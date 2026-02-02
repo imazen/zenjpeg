@@ -77,9 +77,21 @@ fn verify_table_parity(rate: &RateTable, derived: &DerivedTable, name: &str) {
 /// Fields are pub(crate) in zenjpeg, so we can't convert field-by-field.
 fn matched_configs() -> Vec<(&'static str, TrellisConfig, MozTrellisConfig)> {
     vec![
-        ("default", TrellisConfig::default(), MozTrellisConfig::default()),
-        ("favor_size", TrellisConfig::favor_size(), MozTrellisConfig::favor_size()),
-        ("thorough", TrellisConfig::thorough(), MozTrellisConfig::thorough()),
+        (
+            "default",
+            TrellisConfig::default(),
+            MozTrellisConfig::default(),
+        ),
+        (
+            "favor_size",
+            TrellisConfig::favor_size(),
+            MozTrellisConfig::favor_size(),
+        ),
+        (
+            "thorough",
+            TrellisConfig::thorough(),
+            MozTrellisConfig::thorough(),
+        ),
     ]
 }
 
@@ -89,9 +101,9 @@ fn matched_configs() -> Vec<(&'static str, TrellisConfig, MozTrellisConfig)> {
 
 /// Standard JPEG Annex K luminance quant table
 const ANNEX_K_LUMA: [u16; 64] = [
-    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69,
-    56, 14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81,
-    104, 113, 92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
+    92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
 ];
 
 /// Robidoux/ImageMagick luminance quant table (mozjpeg default)
@@ -179,14 +191,24 @@ fn trellis_block_parity_default_config() {
         // Scale coefficients by 8*quant to simulate realistic DCT values
         // (trellis expects raw DCT coefficients before quantization)
         let src = make_test_block(seed, 8000);
-        if compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, &format!("seed={seed}")) {
+        if compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            &format!("seed={seed}"),
+        ) {
             pass += 1;
         } else {
             fail += 1;
         }
     }
 
-    println!("TrellisConfig::default() — Annex K luma: {pass} pass, {fail} fail out of 1000 blocks");
+    println!(
+        "TrellisConfig::default() — Annex K luma: {pass} pass, {fail} fail out of 1000 blocks"
+    );
     assert_eq!(fail, 0, "Block-level parity failures with default config");
 }
 
@@ -195,9 +217,24 @@ fn trellis_block_parity_all_configs() {
     let configs = matched_configs();
 
     let tables: Vec<(&str, &[u16; 64], RateTable, DerivedTable)> = vec![
-        ("annex_k", &ANNEX_K_LUMA, RateTable::standard_luma_ac(), moz_standard_luma_ac()),
-        ("robidoux", &ROBIDOUX_LUMA, RateTable::standard_luma_ac(), moz_standard_luma_ac()),
-        ("chroma", &ANNEX_K_LUMA, RateTable::standard_chroma_ac(), moz_standard_chroma_ac()),
+        (
+            "annex_k",
+            &ANNEX_K_LUMA,
+            RateTable::standard_luma_ac(),
+            moz_standard_luma_ac(),
+        ),
+        (
+            "robidoux",
+            &ROBIDOUX_LUMA,
+            RateTable::standard_luma_ac(),
+            moz_standard_luma_ac(),
+        ),
+        (
+            "chroma",
+            &ANNEX_K_LUMA,
+            RateTable::standard_chroma_ac(),
+            moz_standard_chroma_ac(),
+        ),
     ];
 
     let mut total_pass = 0u32;
@@ -211,7 +248,9 @@ fn trellis_block_parity_all_configs() {
             for seed in 0..200 {
                 let src = make_test_block(seed, 8000);
                 let label = format!("{config_name}/{table_name}/seed={seed}");
-                if compare_block(&src, qtable, zen_table, moz_table, zen_config, moz_config, &label) {
+                if compare_block(
+                    &src, qtable, zen_table, moz_table, zen_config, moz_config, &label,
+                ) {
                     pass += 1;
                 } else {
                     fail += 1;
@@ -224,8 +263,10 @@ fn trellis_block_parity_all_configs() {
         }
     }
 
-    println!("\nTotal: {total_pass} pass, {total_fail} fail out of {} blocks",
-             total_pass + total_fail);
+    println!(
+        "\nTotal: {total_pass} pass, {total_fail} fail out of {} blocks",
+        total_pass + total_fail
+    );
     assert_eq!(total_fail, 0, "Block-level parity failures across configs");
 }
 
@@ -240,7 +281,15 @@ fn trellis_block_parity_edge_cases() {
     // All zeros
     {
         let src = [0i32; DCTSIZE2];
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "zeros") {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "zeros",
+        ) {
             fail += 1;
         }
     }
@@ -249,7 +298,15 @@ fn trellis_block_parity_edge_cases() {
     {
         let mut src = [0i32; DCTSIZE2];
         src[0] = 5000;
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "dc_only") {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "dc_only",
+        ) {
             fail += 1;
         }
     }
@@ -259,7 +316,15 @@ fn trellis_block_parity_edge_cases() {
         let mut src = [0i32; DCTSIZE2];
         src[pos] = 500;
         let label = format!("single_ac_{pos}");
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, &label) {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            &label,
+        ) {
             fail += 1;
         }
     }
@@ -267,7 +332,15 @@ fn trellis_block_parity_edge_cases() {
     // Near-max values
     {
         let src = [7000i32; DCTSIZE2];
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "near_max") {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "near_max",
+        ) {
             fail += 1;
         }
     }
@@ -275,7 +348,15 @@ fn trellis_block_parity_edge_cases() {
     // All negative
     {
         let src = [-3000i32; DCTSIZE2];
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "all_negative") {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "all_negative",
+        ) {
             fail += 1;
         }
     }
@@ -286,7 +367,15 @@ fn trellis_block_parity_edge_cases() {
         for i in 0..DCTSIZE2 {
             src[i] = if i % 2 == 0 { 2000 } else { -2000 };
         }
-        if !compare_block(&src, &ANNEX_K_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "alternating") {
+        if !compare_block(
+            &src,
+            &ANNEX_K_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "alternating",
+        ) {
             fail += 1;
         }
     }
@@ -294,7 +383,15 @@ fn trellis_block_parity_edge_cases() {
     // With Robidoux tables (high quant values)
     {
         let src = make_test_block(42, 50000);
-        if !compare_block(&src, &ROBIDOUX_LUMA, &zen_table, &moz_table, &zen_config, &moz_config, "robidoux_large") {
+        if !compare_block(
+            &src,
+            &ROBIDOUX_LUMA,
+            &zen_table,
+            &moz_table,
+            &zen_config,
+            &moz_config,
+            "robidoux_large",
+        ) {
             fail += 1;
         }
     }
@@ -311,7 +408,9 @@ fn trellis_block_parity_edge_cases() {
 mod full_encode {
     use super::*;
     use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, MozjpegTables, PixelLayout, QuantTablePreset};
+    use zenjpeg::encoder::{
+        ChromaSubsampling, EncoderConfig, MozjpegTables, PixelLayout, QuantTablePreset,
+    };
 
     use mozjpeg_rs::Encoder as MozEncoder;
     use mozjpeg_rs::Preset as MozPreset;
@@ -438,7 +537,13 @@ mod full_encode {
         let orig_rgb = Rgb::new(
             original
                 .chunks(3)
-                .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+                .map(|c| {
+                    [
+                        c[0] as f32 / 255.0,
+                        c[1] as f32 / 255.0,
+                        c[2] as f32 / 255.0,
+                    ]
+                })
                 .collect(),
             width,
             height,
@@ -449,7 +554,13 @@ mod full_encode {
         let dec_rgb = Rgb::new(
             decoded
                 .chunks(3)
-                .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+                .map(|c| {
+                    [
+                        c[0] as f32 / 255.0,
+                        c[1] as f32 / 255.0,
+                        c[2] as f32 / 255.0,
+                    ]
+                })
                 .collect(),
             width,
             height,
@@ -497,8 +608,7 @@ mod full_encode {
             for (ss_name, ss_zen, ss_moz) in &subsampling_pairs {
                 for (prog, prog_name) in &progressive_modes {
                     for (trellis_name, t_zen, t_moz) in &trellis_presets {
-                        let label_str =
-                            format!("q{quality}-{ss_name}-{prog_name}-{trellis_name}");
+                        let label_str = format!("q{quality}-{ss_name}-{prog_name}-{trellis_name}");
                         configs.push(TestConfig {
                             label: Box::leak(label_str.into_boxed_str()),
                             quality,
@@ -595,8 +705,7 @@ mod full_encode {
                 cfg_moz_ssim2 += moz_ssim2;
                 cfg_count += 1;
 
-                let size_pct =
-                    (zen_jpeg.len() as f64 / moz_jpeg.len() as f64 - 1.0) * 100.0;
+                let size_pct = (zen_jpeg.len() as f64 / moz_jpeg.len() as f64 - 1.0) * 100.0;
                 if size_pct > worst_size_regression {
                     worst_size_regression = size_pct;
                     worst_size_label = format!("{} / {}", config.label, _name);
@@ -627,10 +736,8 @@ mod full_encode {
         }
 
         println!("{}", "-".repeat(100));
-        let overall_size_pct =
-            (total_zen_bytes as f64 / total_moz_bytes as f64 - 1.0) * 100.0;
-        let overall_ssim2_delta =
-            total_zen_ssim2 / count as f64 - total_moz_ssim2 / count as f64;
+        let overall_size_pct = (total_zen_bytes as f64 / total_moz_bytes as f64 - 1.0) * 100.0;
+        let overall_ssim2_delta = total_zen_ssim2 / count as f64 - total_moz_ssim2 / count as f64;
         println!(
             "{:<45} {:>7.1} {:>7.1} {:>+6.1}%  {:>7.2} {:>7.2} {:>+6.2}",
             "OVERALL",
@@ -654,5 +761,327 @@ mod full_encode {
             worst_size_regression < 40.0,
             "Size regression too large with matched tables: {worst_size_regression:.1}% on {worst_size_label}"
         );
+    }
+
+    // ========================================================================
+    // Three-way comparison: zenjpeg vs C mozjpeg (libmozjpeg) vs mozjpeg-rs
+    // ========================================================================
+
+    const C_CJPEG_PATH: &str = "/home/lilith/work/mozjpeg/build/cjpeg";
+
+    fn write_ppm(path: &Path, rgb: &[u8], width: u32, height: u32) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(path)?;
+        writeln!(f, "P6")?;
+        writeln!(f, "{} {}", width, height)?;
+        writeln!(f, "255")?;
+        f.write_all(rgb)?;
+        Ok(())
+    }
+
+    /// Encode with C mozjpeg's cjpeg binary using Robidoux tables.
+    ///
+    /// Returns None if cjpeg binary not found or encoding fails.
+    fn encode_c_mozjpeg(
+        ppm_path: &Path,
+        quality: u8,
+        sample: &str, // "2x2" or "1x1"
+        baseline: bool,
+        trellis_speed: Option<u8>, // None = disabled, Some(n) = -trellis-speed n
+    ) -> Option<Vec<u8>> {
+        let cjpeg = Path::new(C_CJPEG_PATH);
+        if !cjpeg.exists() {
+            return None;
+        }
+        let out_path = PathBuf::from(format!("/tmp/c_moz_cmp_{}.jpg", std::process::id()));
+        let mut cmd = std::process::Command::new(cjpeg);
+        cmd.args(["-quality", &quality.to_string()]);
+        cmd.args(["-quant-table", "3"]); // Robidoux (ImageMagick)
+        cmd.args(["-sample", sample]);
+        cmd.arg("-optimize");
+        cmd.arg("-quant-baseline"); // 8-bit quant values, matching zenjpeg allow_16bit=false
+        if baseline {
+            cmd.arg("-baseline");
+        }
+        match trellis_speed {
+            None => {
+                cmd.arg("-notrellis");
+                cmd.arg("-notrellis-dc");
+            }
+            Some(speed) => {
+                cmd.args(["-trellis-speed", &speed.to_string()]);
+            }
+        }
+        cmd.args(["-outfile", out_path.to_str().unwrap()]);
+        cmd.arg(ppm_path);
+
+        let output = cmd.output().ok()?;
+        if !output.status.success() {
+            eprintln!("cjpeg error: {}", String::from_utf8_lossy(&output.stderr));
+            return None;
+        }
+
+        let data = std::fs::read(&out_path).ok();
+        let _ = std::fs::remove_file(&out_path);
+        data
+    }
+
+    struct ThreeWayConfig {
+        label: &'static str,
+        quality: u8,
+        c_sample: &'static str,
+        baseline: bool,
+        trellis_speed: Option<u8>,
+        subsamp_zen: ChromaSubsampling,
+        trellis_zen: Option<TrellisConfig>,
+        subsamp_moz: MozSubsampling,
+        trellis_moz: MozTrellisConfig,
+    }
+
+    fn build_three_way_configs() -> Vec<ThreeWayConfig> {
+        let mut configs = Vec::new();
+
+        let qualities: &[u8] = &[50, 75, 90];
+        let subsamplings: &[(&str, &str, ChromaSubsampling, MozSubsampling)] = &[
+            (
+                "420",
+                "2x2",
+                ChromaSubsampling::Quarter,
+                MozSubsampling::S420,
+            ),
+            ("444", "1x1", ChromaSubsampling::None, MozSubsampling::S444),
+        ];
+        let modes: &[(&str, bool)] = &[("base", true), ("prog", false)];
+        let trellis_presets: &[(&str, Option<u8>, Option<TrellisConfig>, MozTrellisConfig)] = &[
+            ("notrellis", None, None, MozTrellisConfig::disabled()),
+            (
+                "trellis",
+                Some(7),
+                Some(TrellisConfig::default()),
+                MozTrellisConfig::default(),
+            ),
+            (
+                "thorough",
+                Some(0),
+                Some(TrellisConfig::thorough()),
+                MozTrellisConfig::thorough(),
+            ),
+        ];
+
+        for &q in qualities {
+            for &(ss_name, c_sample, ss_zen, ss_moz) in subsamplings {
+                for &(mode_name, baseline) in modes {
+                    for (tr_name, tr_speed, tr_zen, tr_moz) in trellis_presets {
+                        let label = format!("q{q}-{ss_name}-{mode_name}-{tr_name}");
+                        configs.push(ThreeWayConfig {
+                            label: Box::leak(label.into_boxed_str()),
+                            quality: q,
+                            c_sample,
+                            baseline,
+                            trellis_speed: *tr_speed,
+                            subsamp_zen: ss_zen,
+                            trellis_zen: *tr_zen,
+                            subsamp_moz: ss_moz,
+                            trellis_moz: *tr_moz,
+                        });
+                    }
+                }
+            }
+        }
+        configs
+    }
+
+    /// Three-way comparison: zenjpeg vs C mozjpeg (libmozjpeg) vs mozjpeg-rs.
+    ///
+    /// Uses the pre-built cjpeg binary from ~/work/mozjpeg/build/cjpeg.
+    /// All three encoders use Robidoux quant tables for fair comparison.
+    ///
+    /// Expected differences:
+    /// - Baseline without trellis: ±1% (DCT precision, color conversion, Huffman opt)
+    /// - Baseline with trellis: ±2% (above + trellis RateTable vs DerivedTable rounding)
+    /// - Progressive: larger (different scan scripts between encoders)
+    #[test]
+    #[ignore] // Requires CID22 corpus + C cjpeg binary + mozjpeg-tables feature
+    fn c_mozjpeg_robidoux_comparison() {
+        let cjpeg = Path::new(C_CJPEG_PATH);
+        if !cjpeg.exists() {
+            eprintln!("C cjpeg not found at {C_CJPEG_PATH}, skipping");
+            return;
+        }
+
+        let images = load_cid22_images(15);
+        if images.is_empty() {
+            eprintln!("No CID22 images found, skipping");
+            return;
+        }
+
+        // Write PPM files (cjpeg requires PPM input)
+        let pid = std::process::id();
+        let ppm_paths: Vec<PathBuf> = images
+            .iter()
+            .enumerate()
+            .map(|(i, (_name, rgb, w, h))| {
+                let p = PathBuf::from(format!("/tmp/c_moz_cmp_{}_{}.ppm", pid, i));
+                write_ppm(&p, rgb, *w, *h).expect("write PPM");
+                p
+            })
+            .collect();
+
+        let configs = build_three_way_configs();
+        println!(
+            "\nThree-way: {} images × {} configs = {} encodes per encoder",
+            images.len(),
+            configs.len(),
+            images.len() * configs.len()
+        );
+        println!("All encoders use Robidoux quant tables, 8-bit quant, optimized Huffman\n");
+
+        println!(
+            "{:<35} {:>7} {:>7} {:>7}  {:>8} {:>8}  {:>6} {:>6} {:>6}",
+            "Config",
+            "zen_KB",
+            "cmoz_KB",
+            "mrs_KB",
+            "zen/cmoz",
+            "zen/mrs",
+            "zen_s2",
+            "cmz_s2",
+            "mrs_s2"
+        );
+        println!("{}", "-".repeat(115));
+
+        let mut total_zen: u64 = 0;
+        let mut total_cmoz: u64 = 0;
+        let mut total_mrs: u64 = 0;
+        let mut total_zen_s2: f64 = 0.0;
+        let mut total_cmoz_s2: f64 = 0.0;
+        let mut total_mrs_s2: f64 = 0.0;
+        let mut count: u64 = 0;
+        let mut worst_vs_cmoz: f64 = f64::NEG_INFINITY;
+        let mut worst_vs_cmoz_label = String::new();
+
+        for config in &configs {
+            let mut cfg_zen: u64 = 0;
+            let mut cfg_cmoz: u64 = 0;
+            let mut cfg_mrs: u64 = 0;
+            let mut cfg_zen_s2: f64 = 0.0;
+            let mut cfg_cmoz_s2: f64 = 0.0;
+            let mut cfg_mrs_s2: f64 = 0.0;
+            let mut n = 0u32;
+
+            for (i, (name, pixels, w, h)) in images.iter().enumerate() {
+                let wu = *w as usize;
+                let hu = *h as usize;
+
+                let zen_jpeg = encode_zenjpeg_robidoux(
+                    pixels,
+                    *w,
+                    *h,
+                    config.quality,
+                    config.subsamp_zen,
+                    !config.baseline, // progressive
+                    config.trellis_zen,
+                );
+
+                let cmoz_jpeg = match encode_c_mozjpeg(
+                    &ppm_paths[i],
+                    config.quality,
+                    config.c_sample,
+                    config.baseline,
+                    config.trellis_speed,
+                ) {
+                    Some(j) => j,
+                    None => {
+                        eprintln!("cjpeg failed for {}/{}", config.label, name);
+                        continue;
+                    }
+                };
+
+                let mrs_jpeg = encode_mozjpeg(
+                    pixels,
+                    *w,
+                    *h,
+                    config.quality,
+                    config.subsamp_moz,
+                    !config.baseline,
+                    config.trellis_moz,
+                );
+
+                let zen_s2 = compute_ssim2(pixels, &zen_jpeg, wu, hu);
+                let cmoz_s2 = compute_ssim2(pixels, &cmoz_jpeg, wu, hu);
+                let mrs_s2 = compute_ssim2(pixels, &mrs_jpeg, wu, hu);
+
+                cfg_zen += zen_jpeg.len() as u64;
+                cfg_cmoz += cmoz_jpeg.len() as u64;
+                cfg_mrs += mrs_jpeg.len() as u64;
+                cfg_zen_s2 += zen_s2;
+                cfg_cmoz_s2 += cmoz_s2;
+                cfg_mrs_s2 += mrs_s2;
+                n += 1;
+
+                let pct_vs_cmoz = (zen_jpeg.len() as f64 / cmoz_jpeg.len() as f64 - 1.0) * 100.0;
+                if pct_vs_cmoz > worst_vs_cmoz {
+                    worst_vs_cmoz = pct_vs_cmoz;
+                    worst_vs_cmoz_label = format!("{} / {}", config.label, name);
+                }
+            }
+
+            if n == 0 {
+                continue;
+            }
+
+            let pct_cmoz = (cfg_zen as f64 / cfg_cmoz as f64 - 1.0) * 100.0;
+            let pct_mrs = (cfg_zen as f64 / cfg_mrs as f64 - 1.0) * 100.0;
+            let avg_zen_s2 = cfg_zen_s2 / n as f64;
+            let avg_cmoz_s2 = cfg_cmoz_s2 / n as f64;
+            let avg_mrs_s2 = cfg_mrs_s2 / n as f64;
+
+            println!(
+                "{:<35} {:>7.1} {:>7.1} {:>7.1}  {:>+7.1}%  {:>+7.1}%  {:>6.2} {:>6.2} {:>6.2}",
+                config.label,
+                cfg_zen as f64 / 1024.0,
+                cfg_cmoz as f64 / 1024.0,
+                cfg_mrs as f64 / 1024.0,
+                pct_cmoz,
+                pct_mrs,
+                avg_zen_s2,
+                avg_cmoz_s2,
+                avg_mrs_s2,
+            );
+
+            total_zen += cfg_zen;
+            total_cmoz += cfg_cmoz;
+            total_mrs += cfg_mrs;
+            total_zen_s2 += cfg_zen_s2;
+            total_cmoz_s2 += cfg_cmoz_s2;
+            total_mrs_s2 += cfg_mrs_s2;
+            count += n as u64;
+        }
+
+        println!("{}", "-".repeat(115));
+        let pct_cmoz = (total_zen as f64 / total_cmoz as f64 - 1.0) * 100.0;
+        let pct_mrs = (total_zen as f64 / total_mrs as f64 - 1.0) * 100.0;
+        println!(
+            "{:<35} {:>7.1} {:>7.1} {:>7.1}  {:>+7.1}%  {:>+7.1}%  {:>6.2} {:>6.2} {:>6.2}",
+            "OVERALL",
+            total_zen as f64 / 1024.0,
+            total_cmoz as f64 / 1024.0,
+            total_mrs as f64 / 1024.0,
+            pct_cmoz,
+            pct_mrs,
+            total_zen_s2 / count as f64,
+            total_cmoz_s2 / count as f64,
+            total_mrs_s2 / count as f64,
+        );
+        println!(
+            "\nWorst vs C mozjpeg: {:>+.1}% ({})",
+            worst_vs_cmoz, worst_vs_cmoz_label
+        );
+        println!("Positive % = zenjpeg larger than reference");
+
+        // Cleanup PPM files
+        for p in &ppm_paths {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
