@@ -1,26 +1,27 @@
-# Context Handoff: Trellis Validated at Q90+
+# Context Handoff: Trellis Investigation Complete
 
-## Validated Results (30 CID22 images)
+## When Trellis Helps
 
-| Q | Trellis vs Jpegli Size | BA Δ | Verdict |
-|---|------------------------|------|---------|
-| 88 | **-2.8%** | +0.8% | ★ Pareto win |
-| 90 | **-2.5%** | +0.9% | ★ Pareto win |
-| 93 | **-2.0%** | +0.4% | ★ Pareto win |
-| 95 | **-1.6%** | +0.3% | ★ Pareto win |
+| Subsampling | Quality | Size Δ | BA Δ | Speed | Verdict |
+|-------------|---------|--------|------|-------|---------|
+| 4:2:0 | Q90+ | -2.5% | +0.9% | +70% | ★ Worth it |
+| 4:4:4 | Q95 | -2.1% | +0.4% | +70% | ★ Worth it |
+| 4:4:4 | Q90 | -2.8% | +2.9% | +70% | Not worth it |
+| Any | Q85- | ~same curve | | +70% | Not worth it |
 
-**Per-image at Q90:** Trellis wins 20, Jpegli wins 0, Ties 10.
+## Should Trellis Be Automatic?
 
-## Recommended Config
+**No.** 70% slowdown for 2-3% savings should be opt-in.
+
+## Recommended Usage
 
 ```rust
-// Q90+ (archival, print) - USE TRELLIS
+// High quality (Q90+ 4:2:0, Q95+ 4:4:4) — opt into trellis
 EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
     .optimization(OptimizationPreset::HybridProgressive)
     .optimize_scans(true)
-// Result: -2.5% size, +0.9% BA vs jpegli
 
-// Q85 and below (web) - NO TRELLIS BENEFIT
+// Web quality (Q85-) — no trellis benefit
 EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     .optimization(OptimizationPreset::JpegliProgressive)
     .optimize_scans(true)  // -0.5% free
@@ -30,17 +31,18 @@ EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 
 | Feature | Finding |
 |---------|---------|
-| `aq_lambda_scale` coupling | Redundant - same curve as quality change |
-| Deringing | No measurable effect |
-| Trellis at Q85- | No Pareto benefit (same curve as jpegli) |
+| `aq_lambda_scale` coupling | Redundant (same curve as quality) |
+| Deringing | No effect |
+| Trellis at Q85- | No Pareto benefit |
+| Trellis 4:4:4 at Q90 | +2.9% BA too much |
 
-## Bug Fixed
+## Validated Results (30 CID22 images)
 
-`hybrid_config()` now clears `trellis` when enabled=true (commit `df94d12`).
+**4:2:0 Q90:** Trellis wins 20/30 images, loses 0/30.
+**4:4:4 Q95:** Pareto win (-2.1% size, +0.4% BA).
 
 ## Commits
 
+- `75384de` investigate: trellis with 4:4:4 and speed cost
 - `e8641ef` validate: trellis helps over jpegli at Q90+
-- `122442d` investigate: which knobs compose well with jpegli
-- `042c52e` investigate: coupling vs quality - traces same curve
 - `df94d12` fix: hybrid_config now clears trellis
