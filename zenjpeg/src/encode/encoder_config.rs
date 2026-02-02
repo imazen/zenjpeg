@@ -241,6 +241,63 @@ impl EncoderConfig {
         })
     }
 
+    /// Apply an optimization preset.
+    ///
+    /// Sets progressive mode, Huffman strategy, trellis, scan strategy,
+    /// AQ (deringing), and chroma table configuration to match a specific
+    /// encoder profile.
+    ///
+    /// Individual settings can still be overridden after calling this.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, OptimizationPreset};
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .optimization(OptimizationPreset::HybridProgressive);
+    /// ```
+    #[must_use]
+    pub fn optimization(self, preset: super::encoder_types::OptimizationPreset) -> Self {
+        use super::encoder_types::OptimizationPreset::*;
+        use super::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
+
+        let progressive = preset.is_progressive();
+        let scan_strategy = preset.scan_strategy();
+        let uses_aq = preset.uses_aq();
+
+        // Trellis configuration depends on preset
+        let trellis = match preset {
+            JpegliBaseline | JpegliProgressive => None,
+            MozjpegBaseline | MozjpegProgressive | HybridBaseline | HybridProgressive => {
+                Some(TrellisConfig::default())
+            }
+            MozjpegMaxCompression | HybridMaxCompression => {
+                Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
+            }
+        };
+
+        // Mozjpeg modes use 2 quant tables (shared chroma), jpegli/hybrid use 3
+        let separate_chroma_tables = matches!(
+            preset,
+            JpegliBaseline
+                | JpegliProgressive
+                | HybridBaseline
+                | HybridProgressive
+                | HybridMaxCompression
+        );
+
+        Self {
+            progressive,
+            huffman: HuffmanStrategy::Optimize,
+            scan_strategy,
+            deringing: uses_aq,
+            separate_chroma_tables,
+            trellis,
+            ..self
+        }
+    }
+
     /// Enable or disable Huffman table optimization.
     ///
     /// When enabled (default), a two-pass encode computes optimal Huffman tables
@@ -1064,5 +1121,80 @@ mod tests {
         assert!(!trellis.is_enabled());
         assert!(!trellis.is_ac_enabled());
         assert!(!trellis.is_dc_enabled());
+    }
+
+    #[test]
+    fn test_optimization_preset_jpegli_baseline() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::JpegliBaseline);
+        assert!(!config.progressive);
+        assert!(config.deringing);
+        assert!(config.separate_chroma_tables);
+        assert!(config.trellis.is_none());
+    }
+
+    #[test]
+    fn test_optimization_preset_mozjpeg_progressive() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegProgressive);
+        assert!(config.progressive);
+        assert!(!config.deringing);
+        assert!(!config.separate_chroma_tables);
+        assert!(config.trellis.is_some());
+        assert_eq!(config.scan_strategy, ScanStrategy::Mozjpeg);
+    }
+
+    #[test]
+    fn test_optimization_preset_mozjpeg_max() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegMaxCompression);
+        assert!(config.progressive);
+        assert!(!config.deringing);
+        assert!(!config.separate_chroma_tables);
+        assert!(config.trellis.is_some());
+        let trellis = config.trellis.unwrap();
+        assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough);
+        assert_eq!(config.scan_strategy, ScanStrategy::Search);
+    }
+
+    #[test]
+    fn test_optimization_preset_hybrid_progressive() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::HybridProgressive);
+        assert!(config.progressive);
+        assert!(config.deringing);
+        assert!(config.separate_chroma_tables);
+        assert!(config.trellis.is_some());
+        assert_eq!(config.scan_strategy, ScanStrategy::Default);
+    }
+
+    #[test]
+    fn test_optimization_preset_preserves_quality() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(42.0, ChromaSubsampling::None)
+            .optimization(OptimizationPreset::MozjpegBaseline);
+        assert!(matches!(config.quality, Quality::ApproxJpegli(q) if (q - 42.0).abs() < 0.01));
+        assert!(matches!(
+            config.color_mode,
+            ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_optimization_preset_overridable() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        // Apply preset then override progressive
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegProgressive)
+            .progressive(false);
+        assert!(!config.progressive);
+        // Trellis should still be set from the preset
+        assert!(config.trellis.is_some());
     }
 }
