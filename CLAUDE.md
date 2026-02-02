@@ -998,6 +998,50 @@ Max  |diff|: R=25, G=17, B=18
 - May be related to AQ strength interpolation or zero-bias calculation
 - Files: `zenjpeg/src/quant/aq/simd.rs`, `zenjpeg/src/encode/strip/mod.rs:quantize_pending_imcu`
 
+### Hybrid Trellis Rate-Distortion Analysis (2026-02-02)
+
+**Goal:** Determine if AQ-coupled trellis provides better rate-distortion than standalone trellis.
+
+**Hypothesis:** Adjusting trellis lambda per-block based on AQ strength should improve perceptual
+quality by spending more bits on smooth areas (low AQ, visible artifacts) and fewer on textured
+areas (high AQ, masking effect).
+
+**Implementation:** `HybridConfig::to_trellis_config()` adds `aq_strength * coupling` to
+`lambda_log_scale1`. Higher lambda = more aggressive coefficient zeroing.
+
+**Benchmark results** (`cargo run --release --example hybrid_trellis_benchmark`):
+
+| Image | Size | Q | Mode | Bytes | DSSIM | Butteraugli |
+|-------|------|---|------|-------|-------|-------------|
+| flower_small | 510x532 | 85 | jpegli | 38596 | 0.00072 | 1.918 |
+| flower_small | 510x532 | 85 | standalone | 42587 | 0.00053 | 1.809 |
+| flower_small | 510x532 | 85 | hybrid(2.0) | 39298 | 0.00069 | 1.789 |
+| apple.com | 1920x1080 | 85 | jpegli | 503363 | 0.00052 | 7.389 |
+| apple.com | 1920x1080 | 85 | standalone | 469870 | 0.00065 | 7.831 |
+| apple.com | 1920x1080 | 85 | hybrid(2.0) | 542594 | 0.00041 | 7.483 |
+
+**Analysis:**
+- Hybrid improves DSSIM (lower = better) by 23-49% vs standalone
+- But files are 10-30% larger
+- On flower_small at Q85: hybrid is 7.7% smaller than standalone but 28.6% worse DSSIM
+- On apple.com at Q85: hybrid is 15.5% larger than standalone but 37.1% better DSSIM
+
+**Root cause:** The coupling direction may be inverted. When AQ is high (textured), we increase
+lambda (more compression), zeroing more coefficients. This improves DSSIM (perceptual metric that
+penalizes texture loss less) but the "saved" bits don't reduce file size — they're just lost.
+
+**Alternative approaches to explore:**
+1. **Reverse coupling** — decrease lambda for high-AQ blocks (preserve texture, may improve Butteraugli)
+2. **Rate-targeting** — use hybrid to hit a target file size with better quality allocation
+3. **Quality-adaptive coupling** — different coupling strategies at different quality levels
+4. **Butteraugli-optimized** — tune for Butteraugli instead of DSSIM
+5. **Block-level rate control** — redistribute bits from textured to smooth blocks explicitly
+
+**Files:**
+- `hybrid/config.rs:266` — `compute_lambda_adjustment()` does `aq_strength * aq_lambda_scale`
+- `hybrid/core.rs:183` — `config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE`
+- `examples/hybrid_trellis_benchmark.rs` — rate-distortion measurement tool
+
 ### ExpertConfig Parameter Sensitivity (2026-02-02)
 
 Test: `cargo test --release -p zenjpeg --lib -- search::tests::test_parameter_sensitivity --nocapture`

@@ -22,7 +22,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 **Ideas adopted from mozjpeg:**
 - Overshoot deringing for documents/graphics
 - Trellis quantization for optimal coefficient selection
-- Hybrid approach combining jpegli's AQ with mozjpeg's trellis
+- Hybrid trellis mode (experimental, see Trellis Modes below)
 
 **Where we went our own way:**
 - Pure Rust, `#![forbid(unsafe_code)]` unconditionally (SIMD via safe archmage tokens)
@@ -49,6 +49,52 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 
 - **XYB color space** - With progressive mode, matches or beats C++ jpegli file sizes. Baseline mode is 2-3% larger.
 - **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
+- **Hybrid trellis** - Experimental feature that doesn't yet provide rate-distortion improvements (see below).
+
+## Trellis Modes
+
+zenjpeg supports three quantization modes:
+
+### Standard (jpegli-style)
+Default mode. Uses adaptive quantization with perceptual zero-bias. Good balance of speed and quality.
+
+```rust
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+```
+
+### Standalone Trellis (mozjpeg-style)
+Rate-distortion optimized coefficient selection. Typically 10-15% smaller files at equivalent quality.
+Slightly slower due to dynamic programming optimization.
+
+```rust
+use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode, ChromaSubsampling};
+
+let expert = ExpertConfig::from_preset(OptimizationPreset::MozjpegBaseline, 85);
+let config = expert.to_encoder_config(ColorMode::YCbCr {
+    subsampling: ChromaSubsampling::Quarter,
+});
+```
+
+### Hybrid Trellis (experimental)
+Combines jpegli's adaptive quantization with mozjpeg's trellis, adjusting the rate-distortion
+trade-off per-block based on content complexity. **Currently produces suboptimal results:**
+
+- Files are 10-30% larger than standalone trellis
+- But DSSIM (perceptual quality) is 23-49% better
+
+This inverted trade-off means hybrid isn't useful for typical optimization goals. The feature
+is functional but needs algorithmic improvements. See `CLAUDE.md` for details.
+
+```rust
+use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode, ChromaSubsampling};
+
+let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85);
+expert.trellis_enabled = true;
+expert.aq_trellis_coupling = 2.0;  // Enable hybrid mode
+let config = expert.to_encoder_config(ColorMode::YCbCr {
+    subsampling: ChromaSubsampling::Quarter,
+});
+```
 
 ## Quick Start
 
