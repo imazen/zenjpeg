@@ -10,6 +10,7 @@ use zenjpeg::encode::{
     ChromaSubsampling, EncoderConfig, MozjpegTables, PixelLayout, QuantTablePreset,
 };
 use zenjpeg::encode::mozjpeg_compat::TrellisConfig;
+use zenjpeg::hybrid::config::HybridConfig;
 // EOB optimization functions (kept for future use)
 #[allow(unused_imports)]
 use zenjpeg::trellis::eob::{estimate_block_eob_info, optimize_eob_runs};
@@ -86,8 +87,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/home/lilith/work/codec-eval/codec-corpus/kodak/13.png",
     ];
 
-    println!("Testing EOB optimization in mozjpeg mimic mode");
-    println!("All use: Robidoux tables, 4:2:0, baseline, optimized Huffman\n");
+    println!("Testing in TRUE mozjpeg mimic mode");
+    println!("All use: Robidoux tables, 4:2:0, baseline, optimized Huffman");
+    println!("zenjpeg: NO AQ, NO deringing (pure mozjpeg-style encoding)\n");
 
     for path in &test_paths {
         if !Path::new(path).exists() {
@@ -119,22 +121,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|v| v.len())
                 .unwrap_or(0);
 
-            // zenjpeg in mozjpeg mimic mode (baseline, Robidoux tables, no trellis)
+            // zenjpeg in TRUE mozjpeg mimic mode:
+            // - Robidoux tables
+            // - NO jpegli AQ (HybridConfig::disabled)
+            // - NO deringing
+            // - NO trellis (first test)
             let tables = MozjpegTables::generate_ex(quality, QuantTablePreset::Robidoux, true);
             let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
                 .progressive(false)
                 .tables(tables.clone())
-                .allow_16bit_quant_tables(false);
+                .allow_16bit_quant_tables(false)
+                .deringing(false)
+                .hybrid_config(HybridConfig::disabled());
 
             let mut encoder = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
             encoder.push(&pixels, height as usize, width as usize * 3, Unstoppable)?;
             let zen = encoder.finish()?.len();
 
-            // zenjpeg with trellis (AC + DC)
+            // zenjpeg with trellis (AC + DC), still no AQ/deringing
             let config_trel = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
                 .progressive(false)
                 .tables(tables)
                 .allow_16bit_quant_tables(false)
+                .deringing(false)
+                .hybrid_config(HybridConfig::disabled())
                 .trellis(TrellisConfig::default().ac_trellis(true).dc_trellis(true));
 
             let mut encoder = config_trel.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
