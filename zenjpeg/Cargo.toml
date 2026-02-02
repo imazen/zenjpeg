@@ -151,6 +151,9 @@ sharp-yuv = []
 # Enable mozjpeg-compatible quantization table presets (Robidoux, MSSIM, Klein, etc.)
 # Provides MozjpegTables::generate() helper for producing tables compatible with mozjpeg
 mozjpeg-tables = []
+# Enable SA-optimized piecewise quantization tables (+6.5 mean pareto vs jpegli defaults)
+# Provides OptimizedTables::generate() with 20-anchor interpolated tables
+optimized-tables = []
 # Enable WASM console tracing for debugging browser-specific issues
 wasm-trace = ["dep:web-sys"]
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
