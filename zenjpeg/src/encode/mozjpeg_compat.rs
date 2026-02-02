@@ -113,23 +113,6 @@ impl TrellisSpeedMode {
             }
         }
     }
-
-    /// Convert to mozjpeg-rs speed_level (u8).
-    ///
-    /// mozjpeg-rs 0.5.1 uses a simple speed_level: u8 where:
-    /// - 0 = thorough (full search)
-    /// - 7 = default/adaptive
-    /// - 10 = fast
-    #[cfg(feature = "experimental-hybrid-trellis")]
-    #[must_use]
-    pub fn to_mozjpeg(&self) -> u8 {
-        match *self {
-            Self::Thorough => 0,
-            Self::Adaptive => 7,
-            Self::Level(l) => l.min(10),
-            Self::Custom { .. } => 7, // Custom not supported in mozjpeg-rs 0.5.1, use default
-        }
-    }
 }
 
 /// Configuration for trellis quantization.
@@ -447,28 +430,6 @@ impl TrellisConfig {
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled || self.dc_enabled
-    }
-
-    /// Convert to mozjpeg-rs TrellisConfig for actual trellis quantization.
-    ///
-    /// This requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
-    #[must_use]
-    pub fn to_mozjpeg_config(&self) -> mozjpeg_rs::TrellisConfig {
-        mozjpeg_rs::TrellisConfig {
-            enabled: self.enabled,
-            dc_enabled: self.dc_enabled,
-            eob_opt: self.eob_opt,
-            use_lambda_weight_tbl: self.use_lambda_weight_tbl,
-            use_scans_in_trellis: false, // Not exposed in simplified API
-            q_opt: false,                // Not exposed in simplified API
-            lambda_log_scale1: self.lambda_log_scale1,
-            lambda_log_scale2: self.lambda_log_scale2,
-            freq_split: 8, // Default, not exposed
-            num_loops: self.num_loops,
-            delta_dc_weight: 0.0, // Default, not exposed
-            speed_level: self.speed_mode.to_mozjpeg(),
-        }
     }
 }
 

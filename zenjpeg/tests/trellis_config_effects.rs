@@ -1,8 +1,4 @@
 //! Tests verifying that TrellisConfig actually affects encoder output.
-//!
-//! Requires the `experimental-hybrid-trellis` feature.
-
-#![cfg(feature = "experimental-hybrid-trellis")]
 
 use zenjpeg::encode::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

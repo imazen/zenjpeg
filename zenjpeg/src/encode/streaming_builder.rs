@@ -43,14 +43,11 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
-    /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
-    #[cfg(feature = "experimental-hybrid-trellis")]
+    /// Hybrid quantization configuration
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
-    /// Custom AQ map (requires `experimental-hybrid-trellis` feature)
-    #[cfg(feature = "experimental-hybrid-trellis")]
+    /// Custom AQ map
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
-    /// Trellis quantization config (mozjpeg-compat API, requires `experimental-hybrid-trellis`)
-    #[cfg(feature = "experimental-hybrid-trellis")]
+    /// Trellis quantization config (mozjpeg-compat API)
     pub(crate) trellis: Option<super::mozjpeg_compat::TrellisConfig>,
 }
 
@@ -75,11 +72,8 @@ impl StreamingEncoderBuilder {
             optimize_scans: false,
             #[cfg(feature = "parallel")]
             parallel: false,
-            #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
-            #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
-            #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
         }
     }
@@ -300,9 +294,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Enables hybrid quantization (jpegli AQ + mozjpeg trellis).
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
         self.hybrid_config = if enable {
@@ -314,9 +305,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Sets custom hybrid quantization configuration.
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub(crate) fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.hybrid_config = config;
@@ -324,9 +312,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Sets trellis quantization configuration (mozjpeg-compatible API).
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn trellis(mut self, config: super::mozjpeg_compat::TrellisConfig) -> Self {
         self.trellis = Some(config);
@@ -334,9 +319,6 @@ impl StreamingEncoderBuilder {
     }
 
     /// Sets a custom AQ (adaptive quantization) strength map.
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);

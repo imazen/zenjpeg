@@ -19,7 +19,7 @@
 //!
 //! Examples:
 //!   # Quick YCbCr vs hybrid comparison
-//!   cargo run --release --example quality_compare --features experimental-hybrid-trellis -- \
+//!   cargo run --release --example quality_compare -- \
 //!     --encoder zenjpeg-ycbcr --encoder hybrid --quick image.png
 //!
 //!   # Full Pareto curve to CSV

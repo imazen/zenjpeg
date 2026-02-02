@@ -72,12 +72,9 @@ pub struct ComputedConfig {
     /// Has no effect for 4:4:4 (no downsampling needed).
     pub chroma_downsampling: DownsamplingMethod,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
-    /// Requires the `experimental-hybrid-trellis` feature
-    #[cfg(feature = "experimental-hybrid-trellis")]
     pub hybrid_config: crate::hybrid::config::HybridConfig,
     /// Custom AQ map (optional). If None, computed automatically.
     /// Allows pre-scaling the AQ map for size control.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
 
     /// Custom encoding tables (escape hatch for experimentation).
@@ -144,9 +141,6 @@ pub struct ComputedConfig {
     /// When set, enables trellis quantization for rate-distortion optimization.
     /// This is the mozjpeg-compatible API. For hybrid AQ+trellis mode, use
     /// `hybrid_config` instead.
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     pub trellis: Option<super::mozjpeg_compat::TrellisConfig>,
 }
 
@@ -168,9 +162,7 @@ impl Default for ComputedConfig {
             huffman: HuffmanStrategy::Optimize,
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
-            #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
-            #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
             encoding_tables: None,
             edge_padding: EdgePaddingConfig::default(),
@@ -182,7 +174,6 @@ impl Default for ComputedConfig {
             optimize_scans: false,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
-            #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
         }
     }

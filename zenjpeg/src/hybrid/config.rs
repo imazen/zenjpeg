@@ -34,8 +34,7 @@
 //!
 //! These remain configurable for further experimentation.
 
-#[cfg(feature = "experimental-hybrid-trellis")]
-use mozjpeg_rs::TrellisConfig;
+use crate::encode::mozjpeg_compat::TrellisConfig;
 
 /// Threshold for AQ mean above which hybrid trellis might be beneficial.
 ///
@@ -290,8 +289,7 @@ impl HybridConfig {
         adjustment
     }
 
-    /// Convert to mozjpeg TrellisConfig for a specific block.
-    #[cfg(feature = "experimental-hybrid-trellis")]
+    /// Convert to TrellisConfig for a specific block.
     pub fn to_trellis_config(
         &self,
         aq_strength: f32,
@@ -300,20 +298,15 @@ impl HybridConfig {
     ) -> TrellisConfig {
         let adjustment = self.compute_lambda_adjustment(aq_strength, dampen, is_chroma);
 
-        TrellisConfig {
-            enabled: true,
-            dc_enabled: self.dc_enabled,
-            eob_opt: true,
-            use_lambda_weight_tbl: self.use_lambda_weight_tbl,
-            use_scans_in_trellis: false,
-            q_opt: false,
-            lambda_log_scale1: self.base_lambda_scale1 + adjustment,
-            lambda_log_scale2: self.base_lambda_scale2,
-            freq_split: 8,
-            num_loops: self.num_loops,
-            delta_dc_weight: 0.0,
-            speed_level: 7, // Adaptive (default)
-        }
+        TrellisConfig::default()
+            .ac_trellis(true)
+            .dc_trellis(self.dc_enabled)
+            .eob_optimization(true)
+            .lambda_scales(
+                self.base_lambda_scale1 + adjustment,
+                self.base_lambda_scale2,
+            )
+            .num_loops(self.num_loops)
     }
 
     /// Generate a short identifier string for this config (for logging/filenames).
