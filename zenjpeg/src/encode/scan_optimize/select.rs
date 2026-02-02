@@ -154,6 +154,15 @@ impl ScanSelector {
             }
         }
 
+        // Compare freq-split-at-Al=0 against SA cost (Bug 4 from mozjpeg-rs 01fddb9).
+        // Frequency splits are measured at Al=0 only. If the best freq split at Al=0
+        // beats the best SA configuration, override to Al=0 with the split.
+        if best_al > 0 && best_freq_cost < best_cost {
+            best_al = 0;
+            best_cost = best_freq_cost;
+        }
+        let _ = best_cost; // suppress unused warning
+
         (best_al, best_freq_split)
     }
 
@@ -233,6 +242,13 @@ impl ScanSelector {
                 break;
             }
         }
+
+        // Compare freq-split-at-Al=0 against SA cost (same logic as luma).
+        if best_al > 0 && best_freq_cost < best_cost {
+            best_al = 0;
+            best_cost = best_freq_cost;
+        }
+        let _ = best_cost; // suppress unused warning
 
         (best_al, best_freq_split, interleave_chroma_dc)
     }

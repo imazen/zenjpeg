@@ -87,28 +87,30 @@ impl ScanSearchResult {
             });
         }
 
-        // Luma AC scans
+        // Luma AC scans.
+        // Frequency splits were measured at Al=0 and only apply there.
+        // When Al>0, always use full 1-63 range for the initial scan.
         let al = self.best_al_luma;
-        if self.best_freq_split_luma == 0 {
-            scans.push(ProgressiveScan {
-                components: vec![0],
-                ss: 1,
-                se: 63,
-                ah: 0,
-                al,
-            });
-        } else {
+        if al == 0 && self.best_freq_split_luma > 0 {
             let split = config.frequency_splits[self.best_freq_split_luma - 1];
             scans.push(ProgressiveScan {
                 components: vec![0],
                 ss: 1,
                 se: split,
                 ah: 0,
-                al,
+                al: 0,
             });
             scans.push(ProgressiveScan {
                 components: vec![0],
                 ss: split + 1,
+                se: 63,
+                ah: 0,
+                al: 0,
+            });
+        } else {
+            scans.push(ProgressiveScan {
+                components: vec![0],
+                ss: 1,
                 se: 63,
                 ah: 0,
                 al,
@@ -150,29 +152,30 @@ impl ScanSearchResult {
                 }
             }
 
-            // Chroma AC scans
+            // Chroma AC scans.
+            // Same rule: frequency splits only apply at Al=0.
             let al_c = self.best_al_chroma;
             for comp in 1..=2u8 {
-                if self.best_freq_split_chroma == 0 {
-                    scans.push(ProgressiveScan {
-                        components: vec![comp],
-                        ss: 1,
-                        se: 63,
-                        ah: 0,
-                        al: al_c,
-                    });
-                } else {
+                if al_c == 0 && self.best_freq_split_chroma > 0 {
                     let split = config.frequency_splits[self.best_freq_split_chroma - 1];
                     scans.push(ProgressiveScan {
                         components: vec![comp],
                         ss: 1,
                         se: split,
                         ah: 0,
-                        al: al_c,
+                        al: 0,
                     });
                     scans.push(ProgressiveScan {
                         components: vec![comp],
                         ss: split + 1,
+                        se: 63,
+                        ah: 0,
+                        al: 0,
+                    });
+                } else {
+                    scans.push(ProgressiveScan {
+                        components: vec![comp],
+                        ss: 1,
                         se: 63,
                         ah: 0,
                         al: al_c,
