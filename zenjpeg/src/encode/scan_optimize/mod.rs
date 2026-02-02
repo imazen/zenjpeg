@@ -141,41 +141,6 @@ fn scripts_equivalent(a: &[ProgressiveScan], b: &[ProgressiveScan]) -> bool {
     })
 }
 
-/// Simplest progressive scan script: no successive approximation.
-///
-/// Structure: separate DC + full AC 1-63 at al=0 per component.
-/// This produces the fewest scans (2 per component) and is optimal when
-/// SA overhead (extra scans, refinement passes) isn't worth the compression
-/// benefit — common for images with lots of high-frequency content.
-fn no_sa_progressive_scans(num_components: u8) -> Vec<ProgressiveScan> {
-    let nc = num_components as usize;
-    let mut scans = Vec::with_capacity(nc * 2);
-
-    // Separate DC scans
-    for c in 0..nc {
-        scans.push(ProgressiveScan {
-            components: vec![c as u8],
-            ss: 0,
-            se: 0,
-            ah: 0,
-            al: 0,
-        });
-    }
-
-    // Full AC 1-63 at al=0 per component
-    for c in 0..nc {
-        scans.push(ProgressiveScan {
-            components: vec![c as u8],
-            ss: 1,
-            se: 63,
-            ah: 0,
-            al: 0,
-        });
-    }
-
-    scans
-}
-
 /// Mixed SA progressive script with a configurable frequency split point.
 ///
 /// Generalizes the default jpegli script: instead of always splitting at
