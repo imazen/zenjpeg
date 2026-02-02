@@ -1,161 +1,117 @@
-# Context Handoff: Hybrid Trellis Optimization
+# Context Handoff: Hybrid Trellis Pareto Optimization
 
-## Current State
+## Current State (2026-02-02)
 
-Hybrid trellis is **working but not Pareto-optimal**. It trades quality for size - no configuration found that gives both smaller files AND equal/better quality.
+Hybrid trellis **shifts rate-distortion curve** but doesn't dominate it. No configuration found that achieves true Pareto improvement (smaller AND better) on full CID22 corpus.
 
-### CID22 Benchmark Results (20 images, Butteraugli)
+### Key Finding: Positive Coupling
 
-| Q | Jpegli Size | Jpegli BA | Hybrid Size | Hybrid BA | ΔSize% | ΔBA% |
-|---|-------------|-----------|-------------|-----------|--------|------|
-| 75 | 40971 | 2.596 | 39232 | 2.643 | -4.2% | +1.8% |
-| 80 | 46213 | 2.359 | 44456 | 2.413 | -3.8% | +2.3% |
-| 85 | 53913 | 2.095 | 52124 | 2.151 | -3.3% | +2.7% |
-| 90 | 67075 | 1.853 | 65324 | 1.874 | -2.6% | +1.1% |
-| 95 | 93437 | 1.695 | 91786 | 1.716 | -1.8% | +1.2% |
+**Previous session explored negative coupling** (aggressive compression with quality boost to compensate).
 
-Trade-off: ~1% size reduction per ~0.8% butteraugli degradation.
+**This session discovered positive coupling** works better:
+- `aq_lambda_scale > 0` = preserve texture detail in high-AQ blocks
+- Combined with slight quality reduction = comparable size, different quality profile
 
-## What's Been Tried
+### CID22 Results (30 images, Butteraugli)
 
-### 1. Fixed Negative Coupling (-4.0)
-- Result: -9.2% size, +10.9% butteraugli
-- Problem: Over-quantizes high-texture images (up to +45% butteraugli on some)
+#### Positive Coupling at Q85 Base
+| Config | Size Δ | BA Δ |
+|--------|--------|------|
+| baseline Q85 | — | — |
+| aq_lambda_scale=4, Q84 | -0.8% | +1.1% |
+| aq_lambda_scale=5, Q83.5 | -1.8% | +2.9% |
+| aq_lambda_scale=6, Q83.5 | -1.4% | +2.7% |
 
-### 2. Texture-Adaptive Coupling (current)
-- Formula: `coupling = -4.0 × (0.15 / max(aq_mean, 0.15))`
-- Result: -3.3% size, +2.7% butteraugli
-- Better balance but still not Pareto-optimal
+**No Pareto at Q85** on full corpus (though 10-image subset showed some wins).
 
-### 3. Screenshot Protection (max_adjustment=1.0)
-- Works well for mixed content
-- Prevents catastrophic quality loss on UI/text
+#### Quality-Level Dependency
+| BaseQ | Hybrid Q | Size Δ | BA Δ | Efficiency |
+|-------|----------|--------|------|------------|
+| 75 | 73.5 | +1.4% | +1.7% | poor |
+| 80 | 78.5 | +0.9% | +0.8% | neutral |
+| 85 | 83.5 | -1.8% | +2.9% | 0.62 |
+| **90** | **88.5** | **-4.4%** | **+2.4%** | **1.83** |
+| **95** | **93.5** | **-10.5%** | **+6.1%** | **1.72** |
 
-## Approaches to Explore
+**Key insight:** Positive coupling efficiency improves dramatically at high quality (Q90+).
 
-### A. Quality-Neutral Mode
-**Goal:** Same butteraugli as jpegli, smaller file.
+At Q95: -10.5% size for +6.1% BA = excellent trade-off for storage-constrained apps.
 
-**Approach:**
-1. Use hybrid trellis to compress more aggressively
-2. Boost overall quality slightly to compensate for butteraugli loss
-3. If hybrid at Q85 = jpegli Q85 - 3% size + 3% butteraugli,
-   then hybrid at Q86-87 might = jpegli Q85 quality at smaller size
+## What's Been Tested
 
-**Implementation:**
+### Approach A: Quality-Neutral (boost Q to match BA)
+- Negative coupling + higher quality
+- Result: Can match BA but files are larger
+- **Not Pareto-optimal**
+
+### Approach D: Positive Coupling (preserve texture, reduce Q)  
+- Positive `aq_lambda_scale` preserves detail in textured areas
+- Reduce base quality to compensate for larger files
+- Result: Size savings improve at higher quality levels
+- **Best efficiency at Q90-95**
+
+### 10-Image Subset vs 30-Image Full Corpus
+The 10-image subset showed several Pareto points (`aq_lambda_scale=4, Q84` at -0.9% size, -1.5% BA).
+Full 30-image corpus eliminated these — image diversity matters for validation.
+
+## Recommended Usage
+
+### For Q90+ Applications (archival, print):
 ```rust
-// Estimate quality boost needed to offset butteraugli degradation
-let quality_boost = butteraugli_delta_percent * 0.5; // rough estimate
-let adjusted_quality = base_quality + quality_boost;
+let hybrid = HybridConfig {
+    enabled: true,
+    aq_lambda_scale: 5.0,  // Positive = preserve texture
+    max_adjustment: 0.0,
+    ..Default::default()
+};
+let config = EncoderConfig::ycbcr(quality - 1.5, ChromaSubsampling::Quarter)
+    .hybrid_config(hybrid);
 ```
+Expected: -4% to -10% size, +2% to +6% butteraugli (acceptable trade-off).
 
-### B. Butteraugli-Targeted Encoding
-**Goal:** Hit a specific butteraugli target with minimum file size.
+### For Q75-85 Applications (web):
+Don't use hybrid — trade-off is unfavorable. Standard trellis is sufficient.
 
-**Approach:**
-1. Encode with hybrid at initial quality guess
-2. Measure butteraugli
-3. Binary search quality to hit target butteraugli
-4. Compare final size to jpegli at same butteraugli
-
-**Files:** Could extend `EncoderConfig` with `.target_butteraugli(f32)` mode.
-
-### C. Per-Block Quality Redistribution
-**Goal:** Pareto improvement by smarter bit allocation.
-
-**Approach:** Instead of uniformly reducing quality on textured blocks:
-1. Identify blocks where quality loss is imperceptible (high masking)
-2. Steal bits from those blocks
-3. Give bits to blocks where quality loss is visible (low masking)
-4. Net result: same total bits, better perceptual quality
-
-**This is fundamentally different from current approach** which just adjusts lambda uniformly.
-
-### D. Positive Coupling with Size Target
-**Goal:** Better quality at same file size.
-
-**Approach:**
-1. Use positive coupling (preserves texture detail)
-2. Reduce base quality to hit same file size as jpegli
-3. Net result: same size, potentially better quality on textured areas
-
-**Test:** Compare hybrid Q82 with positive coupling vs jpegli Q85.
-
-### E. Frequency-Selective Trellis
-**Goal:** Optimize different DCT frequencies differently.
-
-**Approach:**
-1. Be aggressive on high frequencies (less perceptually important)
-2. Be conservative on low frequencies (more visible)
-3. Current trellis treats all AC coefficients similarly
-
-**Files:** `trellis/ac.rs` - would need per-frequency lambda scaling.
-
-### F. Learn Optimal Coupling from Data
-**Goal:** Find coupling that minimizes butteraugli for a given size budget.
-
-**Approach:**
-1. Run exhaustive sweep on training set (CID22)
-2. For each image, find coupling that minimizes butteraugli at fixed size
-3. Correlate optimal coupling with image statistics (mean, std, etc.)
-4. Build predictive model
-
-## Key Files
+## Files Created
 
 | File | Purpose |
 |------|---------|
-| `zenjpeg/src/hybrid/config.rs` | HybridConfig, adaptive_config(), presets |
-| `zenjpeg/src/encode/search.rs` | ExpertConfig, parameter routing |
-| `zenjpeg/src/trellis/ac.rs` | Trellis quantization algorithm |
-| `zenjpeg/src/quant/aq/mod.rs` | AQ strength computation |
-| `zenjpeg/examples/cid22_hybrid_bench.rs` | Single-quality benchmark |
-| `zenjpeg/examples/cid22_pareto.rs` | Multi-quality Pareto analysis |
-| `zenjpeg/examples/hybrid_parameter_sweep.rs` | Parameter exploration |
+| `examples/pareto_approaches.rs` | Test Approach A and D |
+| `examples/pareto_fine_sweep.rs` | Fine grid search around optimal |
+| `examples/pareto_validate.rs` | Full corpus validation |
+
+## Remaining Questions
+
+1. **Why does positive coupling work better at high quality?**
+   - At Q95, quantization is already gentle — positive coupling can safely preserve more
+   - At Q75, aggressive quantization needed — positive coupling fights the goal
+
+2. **Could quality-adaptive coupling help?**
+   - Different `aq_lambda_scale` at different quality levels
+   - E.g., negative at Q75, neutral at Q85, positive at Q95
+
+3. **Is there a per-image adaptive strategy?**
+   - Low-texture images might benefit from negative coupling
+   - High-texture images from positive coupling
 
 ## Commands
 
 ```bash
-# Run Pareto analysis
-cargo run --release --example cid22_pareto
+# Run Pareto approach comparison
+cargo run --release --example pareto_approaches
 
-# Run single-quality benchmark
-cargo run --release --example cid22_hybrid_bench
+# Fine sweep around optimal
+cargo run --release --example pareto_fine_sweep
 
-# Run parameter sweep on single image
-cargo run --release --example hybrid_parameter_sweep -- path/to/image.png
-
-# Run all hybrid config tests
-cargo test --release -p zenjpeg --lib -- hybrid::config::tests
+# Full corpus validation  
+cargo run --release --example pareto_validate
 ```
 
-## Questions to Answer
+## Summary
 
-1. **Is there a coupling formula that achieves Pareto improvement?**
-   - Current texture-adaptive is close but not quite
+Hybrid trellis with positive coupling is a valid **"high-quality mode"** for Q90+ where:
+- Storage constraints matter
+- +2-6% butteraugli degradation is acceptable
+- -4-10% file size savings are valuable
 
-2. **Should hybrid be a "size-optimized mode" rather than default?**
-   - Clear trade-off: -3% size for +2-3% butteraugli
-   - Some users may prefer this explicitly
-
-3. **Can per-block bit redistribution (approach C) achieve true Pareto improvement?**
-   - This is fundamentally different from lambda adjustment
-   - Would require significant trellis algorithm changes
-
-4. **Is butteraugli the right metric?**
-   - DSSIM showed different results (hybrid sometimes won)
-   - Different metrics optimize for different artifacts
-
-## Session Summary
-
-### Commits Made
-- `f310bc5` feat(hybrid): add image type auto-detection based on AQ statistics
-- `382cc99` docs: update CLAUDE.md with hybrid auto-detection feature
-- `13814d4` feat(hybrid): add texture-adaptive coupling for better quality
-- `41e5504` docs: update CLAUDE.md with texture-adaptive coupling results
-
-### Tests
-- 22 hybrid config unit tests (all pass)
-- 606 total lib tests (all pass)
-
-### Key Finding
-Hybrid trellis shifts the rate-distortion curve but doesn't dominate it. It's a valid "size-optimized" mode but not a universal improvement over jpegli baseline.
+It's **not a universal improvement** over standard trellis — it's a different point on the rate-distortion curve.
