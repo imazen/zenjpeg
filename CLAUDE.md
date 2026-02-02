@@ -1109,35 +1109,25 @@ Run: `cargo run --release --example hybrid_trellis_benchmark`
 | apple.com | 85 | 469870 | 542594 | +15.5% | -37.1% |
 | apple.com | 90 | 566481 | 633700 | +11.9% | -32.8% |
 
-Hybrid improves DSSIM but at cost of larger files. Not useful for the intended
-purpose (smaller files OR better quality at same size).
+**Update (2026-02-02):** Negative coupling NOW WORKS and produces smaller files:
+- `aq_trellis_coupling=-4.0`: ~2% smaller files with ~3% DSSIM degradation (photos)
+- WARNING: Screenshots are more sensitive, use -1 to -2 for UI images
+- Added `aq_trellis_multiplicative` option for proportional scaling (use smaller values)
 
-**For optimizers:** Only tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
-and `zero_bias_mul` (192 values, jpegli only). `aq_trellis_*` fields now work but
-produce suboptimal trade-offs.
+**For optimizers:** Tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
+`zero_bias_mul` (192 values, jpegli only), and optionally `aq_trellis_coupling` (-8 to +8)
+for size/quality trade-offs.
 
 ## Known Bugs
 
-1. **Hybrid trellis produces suboptimal rate-distortion (2026-02-02)** - FIXED: Hybrid path
-   is now wired through `byte_encoders.rs` and `streaming.rs`. But benchmark results show
-   hybrid trades file size for quality in the WRONG direction:
-   - Hybrid files are 10-30% LARGER than standalone trellis
-   - But DSSIM is 23-49% BETTER (lower)
-   - Goal was: same size + better quality, OR smaller + same quality
-   - Actual: larger + better quality (not what we wanted)
-   - Files: `encode/byte_encoders.rs:131-135`, `encode/streaming.rs:261-264`,
-     `encode/strip/mod.rs:723-730`, `examples/hybrid_trellis_benchmark.rs`
-   - Impact: Feature works but isn't useful for the intended purpose
-   - Priority: Low — investigate alternative approaches or remove
-
-2. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
+1. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
    - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`trellis/ac.rs:52`)
    - `trellis_num_loops`: Stored but never read — single-pass only
    - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
    - EOB optimization: deleted (was broken, destroyed quality). See commit history.
    - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
 
-3. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
+2. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
    produces "AC coefficient index out of bounds" errors when decoding very small images
    (1x1, 8x8, 17x31, etc.) and some 4:2:0/4:2:2 subsampled images (100x100).
    - Affects: `zenjpeg/src/entropy/decoder.rs:1092`
@@ -1147,6 +1137,15 @@ produce suboptimal trade-offs.
    - Priority: Medium - encoder works correctly, only affects roundtrip tests
 
 ### Fixed Bugs (historical reference)
+
+- **Hybrid trellis negative coupling (2026-02-02)** - Hybrid mode only worked with positive
+  coupling (`aq_trellis_coupling > 0`). Changed condition to `!= 0` to allow negative coupling.
+  Now negative coupling produces smaller files at the cost of quality:
+  - `coupling=-4.0`: ~2% smaller files, ~3% worse DSSIM (photographic images)
+  - `coupling=+4.0`: ~3% larger files, ~2% better DSSIM
+  - Added `aq_trellis_multiplicative` option for proportional scaling.
+  - **WARNING**: Screenshots are more sensitive - use conservative values (-1 to +1).
+  Files: `encode/search.rs:599`, `hybrid/config.rs`, `examples/hybrid_parameter_sweep.rs`
 
 - **XYB file size gap (2026-02-01)** - XYB baseline was 2-3% larger than C++, but this
   was due to Rust getting 2x more progressive savings (5.7-7.3% vs C++'s 3.1-3.6%).
