@@ -114,6 +114,11 @@ pub struct HybridConfig {
     /// Separate scaling for chroma components (Cb, Cr).
     /// 1.0 = same as luma, <1.0 = less aggressive on chroma
     pub chroma_scale: f32,
+
+    /// Use multiplicative coupling instead of additive.
+    /// Additive (default): scale1 = base_scale1 + aq * coupling
+    /// Multiplicative: scale1 = base_scale1 * (1 + aq * coupling)
+    pub multiplicative: bool,
 }
 
 impl Default for HybridConfig {
@@ -138,6 +143,7 @@ impl Default for HybridConfig {
             aq_threshold: 0.0,
             quality_adaptive: false,
             chroma_scale: 1.0,
+            multiplicative: false,
         }
     }
 }
@@ -252,6 +258,12 @@ impl HybridConfig {
         self
     }
 
+    /// Builder: enable multiplicative coupling (vs additive)
+    pub fn multiplicative(mut self, enabled: bool) -> Self {
+        self.multiplicative = enabled;
+        self
+    }
+
     /// Compute the effective lambda adjustment for a block.
     ///
     /// # Arguments
@@ -298,13 +310,22 @@ impl HybridConfig {
     ) -> TrellisConfig {
         let adjustment = self.compute_lambda_adjustment(aq_strength, dampen, is_chroma);
 
+        // Compute effective lambda_log_scale1
+        let scale1 = if self.multiplicative {
+            // Multiplicative: scale1 = base * (1 + aq * coupling)
+            // Use smaller coupling values (e.g., 0.1 instead of 4.0) for similar effect
+            // This provides proportional scaling: high-base-lambda blocks get larger adjustments
+            self.base_lambda_scale1 * (1.0 + adjustment)
+        } else {
+            // Additive: scale1 = base + aq * coupling
+            // Original behavior - absolute adjustment regardless of base value
+            self.base_lambda_scale1 + adjustment
+        };
+
         TrellisConfig::default()
             .ac_trellis(true)
             .dc_trellis(self.dc_enabled)
-            .lambda_scales(
-                self.base_lambda_scale1 + adjustment,
-                self.base_lambda_scale2,
-            )
+            .lambda_scales(scale1, self.base_lambda_scale2)
             .num_loops(self.num_loops)
     }
 

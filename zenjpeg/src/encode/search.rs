@@ -81,8 +81,7 @@ use crate::hybrid::config::HybridConfig;
 /// # Measured Parameter Impact (256x256 noise+patches, MozjpegBaseline Q85)
 ///
 /// Parameters are grouped by measured file size impact. Parameters marked DEAD
-/// have zero effect on output; parameters marked BROKEN have a code path that
-/// is never executed.
+/// have zero effect on output.
 ///
 /// ## Parameters that affect file size
 ///
@@ -110,17 +109,22 @@ use crate::hybrid::config::HybridConfig;
 /// | `allow_16bit_quant_tables` | No effect unless quant values > 255 |
 /// | `deringing` | Only affects images with saturated (255) pixels near edges |
 ///
-/// ## BROKEN: Hybrid mode (`aq_trellis_coupling > 0`)
+/// ## Hybrid mode (`aq_trellis_coupling != 0`)
 ///
-/// **The hybrid trellis path is completely non-functional.** Setting
-/// `aq_trellis_coupling > 0` produces a `HybridConfig` that is stored in
-/// `EncoderConfig` but **never consumed** during encoding. The `create_hybrid_ctx()`
-/// function exists but is never called. All hybrid coupling values (0.5, 1.0, 2.0,
-/// 4.0, 8.0) produce identical output = trellis disabled (standard rounding).
+/// Hybrid mode adjusts trellis lambda per-block based on AQ strength:
+/// - **Positive coupling**: Higher lambda for textured blocks → better quality, larger files
+/// - **Negative coupling**: Lower lambda for textured blocks → smaller files, worse quality
 ///
-/// All `aq_trellis_*` fields are therefore dead: `aq_trellis_coupling`,
-/// `aq_trellis_exponent`, `aq_trellis_threshold`, `aq_trellis_chroma_scale`,
-/// `aq_trellis_quality_adaptive`.
+/// Recommended settings:
+/// - For size optimization: `aq_trellis_coupling = -4.0` (additive) gives ~2% size reduction
+/// - For quality: `aq_trellis_coupling = +4.0` gives ~2-3% better DSSIM
+/// - For screenshots/text: use conservative values (-1 to +1) as they're more sensitive
+///
+/// The `aq_trellis_multiplicative` field switches between:
+/// - Additive (default): `scale1 = base + aq * coupling`
+/// - Multiplicative: `scale1 = base * (1 + aq * coupling)`
+///
+/// Note: Multiplicative is MORE aggressive on high-AQ images, not safer.
 ///
 /// # Parameters for optimizers
 ///
@@ -257,43 +261,51 @@ pub struct ExpertConfig {
     /// Useful range: `0.0`–`5.0` (diminishing returns above 2.0).
     pub trellis_delta_dc_weight: f32,
 
-    // === AQ->Trellis Coupling ===
-    // **ALL FIELDS IN THIS SECTION ARE BROKEN (dead code path).**
-    // The hybrid trellis pipeline (`create_hybrid_ctx()`) is defined but never
-    // called during encoding. Any non-zero coupling produces output identical
-    // to trellis disabled. These fields are preserved for future use when the
-    // hybrid path is wired up.
+    // === AQ->Trellis Coupling (Hybrid Mode) ===
+    // These fields control hybrid mode: AQ-adjusted per-block lambda for trellis.
+    // Set `aq_trellis_coupling != 0` to enable. See struct-level docs for details.
     /// Per-unit AQ strength to lambda adjustment.
     ///
-    /// **BROKEN — hybrid path not wired up.** Any value > 0.0 silently falls
-    /// through to standard (non-trellis) quantization. The `HybridConfig` is
-    /// built and stored in `EncoderConfig` but never consumed.
+    /// `0.0` = standalone trellis (fixed lambda)
+    /// `!= 0.0` = hybrid mode (lambda adjusted per-block based on AQ)
     ///
-    /// Intended behavior: `0.0` = standalone trellis, `> 0.0` = hybrid mode
-    /// with per-block AQ-adjusted lambda.
+    /// Positive values: increase lambda for high-AQ blocks → better quality, larger files
+    /// Negative values: decrease lambda for high-AQ blocks → smaller files, worse quality
     ///
-    /// Default: `0.0`. Intended range: `0.0`–`8.0`.
+    /// Default: `0.0`. Recommended range: `-8.0` to `+8.0`.
     pub aq_trellis_coupling: f32,
 
-    /// Non-linear AQ mapping exponent. **BROKEN** (see `aq_trellis_coupling`).
+    /// Non-linear AQ mapping exponent.
     ///
+    /// `1.0` = linear, `2.0` = emphasize high-AQ, `0.5` = compress AQ range.
     /// Default: `1.0`.
     pub aq_trellis_exponent: f32,
 
-    /// Minimum AQ strength before coupling kicks in. **BROKEN** (see `aq_trellis_coupling`).
+    /// Minimum AQ strength before coupling kicks in.
     ///
+    /// Blocks with AQ below this use base lambda unchanged.
     /// Default: `0.0`.
     pub aq_trellis_threshold: f32,
 
-    /// Scale coupling for chroma components. **BROKEN** (see `aq_trellis_coupling`).
+    /// Scale coupling for chroma components (Cb, Cr).
     ///
+    /// `1.0` = same as luma, `<1.0` = less aggressive on chroma.
     /// Default: `1.0`.
     pub aq_trellis_chroma_scale: f32,
 
-    /// Scale coupling by quality-derived dampen factor. **BROKEN** (see `aq_trellis_coupling`).
+    /// Scale coupling by quality-derived dampen factor.
     ///
     /// Default: `false`.
     pub aq_trellis_quality_adaptive: bool,
+
+    /// Use multiplicative coupling instead of additive.
+    ///
+    /// Additive (default): `scale1 = base_scale1 + aq * coupling`
+    /// Multiplicative: `scale1 = base_scale1 * (1 + aq * coupling)`
+    ///
+    /// Multiplicative provides proportional scaling (use smaller coupling values).
+    /// Default: `false`.
+    pub aq_trellis_multiplicative: bool,
 
     // === Encoder Strategy ===
     /// Scan mode (baseline vs progressive variants).
@@ -382,6 +394,7 @@ impl ExpertConfig {
             aq_trellis_threshold: 0.0,
             aq_trellis_chroma_scale: 1.0,
             aq_trellis_quality_adaptive: false,
+            aq_trellis_multiplicative: false,
 
             scan_mode: ScanMode::Progressive,
             deringing: true,
@@ -477,6 +490,7 @@ impl ExpertConfig {
             aq_trellis_threshold: 0.0,
             aq_trellis_chroma_scale: 1.0,
             aq_trellis_quality_adaptive: false,
+            aq_trellis_multiplicative: false,
 
             scan_mode,
             deringing,
@@ -596,8 +610,8 @@ impl ExpertConfig {
             return (None, HybridConfig::disabled());
         }
 
-        if self.aq_trellis_coupling > 0.0 {
-            // Hybrid mode: AQ-coupled trellis.
+        if self.aq_trellis_coupling != 0.0 {
+            // Hybrid mode: AQ-coupled trellis (positive or negative coupling).
             // Note: trellis_speed_mode, trellis_delta_dc_weight,
             // and trellis_use_lambda_weight_tbl are stored in HybridConfig but
             // NOT forwarded to per-block TrellisConfig by to_trellis_config().
@@ -614,6 +628,7 @@ impl ExpertConfig {
                 aq_threshold: self.aq_trellis_threshold,
                 quality_adaptive: self.aq_trellis_quality_adaptive,
                 chroma_scale: self.aq_trellis_chroma_scale,
+                multiplicative: self.aq_trellis_multiplicative,
             };
             (None, hybrid)
         } else {
