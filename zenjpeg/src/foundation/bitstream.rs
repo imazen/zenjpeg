@@ -220,6 +220,7 @@ impl BitWriter {
     ///
     /// When `alloc-instrument` feature is enabled, logs utilization stats.
     #[must_use]
+    #[allow(clippy::useless_conversion)] // ProfiledVec<u8> = InstrumentedVec<u8> when alloc-instrument enabled
     pub fn into_bytes(mut self) -> Vec<u8> {
         self.flush();
         #[cfg(feature = "alloc-instrument")]
@@ -239,7 +240,7 @@ impl BitWriter {
                 );
             }
         }
-        self.buffer
+        self.buffer.into()
     }
 
     /// Returns a reference to the current buffer.
