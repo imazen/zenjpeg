@@ -1000,7 +1000,23 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Known Bugs
 
-1. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
+1. **Hybrid trellis path is dead code (2026-02-02)** - `HybridConfig` is built and stored
+   in `EncoderConfig` but `create_hybrid_ctx()` is never called during encoding.
+   Setting `aq_trellis_coupling > 0` silently falls through to standard (non-trellis)
+   quantization. All `aq_trellis_*` fields in ExpertConfig are non-functional.
+   - Affects: `encode/hybrid.rs:56` (`create_hybrid_ctx` defined but never called),
+     `encode/streaming.rs:350` (hybrid_config stored but not consumed)
+   - Impact: Users get no trellis instead of hybrid trellis. Silent failure.
+   - Priority: High — core feature advertised but broken
+
+2. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
+   - `trellis_eob_opt`: Implementation commented out in `streaming.rs` (destroys quality)
+   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`trellis/ac.rs:52`)
+   - `trellis_num_loops`: Stored but never read — single-pass only
+   - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
+   - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
+
+3. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
    produces "AC coefficient index out of bounds" errors when decoding very small images
    (1x1, 8x8, 17x31, etc.) and some 4:2:0/4:2:2 subsampled images (100x100).
    - Affects: `zenjpeg/src/entropy/decoder.rs:1092`
@@ -1109,7 +1125,14 @@ let enc = expert.to_encoder_config(ColorMode::YCbCr {
 ```
 
 **Files:** `zenjpeg/src/encode/search.rs`
-**Tests:** 22 unit tests (field pass-through, preset round-trip, blend, idempotency)
+**Tests:** 23 unit tests including `test_parameter_sensitivity` (field pass-through,
+preset round-trip, blend, idempotency, full parameter sweep with file size measurement)
+
+**Sensitivity findings (2026-02-02):** Of ~30 fields, only ~10 actually affect file size.
+Hybrid mode is completely broken (dead code path). 4 trellis fields are dead
+(eob_opt, lambda_weight_tbl, num_loops, speed_mode). See Known Bugs section.
+The test encodes a 256x256 noise+patches image and reports delta bytes for each
+parameter permutation.
 
 **Key design decisions:**
 - `aq_trellis_coupling` is the mode control: `0.0` = standalone TrellisConfig, `>0.0` = HybridConfig
