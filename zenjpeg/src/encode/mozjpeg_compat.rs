@@ -153,28 +153,28 @@ impl TrellisSpeedMode {
 /// Quality impact is negligible even at the fastest settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrellisConfig {
-    /// Enable trellis quantization for AC coefficients
-    pub(crate) enabled: bool,
-    /// Enable trellis quantization for DC coefficients
-    pub(crate) dc_enabled: bool,
-    /// Optimize for sequences of EOB (end-of-block)
-    pub(crate) eob_opt: bool,
-    /// Use perceptual lambda weighting table
-    pub(crate) use_lambda_weight_tbl: bool,
-    /// Lambda log scale parameter 1 (rate penalty)
-    pub(crate) lambda_log_scale1: f32,
-    /// Lambda log scale parameter 2 (distortion sensitivity)
-    pub(crate) lambda_log_scale2: f32,
-    /// Number of trellis optimization loops
-    pub(crate) num_loops: i32,
-    /// Speed optimization mode
-    pub(crate) speed_mode: TrellisSpeedMode,
+    /// Enable trellis quantization for AC coefficients.
+    pub enabled: bool,
+    /// Enable trellis quantization for DC coefficients.
+    pub dc_enabled: bool,
+    /// Optimize for sequences of EOB (end-of-block).
+    pub eob_opt: bool,
+    /// Use perceptual lambda weighting table.
+    pub use_lambda_weight_tbl: bool,
+    /// Lambda log scale parameter 1 (rate penalty).
+    pub lambda_log_scale1: f32,
+    /// Lambda log scale parameter 2 (distortion sensitivity).
+    pub lambda_log_scale2: f32,
+    /// Number of trellis optimization loops.
+    pub num_loops: i32,
+    /// Speed optimization mode.
+    pub speed_mode: TrellisSpeedMode,
     /// Weight for vertical DC gradient consideration in DC trellis.
     /// When > 0.0, DC trellis also considers the difference between
     /// the current block's DC and the block directly above it, penalizing
     /// large vertical DC jumps that create visible banding.
     /// Default: 0.0 (disabled, matching C mozjpeg default).
-    pub(crate) delta_dc_weight: f32,
+    pub delta_dc_weight: f32,
 }
 
 /// Default lambda_log_scale1 value (matches mozjpeg)
