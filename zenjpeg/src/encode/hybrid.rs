@@ -169,19 +169,19 @@ impl HybridQuantContext {
             &self.rate_tables.chroma_ac
         };
 
-        // Generate trellis config based on mode
-        let trellis_config = match &self.mode {
+        // Generate trellis config and effective AQ strength based on mode
+        let (trellis_config, effective_aq) = match &self.mode {
             TrellisMode::Hybrid(hybrid_config) => {
                 // Hybrid mode: adjust lambda based on AQ strength
-                hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma)
+                (hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma), aq_strength)
             }
             TrellisMode::Standalone(trellis_config) => {
-                // Standalone mode: use config as-is
-                *trellis_config
+                // Standalone mode: pure mozjpeg-compatible trellis, no AQ influence
+                (*trellis_config, 0.0)
             }
         };
 
-        hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &trellis_config)
+        hybrid_quantize_block(dct_coeffs, quant, effective_aq, ac_table, &trellis_config)
     }
 }
 
