@@ -162,15 +162,20 @@ pub fn detect_image_type(aq_mean: f32, aq_std: f32) -> ImageType {
     ImageType::Mixed
 }
 
-/// Get an adaptive HybridConfig based on detected image type.
+/// Get an adaptive HybridConfig based on detected image type and texture level.
 ///
-/// Returns a preset tuned for the detected content type:
-/// - **Photo**: `aggressive_compression()` - maximum size savings
-/// - **Screenshot**: `safe_compression()` - protected from quality destruction
-/// - **Mixed**: `safe_compression()` - err on the side of caution
+/// **Texture-adaptive coupling:** For photos, the coupling strength is scaled
+/// based on AQ mean to avoid over-quantizing high-texture images:
+/// - Low texture (mean ≤ 0.15): coupling = -4.0 (aggressive)
+/// - High texture (mean > 0.15): coupling scales down proportionally
+///   - mean=0.30 → coupling=-2.0
+///   - mean=0.45 → coupling=-1.3
+///   - mean=0.60 → coupling=-1.0
 ///
-/// **⚠️ Experimental:** Based on limited testing. Consider passing through
-/// your own validation pipeline before deploying.
+/// This prevents the +20-45% butteraugli degradation seen on highly textured
+/// CID22 images while maintaining good compression on simpler photos.
+///
+/// **⚠️ Experimental:** Based on CID22 testing. Validate on your own data.
 ///
 /// # Arguments
 /// * `aq_mean` - Mean AQ strength from `AQStrengthMap::mean()`
@@ -180,20 +185,57 @@ pub fn detect_image_type(aq_mean: f32, aq_std: f32) -> ImageType {
 /// ```
 /// use zenjpeg::hybrid::config::adaptive_config;
 ///
-/// // Photo: get aggressive compression
-/// let config = adaptive_config(0.068, 0.039);
-/// assert!(config.max_adjustment == 0.0); // No protection needed
+/// // Low-texture photo: aggressive compression
+/// let config = adaptive_config(0.10, 0.05);
+/// assert!(config.aq_lambda_scale <= -3.0);
 ///
-/// // Screenshot: get safe compression
-/// let config = adaptive_config(0.048, 0.061);
-/// assert!(config.max_adjustment > 0.0); // Protection enabled
+/// // High-texture photo: gentler compression
+/// let config = adaptive_config(0.50, 0.20);
+/// assert!(config.aq_lambda_scale >= -2.0);
+///
+/// // Screenshot: safe compression with protection
+/// let config = adaptive_config(0.05, 0.10);
+/// assert!(config.max_adjustment > 0.0);
 /// ```
 pub fn adaptive_config(aq_mean: f32, aq_std: f32) -> HybridConfig {
     match detect_image_type(aq_mean, aq_std) {
-        ImageType::Photo => HybridConfig::aggressive_compression(),
-        ImageType::Screenshot => HybridConfig::safe_compression(),
-        ImageType::Mixed => HybridConfig::safe_compression(),
+        ImageType::Photo => {
+            // Scale coupling based on texture level
+            // High-texture images (high mean) get gentler coupling
+            let texture_scale = (0.15 / aq_mean.max(0.15)).min(1.0);
+            let coupling = -4.0 * texture_scale;
+
+            HybridConfig {
+                enabled: true,
+                aq_lambda_scale: coupling,
+                base_lambda_scale1: 14.75,
+                dc_enabled: false,
+                max_adjustment: 0.0, // No cap for photos
+                ..HybridConfig::default()
+            }
+        }
+        ImageType::Screenshot | ImageType::Mixed => HybridConfig::safe_compression(),
     }
+}
+
+/// Compute texture-adaptive coupling for a given AQ mean.
+///
+/// Returns a coupling value that's aggressive for low-texture images
+/// and gentler for high-texture images.
+///
+/// Formula: coupling = -4.0 * (0.15 / max(aq_mean, 0.15))
+///
+/// | AQ Mean | Coupling |
+/// |---------|----------|
+/// | 0.10    | -4.0     |
+/// | 0.15    | -4.0     |
+/// | 0.30    | -2.0     |
+/// | 0.45    | -1.33    |
+/// | 0.60    | -1.0     |
+/// | 0.75    | -0.8     |
+pub fn texture_adaptive_coupling(aq_mean: f32) -> f32 {
+    let texture_scale = (0.15 / aq_mean.max(0.15)).min(1.0);
+    -4.0 * texture_scale
 }
 
 /// Configuration for hybrid AQ+trellis quantization.
@@ -836,10 +878,26 @@ mod tests {
     }
 
     #[test]
-    fn test_adaptive_config_photo() {
-        let config = adaptive_config(0.090, 0.065);
-        // Photos get aggressive compression (no protection)
-        assert_eq!(config.aq_lambda_scale, -4.0);
+    fn test_adaptive_config_low_texture_photo() {
+        // Low texture photo (mean=0.10): aggressive coupling
+        let config = adaptive_config(0.10, 0.05);
+        assert_eq!(config.aq_lambda_scale, -4.0); // Full aggressive
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_medium_texture_photo() {
+        // Medium texture photo (mean=0.30): moderate coupling
+        let config = adaptive_config(0.30, 0.15);
+        assert!((config.aq_lambda_scale - (-2.0)).abs() < 0.1); // -4.0 * (0.15/0.30) = -2.0
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_high_texture_photo() {
+        // High texture photo (mean=0.60): gentle coupling
+        let config = adaptive_config(0.60, 0.25);
+        assert!((config.aq_lambda_scale - (-1.0)).abs() < 0.1); // -4.0 * (0.15/0.60) = -1.0
         assert_eq!(config.max_adjustment, 0.0);
     }
 
@@ -856,5 +914,19 @@ mod tests {
         let config = adaptive_config(0.04, 0.02);
         // Mixed gets safe settings (same as screenshot)
         assert!(config.max_adjustment > 0.0);
+    }
+
+    #[test]
+    fn test_texture_adaptive_coupling() {
+        // Low texture: full aggressive
+        assert_eq!(texture_adaptive_coupling(0.10), -4.0);
+        assert_eq!(texture_adaptive_coupling(0.15), -4.0);
+
+        // Medium texture: scaled down
+        assert!((texture_adaptive_coupling(0.30) - (-2.0)).abs() < 0.01);
+
+        // High texture: gentler
+        assert!((texture_adaptive_coupling(0.60) - (-1.0)).abs() < 0.01);
+        assert!((texture_adaptive_coupling(0.75) - (-0.8)).abs() < 0.01);
     }
 }
