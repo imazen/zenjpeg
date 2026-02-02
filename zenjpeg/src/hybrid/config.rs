@@ -209,6 +209,57 @@ impl HybridConfig {
         }
     }
 
+    /// Aggressive size reduction for photographic images.
+    ///
+    /// Uses negative coupling to compress textured areas more aggressively.
+    /// Results: ~5-6% smaller files, ~8-9% worse DSSIM on photos.
+    ///
+    /// **WARNING**: Do NOT use on screenshots or text - causes severe degradation.
+    /// Use `safe_compression()` for mixed or unknown content.
+    pub fn aggressive_compression() -> Self {
+        Self {
+            enabled: true,
+            aq_lambda_scale: -4.0,     // Negative = smaller files
+            base_lambda_scale1: 14.75,
+            dc_enabled: false,
+            max_adjustment: 0.0,       // No cap (photos only!)
+            ..Self::default()
+        }
+    }
+
+    /// Safe compression with screenshot protection.
+    ///
+    /// Uses aggressive negative coupling but caps the adjustment to prevent
+    /// quality destruction on screenshots and text images.
+    ///
+    /// Results on photos: ~4% smaller files, ~7-8% worse DSSIM
+    /// Results on screenshots: +5% larger files (trellis overhead), <6% worse DSSIM
+    pub fn safe_compression() -> Self {
+        Self {
+            enabled: true,
+            aq_lambda_scale: -8.0,     // Aggressive coupling
+            base_lambda_scale1: 14.75,
+            dc_enabled: false,
+            max_adjustment: 1.0,       // Cap protects screenshots
+            ..Self::default()
+        }
+    }
+
+    /// Quality boost for perceptually better encoding.
+    ///
+    /// Uses positive coupling to preserve more detail in textured areas.
+    /// Results: ~3-4% larger files, ~2-3% better DSSIM.
+    pub fn quality_boost() -> Self {
+        Self {
+            enabled: true,
+            aq_lambda_scale: 4.0,      // Positive = better quality
+            base_lambda_scale1: 14.75,
+            dc_enabled: false,
+            max_adjustment: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Builder: set AQ lambda scale
     pub fn aq_lambda_scale(mut self, scale: f32) -> Self {
         self.aq_lambda_scale = scale;
