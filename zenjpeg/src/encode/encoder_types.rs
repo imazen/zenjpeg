@@ -997,16 +997,39 @@ pub enum QuantTableConfig {
     /// Use [`EncodingTables::default_ycbcr()`](super::tuning::EncodingTables::default_ycbcr)
     /// as a starting point for modifications.
     Custom(Box<super::tuning::EncodingTables>),
+
+    /// Glassa low-BPP optimized tables for extreme compression (Q3-Q25).
+    ///
+    /// SA-optimized tables that achieve +20 to +33 pareto gains at ultra-low
+    /// bitrates (0.15-0.50 BPP). Aggressively zeros high-frequency coefficients.
+    ///
+    /// # When to Use
+    ///
+    /// - Thumbnails (<100px)
+    /// - LQIP (low-quality image placeholders)
+    /// - Progressive loading placeholders
+    /// - Any use case where quality < Q30 is acceptable
+    ///
+    /// # When NOT to Use
+    ///
+    /// - Q30+: No benefit over mozjpeg defaults
+    /// - High quality: Use [`Jpegli`](Self::Jpegli) instead
+    ///
+    /// The inner `u8` is the quality level (3-25 recommended).
+    GlassaLowBpp(u8),
 }
 
 impl QuantTableConfig {
     /// Returns the internal [`QuantTableSource`] for this configuration.
     ///
-    /// Custom tables return `Jpegli` (ignored when custom tables are present).
+    /// Custom and GlassaLowBpp tables return `Jpegli` (ignored when custom tables are present).
     #[must_use]
     pub const fn quant_source(&self) -> QuantTableSource {
         match self {
-            Self::Jpegli | Self::JpegliSharedChroma | Self::Custom(_) => QuantTableSource::Jpegli,
+            Self::Jpegli
+            | Self::JpegliSharedChroma
+            | Self::Custom(_)
+            | Self::GlassaLowBpp(_) => QuantTableSource::Jpegli,
             Self::MozjpegRobidoux => QuantTableSource::MozjpegDefault,
         }
     }
@@ -1016,17 +1039,21 @@ impl QuantTableConfig {
     pub const fn separate_chroma_tables(&self) -> bool {
         match self {
             Self::Jpegli => true,
-            Self::JpegliSharedChroma | Self::MozjpegRobidoux => false,
+            // Glassa uses shared chroma (mozjpeg-style 2 tables)
+            Self::JpegliSharedChroma | Self::MozjpegRobidoux | Self::GlassaLowBpp(_) => false,
             // Custom tables define their own layout; default to separate.
             Self::Custom(_) => true,
         }
     }
 
     /// Returns the custom encoding tables, if any.
+    ///
+    /// For `GlassaLowBpp`, this generates tables on-demand via interpolation.
     #[must_use]
-    pub fn custom_tables(&self) -> Option<&super::tuning::EncodingTables> {
+    pub fn custom_tables(&self) -> Option<super::tuning::EncodingTables> {
         match self {
-            Self::Custom(t) => Some(t),
+            Self::Custom(t) => Some((**t).clone()),
+            Self::GlassaLowBpp(q) => Some(super::glassa_tables::tables_for_quality(*q)),
             _ => None,
         }
     }
