@@ -126,10 +126,13 @@ impl BytesEncoder {
         }
 
         // Apply trellis or hybrid quantization config
-        if let Some(ref trellis) = config.trellis {
-            builder = builder.trellis(*trellis);
-        } else if config.hybrid_config.enabled {
-            builder = builder.hybrid_config(config.hybrid_config);
+        #[cfg(feature = "trellis")]
+        {
+            if let Some(ref trellis) = config.trellis {
+                builder = builder.trellis(*trellis);
+            } else if config.hybrid_config.enabled {
+                builder = builder.hybrid_config(config.hybrid_config);
+            }
         }
 
         builder.start()

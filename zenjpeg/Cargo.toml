@@ -111,7 +111,7 @@ img-parts = { workspace = true }
 ultrahdr-core = { version = "0.1.0" }
 
 [features]
-default = ["std", "yuv", "archmage-simd"]
+default = ["std", "yuv", "archmage-simd", "trellis"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -122,6 +122,10 @@ parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/
 # Token-based safe SIMD using archmage + magetypes (f32x4, i32x4 etc. with capability tokens)
 # Provides ~10-20% speedup on x86_64. Without this, all SIMD uses safe `wide` crate.
 archmage-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
+# Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
+# with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
+# When disabled, the encoder uses standard zero-bias quantization.
+trellis = []
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.

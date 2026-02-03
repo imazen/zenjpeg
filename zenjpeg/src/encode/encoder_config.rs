@@ -5,6 +5,7 @@ use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
     QuantTableConfig, QuantTableSource, ScanMode, ScanStrategy, XybSubsampling,
 };
+#[cfg(feature = "trellis")]
 use super::trellis::TrellisConfig;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
@@ -30,7 +31,8 @@ pub struct EncoderConfig {
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
-    /// Hybrid quantization configuration.
+    /// Hybrid quantization configuration (requires `trellis` feature).
+    #[cfg(feature = "trellis")]
     pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
@@ -39,6 +41,7 @@ pub struct EncoderConfig {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
+    #[cfg(feature = "trellis")]
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
@@ -150,9 +153,11 @@ impl EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
+            #[cfg(feature = "trellis")]
             hybrid_config: super::trellis::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: false,
+            #[cfg(feature = "trellis")]
             trellis: None,
             segments: None,
         }
@@ -327,7 +332,6 @@ impl EncoderConfig {
     #[must_use]
     pub fn optimization(self, preset: super::encoder_types::OptimizationPreset) -> Self {
         use super::encoder_types::OptimizationPreset::*;
-        use super::trellis::{TrellisConfig, TrellisSpeedMode};
 
         // Scan mode: bundles progressive + script strategy
         let scan_mode = match preset {
@@ -350,14 +354,18 @@ impl EncoderConfig {
         // - Jpegli: no trellis (AQ-driven quality, no rate-distortion opt)
         // - Mozjpeg: Thorough (full search, matching C mozjpeg default)
         // - Hybrid: Adaptive (zenjpeg heuristic, good speed/quality balance)
-        let trellis = match preset {
-            JpegliBaseline | JpegliProgressive => None,
-            MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
-                Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
-            }
-            HybridBaseline | HybridProgressive => Some(TrellisConfig::default()),
-            HybridMaxCompression => {
-                Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
+        #[cfg(feature = "trellis")]
+        let trellis = {
+            use super::trellis::{TrellisConfig, TrellisSpeedMode};
+            match preset {
+                JpegliBaseline | JpegliProgressive => None,
+                MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
+                    Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
+                }
+                HybridBaseline | HybridProgressive => Some(TrellisConfig::default()),
+                HybridMaxCompression => {
+                    Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
+                }
             }
         };
 
@@ -377,6 +385,7 @@ impl EncoderConfig {
             quant_table_config,
             huffman: HuffmanStrategy::Optimize,
             deringing,
+            #[cfg(feature = "trellis")]
             trellis,
             // All presets force baseline quant tables (matching both cjpegli CLI
             // and C mozjpeg behavior). 16-bit tables provide no quality benefit.
@@ -545,6 +554,7 @@ impl EncoderConfig {
     /// **Note:** When a `HybridConfig` with `enabled = true` is set, it takes
     /// priority over any `TrellisConfig`. The trellis field will be cleared
     /// to ensure the hybrid config is used.
+    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid_config = config;
@@ -588,6 +598,7 @@ impl EncoderConfig {
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .trellis(TrellisConfig::disabled());
     /// ```
+    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
         self.trellis = Some(config);
@@ -595,6 +606,7 @@ impl EncoderConfig {
     }
 
     /// Get the trellis configuration, if set.
+    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn get_trellis(&self) -> Option<&TrellisConfig> {
         self.trellis.as_ref()
@@ -1112,6 +1124,7 @@ impl EncoderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "trellis")]
     use crate::encode::trellis::TrellisSpeedMode;
 
     #[test]
@@ -1207,6 +1220,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_config() {
         // Default config has no trellis
@@ -1224,6 +1238,7 @@ mod tests {
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Adaptive);
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_config_builder() {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(
@@ -1240,6 +1255,7 @@ mod tests {
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Level(5));
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_trellis_disabled() {
         let config =
@@ -1259,10 +1275,12 @@ mod tests {
         assert_eq!(config.scan_mode, ScanMode::Baseline);
         assert!(config.deringing);
         assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+        #[cfg(feature = "trellis")]
         assert!(config.trellis.is_none());
         assert!(!config.allow_16bit_quant_tables);
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {
         use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
@@ -1277,6 +1295,7 @@ mod tests {
         assert!(!config.allow_16bit_quant_tables);
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
         use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
@@ -1291,6 +1310,7 @@ mod tests {
         assert!(!config.allow_16bit_quant_tables);
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_max() {
         use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
@@ -1305,6 +1325,7 @@ mod tests {
         assert!(!config.allow_16bit_quant_tables);
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_hybrid_progressive() {
         use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
@@ -1340,6 +1361,7 @@ mod tests {
             .progressive(false);
         assert_eq!(config.scan_mode, ScanMode::Baseline);
         // Trellis should still be set from the preset
+        #[cfg(feature = "trellis")]
         assert!(config.trellis.is_some());
     }
 

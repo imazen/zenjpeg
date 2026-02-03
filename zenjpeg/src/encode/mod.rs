@@ -96,12 +96,14 @@ pub mod tuning;
 /// - AC/DC trellis DP algorithms
 /// - [`TrellisConfig`](trellis::TrellisConfig) mozjpeg-compatible API
 /// - [`HybridConfig`](trellis::HybridConfig) AQ-coupled trellis
+#[cfg(feature = "trellis")]
 pub mod trellis;
 
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with
 /// no overlapping fields. See [`ExpertConfig`](search::ExpertConfig).
+#[cfg(feature = "trellis")]
 pub mod search;
 
 // v2 is the primary public API (types re-exported below)
@@ -132,6 +134,7 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};
+#[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use search::ExpertConfig;
 

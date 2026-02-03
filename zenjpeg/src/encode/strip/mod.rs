@@ -52,8 +52,11 @@ use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
 
 // Trellis quantization support
+#[cfg(feature = "trellis")]
 use crate::encode::trellis::HybridQuantContext;
+#[cfg(feature = "trellis")]
 use crate::encode::trellis::TrellisConfig;
+#[cfg(feature = "trellis")]
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -280,7 +283,12 @@ impl PendingBuffers {
 ///
 /// Shared logic for both Cb and Cr (and XYB B-channel) quantization.
 /// Maps chroma block positions to the corresponding Y-block AQ strength.
+///
+/// When the `trellis` feature is enabled, accepts optional `HybridQuantContext`
+/// for rate-distortion optimized quantization. Without `trellis`, always uses
+/// the fast SIMD quantization path.
 #[allow(clippy::too_many_arguments)]
+#[allow(unused_variables, unused_mut)]
 fn quantize_chroma_blocks(
     pending: &[Block8x8f],
     output: &mut Vec<[i16; DCT_BLOCK_SIZE]>,
@@ -289,8 +297,8 @@ fn quantize_chroma_blocks(
     quant_simd: &QuantTableSimd,
     zero_bias_simd: &ZeroBiasSimd,
     quant_values: &[u16; DCT_BLOCK_SIZE],
-    hybrid_ctx: Option<&HybridQuantContext>,
-    _use_trellis: bool,
+    #[cfg(feature = "trellis")] hybrid_ctx: Option<&HybridQuantContext>,
+    use_trellis: bool,
     chroma_blocks_h: usize,
     chroma_blocks_v: usize,
     y_blocks_w: usize,
@@ -301,6 +309,7 @@ fn quantize_chroma_blocks(
 
     for (i, dct) in pending.iter().enumerate() {
         // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+        #[cfg(feature = "trellis")]
         if let Some(dc_raw) = dc_raw_output.as_deref_mut() {
             let row0: [f32; 8] = dct.rows[0].into();
             let dc_val = (row0[0] * 64.0).round() as i32;
@@ -319,7 +328,8 @@ fn quantize_chroma_blocks(
             0.08 // C++ mean fallback
         };
 
-        let zigzag = if _use_trellis {
+        #[cfg(feature = "trellis")]
+        let zigzag = if use_trellis {
             let dct_arr = dct.to_array();
             let natural = hybrid_ctx.unwrap().quantize_block(
                 &dct_arr,
@@ -336,6 +346,10 @@ fn quantize_chroma_blocks(
         } else {
             quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength)
         };
+        #[cfg(not(feature = "trellis"))]
+        let zigzag =
+            quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength);
+
         output.push(zigzag);
     }
 }
@@ -407,6 +421,7 @@ pub struct StripProcessor {
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
+    #[cfg(feature = "trellis")]
     hybrid_ctx: Option<HybridQuantContext>,
 
     // === Archmage SIMD token (feature-gated) ===
@@ -625,6 +640,7 @@ impl StripProcessor {
             deringing: true,
 
             // Trellis quantization (disabled by default)
+            #[cfg(feature = "trellis")]
             hybrid_ctx: None,
 
             // Archmage SIMD token (obtained once, reused for all blocks)
@@ -712,6 +728,7 @@ impl StripProcessor {
     /// When enabled, uses trellis quantization for rate-distortion optimization
     /// instead of standard SIMD quantization. This typically produces 10-15%
     /// smaller files at the same quality.
+    #[cfg(feature = "trellis")]
     pub fn set_trellis(&mut self, config: TrellisConfig) {
         if config.is_enabled() {
             self.hybrid_ctx = Some(HybridQuantContext::from_trellis_config(config));
@@ -724,6 +741,7 @@ impl StripProcessor {
     ///
     /// Hybrid mode adjusts trellis lambda per-block based on AQ strength,
     /// spending more bits on smooth areas and fewer on complex textures.
+    #[cfg(feature = "trellis")]
     pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
     }
@@ -1173,12 +1191,18 @@ impl StripProcessor {
         let quant = &self.quant;
 
         // Check if we have trellis context for R-D optimization
+        #[cfg(feature = "trellis")]
         let use_trellis = self.hybrid_ctx.is_some();
+        #[cfg(not(feature = "trellis"))]
+        let use_trellis = false;
 
+        #[cfg(feature = "trellis")]
         let store_dc_raw = self
             .hybrid_ctx
             .as_ref()
             .is_some_and(|ctx| ctx.is_dc_trellis_enabled());
+        #[cfg(not(feature = "trellis"))]
+        let store_dc_raw = false;
 
         // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
@@ -1192,6 +1216,7 @@ impl StripProcessor {
                 self.y_dc_raw.push(dc_raw);
             }
 
+            #[cfg(feature = "trellis")]
             let zigzag = if use_trellis {
                 // Trellis path: convert to array, quantize with R-D, apply zigzag
                 let dct_arr = dct.to_array();
@@ -1216,6 +1241,12 @@ impl StripProcessor {
                     aq_strength,
                 )
             };
+            #[cfg(not(feature = "trellis"))]
+            let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                dct,
+                &quant.y_zero_bias_simd,
+                aq_strength,
+            );
 
             self.y_blocks.push(zigzag);
             self.all_aq_strengths.push(aq_strength);
@@ -1242,6 +1273,7 @@ impl StripProcessor {
                 &quant.cb_quant_simd,
                 &quant.cb_zero_bias_simd,
                 &quant.cb_quant.values,
+                #[cfg(feature = "trellis")]
                 self.hybrid_ctx.as_ref(),
                 use_trellis,
                 c_blocks_w,
@@ -1274,6 +1306,7 @@ impl StripProcessor {
                 &quant.cr_quant_simd,
                 &quant.cr_zero_bias_simd,
                 &quant.cr_quant.values,
+                #[cfg(feature = "trellis")]
                 self.hybrid_ctx.as_ref(),
                 use_trellis,
                 cr_blocks_h,
@@ -1316,6 +1349,7 @@ impl StripProcessor {
         }
 
         // Apply DC trellis optimization if enabled
+        #[cfg(feature = "trellis")]
         if !self.y_dc_raw.is_empty() {
             self.apply_dc_trellis();
         }
@@ -1341,6 +1375,7 @@ impl StripProcessor {
     /// Processes each row of blocks independently, propagating `last_dc` from
     /// one row to the next (matching C mozjpeg behavior). When `delta_dc_weight > 0`,
     /// also considers vertical DC gradients from the row above.
+    #[cfg(feature = "trellis")]
     fn apply_dc_trellis(&mut self) {
         let Some(ref hybrid_ctx) = self.hybrid_ctx else {
             return;
@@ -1416,6 +1451,7 @@ impl StripProcessor {
 /// Blocks are stored in raster order: block index = row * blocks_w + col.
 /// The zigzag-to-natural order conversion is done in-place for DC trellis,
 /// then converted back.
+#[cfg(feature = "trellis")]
 #[allow(clippy::too_many_arguments)]
 fn dc_trellis_channel_row_by_row(
     dc_raw: &[i32],
