@@ -167,7 +167,7 @@ impl StreamingEncoder {
                 // Branch 2: Mozjpeg Robidoux tables with quality scaling
                 let quality_u8 = builder.quality.to_internal().round().clamp(1.0, 100.0) as u8;
                 let force_baseline = !allow_16bit;
-                let tables = super::mozjpeg_table_data::generate_mozjpeg_default_tables(
+                let tables = super::tables::robidoux::generate_mozjpeg_default_tables(
                     quality_u8,
                     force_baseline,
                 );

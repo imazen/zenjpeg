@@ -435,7 +435,7 @@ impl ExpertConfig {
         let (tables, zero_bias_hq, zero_bias_lq) = match preset {
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                 let q_internal = quality.to_internal();
-                let mozjpeg_tables = super::mozjpeg_table_data::generate_mozjpeg_default_tables(
+                let mozjpeg_tables = super::tables::robidoux::generate_mozjpeg_default_tables(
                     q_internal as u8,
                     false,
                 );

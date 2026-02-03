@@ -20,7 +20,7 @@
 //! Optimized by glassa project on CID22 corpus with mozjpeg encoder, 4:2:0.
 //! See `~/work/glassa/results/all_100_tables.json`.
 
-use super::tuning::{EncodingTables, PerComponent, ScalingParams};
+use crate::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
 
 /// Anchor quality levels for interpolation.
 pub const ANCHORS: &[u8] = &[3, 5, 7, 10, 12, 15, 20, 25];

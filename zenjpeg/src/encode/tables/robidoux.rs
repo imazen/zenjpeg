@@ -4,7 +4,7 @@
 //! generation used by `QuantTableSource::MozjpegDefault`. The full 9-preset API
 //! (`QuantTablePreset`, `MozjpegTables`) remains behind the `mozjpeg-tables` feature.
 
-use super::tuning::{EncodingTables, PerComponent, ScalingParams};
+use crate::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
 
 /// DCT block size (8x8 = 64 coefficients)
 const DCTSIZE2: usize = 64;

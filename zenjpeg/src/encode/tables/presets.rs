@@ -27,7 +27,7 @@
 //! - `Ahumada` - Ahumada, Watson, Peterson (1993)
 //! - `Peterson` - Peterson, Ahumada, Watson (1993)
 
-use super::tuning::{EncodingTables, PerComponent, ScalingParams};
+use crate::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
 
 /// DCT block size (8x8 = 64 coefficients)
 const DCTSIZE2: usize = 64;
@@ -188,7 +188,7 @@ impl MozjpegTables {
 }
 
 // Core scaling functions imported from mozjpeg_table_data (always compiled).
-use super::mozjpeg_table_data::{quality_to_scale_factor, scale_table};
+use super::robidoux::{quality_to_scale_factor, scale_table};
 
 fn get_luminance_table(preset: QuantTablePreset) -> &'static [u16; DCTSIZE2] {
     &STD_LUMINANCE_QUANT_TBL[preset as usize]

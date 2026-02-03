@@ -1052,7 +1052,7 @@ impl QuantTableConfig {
     pub fn custom_tables(&self) -> Option<super::tuning::EncodingTables> {
         match self {
             Self::Custom(t) => Some((**t).clone()),
-            Self::GlassaLowBpp(q) => Some(super::glassa_tables::tables_for_quality(*q)),
+            Self::GlassaLowBpp(q) => Some(super::tables::glassa::tables_for_quality(*q)),
             _ => None,
         }
     }
