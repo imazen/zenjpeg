@@ -171,7 +171,7 @@ impl AQStrengthMap {
 
     /// Returns the mean AQ strength across all blocks.
     ///
-    /// This value can be used with [`crate::hybrid::config::should_use_hybrid`]
+    /// This value can be used with [`crate::encode::trellis::should_use_hybrid`]
     /// to decide whether hybrid trellis will benefit this image.
     #[must_use]
     pub fn mean(&self) -> f32 {

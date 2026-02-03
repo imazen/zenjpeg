@@ -5,7 +5,7 @@
 //!
 //! Ported from mozjpeg jcdctmgr.c:937-1379.
 
-use crate::encode::mozjpeg_compat::TrellisConfig;
+use super::compat::TrellisConfig;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 
 use super::rate::RateTable;
@@ -254,7 +254,7 @@ pub fn trellis_quantize_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::mozjpeg_compat::TrellisSpeedMode;
+    use crate::encode::trellis::TrellisSpeedMode;
 
     fn create_ac_table() -> RateTable {
         RateTable::standard_luma_ac()

@@ -46,7 +46,6 @@ mod serialize;
 
 #[doc(hidden)]
 pub mod config;
-mod hybrid;
 pub(crate) mod linear_lut;
 
 // Archmage-based SIMD (token-based safe intrinsics)
@@ -91,11 +90,13 @@ pub mod tables;
 pub mod tuning;
 
 
-/// mozjpeg-compatible API types.
+/// Trellis and hybrid quantization (mozjpeg-style rate-distortion optimization).
 ///
-/// This module provides types that mirror mozjpeg-rs's API for easier migration
-/// and familiarity, including [`TrellisConfig`](mozjpeg_compat::TrellisConfig).
-pub mod mozjpeg_compat;
+/// Consolidates all trellis/hybrid code into one deletable unit:
+/// - AC/DC trellis DP algorithms
+/// - [`TrellisConfig`](trellis::TrellisConfig) mozjpeg-compatible API
+/// - [`HybridConfig`](trellis::HybridConfig) AQ-coupled trellis
+pub mod trellis;
 
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///

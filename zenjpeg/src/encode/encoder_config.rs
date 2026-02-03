@@ -5,7 +5,7 @@ use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
     QuantTableConfig, QuantTableSource, ScanMode, ScanStrategy, XybSubsampling,
 };
-use super::mozjpeg_compat::TrellisConfig;
+use super::trellis::TrellisConfig;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
@@ -31,7 +31,7 @@ pub struct EncoderConfig {
     #[cfg(feature = "parallel")]
     pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
     /// Hybrid quantization configuration.
-    pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
+    pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
@@ -150,7 +150,7 @@ impl EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
-            hybrid_config: crate::hybrid::config::HybridConfig::default(),
+            hybrid_config: super::trellis::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: false,
             trellis: None,
@@ -327,7 +327,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn optimization(self, preset: super::encoder_types::OptimizationPreset) -> Self {
         use super::encoder_types::OptimizationPreset::*;
-        use super::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
+        use super::trellis::{TrellisConfig, TrellisSpeedMode};
 
         // Scan mode: bundles progressive + script strategy
         let scan_mode = match preset {
@@ -540,13 +540,13 @@ impl EncoderConfig {
     /// Configure hybrid quantization (jpegli AQ + mozjpeg trellis).
     ///
     /// Allows fine-tuning all hybrid AQ+trellis parameters.
-    /// See [`HybridConfig`](crate::hybrid::config::HybridConfig) for available options.
+    /// See [`HybridConfig`](super::trellis::HybridConfig) for available options.
     ///
     /// **Note:** When a `HybridConfig` with `enabled = true` is set, it takes
     /// priority over any `TrellisConfig`. The trellis field will be cleared
     /// to ensure the hybrid config is used.
     #[must_use]
-    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+    pub fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid_config = config;
         // Clear trellis so create_hybrid_ctx() uses HybridConfig instead of TrellisConfig
         if config.enabled {
@@ -1112,7 +1112,7 @@ impl EncoderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::mozjpeg_compat::TrellisSpeedMode;
+    use crate::encode::trellis::TrellisSpeedMode;
 
     #[test]
     fn test_ycbcr_config() {

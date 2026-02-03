@@ -46,11 +46,11 @@ pub(crate) struct StreamingEncoderBuilder {
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
     /// Hybrid quantization configuration
-    pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
+    pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Custom AQ map
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
-    pub(crate) trellis: Option<super::mozjpeg_compat::TrellisConfig>,
+    pub(crate) trellis: Option<super::trellis::TrellisConfig>,
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
     pub(crate) quant_source: QuantTableSource,
@@ -77,7 +77,7 @@ impl StreamingEncoderBuilder {
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
-            hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
+            hybrid_config: super::trellis::HybridConfig::disabled(),
             custom_aq_map: None,
             trellis: None,
             quant_source: QuantTableSource::default(),
@@ -314,23 +314,23 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
         self.hybrid_config = if enable {
-            crate::hybrid::config::HybridConfig::default()
+            super::trellis::HybridConfig::default()
         } else {
-            crate::hybrid::config::HybridConfig::disabled()
+            super::trellis::HybridConfig::disabled()
         };
         self
     }
 
     /// Sets custom hybrid quantization configuration.
     #[must_use]
-    pub(crate) fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+    pub(crate) fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid_config = config;
         self
     }
 
     /// Sets trellis quantization configuration (mozjpeg-compatible API).
     #[must_use]
-    pub fn trellis(mut self, config: super::mozjpeg_compat::TrellisConfig) -> Self {
+    pub fn trellis(mut self, config: super::trellis::TrellisConfig) -> Self {
         self.trellis = Some(config);
         self
     }
