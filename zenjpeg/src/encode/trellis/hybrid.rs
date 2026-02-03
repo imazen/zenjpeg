@@ -112,8 +112,8 @@ pub mod detection_thresholds {
 /// // Typical photo statistics
 /// assert_eq!(detect_image_type(0.068, 0.039), ImageType::Photo);
 ///
-/// // Typical screenshot statistics
-/// assert_eq!(detect_image_type(0.048, 0.061), ImageType::Screenshot);
+/// // Typical screenshot statistics (high CV = std/mean > 1.5)
+/// assert_eq!(detect_image_type(0.084, 0.198), ImageType::Screenshot);
 /// ```
 pub fn detect_image_type(aq_mean: f32, aq_std: f32) -> ImageType {
     use detection_thresholds::*;
