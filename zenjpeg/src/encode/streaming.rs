@@ -257,10 +257,13 @@ impl StreamingEncoder {
         processor.set_deringing(builder.deringing);
 
         // Enable trellis quantization if configured
-        if let Some(ref trellis) = builder.trellis {
-            processor.set_trellis(*trellis);
-        } else if builder.hybrid_config.enabled {
-            processor.set_hybrid(builder.hybrid_config);
+        #[cfg(feature = "trellis")]
+        {
+            if let Some(ref trellis) = builder.trellis {
+                processor.set_trellis(*trellis);
+            } else if builder.hybrid_config.enabled {
+                processor.set_hybrid(builder.hybrid_config);
+            }
         }
 
         let strip_height = processor.strip_height();
@@ -283,8 +286,10 @@ impl StreamingEncoder {
             use_xyb: builder.use_xyb,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
+            #[cfg(feature = "trellis")]
             hybrid_config: builder.hybrid_config,
             custom_aq_map: builder.custom_aq_map,
+            #[cfg(feature = "trellis")]
             trellis: builder.trellis,
             encoding_tables: builder.encoding_tables,
             edge_padding: crate::types::EdgePaddingConfig::default(),
