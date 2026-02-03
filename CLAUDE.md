@@ -1039,7 +1039,7 @@ penalizes texture loss less) but the "saved" bits don't reduce file size — the
 
 **Files:**
 - `encode/trellis/hybrid.rs` — `compute_lambda_adjustment()` does `aq_strength * aq_lambda_scale`
-- `encode/trellis/hybrid.rs` — `config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE`
+- `encode/trellis/hybrid.rs` — `to_trellis_config()` applies adjustment to `lambda_log_scale1`
 - `examples/hybrid_trellis_benchmark.rs` — rate-distortion measurement tool
 
 ### ExpertConfig Parameter Sensitivity (2026-02-02)
@@ -1180,6 +1180,16 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
    - Priority: Medium - encoder works correctly, only affects roundtrip tests
 
 ### Fixed Bugs (historical reference)
+
+- **Double-lambda in hybrid trellis quantization (2026-02-03)** -
+  `hybrid_quantize_block()` unconditionally added `aq_strength * AQ_LAMBDA_SCALE` (2.0)
+  to `lambda_log_scale1`, but its caller already computed AQ-adjusted lambda via
+  `HybridConfig::to_trellis_config()`. With all presets using `coupling=0.0`,
+  `to_trellis_config()` returned unadjusted lambda, but `hybrid_quantize_block()` still
+  added the hardcoded adjustment. Fix: removed `AQ_LAMBDA_SCALE` constant and the
+  redundant adjustment; lambda is now adjusted solely in `to_trellis_config()`.
+  With `coupling=0.0`, hybrid mode now produces identical output to standalone trellis.
+  Files: `encode/trellis/hybrid.rs`
 
 - **Default EncoderConfig silently enabled hybrid trellis (2026-02-03)** -
   `EncoderConfig::default_internal()` used `HybridConfig::default()` (enabled=true).
