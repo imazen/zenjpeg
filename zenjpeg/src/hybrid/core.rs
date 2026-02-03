@@ -305,30 +305,32 @@ mod tests {
 
     #[test]
     fn test_dct_f32_to_i32() {
-        // Function multiplies by 8 for trellis compatibility (see docstring)
-        // 127.4 * 8 = 1019.2, rounds to 1019
+        // Function multiplies by 64 for trellis compatibility (see docstring)
+        // 127.4 * 64 = 8153.6, rounds to 8154
         let f32_coeffs = [127.4f32; 64];
         let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], 1019);
+        assert_eq!(i32_coeffs[0], 8154);
 
-        // -127.6 * 8 = -1020.8, rounds to -1021
+        // -127.6 * 64 = -8166.4, rounds to -8166
         let f32_coeffs = [-127.6f32; 64];
         let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], -1021);
+        assert_eq!(i32_coeffs[0], -8166);
     }
 
     #[test]
     fn test_hybrid_quantize_simple() {
         // DC coefficient of 1024 with quant=16 and no AQ
+        // Formula: dct * 8 / quant = 1024 * 8 / 16 = 512
         let mut dct = [0.0f32; 64];
         dct[0] = 1024.0;
         let base_quant = [16u16; 64];
 
         let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.0);
-        assert_eq!(quantized[0], 64); // 1024 / 16 = 64
+        assert_eq!(quantized[0], 512); // 1024 * 8 / 16 = 512
 
         // With AQ strength 0.5, quant becomes 24
+        // 1024 * 8 / 24 = 341.33 -> 341
         let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.5);
-        assert_eq!(quantized[0], 43); // 1024 / 24 = 42.67 -> 43
+        assert_eq!(quantized[0], 341);
     }
 }
