@@ -1093,51 +1093,33 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
     result
 }
 
-/// How much to scale lambda per unit of AQ strength.
-///
-/// This controls the sensitivity of trellis to AQ:
-/// - Higher value = more aggressive compression in textured regions
-/// - Lower value = more uniform compression across image
-///
-/// Since lambda = 2^scale1 / ..., adding 1.0 to scale1 doubles lambda.
-/// With AQ_LAMBDA_SCALE=2.0 and aq_strength=0.5, lambda increases by 2x.
-const AQ_LAMBDA_SCALE: f32 = 2.0;
-
 /// Hybrid quantization: jpegli AQ + mozjpeg trellis.
 ///
-/// This is the main entry point for hybrid encoding. It adjusts the trellis
-/// lambda parameter based on AQ strength:
-/// - Higher AQ (textured) → higher lambda → more aggressive compression
-/// - Lower AQ (smooth) → lower lambda → preserve quality
+/// Runs trellis quantization with a pre-configured lambda. The caller
+/// (typically [`HybridQuantContext::quantize_block`]) is responsible for
+/// computing the AQ-adjusted `TrellisConfig` via
+/// [`HybridConfig::to_trellis_config`] before calling this function.
 ///
 /// # Arguments
 /// * `dct_coeffs` - DCT coefficients in f32 (jpegli format)
 /// * `base_quant` - Base quantization table
-/// * `aq_strength` - Per-block AQ strength from jpegli (typically 0.0 to 0.5)
 /// * `ac_table` - Huffman table for rate estimation
-/// * `base_config` - Base trellis configuration (will be adjusted per-block)
+/// * `config` - Trellis configuration (already AQ-adjusted by caller)
 ///
 /// # Returns
 /// Quantized coefficients ready for entropy coding
 pub fn hybrid_quantize_block(
     dct_coeffs: &[f32; DCT_BLOCK_SIZE],
     base_quant: &[u16; DCT_BLOCK_SIZE],
-    aq_strength: f32,
     ac_table: &RateTable,
-    base_config: &TrellisConfig,
+    config: &TrellisConfig,
 ) -> [i16; DCT_BLOCK_SIZE] {
-    // Adjust lambda based on AQ strength:
-    // - Higher AQ → increase lambda_log_scale1 → higher lambda → favor compression
-    // - aq_strength=0.5 with AQ_LAMBDA_SCALE=2.0 → +1.0 to scale1 → 2x lambda
-    let mut config = *base_config;
-    config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE;
-
     // Convert f32 DCT to i32 (with 8x scaling to match trellis's 8x quant divisor)
     let dct_i32 = dct_f32_to_i32(dct_coeffs);
 
-    // Run trellis quantization with AQ-adjusted lambda
+    // Run trellis quantization with caller-provided lambda config
     let mut quantized = [0i16; DCT_BLOCK_SIZE];
-    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, &config);
+    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, config);
 
     quantized
 }
@@ -1341,22 +1323,19 @@ impl HybridQuantContext {
             &self.rate_tables.chroma_ac
         };
 
-        // Generate trellis config and effective AQ strength based on mode
-        let (trellis_config, effective_aq) = match &self.mode {
+        // Generate trellis config based on mode
+        let trellis_config = match &self.mode {
             TrellisMode::Hybrid(hybrid_config) => {
-                // Hybrid mode: adjust lambda based on AQ strength
-                (
-                    hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma),
-                    aq_strength,
-                )
+                // Hybrid mode: lambda adjusted by AQ strength in to_trellis_config()
+                hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma)
             }
             TrellisMode::Standalone(trellis_config) => {
                 // Standalone mode: pure mozjpeg-compatible trellis, no AQ influence
-                (*trellis_config, 0.0)
+                *trellis_config
             }
         };
 
-        hybrid_quantize_block(dct_coeffs, quant, effective_aq, ac_table, &trellis_config)
+        hybrid_quantize_block(dct_coeffs, quant, ac_table, &trellis_config)
     }
 
     /// Returns true if DC trellis optimization is enabled.
