@@ -1,11 +1,11 @@
 //! Check if hybrid offers Pareto improvement over jpegli baseline
 //! by comparing at multiple quality levels.
 
+use enough::Unstoppable;
 use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::hybrid::config::adaptive_config;
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
-use enough::Unstoppable;
 
 fn main() {
     let base_dir = "../glassa/results/cid22_comparison/butteraugli_matched";
@@ -47,7 +47,9 @@ fn main() {
 
             // Compute AQ stats
             let y_plane = extract_y_plane(&img);
-            let aq_map = match zenjpeg::quant::aq::compute_aq_strength_map(&y_plane, img.width, img.height, 1) {
+            let aq_map = match zenjpeg::quant::aq::compute_aq_strength_map(
+                &y_plane, img.width, img.height, 1,
+            ) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -82,8 +84,10 @@ fn main() {
                 Err(_) => continue,
             };
 
-            let jpegli_butter = QualityMetrics::butteraugli(orig_rgb.as_ref(), jpegli_decoded.as_ref());
-            let hybrid_butter = QualityMetrics::butteraugli(orig_rgb.as_ref(), hybrid_decoded.as_ref());
+            let jpegli_butter =
+                QualityMetrics::butteraugli(orig_rgb.as_ref(), jpegli_decoded.as_ref());
+            let hybrid_butter =
+                QualityMetrics::butteraugli(orig_rgb.as_ref(), hybrid_decoded.as_ref());
 
             jpegli_size_sum += jpegli_jpeg.len();
             jpegli_butter_sum += jpegli_butter;
@@ -101,15 +105,18 @@ fn main() {
             jpegli_points.push((jpegli_avg_size, jpegli_avg_butter));
             hybrid_points.push((hybrid_avg_size, hybrid_avg_butter));
 
-            println!("Q{}: Jpegli={:.0}B/{:.3}ba, Hybrid={:.0}B/{:.3}ba",
-                quality, jpegli_avg_size, jpegli_avg_butter,
-                hybrid_avg_size, hybrid_avg_butter);
+            println!(
+                "Q{}: Jpegli={:.0}B/{:.3}ba, Hybrid={:.0}B/{:.3}ba",
+                quality, jpegli_avg_size, jpegli_avg_butter, hybrid_avg_size, hybrid_avg_butter
+            );
         }
     }
 
     println!("\n=== Pareto Comparison ===\n");
     println!("For each hybrid point, find if it dominates any jpegli point:");
-    println!("(Dominates = smaller size AND better/equal quality, or equal size AND better quality)\n");
+    println!(
+        "(Dominates = smaller size AND better/equal quality, or equal size AND better quality)\n"
+    );
 
     let mut any_pareto_win = false;
 
@@ -127,10 +134,12 @@ fn main() {
             let quality_better = h_butter < j_butter;
             let quality_equal = (h_butter - j_butter).abs() / j_butter < 0.01; // within 1%
 
-            if (size_better && (quality_better || quality_equal)) ||
-               (size_equal && quality_better) {
-                println!("✓ Hybrid Q{} ({:.0}B, {:.3}ba) dominates Jpegli Q{} ({:.0}B, {:.3}ba)",
-                    quality, h_size, h_butter, jq, j_size, j_butter);
+            if (size_better && (quality_better || quality_equal)) || (size_equal && quality_better)
+            {
+                println!(
+                    "✓ Hybrid Q{} ({:.0}B, {:.3}ba) dominates Jpegli Q{} ({:.0}B, {:.3}ba)",
+                    quality, h_size, h_butter, jq, j_size, j_butter
+                );
                 any_pareto_win = true;
             }
         }
@@ -141,10 +150,14 @@ fn main() {
     }
 
     println!("\n=== Rate-Distortion Table ===\n");
-    println!("{:>5}  {:>12}  {:>10}  {:>12}  {:>10}  {:>8}  {:>8}",
-        "Q", "Jpegli Size", "Jpegli BA", "Hybrid Size", "Hybrid BA", "ΔSize%", "ΔBA%");
-    println!("{:-<5}  {:-<12}  {:-<10}  {:-<12}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "", "", "");
+    println!(
+        "{:>5}  {:>12}  {:>10}  {:>12}  {:>10}  {:>8}  {:>8}",
+        "Q", "Jpegli Size", "Jpegli BA", "Hybrid Size", "Hybrid BA", "ΔSize%", "ΔBA%"
+    );
+    println!(
+        "{:-<5}  {:-<12}  {:-<10}  {:-<12}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", "", "", ""
+    );
 
     for (i, &quality) in qualities.iter().enumerate() {
         let (j_size, j_butter) = jpegli_points[i];
@@ -152,8 +165,10 @@ fn main() {
         let size_delta = (h_size / j_size - 1.0) * 100.0;
         let butter_delta = (h_butter / j_butter - 1.0) * 100.0;
 
-        println!("{:>5}  {:>12.0}  {:>10.3}  {:>12.0}  {:>10.3}  {:>+8.1}  {:>+8.1}",
-            quality, j_size, j_butter, h_size, h_butter, size_delta, butter_delta);
+        println!(
+            "{:>5}  {:>12.0}  {:>10.3}  {:>12.0}  {:>10.3}  {:>+8.1}  {:>+8.1}",
+            quality, j_size, j_butter, h_size, h_butter, size_delta, butter_delta
+        );
     }
 
     // Check cross-quality comparisons
@@ -170,9 +185,12 @@ fn main() {
             // If butteraugli is within 5%, compare sizes
             if (h_butter - j_butter).abs() / j_butter < 0.05 {
                 let size_delta = (h_size / j_size - 1.0) * 100.0;
-                if size_delta.abs() > 1.0 { // Only show if meaningful difference
-                    println!("Hybrid Q{} ≈ Jpegli Q{} quality ({:.3} vs {:.3} BA), size: {:+.1}%",
-                        hq, jq, h_butter, j_butter, size_delta);
+                if size_delta.abs() > 1.0 {
+                    // Only show if meaningful difference
+                    println!(
+                        "Hybrid Q{} ≈ Jpegli Q{} quality ({:.3} vs {:.3} BA), size: {:+.1}%",
+                        hq, jq, h_butter, j_butter, size_delta
+                    );
                 }
             }
         }

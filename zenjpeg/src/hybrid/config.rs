@@ -389,10 +389,10 @@ impl HybridConfig {
     pub fn aggressive_compression() -> Self {
         Self {
             enabled: true,
-            aq_lambda_scale: -4.0,     // Negative = smaller files
+            aq_lambda_scale: -4.0, // Negative = smaller files
             base_lambda_scale1: 14.75,
             dc_enabled: false,
-            max_adjustment: 0.0,       // No cap (photos only!)
+            max_adjustment: 0.0, // No cap (photos only!)
             ..Self::default()
         }
     }
@@ -407,10 +407,10 @@ impl HybridConfig {
     pub fn safe_compression() -> Self {
         Self {
             enabled: true,
-            aq_lambda_scale: -8.0,     // Aggressive coupling
+            aq_lambda_scale: -8.0, // Aggressive coupling
             base_lambda_scale1: 14.75,
             dc_enabled: false,
-            max_adjustment: 1.0,       // Cap protects screenshots
+            max_adjustment: 1.0, // Cap protects screenshots
             ..Self::default()
         }
     }
@@ -422,7 +422,7 @@ impl HybridConfig {
     pub fn quality_boost() -> Self {
         Self {
             enabled: true,
-            aq_lambda_scale: 4.0,      // Positive = better quality
+            aq_lambda_scale: 4.0, // Positive = better quality
             base_lambda_scale1: 14.75,
             dc_enabled: false,
             max_adjustment: 0.0,
@@ -815,9 +815,7 @@ mod tests {
 
     #[test]
     fn test_negative_coupling_with_threshold() {
-        let config = HybridConfig::new()
-            .aq_lambda_scale(-4.0)
-            .aq_threshold(0.2);
+        let config = HybridConfig::new().aq_lambda_scale(-4.0).aq_threshold(0.2);
 
         // Below threshold: no adjustment
         let adj_low = config.compute_lambda_adjustment(0.15, 1.0, false);
@@ -830,9 +828,7 @@ mod tests {
 
     #[test]
     fn test_chroma_scale_with_negative_coupling() {
-        let config = HybridConfig::new()
-            .aq_lambda_scale(-4.0)
-            .chroma_scale(0.5);
+        let config = HybridConfig::new().aq_lambda_scale(-4.0).chroma_scale(0.5);
 
         // Luma: full adjustment
         let adj_luma = config.compute_lambda_adjustment(0.5, 1.0, false);

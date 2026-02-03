@@ -9,7 +9,7 @@
 
 use std::env;
 use std::path::Path;
-use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, PixelLayout};
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
 
 fn main() {
@@ -28,7 +28,8 @@ fn main() {
     };
 
     // Filter to existing files
-    let image_paths: Vec<String> = image_paths.iter()
+    let image_paths: Vec<String> = image_paths
+        .iter()
         .filter(|p| Path::new(p).exists())
         .cloned()
         .collect();
@@ -44,7 +45,9 @@ fn main() {
     }
 
     println!("\n=== Summary ===");
-    println!("Negative coupling produces SMALLER files (more aggressive compression on textured areas)");
+    println!(
+        "Negative coupling produces SMALLER files (more aggressive compression on textured areas)"
+    );
     println!("Positive coupling produces LARGER files with BETTER quality");
     println!("Recommended: coupling=-4.0 for ~2% size reduction with ~3% DSSIM degradation");
 }
@@ -63,27 +66,36 @@ fn run_sweep(image_path: &str) {
     let quality = 85;
 
     // Extended coupling range including negative values
-    let couplings: Vec<f32> = vec![-8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 16.0];
+    let couplings: Vec<f32> = vec![
+        -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 16.0,
+    ];
 
     println!("=== Hybrid Coupling Parameter Sweep at Q{} ===", quality);
-    println!("{:>8}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
-        "Coupling", "Bytes", "BPP", "DSSIM", "SSIM2", "Butter");
-    println!("{:-<8}  {:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "", "");
+    println!(
+        "{:>8}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Coupling", "Bytes", "BPP", "DSSIM", "SSIM2", "Butter"
+    );
+    println!(
+        "{:-<8}  {:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", "", ""
+    );
 
     // First get baseline (no trellis, jpegli only)
-    let baseline_config = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter)
-        .optimize_huffman(true);
+    let baseline_config =
+        EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter).optimize_huffman(true);
     let baseline_bytes = encode_and_measure_bytes(&baseline_config, &img);
-    let baseline_decoded: RgbImage = decode_jpeg_to_rgb(&encode_image(&baseline_config, &img)).expect("decode");
+    let baseline_decoded: RgbImage =
+        decode_jpeg_to_rgb(&encode_image(&baseline_config, &img)).expect("decode");
     let orig_rgb = zenjpeg_bench_utils::bytes_to_rgb(&img.pixels, img.width, img.height);
     let baseline_dssim = QualityMetrics::dssim(orig_rgb.as_ref(), baseline_decoded.as_ref());
     let baseline_ssim2 = QualityMetrics::ssimulacra2(orig_rgb.as_ref(), baseline_decoded.as_ref());
     let baseline_butter = QualityMetrics::butteraugli(orig_rgb.as_ref(), baseline_decoded.as_ref());
     let baseline_bpp = bpp(baseline_bytes, img.width, img.height);
 
-    println!("{:>8}  {:>8}  {:>8.3}  {:>10.5}  {:>8.2}  {:>8.3}  (jpegli baseline)",
-        "none", baseline_bytes, baseline_bpp, baseline_dssim, baseline_ssim2, baseline_butter);
+    println!(
+        "{:>8}  {:>8}  {:>8.3}  {:>10.5}  {:>8.2}  {:>8.3}  (jpegli baseline)",
+        "none", baseline_bytes, baseline_bpp, baseline_dssim, baseline_ssim2, baseline_butter
+    );
     println!();
 
     // Results for plotting
@@ -116,25 +128,37 @@ fn run_sweep(image_path: &str) {
 
     // Find minimum size and minimum DSSIM
     let min_size_result = results.iter().min_by_key(|r| r.1).unwrap();
-    let min_dssim_result = results.iter().min_by(|a, b| a.2.partial_cmp(&b.2).unwrap()).unwrap();
+    let min_dssim_result = results
+        .iter()
+        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+        .unwrap();
 
-    println!("Smallest file: coupling={:.1}, {} bytes ({:.1}% vs baseline)",
-        min_size_result.0, min_size_result.1,
-        (min_size_result.1 as f64 / baseline_bytes as f64 - 1.0) * 100.0);
-    println!("Best DSSIM: coupling={:.1}, DSSIM={:.5} ({:.1}% vs baseline)",
-        min_dssim_result.0, min_dssim_result.2,
-        (min_dssim_result.2 / baseline_dssim - 1.0) * 100.0);
+    println!(
+        "Smallest file: coupling={:.1}, {} bytes ({:.1}% vs baseline)",
+        min_size_result.0,
+        min_size_result.1,
+        (min_size_result.1 as f64 / baseline_bytes as f64 - 1.0) * 100.0
+    );
+    println!(
+        "Best DSSIM: coupling={:.1}, DSSIM={:.5} ({:.1}% vs baseline)",
+        min_dssim_result.0,
+        min_dssim_result.2,
+        (min_dssim_result.2 / baseline_dssim - 1.0) * 100.0
+    );
 
     // Find Pareto frontier
     println!("\nPareto-optimal points (no other point is better in both size AND quality):");
     for (coupling, bytes, dssim, ssim2, butter) in &results {
         let is_dominated = results.iter().any(|(_, other_bytes, other_dssim, _, _)| {
-            *other_bytes <= *bytes && *other_dssim <= *dssim &&
-            (*other_bytes < *bytes || *other_dssim < *dssim)
+            *other_bytes <= *bytes
+                && *other_dssim <= *dssim
+                && (*other_bytes < *bytes || *other_dssim < *dssim)
         });
         if !is_dominated {
-            println!("  coupling={:>5.1}: {} bytes, DSSIM={:.5}, SSIM2={:.2}, Butter={:.3}",
-                coupling, bytes, dssim, ssim2, butter);
+            println!(
+                "  coupling={:>5.1}: {} bytes, DSSIM={:.5}, SSIM2={:.2}, Butter={:.3}",
+                coupling, bytes, dssim, ssim2, butter
+            );
         }
     }
 
@@ -146,10 +170,14 @@ fn run_sweep(image_path: &str) {
     // For multiplicative, use smaller coupling values (proportional effect)
     let mult_couplings: Vec<f32> = vec![-0.5, -0.2, -0.1, -0.05, 0.0, 0.05, 0.1, 0.2, 0.5];
 
-    println!("{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
-        "Coupling", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
-    println!("{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "");
+    println!(
+        "{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Coupling", "Bytes", "DSSIM", "Δsize%", "Δdssim%"
+    );
+    println!(
+        "{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", ""
+    );
 
     for &coupling in &mult_couplings {
         let config = create_hybrid_config_multiplicative(quality, coupling);
@@ -162,8 +190,10 @@ fn run_sweep(image_path: &str) {
         let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
         let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
 
-        println!("{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
-            coupling, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+        println!(
+            "{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            coupling, bytes, dssim, size_vs_baseline, dssim_vs_baseline
+        );
     }
 
     // Test AQ threshold (minimum AQ before coupling applies)
@@ -172,10 +202,14 @@ fn run_sweep(image_path: &str) {
 
     let thresholds: Vec<f32> = vec![0.0, 0.05, 0.1, 0.15, 0.2, 0.3];
 
-    println!("{:>10}  {:>8}  {:>10}  {:>8}  {:>8}",
-        "Threshold", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
-    println!("{:-<10}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "");
+    println!(
+        "{:>10}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Threshold", "Bytes", "DSSIM", "Δsize%", "Δdssim%"
+    );
+    println!(
+        "{:-<10}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", ""
+    );
 
     for &threshold in &thresholds {
         let config = create_hybrid_config_with_threshold(quality, -4.0, threshold);
@@ -188,8 +222,10 @@ fn run_sweep(image_path: &str) {
         let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
         let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
 
-        println!("{:>10.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
-            threshold, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+        println!(
+            "{:>10.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            threshold, bytes, dssim, size_vs_baseline, dssim_vs_baseline
+        );
     }
 
     // Test AQ exponent (non-linear AQ mapping)
@@ -199,10 +235,14 @@ fn run_sweep(image_path: &str) {
 
     let exponents: Vec<f32> = vec![0.5, 0.75, 1.0, 1.5, 2.0];
 
-    println!("{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
-        "Exponent", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
-    println!("{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "");
+    println!(
+        "{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Exponent", "Bytes", "DSSIM", "Δsize%", "Δdssim%"
+    );
+    println!(
+        "{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", ""
+    );
 
     for &exp in &exponents {
         let config = create_hybrid_config_with_exponent(quality, -4.0, exp);
@@ -215,8 +255,10 @@ fn run_sweep(image_path: &str) {
         let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
         let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
 
-        println!("{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
-            exp, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+        println!(
+            "{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            exp, bytes, dssim, size_vs_baseline, dssim_vs_baseline
+        );
     }
 
     // Test max adjustment (caps lambda change to limit quality degradation)
@@ -225,10 +267,14 @@ fn run_sweep(image_path: &str) {
 
     let max_adjs: Vec<f32> = vec![0.5, 1.0, 1.5, 2.0, 3.0, 0.0]; // 0.0 = unlimited
 
-    println!("{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
-        "Max Adj", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
-    println!("{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
-        "", "", "", "", "");
+    println!(
+        "{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Max Adj", "Bytes", "DSSIM", "Δsize%", "Δdssim%"
+    );
+    println!(
+        "{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", ""
+    );
 
     for &max_adj in &max_adjs {
         let config = create_hybrid_config_with_max_adj(quality, -8.0, max_adj);
@@ -241,14 +287,20 @@ fn run_sweep(image_path: &str) {
         let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
         let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
 
-        let label = if max_adj == 0.0 { "none".to_string() } else { format!("{:.1}", max_adj) };
-        println!("{:>8}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
-            label, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+        let label = if max_adj == 0.0 {
+            "none".to_string()
+        } else {
+            format!("{:.1}", max_adj)
+        };
+        println!(
+            "{:>8}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            label, bytes, dssim, size_vs_baseline, dssim_vs_baseline
+        );
     }
 }
 
 fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+    use zenjpeg::encode::{ColorMode, ExpertConfig, OptimizationPreset};
 
     let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -260,7 +312,7 @@ fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
 }
 
 fn create_hybrid_config_multiplicative(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+    use zenjpeg::encode::{ColorMode, ExpertConfig, OptimizationPreset};
 
     let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -272,8 +324,12 @@ fn create_hybrid_config_multiplicative(quality: i32, coupling: f32) -> EncoderCo
     })
 }
 
-fn create_hybrid_config_with_threshold(quality: i32, coupling: f32, threshold: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+fn create_hybrid_config_with_threshold(
+    quality: i32,
+    coupling: f32,
+    threshold: f32,
+) -> EncoderConfig {
+    use zenjpeg::encode::{ColorMode, ExpertConfig, OptimizationPreset};
 
     let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -286,7 +342,7 @@ fn create_hybrid_config_with_threshold(quality: i32, coupling: f32, threshold: f
 }
 
 fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+    use zenjpeg::encode::{ColorMode, ExpertConfig, OptimizationPreset};
 
     let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -299,7 +355,7 @@ fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32
 }
 
 fn create_hybrid_config_with_max_adj(quality: i32, coupling: f32, max_adj: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+    use zenjpeg::encode::{ColorMode, ExpertConfig, OptimizationPreset};
 
     let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;

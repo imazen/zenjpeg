@@ -8,13 +8,13 @@
 //!   cargo run --release --example hybrid_auto_detect
 //!   cargo run --release --example hybrid_auto_detect -- /path/to/image.png
 
+use enough::Unstoppable;
 use std::env;
 use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::hybrid::config::{adaptive_config, detect_image_type, ImageType};
 use zenjpeg::quant::aq::compute_aq_strength_map;
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
-use enough::Unstoppable;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -71,7 +71,8 @@ fn main() {
                 ImageType::Mixed => "Mixed",
             };
 
-            let delta_pct = (result.adaptive_bytes as f64 / result.baseline_bytes as f64 - 1.0) * 100.0;
+            let delta_pct =
+                (result.adaptive_bytes as f64 / result.baseline_bytes as f64 - 1.0) * 100.0;
 
             println!(
                 "{:>40}  {:>8.4}  {:>8.4}  {:>6.2}  {:>12}  {:>10}  {:>10}  {:>9.1}%",
@@ -92,18 +93,26 @@ fn main() {
     // Summary
     println!("\n=== Summary ===\n");
 
-    let photos: Vec<_> = results.iter().filter(|r| r.detected_type == ImageType::Photo).collect();
-    let screenshots: Vec<_> = results.iter().filter(|r| r.detected_type == ImageType::Screenshot).collect();
+    let photos: Vec<_> = results
+        .iter()
+        .filter(|r| r.detected_type == ImageType::Photo)
+        .collect();
+    let screenshots: Vec<_> = results
+        .iter()
+        .filter(|r| r.detected_type == ImageType::Screenshot)
+        .collect();
 
     if !photos.is_empty() {
         let avg_delta: f64 = photos
             .iter()
             .map(|r| (r.adaptive_bytes as f64 / r.baseline_bytes as f64 - 1.0) * 100.0)
-            .sum::<f64>() / photos.len() as f64;
+            .sum::<f64>()
+            / photos.len() as f64;
         let avg_dssim_delta: f64 = photos
             .iter()
             .map(|r| (r.adaptive_dssim / r.baseline_dssim - 1.0) * 100.0)
-            .sum::<f64>() / photos.len() as f64;
+            .sum::<f64>()
+            / photos.len() as f64;
         println!(
             "Photos ({} images): avg size {:.1}%, avg DSSIM delta {:.1}%",
             photos.len(),
@@ -116,11 +125,13 @@ fn main() {
         let avg_delta: f64 = screenshots
             .iter()
             .map(|r| (r.adaptive_bytes as f64 / r.baseline_bytes as f64 - 1.0) * 100.0)
-            .sum::<f64>() / screenshots.len() as f64;
+            .sum::<f64>()
+            / screenshots.len() as f64;
         let avg_dssim_delta: f64 = screenshots
             .iter()
             .map(|r| (r.adaptive_dssim / r.baseline_dssim - 1.0) * 100.0)
-            .sum::<f64>() / screenshots.len() as f64;
+            .sum::<f64>()
+            / screenshots.len() as f64;
         println!(
             "Screenshots ({} images): avg size {:.1}%, avg DSSIM delta {:.1}%",
             screenshots.len(),
@@ -152,13 +163,18 @@ fn analyze_image(path: &str) -> Option<DetectionResult> {
     let y_plane = extract_y_plane(&img);
     let aq_map = compute_aq_strength_map(&y_plane, img.width, img.height, 1).ok()?;
     let (_, _, aq_mean, aq_std) = aq_map.stats();
-    let cv = if aq_mean > 0.001 { aq_std / aq_mean } else { 0.0 };
+    let cv = if aq_mean > 0.001 {
+        aq_std / aq_mean
+    } else {
+        0.0
+    };
 
     // Detect image type
     let detected_type = detect_image_type(aq_mean, aq_std);
 
     // Encode baseline (no hybrid)
-    let baseline_config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).optimize_huffman(true);
+    let baseline_config =
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).optimize_huffman(true);
     let baseline_jpeg = encode_image(&baseline_config, &img)?;
     let baseline_bytes = baseline_jpeg.len();
 

@@ -1026,10 +1026,9 @@ impl QuantTableConfig {
     #[must_use]
     pub const fn quant_source(&self) -> QuantTableSource {
         match self {
-            Self::Jpegli
-            | Self::JpegliSharedChroma
-            | Self::Custom(_)
-            | Self::GlassaLowBpp(_) => QuantTableSource::Jpegli,
+            Self::Jpegli | Self::JpegliSharedChroma | Self::Custom(_) | Self::GlassaLowBpp(_) => {
+                QuantTableSource::Jpegli
+            }
             Self::MozjpegRobidoux => QuantTableSource::MozjpegDefault,
         }
     }
