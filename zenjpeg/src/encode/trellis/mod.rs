@@ -44,7 +44,7 @@ pub use hybrid::{
 };
 
 // Encoder integration helpers (pub(crate) only)
+pub(crate) use hybrid::quantize_all_blocks_xyb_with_aq;
 pub(crate) use hybrid::{
     create_hybrid_ctx, get_aq_map_or_compute, quantize_block_dispatch, HybridQuantContext,
 };
-pub(crate) use hybrid::quantize_all_blocks_xyb_with_aq;

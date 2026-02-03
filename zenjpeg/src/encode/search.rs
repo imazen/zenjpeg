@@ -68,9 +68,9 @@ use super::encoder_types::{
     ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset, Quality, QuantTableConfig,
     ScanMode,
 };
+use super::trellis::HybridConfig;
 use super::trellis::{TrellisConfig, TrellisSpeedMode};
 use super::tuning::{EncodingTables, PerComponent};
-use super::trellis::HybridConfig;
 
 /// All tunable encoder parameters for external optimization.
 ///
