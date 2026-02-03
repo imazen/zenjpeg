@@ -52,8 +52,8 @@ use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
 
 // Trellis quantization support
-use crate::encode::hybrid::HybridQuantContext;
-use crate::encode::mozjpeg_compat::TrellisConfig;
+use crate::encode::trellis::HybridQuantContext;
+use crate::encode::trellis::TrellisConfig;
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -724,7 +724,7 @@ impl StripProcessor {
     ///
     /// Hybrid mode adjusts trellis lambda per-block based on AQ strength,
     /// spending more bits on smooth areas and fewer on complex textures.
-    pub fn set_hybrid(&mut self, config: crate::hybrid::config::HybridConfig) {
+    pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
     }
 
@@ -1422,7 +1422,7 @@ fn dc_trellis_channel_row_by_row(
     blocks: &mut [[i16; DCT_BLOCK_SIZE]],
     blocks_w: usize,
     dc_quantval: u16,
-    dc_table: &crate::trellis::RateTable,
+    dc_table: &crate::encode::trellis::RateTable,
     lambda1: f32,
     lambda2: f32,
     delta_dc_weight: f32,
@@ -1487,7 +1487,7 @@ fn dc_trellis_channel_row_by_row(
             None
         };
 
-        last_dc = crate::trellis::dc_trellis_optimize_indexed(
+        last_dc = crate::encode::trellis::dc_trellis_optimize_indexed(
             &raw_blocks,
             &mut natural_blocks,
             &indices,

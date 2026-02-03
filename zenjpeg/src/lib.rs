@@ -215,14 +215,5 @@ pub(crate) mod types;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
-// Trellis quantization (internalized pure Rust, ported from mozjpeg)
-#[cfg(feature = "test-utils")]
-pub mod trellis;
-#[cfg(not(feature = "test-utils"))]
-pub(crate) mod trellis;
-
-// Hybrid quantization (jpegli AQ + mozjpeg trellis)
-pub mod hybrid;
-
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;

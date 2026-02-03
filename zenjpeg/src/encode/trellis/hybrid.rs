@@ -1,40 +1,24 @@
-//! Configurable hybrid quantization parameters.
+//! Hybrid quantization: jpegli AQ + mozjpeg trellis.
 //!
-//! This module exposes all tunable knobs for the hybrid AQ+trellis approach,
-//! enabling systematic parameter sweeps and optimization.
+//! This module combines:
+//! - Configurable hybrid quantization parameters ([`HybridConfig`])
+//! - Core hybrid quantization algorithm ([`hybrid_quantize_block`])
+//! - Encoder integration ([`HybridQuantContext`])
 //!
-//! # ⚠️ Experimental Status
-//!
-//! **All findings in this module are preliminary and not statistically validated.**
-//! Testing was performed on ~5 images at a few quality levels - far too small a sample
-//! for reliable conclusions. The correlation coefficients, improvement percentages,
-//! and threshold values should be treated as rough starting points, not established facts.
-//!
-//! ## Adaptive Mode (Preliminary)
-//!
-//! Early testing suggested **AQ mean** (average per-block complexity) might predict
-//! which images benefit from hybrid trellis. However, the sample size was too small
-//! for statistical validity:
-//!
-//! - `aq_mean > 0.25`: Complex images appeared to benefit more in limited testing
-//! - `aq_mean ≤ 0.25`: Simple images showed smaller improvements
-//!
-//! Use [`should_use_hybrid`] as a heuristic, but verify on your own data.
-//!
-//! ## Parameters That Appeared Unhelpful (Limited Testing)
-//!
-//! The following were tested but showed no clear benefit or made things worse:
-//!
-//! - **`dc_enabled`**: DC trellis optimization - disabled by default, no clear wins observed
-//! - **`aq_exponent != 1.0`**: Non-linear AQ mapping (sqrt, squared) - no improvement seen
-//! - **`quality_adaptive`**: Scaling lambda by quality dampen - not clearly beneficial
-//! - **`chroma_scale != 1.0`**: Separate chroma scaling - not tuned, kept at 1.0
-//! - **`num_loops > 1`**: Multiple trellis passes - slower without clear quality gain
-//! - **`aq_threshold > 0`**: Minimum AQ cutoff - no benefit observed
-//!
-//! These remain configurable for further experimentation.
+//! Merged from:
+//! - `hybrid/config.rs` - HybridConfig, SweepConfig, adaptive detection
+//! - `hybrid/core.rs` - StandardRateTables, hybrid_quantize_block
+//! - `encode/hybrid.rs` - HybridQuantContext, encoder integration
 
-use crate::encode::mozjpeg_compat::TrellisConfig;
+use super::compat::TrellisConfig;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
+use super::{trellis_quantize_block, RateTable};
+use crate::encode::config::ComputedConfig;
+use crate::encode::dct::forward_dct_8x8;
+use crate::encode::natural_to_zigzag_into;
+use crate::error::Result;
+use crate::quant::aq::AQStrengthMap;
+use crate::quant::{self, QuantTable, ZeroBiasParams};
 
 /// Threshold for AQ mean above which hybrid trellis might be beneficial.
 ///
@@ -925,4 +909,605 @@ mod tests {
         assert!((texture_adaptive_coupling(0.60) - (-1.0)).abs() < 0.01);
         assert!((texture_adaptive_coupling(0.75) - (-0.8)).abs() < 0.01);
     }
+
+    #[test]
+    fn test_scale_quant_by_aq() {
+        let base = [16u16; 64];
+
+        // Zero AQ strength = no change
+        let scaled = scale_quant_by_aq(&base, 0.0);
+        assert_eq!(scaled[0], 16);
+
+        // 0.5 AQ strength = 1.5x
+        let scaled = scale_quant_by_aq(&base, 0.5);
+        assert_eq!(scaled[0], 24);
+
+        // 1.0 AQ strength = 2x
+        let scaled = scale_quant_by_aq(&base, 1.0);
+        assert_eq!(scaled[0], 32);
+    }
+
+    #[test]
+    fn test_scale_quant_clamping() {
+        let base = [200u16; 64];
+
+        // Should clamp at 255
+        let scaled = scale_quant_by_aq(&base, 0.5);
+        assert_eq!(scaled[0], 255);
+
+        let base_low = [1u16; 64];
+        // Should never go below 1
+        let scaled = scale_quant_by_aq(&base_low, 0.0);
+        assert_eq!(scaled[0], 1);
+    }
+
+    #[test]
+    fn test_dct_f32_to_i32() {
+        // Function multiplies by 64 for trellis compatibility (see docstring)
+        // jpegli DCT is at 1/64 scale, trellis divides by 8*quant
+        // So multiply by 64 to compensate: trellis sees round(64*DCT / (8*q)) = round(DCT*8/q)
+        // 127.4 * 64 = 8153.6, rounds to 8154
+        let f32_coeffs = [127.4f32; 64];
+        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
+        assert_eq!(i32_coeffs[0], 8154);
+
+        // -127.6 * 64 = -8166.4, rounds to -8166
+        let f32_coeffs = [-127.6f32; 64];
+        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
+        assert_eq!(i32_coeffs[0], -8166);
+    }
+
+    #[test]
+    fn test_hybrid_quantize_simple() {
+        // hybrid_quantize_block_simple uses jpegli's formula: round(DCT * 8 / quant)
+        // DC coefficient of 1024 with quant=16 and no AQ
+        let mut dct = [0.0f32; 64];
+        dct[0] = 1024.0;
+        let base_quant = [16u16; 64];
+
+        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.0);
+        assert_eq!(quantized[0], 512); // 1024 * 8 / 16 = 512
+
+        // With AQ strength 0.5, quant becomes 24
+        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.5);
+        assert_eq!(quantized[0], 341); // 1024 * 8 / 24 = 341.33 -> 341
+    }
+}
+
+// ============================================================================
+// Core hybrid functions (from hybrid/core.rs)
+// ============================================================================
+
+
+
+/// Standard rate tables for trellis rate estimation.
+///
+/// Trellis quantization needs Huffman code lengths to estimate bit costs.
+/// Using standard JPEG tables is a reasonable approximation when
+/// optimized tables aren't available yet.
+pub struct StandardRateTables {
+    pub luma_ac: RateTable,
+    pub chroma_ac: RateTable,
+    pub luma_dc: RateTable,
+    pub chroma_dc: RateTable,
+}
+
+impl StandardRateTables {
+    /// Create standard rate tables for trellis.
+    pub fn new() -> Self {
+        Self {
+            luma_ac: RateTable::standard_luma_ac(),
+            chroma_ac: RateTable::standard_chroma_ac(),
+            luma_dc: RateTable::standard_luma_dc(),
+            chroma_dc: RateTable::standard_chroma_dc(),
+        }
+    }
+}
+
+impl Default for StandardRateTables {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Scale a quantization table by adaptive quantization strength.
+///
+/// Higher AQ strength means the block is "less important" (busy/textured area),
+/// so we can use coarser quantization (higher quant values = fewer bits).
+///
+/// # Arguments
+/// * `base_quant` - Base quantization table (u16\[64\])
+/// * `aq_strength` - Per-block AQ strength from jpegli (typically 0.0 to ~0.5)
+///
+/// # Returns
+/// Scaled quantization table where higher AQ strength = higher quant values
+pub fn scale_quant_by_aq(
+    base_quant: &[u16; DCT_BLOCK_SIZE],
+    aq_strength: f32,
+) -> [u16; DCT_BLOCK_SIZE] {
+    let mut scaled = [0u16; DCT_BLOCK_SIZE];
+    // aq_strength typically ranges from 0.0 to ~0.5
+    // strength=0 → multiplier=1.0 (no change)
+    // strength=0.5 → multiplier=1.5 (50% coarser)
+    let multiplier = 1.0 + aq_strength;
+
+    use wide::f32x8;
+    let mul = f32x8::splat(multiplier);
+    let one = f32x8::splat(1.0);
+    let max_val = f32x8::splat(255.0);
+
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let base_f = f32x8::from([
+            base_quant[k] as f32,
+            base_quant[k + 1] as f32,
+            base_quant[k + 2] as f32,
+            base_quant[k + 3] as f32,
+            base_quant[k + 4] as f32,
+            base_quant[k + 5] as f32,
+            base_quant[k + 6] as f32,
+            base_quant[k + 7] as f32,
+        ]);
+        let val = (base_f * mul).round().max(one).min(max_val);
+        let arr: [f32; 8] = val.into();
+        for j in 0..8 {
+            scaled[k + j] = arr[j] as u16;
+        }
+    }
+
+    scaled
+}
+
+/// Convert f32 DCT coefficients to i32 for trellis quantization.
+///
+/// jpegli and mozjpeg use different quantization formulas:
+/// - jpegli: quantized = round(DCT * 8 / quantval) (DCT at 1/64 scale)
+/// - mozjpeg trellis: quantized = round(DCT / (8 * quantval))
+///
+/// To make trellis produce the same quantized values as jpegli:
+/// - We multiply DCT by 64: trellis sees round((64*DCT) / (8*quantval)) = round(DCT*8 / quantval)
+/// - This compensates for both the 1/64 DCT scaling and the trellis's 8× divisor
+pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
+    let mut result = [0i32; DCT_BLOCK_SIZE];
+
+    use wide::f32x8;
+    let scale = f32x8::splat(64.0);
+
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let v = f32x8::from([
+            coeffs[k],
+            coeffs[k + 1],
+            coeffs[k + 2],
+            coeffs[k + 3],
+            coeffs[k + 4],
+            coeffs[k + 5],
+            coeffs[k + 6],
+            coeffs[k + 7],
+        ]);
+        let scaled = (v * scale).round();
+        let arr: [f32; 8] = scaled.into();
+        for j in 0..8 {
+            result[k + j] = arr[j] as i32;
+        }
+    }
+
+    result
+}
+
+/// How much to scale lambda per unit of AQ strength.
+///
+/// This controls the sensitivity of trellis to AQ:
+/// - Higher value = more aggressive compression in textured regions
+/// - Lower value = more uniform compression across image
+///
+/// Since lambda = 2^scale1 / ..., adding 1.0 to scale1 doubles lambda.
+/// With AQ_LAMBDA_SCALE=2.0 and aq_strength=0.5, lambda increases by 2x.
+const AQ_LAMBDA_SCALE: f32 = 2.0;
+
+/// Hybrid quantization: jpegli AQ + mozjpeg trellis.
+///
+/// This is the main entry point for hybrid encoding. It adjusts the trellis
+/// lambda parameter based on AQ strength:
+/// - Higher AQ (textured) → higher lambda → more aggressive compression
+/// - Lower AQ (smooth) → lower lambda → preserve quality
+///
+/// # Arguments
+/// * `dct_coeffs` - DCT coefficients in f32 (jpegli format)
+/// * `base_quant` - Base quantization table
+/// * `aq_strength` - Per-block AQ strength from jpegli (typically 0.0 to 0.5)
+/// * `ac_table` - Huffman table for rate estimation
+/// * `base_config` - Base trellis configuration (will be adjusted per-block)
+///
+/// # Returns
+/// Quantized coefficients ready for entropy coding
+pub fn hybrid_quantize_block(
+    dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+    base_quant: &[u16; DCT_BLOCK_SIZE],
+    aq_strength: f32,
+    ac_table: &RateTable,
+    base_config: &TrellisConfig,
+) -> [i16; DCT_BLOCK_SIZE] {
+    // Adjust lambda based on AQ strength:
+    // - Higher AQ → increase lambda_log_scale1 → higher lambda → favor compression
+    // - aq_strength=0.5 with AQ_LAMBDA_SCALE=2.0 → +1.0 to scale1 → 2x lambda
+    let mut config = *base_config;
+    config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE;
+
+    // Convert f32 DCT to i32 (with 8x scaling to match trellis's 8x quant divisor)
+    let dct_i32 = dct_f32_to_i32(dct_coeffs);
+
+    // Run trellis quantization with AQ-adjusted lambda
+    let mut quantized = [0i16; DCT_BLOCK_SIZE];
+    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, &config);
+
+    quantized
+}
+
+/// Hybrid quantization without trellis (for comparison/testing).
+///
+/// Scales quant table by AQ but uses simple rounding instead of trellis.
+/// This isolates the AQ scaling effect from trellis optimization.
+pub fn hybrid_quantize_block_simple(
+    dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+    base_quant: &[u16; DCT_BLOCK_SIZE],
+    aq_strength: f32,
+) -> [i16; DCT_BLOCK_SIZE] {
+    // 1. Scale quant table by AQ strength
+    let scaled_quant = scale_quant_by_aq(base_quant, aq_strength);
+
+    // 2. Simple quantization (divide and round)
+    let mut quantized = [0i16; DCT_BLOCK_SIZE];
+
+    use wide::f32x8;
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let dct = f32x8::from([
+            dct_coeffs[k],
+            dct_coeffs[k + 1],
+            dct_coeffs[k + 2],
+            dct_coeffs[k + 3],
+            dct_coeffs[k + 4],
+            dct_coeffs[k + 5],
+            dct_coeffs[k + 6],
+            dct_coeffs[k + 7],
+        ]);
+        let q = f32x8::from([
+            scaled_quant[k] as f32,
+            scaled_quant[k + 1] as f32,
+            scaled_quant[k + 2] as f32,
+            scaled_quant[k + 3] as f32,
+            scaled_quant[k + 4] as f32,
+            scaled_quant[k + 5] as f32,
+            scaled_quant[k + 6] as f32,
+            scaled_quant[k + 7] as f32,
+        ]);
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let eight = f32x8::splat(8.0);
+        let val = (dct * eight / q).round();
+        let arr: [f32; 8] = val.into();
+        for j in 0..8 {
+            quantized[k + j] = arr[j] as i16;
+        }
+    }
+
+    quantized
+}
+
+// ============================================================================
+// Encoder integration (from encode/hybrid.rs)
+// ============================================================================
+
+
+// ============================================================================
+// Setup Helpers
+// ============================================================================
+
+/// Get the AQ map, using custom if provided or computing from Y plane.
+#[inline]
+pub(crate) fn get_aq_map_or_compute(
+    config: &ComputedConfig,
+    y_plane: &[f32],
+    width: usize,
+    height: usize,
+    y_quant_01: u16,
+) -> Result<AQStrengthMap> {
+    if let Some(ref custom) = config.custom_aq_map {
+        Ok(custom.clone())
+    } else {
+        Ok(crate::quant::aq::compute_aq_strength_map(
+            y_plane, width, height, y_quant_01,
+        )?)
+    }
+}
+
+/// Create hybrid quantization context if enabled in config.
+///
+/// Priority:
+/// 1. If `trellis` is set (mozjpeg-compat API), use it directly
+/// 2. Else if `hybrid_config.enabled`, use hybrid AQ+trellis mode
+/// 3. Else return None (no trellis quantization)
+#[inline]
+pub(crate) fn create_hybrid_ctx(config: &ComputedConfig) -> Option<HybridQuantContext> {
+    // First check for explicit TrellisConfig (mozjpeg-compat API)
+    if let Some(ref trellis) = config.trellis {
+        if trellis.is_enabled() {
+            return Some(HybridQuantContext::from_trellis_config(*trellis));
+        }
+    }
+
+    // Fall back to HybridConfig
+    if config.hybrid_config.enabled {
+        Some(HybridQuantContext::new(config.hybrid_config))
+    } else {
+        None
+    }
+}
+
+// ============================================================================
+// Quantization Dispatch Helper
+// ============================================================================
+
+/// Quantize a block, dispatching to hybrid trellis or standard quantization.
+///
+/// This inline helper centralizes the hybrid vs non-hybrid dispatch logic.
+/// When `hybrid_ctx` is Some, uses trellis quantization; otherwise uses
+/// standard zero-bias quantization.
+#[inline]
+pub(crate) fn quantize_block_dispatch(
+    dct: &[f32; DCT_BLOCK_SIZE],
+    quant_values: &[u16; DCT_BLOCK_SIZE],
+    zero_bias: &ZeroBiasParams,
+    aq_strength: f32,
+    is_luma: bool,
+    hybrid_ctx: Option<&HybridQuantContext>,
+) -> [i16; DCT_BLOCK_SIZE] {
+    if let Some(ctx) = hybrid_ctx {
+        ctx.quantize_block(dct, quant_values, aq_strength, 1.0, is_luma)
+    } else {
+        quant::quantize_block_with_zero_bias_simd(dct, quant_values, zero_bias, aq_strength)
+    }
+}
+
+// ============================================================================
+// Hybrid Quantization Context
+// ============================================================================
+
+/// Mode for trellis quantization.
+enum TrellisMode {
+    /// Hybrid mode: jpegli AQ + mozjpeg trellis with AQ-adjusted lambda
+    Hybrid(HybridConfig),
+    /// Standalone mode: pure mozjpeg-style trellis (no AQ lambda adjustment)
+    Standalone(TrellisConfig),
+}
+
+/// Quantization context for trellis mode.
+///
+/// This struct holds pre-built Huffman tables and trellis config for use
+/// during trellis quantization. Supports two modes:
+///
+/// - **Hybrid**: Combines jpegli's AQ with mozjpeg's trellis, adjusting lambda per-block
+/// - **Standalone**: Pure mozjpeg-style trellis with fixed lambda (no AQ adjustment)
+pub(crate) struct HybridQuantContext {
+    rate_tables: StandardRateTables,
+    mode: TrellisMode,
+}
+
+impl std::fmt::Debug for HybridQuantContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode_str = match &self.mode {
+            TrellisMode::Hybrid(_) => "Hybrid",
+            TrellisMode::Standalone(_) => "Standalone",
+        };
+        f.debug_struct("HybridQuantContext")
+            .field("mode", &mode_str)
+            .finish_non_exhaustive()
+    }
+}
+
+impl HybridQuantContext {
+    /// Creates a new hybrid quantization context (AQ + trellis).
+    pub(crate) fn new(config: HybridConfig) -> Self {
+        Self {
+            rate_tables: StandardRateTables::new(),
+            mode: TrellisMode::Hybrid(config),
+        }
+    }
+
+    /// Creates a standalone trellis context (mozjpeg-compatible, no AQ adjustment).
+    pub(crate) fn from_trellis_config(config: TrellisConfig) -> Self {
+        Self {
+            rate_tables: StandardRateTables::new(),
+            mode: TrellisMode::Standalone(config),
+        }
+    }
+
+    /// Quantize a block using trellis quantization.
+    ///
+    /// # Arguments
+    /// * `dct_coeffs` - DCT coefficients
+    /// * `quant` - Quantization table
+    /// * `aq_strength` - Per-block AQ strength (used in hybrid mode)
+    /// * `dampen` - Quality-based AQ dampen factor (0-1, used in hybrid mode)
+    /// * `is_luma` - True for Y component, false for Cb/Cr
+    pub(crate) fn quantize_block(
+        &self,
+        dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+        quant: &[u16; DCT_BLOCK_SIZE],
+        aq_strength: f32,
+        dampen: f32,
+        is_luma: bool,
+    ) -> [i16; DCT_BLOCK_SIZE] {
+        let ac_table = if is_luma {
+            &self.rate_tables.luma_ac
+        } else {
+            &self.rate_tables.chroma_ac
+        };
+
+        // Generate trellis config and effective AQ strength based on mode
+        let (trellis_config, effective_aq) = match &self.mode {
+            TrellisMode::Hybrid(hybrid_config) => {
+                // Hybrid mode: adjust lambda based on AQ strength
+                (
+                    hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma),
+                    aq_strength,
+                )
+            }
+            TrellisMode::Standalone(trellis_config) => {
+                // Standalone mode: pure mozjpeg-compatible trellis, no AQ influence
+                (*trellis_config, 0.0)
+            }
+        };
+
+        hybrid_quantize_block(dct_coeffs, quant, effective_aq, ac_table, &trellis_config)
+    }
+
+    /// Returns true if DC trellis optimization is enabled.
+    pub(crate) fn is_dc_trellis_enabled(&self) -> bool {
+        match &self.mode {
+            TrellisMode::Hybrid(config) => config.dc_enabled,
+            TrellisMode::Standalone(config) => config.is_dc_enabled(),
+        }
+    }
+
+    /// Returns the base trellis configuration (for DC trellis lambda parameters).
+    pub(crate) fn trellis_config(&self) -> TrellisConfig {
+        match &self.mode {
+            TrellisMode::Hybrid(config) => config.to_trellis_config(0.0, 1.0, false),
+            TrellisMode::Standalone(config) => *config,
+        }
+    }
+
+    /// Returns the luma DC rate table for DC trellis optimization.
+    pub(crate) fn luma_dc_rate_table(&self) -> &RateTable {
+        &self.rate_tables.luma_dc
+    }
+
+    /// Returns the chroma DC rate table for DC trellis optimization.
+    pub(crate) fn chroma_dc_rate_table(&self) -> &RateTable {
+        &self.rate_tables.chroma_dc
+    }
+}
+
+// ============================================================================
+// XYB Block Quantization with Hybrid Trellis
+// ============================================================================
+
+/// Quantizes all XYB blocks with adaptive quantization and optional hybrid trellis.
+///
+/// This version uses the AQ map for per-block modulation and applies
+/// hybrid trellis quantization when enabled via the HybridQuantContext.
+///
+/// For XYB mode:
+/// - X and Y use luma tables (both are full-resolution "luma-like" channels)
+/// - B uses chroma tables (downsampled blue channel)
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn quantize_all_blocks_xyb_with_aq(
+    x_plane: &[f32],
+    y_plane: &[f32],
+    b_plane: &[f32], // Already downsampled
+    width: usize,
+    height: usize,
+    b_width: usize,
+    b_height: usize,
+    x_quant: &QuantTable,
+    y_quant: &QuantTable,
+    b_quant: &QuantTable,
+    aq_map: &AQStrengthMap,
+    hybrid_ctx: Option<&HybridQuantContext>,
+) -> crate::error::Result<(
+    Vec<[i16; DCT_BLOCK_SIZE]>,
+    Vec<[i16; DCT_BLOCK_SIZE]>,
+    Vec<[i16; DCT_BLOCK_SIZE]>,
+)> {
+    // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
+    let mcu_cols = (width + 15) / 16;
+    let mcu_rows = (height + 15) / 16;
+    let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
+    let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
+
+    // Pre-allocate block arrays to avoid push() overhead
+    let mut x_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
+    let mut y_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
+    let mut b_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
+
+    for mcu_y in 0..mcu_rows {
+        for mcu_x in 0..mcu_cols {
+            let mcu_idx = mcu_y * mcu_cols + mcu_x;
+            let xy_base = mcu_idx * 4; // 4 blocks per MCU for X and Y
+
+            // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
+            for block_y in 0..2 {
+                for block_x in 0..2 {
+                    let bx = mcu_x * 2 + block_x;
+                    let by = mcu_y * 2 + block_y;
+                    let block_offset = block_y * 2 + block_x;
+                    let aq_strength = aq_map.get(bx, by);
+
+                    let x_block =
+                        crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
+                    let x_dct = forward_dct_8x8(&x_block);
+
+                    // X is luma-like in XYB, dampen=1.0
+                    let x_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                        ctx.quantize_block(&x_dct, &x_quant.values, aq_strength, 1.0, true)
+                    } else {
+                        quant::quantize_block(&x_dct, &x_quant.values)
+                    };
+                    natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
+                }
+            }
+
+            // Process 4 Y blocks (2×2 arrangement within 16×16 MCU)
+            for block_y in 0..2 {
+                for block_x in 0..2 {
+                    let bx = mcu_x * 2 + block_x;
+                    let by = mcu_y * 2 + block_y;
+                    let block_offset = block_y * 2 + block_x;
+                    let aq_strength = aq_map.get(bx, by);
+
+                    let y_block =
+                        crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
+                    let y_dct = forward_dct_8x8(&y_block);
+
+                    // Y is the primary luma channel in XYB, dampen=1.0
+                    let y_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                        ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
+                    } else {
+                        quant::quantize_block(&y_dct, &y_quant.values)
+                    };
+                    natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
+                }
+            }
+
+            // Process 1 B block (from downsampled plane)
+            // Average AQ from the 4 corresponding full-res blocks
+            let b_aq_strength = {
+                let mut sum = 0.0f32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        sum += aq_map.get(bx, by);
+                    }
+                }
+                sum / 4.0
+            };
+
+            let b_block = crate::encode_simd::extract_block_xyb_simd(
+                b_plane, b_width, b_height, mcu_x, mcu_y,
+            );
+            let b_dct = forward_dct_8x8(&b_block);
+
+            // B is chroma-like (blue channel), is_luma=false
+            let b_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                ctx.quantize_block(&b_dct, &b_quant.values, b_aq_strength, 1.0, false)
+            } else {
+                quant::quantize_block(&b_dct, &b_quant.values)
+            };
+            natural_to_zigzag_into(&b_quant_coeffs, &mut b_blocks[mcu_idx]);
+        }
+    }
+
+    Ok((x_blocks, y_blocks, b_blocks))
 }
