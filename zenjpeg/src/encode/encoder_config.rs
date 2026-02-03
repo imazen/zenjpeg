@@ -154,7 +154,7 @@ impl EncoderConfig {
             #[cfg(feature = "parallel")]
             parallel: None,
             #[cfg(feature = "trellis")]
-            hybrid_config: super::trellis::HybridConfig::default(),
+            hybrid_config: super::trellis::HybridConfig::disabled(),
             deringing: true,
             allow_16bit_quant_tables: false,
             #[cfg(feature = "trellis")]
