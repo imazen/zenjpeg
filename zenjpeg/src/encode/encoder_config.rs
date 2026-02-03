@@ -452,7 +452,9 @@ impl EncoderConfig {
         // Map the bool to the appropriate QuantTableConfig variant,
         // preserving mozjpeg vs jpegli distinction.
         match &self.quant_table_config {
-            QuantTableConfig::Custom(_) => {} // Don't touch custom tables
+            QuantTableConfig::Custom(_) | QuantTableConfig::GlassaLowBpp(_) => {
+                // Don't touch custom or Glassa tables (Glassa always uses shared chroma)
+            }
             QuantTableConfig::MozjpegRobidoux => {
                 // MozjpegRobidoux is always shared chroma; can't separate
                 if enable {

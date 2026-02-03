@@ -105,6 +105,12 @@ pub(crate) mod mozjpeg_table_data;
 #[cfg(feature = "mozjpeg-tables")]
 pub mod mozjpeg_tables;
 
+/// Glassa low-BPP optimized quantization tables for extreme compression.
+///
+/// SA-optimized tables that outperform mozjpeg defaults at Q3-Q25 (low quality).
+/// Use for thumbnails, LQIP, and progressive placeholders.
+pub mod glassa_tables;
+
 /// mozjpeg-compatible API types.
 ///
 /// This module provides types that mirror mozjpeg-rs's API for easier migration
