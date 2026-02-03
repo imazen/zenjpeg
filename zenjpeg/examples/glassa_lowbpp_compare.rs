@@ -8,7 +8,7 @@
 use zenjpeg::encode::{
     ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, QuantTableConfig,
 };
-use zenjpeg_bench_utils::{ImageData, QualityMetrics, decode_jpeg_to_rgb};
+use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics};
 
 fn encode(config: &EncoderConfig, img: &ImageData) -> Option<Vec<u8>> {
     let mut enc = config
@@ -21,13 +21,17 @@ fn encode(config: &EncoderConfig, img: &ImageData) -> Option<Vec<u8>> {
 fn compute_ssim2(img: &ImageData, jpeg: &[u8]) -> Option<f64> {
     let original = zenjpeg_bench_utils::bytes_to_rgb(&img.pixels, img.width, img.height);
     let decoded = decode_jpeg_to_rgb(jpeg).ok()?;
-    Some(QualityMetrics::ssimulacra2(original.as_ref(), decoded.as_ref()))
+    Some(QualityMetrics::ssimulacra2(
+        original.as_ref(),
+        decoded.as_ref(),
+    ))
 }
 
 fn main() {
     // Find test images
-    let corpus_path = std::env::var("CORPUS_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/training".to_string());
+    let corpus_path = std::env::var("CORPUS_PATH").unwrap_or_else(|_| {
+        "/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/training".to_string()
+    });
 
     let images: Vec<_> = std::fs::read_dir(&corpus_path)
         .expect("Cannot find corpus; set CORPUS_PATH env var")
@@ -46,7 +50,10 @@ fn main() {
         return;
     }
 
-    println!("=== Glassa Low-BPP Quality Comparison ({} images, 4:2:0) ===\n", images.len());
+    println!(
+        "=== Glassa Low-BPP Quality Comparison ({} images, 4:2:0) ===\n",
+        images.len()
+    );
     println!("Glassa tables are optimized for QUALITY at a given file size, not minimum size.");
     println!("This compares SSIMULACRA2 (higher=better) at similar file sizes.\n");
 

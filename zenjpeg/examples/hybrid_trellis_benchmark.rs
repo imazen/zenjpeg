@@ -44,12 +44,8 @@ fn main() {
     let couplings = [0.0, 0.5, 1.0, 2.0, 4.0];
 
     println!("\n=== Rate-Distortion Comparison ===");
-    println!(
-        "   Q   Mode        Coupling   Size     BPP    DSSIM       SSIM2   Butteraugli"
-    );
-    println!(
-        "  ---  ----------  --------  ------  ------  --------  --------  -----------"
-    );
+    println!("   Q   Mode        Coupling   Size     BPP    DSSIM       SSIM2   Butteraugli");
+    println!("  ---  ----------  --------  ------  ------  --------  --------  -----------");
 
     for &quality in &qualities {
         // Baseline: jpegli (no trellis)
