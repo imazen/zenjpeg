@@ -536,6 +536,60 @@ impl EncoderConfig {
         self
     }
 
+    /// Use optimized quantization parameters.
+    ///
+    /// Applies CMA-ES butteraugli-optimized scaling parameters that improve
+    /// perceptual quality at most quality levels. Automatically adapts based
+    /// on quality and subsampling:
+    ///
+    /// - **High quality** (q70+ for 4:2:0, q50+ for 4:4:4): Uses optimized
+    ///   parameters providing +0.2 to +4.1 Pareto improvement
+    /// - **Low quality**: Falls back to default parameters to avoid losses
+    /// - **Other subsampling modes** (4:2:2, 4:4:0, XYB): No-op, keeps defaults
+    ///
+    /// # Example
+    /// ```
+    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .auto_optimize();
+    /// ```
+    #[must_use]
+    pub fn auto_optimize(mut self) -> Self {
+        use super::tuning::ScalingParams;
+        use crate::quant::{
+            OPTIMIZED_FREQUENCY_EXPONENT, OPTIMIZED_FREQUENCY_EXPONENT_444,
+            OPTIMIZED_GLOBAL_SCALE, OPTIMIZED_GLOBAL_SCALE_444,
+        };
+
+        let distance = self.quality.to_distance();
+
+        // Select optimized params if quality is high enough, per subsampling mode
+        let optimized_scaling = match self.color_mode {
+            ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::Quarter,
+            } if distance < 3.0 => Some(ScalingParams::Scaled {
+                global_scale: OPTIMIZED_GLOBAL_SCALE,
+                frequency_exponents: Box::new(OPTIMIZED_FREQUENCY_EXPONENT),
+            }),
+            ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::None,
+            } if distance < 5.0 => Some(ScalingParams::Scaled {
+                global_scale: OPTIMIZED_GLOBAL_SCALE_444,
+                frequency_exponents: Box::new(OPTIMIZED_FREQUENCY_EXPONENT_444),
+            }),
+            _ => None,
+        };
+
+        if let Some(scaling) = optimized_scaling {
+            let mut tables = EncodingTables::default_ycbcr();
+            tables.scaling = scaling;
+            self.tables = Some(Box::new(tables));
+        }
+
+        self
+    }
+
     /// Sets custom Huffman tables for single-pass encoding.
     ///
     /// Blocks are entropy-encoded immediately using these tables instead of
