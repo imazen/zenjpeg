@@ -1181,6 +1181,16 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
 
 ### Fixed Bugs (historical reference)
 
+- **Default EncoderConfig silently enabled hybrid trellis (2026-02-03)** -
+  `EncoderConfig::default_internal()` used `HybridConfig::default()` (enabled=true).
+  Commit ec3b52c added `else if config.hybrid_config.enabled` to byte_encoders.rs,
+  which activated hybrid trellis for all default configs. Caused:
+  - `test_trellis_disabled_matches_default` failure (default ≠ disabled)
+  - `cpp_parity_locked` Q5 failures (11-13% size regression at extreme low quality)
+  - `detect_image_type` doctest wrong example values (Mixed, not Screenshot)
+  Fix: Changed default to `HybridConfig::disabled()`. Users must explicitly opt in.
+  Files: `encode/encoder_config.rs:157`, `encode/trellis/hybrid.rs:115`
+
 - **Hybrid trellis improvements (2026-02-02)** - Multiple fixes and new features:
   1. Changed condition from `> 0` to `!= 0` to allow negative coupling (smaller files)
   2. Added `aq_trellis_multiplicative` for proportional scaling
