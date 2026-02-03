@@ -42,6 +42,27 @@
 //! let mozjpeg_tables = MozjpegTables::generate(85, QuantTablePreset::Robidoux);
 //! ```
 
+/// Core mozjpeg quantization table data (Robidoux arrays, quality scaling).
+///
+/// Always compiled. Used by `QuantTableSource::MozjpegDefault` to generate
+/// Robidoux-based quant tables without enabling the full `mozjpeg-tables` feature.
+pub(crate) mod robidoux;
+
+/// mozjpeg-compatible quantization table presets.
+///
+/// Provides access to the 9 quantization table variants used by mozjpeg
+/// (Robidoux, MSSIM, Klein, etc.) with the standard quality scaling formula.
+///
+/// Requires the `mozjpeg-tables` feature flag.
+#[cfg(feature = "mozjpeg-tables")]
+pub mod presets;
+
+/// Glassa low-BPP optimized quantization tables for extreme compression.
+///
+/// SA-optimized tables that outperform mozjpeg defaults at Q3-Q25 (low quality).
+/// Use for thumbnails, LQIP, and progressive placeholders.
+pub mod glassa;
+
 // Re-export base quantization matrices
 pub use crate::foundation::consts::{
     BASE_QUANT_MATRIX_STD as BASE_QUANT_STD, BASE_QUANT_MATRIX_XYB as BASE_QUANT_XYB,

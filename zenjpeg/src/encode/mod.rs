@@ -90,26 +90,6 @@ pub mod tables;
 /// "Table Optimization" section for research methodology.
 pub mod tuning;
 
-/// Core mozjpeg quantization table data (Robidoux arrays, quality scaling).
-///
-/// Always compiled. Used by `QuantTableSource::MozjpegDefault` to generate
-/// Robidoux-based quant tables without enabling the full `mozjpeg-tables` feature.
-pub(crate) mod mozjpeg_table_data;
-
-/// mozjpeg-compatible quantization table presets.
-///
-/// This module provides access to the 9 quantization table variants used by mozjpeg
-/// (Robidoux, MSSIM, Klein, etc.) with the standard quality scaling formula.
-///
-/// Requires the `mozjpeg-tables` feature flag.
-#[cfg(feature = "mozjpeg-tables")]
-pub mod mozjpeg_tables;
-
-/// Glassa low-BPP optimized quantization tables for extreme compression.
-///
-/// SA-optimized tables that outperform mozjpeg defaults at Q3-Q25 (low quality).
-/// Use for thumbnails, LQIP, and progressive placeholders.
-pub mod glassa_tables;
 
 /// mozjpeg-compatible API types.
 ///
@@ -150,7 +130,7 @@ pub use exif::{Exif, ExifFields, Orientation};
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
-pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
+pub use tables::presets::{MozjpegTables, QuantTablePreset};
 #[allow(unused_imports)] // Public API re-export
 pub use search::ExpertConfig;
 
