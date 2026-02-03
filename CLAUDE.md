@@ -1038,8 +1038,8 @@ penalizes texture loss less) but the "saved" bits don't reduce file size — the
 5. **Block-level rate control** — redistribute bits from textured to smooth blocks explicitly
 
 **Files:**
-- `hybrid/config.rs:266` — `compute_lambda_adjustment()` does `aq_strength * aq_lambda_scale`
-- `hybrid/core.rs:183` — `config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE`
+- `encode/trellis/hybrid.rs` — `compute_lambda_adjustment()` does `aq_strength * aq_lambda_scale`
+- `encode/trellis/hybrid.rs` — `config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE`
 - `examples/hybrid_trellis_benchmark.rs` — rate-distortion measurement tool
 
 ### ExpertConfig Parameter Sensitivity (2026-02-02)
@@ -1082,12 +1082,12 @@ AQ-coupled trellis by default because `aq_trellis_coupling=0` in all presets.
 
 | Parameter | Root cause | File:line |
 |-----------|-----------|-----------|
-| `trellis_use_lambda_weight_tbl` | Hardcoded flat 1/q² weights | `trellis/ac.rs:47-52` |
-| `trellis_num_loops` | Stored but never read (single-pass) | `trellis/ac.rs` (absent) |
-| `trellis_speed_mode` | Only search bounds, DP finds same optimum | `trellis/ac.rs:102-113` |
+| `trellis_use_lambda_weight_tbl` | Hardcoded flat 1/q² weights | `encode/trellis/ac.rs:47-52` |
+| `trellis_num_loops` | Stored but never read (single-pass) | `encode/trellis/ac.rs` (absent) |
+| `trellis_speed_mode` | Only search bounds, DP finds same optimum | `encode/trellis/ac.rs:102-113` |
 | `aq_trellis_coupling` | **FIXED**: Now affects output (larger files, better DSSIM) | `streaming.rs:263` |
-| All `aq_trellis_*` fields | **FIXED**: Now affect lambda adjustment | `hybrid/config.rs:266` |
-| `quality` (Exact tables) | Tables pre-scaled; zero-bias all-zeros | `mozjpeg_table_data.rs:99-106` |
+| All `aq_trellis_*` fields | **FIXED**: Now affect lambda adjustment | `encode/trellis/hybrid.rs` |
+| `quality` (Exact tables) | Tables pre-scaled; zero-bias all-zeros | `encode/tables/robidoux.rs:99-106` |
 | `allow_16bit_quant_tables` | No effect at Q85+ (values ≤ 255) | — |
 | `deringing` | Only triggers on saturated (255) pixels | `deringing.rs:131-135` |
 
@@ -1123,7 +1123,7 @@ Run: `cargo run --release --example hybrid_trellis_benchmark`
 
 **Auto-detection (2026-02-02):** Use AQ statistics to automatically choose settings:
 ```rust
-use zenjpeg::hybrid::config::{adaptive_config, detect_image_type, ImageType};
+use zenjpeg::encode::trellis::{adaptive_config, detect_image_type, ImageType};
 use zenjpeg::quant::aq::compute_aq_strength_map;
 
 // After computing AQ map...
@@ -1164,7 +1164,7 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
 ## Known Bugs
 
 1. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
-   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`trellis/ac.rs:52`)
+   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`encode/trellis/ac.rs:52`)
    - `trellis_num_loops`: Stored but never read — single-pass only
    - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
    - EOB optimization: deleted (was broken, destroyed quality). See commit history.
@@ -1193,7 +1193,7 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
   Results with `coupling=-8.0, max_adjustment=1.0` (safe):
   - flower_small: -4% size, +7% DSSIM
   - apple.com: -2.5% size, +5.9% DSSIM (protected from 552% degradation!)
-  Files: `encode/search.rs`, `hybrid/config.rs`, `examples/hybrid_*.rs`
+  Files: `encode/search.rs`, `encode/trellis/hybrid.rs`, `examples/hybrid_*.rs`
 
 - **XYB file size gap (2026-02-01)** - XYB baseline was 2-3% larger than C++, but this
   was due to Rust getting 2x more progressive savings (5.7-7.3% vs C++'s 3.1-3.6%).
@@ -1678,7 +1678,8 @@ use butteraugli::compute_butteraugli;
 
 ```toml
 [features]
-default = ["std", "yuv", "archmage-simd"]
+default = ["std", "yuv", "archmage-simd", "trellis"]
+trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
 archmage-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]  # Token-based SIMD (~10-20% faster)
