@@ -432,8 +432,7 @@ impl EncodingTables {
         distance: f32,
         is_420: bool,
     ) -> crate::quant::QuantTable {
-        use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
-        use crate::quant::{create_quant_table, DIST_THRESHOLD};
+        use crate::quant::create_quant_table;
 
         let c = component.min(2);
         let base = self.quant.get(c);
@@ -450,42 +449,58 @@ impl EncodingTables {
             ScalingParams::Scaled {
                 global_scale,
                 frequency_exponents,
-            } => {
-                let mut values = [0u16; 64];
-                let mut scale_factor = *global_scale;
-
-                // Apply 4:2:0 global quality compensation for YCbCr mode
-                if is_420 {
-                    scale_factor *= GLOBAL_SCALE_420;
-                }
-
-                // Check if we need per-frequency chroma rescale for 4:2:0
-                let is_chroma_420 = is_420 && component > 0;
-
-                for i in 0..64 {
-                    // Apply per-frequency non-linear scaling
-                    let freq_scale = if distance < DIST_THRESHOLD {
-                        distance
-                    } else {
-                        let exp = frequency_exponents[i];
-                        let mul = DIST_THRESHOLD.powf(1.0 - exp);
-                        (0.5 * distance).max(mul * distance.powf(exp))
-                    };
-
-                    let mut scale = freq_scale * scale_factor;
-
-                    // Apply additional per-frequency rescale for chroma in 4:2:0 mode
-                    if is_chroma_420 {
-                        scale *= K420_RESCALE[i];
-                    }
-
-                    let q = (base[i] * scale).round();
-                    values[i] = q as u16;
-                }
-
-                create_quant_table(values, true)
-            }
+            } => Self::compute_scaled_quant(
+                base,
+                *global_scale,
+                frequency_exponents,
+                distance,
+                is_420,
+                component,
+            ),
         }
+    }
+
+    /// Scaling logic for the Scaled variant.
+    fn compute_scaled_quant(
+        base: &[f32; 64],
+        global_scale: f32,
+        frequency_exponents: &[f32; 64],
+        distance: f32,
+        is_420: bool,
+        component: usize,
+    ) -> crate::quant::QuantTable {
+        use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
+        use crate::quant::{create_quant_table, DIST_THRESHOLD};
+
+        let mut values = [0u16; 64];
+        let mut scale_factor = global_scale;
+
+        if is_420 {
+            scale_factor *= GLOBAL_SCALE_420;
+        }
+
+        let is_chroma_420 = is_420 && component > 0;
+
+        for i in 0..64 {
+            let freq_scale = if distance < DIST_THRESHOLD {
+                distance
+            } else {
+                let exp = frequency_exponents[i];
+                let mul = DIST_THRESHOLD.powf(1.0 - exp);
+                (0.5 * distance).max(mul * distance.powf(exp))
+            };
+
+            let mut scale = freq_scale * scale_factor;
+
+            if is_chroma_420 {
+                scale *= K420_RESCALE[i];
+            }
+
+            let q = (base[i] * scale).round();
+            values[i] = q as u16;
+        }
+
+        create_quant_table(values, true)
     }
 
     /// Generate quantization tables for all three components.
@@ -747,5 +762,68 @@ mod tests {
         assert_eq!(x, &tables.quant.c0);
         assert_eq!(luma, &tables.quant.c1);
         assert_eq!(b, &tables.quant.c2);
+    }
+
+    #[test]
+    fn test_optimized_scaling_params() {
+        use crate::quant::{OPTIMIZED_FREQUENCY_EXPONENT, OPTIMIZED_GLOBAL_SCALE};
+
+        let optimized = ScalingParams::Scaled {
+            global_scale: OPTIMIZED_GLOBAL_SCALE,
+            frequency_exponents: Box::new(OPTIMIZED_FREQUENCY_EXPONENT),
+        };
+        let default = ScalingParams::default_ycbcr();
+
+        match (&optimized, &default) {
+            (
+                ScalingParams::Scaled {
+                    global_scale: opt_scale,
+                    ..
+                },
+                ScalingParams::Scaled {
+                    global_scale: def_scale,
+                    ..
+                },
+            ) => {
+                assert!(
+                    *opt_scale > *def_scale * 2.5,
+                    "Optimized scale ({}) should be > 2.5x default ({})",
+                    opt_scale,
+                    def_scale
+                );
+            }
+            _ => panic!("Expected Scaled variants"),
+        }
+    }
+
+    #[test]
+    fn test_optimized_generates_valid_quant_tables() {
+        use crate::quant::{OPTIMIZED_FREQUENCY_EXPONENT, OPTIMIZED_GLOBAL_SCALE};
+
+        let mut tables = EncodingTables::default_ycbcr();
+        tables.scaling = ScalingParams::Scaled {
+            global_scale: OPTIMIZED_GLOBAL_SCALE,
+            frequency_exponents: Box::new(OPTIMIZED_FREQUENCY_EXPONENT),
+        };
+
+        for q in [50, 75, 90] {
+            let distance = (100.0 - q as f32) / 10.0;
+            let (y, cb, cr) = tables.generate_quant_tables(distance, false);
+
+            assert!(y.values.iter().all(|&v| v > 0), "Y quant at q{q} has zeros");
+            assert!(
+                cb.values.iter().all(|&v| v > 0),
+                "Cb quant at q{q} has zeros"
+            );
+            assert!(
+                cr.values.iter().all(|&v| v > 0),
+                "Cr quant at q{q} has zeros"
+            );
+            assert!(
+                y.values[0] < 1000,
+                "Y DC quant at q{q} too high: {}",
+                y.values[0]
+            );
+        }
     }
 }

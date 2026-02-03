@@ -37,6 +37,43 @@ pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
     1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
 ];
 
+/// Optimized global scale for butteraugli-targeted encoding (4:2:0).
+///
+/// CMA-ES optimized for best butteraugli Pareto distance.
+/// Trained on low-bpp regime (q30/40/50) which generalizes well across q25-99.
+/// Holdout: +0.46 mean Pareto, 76% wins across q1-100.
+pub(crate) const OPTIMIZED_GLOBAL_SCALE: f32 = 5.608994;
+
+/// Optimized per-frequency exponents for butteraugli-targeted encoding (4:2:0).
+#[rustfmt::skip]
+pub(crate) const OPTIMIZED_FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
+    0.9290, 0.5055, 0.4091, 0.0500, 1.3343, 0.0500, 0.0500, 0.0500,
+    0.5531, 0.0500, 0.0500, 0.0500, 0.0500, 1.0335, 0.0500, 1.6398,
+    0.0895, 0.0500, 0.0500, 0.0500, 2.6858, 0.7470, 3.0000, 2.7968,
+    0.6324, 0.8227, 0.0500, 0.5614, 2.8141, 0.7772, 2.7403, 1.1628,
+    0.9265, 0.6416, 0.6685, 1.7116, 1.2055, 0.0500, 0.0500, 0.0500,
+    3.0000, 1.7208, 0.2617, 1.5779, 2.7802, 0.1632, 0.1763, 0.0500,
+    2.7568, 1.1736, 3.0000, 0.0500, 3.0000, 1.2260, 0.1728, 2.4492,
+    1.4469, 1.8568, 3.0000, 1.0191, 3.0000, 2.2444, 2.5550, 1.2293,
+];
+
+/// Optimized global scale for 4:4:4 subsampling (butteraugli-targeted).
+/// Holdout: +0.39 mean Pareto, 72% wins across q1-100.
+pub(crate) const OPTIMIZED_GLOBAL_SCALE_444: f32 = 5.101017;
+
+/// Optimized per-frequency exponents for 4:4:4 subsampling.
+#[rustfmt::skip]
+pub(crate) const OPTIMIZED_FREQUENCY_EXPONENT_444: [f32; DCT_BLOCK_SIZE] = [
+    0.6889, 0.0500, 0.0500, 0.0500, 0.5657, 1.0443, 1.0567, 0.0500,
+    0.0500, 0.0500, 0.0500, 0.0500, 0.6979, 3.0000, 0.0500, 3.0000,
+    0.0500, 0.0500, 0.0500, 0.0500, 3.0000, 1.0125, 3.0000, 3.0000,
+    0.0500, 0.0500, 0.7163, 0.0500, 3.0000, 0.1199, 0.0500, 0.6991,
+    0.6625, 1.0193, 2.2532, 0.1774, 0.0500, 0.9991, 0.0500, 0.0563,
+    3.0000, 0.8432, 0.0500, 0.0500, 0.0500, 3.0000, 3.0000, 0.0500,
+    2.9523, 0.0500, 3.0000, 0.0500, 3.0000, 0.4255, 0.0500, 2.5996,
+    2.5691, 3.0000, 3.0000, 0.0500, 2.1383, 1.7501, 3.0000, 2.7979,
+];
+
 /// Distance threshold where non-linear scaling kicks in.
 pub const DIST_THRESHOLD: f32 = 1.5;
 
