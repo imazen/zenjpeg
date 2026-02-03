@@ -347,8 +347,7 @@ fn quantize_chroma_blocks(
             quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength)
         };
         #[cfg(not(feature = "trellis"))]
-        let zigzag =
-            quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength);
+        let zigzag = quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength);
 
         output.push(zigzag);
     }

@@ -3,8 +3,8 @@
 
 use enough::Unstoppable;
 use std::path::Path;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::encode::trellis::adaptive_config;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
 
 fn main() {

@@ -11,12 +11,12 @@
 //! - `encode/hybrid.rs` - HybridQuantContext, encoder integration
 
 use super::compat::TrellisConfig;
-use crate::foundation::consts::DCT_BLOCK_SIZE;
 use super::{trellis_quantize_block, RateTable};
 use crate::encode::config::ComputedConfig;
 use crate::encode::dct::forward_dct_8x8;
 use crate::encode::natural_to_zigzag_into;
 use crate::error::Result;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
@@ -978,8 +978,6 @@ mod tests {
 // Core hybrid functions (from hybrid/core.rs)
 // ============================================================================
 
-
-
 /// Standard rate tables for trellis rate estimation.
 ///
 /// Trellis quantization needs Huffman code lengths to estimate bit costs.
@@ -1197,7 +1195,6 @@ pub fn hybrid_quantize_block_simple(
 // ============================================================================
 // Encoder integration (from encode/hybrid.rs)
 // ============================================================================
-
 
 // ============================================================================
 // Setup Helpers

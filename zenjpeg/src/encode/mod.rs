@@ -89,7 +89,6 @@ pub mod tables;
 /// "Table Optimization" section for research methodology.
 pub mod tuning;
 
-
 /// Trellis and hybrid quantization (mozjpeg-style rate-distortion optimization).
 ///
 /// Consolidates all trellis/hybrid code into one deletable unit:
@@ -131,12 +130,12 @@ pub use enough::Stop;
 pub use exif::{Exif, ExifFields, Orientation};
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
-#[cfg(feature = "mozjpeg-tables")]
-#[allow(unused_imports)] // Public API re-exports
-pub use tables::presets::{MozjpegTables, QuantTablePreset};
 #[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use search::ExpertConfig;
+#[cfg(feature = "mozjpeg-tables")]
+#[allow(unused_imports)] // Public API re-exports
+pub use tables::presets::{MozjpegTables, QuantTablePreset};
 
 use crate::error::Result;
 
