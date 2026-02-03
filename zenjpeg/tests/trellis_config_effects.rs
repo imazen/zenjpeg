@@ -1,6 +1,6 @@
 //! Tests verifying that TrellisConfig actually affects encoder output.
 
-use zenjpeg::encode::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
+use zenjpeg::encode::trellis::{TrellisConfig, TrellisSpeedMode};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a simple test image (gradient with some texture)

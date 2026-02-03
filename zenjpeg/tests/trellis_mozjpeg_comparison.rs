@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 // zenjpeg internalized trellis
-use zenjpeg::encode::mozjpeg_compat::TrellisConfig;
-use zenjpeg::trellis::{trellis_quantize_block, RateTable};
+use zenjpeg::encode::trellis::TrellisConfig;
+use zenjpeg::encode::trellis::{trellis_quantize_block, RateTable};
 
 // mozjpeg-rs trellis (the original we ported from)
 use mozjpeg_rs::consts::{

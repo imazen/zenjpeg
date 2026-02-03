@@ -3,7 +3,7 @@
 use enough::Unstoppable;
 use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
-use zenjpeg::hybrid::config::HybridConfig;
+use zenjpeg::encode::trellis::HybridConfig;
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
 
 fn encode(config: &EncoderConfig, img: &ImageData) -> Option<Vec<u8>> {
