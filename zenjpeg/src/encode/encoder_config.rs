@@ -625,34 +625,44 @@ impl EncoderConfig {
         self.trellis.as_ref()
     }
 
-    /// Apply expert configuration for fine-grained control.
+    /// Apply expert configuration overlay.
     ///
-    /// `ExpertConfig` provides access to all encoder parameters including:
-    /// - Quantization tables and zero-bias settings
-    /// - Trellis quantization (standalone or AQ-coupled hybrid)
-    /// - Lambda scaling for rate-distortion optimization
-    /// - All encoder flags (deringing, AQ, 16-bit tables, etc.)
-    ///
-    /// Use [`ExpertConfig::from_preset()`] for preset-based configuration,
-    /// or [`ExpertConfig::default_ycbcr()`] as a starting point for custom tuning.
+    /// Customizes quantization tables and trellis/hybrid settings on top of
+    /// the current configuration. Only specified fields are overridden.
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ExpertConfig, OptimizationPreset, ChromaSubsampling};
-    ///
-    /// // Start from a preset and customize
-    /// let mut expert = ExpertConfig::from_preset(OptimizationPreset::HybridProgressive, 85.0);
-    /// expert.trellis_lambda_log_scale1 = 14.5;  // Adjust lambda
-    /// expert.aq_trellis_coupling = -4.0;        // Negative coupling for smaller files
+    /// use zenjpeg::encode::{EncoderConfig, ExpertConfig, QuantTableConfig, ChromaSubsampling};
+    /// use zenjpeg::encode::trellis::TrellisConfig;
     ///
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .expert(expert);
+    ///     .expert(ExpertConfig::default()
+    ///         .tables(QuantTableConfig::MozjpegRobidoux)
+    ///         .trellis(TrellisConfig::default()));
     /// ```
     #[cfg(feature = "trellis")]
     #[must_use]
-    pub fn expert(self, expert: super::search::ExpertConfig) -> Self {
-        expert.to_encoder_config(self.color_mode)
+    pub fn expert(mut self, expert: super::encoder_types::ExpertConfig) -> Self {
+        // Apply tables if specified
+        if let Some(tables) = expert.tables {
+            self.quant_table_config = tables;
+        }
+
+        // Apply trellis/hybrid - hybrid takes priority
+        if let Some(ref hybrid) = expert.hybrid {
+            if hybrid.enabled {
+                self.hybrid_config = *hybrid;
+                self.trellis = None;
+            }
+        }
+        if expert.hybrid.is_none() || !expert.hybrid.as_ref().is_some_and(|h| h.enabled) {
+            if let Some(trellis) = expert.trellis {
+                self.trellis = Some(trellis);
+            }
+        }
+
+        self
     }
 
     // === ICC Profile ===
