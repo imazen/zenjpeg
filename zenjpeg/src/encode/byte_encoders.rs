@@ -100,7 +100,7 @@ impl BytesEncoder {
         builder =
             builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
-        // Decompose ScanMode into builder's individual fields
+        // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
@@ -942,7 +942,7 @@ impl YCbCrPlanarEncoder {
         builder =
             builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
-        // Decompose ScanMode into builder's individual fields
+        // Decompose ProgressiveScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
