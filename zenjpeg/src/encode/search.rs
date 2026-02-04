@@ -66,7 +66,7 @@
 use super::encoder_config::EncoderConfig;
 use super::encoder_types::{
     ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset, Quality, QuantTableConfig,
-    ScanMode,
+    ProgressiveScanMode,
 };
 use super::trellis::HybridConfig;
 use super::trellis::{TrellisConfig, TrellisSpeedMode};
@@ -324,7 +324,7 @@ pub struct ExpertConfig {
     /// - `ProgressiveSearch`: -2.0% (tries 64 candidate scan configs)
     ///
     /// Progressive modes automatically enable optimized Huffman tables.
-    pub scan_mode: ScanMode,
+    pub scan_mode: ProgressiveScanMode,
 
     /// Enable overshoot deringing.
     ///
@@ -415,7 +415,7 @@ impl ExpertConfig {
             aq_trellis_multiplicative: false,
             aq_trellis_max_adjustment: 0.0,
 
-            scan_mode: ScanMode::Progressive,
+            scan_mode: ProgressiveScanMode::Progressive,
             deringing: true,
             allow_16bit_quant_tables: false,
             quality,
@@ -477,10 +477,10 @@ impl ExpertConfig {
 
         // Scan mode: baseline, progressive, mozjpeg script, or search
         let scan_mode = match preset {
-            JpegliBaseline | MozjpegBaseline | HybridBaseline => ScanMode::Baseline,
-            JpegliProgressive | HybridProgressive => ScanMode::Progressive,
-            MozjpegProgressive => ScanMode::ProgressiveMozjpeg,
-            MozjpegMaxCompression | HybridMaxCompression => ScanMode::ProgressiveSearch,
+            JpegliBaseline | MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
+            JpegliProgressive | HybridProgressive => ProgressiveScanMode::Progressive,
+            MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
+            MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
 
         // Deringing: enabled for all except mozjpeg baseline/progressive
@@ -682,7 +682,7 @@ mod tests {
         let config = ExpertConfig::default_ycbcr(90.0);
         assert!(!config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Progressive);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
         assert!(!config.allow_16bit_quant_tables);
         // Default uses jpegli scaling, not exact
         assert!(config.uses_quality_scaling());
@@ -693,7 +693,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
         assert!(!config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(config.uses_quality_scaling());
     }
 
@@ -702,7 +702,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::JpegliProgressive, 85.0);
         assert!(!config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Progressive);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
     }
 
     #[test]
@@ -710,7 +710,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegBaseline, 85.0);
         assert!(config.trellis_enabled);
         assert!(!config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert_eq!(config.trellis_speed_mode, TrellisSpeedMode::Thorough);
         // Mozjpeg uses exact (pre-scaled) tables
         assert!(!config.uses_quality_scaling());
@@ -721,7 +721,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegProgressive, 85.0);
         assert!(config.trellis_enabled);
         assert!(!config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveMozjpeg);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
     }
 
     #[test]
@@ -729,7 +729,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegMaxCompression, 85.0);
         assert!(config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
         assert_eq!(config.trellis_speed_mode, TrellisSpeedMode::Thorough);
     }
 
@@ -738,7 +738,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::HybridBaseline, 85.0);
         assert!(config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert_eq!(config.trellis_speed_mode, TrellisSpeedMode::Adaptive);
         // Hybrid starts uncoupled
         assert_eq!(config.aq_trellis_coupling, 0.0);
@@ -749,7 +749,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::HybridProgressive, 85.0);
         assert!(config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::Progressive);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
         assert_eq!(config.trellis_speed_mode, TrellisSpeedMode::Adaptive);
     }
 
@@ -758,7 +758,7 @@ mod tests {
         let config = ExpertConfig::from_preset(OptimizationPreset::HybridMaxCompression, 85.0);
         assert!(config.trellis_enabled);
         assert!(config.deringing);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
         assert_eq!(config.trellis_speed_mode, TrellisSpeedMode::Thorough);
     }
 
@@ -772,7 +772,7 @@ mod tests {
         assert!(enc.trellis.is_none());
         assert!(!enc.hybrid_config.enabled);
         assert!(enc.deringing);
-        assert_eq!(enc.scan_mode, ScanMode::Progressive);
+        assert_eq!(enc.scan_mode, ProgressiveScanMode::Progressive);
     }
 
     #[test]
@@ -949,7 +949,7 @@ mod tests {
     #[test]
     fn test_scan_mode_progressive_enables_optimize() {
         let mut expert = ExpertConfig::default_ycbcr(85.0);
-        expert.scan_mode = ScanMode::ProgressiveSearch;
+        expert.scan_mode = ProgressiveScanMode::ProgressiveSearch;
 
         let enc = expert.to_encoder_config(ColorMode::YCbCr {
             subsampling: ChromaSubsampling::Quarter,
@@ -1151,17 +1151,17 @@ mod tests {
 
         println!("\n--- Scan mode ---");
         for mode in [
-            ScanMode::Baseline,
-            ScanMode::Progressive,
-            ScanMode::ProgressiveMozjpeg,
-            ScanMode::ProgressiveSearch,
+            ProgressiveScanMode::Baseline,
+            ProgressiveScanMode::Progressive,
+            ProgressiveScanMode::ProgressiveMozjpeg,
+            ProgressiveScanMode::ProgressiveSearch,
         ] {
             let mut c = base.clone();
             c.scan_mode = mode;
             test_field(
                 Box::leak(format!("scan_mode={:?}", mode).into_boxed_str()),
                 &c,
-                if mode == ScanMode::Baseline {
+                if mode == ProgressiveScanMode::Baseline {
                     "(default for this preset)"
                 } else {
                     ""

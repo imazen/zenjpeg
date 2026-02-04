@@ -3,7 +3,7 @@
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
-    QuantTableConfig, QuantTableSource, ScanMode, ScanStrategy, XybSubsampling,
+    QuantTableConfig, QuantTableSource, ProgressiveScanMode, ScanStrategy, XybSubsampling,
 };
 #[cfg(feature = "trellis")]
 use super::trellis::TrellisConfig;
@@ -19,7 +19,7 @@ pub struct EncoderConfig {
     pub(crate) quant_table_config: QuantTableConfig,
     /// Scan mode (baseline vs progressive, with script strategy).
     /// Replaces the old `progressive` + `scan_strategy` pair.
-    pub(crate) scan_mode: ScanMode,
+    pub(crate) scan_mode: ProgressiveScanMode,
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
@@ -190,7 +190,7 @@ impl EncoderConfig {
         Self {
             quality: Quality::default(),
             quant_table_config: QuantTableConfig::default(), // Jpegli, 3 tables
-            scan_mode: ScanMode::Progressive,                // Progressive gives 3-7% smaller
+            scan_mode: ProgressiveScanMode::Progressive,                // Progressive gives 3-7% smaller
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
@@ -240,13 +240,13 @@ impl EncoderConfig {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, ScanMode};
+    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, ProgressiveScanMode};
     ///
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .scan_mode(ScanMode::ProgressiveSearch);
+    ///     .scan_mode(ProgressiveScanMode::ProgressiveSearch);
     /// ```
     #[must_use]
-    pub fn scan_mode(mut self, mode: ScanMode) -> Self {
+    pub fn scan_mode(mut self, mode: ProgressiveScanMode) -> Self {
         self.scan_mode = mode;
         if mode.is_progressive() {
             self.huffman = HuffmanStrategy::Optimize;
@@ -258,8 +258,8 @@ impl EncoderConfig {
     ///
     /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
     ///
-    /// - `true` → `ScanMode::Progressive` (jpegli default script)
-    /// - `false` → `ScanMode::Baseline`
+    /// - `true` → `ProgressiveScanMode::Progressive` (jpegli default script)
+    /// - `false` → `ProgressiveScanMode::Baseline`
     ///
     /// If the current mode is already a progressive variant (e.g. `ProgressiveSearch`),
     /// calling `.progressive(true)` preserves it. Calling `.progressive(false)` always
@@ -269,11 +269,11 @@ impl EncoderConfig {
         if enable {
             // Preserve existing progressive variant if already progressive
             if !self.scan_mode.is_progressive() {
-                self.scan_mode = ScanMode::Progressive;
+                self.scan_mode = ProgressiveScanMode::Progressive;
             }
             self.huffman = HuffmanStrategy::Optimize;
         } else {
-            self.scan_mode = ScanMode::Baseline;
+            self.scan_mode = ProgressiveScanMode::Baseline;
         }
         self
     }
@@ -289,13 +289,13 @@ impl EncoderConfig {
         self.scan_mode = match strategy {
             ScanStrategy::Default => {
                 if self.scan_mode.is_progressive() {
-                    ScanMode::Progressive
+                    ProgressiveScanMode::Progressive
                 } else {
-                    ScanMode::Baseline
+                    ProgressiveScanMode::Baseline
                 }
             }
-            ScanStrategy::Search => ScanMode::ProgressiveSearch,
-            ScanStrategy::Mozjpeg => ScanMode::ProgressiveMozjpeg,
+            ScanStrategy::Search => ProgressiveScanMode::ProgressiveSearch,
+            ScanStrategy::Mozjpeg => ProgressiveScanMode::ProgressiveMozjpeg,
         };
         if self.scan_mode.is_progressive() {
             self.huffman = HuffmanStrategy::Optimize;
@@ -384,10 +384,10 @@ impl EncoderConfig {
 
         // Scan mode: bundles progressive + script strategy
         let scan_mode = match preset {
-            JpegliBaseline | MozjpegBaseline | HybridBaseline => ScanMode::Baseline,
-            JpegliProgressive | HybridProgressive => ScanMode::Progressive,
-            MozjpegProgressive => ScanMode::ProgressiveMozjpeg,
-            MozjpegMaxCompression | HybridMaxCompression => ScanMode::ProgressiveSearch,
+            JpegliBaseline | MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
+            JpegliProgressive | HybridProgressive => ProgressiveScanMode::Progressive,
+            MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
+            MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
 
         // Quant table config: bundles source + chroma layout
@@ -1115,7 +1115,7 @@ impl EncoderConfig {
 
     /// Get the current scan mode.
     #[must_use]
-    pub fn get_scan_mode(&self) -> ScanMode {
+    pub fn get_scan_mode(&self) -> ProgressiveScanMode {
         self.scan_mode
     }
 
@@ -1331,7 +1331,7 @@ mod tests {
     #[test]
     fn test_validation_progressive_huffman() {
         let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
-        config.scan_mode = ScanMode::Progressive;
+        config.scan_mode = ProgressiveScanMode::Progressive;
         config.huffman = HuffmanStrategy::Fixed;
 
         assert!(config.validate().is_err());
@@ -1399,10 +1399,10 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_jpegli_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::JpegliBaseline);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(config.deringing);
         assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
         #[cfg(feature = "trellis")]
@@ -1413,10 +1413,10 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegBaseline);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
         assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
@@ -1428,10 +1428,10 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveMozjpeg);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
         assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
@@ -1443,10 +1443,10 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_max() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegMaxCompression);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
         assert!(config.deringing); // JCP_MAX_COMPRESSION enables overshoot
         assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
@@ -1458,10 +1458,10 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_hybrid_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::HybridProgressive);
-        assert_eq!(config.scan_mode, ScanMode::Progressive);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
         assert!(config.deringing);
         assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
         assert!(config.trellis.is_some());
@@ -1484,12 +1484,12 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_overridable() {
-        use crate::encode::encoder_types::{OptimizationPreset, ScanMode};
+        use crate::encode::encoder_types::{OptimizationPreset, ProgressiveScanMode};
         // Apply preset then override progressive
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive)
             .progressive(false);
-        assert_eq!(config.scan_mode, ScanMode::Baseline);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         // Trellis should still be set from the preset
         #[cfg(feature = "trellis")]
         assert!(config.trellis.is_some());
@@ -1497,12 +1497,12 @@ mod tests {
 
     #[test]
     fn test_scan_mode_progressive_preserves_variant() {
-        use crate::encode::encoder_types::ScanMode;
+        use crate::encode::encoder_types::ProgressiveScanMode;
         // ProgressiveSearch should be preserved when calling .progressive(true)
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .scan_mode(ScanMode::ProgressiveSearch)
+            .scan_mode(ProgressiveScanMode::ProgressiveSearch)
             .progressive(true);
-        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
     }
 
     #[test]

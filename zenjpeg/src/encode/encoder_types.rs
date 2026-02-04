@@ -631,7 +631,7 @@ mod tests {
 
 /// Preset optimization modes for the encoder.
 ///
-/// Each preset configures [`ScanMode`], [`QuantTableConfig`], trellis,
+/// Each preset configures [`ProgressiveScanMode`], [`QuantTableConfig`], trellis,
 /// deringing, and Huffman strategy to match a specific encoder profile.
 /// The three lineages are:
 ///
@@ -1111,7 +1111,7 @@ impl QuantTableConfig {
 /// | `ProgressiveSearch` | Yes | search (64 candidates) | Best compression, ~2x slower |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ScanMode {
+pub enum ProgressiveScanMode {
     /// Baseline (sequential) JPEG.
     ///
     /// Single scan containing all components. No progressive refinement.
@@ -1143,7 +1143,7 @@ pub enum ScanMode {
     ProgressiveSearch,
 }
 
-impl ScanMode {
+impl ProgressiveScanMode {
     /// Returns true if this mode uses progressive encoding.
     #[must_use]
     pub const fn is_progressive(self) -> bool {
