@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use zenjpeg::encode::{
-    ChromaSubsampling, ColorMode, ExpertConfig, OptimizationPreset, PixelLayout,
+    ChromaSubsampling, ColorMode, SearchConfig, OptimizationPreset, PixelLayout,
 };
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
@@ -336,7 +336,7 @@ fn main() {
     // No-trellis presets (no lambda sweep)
     for (preset, name) in &NO_TRELLIS_PRESETS {
         for &q in quality_levels {
-            let expert = ExpertConfig::from_preset(*preset, q);
+            let expert = SearchConfig::from_preset(*preset, q);
             config_list.push((name.to_string(), expert));
         }
     }
@@ -345,7 +345,7 @@ fn main() {
     for (preset, name) in &TRELLIS_PRESETS {
         for &lam in &LAMBDA_VALUES {
             for &q in quality_levels {
-                let mut expert = ExpertConfig::from_preset(*preset, q);
+                let mut expert = SearchConfig::from_preset(*preset, q);
                 expert.trellis_lambda_log_scale1 = lam;
                 config_list.push((format!("{}-L{:.2}", name, lam), expert));
             }
