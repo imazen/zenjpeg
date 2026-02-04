@@ -1262,7 +1262,7 @@ fn sum_2x2_blocks_simd(
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub(crate) mod archmage_impl {
-    use archmage::{arcane, X64V3Token};
+    use archmage::{arcane, SimdToken, X64V3Token, X64V4Token};
     use core::arch::x86_64::*;
 
     use super::{
@@ -1477,6 +1477,217 @@ pub(crate) mod archmage_impl {
             let masked = super::masking_sqrt_scalar(diff_sq);
 
             output[x] += masked;
+        }
+    }
+
+    // ========================================================================
+    // AVX-512 pre_erosion - processes 16 pixels per iteration (2x wider)
+    // ========================================================================
+
+    /// AVX-512 inner loop - processes 16 pixels per iteration.
+    /// Uses X64V4Token to prove AVX-512F capability.
+    #[arcane]
+    #[inline(always)]
+    fn mage_pre_erosion_row_padded_inner_v4(
+        _token: X64V4Token,
+        row: &[f32],
+        row_above: &[f32],
+        row_below: &[f32],
+        output: &mut [f32],
+        width: usize,
+    ) {
+        let chunks16 = width / 16;
+
+        // Broadcast constants once outside the loop
+        let quarter = _mm512_set1_ps(0.25);
+        let gamma_offset = _mm512_set1_ps(GAMMA_OFFSET);
+        let limit = _mm512_set1_ps(LIMIT);
+        let k_num_mul = _mm512_set1_ps(K_NUM_MUL_RATIO);
+        let k_num_off = _mm512_set1_ps(K_NUM_OFFSET_RATIO);
+        let k_den_mul = _mm512_set1_ps(K_DEN_MUL_RATIO);
+        let k_voff = _mm512_set1_ps(K_VOFFSET_RATIO);
+        let k_mul_sqrt = _mm512_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
+        let k_offset = _mm512_set1_ps(K_MASKING_LOG_OFFSET);
+        let zero = _mm512_setzero_ps();
+
+        for chunk in 0..chunks16 {
+            let x = chunk * 16;
+            let buf_x = x + 1; // Data offset due to padding
+
+            // Load 16 pixels at once (unaligned loads)
+            let pixels = _mm512_loadu_ps(row.as_ptr().add(buf_x));
+            let left = _mm512_loadu_ps(row.as_ptr().add(buf_x - 1));
+            let right = _mm512_loadu_ps(row.as_ptr().add(buf_x + 1));
+            let top = _mm512_loadu_ps(row_above.as_ptr().add(buf_x));
+            let bottom = _mm512_loadu_ps(row_below.as_ptr().add(buf_x));
+
+            // base = 0.25 * (left + right + top + bottom)
+            let sum_lr = _mm512_add_ps(left, right);
+            let sum_tb = _mm512_add_ps(top, bottom);
+            let sum_all = _mm512_add_ps(sum_lr, sum_tb);
+            let base = _mm512_mul_ps(quarter, sum_all);
+
+            // ratio = ratio_of_derivatives(pixel + gamma_offset)
+            let pixel_gamma = _mm512_add_ps(pixels, gamma_offset);
+            let v = _mm512_max_ps(pixel_gamma, zero);
+            let v2 = _mm512_mul_ps(v, v);
+            let num = _mm512_fmadd_ps(v2, k_num_mul, k_num_off);
+            let v_scaled = _mm512_mul_ps(v, k_den_mul);
+            let den = _mm512_fmadd_ps(v_scaled, v2, k_voff);
+            let ratio = _mm512_div_ps(den, num);
+
+            // diff = ratio * (pixel - base)
+            let pixel_minus_base = _mm512_sub_ps(pixels, base);
+            let diff = _mm512_mul_ps(ratio, pixel_minus_base);
+
+            // diff_sq = min(diff * diff, LIMIT)
+            let diff_sq = _mm512_mul_ps(diff, diff);
+            let diff_sq_clamped = _mm512_min_ps(diff_sq, limit);
+
+            // masked = masking_sqrt(diff_sq)
+            let inner = _mm512_fmadd_ps(diff_sq_clamped, k_mul_sqrt, k_offset);
+            let sqrt_inner = _mm512_sqrt_ps(inner);
+            let result = _mm512_mul_ps(quarter, sqrt_inner);
+
+            // Load existing, add result, store back
+            let existing = _mm512_loadu_ps(output.as_ptr().add(x));
+            let updated = _mm512_add_ps(existing, result);
+            _mm512_storeu_ps(output.as_mut_ptr().add(x), updated);
+        }
+
+    }
+
+    /// Helper for processing 8 pixels (AVX2) - used by V4 for remainder handling.
+    #[arcane]
+    #[inline(always)]
+    fn mage_pre_erosion_8_inner(
+        _token: X64V3Token,
+        row: &[f32],
+        row_above: &[f32],
+        row_below: &[f32],
+        output: &mut [f32],
+        buf_x: usize,
+        out_x: usize,
+    ) {
+        use safe_unaligned_simd::x86_64 as safe_simd;
+
+        let quarter = _mm256_set1_ps(0.25);
+        let gamma_offset = _mm256_set1_ps(GAMMA_OFFSET);
+        let limit = _mm256_set1_ps(LIMIT);
+        let k_num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
+        let k_num_off = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
+        let k_den_mul = _mm256_set1_ps(K_DEN_MUL_RATIO);
+        let k_voff = _mm256_set1_ps(K_VOFFSET_RATIO);
+        let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
+        let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
+        let zero = _mm256_setzero_ps();
+
+        let pixels = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap(),
+        );
+        let left = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap(),
+        );
+        let right = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap(),
+        );
+        let top = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&row_above[buf_x..buf_x + 8]).unwrap(),
+        );
+        let bottom = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&row_below[buf_x..buf_x + 8]).unwrap(),
+        );
+
+        let sum_lr = _mm256_add_ps(left, right);
+        let sum_tb = _mm256_add_ps(top, bottom);
+        let sum_all = _mm256_add_ps(sum_lr, sum_tb);
+        let base = _mm256_mul_ps(quarter, sum_all);
+
+        let pixel_gamma = _mm256_add_ps(pixels, gamma_offset);
+        let v = _mm256_max_ps(pixel_gamma, zero);
+        let v2 = _mm256_mul_ps(v, v);
+        let num = _mm256_fmadd_ps(v2, k_num_mul, k_num_off);
+        let v_scaled = _mm256_mul_ps(v, k_den_mul);
+        let den = _mm256_fmadd_ps(v_scaled, v2, k_voff);
+        let ratio = _mm256_div_ps(den, num);
+
+        let pixel_minus_base = _mm256_sub_ps(pixels, base);
+        let diff = _mm256_mul_ps(ratio, pixel_minus_base);
+
+        let diff_sq = _mm256_mul_ps(diff, diff);
+        let diff_sq_clamped = _mm256_min_ps(diff_sq, limit);
+
+        let inner = _mm256_fmadd_ps(diff_sq_clamped, k_mul_sqrt, k_offset);
+        let sqrt_inner = _mm256_sqrt_ps(inner);
+        let result = _mm256_mul_ps(quarter, sqrt_inner);
+
+        let existing = safe_simd::_mm256_loadu_ps(
+            <&[f32; 8]>::try_from(&output[out_x..out_x + 8]).unwrap(),
+        );
+        let updated = _mm256_add_ps(existing, result);
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[out_x..out_x + 8]).unwrap(),
+            updated,
+        );
+    }
+
+    /// AVX-512 pre_erosion_row_padded - public wrapper with V4 dispatch.
+    /// Falls back to V3 if AVX-512 not available.
+    pub fn mage_pre_erosion_row_padded_v4(
+        row: &[f32],
+        row_above: &[f32],
+        row_below: &[f32],
+        width: usize,
+        output: &mut [f32],
+    ) {
+        debug_assert_eq!(row.len(), width + 2);
+        debug_assert_eq!(row_above.len(), width + 2);
+        debug_assert_eq!(row_below.len(), width + 2);
+        debug_assert_eq!(output.len(), width);
+
+        if width == 0 {
+            return;
+        }
+
+        // Try AVX-512 first
+        if let Some(v4_token) = X64V4Token::summon() {
+            mage_pre_erosion_row_padded_inner_v4(v4_token, row, row_above, row_below, output, width);
+
+            // AVX-512 processes 16 at a time, handle 8-15 pixel remainder with AVX2
+            let v4_processed = (width / 16) * 16;
+            if v4_processed < width {
+                if let Some(v3_token) = X64V3Token::summon() {
+                    let remaining_chunks8 = (width - v4_processed) / 8;
+                    for chunk in 0..remaining_chunks8 {
+                        let x = v4_processed + chunk * 8;
+                        let buf_x = x + 1;
+                        mage_pre_erosion_8_inner(
+                            v3_token, row, row_above, row_below, output, buf_x, x,
+                        );
+                    }
+                }
+            }
+
+            // Scalar remainder for final <8 pixels
+            let processed = (width / 8) * 8;
+            for x in processed..width {
+                let buf_x = x + 1;
+                let pixel = row[buf_x];
+                let left_val = row[buf_x - 1];
+                let right_val = row[buf_x + 1];
+                let top_val = row_above[buf_x];
+                let bottom_val = row_below[buf_x];
+
+                let base = 0.25 * (left_val + right_val + top_val + bottom_val);
+                let ratio = super::ratio_of_derivatives_scalar(pixel + GAMMA_OFFSET, false);
+                let diff = ratio * (pixel - base);
+                let diff_sq = (diff * diff).min(LIMIT);
+                let masked = super::masking_sqrt_scalar(diff_sq);
+                output[x] += masked;
+            }
+        } else if let Some(token) = X64V3Token::summon() {
+            // Fall back to AVX2
+            mage_pre_erosion_row_padded(token, row, row_above, row_below, width, output);
         }
     }
 
@@ -2413,6 +2624,9 @@ pub(crate) mod archmage_impl {
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_pre_erosion_row_padded;
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+pub use archmage_impl::mage_pre_erosion_row_padded_v4;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_per_block_modulations_row;

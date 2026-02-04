@@ -32,12 +32,13 @@ use super::autovec::compute_fuzzy_erosion_blocks_autovec;
 use super::quant_field_to_aq_strength;
 use super::simd::per_block_modulations_row;
 
-// Use autovec pre_erosion - 1.95x faster than wide-based version due to
-// better autovectorization with #[multiversion] runtime dispatch
+// Use autovec pre_erosion as fallback (no archmage-simd feature)
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 use super::autovec::pre_erosion_row_autovec_iter as pre_erosion_row_padded;
 
+// AVX-512/AVX2 version - handles its own dispatch (tries V4 first, falls back to V3)
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use super::simd::mage_pre_erosion_row_padded;
+use super::simd::mage_pre_erosion_row_padded_v4;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use super::simd::mage_per_block_modulations_row;
@@ -749,19 +750,11 @@ impl StreamingAQ {
 
         self.pre_erosion_temp.fill(0.0);
 
-        // Use archmage SIMD when available (2x faster)
+        // Use archmage SIMD when available - V4 (AVX-512) preferred, falls back to V3 (AVX2)
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-        if let Some(token) = self.archmage_token {
-            mage_pre_erosion_row_padded(
-                token,
-                row_curr,
-                row_above,
-                row_below,
-                self.width,
-                &mut self.pre_erosion_temp,
-            );
-        } else {
-            pre_erosion_row_padded(
+        {
+            // V4 version handles its own dispatch - tries AVX-512 first, falls back to AVX2
+            mage_pre_erosion_row_padded_v4(
                 row_curr,
                 row_above,
                 row_below,
@@ -792,19 +785,11 @@ impl StreamingAQ {
 
         self.pre_erosion_temp.fill(0.0);
 
-        // Use archmage SIMD when available (2x faster)
+        // Use archmage SIMD when available - V4 (AVX-512) preferred, falls back to V3 (AVX2)
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-        if let Some(token) = self.archmage_token {
-            mage_pre_erosion_row_padded(
-                token,
-                row_curr,
-                row_above,
-                row_below,
-                self.width,
-                &mut self.pre_erosion_temp,
-            );
-        } else {
-            pre_erosion_row_padded(
+        {
+            // V4 version handles its own dispatch - tries AVX-512 first, falls back to AVX2
+            mage_pre_erosion_row_padded_v4(
                 row_curr,
                 row_above,
                 row_below,
