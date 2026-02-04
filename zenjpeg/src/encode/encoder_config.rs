@@ -242,37 +242,31 @@ impl EncoderConfig {
     /// ```rust,ignore
     /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, ProgressiveScanMode};
     ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .scan_mode(ProgressiveScanMode::ProgressiveSearch);
-    /// ```
-    #[must_use]
-    pub fn scan_mode(mut self, mode: ProgressiveScanMode) -> Self {
-        self.scan_mode = mode;
-        if mode.is_progressive() {
-            self.huffman = HuffmanStrategy::Optimize;
-        }
-        self
-    }
-
-    /// Set the progressive scan mode.
+    /// Set the progressive/baseline scan mode.
     ///
-    /// Accepts `bool`, `ProgressiveScanMode`, or any type that converts to `ProgressiveScanMode`.
+    /// Accepts `bool`, `ProgressiveScanMode`, or any type that converts to it.
     ///
-    /// - `true` → `ProgressiveScanMode::Progressive` (jpegli default script)
-    /// - `false` → `ProgressiveScanMode::Baseline`
-    /// - `ProgressiveScanMode::*` → explicit mode selection
+    /// | Input | Result |
+    /// |-------|--------|
+    /// | `true` | `Progressive` (jpegli default script) |
+    /// | `false` | `Baseline` (sequential JPEG) |
+    /// | `ProgressiveScanMode::Progressive` | jpegli progressive script |
+    /// | `ProgressiveScanMode::ProgressiveMozjpeg` | mozjpeg progressive script |
+    /// | `ProgressiveScanMode::ProgressiveSearch` | search 64 candidates (~2% smaller) |
     ///
-    /// All progressive modes automatically enable `HuffmanStrategy::Optimize`
-    /// (required for progressive encoding).
+    /// All progressive modes automatically enable `HuffmanStrategy::Optimize`.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// // Boolean convenience
+    /// use zenjpeg::encoder::{EncoderConfig, ProgressiveScanMode, ChromaSubsampling};
+    ///
+    /// // Boolean
     /// let config = EncoderConfig::ycbcr(85, sub).progressive(true);
     ///
-    /// // Explicit mode
-    /// let config = EncoderConfig::ycbcr(85, sub).progressive(ProgressiveScanMode::ProgressiveSearch);
+    /// // Explicit mode for best compression
+    /// let config = EncoderConfig::ycbcr(85, sub)
+    ///     .progressive(ProgressiveScanMode::ProgressiveSearch);
     /// ```
     #[must_use]
     pub fn progressive(mut self, mode: impl Into<ProgressiveScanMode>) -> Self {
@@ -283,41 +277,30 @@ impl EncoderConfig {
         self
     }
 
-    /// Set the progressive scan script strategy.
-    ///
-    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
-    ///
-    /// Non-Default strategies automatically enable progressive mode.
-    /// Skipped for XYB mode (XYB uses a fixed scan structure).
+    #[doc(hidden)]
     #[must_use]
-    pub fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
-        self.scan_mode = match strategy {
-            ScanStrategy::Default => {
-                if self.scan_mode.is_progressive() {
-                    ProgressiveScanMode::Progressive
-                } else {
-                    ProgressiveScanMode::Baseline
-                }
-            }
-            ScanStrategy::Search => ProgressiveScanMode::ProgressiveSearch,
-            ScanStrategy::Mozjpeg => ProgressiveScanMode::ProgressiveMozjpeg,
-        };
-        if self.scan_mode.is_progressive() {
-            self.huffman = HuffmanStrategy::Optimize;
-        }
-        self
+    pub fn scan_mode(self, mode: ProgressiveScanMode) -> Self {
+        self.progressive(mode)
     }
 
-    /// Enable progressive scan optimization (mozjpeg-style `optimize_scans`).
-    ///
-    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn scan_strategy(self, strategy: ScanStrategy) -> Self {
+        self.progressive(match strategy {
+            ScanStrategy::Default => ProgressiveScanMode::Progressive,
+            ScanStrategy::Search => ProgressiveScanMode::ProgressiveSearch,
+            ScanStrategy::Mozjpeg => ProgressiveScanMode::ProgressiveMozjpeg,
+        })
+    }
+
+    #[doc(hidden)]
     #[must_use]
     pub fn optimize_scans(self, enable: bool) -> Self {
-        self.scan_strategy(if enable {
-            ScanStrategy::Search
+        if enable {
+            self.progressive(ProgressiveScanMode::ProgressiveSearch)
         } else {
-            ScanStrategy::Default
-        })
+            self
+        }
     }
 
     /// Set the quantization table configuration.
@@ -454,21 +437,10 @@ impl EncoderConfig {
     /// When enabled (default), a two-pass encode computes optimal Huffman tables
     /// from the image data. This produces the smallest files.
     ///
-    /// When disabled, uses general-purpose trained tables (~2.5% larger than optimal).
-    /// To use the original JPEG Annex K tables instead, use
-    /// [`custom_huffman_tables(HuffmanTableSet::annex_k()?)`](Self::custom_huffman_tables).
-    ///
-    /// Note: Progressive mode requires optimized Huffman tables.
-    ///
-    /// Consider using [`huffman()`](Self::huffman) for more control over the strategy.
+    #[doc(hidden)]
     #[must_use]
-    pub fn optimize_huffman(mut self, enable: bool) -> Self {
-        self.huffman = if enable {
-            HuffmanStrategy::Optimize
-        } else {
-            HuffmanStrategy::Fixed
-        };
-        self
+    pub fn optimize_huffman(self, enable: bool) -> Self {
+        self.huffman(enable)
     }
 
     /// Set the Huffman table strategy.
@@ -905,19 +877,13 @@ impl EncoderConfig {
     }
 
     /// Sets custom Huffman tables for single-pass encoding.
-    ///
-    /// Blocks are entropy-encoded immediately using these tables instead of
-    /// buffering for a two-pass Huffman optimization.
-    ///
-    /// Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
-    /// or provide tables from a previous encoding pass or external source.
+        #[doc(hidden)]
     #[must_use]
     pub fn custom_huffman_tables(
-        mut self,
+        self,
         tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
-        self.huffman = HuffmanStrategy::Custom(Box::new(tables));
-        self
+        self.huffman(tables)
     }
 
     /// Enable or disable SharpYUV (GammaAwareIterative) downsampling.
