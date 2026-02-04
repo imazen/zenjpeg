@@ -524,6 +524,22 @@ See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption,
 
 ## Planned Features / TODO
 
+### Needs Heavy Analysis: CMA-ES auto_optimize() (2026-02-04)
+
+Merged from `feat/formula-optimization`. Adds `EncoderConfig::auto_optimize()` with CMA-ES
+butteraugli-optimized scaling parameters:
+- `OPTIMIZED_GLOBAL_SCALE` = 5.608994 (4:2:0), 5.101017 (4:4:4)
+- `OPTIMIZED_FREQUENCY_EXPONENT[64]` — per-frequency non-linear scaling
+- Quality-gated: q70+ for 4:2:0, q50+ for 4:4:4
+- Claimed holdout: +0.46 mean Pareto, 76% wins
+
+**TODO:**
+- [ ] Add `auto_optimize()` to `knobs_vs_jpegli` R-D comparison
+- [ ] Verify claimed Pareto improvements on gb82/CID22 corpora
+- [ ] Compare vs HybMax-L14.5 (current best) at matched BPP
+- [ ] Test interaction with trellis (does it stack? conflict?)
+- [ ] Document recommended usage pattern
+
 ### Remaining Hardening
 
 - `serialize.rs::write_frame_header_xyb_ex()` still hardcodes 0x22/0x11 (low priority, always correct for XYB)
