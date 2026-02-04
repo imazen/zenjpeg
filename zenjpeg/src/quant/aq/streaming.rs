@@ -55,7 +55,7 @@ use archmage::{SimdToken, X64V3Token};
 /// ## Batch Mode (compatible with existing code)
 /// ```ignore
 /// let layout = LayoutParams::new(width, height, subsampling, use_xyb);
-/// let mut aq = StreamingAQ::new(&layout, y_quant_01)?;
+/// let mut aq = StreamingAQ::new(&layout, y_quant_01, true)?;
 /// for strip in strips {
 ///     aq.process_y_strip(&strip, strip_y, strip_height);
 /// }
@@ -65,7 +65,7 @@ use archmage::{SimdToken, X64V3Token};
 /// ## Incremental Mode (lowest memory)
 /// ```ignore
 /// let layout = LayoutParams::new(width, height, subsampling, use_xyb);
-/// let mut aq = StreamingAQ::new(&layout, y_quant_01)?;
+/// let mut aq = StreamingAQ::new(&layout, y_quant_01, true)?;
 /// for strip in strips {
 ///     if let Some(strengths) = aq.process_y_strip(&strip, strip_y, strip_height) {
 ///         // Quantize this iMCU's blocks immediately
@@ -75,8 +75,17 @@ use archmage::{SimdToken, X64V3Token};
 ///     // Handle last iMCU
 /// }
 /// ```
+///
+/// ## Bypass Mode (AQ disabled)
+///
+/// When `aq_enabled=false`, the expensive AQ computation is skipped entirely.
+/// The struct still tracks iMCU boundaries and returns the correct number of
+/// zero-valued AQ strengths at each boundary, preserving pipeline timing.
+/// This saves ~600KB-2.5MB of buffer allocations depending on image size.
 #[derive(Debug)]
 pub struct StreamingAQ {
+    /// When false, skips all AQ computation and returns 0.0 for all blocks.
+    aq_enabled: bool,
     // Image dimensions
     width: usize,
     height: usize,
@@ -158,14 +167,19 @@ impl StreamingAQ {
     /// # Arguments
     /// * `layout` - Immutable image layout (source of truth for all geometry)
     /// * `y_quant_01` - Y quant table value at position [0,1] (first AC coefficient)
+    /// * `aq_enabled` - When false, skips AQ computation and returns 0.0 for all blocks
     ///
     /// # Errors
     /// Returns `AllocError` if buffer allocation fails.
-    pub(crate) fn new(layout: &LayoutParams, y_quant_01: u16) -> Result<Self> {
+    pub(crate) fn new(layout: &LayoutParams, y_quant_01: u16, aq_enabled: bool) -> Result<Self> {
         let width = layout.width;
         let height = layout.height;
         if width == 0 || height == 0 {
             return Ok(Self::empty(y_quant_01 as f32));
+        }
+
+        if !aq_enabled {
+            return Self::new_bypass(layout, y_quant_01);
         }
 
         let blocks_w = layout.blocks_w;
@@ -191,6 +205,7 @@ impl StreamingAQ {
         let total_blocks = blocks_w * blocks_h;
 
         Ok(Self {
+            aq_enabled: true,
             width,
             height,
             padded_width,
@@ -231,8 +246,59 @@ impl StreamingAQ {
         })
     }
 
+    /// Creates a bypass-mode AQ state that skips computation.
+    ///
+    /// Keeps iMCU tracking fields for correct pipeline timing but skips
+    /// expensive buffer allocations (~600KB-2.5MB savings).
+    fn new_bypass(layout: &LayoutParams, y_quant_01: u16) -> Result<Self> {
+        let blocks_w = layout.blocks_w;
+        let blocks_h = layout.blocks_h;
+        let v_samp_factor = layout.v_samp;
+        let imcu_height = 8 * v_samp_factor;
+        let total_imcu_rows = (layout.height + imcu_height - 1) / imcu_height;
+        let blocks_per_imcu = blocks_w * v_samp_factor;
+        let total_blocks = blocks_w * blocks_h;
+
+        Ok(Self {
+            aq_enabled: false,
+            width: layout.width,
+            height: layout.height,
+            padded_width: layout.padded_width,
+            y_buffer_stride: 0,
+            strip_stride: layout.padded_width,
+            blocks_w,
+            blocks_h,
+            pre_erosion_w: 0,
+            pre_erosion_h: 0,
+            // No expensive buffer allocations in bypass mode
+            pre_erosion_buffer: AlignedVec::new(0),
+            pre_erosion_buffer_rows: 0,
+            row_prev_prev: AlignedVec::new(0),
+            row_prev: AlignedVec::new(0),
+            row_curr: AlignedVec::new(0),
+            pending_pre_erosion_row: None,
+            pre_erosion_accum: AlignedVec::new(0),
+            pre_erosion_temp: AlignedVec::new(0),
+            y_imcu_buffers: [AlignedVec::new(0), AlignedVec::new(0)],
+            y_imcu_current: 0,
+            y_imcu_height: imcu_height,
+            fuzzy_erosion_out: AlignedVec::new(0),
+            imcu_aq_strengths: vec![0.0f32; blocks_per_imcu],
+            all_aq_strengths: Vec::with_capacity(total_blocks),
+            y_quant_01: y_quant_01 as f32,
+            rows_received: 0,
+            current_imcu_row: 0,
+            total_imcu_rows,
+            pre_erosion_rows_flushed: 0,
+            pending_imcu_row: None,
+            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            archmage_token: None,
+        })
+    }
+
     fn empty(y_quant_01: f32) -> Self {
         Self {
+            aq_enabled: false,
             width: 0,
             height: 0,
             padded_width: 0,
@@ -267,6 +333,62 @@ impl StreamingAQ {
         }
     }
 
+    /// Compute the number of valid blocks for an iMCU row.
+    ///
+    /// The last iMCU may be a partial row (fewer than v_samp block rows).
+    fn compute_imcu_block_count(&self, imcu_row: usize) -> usize {
+        let v_samp = self.y_imcu_height / 8;
+        let mut valid_rows = 0;
+        for by_offset in 0..v_samp {
+            let global_by = imcu_row * v_samp + by_offset;
+            if global_by >= self.blocks_h {
+                break;
+            }
+            valid_rows += 1;
+        }
+        valid_rows * self.blocks_w
+    }
+
+    /// Bypass-mode strip processing: track iMCU boundaries without AQ computation.
+    ///
+    /// Returns the block count for a completed iMCU (filled with 0.0), or None.
+    /// Pipeline timing matches the enabled path exactly: output is delayed by 1 iMCU.
+    fn process_strip_bypass(&mut self, strip_y: usize, strip_height: usize) -> Option<usize> {
+        // Track rows received (same as enabled path)
+        for local_y in 0..strip_height {
+            let global_y = strip_y + local_y;
+            if global_y >= self.height {
+                break;
+            }
+            self.rows_received = global_y + 1;
+        }
+
+        // Check iMCU boundary (same logic as enabled path)
+        let imcu_height = self.y_imcu_height;
+        let next_imcu_boundary = (self.current_imcu_row + 1) * imcu_height;
+
+        if self.rows_received >= next_imcu_boundary.min(self.height) {
+            // Finalize previously pending iMCU
+            let valid_count = if let Some(pending) = self.pending_imcu_row.take() {
+                let count = self.compute_imcu_block_count(pending);
+                // imcu_aq_strengths is pre-initialized to 0.0, just accumulate
+                self.all_aq_strengths
+                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
+                Some(count)
+            } else {
+                None
+            };
+
+            // Mark just-completed iMCU as pending
+            self.pending_imcu_row = Some(self.current_imcu_row);
+            self.current_imcu_row += 1;
+
+            return valid_count;
+        }
+
+        None
+    }
+
     /// Process Y strip data and compute AQ for completed iMCU rows.
     ///
     /// # Arguments
@@ -286,6 +408,11 @@ impl StreamingAQ {
     ) -> Option<&[f32]> {
         if self.width == 0 || self.height == 0 {
             return None;
+        }
+
+        if !self.aq_enabled {
+            let count = self.process_strip_bypass(strip_y, strip_height)?;
+            return Some(&self.imcu_aq_strengths[..count]);
         }
 
         // Use strip_stride for indexing input data
@@ -391,6 +518,13 @@ impl StreamingAQ {
             return None;
         }
 
+        if !self.aq_enabled {
+            let count = self.process_strip_bypass(strip_y, strip_height)?;
+            // Fill caller's buffer with 0.0 (imcu_aq_strengths is already zero)
+            out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
+            return Some(count);
+        }
+
         // Use strip_stride for indexing input data
         let stride = self.strip_stride;
         let padded_width = self.padded_width;
@@ -471,8 +605,12 @@ impl StreamingAQ {
     /// Call after all strips have been processed to get the last iMCU's AQ.
     pub fn flush(&mut self) -> Option<&[f32]> {
         if let Some(pending) = self.pending_imcu_row.take() {
-            let prev_buffer = 1 - self.y_imcu_current;
-            let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+            let count = if self.aq_enabled {
+                let prev_buffer = 1 - self.y_imcu_current;
+                self.finalize_imcu_aq_with_buffer(pending, prev_buffer)
+            } else {
+                self.compute_imcu_block_count(pending)
+            };
             // Only append the valid portion for partial iMCU rows
             self.all_aq_strengths
                 .extend_from_slice(&self.imcu_aq_strengths[..count]);
@@ -492,9 +630,13 @@ impl StreamingAQ {
     /// Number of AQ values written, or `None` if nothing pending.
     pub fn flush_into(&mut self, out_buffer: &mut [f32]) -> Option<usize> {
         if let Some(pending) = self.pending_imcu_row.take() {
-            let prev_buffer = 1 - self.y_imcu_current;
-            let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
-            // Copy to caller's buffer
+            let count = if self.aq_enabled {
+                let prev_buffer = 1 - self.y_imcu_current;
+                self.finalize_imcu_aq_with_buffer(pending, prev_buffer)
+            } else {
+                self.compute_imcu_block_count(pending)
+            };
+            // Copy to caller's buffer (imcu_aq_strengths is 0.0 in bypass mode)
             out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
             // Also accumulate for batch mode
             self.all_aq_strengths
@@ -913,7 +1055,7 @@ mod tests {
     #[test]
     fn test_streaming_aq_creation() {
         let layout = test_layout(256, 256);
-        let aq = StreamingAQ::new(&layout, 3).unwrap();
+        let aq = StreamingAQ::new(&layout, 3, true).unwrap();
         assert_eq!(aq.blocks_w, 32);
         assert_eq!(aq.blocks_h, 32);
         assert_eq!(aq.y_imcu_height, 16);
@@ -932,7 +1074,7 @@ mod tests {
 
         // Streaming computation
         let layout = test_layout(width, height);
-        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01, true).unwrap();
         let strip_height = 16;
         for strip_y in (0..height).step_by(strip_height) {
             let actual_height = strip_height.min(height - strip_y);
@@ -971,7 +1113,7 @@ mod tests {
         let full_result = compute_aq_strength_map(&y_plane, width, height, y_quant_01).unwrap();
 
         let layout = test_layout(width, height);
-        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01, true).unwrap();
         let strip_height = 16;
         for strip_y in (0..height).step_by(strip_height) {
             let actual_height = strip_height.min(height - strip_y);
@@ -1002,7 +1144,7 @@ mod tests {
             .collect();
 
         let layout = test_layout(width, height);
-        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01, true).unwrap();
         let mut collected = Vec::new();
 
         let strip_height = 16;

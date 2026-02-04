@@ -36,6 +36,10 @@ pub struct EncoderConfig {
     pub(crate) hybrid_config: super::trellis::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
+    /// Enable adaptive quantization (jpegli AQ). On by default.
+    /// When disabled, AQ computation is skipped entirely and all blocks
+    /// receive neutral AQ strength (0.0).
+    pub(crate) aq_enabled: bool,
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
     /// When false, quant values are clamped to 255 for baseline compatibility.
     pub(crate) allow_16bit_quant_tables: bool,
@@ -137,6 +141,50 @@ impl EncoderConfig {
         }
     }
 
+    /// Create a YCbCr encoder with effort-based defaults.
+    ///
+    /// Combines quality, subsampling, and an [`Effort`] level into a single call.
+    /// The effort level maps to an [`OptimizationPreset`] that configures
+    /// progressive mode, trellis, AQ, scan strategy, and deringing.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, Effort};
+    ///
+    /// let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Balanced);
+    /// ```
+    #[must_use]
+    pub fn ycbcr_effort(
+        quality: impl Into<Quality>,
+        subsampling: ChromaSubsampling,
+        effort: super::encoder_types::Effort,
+    ) -> Self {
+        Self::ycbcr(quality, subsampling).optimization(effort.to_preset())
+    }
+
+    /// Create an XYB encoder with effort-based defaults.
+    ///
+    /// See [`ycbcr_effort()`](Self::ycbcr_effort) for details on effort levels.
+    #[must_use]
+    pub fn xyb_effort(
+        quality: impl Into<Quality>,
+        b_subsampling: XybSubsampling,
+        effort: super::encoder_types::Effort,
+    ) -> Self {
+        Self::xyb(quality, b_subsampling).optimization(effort.to_preset())
+    }
+
+    /// Create a grayscale encoder with effort-based defaults.
+    ///
+    /// See [`ycbcr_effort()`](Self::ycbcr_effort) for details on effort levels.
+    #[must_use]
+    pub fn grayscale_effort(
+        quality: impl Into<Quality>,
+        effort: super::encoder_types::Effort,
+    ) -> Self {
+        Self::grayscale(quality).optimization(effort.to_preset())
+    }
+
     /// Internal default for non-required fields only.
     fn default_internal() -> Self {
         Self {
@@ -156,6 +204,7 @@ impl EncoderConfig {
             #[cfg(feature = "trellis")]
             hybrid_config: super::trellis::HybridConfig::disabled(),
             deringing: true,
+            aq_enabled: true,
             allow_16bit_quant_tables: false,
             #[cfg(feature = "trellis")]
             trellis: None,
@@ -385,6 +434,7 @@ impl EncoderConfig {
             quant_table_config,
             huffman: HuffmanStrategy::Optimize,
             deringing,
+            aq_enabled: preset.uses_aq(),
             #[cfg(feature = "trellis")]
             trellis,
             // All presets force baseline quant tables (matching both cjpegli CLI
@@ -808,6 +858,26 @@ impl EncoderConfig {
         self
     }
 
+    /// Enable or disable adaptive quantization (jpegli AQ).
+    ///
+    /// When enabled (default), the encoder computes per-block AQ strengths from
+    /// luminance data, adjusting quantization to allocate more bits to smooth
+    /// areas and fewer to textured areas.
+    ///
+    /// When disabled, AQ computation is skipped entirely and all blocks receive
+    /// neutral AQ strength (0.0). This saves memory (~600KB-2.5MB depending on
+    /// image size) and computation.
+    ///
+    /// Mozjpeg presets disable AQ automatically via
+    /// [`optimization()`](Self::optimization). For mozjpeg presets where
+    /// `zero_bias_mul` is all-zeros, disabling AQ produces identical output
+    /// since AQ values are never applied.
+    #[must_use]
+    pub fn aq_enabled(mut self, enable: bool) -> Self {
+        self.aq_enabled = enable;
+        self
+    }
+
     // === Validation ===
 
     /// Validate the configuration, returning an error for invalid combinations.
@@ -1011,6 +1081,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_allow_16bit_quant_tables(&self) -> bool {
         self.allow_16bit_quant_tables
+    }
+
+    /// Check if adaptive quantization (AQ) is enabled.
+    #[must_use]
+    pub fn is_aq_enabled(&self) -> bool {
+        self.aq_enabled
     }
 
     /// Check if separate chroma tables are enabled (3 tables vs 2).
@@ -1395,5 +1471,156 @@ mod tests {
             .quant_table_config(QuantTableConfig::MozjpegRobidoux)
             .separate_chroma_tables(true);
         assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
+    }
+
+    #[test]
+    fn test_aq_enabled_default() {
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+        assert!(config.is_aq_enabled(), "AQ should be enabled by default");
+    }
+
+    #[test]
+    fn test_aq_enabled_mozjpeg_preset() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegBaseline);
+        assert!(!config.is_aq_enabled(), "Mozjpeg presets should disable AQ");
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegProgressive);
+        assert!(!config.is_aq_enabled());
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegMaxCompression);
+        assert!(!config.is_aq_enabled());
+    }
+
+    #[test]
+    fn test_aq_enabled_jpegli_preset() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::JpegliBaseline);
+        assert!(config.is_aq_enabled(), "Jpegli presets should enable AQ");
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::JpegliProgressive);
+        assert!(config.is_aq_enabled());
+    }
+
+    #[test]
+    fn test_aq_enabled_hybrid_preset() {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::HybridProgressive);
+        assert!(config.is_aq_enabled(), "Hybrid presets should enable AQ");
+    }
+
+    #[test]
+    fn test_aq_enabled_override() {
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).aq_enabled(false);
+        assert!(!config.is_aq_enabled(), "Builder should override default");
+
+        use crate::encode::encoder_types::OptimizationPreset;
+        // Override after preset
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::JpegliBaseline)
+            .aq_enabled(false);
+        assert!(!config.is_aq_enabled(), "Builder should override preset");
+    }
+
+    #[test]
+    fn test_effort_constructors() {
+        use crate::encode::encoder_types::Effort;
+
+        let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Fast);
+        assert!(config.is_aq_enabled()); // JpegliBaseline uses AQ
+        assert!(!config.scan_mode.is_progressive()); // Baseline
+
+        let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Balanced);
+        assert!(config.is_aq_enabled()); // HybridProgressive uses AQ
+        assert!(config.scan_mode.is_progressive());
+
+        let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Max);
+        assert!(config.is_aq_enabled()); // HybridMaxCompression uses AQ
+        assert!(config.scan_mode.is_progressive());
+    }
+
+    /// Helper: encode a 64x64 test image with the given config.
+    fn encode_test_image(config: &EncoderConfig) -> Vec<u8> {
+        use crate::encode::encoder_types::PixelLayout;
+        // Create a simple 64x64 noise-like pattern (not a gradient!)
+        let w = 64u32;
+        let h = 64u32;
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = ((y * w + x) * 3) as usize;
+                // Simple hash-based pattern for reproducibility
+                let v = ((x.wrapping_mul(31).wrapping_add(y.wrapping_mul(67))) % 256) as u8;
+                pixels[idx] = v;
+                pixels[idx + 1] = v.wrapping_add(50);
+                pixels[idx + 2] = v.wrapping_add(100);
+            }
+        }
+        let stride = (w * 3) as usize;
+        let mut enc = config
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push(&pixels, h as usize, stride, enough::Unstoppable)
+            .unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn test_mozjpeg_aq_disabled_identical_output() {
+        use crate::encode::encoder_types::OptimizationPreset;
+
+        // Mozjpeg baseline with AQ enabled (default before this change)
+        let config_with_aq = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegBaseline)
+            .aq_enabled(true);
+
+        // Mozjpeg baseline with AQ disabled (new default from preset)
+        let config_without_aq = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegBaseline);
+        assert!(!config_without_aq.is_aq_enabled());
+
+        let jpeg_with = encode_test_image(&config_with_aq);
+        let jpeg_without = encode_test_image(&config_without_aq);
+
+        // Should be byte-identical: mozjpeg presets have zero_bias_mul = 0,
+        // so AQ values are never applied to quantization
+        assert_eq!(
+            jpeg_with.len(),
+            jpeg_without.len(),
+            "Mozjpeg preset: AQ on vs off should produce same size (zero_bias_mul = 0)"
+        );
+        assert_eq!(
+            jpeg_with, jpeg_without,
+            "Mozjpeg preset: AQ on vs off should be byte-identical"
+        );
+    }
+
+    #[test]
+    fn test_jpegli_aq_disabled_different_output() {
+        // Jpegli baseline with AQ enabled (default)
+        let config_with_aq =
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(false);
+        assert!(config_with_aq.is_aq_enabled());
+
+        // Jpegli baseline with AQ disabled
+        let config_without_aq = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .progressive(false)
+            .aq_enabled(false);
+        assert!(!config_without_aq.is_aq_enabled());
+
+        let jpeg_with = encode_test_image(&config_with_aq);
+        let jpeg_without = encode_test_image(&config_without_aq);
+
+        // Should differ: jpegli uses non-zero zero_bias_mul, so AQ affects output
+        assert_ne!(
+            jpeg_with, jpeg_without,
+            "Jpegli preset: AQ on vs off should produce different output"
+        );
     }
 }

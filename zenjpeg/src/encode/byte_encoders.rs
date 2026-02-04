@@ -113,8 +113,9 @@ impl BytesEncoder {
             builder = builder.use_xyb(true);
         }
 
-        // Always pass deringing setting (StreamingEncoder defaults to true)
+        // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
+        builder = builder.aq_enabled(config.aq_enabled);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
 
@@ -947,8 +948,9 @@ impl YCbCrPlanarEncoder {
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
-        // Always pass deringing setting (StreamingEncoder defaults to true)
+        // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
+        builder = builder.aq_enabled(config.aq_enabled);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
 

@@ -363,6 +363,17 @@ pub struct ExpertConfig {
     /// `GammaAware` and `GammaAwareIterative` may produce slightly different
     /// chroma, affecting compressibility marginally.
     pub downsampling_method: DownsamplingMethod,
+
+    /// Enable adaptive quantization (jpegli AQ).
+    ///
+    /// When `true` (default for jpegli/hybrid presets), the encoder computes
+    /// per-block AQ strengths from luminance data. When `false` (default for
+    /// mozjpeg presets), AQ is skipped entirely — all blocks get neutral AQ (0.0).
+    ///
+    /// For mozjpeg presets where `zero_bias_mul` is all-zeros, disabling AQ
+    /// produces identical output (AQ values are never applied). Disabling saves
+    /// ~600KB-2.5MB of buffer allocations.
+    pub aq_enabled: bool,
 }
 
 impl ExpertConfig {
@@ -409,6 +420,7 @@ impl ExpertConfig {
             allow_16bit_quant_tables: false,
             quality,
             downsampling_method: DownsamplingMethod::default(),
+            aq_enabled: true,
         };
         config.blend_zero_bias();
         config
@@ -506,6 +518,7 @@ impl ExpertConfig {
             allow_16bit_quant_tables: false,
             quality,
             downsampling_method: DownsamplingMethod::default(),
+            aq_enabled: preset.uses_aq(),
         };
         config.blend_zero_bias();
         config
@@ -594,6 +607,7 @@ impl ExpertConfig {
 
         // Encoder flags
         config.deringing = self.deringing;
+        config.aq_enabled = self.aq_enabled;
         config.allow_16bit_quant_tables = self.allow_16bit_quant_tables;
         config.downsampling_method = self.downsampling_method;
 
@@ -1387,5 +1401,63 @@ mod tests {
             let pct = (*delta as f64 / base_size as f64) * 100.0;
             println!("  {:>+7} bytes ({:>+6.2}%): {} {}", delta, pct, name, note);
         }
+    }
+
+    #[test]
+    fn test_expert_aq_enabled_default() {
+        let config = ExpertConfig::default_ycbcr(90.0);
+        assert!(config.aq_enabled, "default_ycbcr should enable AQ");
+    }
+
+    #[test]
+    fn test_expert_aq_enabled_mozjpeg() {
+        let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegBaseline, 85.0);
+        assert!(!config.aq_enabled, "Mozjpeg preset should disable AQ");
+
+        let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegProgressive, 85.0);
+        assert!(!config.aq_enabled);
+
+        let config = ExpertConfig::from_preset(OptimizationPreset::MozjpegMaxCompression, 85.0);
+        assert!(!config.aq_enabled);
+    }
+
+    #[test]
+    fn test_expert_aq_enabled_jpegli() {
+        let config = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+        assert!(config.aq_enabled, "Jpegli preset should enable AQ");
+
+        let config = ExpertConfig::from_preset(OptimizationPreset::JpegliProgressive, 85.0);
+        assert!(config.aq_enabled);
+    }
+
+    #[test]
+    fn test_expert_aq_enabled_hybrid() {
+        let config = ExpertConfig::from_preset(OptimizationPreset::HybridProgressive, 85.0);
+        assert!(config.aq_enabled, "Hybrid preset should enable AQ");
+    }
+
+    #[test]
+    fn test_expert_aq_passthrough() {
+        // Verify aq_enabled passes through to EncoderConfig
+        let mut config = ExpertConfig::from_preset(OptimizationPreset::MozjpegBaseline, 85.0);
+        assert!(!config.aq_enabled);
+
+        let enc = config.to_encoder_config(ColorMode::YCbCr {
+            subsampling: ChromaSubsampling::Quarter,
+        });
+        assert!(
+            !enc.is_aq_enabled(),
+            "aq_enabled should pass through to EncoderConfig"
+        );
+
+        // Now flip it and verify
+        config.aq_enabled = true;
+        let enc = config.to_encoder_config(ColorMode::YCbCr {
+            subsampling: ChromaSubsampling::Quarter,
+        });
+        assert!(
+            enc.is_aq_enabled(),
+            "flipped aq_enabled should pass through"
+        );
     }
 }

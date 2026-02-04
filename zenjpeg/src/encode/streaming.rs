@@ -251,6 +251,7 @@ impl StreamingEncoder {
             builder.restart_interval,
             builder.use_xyb,
             quant_ctx,
+            builder.aq_enabled,
         )?;
 
         // Set deringing (on by default in both builder and processor)
