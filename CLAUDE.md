@@ -510,6 +510,14 @@ sensitivity tables, and preset baselines.
    - Workaround: Use baseline mode for images <64 pixels or when decoding fidelity is critical
    - Priority: Medium - encoder works correctly, only affects roundtrip tests
 
+3. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
+   are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
+   was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
+   points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
+   - Root cause: Independent per-anchor SA without monotonicity constraints
+   - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
+   - Verified: `cargo run --release -p zenjpeg --example knobs_vs_jpegli --features optimized-tables`
+
 ### Fixed Bugs (historical reference)
 
 See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, etc.).
