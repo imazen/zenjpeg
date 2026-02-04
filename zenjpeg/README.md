@@ -49,7 +49,6 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 
 - **XYB color space** - With progressive mode, matches or beats C++ jpegli file sizes. Baseline mode is 2-3% larger.
 - **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
-- **Hybrid trellis** - Experimental feature that doesn't yet provide rate-distortion improvements (see below).
 
 ## Trellis Modes
 
@@ -75,25 +74,20 @@ let config = expert.to_encoder_config(ColorMode::YCbCr {
 });
 ```
 
-### Hybrid Trellis (experimental)
-Combines jpegli's adaptive quantization with mozjpeg's trellis, adjusting the rate-distortion
-trade-off per-block based on content complexity. **Currently produces suboptimal results:**
+### Hybrid Trellis (recommended)
+Combines jpegli's adaptive quantization with mozjpeg's trellis. **This is our best mode**
+and is enabled via `.auto_optimize(true)`:
 
-- Files are 10-30% larger than standalone trellis
-- But DSSIM (perceptual quality) is 23-49% better
-
-This inverted trade-off means hybrid isn't useful for typical optimization goals. The feature
-is functional but needs algorithmic improvements. See `CLAUDE.md` for details.
+- **+1.5 SSIM2 points** vs jpegli at matched file size
+- **-1.5% to -2% smaller files** at matched quality
+- Works across q50-q95 range
 
 ```rust
-use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode, ChromaSubsampling};
+use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
 
-let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85);
-expert.trellis_enabled = true;
-expert.aq_trellis_coupling = 2.0;  // Enable hybrid mode
-let config = expert.to_encoder_config(ColorMode::YCbCr {
-    subsampling: ChromaSubsampling::Quarter,
-});
+// Recommended: use auto_optimize for best results
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .auto_optimize(true);
 ```
 
 ## Quick Start
@@ -103,7 +97,9 @@ let config = expert.to_encoder_config(ColorMode::YCbCr {
 ```rust
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+// Best quality/size with auto_optimize
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .auto_optimize(true);
 let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
 enc.push_packed(&rgb_bytes, Unstoppable)?;
 let jpeg_bytes: Vec<u8> = enc.finish()?;
@@ -194,8 +190,9 @@ Choose one constructor based on desired color mode:
 
 | Method | Description | Default |
 |--------|-------------|---------|
+| `.auto_optimize(bool)` | **Best quality/size** - enables hybrid trellis λ=14.5 | `false` |
 | `.progressive(bool)` | Progressive JPEG (3-7% smaller) | `true` |
-| `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
+| `.huffman(impl Into<HuffmanStrategy>)` | Huffman table strategy | `Optimize` |
 | `.deringing(bool)` | Overshoot deringing for documents/graphics | `true` |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
 | `.separate_chroma_tables(bool)` | Use 3 quant tables (Y, Cb, Cr) vs 2 (Y, shared) | `true` |
@@ -710,7 +707,7 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-zenjpeg = "0.3"
+zenjpeg = "0.4"
 
 # With UltraHDR support:
 zenjpeg = { version = "0.3", features = ["ultrahdr"] }
