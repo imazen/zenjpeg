@@ -318,6 +318,13 @@ impl StreamingEncoder {
                     builder.use_xyb,
                     builder.subsampling,
                 )),
+                HuffmanStrategy::FixedAnnexK => {
+                    // Annex K tables are well-defined constants, cannot fail
+                    Box::new(
+                        crate::huffman::optimize::HuffmanTableSet::annex_k()
+                            .expect("JPEG Annex K tables are constant and valid"),
+                    )
+                }
                 HuffmanStrategy::Optimize => unreachable!(),
             };
 

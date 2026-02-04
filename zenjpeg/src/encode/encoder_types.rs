@@ -897,22 +897,50 @@ pub enum ParallelEncoding {
 /// Huffman table strategy for entropy encoding.
 ///
 /// Controls how Huffman tables are selected for the JPEG output:
+/// Huffman table selection strategy.
+///
 /// - `Optimize`: Two-pass encoding collects symbol frequencies, then builds optimal tables.
 ///   Produces the smallest files. Required for progressive mode.
 /// - `Fixed`: Single-pass encoding with general-purpose trained Huffman tables.
 ///   Fastest, with ~2.5% overhead vs per-image optimal.
+/// - `FixedAnnexK`: Single-pass with JPEG Annex K standard tables.
+///   Maximum compatibility, ~5-12% larger than optimal.
 /// - `Custom`: Single-pass encoding with caller-provided tables.
 ///   Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
 ///   or provide your own pre-computed tables.
 #[derive(Clone, Debug, Default)]
-pub(crate) enum HuffmanStrategy {
+#[non_exhaustive]
+pub enum HuffmanStrategy {
     /// Two-pass: collect frequencies, build optimal tables.
+    /// Smallest files, but cannot stream output (must buffer all blocks).
     #[default]
     Optimize,
-    /// Single-pass: use general-purpose trained tables.
+    /// Single-pass: use general-purpose trained tables (~2.5% overhead).
+    /// Enables streaming output for sequential mode.
     Fixed,
+    /// Single-pass: use JPEG Annex K standard tables (~5-12% overhead).
+    /// Maximum decoder compatibility. Enables streaming output.
+    FixedAnnexK,
     /// Single-pass: use caller-provided tables.
+    /// Use [`HuffmanTableSet::annex_k()`] for Annex K, or provide custom tables.
     Custom(Box<crate::huffman::optimize::HuffmanTableSet>),
+}
+
+impl From<bool> for HuffmanStrategy {
+    /// `true` → `Optimize`, `false` → `Fixed`
+    fn from(optimize: bool) -> Self {
+        if optimize {
+            HuffmanStrategy::Optimize
+        } else {
+            HuffmanStrategy::Fixed
+        }
+    }
+}
+
+impl From<crate::huffman::optimize::HuffmanTableSet> for HuffmanStrategy {
+    fn from(tables: crate::huffman::optimize::HuffmanTableSet) -> Self {
+        HuffmanStrategy::Custom(Box::new(tables))
+    }
 }
 
 /// Progressive scan script strategy.
@@ -1159,6 +1187,17 @@ impl ProgressiveScanMode {
             Self::Baseline | Self::Progressive => ScanStrategy::Default,
             Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
             Self::ProgressiveSearch => ScanStrategy::Search,
+        }
+    }
+}
+
+impl From<bool> for ProgressiveScanMode {
+    /// `true` → `Progressive`, `false` → `Baseline`
+    fn from(progressive: bool) -> Self {
+        if progressive {
+            ProgressiveScanMode::Progressive
+        } else {
+            ProgressiveScanMode::Baseline
         }
     }
 }

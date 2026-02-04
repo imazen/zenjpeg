@@ -295,11 +295,7 @@ pub fn encode_blocks_mcu_order(
     //   block[row * y_blocks_w + col]
     // For subsampled modes, each MCU row spans v_samp Y block-rows
     // and 1 chroma block-row.
-    let y_rows_in_batch = if y_blocks_w > 0 {
-        y_blocks.len() / y_blocks_w
-    } else {
-        0
-    };
+    let y_rows_in_batch = y_blocks.len().checked_div(y_blocks_w).unwrap_or(0);
     let mcu_rows_in_batch = if h_samp == 1 && v_samp == 1 {
         y_rows_in_batch
     } else {

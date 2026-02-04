@@ -20,11 +20,11 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::PathBuf;
+#[cfg(feature = "optimized-tables")]
+use zenjpeg::encode::OptimizedTables;
 use zenjpeg::encode::{
     ChromaSubsampling, ColorMode, EncoderConfig, ExpertConfig, OptimizationPreset, PixelLayout,
 };
-#[cfg(feature = "optimized-tables")]
-use zenjpeg::encode::OptimizedTables;
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
     EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, RgbImage,
