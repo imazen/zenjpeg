@@ -23,7 +23,8 @@ use std::path::PathBuf;
 #[cfg(feature = "optimized-tables")]
 use zenjpeg::encode::OptimizedTables;
 use zenjpeg::encode::{
-    ChromaSubsampling, ColorMode, EncoderConfig, ExpertConfig, OptimizationPreset, PixelLayout,
+    ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout,
+    SearchConfig,
 };
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
@@ -287,7 +288,7 @@ fn main() {
                 .iter()
                 .map(|&q| {
                     let mut expert =
-                        ExpertConfig::from_preset(OptimizationPreset::MozjpegMaxCompression, q);
+                        SearchConfig::from_preset(OptimizationPreset::MozjpegMaxCompression, q);
                     expert.trellis_lambda_log_scale1 = lam;
                     (format!("q{:.0}", q), expert.to_encoder_config(color_444))
                 })
@@ -307,7 +308,7 @@ fn main() {
             .iter()
             .map(|&q| {
                 let mut expert =
-                    ExpertConfig::from_preset(OptimizationPreset::MozjpegProgressive, q);
+                    SearchConfig::from_preset(OptimizationPreset::MozjpegProgressive, q);
                 expert.trellis_lambda_log_scale1 = 14.5;
                 (format!("q{:.0}", q), expert.to_encoder_config(color_444))
             })
@@ -328,7 +329,7 @@ fn main() {
                 .iter()
                 .map(|&q| {
                     let mut expert =
-                        ExpertConfig::from_preset(OptimizationPreset::HybridMaxCompression, q);
+                        SearchConfig::from_preset(OptimizationPreset::HybridMaxCompression, q);
                     expert.trellis_lambda_log_scale1 = lam;
                     (format!("q{:.0}", q), expert.to_encoder_config(color_444))
                 })
@@ -374,7 +375,7 @@ fn main() {
                 .map(|&q| {
                     let tables = OptimizedTables::generate(q as u8);
                     let mut expert =
-                        ExpertConfig::from_preset(OptimizationPreset::HybridMaxCompression, q);
+                        SearchConfig::from_preset(OptimizationPreset::HybridMaxCompression, q);
                     expert.trellis_lambda_log_scale1 = 14.5;
                     let config = expert.to_encoder_config(color_444).tables(tables);
                     (format!("q{:.0}", q), config)
