@@ -23,6 +23,8 @@ use std::path::PathBuf;
 use zenjpeg::encode::{
     ChromaSubsampling, ColorMode, EncoderConfig, ExpertConfig, OptimizationPreset, PixelLayout,
 };
+#[cfg(feature = "optimized-tables")]
+use zenjpeg::encode::OptimizedTables;
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
     EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, RgbImage,
@@ -335,6 +337,53 @@ fn main() {
         );
         println!(" done ({} points)", results.len());
         all_results.extend(results);
+    }
+
+    // --- SA-Optimized Tables 444 (jpegli AQ + SA-tuned quant tables) ---
+    #[cfg(feature = "optimized-tables")]
+    {
+        // With JpegliProgressive base (AQ enabled, progressive scan)
+        print!("SA-Opt-JpegliProg...");
+        std::io::stdout().flush().ok();
+        let sa_jpegli_results = sweep_zen(
+            "SA-Opt-JpegliProg",
+            QUALITY_LEVELS
+                .iter()
+                .map(|&q| {
+                    let tables = OptimizedTables::generate(q as u8);
+                    (
+                        format!("q{:.0}", q),
+                        EncoderConfig::ycbcr(q, ChromaSubsampling::None)
+                            .optimization(OptimizationPreset::JpegliProgressive)
+                            .tables(tables),
+                    )
+                })
+                .collect(),
+            &images,
+        );
+        println!(" done ({} points)", sa_jpegli_results.len());
+        all_results.extend(sa_jpegli_results);
+
+        // With HybridMaxCompression base (AQ + trellis + SA tables) at best lambda
+        print!("SA-Opt-HybMax-L14.5...");
+        std::io::stdout().flush().ok();
+        let sa_hyb_results = sweep_zen(
+            "SA-Opt-HybMax-L14.5",
+            QUALITY_LEVELS
+                .iter()
+                .map(|&q| {
+                    let tables = OptimizedTables::generate(q as u8);
+                    let mut expert =
+                        ExpertConfig::from_preset(OptimizationPreset::HybridMaxCompression, q);
+                    expert.trellis_lambda_log_scale1 = 14.5;
+                    let config = expert.to_encoder_config(color_444).tables(tables);
+                    (format!("q{:.0}", q), config)
+                })
+                .collect(),
+            &images,
+        );
+        println!(" done ({} points)", sa_hyb_results.len());
+        all_results.extend(sa_hyb_results);
     }
 
     // --- Print grouped R-D tables ---
