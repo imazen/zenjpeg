@@ -147,12 +147,7 @@ impl EncoderConfig {
     /// The effort level maps to an [`OptimizationPreset`] that configures
     /// progressive mode, trellis, AQ, scan strategy, and deringing.
     ///
-    /// # Example
-    /// ```ignore
-    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, Effort};
-    ///
-    /// let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Balanced);
-    /// ```
+    #[doc(hidden)]
     #[must_use]
     pub fn ycbcr_effort(
         quality: impl Into<Quality>,
@@ -162,9 +157,7 @@ impl EncoderConfig {
         Self::ycbcr(quality, subsampling).optimization(effort.to_preset())
     }
 
-    /// Create an XYB encoder with effort-based defaults.
-    ///
-    /// See [`ycbcr_effort()`](Self::ycbcr_effort) for details on effort levels.
+    #[doc(hidden)]
     #[must_use]
     pub fn xyb_effort(
         quality: impl Into<Quality>,
@@ -174,9 +167,7 @@ impl EncoderConfig {
         Self::xyb(quality, b_subsampling).optimization(effort.to_preset())
     }
 
-    /// Create a grayscale encoder with effort-based defaults.
-    ///
-    /// See [`ycbcr_effort()`](Self::ycbcr_effort) for details on effort levels.
+    #[doc(hidden)]
     #[must_use]
     pub fn grayscale_effort(
         quality: impl Into<Quality>,
@@ -350,22 +341,7 @@ impl EncoderConfig {
         self
     }
 
-    /// Apply an optimization preset.
-    ///
-    /// Sets progressive mode, Huffman strategy, trellis, scan strategy,
-    /// AQ (deringing), quant table source, and chroma table configuration
-    /// to match a specific encoder profile.
-    ///
-    /// Individual settings can still be overridden after calling this.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, OptimizationPreset};
-    ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .optimization(OptimizationPreset::HybridProgressive);
-    /// ```
+    #[doc(hidden)]
     #[must_use]
     pub fn optimization(self, preset: super::encoder_types::OptimizationPreset) -> Self {
         use super::encoder_types::OptimizationPreset::*;
