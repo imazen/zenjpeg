@@ -335,13 +335,20 @@ upsampling (-23%) and AVX2 IDCT. Key lesson: tiered 4x4/8x8 IDCT was counterprod
 always use AVX2 8x8 with built-in DC-only check. Baseline 512x512 decoding: 1.31ms -> 456us (65% faster).
 See `docs/TUNING_HISTORY.md` for callgrind breakdown and per-function instruction counts.
 
-## C++ Performance Gap (2026-02-01)
+## C++ Performance Gap (2026-02-04)
 
-Rust is **~20% slower** than C++ jpegli (1.2x median, range 1.05x-1.43x). Quality is
-effectively identical (size +0.63%, DSSIM +0.41%, Butteraugli +0.19% mean). Remaining gap
-is from C++ Highway AVX-512 vs Rust `wide` AVX2 in AQ (14.5%) and DCT. Allocations reduced
-84% (33K to 5K per 10 encodes). Autovec `pre_erosion_row` is 1.95x faster than `wide` for
-long rows; `wide` is 2-5x faster for small 8x8 blocks. Run: `cargo bench --bench cpp_comparison`.
+Rust is **~15-20% slower** than C++ jpegli (1.15x-1.2x median). Quality is effectively
+identical (size +0.63%, DSSIM +0.41%, Butteraugli +0.19% mean).
+
+**AVX-512 additions (2026-02-04):** Added `mage_pre_erosion_row_padded_v4()` with X64V4Token
+dispatch - processes 16 pixels per iteration vs 8 for AVX2. Shows ~10% improvement in quick
+benchmarks. DCT dual-block AVX-512 was attempted but failed (2.3x slower due to register
+lane crossing overhead).
+
+Remaining gap from C++ Highway AVX-512 vs Rust `wide` AVX2 in DCT (~8.6% of encode). Other
+hot paths: pre_erosion (now AVX-512), per_block_modulations (8x8 block structure limits
+AVX-512 benefit), entropy encoding (inherently serial). Allocations reduced 84% (33K to 5K
+per 10 encodes). Run: `cargo bench --bench cpp_comparison`.
 See `docs/TUNING_HISTORY.md` for allocation details, SIMD analysis, and autovectorization benchmarks.
 
 ## WASM SIMD128 Performance (2026-01-27)
