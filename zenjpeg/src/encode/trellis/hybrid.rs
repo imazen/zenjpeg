@@ -646,334 +646,6 @@ impl SweepConfig {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_config() {
-        let config = HybridConfig::default();
-        assert!(config.enabled);
-        // Default is 0.0 (appeared most efficient in limited testing)
-        assert_eq!(config.aq_lambda_scale, 0.0);
-        assert_eq!(config.base_lambda_scale1, 14.75);
-    }
-
-    #[test]
-    fn test_presets() {
-        let favor_size = HybridConfig::favor_size();
-        assert_eq!(favor_size.base_lambda_scale1, 14.0);
-
-        let favor_quality = HybridConfig::favor_quality();
-        assert_eq!(favor_quality.aq_lambda_scale, 4.0);
-        assert_eq!(favor_quality.base_lambda_scale1, 15.5);
-
-        let balanced = HybridConfig::balanced();
-        assert_eq!(balanced.aq_lambda_scale, 2.0);
-    }
-
-    #[test]
-    fn test_lambda_adjustment() {
-        // Default config has aq_lambda_scale=0.0, so all adjustments are 0
-        let config = HybridConfig::default();
-        assert_eq!(config.compute_lambda_adjustment(0.5, 1.0, false), 0.0);
-        assert_eq!(config.compute_lambda_adjustment(1.0, 1.0, false), 0.0);
-
-        // Use balanced preset which has aq_lambda_scale=2.0
-        let balanced = HybridConfig::balanced();
-
-        // Zero AQ = zero adjustment
-        assert_eq!(balanced.compute_lambda_adjustment(0.0, 1.0, false), 0.0);
-
-        // 0.5 AQ with scale 2.0 = 1.0 adjustment
-        assert_eq!(balanced.compute_lambda_adjustment(0.5, 1.0, false), 1.0);
-
-        // Full AQ (1.0) with scale 2.0 = 2.0 adjustment
-        assert_eq!(balanced.compute_lambda_adjustment(1.0, 1.0, false), 2.0);
-    }
-
-    #[test]
-    fn test_quality_adaptive() {
-        // Use balanced preset to have non-zero aq_lambda_scale
-        let config = HybridConfig::balanced().quality_adaptive(true);
-
-        // With dampen=0.5, adjustment should be halved
-        let adj_full = config.compute_lambda_adjustment(0.5, 1.0, false);
-        let adj_half = config.compute_lambda_adjustment(0.5, 0.5, false);
-        assert_eq!(adj_half, adj_full * 0.5);
-    }
-
-    #[test]
-    fn test_aq_exponent() {
-        // Use balanced preset to have non-zero aq_lambda_scale
-        let config = HybridConfig::balanced().aq_exponent(2.0);
-
-        // With exponent 2.0, aq=0.5 becomes 0.25
-        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj, 0.25 * 2.0); // 0.5^2 * scale
-    }
-
-    #[test]
-    fn test_sweep_config() {
-        let sweep = SweepConfig::quick();
-        let configs = sweep.generate_configs();
-        assert_eq!(configs.len(), 3); // 3 aq_scales × 1 × 1 × 1
-    }
-
-    #[test]
-    fn test_aggressive_compression_preset() {
-        let config = HybridConfig::aggressive_compression();
-        assert!(config.enabled);
-        assert_eq!(config.aq_lambda_scale, -4.0); // Negative for smaller files
-        assert_eq!(config.max_adjustment, 0.0); // No cap
-
-        // Negative coupling produces negative adjustment
-        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj, -2.0); // 0.5 * -4.0 = -2.0
-    }
-
-    #[test]
-    fn test_safe_compression_preset() {
-        let config = HybridConfig::safe_compression();
-        assert!(config.enabled);
-        assert_eq!(config.aq_lambda_scale, -8.0); // More aggressive coupling
-        assert_eq!(config.max_adjustment, 1.0); // Cap at ±1.0
-
-        // High AQ would produce -4.0 but capped to -1.0
-        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj, -1.0); // Clamped from 0.5 * -8.0 = -4.0
-
-        // Low AQ produces smaller adjustment (not capped)
-        let adj_low = config.compute_lambda_adjustment(0.1, 1.0, false);
-        assert_eq!(adj_low, -0.8); // 0.1 * -8.0 = -0.8, within ±1.0
-    }
-
-    #[test]
-    fn test_quality_boost_preset() {
-        let config = HybridConfig::quality_boost();
-        assert!(config.enabled);
-        assert_eq!(config.aq_lambda_scale, 4.0); // Positive for better quality
-
-        // Positive coupling produces positive adjustment (larger files, better quality)
-        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj, 2.0); // 0.5 * 4.0 = 2.0
-    }
-
-    #[test]
-    fn test_max_adjustment_clamping() {
-        let config = HybridConfig::new()
-            .aq_lambda_scale(-10.0)
-            .max_adjustment(2.0);
-
-        // Very negative coupling clamped to -2.0
-        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj, -2.0); // Clamped from 0.5 * -10.0 = -5.0
-
-        // Also clamps positive
-        let config_pos = HybridConfig::new()
-            .aq_lambda_scale(10.0)
-            .max_adjustment(2.0);
-        let adj_pos = config_pos.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj_pos, 2.0); // Clamped from 0.5 * 10.0 = 5.0
-    }
-
-    #[test]
-    fn test_multiplicative_coupling() {
-        let config = HybridConfig::new()
-            .aq_lambda_scale(0.1) // Use small value for multiplicative
-            .multiplicative(true);
-
-        // Multiplicative: scale1 = base * (1 + aq * coupling)
-        // With aq=0.5 and coupling=0.1: adjustment = 0.5 * 0.1 = 0.05
-        // scale1 = 14.75 * (1 + 0.05) = 14.75 * 1.05 = 15.4875
-        let trellis = config.to_trellis_config(0.5, 1.0, false);
-        let expected = 14.75 * 1.05;
-        assert!((trellis.lambda_log_scale1 - expected).abs() < 0.001);
-
-        // Compare to additive
-        let config_add = HybridConfig::new().aq_lambda_scale(0.1);
-        let trellis_add = config_add.to_trellis_config(0.5, 1.0, false);
-        // Additive: scale1 = 14.75 + 0.05 = 14.80
-        assert!((trellis_add.lambda_log_scale1 - 14.80).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_negative_coupling_with_threshold() {
-        let config = HybridConfig::new().aq_lambda_scale(-4.0).aq_threshold(0.2);
-
-        // Below threshold: no adjustment
-        let adj_low = config.compute_lambda_adjustment(0.15, 1.0, false);
-        assert_eq!(adj_low, 0.0);
-
-        // Above threshold: full adjustment
-        let adj_high = config.compute_lambda_adjustment(0.3, 1.0, false);
-        assert_eq!(adj_high, -1.2); // 0.3 * -4.0
-    }
-
-    #[test]
-    fn test_chroma_scale_with_negative_coupling() {
-        let config = HybridConfig::new().aq_lambda_scale(-4.0).chroma_scale(0.5);
-
-        // Luma: full adjustment
-        let adj_luma = config.compute_lambda_adjustment(0.5, 1.0, false);
-        assert_eq!(adj_luma, -2.0);
-
-        // Chroma: half adjustment
-        let adj_chroma = config.compute_lambda_adjustment(0.5, 1.0, true);
-        assert_eq!(adj_chroma, -1.0);
-    }
-
-    // ========================================================================
-    // Image Type Detection Tests
-    // ========================================================================
-
-    #[test]
-    fn test_detect_photo() {
-        // flower_small stats: mean=0.090, std=0.065, cv=0.72
-        assert_eq!(detect_image_type(0.090, 0.065), ImageType::Photo);
-
-        // Higher texture photo
-        assert_eq!(detect_image_type(0.10, 0.05), ImageType::Photo);
-    }
-
-    #[test]
-    fn test_detect_screenshot() {
-        // apple.com stats: mean=0.084, std=0.198, cv=2.35 (very high CV)
-        assert_eq!(detect_image_type(0.084, 0.198), ImageType::Screenshot);
-
-        // Very flat UI
-        assert_eq!(detect_image_type(0.02, 0.01), ImageType::Screenshot);
-
-        // Zero mean (edge case)
-        assert_eq!(detect_image_type(0.0, 0.0), ImageType::Screenshot);
-
-        // High CV even with moderate mean = screenshot
-        assert_eq!(detect_image_type(0.08, 0.16), ImageType::Screenshot); // CV=2.0
-    }
-
-    #[test]
-    fn test_detect_mixed() {
-        // Ambiguous: low mean, low CV (neither clearly photo nor screenshot)
-        assert_eq!(detect_image_type(0.04, 0.02), ImageType::Mixed); // mean<0.06, CV=0.5
-    }
-
-    #[test]
-    fn test_adaptive_config_low_texture_photo() {
-        // Low texture photo (mean=0.10): aggressive coupling
-        let config = adaptive_config(0.10, 0.05);
-        assert_eq!(config.aq_lambda_scale, -4.0); // Full aggressive
-        assert_eq!(config.max_adjustment, 0.0);
-    }
-
-    #[test]
-    fn test_adaptive_config_medium_texture_photo() {
-        // Medium texture photo (mean=0.30): moderate coupling
-        let config = adaptive_config(0.30, 0.15);
-        assert!((config.aq_lambda_scale - (-2.0)).abs() < 0.1); // -4.0 * (0.15/0.30) = -2.0
-        assert_eq!(config.max_adjustment, 0.0);
-    }
-
-    #[test]
-    fn test_adaptive_config_high_texture_photo() {
-        // High texture photo (mean=0.60): gentle coupling
-        let config = adaptive_config(0.60, 0.25);
-        assert!((config.aq_lambda_scale - (-1.0)).abs() < 0.1); // -4.0 * (0.15/0.60) = -1.0
-        assert_eq!(config.max_adjustment, 0.0);
-    }
-
-    #[test]
-    fn test_adaptive_config_screenshot() {
-        let config = adaptive_config(0.084, 0.198);
-        // Screenshots get safe compression (with protection)
-        assert_eq!(config.aq_lambda_scale, -8.0);
-        assert_eq!(config.max_adjustment, 1.0);
-    }
-
-    #[test]
-    fn test_adaptive_config_mixed() {
-        let config = adaptive_config(0.04, 0.02);
-        // Mixed gets safe settings (same as screenshot)
-        assert!(config.max_adjustment > 0.0);
-    }
-
-    #[test]
-    fn test_texture_adaptive_coupling() {
-        // Low texture: full aggressive
-        assert_eq!(texture_adaptive_coupling(0.10), -4.0);
-        assert_eq!(texture_adaptive_coupling(0.15), -4.0);
-
-        // Medium texture: scaled down
-        assert!((texture_adaptive_coupling(0.30) - (-2.0)).abs() < 0.01);
-
-        // High texture: gentler
-        assert!((texture_adaptive_coupling(0.60) - (-1.0)).abs() < 0.01);
-        assert!((texture_adaptive_coupling(0.75) - (-0.8)).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_scale_quant_by_aq() {
-        let base = [16u16; 64];
-
-        // Zero AQ strength = no change
-        let scaled = scale_quant_by_aq(&base, 0.0);
-        assert_eq!(scaled[0], 16);
-
-        // 0.5 AQ strength = 1.5x
-        let scaled = scale_quant_by_aq(&base, 0.5);
-        assert_eq!(scaled[0], 24);
-
-        // 1.0 AQ strength = 2x
-        let scaled = scale_quant_by_aq(&base, 1.0);
-        assert_eq!(scaled[0], 32);
-    }
-
-    #[test]
-    fn test_scale_quant_clamping() {
-        let base = [200u16; 64];
-
-        // Should clamp at 255
-        let scaled = scale_quant_by_aq(&base, 0.5);
-        assert_eq!(scaled[0], 255);
-
-        let base_low = [1u16; 64];
-        // Should never go below 1
-        let scaled = scale_quant_by_aq(&base_low, 0.0);
-        assert_eq!(scaled[0], 1);
-    }
-
-    #[test]
-    fn test_dct_f32_to_i32() {
-        // Function multiplies by 64 for trellis compatibility (see docstring)
-        // jpegli DCT is at 1/64 scale, trellis divides by 8*quant
-        // So multiply by 64 to compensate: trellis sees round(64*DCT / (8*q)) = round(DCT*8/q)
-        // 127.4 * 64 = 8153.6, rounds to 8154
-        let f32_coeffs = [127.4f32; 64];
-        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], 8154);
-
-        // -127.6 * 64 = -8166.4, rounds to -8166
-        let f32_coeffs = [-127.6f32; 64];
-        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], -8166);
-    }
-
-    #[test]
-    fn test_hybrid_quantize_simple() {
-        // hybrid_quantize_block_simple uses jpegli's formula: round(DCT * 8 / quant)
-        // DC coefficient of 1024 with quant=16 and no AQ
-        let mut dct = [0.0f32; 64];
-        dct[0] = 1024.0;
-        let base_quant = [16u16; 64];
-
-        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.0);
-        assert_eq!(quantized[0], 512); // 1024 * 8 / 16 = 512
-
-        // With AQ strength 0.5, quant becomes 24
-        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.5);
-        assert_eq!(quantized[0], 341); // 1024 * 8 / 24 = 341.33 -> 341
-    }
-}
-
 // ============================================================================
 // Core hybrid functions (from hybrid/core.rs)
 // ============================================================================
@@ -1486,4 +1158,332 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
     }
 
     Ok((x_blocks, y_blocks, b_blocks))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = HybridConfig::default();
+        assert!(config.enabled);
+        // Default is 0.0 (appeared most efficient in limited testing)
+        assert_eq!(config.aq_lambda_scale, 0.0);
+        assert_eq!(config.base_lambda_scale1, 14.75);
+    }
+
+    #[test]
+    fn test_presets() {
+        let favor_size = HybridConfig::favor_size();
+        assert_eq!(favor_size.base_lambda_scale1, 14.0);
+
+        let favor_quality = HybridConfig::favor_quality();
+        assert_eq!(favor_quality.aq_lambda_scale, 4.0);
+        assert_eq!(favor_quality.base_lambda_scale1, 15.5);
+
+        let balanced = HybridConfig::balanced();
+        assert_eq!(balanced.aq_lambda_scale, 2.0);
+    }
+
+    #[test]
+    fn test_lambda_adjustment() {
+        // Default config has aq_lambda_scale=0.0, so all adjustments are 0
+        let config = HybridConfig::default();
+        assert_eq!(config.compute_lambda_adjustment(0.5, 1.0, false), 0.0);
+        assert_eq!(config.compute_lambda_adjustment(1.0, 1.0, false), 0.0);
+
+        // Use balanced preset which has aq_lambda_scale=2.0
+        let balanced = HybridConfig::balanced();
+
+        // Zero AQ = zero adjustment
+        assert_eq!(balanced.compute_lambda_adjustment(0.0, 1.0, false), 0.0);
+
+        // 0.5 AQ with scale 2.0 = 1.0 adjustment
+        assert_eq!(balanced.compute_lambda_adjustment(0.5, 1.0, false), 1.0);
+
+        // Full AQ (1.0) with scale 2.0 = 2.0 adjustment
+        assert_eq!(balanced.compute_lambda_adjustment(1.0, 1.0, false), 2.0);
+    }
+
+    #[test]
+    fn test_quality_adaptive() {
+        // Use balanced preset to have non-zero aq_lambda_scale
+        let config = HybridConfig::balanced().quality_adaptive(true);
+
+        // With dampen=0.5, adjustment should be halved
+        let adj_full = config.compute_lambda_adjustment(0.5, 1.0, false);
+        let adj_half = config.compute_lambda_adjustment(0.5, 0.5, false);
+        assert_eq!(adj_half, adj_full * 0.5);
+    }
+
+    #[test]
+    fn test_aq_exponent() {
+        // Use balanced preset to have non-zero aq_lambda_scale
+        let config = HybridConfig::balanced().aq_exponent(2.0);
+
+        // With exponent 2.0, aq=0.5 becomes 0.25
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, 0.25 * 2.0); // 0.5^2 * scale
+    }
+
+    #[test]
+    fn test_sweep_config() {
+        let sweep = SweepConfig::quick();
+        let configs = sweep.generate_configs();
+        assert_eq!(configs.len(), 3); // 3 aq_scales × 1 × 1 × 1
+    }
+
+    #[test]
+    fn test_aggressive_compression_preset() {
+        let config = HybridConfig::aggressive_compression();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, -4.0); // Negative for smaller files
+        assert_eq!(config.max_adjustment, 0.0); // No cap
+
+        // Negative coupling produces negative adjustment
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -2.0); // 0.5 * -4.0 = -2.0
+    }
+
+    #[test]
+    fn test_safe_compression_preset() {
+        let config = HybridConfig::safe_compression();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, -8.0); // More aggressive coupling
+        assert_eq!(config.max_adjustment, 1.0); // Cap at ±1.0
+
+        // High AQ would produce -4.0 but capped to -1.0
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -1.0); // Clamped from 0.5 * -8.0 = -4.0
+
+        // Low AQ produces smaller adjustment (not capped)
+        let adj_low = config.compute_lambda_adjustment(0.1, 1.0, false);
+        assert_eq!(adj_low, -0.8); // 0.1 * -8.0 = -0.8, within ±1.0
+    }
+
+    #[test]
+    fn test_quality_boost_preset() {
+        let config = HybridConfig::quality_boost();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, 4.0); // Positive for better quality
+
+        // Positive coupling produces positive adjustment (larger files, better quality)
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, 2.0); // 0.5 * 4.0 = 2.0
+    }
+
+    #[test]
+    fn test_max_adjustment_clamping() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(-10.0)
+            .max_adjustment(2.0);
+
+        // Very negative coupling clamped to -2.0
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -2.0); // Clamped from 0.5 * -10.0 = -5.0
+
+        // Also clamps positive
+        let config_pos = HybridConfig::new()
+            .aq_lambda_scale(10.0)
+            .max_adjustment(2.0);
+        let adj_pos = config_pos.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj_pos, 2.0); // Clamped from 0.5 * 10.0 = 5.0
+    }
+
+    #[test]
+    fn test_multiplicative_coupling() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(0.1) // Use small value for multiplicative
+            .multiplicative(true);
+
+        // Multiplicative: scale1 = base * (1 + aq * coupling)
+        // With aq=0.5 and coupling=0.1: adjustment = 0.5 * 0.1 = 0.05
+        // scale1 = 14.75 * (1 + 0.05) = 14.75 * 1.05 = 15.4875
+        let trellis = config.to_trellis_config(0.5, 1.0, false);
+        let expected = 14.75 * 1.05;
+        assert!((trellis.lambda_log_scale1 - expected).abs() < 0.001);
+
+        // Compare to additive
+        let config_add = HybridConfig::new().aq_lambda_scale(0.1);
+        let trellis_add = config_add.to_trellis_config(0.5, 1.0, false);
+        // Additive: scale1 = 14.75 + 0.05 = 14.80
+        assert!((trellis_add.lambda_log_scale1 - 14.80).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_negative_coupling_with_threshold() {
+        let config = HybridConfig::new().aq_lambda_scale(-4.0).aq_threshold(0.2);
+
+        // Below threshold: no adjustment
+        let adj_low = config.compute_lambda_adjustment(0.15, 1.0, false);
+        assert_eq!(adj_low, 0.0);
+
+        // Above threshold: full adjustment
+        let adj_high = config.compute_lambda_adjustment(0.3, 1.0, false);
+        assert_eq!(adj_high, -1.2); // 0.3 * -4.0
+    }
+
+    #[test]
+    fn test_chroma_scale_with_negative_coupling() {
+        let config = HybridConfig::new().aq_lambda_scale(-4.0).chroma_scale(0.5);
+
+        // Luma: full adjustment
+        let adj_luma = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj_luma, -2.0);
+
+        // Chroma: half adjustment
+        let adj_chroma = config.compute_lambda_adjustment(0.5, 1.0, true);
+        assert_eq!(adj_chroma, -1.0);
+    }
+
+    // ========================================================================
+    // Image Type Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn test_detect_photo() {
+        // flower_small stats: mean=0.090, std=0.065, cv=0.72
+        assert_eq!(detect_image_type(0.090, 0.065), ImageType::Photo);
+
+        // Higher texture photo
+        assert_eq!(detect_image_type(0.10, 0.05), ImageType::Photo);
+    }
+
+    #[test]
+    fn test_detect_screenshot() {
+        // apple.com stats: mean=0.084, std=0.198, cv=2.35 (very high CV)
+        assert_eq!(detect_image_type(0.084, 0.198), ImageType::Screenshot);
+
+        // Very flat UI
+        assert_eq!(detect_image_type(0.02, 0.01), ImageType::Screenshot);
+
+        // Zero mean (edge case)
+        assert_eq!(detect_image_type(0.0, 0.0), ImageType::Screenshot);
+
+        // High CV even with moderate mean = screenshot
+        assert_eq!(detect_image_type(0.08, 0.16), ImageType::Screenshot); // CV=2.0
+    }
+
+    #[test]
+    fn test_detect_mixed() {
+        // Ambiguous: low mean, low CV (neither clearly photo nor screenshot)
+        assert_eq!(detect_image_type(0.04, 0.02), ImageType::Mixed); // mean<0.06, CV=0.5
+    }
+
+    #[test]
+    fn test_adaptive_config_low_texture_photo() {
+        // Low texture photo (mean=0.10): aggressive coupling
+        let config = adaptive_config(0.10, 0.05);
+        assert_eq!(config.aq_lambda_scale, -4.0); // Full aggressive
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_medium_texture_photo() {
+        // Medium texture photo (mean=0.30): moderate coupling
+        let config = adaptive_config(0.30, 0.15);
+        assert!((config.aq_lambda_scale - (-2.0)).abs() < 0.1); // -4.0 * (0.15/0.30) = -2.0
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_high_texture_photo() {
+        // High texture photo (mean=0.60): gentle coupling
+        let config = adaptive_config(0.60, 0.25);
+        assert!((config.aq_lambda_scale - (-1.0)).abs() < 0.1); // -4.0 * (0.15/0.60) = -1.0
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_screenshot() {
+        let config = adaptive_config(0.084, 0.198);
+        // Screenshots get safe compression (with protection)
+        assert_eq!(config.aq_lambda_scale, -8.0);
+        assert_eq!(config.max_adjustment, 1.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_mixed() {
+        let config = adaptive_config(0.04, 0.02);
+        // Mixed gets safe settings (same as screenshot)
+        assert!(config.max_adjustment > 0.0);
+    }
+
+    #[test]
+    fn test_texture_adaptive_coupling() {
+        // Low texture: full aggressive
+        assert_eq!(texture_adaptive_coupling(0.10), -4.0);
+        assert_eq!(texture_adaptive_coupling(0.15), -4.0);
+
+        // Medium texture: scaled down
+        assert!((texture_adaptive_coupling(0.30) - (-2.0)).abs() < 0.01);
+
+        // High texture: gentler
+        assert!((texture_adaptive_coupling(0.60) - (-1.0)).abs() < 0.01);
+        assert!((texture_adaptive_coupling(0.75) - (-0.8)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_scale_quant_by_aq() {
+        let base = [16u16; 64];
+
+        // Zero AQ strength = no change
+        let scaled = scale_quant_by_aq(&base, 0.0);
+        assert_eq!(scaled[0], 16);
+
+        // 0.5 AQ strength = 1.5x
+        let scaled = scale_quant_by_aq(&base, 0.5);
+        assert_eq!(scaled[0], 24);
+
+        // 1.0 AQ strength = 2x
+        let scaled = scale_quant_by_aq(&base, 1.0);
+        assert_eq!(scaled[0], 32);
+    }
+
+    #[test]
+    fn test_scale_quant_clamping() {
+        let base = [200u16; 64];
+
+        // Should clamp at 255
+        let scaled = scale_quant_by_aq(&base, 0.5);
+        assert_eq!(scaled[0], 255);
+
+        let base_low = [1u16; 64];
+        // Should never go below 1
+        let scaled = scale_quant_by_aq(&base_low, 0.0);
+        assert_eq!(scaled[0], 1);
+    }
+
+    #[test]
+    fn test_dct_f32_to_i32() {
+        // Function multiplies by 64 for trellis compatibility (see docstring)
+        // jpegli DCT is at 1/64 scale, trellis divides by 8*quant
+        // So multiply by 64 to compensate: trellis sees round(64*DCT / (8*q)) = round(DCT*8/q)
+        // 127.4 * 64 = 8153.6, rounds to 8154
+        let f32_coeffs = [127.4f32; 64];
+        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
+        assert_eq!(i32_coeffs[0], 8154);
+
+        // -127.6 * 64 = -8166.4, rounds to -8166
+        let f32_coeffs = [-127.6f32; 64];
+        let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
+        assert_eq!(i32_coeffs[0], -8166);
+    }
+
+    #[test]
+    fn test_hybrid_quantize_simple() {
+        // hybrid_quantize_block_simple uses jpegli's formula: round(DCT * 8 / quant)
+        // DC coefficient of 1024 with quant=16 and no AQ
+        let mut dct = [0.0f32; 64];
+        dct[0] = 1024.0;
+        let base_quant = [16u16; 64];
+
+        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.0);
+        assert_eq!(quantized[0], 512); // 1024 * 8 / 16 = 512
+
+        // With AQ strength 0.5, quant becomes 24
+        let quantized = hybrid_quantize_block_simple(&dct, &base_quant, 0.5);
+        assert_eq!(quantized[0], 341); // 1024 * 8 / 24 = 341.33 -> 341
+    }
 }
