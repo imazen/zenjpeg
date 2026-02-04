@@ -116,6 +116,10 @@ wasm-dct:
     cargo run --release -p zenjpeg --example wasm_dct_bench \
         --target wasm32-wasip1 --no-default-features --features std
 
+# SSIM2 Pareto sweep: find zenjpeg configs that beat C++ jpegli 444 per RDKnee angular bucket
+ssim2-pareto *ARGS:
+    cargo run --release -p zenjpeg --example ssim2_pareto_sweep -- {{ARGS}}
+
 # Gather Huffman frequencies from codec-corpus (all modes × all qualities)
 gather-huffman-freq:
     cargo run --release -p zenjpeg --example gather_corpus_frequencies

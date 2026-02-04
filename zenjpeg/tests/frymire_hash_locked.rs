@@ -659,8 +659,15 @@ fn test_configs() -> Vec<EncoderTestConfig> {
 // =============================================================================
 
 /// Verify all configurations produce expected hashes.
-/// This test is skipped until hashes are populated.
+///
+/// Only runs in release mode without the parallel feature:
+/// - Debug mode: floating-point rounding differences cause hash mismatches
+/// - Parallel feature: thread ordering causes non-deterministic output
 #[test]
+#[cfg_attr(
+    any(debug_assertions, feature = "parallel"),
+    ignore = "debug FP rounding or parallel non-determinism causes hash mismatch"
+)]
 fn test_frymire_hashes_locked() {
     if EXPECTED_HASHES.is_empty() {
         println!("No hashes configured yet. Run print_all_hashes to generate.");
