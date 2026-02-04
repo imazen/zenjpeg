@@ -36,6 +36,8 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) use_xyb: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
+    /// Enable adaptive quantization (jpegli AQ). On by default.
+    pub(crate) aq_enabled: bool,
     /// Allow 16-bit quantization tables (default: true)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
@@ -74,6 +76,7 @@ impl StreamingEncoderBuilder {
             encoding_tables: None,
             use_xyb: false,
             deringing: true,
+            aq_enabled: true,
             allow_16bit_quant_tables: false,
             separate_chroma_tables: true,
             scan_strategy: ScanStrategy::Default,
@@ -270,6 +273,16 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
+        self
+    }
+
+    /// Enables or disables adaptive quantization (jpegli AQ).
+    ///
+    /// When disabled, AQ computation is skipped entirely and all blocks
+    /// receive neutral AQ strength (0.0).
+    #[must_use]
+    pub(crate) fn aq_enabled(mut self, enable: bool) -> Self {
+        self.aq_enabled = enable;
         self
     }
 

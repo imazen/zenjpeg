@@ -712,6 +712,39 @@ pub enum OptimizationPreset {
     HybridMaxCompression,
 }
 
+/// Effort level for convenience constructors.
+///
+/// Maps to the corresponding [`OptimizationPreset`] for the chosen color mode.
+/// Use this with [`EncoderConfig::ycbcr_effort()`], [`EncoderConfig::xyb_effort()`],
+/// or [`EncoderConfig::grayscale_effort()`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Effort {
+    /// Fast encoding: jpegli baseline, no trellis.
+    /// Maps to [`OptimizationPreset::JpegliBaseline`].
+    Fast,
+
+    /// Balanced quality/speed: AQ + adaptive trellis + progressive.
+    /// Maps to [`OptimizationPreset::HybridProgressive`].
+    Balanced,
+
+    /// Maximum compression: thorough trellis + scan optimization.
+    /// Maps to [`OptimizationPreset::HybridMaxCompression`].
+    Max,
+}
+
+impl Effort {
+    /// Convert to the corresponding [`OptimizationPreset`].
+    #[must_use]
+    pub const fn to_preset(self) -> OptimizationPreset {
+        match self {
+            Self::Fast => OptimizationPreset::JpegliBaseline,
+            Self::Balanced => OptimizationPreset::HybridProgressive,
+            Self::Max => OptimizationPreset::HybridMaxCompression,
+        }
+    }
+}
+
 /// All preset variants in a fixed array for iteration.
 const ALL_PRESETS: [OptimizationPreset; 8] = [
     OptimizationPreset::JpegliBaseline,

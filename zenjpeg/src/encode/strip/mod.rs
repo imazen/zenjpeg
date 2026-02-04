@@ -464,6 +464,7 @@ impl StripProcessor {
             0,
             false,
             quant,
+            true, // aq_enabled
         )
     }
 
@@ -480,6 +481,7 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
         quant: QuantContext,
+        aq_enabled: bool,
     ) -> Result<Self> {
         let layout = LayoutParams::new(width, height, subsampling, use_xyb);
 
@@ -501,7 +503,7 @@ impl StripProcessor {
 
         // Initialize streaming AQ from layout and quant tables
         let y_quant_01 = quant.y_quant.values[1]; // Position [0,1] in zigzag
-        let aq_state = StreamingAQ::new(&layout, y_quant_01)?;
+        let aq_state = StreamingAQ::new(&layout, y_quant_01, aq_enabled)?;
 
         Ok(Self {
             layout,
