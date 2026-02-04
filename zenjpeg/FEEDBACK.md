@@ -26,4 +26,17 @@ User requests for API cleanup:
 - [x] Re-export HuffmanStrategy and ProgressiveScanMode in public API
 - [x] Add .expert() method for ExpertConfig
 - [x] Make .trellis() and .hybrid_config() #[doc(hidden)] (expert-only)
-- [ ] Merge ExpertConfig types (only one exists now after stash)
+- [x] Simplify ExpertConfig to minimal overlay (tables + trellis + hybrid)
+
+### Additional consolidation (this session)
+- [x] Consolidate .scan_mode(), .scan_strategy(), .optimize_scans() under .progressive()
+- [x] Consolidate .optimize_huffman(), .custom_huffman_tables() under .huffman()
+- [x] Hide .effort constructors and .optimization() until design finalized
+- [x] Benchmark: no performance regression with mozjpeg tables vs jpegli
+
+### Final Public API
+Constructors: ycbcr(), xyb(), grayscale()
+Core: .quality(), .progressive(), .huffman()
+Knobs: .deringing(), .sharp_yuv(), .separate_chroma_tables(), .allow_16bit_quant_tables()
+Expert: .expert(ExpertConfig) with .tables(), .trellis(), .hybrid()
+Metadata: .icc_profile(), .exif(), .xmp()
