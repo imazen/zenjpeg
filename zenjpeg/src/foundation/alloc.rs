@@ -328,7 +328,7 @@ impl AllocationStats {
 
         // Sort by size descending
         let mut sorted: Vec<_> = self.allocations.iter().collect();
-        sorted.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.bytes));
 
         for info in sorted {
             lines.push(info.summary());
@@ -356,7 +356,7 @@ impl AllocationStats {
         }
 
         let mut sorted: Vec<_> = by_ctx.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         let mut lines = Vec::with_capacity(sorted.len() + 2);
         lines.push(format!("{:>12} | Context", "Total Size"));

@@ -2,8 +2,8 @@
 
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
-    QuantTableConfig, QuantTableSource, ProgressiveScanMode, ScanStrategy, XybSubsampling,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
+    ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, XybSubsampling,
 };
 #[cfg(feature = "trellis")]
 use super::trellis::TrellisConfig;
@@ -190,7 +190,7 @@ impl EncoderConfig {
         Self {
             quality: Quality::default(),
             quant_table_config: QuantTableConfig::default(), // Jpegli, 3 tables
-            scan_mode: ProgressiveScanMode::Progressive,                // Progressive gives 3-7% smaller
+            scan_mode: ProgressiveScanMode::Progressive,     // Progressive gives 3-7% smaller
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
@@ -254,26 +254,31 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable or disable progressive encoding.
+    /// Set the progressive scan mode.
     ///
-    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
+    /// Accepts `bool`, `ProgressiveScanMode`, or any type that converts to `ProgressiveScanMode`.
     ///
     /// - `true` → `ProgressiveScanMode::Progressive` (jpegli default script)
     /// - `false` → `ProgressiveScanMode::Baseline`
+    /// - `ProgressiveScanMode::*` → explicit mode selection
     ///
-    /// If the current mode is already a progressive variant (e.g. `ProgressiveSearch`),
-    /// calling `.progressive(true)` preserves it. Calling `.progressive(false)` always
-    /// switches to `Baseline`.
+    /// All progressive modes automatically enable `HuffmanStrategy::Optimize`
+    /// (required for progressive encoding).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Boolean convenience
+    /// let config = EncoderConfig::ycbcr(85, sub).progressive(true);
+    ///
+    /// // Explicit mode
+    /// let config = EncoderConfig::ycbcr(85, sub).progressive(ProgressiveScanMode::ProgressiveSearch);
+    /// ```
     #[must_use]
-    pub fn progressive(mut self, enable: bool) -> Self {
-        if enable {
-            // Preserve existing progressive variant if already progressive
-            if !self.scan_mode.is_progressive() {
-                self.scan_mode = ProgressiveScanMode::Progressive;
-            }
+    pub fn progressive(mut self, mode: impl Into<ProgressiveScanMode>) -> Self {
+        self.scan_mode = mode.into();
+        if self.scan_mode.is_progressive() {
             self.huffman = HuffmanStrategy::Optimize;
-        } else {
-            self.scan_mode = ProgressiveScanMode::Baseline;
         }
         self
     }
@@ -454,6 +459,8 @@ impl EncoderConfig {
     /// [`custom_huffman_tables(HuffmanTableSet::annex_k()?)`](Self::custom_huffman_tables).
     ///
     /// Note: Progressive mode requires optimized Huffman tables.
+    ///
+    /// Consider using [`huffman()`](Self::huffman) for more control over the strategy.
     #[must_use]
     pub fn optimize_huffman(mut self, enable: bool) -> Self {
         self.huffman = if enable {
@@ -461,6 +468,38 @@ impl EncoderConfig {
         } else {
             HuffmanStrategy::Fixed
         };
+        self
+    }
+
+    /// Set the Huffman table strategy.
+    ///
+    /// Accepts `bool`, `HuffmanStrategy`, or `HuffmanTableSet`.
+    ///
+    /// - `true` → `HuffmanStrategy::Optimize` (two-pass, smallest files)
+    /// - `false` → `HuffmanStrategy::Fixed` (single-pass, ~2.5% larger)
+    /// - `HuffmanStrategy::*` → explicit strategy selection
+    /// - `HuffmanTableSet` → custom tables (single-pass)
+    ///
+    /// Progressive mode requires `HuffmanStrategy::Optimize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::encoder::{EncoderConfig, HuffmanStrategy, HuffmanTableSet};
+    ///
+    /// // Boolean (same as old optimize_huffman)
+    /// let config = EncoderConfig::ycbcr(85, sub).huffman(true);
+    ///
+    /// // Explicit strategy
+    /// let config = EncoderConfig::ycbcr(85, sub).huffman(HuffmanStrategy::FixedAnnexK);
+    ///
+    /// // Custom tables
+    /// let tables = HuffmanTableSet::annex_k()?;
+    /// let config = EncoderConfig::ycbcr(85, sub).huffman(tables);
+    /// ```
+    #[must_use]
+    pub fn huffman(mut self, strategy: impl Into<HuffmanStrategy>) -> Self {
+        self.huffman = strategy.into();
         self
     }
 
@@ -827,8 +866,8 @@ impl EncoderConfig {
     pub fn auto_optimize(mut self) -> Self {
         use super::tuning::{EncodingTables, ScalingParams};
         use crate::quant::{
-            OPTIMIZED_FREQUENCY_EXPONENT, OPTIMIZED_FREQUENCY_EXPONENT_444,
-            OPTIMIZED_GLOBAL_SCALE, OPTIMIZED_GLOBAL_SCALE_444,
+            OPTIMIZED_FREQUENCY_EXPONENT, OPTIMIZED_FREQUENCY_EXPONENT_444, OPTIMIZED_GLOBAL_SCALE,
+            OPTIMIZED_GLOBAL_SCALE_444,
         };
 
         let distance = self.quality.to_distance();
@@ -1399,7 +1438,9 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_jpegli_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
+        use crate::encode::encoder_types::{
+            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+        };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::JpegliBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
@@ -1413,7 +1454,9 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
+        use crate::encode::encoder_types::{
+            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+        };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegBaseline);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
@@ -1428,7 +1471,9 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
+        use crate::encode::encoder_types::{
+            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+        };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
@@ -1443,7 +1488,9 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_mozjpeg_max() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
+        use crate::encode::encoder_types::{
+            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+        };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegMaxCompression);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
@@ -1458,7 +1505,9 @@ mod tests {
     #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_hybrid_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ProgressiveScanMode};
+        use crate::encode::encoder_types::{
+            OptimizationPreset, ProgressiveScanMode, QuantTableConfig,
+        };
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::HybridProgressive);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
@@ -1496,13 +1545,26 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_mode_progressive_preserves_variant() {
+    fn test_progressive_accepts_bool_and_enum() {
         use crate::encode::encoder_types::ProgressiveScanMode;
-        // ProgressiveSearch should be preserved when calling .progressive(true)
+
+        // Bool: true → Progressive
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(true);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Progressive);
+
+        // Bool: false → Baseline
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(false);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
+
+        // Enum: explicit ProgressiveSearch
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .scan_mode(ProgressiveScanMode::ProgressiveSearch)
-            .progressive(true);
+            .progressive(ProgressiveScanMode::ProgressiveSearch);
         assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveSearch);
+
+        // Enum: ProgressiveMozjpeg
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .progressive(ProgressiveScanMode::ProgressiveMozjpeg);
+        assert_eq!(config.scan_mode, ProgressiveScanMode::ProgressiveMozjpeg);
     }
 
     #[test]

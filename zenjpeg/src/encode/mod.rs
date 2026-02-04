@@ -132,24 +132,24 @@ pub use encoder_config::EncoderConfig;
 pub use encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, Effort, OptimizationPreset, PixelLayout,
-    Quality, QuantTableConfig, QuantTableSource, ProgressiveScanMode, ScanStrategy, XybSubsampling,
-    YCbCrPlanes,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, Effort, HuffmanStrategy, OptimizationPreset,
+    PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy,
+    XybSubsampling, YCbCrPlanes,
 };
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
+#[cfg(feature = "optimized-tables")]
+#[allow(unused_imports)] // Public API re-export
+pub use optimized_tables::OptimizedTables;
 #[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use search::ExpertConfig;
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};
-#[cfg(feature = "optimized-tables")]
-#[allow(unused_imports)] // Public API re-export
-pub use optimized_tables::OptimizedTables;
 
 use crate::error::Result;
 

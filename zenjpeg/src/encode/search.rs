@@ -65,8 +65,8 @@
 
 use super::encoder_config::EncoderConfig;
 use super::encoder_types::{
-    ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset, Quality, QuantTableConfig,
-    ProgressiveScanMode,
+    ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset, ProgressiveScanMode,
+    Quality, QuantTableConfig,
 };
 use super::trellis::HybridConfig;
 use super::trellis::{TrellisConfig, TrellisSpeedMode};
