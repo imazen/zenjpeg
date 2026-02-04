@@ -637,17 +637,18 @@ impl EncoderConfig {
 
     /// Configure hybrid quantization (jpegli AQ + mozjpeg trellis).
     ///
-    /// Allows fine-tuning all hybrid AQ+trellis parameters.
-    /// See [`HybridConfig`](super::trellis::HybridConfig) for available options.
+    /// Set hybrid AQ+trellis configuration directly.
     ///
-    /// **Note:** When a `HybridConfig` with `enabled = true` is set, it takes
-    /// priority over any `TrellisConfig`. The trellis field will be cleared
-    /// to ensure the hybrid config is used.
+    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
+    /// [`ExpertConfig`](super::search::ExpertConfig) for full control.
+    ///
+    /// When a `HybridConfig` with `enabled = true` is set, it takes
+    /// priority over any `TrellisConfig`.
+    #[doc(hidden)]
     #[cfg(feature = "trellis")]
     #[must_use]
     pub fn hybrid_config(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid_config = config;
-        // Clear trellis so create_hybrid_ctx() uses HybridConfig instead of TrellisConfig
         if config.enabled {
             self.trellis = None;
         }
@@ -656,37 +657,12 @@ impl EncoderConfig {
 
     // === Trellis Quantization ===
 
-    /// Configure trellis quantization (mozjpeg-compatible API).
+    /// Set trellis quantization configuration directly.
     ///
-    /// Trellis quantization uses rate-distortion optimization to find the best
-    /// quantization decisions, typically producing 10-15% smaller files at the
-    /// same visual quality.
-    ///
-    /// This uses the same algorithm as mozjpeg and provides a compatible API.
-    /// For advanced users who want to combine trellis with jpegli's adaptive
-    /// quantization, see the `hybrid_config()` method.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, TrellisConfig};
-    ///
-    /// // Enable trellis with default settings
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .trellis(TrellisConfig::default());
-    ///
-    /// // Fine-tune trellis parameters
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .trellis(TrellisConfig::default()
-    ///         .ac_trellis(true)
-    ///         .dc_trellis(true)
-    ///         .speed_mode(TrellisSpeedMode::Level(5))
-    ///         .rd_factor(0.8));
-    ///
-    /// // Disable trellis for fastest encoding
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .trellis(TrellisConfig::disabled());
-    /// ```
+    /// **Expert API.** Prefer using [`.expert()`](Self::expert) with
+    /// [`ExpertConfig`](super::search::ExpertConfig) for full control,
+    /// or [`.optimization()`](Self::optimization) with presets.
+    #[doc(hidden)]
     #[cfg(feature = "trellis")]
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
@@ -699,6 +675,36 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_trellis(&self) -> Option<&TrellisConfig> {
         self.trellis.as_ref()
+    }
+
+    /// Apply expert configuration for fine-grained control.
+    ///
+    /// `ExpertConfig` provides access to all encoder parameters including:
+    /// - Quantization tables and zero-bias settings
+    /// - Trellis quantization (standalone or AQ-coupled hybrid)
+    /// - Lambda scaling for rate-distortion optimization
+    /// - All encoder flags (deringing, AQ, 16-bit tables, etc.)
+    ///
+    /// Use [`ExpertConfig::from_preset()`] for preset-based configuration,
+    /// or [`ExpertConfig::default_ycbcr()`] as a starting point for custom tuning.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::encode::{EncoderConfig, ExpertConfig, OptimizationPreset, ChromaSubsampling};
+    ///
+    /// // Start from a preset and customize
+    /// let mut expert = ExpertConfig::from_preset(OptimizationPreset::HybridProgressive, 85.0);
+    /// expert.trellis_lambda_log_scale1 = 14.5;  // Adjust lambda
+    /// expert.aq_trellis_coupling = -4.0;        // Negative coupling for smaller files
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .expert(expert);
+    /// ```
+    #[cfg(feature = "trellis")]
+    #[must_use]
+    pub fn expert(self, expert: super::search::ExpertConfig) -> Self {
+        expert.to_encoder_config(self.color_mode)
     }
 
     // === ICC Profile ===
