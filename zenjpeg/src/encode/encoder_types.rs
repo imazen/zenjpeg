@@ -1201,3 +1201,62 @@ impl From<bool> for ProgressiveScanMode {
         }
     }
 }
+
+/// Expert configuration overlay for advanced encoding options.
+///
+/// Use with [`EncoderConfig::expert()`] to customize quantization tables
+/// and trellis/hybrid rate-distortion optimization.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenjpeg::encode::{EncoderConfig, ExpertConfig, QuantTableConfig, ChromaSubsampling};
+///
+/// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+///     .expert(ExpertConfig::default()
+///         .tables(QuantTableConfig::MozjpegRobidoux));
+/// ```
+#[cfg(feature = "trellis")]
+#[derive(Clone, Debug, Default)]
+pub struct ExpertConfig {
+    /// Quantization table selection.
+    ///
+    /// Defaults to `QuantTableConfig::Jpegli`.
+    pub tables: Option<QuantTableConfig>,
+
+    /// Trellis quantization (standalone rate-distortion optimization).
+    ///
+    /// When set, enables mozjpeg-compatible trellis quantization.
+    /// Mutually exclusive with `hybrid` - if both set, `hybrid` takes priority.
+    pub trellis: Option<super::trellis::TrellisConfig>,
+
+    /// Hybrid AQ+trellis (adaptive quantization coupled with trellis).
+    ///
+    /// When set with `enabled: true`, combines jpegli's adaptive quantization
+    /// with trellis optimization. Takes priority over standalone `trellis`.
+    pub hybrid: Option<super::trellis::HybridConfig>,
+}
+
+#[cfg(feature = "trellis")]
+impl ExpertConfig {
+    /// Set quantization tables.
+    #[must_use]
+    pub fn tables(mut self, tables: QuantTableConfig) -> Self {
+        self.tables = Some(tables);
+        self
+    }
+
+    /// Set standalone trellis configuration.
+    #[must_use]
+    pub fn trellis(mut self, config: super::trellis::TrellisConfig) -> Self {
+        self.trellis = Some(config);
+        self
+    }
+
+    /// Set hybrid AQ+trellis configuration.
+    #[must_use]
+    pub fn hybrid(mut self, config: super::trellis::HybridConfig) -> Self {
+        self.hybrid = Some(config);
+        self
+    }
+}
