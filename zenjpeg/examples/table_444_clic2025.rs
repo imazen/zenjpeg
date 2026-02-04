@@ -1,7 +1,6 @@
 //! Butteraugli tables for 4:4:4 jpegli with/without trellis Q90+ on CLIC2025
 
 use enough::Unstoppable;
-use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
 

@@ -1,10 +1,8 @@
 //! Quick CID22 hybrid vs jpegli comparison using butteraugli
 
 use enough::Unstoppable;
-use std::path::Path;
-use zenjpeg::encode::trellis::{adaptive_config, detect_image_type, HybridConfig, ImageType};
+use zenjpeg::encode::trellis::{adaptive_config, detect_image_type, ImageType};
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zenjpeg::quant::aq::compute_aq_strength_map;
 use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
 
 fn main() {
