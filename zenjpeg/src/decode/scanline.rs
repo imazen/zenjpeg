@@ -32,7 +32,7 @@ use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::try_alloc_maybeuninit;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::dequantize_unzigzag_i32_into;
+use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
 
@@ -500,10 +500,11 @@ impl<'a> ScanlineReader<'a> {
                         self.prev_coeff_counts[comp_idx] =
                             self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        dequantize_unzigzag_i32_into(
+                        dequantize_unzigzag_i32_into_partial(
                             &self.coeffs_buf,
                             quant,
                             &mut self.dequant_buf,
+                            coeff_count,
                         );
 
                         // Calculate destination offset in strip buffer (using aligned stride)

@@ -875,6 +875,56 @@ pub fn dequantize_unzigzag_i32_into(
     }
 }
 
+/// Partial dequantize + unzigzag: only processes the first `coeff_count` zigzag
+/// positions. Remaining positions are zero. For typical Q85 photos, most blocks
+/// have 10-15 non-zero coefficients, saving 75-85% of multiply work.
+#[inline(always)]
+pub fn dequantize_unzigzag_i32_partial(
+    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant_natural: &[u16; DCT_BLOCK_SIZE],
+    coeff_count: u8,
+) -> [i32; DCT_BLOCK_SIZE] {
+    use crate::foundation::consts::JPEG_NATURAL_ORDER;
+
+    let mut result = [0i32; DCT_BLOCK_SIZE];
+    let count = (coeff_count as usize).min(DCT_BLOCK_SIZE);
+
+    // Iterate in zigzag order (0..count), mapping each to natural position.
+    // Positions beyond count are guaranteed zero from entropy decoder.
+    for zigzag_idx in 0..count {
+        let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
+        result[natural_idx] =
+            zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+    }
+
+    result
+}
+
+/// Partial dequantize + unzigzag into an existing buffer.
+/// Caller must ensure `result` is zeroed for positions beyond `coeff_count`.
+/// For buffer reuse patterns, zero the full buffer once, then after each IDCT
+/// (which destroys the buffer), re-zero before the next partial dequant.
+#[inline(always)]
+pub fn dequantize_unzigzag_i32_into_partial(
+    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant_natural: &[u16; DCT_BLOCK_SIZE],
+    result: &mut [i32; DCT_BLOCK_SIZE],
+    coeff_count: u8,
+) {
+    use crate::foundation::consts::JPEG_NATURAL_ORDER;
+
+    let count = (coeff_count as usize).min(DCT_BLOCK_SIZE);
+
+    // Zero the full buffer (IDCT destroys contents, so we must re-zero)
+    *result = [0i32; DCT_BLOCK_SIZE];
+
+    for zigzag_idx in 0..count {
+        let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
+        result[natural_idx] =
+            zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+    }
+}
+
 /// Dequantizes a block of coefficients (SIMD-optimized).
 pub fn dequantize_block(
     quantized: &[i16; DCT_BLOCK_SIZE],

@@ -29,8 +29,8 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use enough::Stop;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
-    DequantBiasStats,
+    dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
+    dequantize_unzigzag_i32_partial, DequantBiasStats,
 };
 use crate::types::PixelFormat;
 
@@ -189,7 +189,7 @@ impl<'a> JpegParser<'a> {
                         let coeff_count = self.coeff_counts[comp_idx][block_idx];
 
                         // Fused dequantize + unzigzag (single pass)
-                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
 
                         // IDCT writes directly to strip buffer (no intermediate copy)
                         // Use tiered IDCT based on coefficient count for speed
@@ -314,7 +314,7 @@ impl<'a> JpegParser<'a> {
                         let coeffs = &self.coeffs[0][block_idx];
                         let coeff_count = self.coeff_counts[0][block_idx];
 
-                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * y_strip_width + base_px;
                         idct_int_tiered(
@@ -347,7 +347,7 @@ impl<'a> JpegParser<'a> {
                         let coeffs = &self.coeffs[1][block_idx];
                         let coeff_count = self.coeff_counts[1][block_idx];
 
-                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * c_strip_width + base_px;
                         idct_int_tiered(
@@ -380,7 +380,7 @@ impl<'a> JpegParser<'a> {
                         let coeffs = &self.coeffs[2][block_idx];
                         let coeff_count = self.coeff_counts[2][block_idx];
 
-                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * c_strip_width + base_px;
                         idct_int_tiered(
