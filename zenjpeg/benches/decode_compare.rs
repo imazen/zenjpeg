@@ -97,6 +97,23 @@ fn bench_decode_comparison(c: &mut Criterion) {
             },
         );
 
+        // zenjpeg baseline fast mode (box filter + fused upsample)
+        #[cfg(feature = "decoder")]
+        group.bench_with_input(
+            BenchmarkId::new("jpegli-baseline-fast", format!("{}x{}", width, height)),
+            &jpeg_baseline,
+            |b, data| {
+                b.iter(|| {
+                    use zenjpeg::decode::Decoder;
+                    use zenjpeg::decoder::PixelFormat;
+                    let decoder = Decoder::new()
+                        .output_format(PixelFormat::Rgb)
+                        .fancy_upsampling(false);
+                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                });
+            },
+        );
+
         // Progressive JPEG benchmarks
 
         // zune-jpeg progressive
@@ -124,6 +141,23 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decode::Decoder;
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                });
+            },
+        );
+
+        // zenjpeg progressive fast mode
+        #[cfg(feature = "decoder")]
+        group.bench_with_input(
+            BenchmarkId::new("jpegli-progressive-fast", format!("{}x{}", width, height)),
+            &jpeg_progressive,
+            |b, data| {
+                b.iter(|| {
+                    use zenjpeg::decode::Decoder;
+                    use zenjpeg::decoder::PixelFormat;
+                    let decoder = Decoder::new()
+                        .output_format(PixelFormat::Rgb)
+                        .fancy_upsampling(false);
                     decoder.decode(black_box(data), Unstoppable).expect("decode failed")
                 });
             },

@@ -1483,6 +1483,279 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
     }
 }
 
+/// Fused box-filter 4:2:0 horizontal upsample + YCbCr→RGB conversion.
+///
+/// Processes one output row. For 4:2:0 box filter, both output rows in a vertical
+/// pair use the same chroma row (nearest-neighbor vertical upsampling).
+///
+/// Each chroma pixel maps to 2 horizontal output pixels. This eliminates
+/// the intermediate upsampled chroma buffers entirely.
+///
+/// `y_row`: Y values for one output row (`width` elements)
+/// `cb_row`: Cb values at half resolution (`width/2` elements)
+/// `cr_row`: Cr values at half resolution (`width/2` elements)
+/// `rgb`: Output RGB buffer (`width * 3` bytes)
+/// `width`: Output width in pixels
+pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
+    y_row: &[i16],
+    cb_row: &[i16],
+    cr_row: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+) {
+    debug_assert!(y_row.len() >= width);
+    debug_assert!(cb_row.len() >= (width + 1) / 2);
+    debug_assert!(cr_row.len() >= (width + 1) / 2);
+    debug_assert!(rgb.len() >= width * 3);
+
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            fused_h2v2_box_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
+            return;
+        }
+    }
+
+    // Scalar fallback
+    let chroma_width = (width + 1) / 2;
+    for cx in 0..chroma_width {
+        let cb_val = i32::from(cb_row[cx]) - 128;
+        let cr_val = i32::from(cr_row[cx]) - 128;
+
+        // Left output pixel
+        let px0 = cx * 2;
+        if px0 < width {
+            let y_val = i32::from(y_row[px0]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let idx = px0 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+
+        // Right output pixel (same chroma)
+        let px1 = cx * 2 + 1;
+        if px1 < width {
+            let y_val = i32::from(y_row[px1]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let idx = px1 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+    }
+}
+
+/// AVX2 fused box-filter 4:2:0 upsample + YCbCr→RGB.
+/// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
+    _token: archmage::Avx2Token,
+    y_row: &[i16],
+    cb_row: &[i16],
+    cr_row: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+) {
+    use core::arch::x86_64::*;
+
+    let chunks = width / 16;
+
+    // Preload constants
+    let bias = _mm256_set1_epi16(128);
+    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
+    let rounding = _mm256_set1_epi32(YUV_ROUND);
+    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
+    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
+    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
+    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let zero = _mm256_setzero_si256();
+
+    // RGB interleave masks (same as existing ycbcr_planes_i16_to_rgb_u8_avx2)
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13,
+        8, 3, 14, 9, 4, 15,
+    );
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
+        0, -1, 0, 0, -1, 0,
+    );
+
+    for chunk in 0..chunks {
+        let y_offset = chunk * 16;
+        let c_offset = chunk * 8;
+        let out_offset = chunk * 48;
+
+        // Load 16 Y values
+        let y_vec = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
+        );
+
+        // Load 8 chroma values and duplicate each for box-filter horizontal upsampling:
+        // [c0, c1, c2, c3, c4, c5, c6, c7] → [c0, c0, c1, c1, c2, c2, c3, c3, c4, c4, c5, c5, c6, c6, c7, c7]
+        let cb_half = safe_simd::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&cb_row[c_offset..c_offset + 8]).unwrap(),
+        );
+        let cr_half = safe_simd::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&cr_row[c_offset..c_offset + 8]).unwrap(),
+        );
+
+        // Duplicate each i16: unpacklo/hi interleaves with itself
+        let cb_lo = _mm_unpacklo_epi16(cb_half, cb_half); // [c0,c0, c1,c1, c2,c2, c3,c3]
+        let cb_hi = _mm_unpackhi_epi16(cb_half, cb_half); // [c4,c4, c5,c5, c6,c6, c7,c7]
+        let cb_vec = _mm256_set_m128i(cb_hi, cb_lo);
+
+        let cr_lo = _mm_unpacklo_epi16(cr_half, cr_half);
+        let cr_hi = _mm_unpackhi_epi16(cr_half, cr_half);
+        let cr_vec = _mm256_set_m128i(cr_hi, cr_lo);
+
+        // Subtract 128 from Cb and Cr
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+        // Zero-extend Y to 32-bit
+        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+
+        // y_scaled = y * Y_CF + rounding
+        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+        // Sign-extend Cb/Cr to 32-bit
+        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
+        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+        let cb_lo32 = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+        let cb_hi32 = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+        let cr_lo32 = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+        let cr_hi32 = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+        // R = (y_scaled + cr * CR_TO_R) >> 14
+        let r_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo32, cr_to_r)),
+            14,
+        );
+        let r_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi32, cr_to_r)),
+            14,
+        );
+
+        // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
+        let g_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_lo,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_lo32, cr_to_g),
+                    _mm256_mullo_epi32(cb_lo32, cb_to_g),
+                ),
+            ),
+            14,
+        );
+        let g_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_hi,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_hi32, cr_to_g),
+                    _mm256_mullo_epi32(cb_hi32, cb_to_g),
+                ),
+            ),
+            14,
+        );
+
+        // B = (y_scaled + cb * CB_TO_B) >> 14
+        let b_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo32, cb_to_b)),
+            14,
+        );
+        let b_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi32, cb_to_b)),
+            14,
+        );
+
+        // Pack i32 -> i16 -> u8
+        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
+        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
+        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
+
+        // Interleave RGB
+        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+        // Store 48 bytes (16 pixels * 3 channels)
+        safe_simd::_mm256_storeu_si256(
+            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
+            rgb0,
+        );
+        safe_simd::_mm_storeu_si128(
+            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
+            _mm256_castsi256_si128(rgb1),
+        );
+    }
+
+    // Handle remainder with scalar
+    let c_remainder_start = chunks * 8;
+    let chroma_width = (width + 1) / 2;
+    for cx in c_remainder_start..chroma_width {
+        let cb_val = i32::from(cb_row[cx]) - 128;
+        let cr_val = i32::from(cr_row[cx]) - 128;
+
+        let px0 = cx * 2;
+        if px0 < width {
+            let y_val = i32::from(y_row[px0]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let idx = px0 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+        let px1 = cx * 2 + 1;
+        if px1 < width {
+            let y_val = i32::from(y_row[px1]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+            let idx = px1 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
