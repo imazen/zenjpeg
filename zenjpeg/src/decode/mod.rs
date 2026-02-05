@@ -342,25 +342,20 @@ impl Decoder {
             ));
         }
 
-        // Support grayscale (1) and color (3) images
-        // CMYK/YCCK (4 components) is recognized but not yet supported for decode
-        if parser.num_components == 4 {
+        // Support grayscale (1), color (3), and CMYK/YCCK (4) images
+        if parser.num_components != 1 && parser.num_components != 3 && parser.num_components != 4 {
             return Err(Error::unsupported_feature(
-                "CMYK/YCCK images (4-component) are not yet supported. \
-                 Consider converting to RGB JPEG first.",
-            ));
-        }
-        if parser.num_components != 1 && parser.num_components != 3 {
-            return Err(Error::unsupported_feature(
-                "scanline reader requires 1-component (grayscale) or 3-component (YCbCr) image",
+                "scanline reader requires 1, 3, or 4 component image",
             ));
         }
 
         let is_grayscale = parser.num_components == 1;
+        let is_cmyk = parser.num_components == 4;
         let is_xyb = parser.info().is_xyb;
 
-        // For progressive JPEGs, use buffered mode: fully decode then serve from buffer
-        if parser.mode == JpegMode::Progressive {
+        // For progressive JPEGs or CMYK, use buffered mode: fully decode then serve from buffer
+        // (CMYK requires buffered mode because scanline streaming doesn't support 4 components yet)
+        if parser.mode == JpegMode::Progressive || is_cmyk {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;

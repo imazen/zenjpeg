@@ -2,12 +2,14 @@
 //!
 //! This module handles parsing of JPEG marker segments during header reading.
 
-use crate::decode::extras::{detect_segment_type, should_preserve_segment, SegmentType};
+use crate::decode::extras::{
+    detect_segment_type, should_preserve_segment, AdobeColorTransform, SegmentType,
+};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
-    MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MAX_COMPONENTS,
+    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DHT,
+    MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MAX_COMPONENTS,
     MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
@@ -317,6 +319,14 @@ impl<'a> JpegParser<'a> {
         }
         let data_len = length - 2;
 
+        // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)
+        if marker == MARKER_APP14 && self.position + data_len <= self.data.len() {
+            let data = &self.data[self.position..self.position + data_len];
+            if let Some(transform) = parse_adobe_app14(data) {
+                self.adobe_transform = Some(transform);
+            }
+        }
+
         // Check if we should preserve this segment
         if let (Some(config), Some(extras)) = (&self.preserve_config, &mut self.extras) {
             if self.position + data_len <= self.data.len() {
@@ -338,4 +348,26 @@ impl<'a> JpegParser<'a> {
         self.position += data_len;
         Ok(())
     }
+}
+
+/// Parse Adobe APP14 segment to extract color transform.
+/// Format: "Adobe\0" + version (2 bytes) + flags0 (2) + flags1 (2) + color_transform (1)
+fn parse_adobe_app14(data: &[u8]) -> Option<AdobeColorTransform> {
+    const ADOBE_SIG: &[u8] = b"Adobe";
+    if data.len() < ADOBE_SIG.len() + 7 {
+        return None;
+    }
+    if !data.starts_with(ADOBE_SIG) {
+        return None;
+    }
+
+    let offset = ADOBE_SIG.len();
+    let color_transform_byte = data[offset + 6];
+
+    Some(match color_transform_byte {
+        0 => AdobeColorTransform::Unknown, // CMYK (raw, values often inverted)
+        1 => AdobeColorTransform::YCbCr,   // Standard YCbCr
+        2 => AdobeColorTransform::Ycck,    // YCCK
+        _ => AdobeColorTransform::Unknown,
+    })
 }
