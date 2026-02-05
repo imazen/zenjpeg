@@ -389,6 +389,10 @@ pub enum JpegMode {
     Progressive,
     /// Lossless (not implemented)
     Lossless,
+    /// Arithmetic sequential DCT (SOF9)
+    ArithmeticSequential,
+    /// Arithmetic progressive DCT (SOF10)
+    ArithmeticProgressive,
 }
 
 /// Huffman table optimization algorithm.
