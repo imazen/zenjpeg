@@ -762,6 +762,23 @@ impl Decoder {
         // Find SOS marker to get table mapping and scan data position
         let scan_info = parser.find_scan_info()?;
 
+        // Detect RGB JPEGs (Adobe APP14 transform=0 or RGB component IDs)
+        let is_rgb = if parser.num_components == 3 {
+            match parser.adobe_transform {
+                Some(AdobeColorTransform::Unknown) => true,  // transform=0 → RGB
+                Some(AdobeColorTransform::YCbCr) => false,   // transform=1 → YCbCr
+                None => {
+                    // No Adobe marker: check for RGB component IDs
+                    parser.components[0].id == b'R'
+                        && parser.components[1].id == b'G'
+                        && parser.components[2].id == b'B'
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
         ScanlineReader::new(
             data,
             parser.width,
@@ -777,6 +794,7 @@ impl Decoder {
             scan_info.data_start,
             parser.restart_interval,
             is_xyb,
+            is_rgb,
         )
     }
 

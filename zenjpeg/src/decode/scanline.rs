@@ -144,6 +144,8 @@ pub struct ScanlineReader<'a> {
 
     // Info
     is_xyb: bool,
+    /// True for Adobe RGB JPEGs (APP14 transform=0) - skip YCbCr→RGB conversion
+    is_rgb: bool,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -166,6 +168,7 @@ impl<'a> ScanlineReader<'a> {
         scan_data_start: usize,
         restart_interval: u16,
         is_xyb: bool,
+        is_rgb: bool,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -283,6 +286,7 @@ impl<'a> ScanlineReader<'a> {
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4], // Start with full zeroing
             is_xyb,
+            is_rgb,
         })
     }
 
@@ -343,6 +347,7 @@ impl<'a> ScanlineReader<'a> {
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4],
             is_xyb,
+            is_rgb: false, // Buffered mode: pixels already color-converted
         }
     }
 
@@ -748,13 +753,23 @@ impl<'a> ScanlineReader<'a> {
                 )
             };
 
-            // Convert YCbCr to RGB using the same function as the main decoder
-            ycbcr_planes_i16_to_rgb_u8(
-                &self.y_strip[strip_offset..strip_offset + cols],
-                cb_slice,
-                cr_slice,
-                out_row,
-            );
+            if self.is_rgb {
+                // RGB JPEG: interleave planes without YCbCr→RGB matrix
+                let y_slice = &self.y_strip[strip_offset..strip_offset + cols];
+                for px in 0..cols {
+                    out_row[px * 3] = y_slice[px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 1] = cb_slice[px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 2] = cr_slice[px].clamp(0, 255) as u8;
+                }
+            } else {
+                // Convert YCbCr to RGB using the same function as the main decoder
+                ycbcr_planes_i16_to_rgb_u8(
+                    &self.y_strip[strip_offset..strip_offset + cols],
+                    cb_slice,
+                    cr_slice,
+                    out_row,
+                );
+            }
 
             rows_written += 1;
             self.current_row += 1;
@@ -827,11 +842,15 @@ impl<'a> ScanlineReader<'a> {
                 let y = self.y_strip[strip_offset + x];
                 let cb = cb_buf[strip_offset + x];
                 let cr = cr_buf[strip_offset + x];
-                let (r, g, b) = ycbcr_to_rgb(
-                    y.clamp(0, 255) as u8,
-                    cb.clamp(0, 255) as u8,
-                    cr.clamp(0, 255) as u8,
-                );
+                let (r, g, b) = if self.is_rgb {
+                    (y.clamp(0, 255) as u8, cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
+                } else {
+                    ycbcr_to_rgb(
+                        y.clamp(0, 255) as u8,
+                        cb.clamp(0, 255) as u8,
+                        cr.clamp(0, 255) as u8,
+                    )
+                };
                 out_row[x * 4] = r;
                 out_row[x * 4 + 1] = g;
                 out_row[x * 4 + 2] = b;
@@ -909,11 +928,15 @@ impl<'a> ScanlineReader<'a> {
                 let y = self.y_strip[strip_offset + x];
                 let cb = cb_buf[strip_offset + x];
                 let cr = cr_buf[strip_offset + x];
-                let (r, g, b) = ycbcr_to_rgb(
-                    y.clamp(0, 255) as u8,
-                    cb.clamp(0, 255) as u8,
-                    cr.clamp(0, 255) as u8,
-                );
+                let (r, g, b) = if self.is_rgb {
+                    (y.clamp(0, 255) as u8, cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
+                } else {
+                    ycbcr_to_rgb(
+                        y.clamp(0, 255) as u8,
+                        cb.clamp(0, 255) as u8,
+                        cr.clamp(0, 255) as u8,
+                    )
+                };
 
                 // Convert sRGB u8 to linear f32
                 out_row[x * 4] = srgb_to_linear(r);

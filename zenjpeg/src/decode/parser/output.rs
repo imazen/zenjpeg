@@ -38,6 +38,32 @@ use super::JpegParser;
 
 /// Pixel output conversion methods for JpegParser.
 impl<'a> JpegParser<'a> {
+    /// Check if this JPEG stores raw RGB (not YCbCr).
+    ///
+    /// Adobe APP14 with transform=0 and 3 components means the data is stored
+    /// as raw RGB. Also detect RGB component IDs (R=82, G=71, B=66) without
+    /// Adobe marker. In these cases we must NOT apply YCbCr→RGB conversion.
+    pub(crate) fn is_rgb_jpeg(&self) -> bool {
+        if self.num_components != 3 {
+            return false;
+        }
+        // Adobe APP14 transform byte determines encoding:
+        // 0 = Unknown/RGB (no transform), 1 = YCbCr, 2 = YCCK
+        match self.adobe_transform {
+            Some(AdobeColorTransform::YCbCr) => return false, // Explicitly YCbCr
+            Some(AdobeColorTransform::Unknown) => return true, // Explicitly RGB (transform=0)
+            Some(AdobeColorTransform::Ycck) => return false,   // YCCK (shouldn't be 3-component)
+            None => {}                                          // No Adobe marker, check IDs
+        }
+        // No Adobe APP14: check component IDs for RGB ('R'=82, 'G'=71, 'B'=66)
+        let ids: [u8; 3] = [
+            self.components[0].id,
+            self.components[1].id,
+            self.components[2].id,
+        ];
+        ids == [b'R', b'G', b'B']
+    }
+
     /// Check if we can use the fast i16 path for 4:4:4 images.
     ///
     /// Fast path requirements:
@@ -210,18 +236,31 @@ impl<'a> JpegParser<'a> {
             let y_start = imcu_row * mcu_height;
             let rows_this_mcu = mcu_height.min(height.saturating_sub(y_start));
             let cols_this_mcu = width.min(strip_width);
+            let is_rgb = self.is_rgb_jpeg();
 
             for row in 0..rows_this_mcu {
                 let strip_offset = row * strip_width;
                 let rgb_offset = (y_start + row) * width * 3;
 
-                // Convert one row at a time for cache efficiency
-                ycbcr_planes_i16_to_rgb_u8(
-                    &y_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &cb_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &cr_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
-                );
+                if is_rgb {
+                    // RGB JPEG: just interleave the 3 planes (no YCbCr→RGB matrix)
+                    // IDCT already output level-shifted values [0, 255]
+                    for px in 0..cols_this_mcu {
+                        let i = strip_offset + px;
+                        let o = rgb_offset + px * 3;
+                        rgb[o] = y_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
+                    }
+                } else {
+                    // Convert one row at a time for cache efficiency
+                    ycbcr_planes_i16_to_rgb_u8(
+                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                    );
+                }
             }
         }
 
@@ -842,6 +881,17 @@ impl<'a> JpegParser<'a> {
                         &planes_f32[2],
                         &mut rgb,
                     );
+                } else if self.is_rgb_jpeg() {
+                    // RGB JPEG (Adobe APP14 transform=0 or RGB component IDs):
+                    // Level-shift from [-128..127] to [0..255] and interleave.
+                    for i in 0..output_size {
+                        let r = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        let g = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        let b = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3] = r;
+                        rgb[i * 3 + 1] = g;
+                        rgb[i * 3 + 2] = b;
+                    }
                 } else {
                     // YCbCr to RGB conversion using batch function
                     ycbcr_planes_f32_to_rgb_u8(
@@ -1102,6 +1152,13 @@ impl<'a> JpegParser<'a> {
                         &planes_f32[2],
                         &mut rgb,
                     );
+                } else if self.is_rgb_jpeg() {
+                    // RGB JPEG: level-shift and normalize to [0.0, 1.0]
+                    for i in 0..output_size {
+                        rgb[i * 3] = (planes_f32[0][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0) / 255.0;
+                    }
                 } else {
                     // YCbCr to RGB conversion using batch function
                     ycbcr_planes_f32_to_rgb_f32(
