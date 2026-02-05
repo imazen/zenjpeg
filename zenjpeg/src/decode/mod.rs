@@ -29,7 +29,7 @@ mod upsample;
 #[cfg(feature = "ultrahdr")]
 mod ultrahdr_reader;
 
-// These types are public API for coefficient analysis
+// These types are public API for coefficient analysis and decode results
 #[allow(unused_imports)]
 pub use image::{
     CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
@@ -60,11 +60,11 @@ use crate::error::{Error, Result};
 /// Controls how the decoder handles non-fatal errors.
 ///
 /// The default is [`Strictness::Balanced`], which matches mozjpeg/libjpeg-turbo
-/// behavior: structural errors (missing tables, bad IDs) are fatal, but data
-/// errors (truncation, missing padding, DNL conflicts) recover gracefully.
+/// behavior: data errors (truncation, missing padding, DNL conflicts) recover
+/// gracefully, and missing DHT falls back to standard tables (for MJPEG compat).
 ///
 /// Use [`Strictness::Strict`] for validation/conformance testing,
-/// [`Strictness::Lenient`] for maximum compatibility including MJPEG without DHT.
+/// [`Strictness::Lenient`] for maximum compatibility.
 ///
 /// # Behavior matrix
 ///
@@ -74,13 +74,18 @@ use crate::error::{Error, Result};
 /// | Missing padding blocks | Invalid (MCUs required) | Implicit zero fill | Error | Speculative+zero | Speculative+zero |
 /// | DNL conflicts with SOF | Invalid (B.2.5) | Ignored entirely | Error | Ignored | Ignored |
 /// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan |
-/// | Missing DHT before scan | Invalid (B.2.4.2) | JERR_NO_HUFF_TABLE (fatal) | Error | Error | Std tables |
+/// | Missing DHT before scan | Invalid (B.2.4.2) | std_huff_tables() fallback | Error | Std tables | Std tables |
 /// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
 /// | Bad DQT/DHT structure | Invalid | ERREXIT (fatal) | Error | Error | Error |
 /// | Bad component ID in SOS | Invalid (B.2.3) | ERREXIT (fatal) | Error | Error | Error |
 ///
 /// "Speculative+zero" means: attempt to decode the block; if the data is
 /// missing or invalid, restore decoder state and fill with zeros.
+///
+/// Note on missing DHT: mozjpeg calls `std_huff_tables()` in `jinit_huff_decoder()`
+/// before decode begins, automatically filling any missing tables with ITU-T T.81
+/// section K.3 standard tables. This is specifically for MJPEG/AVI1 compatibility.
+/// Balanced matches this behavior. Only Strict rejects missing DHT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Strictness {
     /// Fail on any spec violation, truncation, or recoverable error.
@@ -95,31 +100,133 @@ pub enum Strictness {
 
     /// Match mozjpeg/libjpeg-turbo error handling behavior (default).
     ///
-    /// Errors on structural violations (like mozjpeg's ERREXIT):
-    /// - Missing Huffman table (DHT not defined before scan)
-    ///
     /// Recovers from data errors (like mozjpeg's WARNMS):
     /// - Truncated scan data (fills remaining with zeros)
     /// - Missing padding blocks (speculative decode, zero fill)
     /// - DNL marker conflicts with SOF height (ignored)
     /// - End-of-scan fill bits that don't form valid Huffman codes
+    /// - Missing DHT markers (falls back to ITU-T T.81 K.3 standard tables)
+    ///
+    /// Errors on structural violations (like mozjpeg's ERREXIT):
+    /// - Bad DQT/DHT table structure
+    /// - Bad component ID in SOS
     ///
     /// Use for:
     /// - General image processing
     /// - Production pipelines expecting mozjpeg-compatible behavior
+    /// - MJPEG streams (which often omit DHT markers)
     #[default]
     Balanced,
 
-    /// Recover from all errors when possible, including structural ones.
+    /// Recover from all errors when possible.
     ///
-    /// More lenient than mozjpeg. Additionally recovers from:
-    /// - Missing Huffman tables (falls back to standard JPEG tables for MJPEG)
+    /// Currently identical to Balanced. Reserved for future recovery
+    /// behaviors that go beyond what mozjpeg supports.
     ///
     /// Use for:
-    /// - MJPEG streams (which often omit DHT markers)
     /// - Corrupt file recovery
     /// - Maximum compatibility
     Lenient,
+}
+
+/// Issues discovered during JPEG decoding.
+///
+/// In [`Strictness::Strict`] mode, any issue triggers an immediate error
+/// (the variant is embedded in the error message for programmatic matching).
+///
+/// In [`Strictness::Balanced`] and [`Strictness::Lenient`] modes, issues are
+/// collected as warnings and accessible via [`DecodedImage::warnings()`].
+///
+/// This allows the same enum to serve as both warning data and error context.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenjpeg::decoder::{Decoder, DecodeWarning};
+///
+/// let image = Decoder::new().decode(&data)?;
+/// for warning in image.warnings() {
+///     match warning {
+///         DecodeWarning::MissingHuffmanTables => eprintln!("MJPEG: used standard tables"),
+///         DecodeWarning::TruncatedScan { .. } => eprintln!("Scan data was truncated"),
+///         _ => {}
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DecodeWarning {
+    /// No DHT markers found; standard Huffman tables (ITU-T T.81 K.3) were used.
+    ///
+    /// Common in MJPEG/AVI1 frames which omit DHT to save space.
+    /// mozjpeg handles this via `std_huff_tables()` in `jinit_huff_decoder()`.
+    MissingHuffmanTables,
+
+    /// Scan data was truncated; remaining blocks filled with zeros.
+    ///
+    /// The image may have partial content. `blocks_decoded` and `blocks_expected`
+    /// indicate how much data was recovered.
+    TruncatedScan {
+        /// Number of MCU blocks successfully decoded before truncation.
+        blocks_decoded: u32,
+        /// Total number of MCU blocks expected for this scan.
+        blocks_expected: u32,
+    },
+
+    /// Padding blocks beyond image boundary couldn't be decoded; filled with zeros.
+    ///
+    /// When the image dimensions aren't MCU-aligned, padding blocks are needed.
+    /// If the entropy data doesn't contain valid padding, zeros are used.
+    PaddingBlockError,
+
+    /// DNL marker height conflicts with SOF header height; DNL value ignored.
+    ///
+    /// Per ITU-T T.81, DNL is only valid when SOF height is 0. mozjpeg ignores
+    /// DNL entirely (skip_variable).
+    DnlHeightConflict {
+        /// Height from the SOF marker.
+        sof_height: u32,
+        /// Height from the DNL marker (ignored).
+        dnl_height: u32,
+    },
+
+    /// Progressive scan data was truncated; remaining coefficients filled with zeros.
+    TruncatedProgressiveScan,
+}
+
+impl core::fmt::Display for DecodeWarning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MissingHuffmanTables => {
+                write!(f, "missing DHT markers; standard Huffman tables used")
+            }
+            Self::TruncatedScan {
+                blocks_decoded,
+                blocks_expected,
+            } => write!(
+                f,
+                "scan truncated at block {}/{}; remaining filled with zeros",
+                blocks_decoded, blocks_expected
+            ),
+            Self::PaddingBlockError => {
+                write!(f, "padding block decode failed; filled with zeros")
+            }
+            Self::DnlHeightConflict {
+                sof_height,
+                dnl_height,
+            } => write!(
+                f,
+                "DNL height {} conflicts with SOF height {}; DNL ignored",
+                dnl_height, sof_height
+            ),
+            Self::TruncatedProgressiveScan => {
+                write!(
+                    f,
+                    "progressive scan truncated; remaining coefficients are zero"
+                )
+            }
+        }
+    }
 }
 
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -146,7 +253,7 @@ pub struct DecoderConfig {
     /// What metadata and secondary images to preserve during decode.
     pub preserve: PreserveConfig,
     /// How to handle recoverable errors (truncation, minor spec violations).
-    /// Default is [`Strictness::Lenient`].
+    /// Default is [`Strictness::Balanced`].
     pub strictness: Strictness,
 }
 
@@ -640,8 +747,9 @@ impl Decoder {
             }
         }
 
-        // Extract preserved extras
+        // Extract preserved extras and warnings
         let extras = parser.take_extras();
+        let warnings = parser.take_warnings();
 
         Ok(DecodedImage {
             width: info.dimensions.width,
@@ -649,6 +757,7 @@ impl Decoder {
             format: output_format,
             data: pixels,
             extras,
+            warnings,
         })
     }
 
@@ -689,11 +798,14 @@ impl Decoder {
         let pixels =
             parser.to_pixels_f32(output_format, info.is_xyb, self.config.fancy_upsampling)?;
 
+        let warnings = parser.take_warnings();
+
         Ok(DecodedImageF32 {
             width: info.dimensions.width,
             height: info.dimensions.height,
             format: output_format,
             data: pixels,
+            warnings,
         })
     }
 

@@ -14,7 +14,7 @@ use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::JpegMode;
 
 use super::super::idct_int::idct_int_tiered;
-use super::super::Strictness;
+use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 use crate::color::ycbcr_planes_i16_to_rgb_u8;
 
@@ -147,21 +147,32 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
+        // Check for missing DHT and emit warning/error BEFORE borrowing tables.
+        // This avoids borrow conflicts between self.warn() (mutable) and self.dc_tables (immutable).
+        {
+            let mut any_missing = false;
+            for (_comp_idx, dc_table, ac_table) in scan_components {
+                let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+                let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+                if self.dc_tables[dc_idx].is_none() || self.ac_tables[ac_idx].is_none() {
+                    any_missing = true;
+                    break;
+                }
+            }
+            if any_missing {
+                self.warn(DecodeWarning::MissingHuffmanTables)?;
+            }
+        }
+
         for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
 
-            // Use explicit table if provided, otherwise behavior depends on strictness:
-            // - Strict/Balanced: error on missing DHT (matches mozjpeg JERR_NO_HUFF_TABLE)
-            // - Lenient: fall back to standard JPEG tables (for MJPEG compatibility)
+            // Use explicit table if provided, otherwise fall back to standard tables.
+            // (Warning already emitted above; Strict mode returned Err above.)
             let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
                 Some(table) => table,
                 None => {
-                    if self.strictness != Strictness::Lenient {
-                        return Err(Error::invalid_jpeg_data(
-                            "missing Huffman table (DHT not defined before scan)",
-                        ));
-                    }
                     if dc_idx == 0 {
                         HuffmanDecodeTable::std_dc_luminance()
                     } else {
@@ -174,11 +185,6 @@ impl<'a> JpegParser<'a> {
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
                 None => {
-                    if self.strictness != Strictness::Lenient {
-                        return Err(Error::invalid_jpeg_data(
-                            "missing Huffman table (DHT not defined before scan)",
-                        ));
-                    }
                     if ac_idx == 0 {
                         HuffmanDecodeTable::std_ac_luminance()
                     } else {
@@ -197,6 +203,8 @@ impl<'a> JpegParser<'a> {
         // Track previous coefficient count per component for smart zeroing (zero-copy optimization).
         // Start with 64 to force full zeroing on first block of each component.
         let mut prev_coeff_counts: [u8; 4] = [64; 4];
+        let mut had_padding_error = false;
+        let mut truncation_mcu: Option<u32> = None;
 
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
@@ -296,17 +304,14 @@ impl<'a> JpegParser<'a> {
                                             self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                             self.coeff_counts[*comp_idx][block_idx] = 1;
                                             prev_coeff_counts[*comp_idx] = 64;
+                                            had_padding_error = true;
                                         }
                                         Err(_e) => {
                                             decoder.restore_state(saved_state);
                                             self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                             self.coeff_counts[*comp_idx][block_idx] = 1;
                                             prev_coeff_counts[*comp_idx] = 64;
-                                            #[cfg(debug_assertions)]
-                                            eprintln!(
-                                                "DEBUG: Padding block ({},{}) error: {:?}",
-                                                block_x, block_y, _e
-                                            );
+                                            had_padding_error = true;
                                         }
                                     }
                                 }
@@ -321,15 +326,10 @@ impl<'a> JpegParser<'a> {
                                 )? {
                                     ScanRead::Value(c) => c,
                                     ScanRead::EndOfScan | ScanRead::Truncated => {
-                                        // Truncation handling depends on strictness:
-                                        // - Strict: error on any truncation
-                                        // - Balanced/Lenient: fill with zeros and continue
-                                        if self.strictness == Strictness::Strict {
-                                            return Err(Error::truncated_data(
-                                                "scan data truncated mid-block",
-                                            ));
+                                        // Truncation: Strict errors via warn(), Balanced/Lenient fills zeros
+                                        if truncation_mcu.is_none() {
+                                            truncation_mcu = Some(mcu_count);
                                         }
-                                        // Balanced/Lenient: recover by filling zeros
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
                                         prev_coeff_counts[*comp_idx] = 64;
@@ -347,7 +347,23 @@ impl<'a> JpegParser<'a> {
             }
         }
 
+        // Consume decoder before warn() to avoid borrow conflicts
+        // (decoder holds immutable refs to self.dc_tables/ac_tables)
         self.position += decoder.position();
+        drop(decoder);
+
+        // Emit warnings for any issues detected during decode
+        let total_mcus = (mcu_rows * mcu_cols) as u32;
+        if let Some(at_mcu) = truncation_mcu {
+            self.warn(DecodeWarning::TruncatedScan {
+                blocks_decoded: at_mcu,
+                blocks_expected: total_mcus,
+            })?;
+        }
+        if had_padding_error {
+            self.warn(DecodeWarning::PaddingBlockError)?;
+        }
+
         Ok(())
     }
 
@@ -399,6 +415,23 @@ impl<'a> JpegParser<'a> {
         let mcu_rows = (height + 7) / 8;
         let strip_width = mcu_cols * 8;
 
+        // Check for missing DHT FIRST (before any immutable borrows of self).
+        // warn() needs mutable self, which conflicts with quant/table borrows below.
+        {
+            let mut any_missing = false;
+            for (_comp_idx, dc_table, ac_table) in scan_components {
+                let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+                let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+                if self.dc_tables[dc_idx].is_none() || self.ac_tables[ac_idx].is_none() {
+                    any_missing = true;
+                    break;
+                }
+            }
+            if any_missing {
+                self.warn(DecodeWarning::MissingHuffmanTables)?;
+            }
+        }
+
         // Get quantization tables
         let quant_y = self.quant_tables[self.components[0].quant_table_idx as usize]
             .as_ref()
@@ -414,7 +447,6 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Set up Huffman tables (same strictness logic as decode_scan)
         for (comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
@@ -422,11 +454,6 @@ impl<'a> JpegParser<'a> {
             let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
                 Some(table) => table,
                 None => {
-                    if self.strictness != Strictness::Lenient {
-                        return Err(Error::invalid_jpeg_data(
-                            "missing Huffman table (DHT not defined before scan)",
-                        ));
-                    }
                     if dc_idx == 0 {
                         HuffmanDecodeTable::std_dc_luminance()
                     } else {
@@ -439,11 +466,6 @@ impl<'a> JpegParser<'a> {
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
                 None => {
-                    if self.strictness != Strictness::Lenient {
-                        return Err(Error::invalid_jpeg_data(
-                            "missing Huffman table (DHT not defined before scan)",
-                        ));
-                    }
                     if ac_idx == 0 {
                         HuffmanDecodeTable::std_ac_luminance()
                     } else {
@@ -475,6 +497,7 @@ impl<'a> JpegParser<'a> {
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
         // Track previous coefficient count per component for smart zeroing
         let mut prev_coeff_counts: [u8; 4] = [64; 4];
+        let mut streaming_truncation_mcu: Option<u32> = None;
 
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
@@ -501,11 +524,10 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(c) => c,
                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                            // Truncation handling depends on strictness
-                            if self.strictness == Strictness::Strict {
-                                return Err(Error::truncated_data("scan data truncated mid-block"));
+                            // Truncation: record for warning, Strict will error after loop
+                            if streaming_truncation_mcu.is_none() {
+                                streaming_truncation_mcu = Some(mcu_count);
                             }
-                            // Balanced/Lenient: skip remaining blocks
                             prev_coeff_counts[*comp_idx] = 64;
                             continue;
                         }
@@ -558,7 +580,19 @@ impl<'a> JpegParser<'a> {
             }
         }
 
+        // Consume decoder before warn() to avoid borrow conflicts
         self.position += decoder.position();
+        drop(decoder);
+
+        // Emit truncation warning (or error in Strict mode)
+        let total_mcus = (mcu_rows * mcu_cols) as u32;
+        if let Some(at_mcu) = streaming_truncation_mcu {
+            self.warn(DecodeWarning::TruncatedScan {
+                blocks_decoded: at_mcu,
+                blocks_expected: total_mcus,
+            })?;
+        }
+
         Ok(rgb)
     }
 }
