@@ -54,12 +54,50 @@ pub use extras::{
 
 // Re-export types used in public struct fields so users can access them
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
+use crate::types::{Component, Subsampling};
 
 // Re-export Stop trait for cancellation support
 pub use enough::Stop;
 use enough::Unstoppable;
 
 use crate::error::{Error, Result};
+use crate::foundation::consts::MAX_COMPONENTS;
+
+/// Compute subsampling mode from component sampling factors.
+fn compute_subsampling(components: &[Component; MAX_COMPONENTS], num_components: u8) -> Subsampling {
+    if num_components == 1 {
+        return Subsampling::S444; // Grayscale
+    }
+
+    // Find max sampling factors
+    let max_h = components[..num_components as usize]
+        .iter()
+        .map(|c| c.h_samp_factor)
+        .max()
+        .unwrap_or(1);
+    let max_v = components[..num_components as usize]
+        .iter()
+        .map(|c| c.v_samp_factor)
+        .max()
+        .unwrap_or(1);
+
+    subsampling_from_max(max_h, max_v, false)
+}
+
+/// Convert max sampling factors to Subsampling enum.
+fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling {
+    if is_grayscale {
+        return Subsampling::S444;
+    }
+    match (max_h, max_v) {
+        (1, 1) => Subsampling::S444,
+        (2, 1) => Subsampling::S422,
+        (2, 2) => Subsampling::S420,
+        (1, 2) => Subsampling::S440,
+        // For other patterns, approximate as 4:2:0
+        _ => Subsampling::S420,
+    }
+}
 
 /// Controls how the decoder handles non-fatal errors.
 ///
@@ -604,12 +642,22 @@ impl Decoder {
         let is_cmyk = parser.num_components == 4;
         let is_xyb = parser.info().is_xyb;
 
-        // For progressive JPEGs or CMYK, use buffered mode: fully decode then serve from buffer
-        // (CMYK requires buffered mode because scanline streaming doesn't support 4 components yet)
-        if parser.mode == JpegMode::Progressive || is_cmyk {
+        // Use buffered mode for:
+        // - Progressive JPEGs (format requires all scans before final coefficients)
+        // - Arithmetic-coded JPEGs (streaming entropy decoder is Huffman-only for now)
+        // - CMYK (4-component streaming not implemented yet)
+        let needs_buffered = matches!(
+            parser.mode,
+            JpegMode::Progressive | JpegMode::ArithmeticSequential | JpegMode::ArithmeticProgressive
+        ) || is_cmyk;
+
+        if needs_buffered {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;
+
+            // Compute subsampling from sampling factors
+            let subsampling = compute_subsampling(&parser.components, num_components);
 
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.decode(&Unstoppable)?;
@@ -628,6 +676,7 @@ impl Decoder {
                 width,
                 height,
                 num_components,
+                subsampling,
                 pixels,
                 is_xyb,
             ));
@@ -673,6 +722,9 @@ impl Decoder {
             let height = parser.height;
             let num_components = parser.num_components;
 
+            // Compute subsampling from max sampling factors
+            let subsampling = subsampling_from_max(max_h, max_v, is_grayscale);
+
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.decode(&Unstoppable)?;
 
@@ -690,6 +742,7 @@ impl Decoder {
                 width,
                 height,
                 num_components,
+                subsampling,
                 pixels,
                 is_xyb,
             ));
