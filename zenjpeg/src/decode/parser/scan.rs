@@ -11,7 +11,7 @@ use enough::Stop;
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::dequantize_unzigzag_i32_into;
+use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::JpegMode;
 
 use super::super::idct_int::idct_int_tiered;
@@ -599,7 +599,7 @@ impl<'a> JpegParser<'a> {
                     };
 
                     // Fused dequantize + unzigzag into reusable buffer
-                    dequantize_unzigzag_i32_into(&coeffs, quant, &mut dequant_buf);
+                    dequantize_unzigzag_i32_into_partial(&coeffs, quant, &mut dequant_buf, coeff_count);
 
                     // IDCT directly to strip buffer
                     let dst_offset = mcu_x * 8;
