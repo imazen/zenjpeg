@@ -358,35 +358,48 @@ crate f32x4 maps directly to v128 operations. Explicit WASM intrinsics only impr
 by 7% (not worth the complexity). Build with `RUSTFLAGS="-C target-feature=+simd128"`.
 Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables and intrinsics investigation.
 
-## Decoder Performance Gap (2026-01-22)
+## Decoder Performance Gap (2026-02-05)
 
-Decoder is **4-5x slower** than zune-jpeg baseline, **2-4x slower** progressive. Instruction
-count gap reduced from 1.74x to 1.34x via AVX2 upsampling and zero-copy decode. Remaining
-bottlenecks: IDCT (5.8x slower than zune), entropy decoder ScanRead overhead, memset (5.6%).
-Run: `cargo bench --bench decode_compare`.
-See `docs/TUNING_HISTORY.md` for callgrind analysis and per-function comparison tables.
+Decoder is **~2x slower** than zune-jpeg baseline, **1.75x slower** progressive (improved from
+4-5x via AVX2 upsampling, SIMD chroma upsample, and force-inlined hot path functions).
 
-### Decoder Optimization Path (remaining)
+**Wall-clock (2048x2048):**
+| Mode | zune-jpeg | zenjpeg | Ratio |
+|------|-----------|---------|-------|
+| Baseline | 4.04ms | 8.29ms | 2.05x |
+| Progressive | 9.00ms | 15.78ms | 1.75x |
+| Scanline-420 | N/A | 5.97ms | - |
 
-5. **AVX2 IDCT** - Now biggest gap: 7M vs zune's 1.2M = **5.8x slower**
-6. Reduce memset overhead (2.6M instructions, 5.6%)
-7. Macro-based Huffman (eliminate ScanRead enum)
+**Instruction count (callgrind, 5 iterations):**
+- zune-jpeg: 7.32B (1.0x)
+- zenjpeg: 7.82B (1.07x) ← improved from 8.22B via inlining
+
+### Remaining Bottlenecks (by impact)
+
+1. **Entropy decode AC refine**: 1,668M vs zune's 1,427M (+241M, 17% slower)
+   - Bit-by-bit Huffman slow path still inefficient
+   - Fix: Table-based multi-bit lookup for codes >8 bits
+2. **Output processing**: 322M vs zune's 117M (2.75x slower)
+   - `to_pixels_fast_i16_subsampled` not fused with color conversion
+3. **Upsampling**: 70M vs zune's 27M (2.6x slower, despite SIMD)
+   - zune's cache-aware horizontal-first approach more efficient
 
 ### Scanline Decoder Performance (2026-02-05)
 
 Scanline decoder (`ScanlineReader`) optimized to outperform buffered decode for 4:2:0 content.
 
 **Results (2048x2048 baseline JPEG):**
-- `zune-jpeg`: 4.27ms (reference, fastest)
-- `jpegli-baseline` (buffered): 7.44ms (1.0x)
-- `jpegli-scanline-420`: **5.93ms (0.80x)** ← faster than buffered!
-- `jpegli-scanline-444`: 9.32ms (1.25x)
+- `zune-jpeg`: 4.04ms (reference, fastest)
+- `jpegli-baseline` (buffered): 8.29ms (1.0x)
+- `jpegli-scanline-420`: **5.97ms (0.72x)** ← faster than buffered!
+- `jpegli-scanline-444`: ~9.8ms (1.18x)
 
 **Optimizations applied:**
 1. Pre-validate quant tables before MCU loop (was allocating Error per-block)
 2. AVX2 SIMD chroma upsampling (`upsample_h2v2_i16_fancy_strided`)
+3. Force-inline hot path functions (`#[inline(always)]` on BitReader and Huffman)
 
-The scanline-420 mode is now 20% faster than buffered decode due to efficient AVX2
+The scanline-420 mode is now 28% faster than buffered decode due to efficient AVX2
 vertical+horizontal separable upsampling and better cache utilization (streaming vs whole-image).
 
 ## Failed Explorations
