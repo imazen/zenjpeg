@@ -834,47 +834,6 @@ pub fn dequantize_block_i32(
     result
 }
 
-/// Fused dequantize and unzigzag in a single pass.
-///
-/// Takes coefficients in zigzag order and quant table in natural order,
-/// outputs dequantized coefficients in natural order.
-///
-/// This saves one loop over 64 elements compared to separate unzigzag + dequant.
-#[inline]
-pub fn dequantize_unzigzag_i32(
-    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
-    quant_natural: &[u16; DCT_BLOCK_SIZE],
-) -> [i32; DCT_BLOCK_SIZE] {
-    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
-
-    let mut result = [0i32; DCT_BLOCK_SIZE];
-
-    // Iterate in natural order (0..64 in row-major)
-    // For each natural position, look up the corresponding zigzag position
-    for natural_idx in 0..DCT_BLOCK_SIZE {
-        let zigzag_idx = JPEG_ZIGZAG_ORDER[natural_idx] as usize;
-        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
-    }
-
-    result
-}
-
-/// Dequantize and unzigzag into an existing buffer.
-/// This allows buffer reuse across multiple blocks.
-#[inline(always)]
-pub fn dequantize_unzigzag_i32_into(
-    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
-    quant_natural: &[u16; DCT_BLOCK_SIZE],
-    result: &mut [i32; DCT_BLOCK_SIZE],
-) {
-    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
-
-    for natural_idx in 0..DCT_BLOCK_SIZE {
-        let zigzag_idx = JPEG_ZIGZAG_ORDER[natural_idx] as usize;
-        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
-    }
-}
-
 /// Partial dequantize + unzigzag: only processes the first `coeff_count` zigzag
 /// positions. Remaining positions are zero. For typical Q85 photos, most blocks
 /// have 10-15 non-zero coefficients, saving 75-85% of multiply work.
