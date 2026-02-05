@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use zenjpeg::encode::{
-    ChromaSubsampling, ColorMode, SearchConfig, OptimizationPreset, PixelLayout,
+    ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout, SearchConfig,
 };
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,

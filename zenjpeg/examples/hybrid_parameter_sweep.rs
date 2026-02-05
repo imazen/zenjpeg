@@ -300,7 +300,7 @@ fn run_sweep(image_path: &str) {
 }
 
 fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, SearchConfig, OptimizationPreset};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
 
     let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -312,7 +312,7 @@ fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
 }
 
 fn create_hybrid_config_multiplicative(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, SearchConfig, OptimizationPreset};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
 
     let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -329,7 +329,7 @@ fn create_hybrid_config_with_threshold(
     coupling: f32,
     threshold: f32,
 ) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, SearchConfig, OptimizationPreset};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
 
     let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -342,7 +342,7 @@ fn create_hybrid_config_with_threshold(
 }
 
 fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, SearchConfig, OptimizationPreset};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
 
     let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
@@ -355,7 +355,7 @@ fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32
 }
 
 fn create_hybrid_config_with_max_adj(quality: i32, coupling: f32, max_adj: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, SearchConfig, OptimizationPreset};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
 
     let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
