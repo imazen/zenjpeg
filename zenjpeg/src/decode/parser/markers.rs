@@ -15,6 +15,7 @@ use crate::foundation::consts::{
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
 
+use super::super::Strictness;
 use super::JpegParser;
 
 /// Marker parsing methods for JpegParser.
@@ -293,9 +294,18 @@ impl<'a> JpegParser<'a> {
         if self.height == 0 {
             self.height = num_lines;
         } else if self.height != num_lines {
-            // Height was already specified - this is technically invalid but we can
-            // either ignore it or error. Being lenient and ignoring it for robustness.
-            // Some encoders may emit DNL even when height was specified.
+            // Height was already specified - this is technically invalid
+            // Strictness determines whether to error or ignore
+            match self.strictness {
+                Strictness::Strict | Strictness::Balanced => {
+                    return Err(Error::invalid_jpeg_data(
+                        "DNL marker conflicts with SOF height (spec violation)",
+                    ));
+                }
+                Strictness::Lenient => {
+                    // Ignore DNL, keep original SOF height
+                }
+            }
         }
 
         Ok(())

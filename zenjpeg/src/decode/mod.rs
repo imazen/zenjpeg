@@ -57,6 +57,51 @@ pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
 use crate::error::{Error, Result};
 
+/// Controls how the decoder handles non-fatal errors.
+///
+/// The default is [`Strictness::Balanced`], which rejects clear spec violations
+/// but recovers from truncation where possible.
+///
+/// Use [`Strictness::Strict`] for validation/conformance testing,
+/// [`Strictness::Lenient`] for maximum compatibility with corrupt files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Strictness {
+    /// Fail on any spec violation, truncation, or recoverable error.
+    ///
+    /// Use for:
+    /// - Validation/conformance testing
+    /// - When partial results are worse than no result
+    /// - Quality assurance pipelines
+    Strict,
+
+    /// Reject clear spec violations but recover from truncation (default).
+    ///
+    /// Errors on:
+    /// - DNL marker conflicts with SOF height
+    /// - Invalid padding block structure
+    ///
+    /// Recovers from:
+    /// - Truncated scan data (fills remaining with zeros)
+    /// - End-of-scan fill bits that don't form valid Huffman codes
+    ///
+    /// Use for:
+    /// - General image processing
+    /// - Production pipelines that want to catch malformed files
+    #[default]
+    Balanced,
+
+    /// Recover from truncation and minor violations when possible.
+    ///
+    /// Returns partial results for truncated images, fills missing blocks with
+    /// zeros, and silently handles common spec violations.
+    ///
+    /// Use for:
+    /// - Image display/thumbnails
+    /// - Corrupt file recovery
+    /// - Maximum compatibility
+    Lenient,
+}
+
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
 use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
@@ -80,6 +125,9 @@ pub struct DecoderConfig {
     pub max_memory: usize,
     /// What metadata and secondary images to preserve during decode.
     pub preserve: PreserveConfig,
+    /// How to handle recoverable errors (truncation, minor spec violations).
+    /// Default is [`Strictness::Lenient`].
+    pub strictness: Strictness,
 }
 
 impl core::fmt::Debug for DecoderConfig {
@@ -92,6 +140,7 @@ impl core::fmt::Debug for DecoderConfig {
             .field("max_pixels", &self.max_pixels)
             .field("max_memory", &self.max_memory)
             .field("preserve", &self.preserve)
+            .field("strictness", &self.strictness)
             .finish()
     }
 }
@@ -107,6 +156,7 @@ impl Default for DecoderConfig {
             max_pixels: DEFAULT_MAX_PIXELS,
             max_memory: DEFAULT_MAX_MEMORY,
             preserve: PreserveConfig::default(),
+            strictness: Strictness::default(),
         }
     }
 }
@@ -245,9 +295,52 @@ impl Decoder {
         self.preserve(PreserveConfig::all())
     }
 
+    /// Sets the strictness level for error handling.
+    ///
+    /// - [`Strictness::Strict`]: Fail on any spec violation or truncation
+    /// - [`Strictness::Balanced`]: Reject violations, recover from truncation (default)
+    /// - [`Strictness::Lenient`]: Recover from all errors when possible
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, Strictness};
+    ///
+    /// // Strict mode for validation
+    /// let decoder = Decoder::new().strictness(Strictness::Strict);
+    ///
+    /// // Balanced mode (default) for production
+    /// let decoder = Decoder::new().strictness(Strictness::Balanced);
+    ///
+    /// // Lenient mode for corrupt file recovery
+    /// let decoder = Decoder::new().strictness(Strictness::Lenient);
+    /// ```
+    #[must_use]
+    pub fn strictness(mut self, strictness: Strictness) -> Self {
+        self.config.strictness = strictness;
+        self
+    }
+
+    /// Convenience: use strict mode (fail on any recoverable error).
+    #[must_use]
+    pub fn strict(self) -> Self {
+        self.strictness(Strictness::Strict)
+    }
+
+    /// Convenience: use lenient mode (maximum compatibility).
+    #[must_use]
+    pub fn lenient(self) -> Self {
+        self.strictness(Strictness::Lenient)
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            None,
+            self.config.strictness,
+        )?;
         parser.read_header()?;
         Ok(parser.info())
     }
@@ -323,7 +416,12 @@ impl Decoder {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            None,
+            self.config.strictness,
+        )?;
         parser.read_header()?;
 
         // DNL mode (height=0 in SOF) not supported - scanline reader needs dimensions upfront
@@ -480,8 +578,12 @@ impl Decoder {
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
-        let mut parser =
-            JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            Some(&self.config.preserve),
+            self.config.strictness,
+        )?;
         parser.decode()?;
 
         let info = parser.info();
@@ -550,7 +652,12 @@ impl Decoder {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            None,
+            self.config.strictness,
+        )?;
         // Disable streaming - f32 decode needs coefficients for precision
         parser.prefer_streaming = false;
         parser.decode()?;
@@ -597,7 +704,12 @@ impl Decoder {
     ///
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            None,
+            self.config.strictness,
+        )?;
         // Disable streaming - we need coefficients stored
         parser.prefer_streaming = false;
         parser.decode()?;
@@ -649,7 +761,12 @@ impl Decoder {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            None,
+            self.config.strictness,
+        )?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.prefer_streaming = false;
         parser.decode()?;
@@ -731,8 +848,12 @@ impl Decoder {
         config: UltraHdrReaderConfig,
     ) -> Result<UltraHdrReader<'a>> {
         // Parse the JPEG header and get scanline reader
-        let mut parser =
-            JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.config.max_pixels,
+            Some(&self.config.preserve),
+            self.config.strictness,
+        )?;
         parser.read_header()?;
 
         // Only baseline supported for scanline reading

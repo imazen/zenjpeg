@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::path::Path;
+use zenjpeg::decoder::{Decoder, Strictness};
 
 const CORPUS_BASE: &str = "/home/lilith/work/codec-eval/codec-corpus/jpeg-conformance";
 
@@ -28,9 +29,18 @@ fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
 }
 
 fn decode_file(path: &Path) -> Result<(u32, u32, usize), String> {
+    decode_file_with_strictness(path, Strictness::default())
+}
+
+fn decode_file_with_strictness(
+    path: &Path,
+    strictness: Strictness,
+) -> Result<(u32, u32, usize), String> {
     let data = fs::read(path).map_err(|e| format!("read error: {e}"))?;
-    let decoder = zenjpeg::decoder::Decoder::new();
-    let image = decoder.decode(&data).map_err(|e| format!("decode error: {e}"))?;
+    let decoder = Decoder::new().strictness(strictness);
+    let image = decoder
+        .decode(&data)
+        .map_err(|e| format!("decode error: {e}"))?;
     Ok((image.width(), image.height(), image.pixels().len()))
 }
 
@@ -97,7 +107,10 @@ fn test_invalid_files() {
 
         match result {
             Ok(Ok((w, h, _))) => {
-                println!("⚠ {} ACCEPTED ({}x{}) - should have been rejected", name, w, h);
+                println!(
+                    "⚠ {} ACCEPTED ({}x{}) - should have been rejected",
+                    name, w, h
+                );
                 accepted.push(name.to_string());
             }
             Ok(Err(_)) => {
@@ -136,7 +149,12 @@ fn test_nonconformant_files() {
 
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy();
-        let parent = path.parent().unwrap().file_name().unwrap().to_string_lossy();
+        let parent = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
 
         // Read companion .txt if exists
         let txt_path = path.with_extension("txt");
@@ -146,7 +164,10 @@ fn test_nonconformant_files() {
 
         match result {
             Ok(Ok((w, h, _))) => {
-                println!("✓ {}/{} ACCEPTED ({}x{}) - lenient behavior", parent, name, w, h);
+                println!(
+                    "✓ {}/{} ACCEPTED ({}x{}) - lenient behavior",
+                    parent, name, w, h
+                );
                 accepted += 1;
             }
             Ok(Err(e)) => {
@@ -166,7 +187,10 @@ fn test_nonconformant_files() {
         println!();
     }
 
-    println!("\nSummary: {} accepted (lenient), {} rejected (strict)", accepted, rejected);
+    println!(
+        "\nSummary: {} accepted (lenient), {} rejected (strict)",
+        accepted, rejected
+    );
 }
 
 #[test]
@@ -174,10 +198,7 @@ fn test_nonconformant_files() {
 fn test_cmyk_files() {
     println!("\n=== CMYK/YCCK FILES ===\n");
 
-    let cmyk_files = [
-        "cmyk_logo.jpg",
-        "cymk.jpg",
-    ];
+    let cmyk_files = ["cmyk_logo.jpg", "cymk.jpg"];
 
     for name in cmyk_files {
         let path = Path::new(CORPUS_BASE).join("valid").join(name);
@@ -193,7 +214,10 @@ fn test_cmyk_files() {
                 if bytes == expected_rgb {
                     println!("✓ {} ({}x{}) -> RGB ({} bytes)", name, w, h, bytes);
                 } else {
-                    println!("⚠ {} ({}x{}) -> {} bytes (expected {})", name, w, h, bytes, expected_rgb);
+                    println!(
+                        "⚠ {} ({}x{}) -> {} bytes (expected {})",
+                        name, w, h, bytes, expected_rgb
+                    );
                 }
             }
             Err(e) => {
@@ -201,4 +225,142 @@ fn test_cmyk_files() {
             }
         }
     }
+}
+
+/// Test that strictness modes behave correctly.
+///
+/// - Valid files: should decode with all modes
+/// - Non-conformant files: Strict may reject more than Lenient
+/// - Invalid files: should be rejected by all modes
+#[test]
+#[ignore] // Run with --ignored
+fn test_strictness_modes() {
+    println!("\n=== STRICTNESS MODE COMPARISON ===\n");
+
+    // Test valid files with all strictness modes
+    let valid_dir = Path::new(CORPUS_BASE).join("valid");
+    let valid_files = collect_jpgs(&valid_dir);
+
+    println!("=== VALID FILES (all modes should accept) ===\n");
+    let mut valid_strict_fail = Vec::new();
+    let mut valid_balanced_fail = Vec::new();
+    let mut valid_lenient_fail = Vec::new();
+
+    for path in &valid_files {
+        let name = path.file_name().unwrap().to_string_lossy();
+
+        let strict_ok = decode_file_with_strictness(path, Strictness::Strict).is_ok();
+        let balanced_ok = decode_file_with_strictness(path, Strictness::Balanced).is_ok();
+        let lenient_ok = decode_file_with_strictness(path, Strictness::Lenient).is_ok();
+
+        if !strict_ok {
+            valid_strict_fail.push(name.to_string());
+        }
+        if !balanced_ok {
+            valid_balanced_fail.push(name.to_string());
+        }
+        if !lenient_ok {
+            valid_lenient_fail.push(name.to_string());
+        }
+    }
+
+    println!(
+        "Valid files: Strict {}/{}, Balanced {}/{}, Lenient {}/{}",
+        valid_files.len() - valid_strict_fail.len(),
+        valid_files.len(),
+        valid_files.len() - valid_balanced_fail.len(),
+        valid_files.len(),
+        valid_files.len() - valid_lenient_fail.len(),
+        valid_files.len()
+    );
+
+    // Test non-conformant files - expect Strict to reject more
+    let nonconf_dir = Path::new(CORPUS_BASE).join("non-conformant");
+    let nonconf_files = collect_jpgs(&nonconf_dir);
+
+    println!("\n=== NON-CONFORMANT FILES (strictness differences) ===\n");
+    let mut strict_accepted = 0;
+    let mut balanced_accepted = 0;
+    let mut lenient_accepted = 0;
+    let mut differences = Vec::new();
+
+    for path in &nonconf_files {
+        let name = path.file_name().unwrap().to_string_lossy();
+        let parent = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        let full_name = format!("{}/{}", parent, name);
+
+        let strict_ok =
+            std::panic::catch_unwind(|| decode_file_with_strictness(path, Strictness::Strict))
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+
+        let balanced_ok =
+            std::panic::catch_unwind(|| decode_file_with_strictness(path, Strictness::Balanced))
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+
+        let lenient_ok =
+            std::panic::catch_unwind(|| decode_file_with_strictness(path, Strictness::Lenient))
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+
+        if strict_ok {
+            strict_accepted += 1;
+        }
+        if balanced_ok {
+            balanced_accepted += 1;
+        }
+        if lenient_ok {
+            lenient_accepted += 1;
+        }
+
+        // Record files where modes differ
+        if strict_ok != lenient_ok || balanced_ok != lenient_ok {
+            differences.push((
+                full_name.clone(),
+                if strict_ok { "✓" } else { "✗" },
+                if balanced_ok { "✓" } else { "✗" },
+                if lenient_ok { "✓" } else { "✗" },
+            ));
+        }
+    }
+
+    println!(
+        "Non-conformant files: Strict {}/{}, Balanced {}/{}, Lenient {}/{}",
+        strict_accepted,
+        nonconf_files.len(),
+        balanced_accepted,
+        nonconf_files.len(),
+        lenient_accepted,
+        nonconf_files.len()
+    );
+
+    if !differences.is_empty() {
+        println!("\nFiles with different behavior between modes:");
+        println!("{:<50} Strict  Balanced  Lenient", "File");
+        println!("{}", "-".repeat(70));
+        for (name, strict, balanced, lenient) in &differences {
+            println!(
+                "{:<50} {}       {}         {}",
+                name, strict, balanced, lenient
+            );
+        }
+    }
+
+    // Sanity checks
+    // Lenient should accept at least as many as Balanced
+    assert!(
+        lenient_accepted >= balanced_accepted,
+        "Lenient should accept at least as many as Balanced"
+    );
+    // Balanced should accept at least as many as Strict
+    assert!(
+        balanced_accepted >= strict_accepted,
+        "Balanced should accept at least as many as Strict"
+    );
 }
