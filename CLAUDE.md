@@ -372,6 +372,26 @@ See `docs/TUNING_HISTORY.md` for callgrind analysis and per-function comparison 
 6. Reduce memset overhead (2.6M instructions, 5.6%)
 7. Macro-based Huffman (eliminate ScanRead enum)
 
+### Scanline Decoder Performance (2026-02-05)
+
+Scanline decoder (`ScanlineReader`) investigated due to 2x slowdown vs buffered decode.
+
+**Results after fix (2048x2048 baseline JPEG):**
+- `scanline-444`: 9.3ms (1.1x baseline) ✓
+- `scanline-420`: 17.4ms (2.1x baseline) ✗ - chroma upsampling overhead
+
+**Root cause analysis (callgrind):**
+- 486M (21%) in `slice/index.rs` - bounds checking on every array access
+- 220M (9.5%) in `quant/mod.rs` - dequantization overhead
+- 148M (6.4%) in `cmp.rs` - min/max/clamp comparisons
+- 18M (0.8%) in `entropy/decoder.rs` - actual entropy decoding
+
+**Fixed:** Pre-validate quant tables before MCU loop (was allocating Error per-block)
+
+**Remaining 4:2:0 bottleneck:** Chroma upsampling in `upsample_h2v2` dominates. The 4:4:4
+case (no upsampling) is now near parity with buffered decode. To fix 4:2:0, would need
+SIMD-optimized upsampling or deferred upsampling during color conversion.
+
 ## Failed Explorations
 
 ### Parallel AQ (2026-01-17)
