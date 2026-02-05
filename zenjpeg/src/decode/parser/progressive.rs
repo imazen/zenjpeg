@@ -15,6 +15,7 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
 use crate::foundation::consts::MAX_HUFFMAN_TABLES;
 use crate::huffman::HuffmanDecodeTable;
 
+use super::super::Strictness;
 use super::JpegParser;
 
 /// Progressive scan decoding methods for JpegParser.
@@ -176,7 +177,11 @@ impl<'a> JpegParser<'a> {
                         match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
                             ScanRead::Value(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                // End of scan data - remaining blocks have DC=0
+                                if self.strictness == Strictness::Strict {
+                                    return Err(Error::truncated_data(
+                                        "progressive DC scan truncated",
+                                    ));
+                                }
                                 break;
                             }
                         }
@@ -184,7 +189,11 @@ impl<'a> JpegParser<'a> {
                         match decoder.decode_dc_refine(al)? {
                             ScanRead::Value(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                // End of scan data - remaining blocks unchanged
+                                if self.strictness == Strictness::Strict {
+                                    return Err(Error::truncated_data(
+                                        "progressive DC refine scan truncated",
+                                    ));
+                                }
                                 break;
                             }
                         }
@@ -245,7 +254,11 @@ impl<'a> JpegParser<'a> {
                                                 self.coeffs[*comp_idx][block_idx][0] = dc;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                                // End of scan data - remaining blocks have DC=0
+                                                if self.strictness == Strictness::Strict {
+                                                    return Err(Error::truncated_data(
+                                                        "progressive DC scan truncated",
+                                                    ));
+                                                }
                                                 break 'dc_scan;
                                             }
                                         }
@@ -256,7 +269,11 @@ impl<'a> JpegParser<'a> {
                                                 self.coeffs[*comp_idx][block_idx][0] |= bit;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                                // End of scan data - remaining blocks unchanged
+                                                if self.strictness == Strictness::Strict {
+                                                    return Err(Error::truncated_data(
+                                                        "progressive DC refine scan truncated",
+                                                    ));
+                                                }
                                                 break 'dc_scan;
                                             }
                                         }
@@ -325,9 +342,10 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(()) => {}
                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                            // End of scan data - remaining blocks have zeros (implicit EOB)
-                            // This is normal in progressive JPEG when encoder uses
-                            // implicit EOB at end of scan
+                            // End of scan may be normal (implicit EOB) or truncation
+                            if self.strictness == Strictness::Strict {
+                                return Err(Error::truncated_data("progressive AC scan truncated"));
+                            }
                             break;
                         }
                     }
@@ -343,7 +361,11 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(()) => {}
                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                            // End of scan data - remaining blocks unchanged
+                            if self.strictness == Strictness::Strict {
+                                return Err(Error::truncated_data(
+                                    "progressive AC refine scan truncated",
+                                ));
+                            }
                             break;
                         }
                     }

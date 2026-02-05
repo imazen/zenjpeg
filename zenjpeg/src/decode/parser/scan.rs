@@ -14,6 +14,7 @@ use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::JpegMode;
 
 use super::super::idct_int::idct_int_tiered;
+use super::super::Strictness;
 use super::JpegParser;
 use crate::color::ycbcr_planes_i16_to_rgb_u8;
 
@@ -243,45 +244,64 @@ impl<'a> JpegParser<'a> {
                             }
 
                             if is_padding {
-                                // For padding blocks in multi-component images, use speculative decoding
-                                // Most encoders include them, but some might not
-                                let saved_state = decoder.save_state();
-                                // Zero-copy decode directly into coefficient storage
-                                match decoder.decode_block_into(
-                                    &mut self.coeffs[*comp_idx][block_idx],
-                                    prev_coeff_counts[*comp_idx],
-                                    *comp_idx,
-                                    *dc_table as usize,
-                                    *ac_table as usize,
-                                ) {
-                                    Ok(ScanRead::Value(count)) => {
-                                        // Encoder included padding block
-                                        self.coeff_counts[*comp_idx][block_idx] = count;
-                                        prev_coeff_counts[*comp_idx] = count;
+                                // For padding blocks in multi-component images, behavior depends on strictness:
+                                // - Strict: require all padding blocks (error if missing)
+                                // - Balanced: require padding blocks but allow truncation at scan end
+                                // - Lenient: speculatively decode, fill with zeros if missing
+
+                                if self.strictness == Strictness::Lenient {
+                                    // Lenient: speculative decoding with recovery
+                                    let saved_state = decoder.save_state();
+                                    match decoder.decode_block_into(
+                                        &mut self.coeffs[*comp_idx][block_idx],
+                                        prev_coeff_counts[*comp_idx],
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    ) {
+                                        Ok(ScanRead::Value(count)) => {
+                                            self.coeff_counts[*comp_idx][block_idx] = count;
+                                            prev_coeff_counts[*comp_idx] = count;
+                                        }
+                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                            decoder.restore_state(saved_state);
+                                            self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                            self.coeff_counts[*comp_idx][block_idx] = 1;
+                                            prev_coeff_counts[*comp_idx] = 64;
+                                        }
+                                        Err(_e) => {
+                                            decoder.restore_state(saved_state);
+                                            self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                            self.coeff_counts[*comp_idx][block_idx] = 1;
+                                            prev_coeff_counts[*comp_idx] = 64;
+                                            #[cfg(debug_assertions)]
+                                            eprintln!(
+                                                "DEBUG: Padding block ({},{}) error: {:?}",
+                                                block_x, block_y, _e
+                                            );
+                                        }
                                     }
-                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                        // Encoder omitted padding block - restore state and fill zeros
-                                        decoder.restore_state(saved_state);
-                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                        self.coeff_counts[*comp_idx][block_idx] = 1;
-                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next
-                                    }
-                                    Err(_e) => {
-                                        // Other error - also restore and skip
-                                        decoder.restore_state(saved_state);
-                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                        self.coeff_counts[*comp_idx][block_idx] = 1;
-                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next
-                                                                           // Log but don't fail on padding block errors
-                                        #[cfg(debug_assertions)]
-                                        eprintln!(
-                                            "DEBUG: Padding block ({},{}) error: {:?}",
-                                            block_x, block_y, _e
-                                        );
-                                    }
+                                } else {
+                                    // Strict/Balanced: require padding blocks, propagate errors
+                                    let count = match decoder.decode_block_into(
+                                        &mut self.coeffs[*comp_idx][block_idx],
+                                        prev_coeff_counts[*comp_idx],
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    )? {
+                                        ScanRead::Value(c) => c,
+                                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                                            return Err(Error::invalid_jpeg_data(
+                                                "padding blocks missing (encoder omitted MCU padding)",
+                                            ));
+                                        }
+                                    };
+                                    self.coeff_counts[*comp_idx][block_idx] = count;
+                                    prev_coeff_counts[*comp_idx] = count;
                                 }
                             } else {
-                                // Zero-copy decode: write directly to coefficient storage
+                                // Non-padding block: decode with strictness-aware truncation handling
                                 let count = match decoder.decode_block_into(
                                     &mut self.coeffs[*comp_idx][block_idx],
                                     prev_coeff_counts[*comp_idx],
@@ -290,11 +310,19 @@ impl<'a> JpegParser<'a> {
                                     *ac_table as usize,
                                 )? {
                                     ScanRead::Value(c) => c,
-                                    // EndOfScan/Truncated mid-decode - fill with zeros
                                     ScanRead::EndOfScan | ScanRead::Truncated => {
+                                        // Truncation handling depends on strictness:
+                                        // - Strict: error on any truncation
+                                        // - Balanced/Lenient: fill with zeros and continue
+                                        if self.strictness == Strictness::Strict {
+                                            return Err(Error::truncated_data(
+                                                "scan data truncated mid-block",
+                                            ));
+                                        }
+                                        // Balanced/Lenient: recover by filling zeros
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
-                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next time
+                                        prev_coeff_counts[*comp_idx] = 64;
                                         continue;
                                     }
                                 };
@@ -453,8 +481,13 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(c) => c,
                         ScanRead::EndOfScan | ScanRead::Truncated => {
+                            // Truncation handling depends on strictness
+                            if self.strictness == Strictness::Strict {
+                                return Err(Error::truncated_data("scan data truncated mid-block"));
+                            }
+                            // Balanced/Lenient: skip remaining blocks
                             prev_coeff_counts[*comp_idx] = 64;
-                            continue; // End of scan mid-block, skip remaining
+                            continue;
                         }
                     };
                     // Track maximum, not just previous, for reusable buffer correctness

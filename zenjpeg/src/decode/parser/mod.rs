@@ -17,7 +17,7 @@ mod scan;
 use super::extras::{
     should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
 };
-use super::{JpegInfo, ScanInfo};
+use super::{JpegInfo, ScanInfo, Strictness};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
@@ -91,14 +91,28 @@ pub(super) struct JpegParser<'a> {
 
     /// Adobe APP14 color transform (for CMYK/YCCK detection)
     pub(super) adobe_transform: Option<AdobeColorTransform>,
+
+    /// Strictness level for error handling
+    pub(super) strictness: Strictness,
 }
 
 impl<'a> JpegParser<'a> {
     /// Create a new parser with optional extras preservation.
+    #[allow(dead_code)] // May be used by tests or future code
     pub(super) fn new(
         data: &'a [u8],
         max_pixels: u64,
         preserve_config: Option<&PreserveConfig>,
+    ) -> Result<Self> {
+        Self::with_strictness(data, max_pixels, preserve_config, Strictness::default())
+    }
+
+    /// Create a new parser with explicit strictness level.
+    pub(super) fn with_strictness(
+        data: &'a [u8],
+        max_pixels: u64,
+        preserve_config: Option<&PreserveConfig>,
+        strictness: Strictness,
     ) -> Result<Self> {
         // Check for SOI
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
@@ -139,6 +153,7 @@ impl<'a> JpegParser<'a> {
             extras,
             mpf_header_pos: 0,
             adobe_transform: None,
+            strictness,
         })
     }
 

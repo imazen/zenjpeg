@@ -36,7 +36,7 @@ pub use crate::error::{Error, Result};
 // === Main decoder types ===
 pub use crate::decode::{
     DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig, JpegInfo, ScanlineInfo,
-    ScanlineReader,
+    ScanlineReader, Strictness,
 };
 
 // === Metadata preservation types ===
