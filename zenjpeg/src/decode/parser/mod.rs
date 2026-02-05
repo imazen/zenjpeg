@@ -9,6 +9,7 @@
 //! - `progressive` - Progressive scan accumulation and refinement
 //! - `output` - Pixel conversion and output formatting
 
+mod arithmetic_scan;
 mod markers;
 mod output;
 mod progressive;
@@ -22,8 +23,9 @@ use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DNL, MARKER_DQT, MARKER_DRI,
-    MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
+    MARKER_DRI, MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES,
+    MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
@@ -98,6 +100,12 @@ pub(super) struct JpegParser<'a> {
     /// Warnings collected during decode (Balanced/Lenient only).
     /// In Strict mode, warnings become errors instead of being collected.
     pub(super) warnings: Vec<DecodeWarning>,
+
+    // Arithmetic coding conditioning parameters (from DAC marker)
+    /// DC conditioning: (L, U) per table, default (0, 1)
+    pub(super) arith_dc_cond: [(u8, u8); 4],
+    /// AC conditioning: Kx per table, default 5
+    pub(super) arith_ac_kx: [u8; 4],
 }
 
 impl<'a> JpegParser<'a> {
@@ -159,6 +167,8 @@ impl<'a> JpegParser<'a> {
             adobe_transform: None,
             strictness,
             warnings: Vec::new(),
+            arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
+            arith_ac_kx: [5; 4],        // Default Kx=5
         })
     }
 
@@ -461,6 +471,7 @@ impl<'a> JpegParser<'a> {
                 }
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
+                MARKER_DAC => self.parse_dac()?,
                 MARKER_DRI => self.parse_restart_interval()?,
                 MARKER_EOI => {
                     // Validate that we have a valid height (either from SOF or DNL)

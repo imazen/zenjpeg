@@ -8,9 +8,9 @@ use crate::decode::extras::{
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DHT,
-    MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MAX_COMPONENTS,
-    MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DAC,
+    MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
+    MARKER_SOF9, MARKER_SOF10, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
@@ -36,8 +36,19 @@ impl<'a> JpegParser<'a> {
                     self.parse_frame_header()?;
                     return Ok(());
                 }
+                MARKER_SOF9 => {
+                    self.mode = JpegMode::ArithmeticSequential;
+                    self.parse_frame_header()?;
+                    return Ok(());
+                }
+                MARKER_SOF10 => {
+                    self.mode = JpegMode::ArithmeticProgressive;
+                    self.parse_frame_header()?;
+                    return Ok(());
+                }
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
+                MARKER_DAC => self.parse_dac()?,
                 MARKER_DRI => self.parse_restart_interval()?,
                 MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
                 MARKER_EOI => {
@@ -269,6 +280,51 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_restart_interval(&mut self) -> Result<()> {
         let _length = self.read_u16()?;
         self.restart_interval = self.read_u16()?;
+        Ok(())
+    }
+
+    /// Parse DAC (Define Arithmetic Coding) marker.
+    ///
+    /// DAC defines conditioning parameters for arithmetic coding:
+    /// - For DC tables: L and U values that classify DC differences
+    /// - For AC tables: Kx value that selects context for AC magnitudes
+    ///
+    /// Format per table: Tc/Th (1 byte) + Cs (1 byte)
+    /// - Tc: 0=DC, 1=AC
+    /// - Th: table destination (0-3)
+    /// - Cs: For DC: L in low 4 bits, U in high 4 bits
+    ///       For AC: Kx value (0-63)
+    pub(super) fn parse_dac(&mut self) -> Result<()> {
+        let mut length = self.read_u16()? as i32 - 2;
+
+        while length >= 2 {
+            let info = self.read_u8()?;
+            let table_class = info >> 4; // 0=DC, 1=AC
+            let table_idx = (info & 0x0F) as usize;
+
+            if table_idx >= 4 {
+                return Err(Error::invalid_jpeg_data("DAC table index out of range"));
+            }
+
+            let cs = self.read_u8()?;
+            length -= 2;
+
+            if table_class == 0 {
+                // DC conditioning: L in low 4 bits, U in high 4 bits
+                let l = cs & 0x0F;
+                let u = cs >> 4;
+                // Validate: L <= U (per spec)
+                if l > u {
+                    return Err(Error::invalid_jpeg_data("DAC DC conditioning: L > U"));
+                }
+                self.arith_dc_cond[table_idx] = (l, u);
+            } else {
+                // AC conditioning: Kx value
+                let kx = cs & 0x3F; // Kx is 0-63
+                self.arith_ac_kx[table_idx] = kx;
+            }
+        }
+
         Ok(())
     }
 

@@ -86,15 +86,27 @@ impl<'a> JpegParser<'a> {
         }
 
         // Decode entropy-coded segment based on mode
-        if self.mode == JpegMode::Progressive {
-            self.decode_progressive_scan(&scan_components, ss, se, ah, al)?;
-        } else if self.prefer_streaming && self.can_use_streaming() && self.streaming_rgb.is_none()
-        {
-            // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
-            let rgb = self.decode_baseline_streaming_rgb(&scan_components)?;
-            self.streaming_rgb = Some(rgb);
-        } else {
-            self.decode_scan(&scan_components)?;
+        match self.mode {
+            JpegMode::Progressive => {
+                self.decode_progressive_scan(&scan_components, ss, se, ah, al)?;
+            }
+            JpegMode::ArithmeticSequential => {
+                self.decode_arithmetic_scan(&scan_components)?;
+            }
+            JpegMode::ArithmeticProgressive => {
+                self.decode_arithmetic_progressive_scan(&scan_components, ss, se, ah, al)?;
+            }
+            _ => {
+                // Baseline/Extended Huffman modes
+                if self.prefer_streaming && self.can_use_streaming() && self.streaming_rgb.is_none()
+                {
+                    // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
+                    let rgb = self.decode_baseline_streaming_rgb(&scan_components)?;
+                    self.streaming_rgb = Some(rgb);
+                } else {
+                    self.decode_scan(&scan_components)?;
+                }
+            }
         }
 
         Ok(())

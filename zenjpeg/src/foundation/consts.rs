@@ -75,6 +75,13 @@ pub const MARKER_APP14: u8 = 0xEE;
 /// Comment marker
 pub const MARKER_COM: u8 = 0xFE;
 
+/// Start of Frame (Arithmetic Sequential DCT)
+pub const MARKER_SOF9: u8 = 0xC9;
+/// Start of Frame (Arithmetic Progressive DCT)
+pub const MARKER_SOF10: u8 = 0xCA;
+/// Define Arithmetic Coding conditioning
+pub const MARKER_DAC: u8 = 0xCC;
+
 /// ICC Profile marker tag
 pub const ICC_PROFILE_TAG: &[u8; 12] = b"ICC_PROFILE\0";
 /// EXIF marker tag
