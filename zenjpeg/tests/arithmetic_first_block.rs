@@ -1,4 +1,5 @@
 //! Compare first block pixels.
+use enough::Unstoppable;
 
 use zenjpeg::decode::Decoder;
 use std::process::Command;
@@ -13,7 +14,7 @@ fn compare_first_block_pixels() {
     // Decode with our decoder
     let data = std::fs::read(TESTIMGARI_PATH).expect("failed to read file");
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&data).expect("failed to decode");
+    let decoded = decoder.decode(&data, Unstoppable).expect("failed to decode");
     
     let width = 227usize;
     let stride = width * 3;

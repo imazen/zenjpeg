@@ -1,4 +1,5 @@
 //! Tests verifying that TrellisConfig actually affects encoder output.
+use enough::Unstoppable;
 
 use zenjpeg::encode::trellis::{TrellisConfig, TrellisSpeedMode};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

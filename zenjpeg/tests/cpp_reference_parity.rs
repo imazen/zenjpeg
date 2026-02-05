@@ -5,6 +5,7 @@
 //! at various quality levels.
 //!
 //! Thresholds are intentionally tight to catch regressions.
+use enough::Unstoppable;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -315,7 +316,7 @@ fn test_dssim_parity() {
 
             // Decode and compute DSSIM
             let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-            let decoded = match decoder.decode(&rust_jpeg) {
+            let decoded = match decoder.decode(&rust_jpeg, Unstoppable) {
                 Ok(img) => img,
                 Err(_) => continue,
             };

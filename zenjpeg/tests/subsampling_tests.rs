@@ -2,6 +2,7 @@
 //!
 //! Tests for various chroma subsampling modes and their effect on
 //! image quality and file size.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -47,7 +48,7 @@ fn roundtrip_with_subsampling(
     let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config);
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     let rms = distance_rms(&img.pixels, &decoded.data);
     let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
@@ -125,7 +126,7 @@ fn test_subsampling_quality_size_tradeoff() {
 fn test_decode_cpp_420() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_420.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data).expect("decode 420 failed");
+        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 420 failed");
 
         println!(
             "Decoded 4:2:0: {}x{}, {} bytes",
@@ -144,7 +145,7 @@ fn test_decode_cpp_420() {
 fn test_decode_cpp_422() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_422.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data).expect("decode 422 failed");
+        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 422 failed");
 
         println!(
             "Decoded 4:2:2: {}x{}, {} bytes",
@@ -163,7 +164,7 @@ fn test_decode_cpp_422() {
 fn test_decode_cpp_440() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_440.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data).expect("decode 440 failed");
+        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 440 failed");
 
         println!(
             "Decoded 4:4:0: {}x{}, {} bytes",
@@ -182,7 +183,7 @@ fn test_decode_cpp_440() {
 fn test_decode_cpp_444() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_444.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data).expect("decode 444 failed");
+        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 444 failed");
 
         println!(
             "Decoded 4:4:4: {}x{}, {} bytes",
@@ -206,7 +207,7 @@ fn test_decode_cpp_asymmetric() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_asymmetric.jpg") {
         let decoder = Decoder::new();
         let decoded = decoder
-            .decode(&jpeg_data)
+            .decode(&jpeg_data, Unstoppable)
             .expect("decode asymmetric failed");
 
         println!(
@@ -226,7 +227,7 @@ fn test_decode_cpp_asymmetric() {
 fn test_decode_cpp_444_1x2() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_444_1x2.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data).expect("decode 444_1x2 failed");
+        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 444_1x2 failed");
 
         println!(
             "Decoded 4:4:4 1x2: {}x{}, {} bytes",
@@ -349,7 +350,7 @@ fn test_grayscale_no_subsampling() {
     println!("Grayscale JPEG: {} bytes", jpeg.len());
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);

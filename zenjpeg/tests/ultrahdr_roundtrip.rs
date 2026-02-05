@@ -1,15 +1,15 @@
 //! UltraHDR roundtrip integration tests.
 //!
 //! Tests the full encode → decode → re-encode workflow.
-
 #![cfg(feature = "ultrahdr")]
 
+use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
     encode_ultrahdr, tonemapper_from_ultrahdr, GainMapConfig, ToneMapConfig, UhdrColorGamut,
     UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage, UltraHdrExtras, UltraHdrMode,
-    UltraHdrReaderConfig, Unstoppable,
+    UltraHdrReaderConfig,
 };
 
 /// Create a simple HDR test image (linear RGB float).
@@ -68,7 +68,7 @@ fn test_encode_decode_roundtrip() {
     );
 
     // Decode and check for UltraHDR
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -125,7 +125,7 @@ fn test_tonemapper_extraction() {
     .expect("Encoding failed");
 
     // Decode and extract tonemapper
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     let tonemapper =
@@ -171,7 +171,7 @@ fn test_metadata_passthrough() {
     .expect("Encoding failed");
 
     // Decode
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     // Should have XMP with UltraHDR metadata
@@ -197,7 +197,7 @@ fn test_gainmap_grayscale_roundtrip() {
     )
     .expect("Encoding failed");
 
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     // Decode gainmap
@@ -254,7 +254,7 @@ fn test_gainmap_pixel_variance() {
     )
     .expect("Encoding failed");
 
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
     let gainmap = extras
         .decode_gainmap()
@@ -318,7 +318,7 @@ fn test_standalone_grayscale_encode_decode() {
     );
 
     // Decode and verify
-    let decoded = Decoder::new().decode(&jpeg_data).expect("decode failed");
+    let decoded = Decoder::new().decode(&jpeg_data, Unstoppable).expect("decode failed");
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
 
@@ -424,7 +424,7 @@ fn test_gainmap_various_sizes() {
         .unwrap_or_else(|e| panic!("Encoding failed for size {}: {:?}", size, e));
 
         let decoded = Decoder::new()
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .unwrap_or_else(|e| panic!("Decoding failed for size {}: {:?}", size, e));
 
         let extras = decoded.extras().expect("Should have extras");

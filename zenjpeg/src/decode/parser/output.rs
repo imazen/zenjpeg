@@ -25,6 +25,7 @@ use crate::color::{
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
+use enough::Stop;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
@@ -546,12 +547,15 @@ impl<'a> JpegParser<'a> {
     ///
     /// This is the main entry point for pixel output. It automatically selects
     /// the fastest path based on the image characteristics.
+    ///
+    /// The `stop` parameter allows cancellation of long-running operations.
     #[allow(clippy::wrong_self_convention)] // Takes &mut self to take() internal buffer
     pub(in crate::decode) fn to_pixels(
         &mut self,
         format: PixelFormat,
         is_xyb: bool,
         fancy_upsampling: bool,
+        _stop: &impl Stop,
     ) -> Result<Vec<u8>> {
         // If streaming decode was used, return its result directly (zero-copy)
         if format == PixelFormat::Rgb && !is_xyb {
@@ -867,11 +871,14 @@ impl<'a> JpegParser<'a> {
 
     /// Convert decoded coefficients to f32 pixels.
     /// Values are normalized to range 0.0-1.0.
+    ///
+    /// The `stop` parameter allows cancellation of long-running operations.
     pub(in crate::decode) fn to_pixels_f32(
         &self,
         format: PixelFormat,
         is_xyb: bool,
         fancy_upsampling: bool,
+        _stop: &impl Stop,
     ) -> Result<Vec<f32>> {
         if self.coeffs.is_empty() {
             return Err(Error::internal("no decoded data"));

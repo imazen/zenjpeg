@@ -1,3 +1,4 @@
+use enough::Unstoppable;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
@@ -45,7 +46,7 @@ fn test_size(size: u32) {
 
     // Try our decoder
     let decoder = Decoder::new();
-    match decoder.decode(&jpeg) {
+    match decoder.decode(&jpeg, Unstoppable) {
         Ok(decoded) => {
             let mut max_err = 0i32;
             for i in 0..pixels.len().min(decoded.data.len()) {

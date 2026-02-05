@@ -5,15 +5,19 @@
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
+use enough::Stop;
 
 use super::JpegParser;
 
 /// Arithmetic scan decoding methods for JpegParser.
 impl<'a> JpegParser<'a> {
     /// Decode an arithmetic-coded sequential scan.
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode_arithmetic_scan(
         &mut self,
         scan_components: &[(usize, u8, u8)],
+        stop: &impl Stop,
     ) -> Result<()> {
         // DNL mode not supported
         if self.height == 0 {
@@ -72,6 +76,11 @@ impl<'a> JpegParser<'a> {
 
         // Decode MCUs
         for mcu_y in 0..mcu_rows {
+            // Check for cancellation at each MCU row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for mcu_x in 0..mcu_cols {
                 // For each component in the scan
                 for (comp_idx, dc_table, ac_table) in scan_components {
@@ -121,6 +130,8 @@ impl<'a> JpegParser<'a> {
     }
 
     /// Decode an arithmetic-coded progressive scan.
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode_arithmetic_progressive_scan(
         &mut self,
         scan_components: &[(usize, u8, u8)],
@@ -128,6 +139,7 @@ impl<'a> JpegParser<'a> {
         se: u8,
         ah: u8,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         // DNL mode not supported
         if self.height == 0 {
@@ -190,7 +202,14 @@ impl<'a> JpegParser<'a> {
         if is_dc_scan {
             // DC scan
             if is_first_scan {
-                self.decode_arith_dc_first(&mut decoder, scan_components, mcu_cols, mcu_rows, al)?;
+                self.decode_arith_dc_first(
+                    &mut decoder,
+                    scan_components,
+                    mcu_cols,
+                    mcu_rows,
+                    al,
+                    stop,
+                )?;
             } else {
                 self.decode_arith_dc_refine(
                     &mut decoder,
@@ -198,6 +217,7 @@ impl<'a> JpegParser<'a> {
                     mcu_cols,
                     mcu_rows,
                     al,
+                    stop,
                 )?;
             }
         } else {
@@ -219,6 +239,7 @@ impl<'a> JpegParser<'a> {
                     ss,
                     se,
                     al,
+                    stop,
                 )?;
             } else {
                 self.decode_arith_ac_refine(
@@ -230,6 +251,7 @@ impl<'a> JpegParser<'a> {
                     ss,
                     se,
                     al,
+                    stop,
                 )?;
             }
         }
@@ -246,8 +268,14 @@ impl<'a> JpegParser<'a> {
         mcu_cols: usize,
         mcu_rows: usize,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         for mcu_y in 0..mcu_rows {
+            // Check for cancellation at each MCU row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for mcu_x in 0..mcu_cols {
                 for (comp_idx, dc_tbl, _ac_tbl) in scan_components {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
@@ -284,8 +312,14 @@ impl<'a> JpegParser<'a> {
         mcu_cols: usize,
         mcu_rows: usize,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         for mcu_y in 0..mcu_rows {
+            // Check for cancellation at each MCU row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for mcu_x in 0..mcu_cols {
                 for (comp_idx, _dc_tbl, _ac_tbl) in scan_components {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
@@ -322,6 +356,7 @@ impl<'a> JpegParser<'a> {
         ss: u8,
         se: u8,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         let h_samp = self.components[comp_idx].h_samp_factor as usize;
         let v_samp = self.components[comp_idx].v_samp_factor as usize;
@@ -330,6 +365,11 @@ impl<'a> JpegParser<'a> {
 
         // AC progressive scans process blocks in raster order (not MCU order)
         for block_y in 0..comp_blocks_v {
+            // Check for cancellation at each block row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * comp_blocks_h + block_x;
                 decoder.decode_ac_first(
@@ -356,6 +396,7 @@ impl<'a> JpegParser<'a> {
         ss: u8,
         se: u8,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         let h_samp = self.components[comp_idx].h_samp_factor as usize;
         let v_samp = self.components[comp_idx].v_samp_factor as usize;
@@ -363,6 +404,11 @@ impl<'a> JpegParser<'a> {
         let comp_blocks_v = mcu_rows * v_samp;
 
         for block_y in 0..comp_blocks_v {
+            // Check for cancellation at each block row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for block_x in 0..comp_blocks_h {
                 let block_idx = block_y * comp_blocks_h + block_x;
                 decoder.decode_ac_refine(

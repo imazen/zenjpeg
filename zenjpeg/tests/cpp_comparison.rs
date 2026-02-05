@@ -2,6 +2,7 @@
 //!
 //! Tests that compare Rust output against C++ jpegli reference data
 //! to verify parity in encoding behavior.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -67,7 +68,7 @@ fn load_png(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
 fn decode_test_jpeg(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
     let data = read_test_data(filename)?;
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&data).ok()?;
+    let decoded = decoder.decode(&data, Unstoppable).ok()?;
     Some((decoded.width, decoded.height, decoded.data))
 }
 
@@ -200,7 +201,7 @@ fn test_quality_vs_cpp_decoded() {
     let rust_jpeg = encode_rgb(width, height, &original, &config).expect("Rust encode failed");
 
     let decoder = Decoder::new();
-    let rust_decoded = decoder.decode(&rust_jpeg).expect("Rust decode failed");
+    let rust_decoded = decoder.decode(&rust_jpeg, Unstoppable).expect("Rust decode failed");
 
     // Compare both against original
     let cpp_rms = distance_rms(&original, &cpp_pixels);

@@ -15,6 +15,7 @@
 //! - DSSIM: Perceptual quality (lower is better)
 //! - File size: Compression efficiency
 //! - Encoding time: Performance
+use enough::Unstoppable;
 
 use dssim::Dssim;
 use std::time::Instant;
@@ -217,7 +218,7 @@ fn encode_with_method(
 
 fn decode_jpeg(jpeg_data: &[u8]) -> Result<(Vec<u8>, u32, u32), Error> {
     let decoder = Decoder::new();
-    let decoded = decoder.decode(jpeg_data)?;
+    let decoded = decoder.decode(jpeg_data, Unstoppable)?;
     Ok((decoded.data, decoded.width, decoded.height))
 }
 

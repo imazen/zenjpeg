@@ -8,6 +8,7 @@
 //! - zune/test-images/jpeg: Specialized edge case images
 //! - image-rs/test-images/jpg: Additional test images
 //! - mozjpeg/: mozjpeg test images
+use enough::Unstoppable;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -111,7 +112,7 @@ fn test_fuzz_corpus_no_panic() {
         };
 
         // The test passes if we don't panic
-        match decoder.decode(&data) {
+        match decoder.decode(&data, Unstoppable) {
             Ok(_) => success += 1,
             Err(_) => errors += 1,
         }
@@ -155,7 +156,7 @@ fn test_fuzz_corpus_sample() {
             Err(_) => continue,
         };
 
-        match decoder.decode(&data) {
+        match decoder.decode(&data, Unstoppable) {
             Ok(img) => {
                 // Valid JPEG - verify basic properties
                 assert!(img.width > 0, "Width should be positive");
@@ -204,7 +205,7 @@ fn test_zune_progressive() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         println!("{}: {:?}", filename, result.is_ok());
 
@@ -253,7 +254,7 @@ fn test_zune_sampling_factors() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         println!(
             "{}: {} (size: {} bytes)",
@@ -308,7 +309,7 @@ fn test_zune_edge_cases() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         println!(
             "{}: {}",
@@ -354,7 +355,7 @@ fn test_image_rs_progressive() {
 
     for file in &files {
         let data = fs::read(file).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         let filename = file.file_name().unwrap().to_string_lossy();
         match result {
@@ -404,7 +405,7 @@ fn test_image_rs_general() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         let filename = path.file_name().unwrap().to_string_lossy();
         println!(
@@ -456,7 +457,7 @@ fn test_mozjpeg_images() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         println!(
             "mozjpeg/{}: {}",
@@ -481,7 +482,7 @@ fn test_mozjpeg_images() {
         }
 
         let data = fs::read(&path).expect("read file");
-        let result = decoder.decode(&data);
+        let result = decoder.decode(&data, Unstoppable);
 
         println!(
             "mozjpeg/{} (unsupported): {}",
@@ -530,7 +531,7 @@ fn test_fuzz_corpus_vs_reference() {
             Err(_) => continue,
         };
 
-        let jpegli_result = jpegli_decoder.decode(&data);
+        let jpegli_result = jpegli_decoder.decode(&data, Unstoppable);
         let ref_result = decode_zune(&data[..]);
 
         match (jpegli_result.is_ok(), ref_result.is_ok()) {
@@ -634,7 +635,7 @@ fn test_jpeg_conformance_valid() {
 
         let filename = file.file_name().unwrap().to_string_lossy();
 
-        match decoder.decode(&data) {
+        match decoder.decode(&data, Unstoppable) {
             Ok(img) => {
                 success += 1;
                 println!("{}: OK {}x{}", filename, img.width, img.height);
@@ -720,7 +721,7 @@ fn test_jpeg_conformance_invalid() {
 
         // Use catch_unwind to detect panics
         let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
 
         match result {
             Ok(Ok(img)) => {
@@ -817,7 +818,7 @@ fn test_jpeg_conformance_non_conformant() {
 
             // Use catch_unwind to detect panics
             let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
 
             match result {
                 Ok(Ok(img)) => {
@@ -886,7 +887,7 @@ fn test_jpeg_conformance_vs_reference() {
 
         let filename = file.file_name().unwrap().to_string_lossy();
 
-        let jpegli_result = jpegli_decoder.decode(&data);
+        let jpegli_result = jpegli_decoder.decode(&data, Unstoppable);
         let ref_result = decode_zune(&data[..]);
 
         match (jpegli_result.is_ok(), ref_result.is_ok()) {
@@ -960,7 +961,7 @@ fn test_full_fuzz_corpus() {
 
         // Use catch_unwind to detect panics
         let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
 
         match result {
             Ok(Ok(_)) => success += 1,

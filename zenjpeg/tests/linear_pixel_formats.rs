@@ -2,6 +2,7 @@
 //!
 //! These formats are treated as linear RGB and converted through sRGB
 //! gamma correction before YCbCr encoding.
+use enough::Unstoppable;
 
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 

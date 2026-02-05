@@ -1,4 +1,5 @@
 //! Compare Rust vs C++ progressive encoding quality and size.
+use enough::Unstoppable;
 
 use std::fs;
 use std::process::Command;

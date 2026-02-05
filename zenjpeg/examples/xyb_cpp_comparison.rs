@@ -139,7 +139,7 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");
     let decoded = Decoder::new()
         .apply_icc(true)
-        .decode(&jpeg_data)
+        .decode(&jpeg_data, Unstoppable)
         .expect("decode jpeg");
 
     let params = ButteraugliParams::default();

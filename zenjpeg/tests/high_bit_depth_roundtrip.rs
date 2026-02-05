@@ -13,6 +13,7 @@
 //! IMPORTANT: RGB16 and RgbF32 formats are treated as LINEAR RGB input.
 //! The encoder applies sRGB gamma correction during encoding.
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
+use enough::Unstoppable;
 
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
@@ -175,10 +176,10 @@ fn test_16bit_input_preserves_good_precision() {
     let decoder = Decoder::new();
 
     let decoded_16 = decoder
-        .decode_f32(&jpeg_16)
+        .decode_f32(&jpeg_16, Unstoppable)
         .expect("decode 16-bit jpeg failed");
     let decoded_8 = decoder
-        .decode_f32(&jpeg_8)
+        .decode_f32(&jpeg_8, Unstoppable)
         .expect("decode 8-bit jpeg failed");
 
     // Extract red channel (same as green and blue for gray gradient)
@@ -243,11 +244,11 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let decoder = Decoder::new();
 
     // Decode to f32 (high precision path)
-    let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decode failed");
+    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
     let f32_red: Vec<f32> = decoded_f32.data.chunks(3).map(|c| c[0]).collect();
 
     // Decode to u8
-    let decoded_u8 = decoder.decode(&jpeg).expect("u8 decode failed");
+    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
     let u8_red: Vec<u8> = decoded_u8.data.chunks(3).map(|c| c[0]).collect();
 
     // Count unique values in each output
@@ -295,7 +296,7 @@ fn test_to_u16_conversion_preserves_precision() {
         encode_rgb16(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
     let decoder = Decoder::new();
-    let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decode failed");
+    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
 
     // Convert to u16
     let data_u16 = decoded_f32.to_u16();
@@ -350,7 +351,7 @@ fn test_gradient_banding_reduced() {
         encode_rgb16(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode_f32(&jpeg).expect("decode failed");
+    let decoded = decoder.decode_f32(&jpeg, Unstoppable).expect("decode failed");
 
     // Analyze horizontal gradient steps in the middle row
     let row_start = (height / 2) * width * 3;
@@ -444,10 +445,10 @@ fn test_full_pipeline_8bit_to_f32_precision() {
 
     // Decode to f32
     let decoder = Decoder::new();
-    let decoded_f32 = decoder.decode_f32(&jpeg).expect("decode failed");
+    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("decode failed");
 
     // Also decode to u8 for comparison
-    let decoded_u8 = decoder.decode(&jpeg).expect("u8 decode failed");
+    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
 
     // Extract red channel
     let output_f32: Vec<f32> = decoded_f32.data.chunks(3).map(|c| c[0]).collect();
@@ -521,7 +522,7 @@ fn test_quality_affects_precision() {
         let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
             .expect("encode should succeed");
 
-        let decoded = decoder.decode_f32(&jpeg).expect("decode failed");
+        let decoded = decoder.decode_f32(&jpeg, Unstoppable).expect("decode failed");
         let red: Vec<f32> = decoded.data.chunks(3).map(|c| c[0]).collect();
         let bits = estimate_effective_bits(&red, 0.2);
 
@@ -574,8 +575,8 @@ fn test_subsampling_comparison() {
     let jpeg_420 =
         encode_rgb(width as u32, height as u32, &input, &config_420).expect("420 encode failed");
 
-    let decoded_444 = decoder.decode_f32(&jpeg_444).expect("444 decode failed");
-    let decoded_420 = decoder.decode_f32(&jpeg_420).expect("420 decode failed");
+    let decoded_444 = decoder.decode_f32(&jpeg_444, Unstoppable).expect("444 decode failed");
+    let decoded_420 = decoder.decode_f32(&jpeg_420, Unstoppable).expect("420 decode failed");
 
     // Check green channel precision (affected by chroma subsampling)
     let green_444: Vec<f32> = decoded_444.data.chunks(3).map(|c| c[1]).collect();

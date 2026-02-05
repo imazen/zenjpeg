@@ -90,7 +90,7 @@ fn benchmark_size(width: u32, height: u32) {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _decoded = decoder.decode(&jpeg).expect("decoding failed");
+        let _decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding failed");
     }
     let decode_time = start.elapsed();
     let decode_per_iter = decode_time / iterations as u32;

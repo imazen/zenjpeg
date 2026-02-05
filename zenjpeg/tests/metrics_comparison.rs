@@ -2,6 +2,7 @@
 //!
 //! Tests DSSIM and SSIMULACRA2 metrics to ensure they correlate and produce
 //! consistent results that match C++ implementations.
+use enough::Unstoppable;
 
 use dssim::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};

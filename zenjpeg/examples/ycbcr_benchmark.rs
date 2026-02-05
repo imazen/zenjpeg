@@ -32,12 +32,12 @@ fn bench_decode_rgb(jpeg_data: &[u8], iterations: usize) -> Duration {
 
     // Warmup
     for _ in 0..3 {
-        let _ = decoder.decode(jpeg_data);
+        let _ = decoder.decode(jpeg_data, Unstoppable);
     }
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = decoder.decode(jpeg_data).unwrap();
+        let _ = decoder.decode(jpeg_data, Unstoppable).unwrap();
     }
     start.elapsed()
 }
@@ -47,12 +47,12 @@ fn bench_decode_ycbcr(jpeg_data: &[u8], iterations: usize) -> Duration {
 
     // Warmup
     for _ in 0..3 {
-        let _ = decoder.decode_to_ycbcr_f32(jpeg_data);
+        let _ = decoder.decode_to_ycbcr_f32(jpeg_data, Unstoppable);
     }
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = decoder.decode_to_ycbcr_f32(jpeg_data).unwrap();
+        let _ = decoder.decode_to_ycbcr_f32(jpeg_data, Unstoppable).unwrap();
     }
     start.elapsed()
 }

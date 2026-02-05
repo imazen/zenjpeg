@@ -5,6 +5,7 @@
 //!   heaptrack_print heaptrack.alloc_analysis.*.zst
 //!
 //! Uses CID22 high-resolution images from codec-corpus for realistic allocation patterns.
+use enough::Unstoppable;
 
 use std::fs::File;
 use std::io::BufReader;

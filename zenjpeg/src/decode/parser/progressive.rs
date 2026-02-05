@@ -14,6 +14,7 @@ use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
 use crate::foundation::consts::MAX_HUFFMAN_TABLES;
 use crate::huffman::HuffmanDecodeTable;
+use enough::Stop;
 
 use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
@@ -26,6 +27,8 @@ impl<'a> JpegParser<'a> {
     /// - First, DC coefficients are sent for all blocks
     /// - Then AC coefficients in bands [ss, se]
     /// - Refinement scans improve precision bit by bit
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode_progressive_scan(
         &mut self,
         scan_components: &[(usize, u8, u8)],
@@ -33,6 +36,7 @@ impl<'a> JpegParser<'a> {
         se: u8,
         ah: u8,
         al: u8,
+        stop: &impl Stop,
     ) -> Result<()> {
         // DNL mode not supported for progressive decode
         if self.height == 0 {
@@ -171,6 +175,13 @@ impl<'a> JpegParser<'a> {
                 let total_blocks = comp_blocks_h * comp_blocks_v;
 
                 for block_idx in 0..total_blocks {
+                    // Check for cancellation periodically (every 256 blocks)
+                    if block_idx & 0xFF == 0 {
+                        if stop.should_stop() {
+                        return Err(Error::cancelled());
+                    }
+                    }
+
                     // Check for restart marker
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
                         decoder.align_to_byte();
@@ -202,6 +213,11 @@ impl<'a> JpegParser<'a> {
             } else {
                 // Interleaved DC scan: blocks in MCU order
                 'dc_scan: for mcu_y in 0..mcu_rows {
+                    // Check for cancellation at each MCU row
+                    if stop.should_stop() {
+                        return Err(Error::cancelled());
+                    }
+
                     for mcu_x in 0..mcu_cols {
                         // Check for restart marker
                         if restart_interval > 0
@@ -307,6 +323,13 @@ impl<'a> JpegParser<'a> {
             next_restart_num = 0;
 
             for block_idx in 0..total_blocks {
+                // Check for cancellation periodically (every 256 blocks)
+                if block_idx & 0xFF == 0 {
+                    if stop.should_stop() {
+                        return Err(Error::cancelled());
+                    }
+                }
+
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
                     // Align to byte boundary (discard padding bits)

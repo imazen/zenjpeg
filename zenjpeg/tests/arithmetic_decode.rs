@@ -1,4 +1,5 @@
 //! Tests for arithmetic-coded JPEG decoding.
+use enough::Unstoppable;
 
 use zenjpeg::decode::Decoder;
 use zenjpeg::types::JpegMode;
@@ -28,7 +29,7 @@ fn test_arithmetic_jpeg_decode_rgb() {
 
     // Decode to RGB
     let decoded = decoder
-        .decode(&data)
+        .decode(&data, Unstoppable)
         .expect("failed to decode arithmetic JPEG");
 
     // Verify dimensions
@@ -56,7 +57,7 @@ fn test_arithmetic_jpeg_decode_coefficients() {
 
     // Decode coefficients
     let coeffs = decoder
-        .decode_coefficients(&data)
+        .decode_coefficients(&data, Unstoppable)
         .expect("failed to decode coefficients");
 
     assert_eq!(coeffs.width, 227);
@@ -92,7 +93,7 @@ fn test_arithmetic_jpeg_reference_comparison() {
 
     // Decode with our decoder
     let decoded = decoder
-        .decode(&data)
+        .decode(&data, Unstoppable)
         .expect("failed to decode with zenjpeg");
 
     // Decode with djpeg (libjpeg-turbo)
@@ -155,7 +156,7 @@ fn debug_arithmetic_output() {
     println!("Image: {}x{}, mode: {:?}",
              info.dimensions.width, info.dimensions.height, info.mode);
 
-    let decoded = decoder.decode(&data).expect("failed to decode");
+    let decoded = decoder.decode(&data, Unstoppable).expect("failed to decode");
     println!("Decoded {} bytes", decoded.data.len());
 
     // Get djpeg output

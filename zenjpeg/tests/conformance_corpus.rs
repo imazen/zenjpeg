@@ -1,6 +1,7 @@
 //! Test decoder against jpeg-conformance corpus.
 //!
 //! Run with: cargo test --release --features decoder -p zenjpeg --test conformance_corpus -- --nocapture
+use enough::Unstoppable;
 
 use std::fs;
 use std::path::Path;
@@ -39,7 +40,7 @@ fn decode_file_with_strictness(
     let data = fs::read(path).map_err(|e| format!("read error: {e}"))?;
     let decoder = Decoder::new().strictness(strictness);
     let image = decoder
-        .decode(&data)
+        .decode(&data, Unstoppable)
         .map_err(|e| format!("decode error: {e}"))?;
     Ok((image.width(), image.height(), image.pixels().len()))
 }

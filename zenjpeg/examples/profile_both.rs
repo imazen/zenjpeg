@@ -41,7 +41,7 @@ fn main() {
         use zenjpeg::decode::Decoder;
         use zenjpeg::decoder::PixelFormat;
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let _ = decoder.decode(&jpeg).unwrap();
+        let _ = decoder.decode(&jpeg, Unstoppable).unwrap();
     }
 
     // Profile zune-jpeg
@@ -70,7 +70,7 @@ fn main() {
         use zenjpeg::decode::Decoder;
         use zenjpeg::decoder::PixelFormat;
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let _ = black_box(decoder.decode(&jpeg).unwrap());
+        let _ = black_box(decoder.decode(&jpeg, Unstoppable).unwrap());
     }
     let jpegli_elapsed = start.elapsed();
     let jpegli_per_iter = jpegli_elapsed / iterations;

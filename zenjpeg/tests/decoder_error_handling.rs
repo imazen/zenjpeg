@@ -5,6 +5,7 @@
 //!
 //! The kCompressed0 test data is a minimal valid 1x1 grayscale JPEG.
 
+use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 
 // ============================================================================
@@ -68,7 +69,7 @@ const SOS_OFFSET: usize = 296;
 /// Helper to parse compressed data and return success/failure.
 fn parse_compressed(data: &[u8]) -> bool {
     let decoder = Decoder::new();
-    decoder.decode(data).is_ok()
+    decoder.decode(data, Unstoppable).is_ok()
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 //! Basic XYB encoding tests.
 //!
 //! Verifies that the XYB encoder produces valid, decodable output.
+use enough::Unstoppable;
 
 use zenjpeg::{
     decoder::Decoder,
@@ -46,7 +47,7 @@ fn test_xyb_basic() {
         assert_eq!(jpeg[0..2], [0xFF, 0xD8], "not valid JPEG SOI");
 
         // Verify it can be decoded
-        let decoded = Decoder::new().decode(&jpeg).expect("failed to decode JPEG");
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("failed to decode JPEG");
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
     }
@@ -84,7 +85,7 @@ fn test_xyb_output_quality() {
     // Decode and measure quality
     let decoded = Decoder::new()
         .apply_icc(true)
-        .decode(&jpeg)
+        .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
     // Compute DSSIM

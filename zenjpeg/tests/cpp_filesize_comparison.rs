@@ -9,6 +9,7 @@
 //!
 //! For synthetic gradients (low entropy), this overhead can be 5-15% for 256x256.
 //! For real photos, differences are typically <1%.
+use enough::Unstoppable;
 
 use std::fs;
 use std::process::Command;

@@ -55,6 +55,10 @@ pub use extras::{
 // Re-export types used in public struct fields so users can access them
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
+// Re-export Stop trait for cancellation support
+pub use enough::Stop;
+use enough::Unstoppable;
+
 use crate::error::{Error, Result};
 
 /// Controls how the decoder handles non-fatal errors.
@@ -607,8 +611,8 @@ impl Decoder {
             let height = parser.height;
             let num_components = parser.num_components;
 
-            // Fully decode the image
-            parser.decode()?;
+            // Fully decode the image (scanline reader doesn't support cancellation)
+            parser.decode(&Unstoppable)?;
 
             // Convert to pixels (RGB for color, grayscale for 1-component)
             let output_format = if is_grayscale {
@@ -616,7 +620,8 @@ impl Decoder {
             } else {
                 PixelFormat::Rgb
             };
-            let pixels = parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling)?;
+            let pixels =
+                parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling, &Unstoppable)?;
 
             return Ok(ScanlineReader::new_buffered(
                 data,
@@ -668,8 +673,8 @@ impl Decoder {
             let height = parser.height;
             let num_components = parser.num_components;
 
-            // Fully decode the image
-            parser.decode()?;
+            // Fully decode the image (scanline reader doesn't support cancellation)
+            parser.decode(&Unstoppable)?;
 
             // Convert to pixels
             let output_format = if is_grayscale {
@@ -677,7 +682,8 @@ impl Decoder {
             } else {
                 PixelFormat::Rgb
             };
-            let pixels = parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling)?;
+            let pixels =
+                parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling, &Unstoppable)?;
 
             return Ok(ScanlineReader::new_buffered(
                 data,
@@ -726,14 +732,14 @@ impl Decoder {
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
-    pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
+    pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImage> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.config.max_pixels,
             Some(&self.config.preserve),
             self.config.strictness,
         )?;
-        parser.decode()?;
+        parser.decode(&stop)?;
 
         let info = parser.info();
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
@@ -742,7 +748,7 @@ impl Decoder {
         // For XYB images, use simple dequantization so ICC profile works correctly
         #[allow(unused_mut)] // pixels is mutated when cms features are enabled
         let mut pixels =
-            parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling)?;
+            parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling, &stop)?;
 
         // Apply ICC profile if enabled and present
         // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
@@ -802,7 +808,7 @@ impl Decoder {
     /// If you need ICC profile transformation, decode to u8 first.
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
-    pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
+    pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImageF32> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.config.max_pixels,
@@ -811,14 +817,14 @@ impl Decoder {
         )?;
         // Disable streaming - f32 decode needs coefficients for precision
         parser.prefer_streaming = false;
-        parser.decode()?;
+        parser.decode(&stop)?;
 
         let info = parser.info();
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format as f32
         let pixels =
-            parser.to_pixels_f32(output_format, info.is_xyb, self.config.fancy_upsampling)?;
+            parser.to_pixels_f32(output_format, info.is_xyb, self.config.fancy_upsampling, &stop)?;
 
         let warnings = parser.take_warnings();
 
@@ -857,7 +863,11 @@ impl Decoder {
     /// ```
     ///
     /// For analysis of large images, consider streaming APIs.
-    pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
+    pub fn decode_coefficients(
+        &self,
+        data: &[u8],
+        stop: impl Stop,
+    ) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.config.max_pixels,
@@ -866,7 +876,7 @@ impl Decoder {
         )?;
         // Disable streaming - we need coefficients stored
         parser.prefer_streaming = false;
-        parser.decode()?;
+        parser.decode(&stop)?;
 
         // Extract coefficients from parser
         parser.extract_coefficients()
@@ -914,7 +924,7 @@ impl Decoder {
     /// - Parsing or decoding fails
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
-    pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
+    pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.config.max_pixels,
@@ -923,7 +933,7 @@ impl Decoder {
         )?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.prefer_streaming = false;
-        parser.decode()?;
+        parser.decode(&stop)?;
 
         let info = parser.info();
 
@@ -1100,7 +1110,7 @@ mod tests {
 
         // Decode
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
+        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding should succeed");
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
@@ -1142,7 +1152,7 @@ mod tests {
 
         // Decode
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
+        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding should succeed");
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
@@ -1185,7 +1195,7 @@ mod tests {
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
         let decoded_f32 = decoder
-            .decode_f32(&jpeg)
+            .decode_f32(&jpeg, Unstoppable)
             .expect("f32 decoding should succeed");
 
         assert_eq!(decoded_f32.width, width);
@@ -1198,7 +1208,7 @@ mod tests {
         }
 
         // Compare with u8 decode - converted f32 should match
-        let decoded_u8 = decoder.decode(&jpeg).expect("u8 decoding should succeed");
+        let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decoding should succeed");
         let converted_u8 = decoded_f32.to_u8();
 
         // Values should be close - allow diff of 2 because u8 path uses integer IDCT
@@ -1244,7 +1254,7 @@ mod tests {
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
         let decoded_f32 = decoder
-            .decode_f32(&jpeg)
+            .decode_f32(&jpeg, Unstoppable)
             .expect("f32 decoding should succeed");
 
         // Check that f32 values show more precision than just u8/255

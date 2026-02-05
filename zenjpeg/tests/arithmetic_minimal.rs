@@ -1,4 +1,5 @@
 //! Minimal arithmetic decode test with reference comparison.
+use enough::Unstoppable;
 
 use std::process::Command;
 
@@ -22,7 +23,7 @@ fn check_ac_in_first_blocks() {
     // Check with our decoder what AC coefficients we get
     let data = std::fs::read(TESTIMGARI_PATH).expect("failed to read file");
     let decoder = zenjpeg::decode::Decoder::new();
-    let coeffs = decoder.decode_coefficients(&data).expect("failed to decode");
+    let coeffs = decoder.decode_coefficients(&data, Unstoppable).expect("failed to decode");
     
     // First 5 Y blocks - show all non-zero coefficients
     println!("\nOur decoder - First 5 Y blocks:");

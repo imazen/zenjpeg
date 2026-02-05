@@ -1434,7 +1434,7 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -1490,7 +1490,7 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         // Read in small chunks (3 rows at a time)
         let mut reader = decoder
@@ -1533,7 +1533,7 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 85.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1604,7 +1604,7 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1762,7 +1762,7 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1812,7 +1812,7 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -1891,7 +1891,7 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -1974,7 +1974,7 @@ mod tests {
 
         // Decode normally for comparison - use Gray output format
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = Decoder::new()
@@ -2039,7 +2039,7 @@ mod tests {
 
         // Use Gray output format for comparison
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
 
         let mut reader = Decoder::new()
             .scanline_reader(&jpeg)
@@ -2226,7 +2226,7 @@ mod tests {
         assert_eq!(rows_read, height as usize, "Should read all rows");
 
         // Compare with full-frame decode
-        let decoded = decoder.decode(&progressive_jpeg).expect("decode failed");
+        let decoded = decoder.decode(&progressive_jpeg, enough::Unstoppable).expect("decode failed");
         let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
 
         // Should be identical (same decode path for progressive)

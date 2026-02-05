@@ -22,6 +22,7 @@ use super::{DecodeWarning, JpegInfo, ScanInfo, Strictness};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
+use enough::Stop;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
     MARKER_DRI, MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES,
@@ -451,18 +452,25 @@ impl<'a> JpegParser<'a> {
     // =========================================================================
 
     /// Decode the full JPEG (header + all scans).
-    pub(super) fn decode(&mut self) -> Result<()> {
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
+    pub(super) fn decode(&mut self, stop: &impl Stop) -> Result<()> {
         // First read header
         self.position = 2; // Skip SOI
         self.read_header()?;
 
         // Continue parsing until we hit EOI
         loop {
+            // Check for cancellation
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             let marker = self.read_marker()?;
 
             match marker {
                 MARKER_SOS => {
-                    self.parse_scan()?;
+                    self.parse_scan(stop)?;
                     // After scan, look for more markers
                 }
                 MARKER_DNL => {

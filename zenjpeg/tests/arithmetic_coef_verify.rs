@@ -1,4 +1,5 @@
 //! Verify arithmetic decoder produces identical coefficients to Huffman transcode.
+use enough::Unstoppable;
 
 use zenjpeg::decode::Decoder;
 
@@ -12,11 +13,11 @@ fn verify_arithmetic_coefficients_match_huffman_transcode() {
     // Decode original arithmetic JPEG
     let ari_data = std::fs::read(TESTIMGARI_PATH).expect("failed to read arithmetic file");
     let decoder = Decoder::new();
-    let ari_coeffs = decoder.decode_coefficients(&ari_data).expect("failed to decode arithmetic");
+    let ari_coeffs = decoder.decode_coefficients(&ari_data, Unstoppable).expect("failed to decode arithmetic");
     
     // Decode Huffman-transcoded version (jpegtran -copy none)
     let huff_data = std::fs::read("/tmp/testimgari_huffman.jpg").expect("failed to read huffman file");
-    let huff_coeffs = decoder.decode_coefficients(&huff_data).expect("failed to decode huffman");
+    let huff_coeffs = decoder.decode_coefficients(&huff_data, Unstoppable).expect("failed to decode huffman");
     
     // Compare coefficient counts
     assert_eq!(ari_coeffs.components.len(), huff_coeffs.components.len(), 

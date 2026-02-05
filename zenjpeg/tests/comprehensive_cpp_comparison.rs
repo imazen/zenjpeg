@@ -6,6 +6,7 @@
 //!
 //! IMPORTANT: Uses `jpegli_set_distance()` for C++ (not `jpeg_set_quality()`)
 //! to ensure matching quant table configuration (3 tables for both).
+use enough::Unstoppable;
 
 use std::fs;
 use std::path::Path;

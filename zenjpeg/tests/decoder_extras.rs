@@ -1,7 +1,8 @@
 //! Tests for decoder extras preservation.
+use enough::Unstoppable;
 
 use zenjpeg::decoder::{Decoder, MpfImageType, PreserveConfig, SegmentType};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Create a simple test image.
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -79,7 +80,7 @@ fn test_extras_empty_when_preserve_none() {
     // Decode with no preservation
     let decoded = Decoder::new()
         .preserve_none()
-        .decode(&jpeg)
+        .decode(&jpeg, Unstoppable)
         .expect("decode");
 
     // Should have no extras (or empty extras)
@@ -102,7 +103,7 @@ fn test_extras_preserved_with_default_config() {
     let jpeg = enc.finish().expect("encode");
 
     // Decode with default preservation
-    let decoded = Decoder::new().decode(&jpeg).expect("decode");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
 
     // Should have extras if there are any segments to preserve
     // Note: A minimal JPEG might not have JFIF, EXIF, etc.
@@ -186,7 +187,7 @@ fn test_decoded_image_has_extras_method() {
     enc.push_packed(&pixels, Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
-    let decoded = Decoder::new().decode(&jpeg).expect("decode");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
 
     // The extras() method should be callable
     let _extras_opt = decoded.extras();

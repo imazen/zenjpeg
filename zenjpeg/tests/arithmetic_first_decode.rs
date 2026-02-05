@@ -1,4 +1,5 @@
 //! Trace the first few arithmetic decode operations.
+use enough::Unstoppable;
 
 use zenjpeg::decode::Decoder;
 
@@ -40,7 +41,7 @@ fn trace_first_decode() {
     
     // Now decode the whole image and show first DC values
     let decoder = Decoder::new();
-    let coeffs = decoder.decode_coefficients(&data).expect("failed to decode");
+    let coeffs = decoder.decode_coefficients(&data, Unstoppable).expect("failed to decode");
     
     // First 10 Y DC values
     println!("\nFirst 10 Y DC values:");

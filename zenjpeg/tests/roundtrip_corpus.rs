@@ -2,6 +2,7 @@
 //!
 //! Tests that verify roundtrip quality using test images from the corpus,
 //! matching C++ jpegli quality verification patterns.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -34,7 +35,7 @@ fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, 
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     let rms = distance_rms(&img.pixels, &decoded.data);
     let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
@@ -301,7 +302,7 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     // Note: Decoder may expand grayscale to RGB
     println!(
@@ -356,8 +357,8 @@ fn test_decode_deterministic() {
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
-    let decoded1 = decoder.decode(&jpeg).expect("decode 1 failed");
-    let decoded2 = decoder.decode(&jpeg).expect("decode 2 failed");
+    let decoded1 = decoder.decode(&jpeg, Unstoppable).expect("decode 1 failed");
+    let decoded2 = decoder.decode(&jpeg, Unstoppable).expect("decode 2 failed");
 
     assert_eq!(
         decoded1.data, decoded2.data,

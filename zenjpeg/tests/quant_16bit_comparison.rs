@@ -22,6 +22,7 @@
 //!
 //! Note: DQT extraction also exists in examples/jpeg_inspect.rs. Consider
 //! moving to a shared location if more tests need this functionality.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
