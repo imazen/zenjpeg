@@ -33,32 +33,57 @@ const XYB_PROFILE_MARKER: &[u8] = b"XYB";
 ///
 /// ICC profiles are stored in APP2 markers with signature "ICC_PROFILE\0".
 /// Large profiles may be split across multiple APP2 markers.
+///
+/// Scans marker-to-marker (not byte-by-byte), stopping at SOS.
 pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
     let mut chunks: Vec<(u8, Vec<u8>)> = Vec::new();
-    let mut i = 0;
 
-    while i < jpeg_data.len().saturating_sub(1) {
-        if jpeg_data[i] == 0xFF && jpeg_data[i + 1] == 0xE2 {
-            // APP2 marker
-            if i + 4 > jpeg_data.len() {
-                break;
-            }
-            let length = ((jpeg_data[i + 2] as usize) << 8) | (jpeg_data[i + 3] as usize);
-            if i + 2 + length > jpeg_data.len() {
-                break;
-            }
+    // Skip SOI (0xFF 0xD8)
+    let mut i = 2;
 
-            // Check for ICC_PROFILE signature
-            if length >= 16 && &jpeg_data[i + 4..i + 16] == ICC_PROFILE_SIGNATURE {
-                let chunk_num = jpeg_data[i + 16];
-                let _total_chunks = jpeg_data[i + 17];
-                let icc_data = jpeg_data[i + 18..i + 2 + length].to_vec();
-                chunks.push((chunk_num, icc_data));
-            }
-            i += 2 + length;
-        } else {
+    // Scan marker-by-marker until SOS or end of markers
+    while i + 3 < jpeg_data.len() {
+        // Look for marker prefix
+        if jpeg_data[i] != 0xFF {
+            break; // Not a marker, likely scan data
+        }
+
+        // Skip any fill bytes (0xFF padding)
+        while i + 1 < jpeg_data.len() && jpeg_data[i + 1] == 0xFF {
             i += 1;
         }
+        if i + 3 >= jpeg_data.len() {
+            break;
+        }
+
+        let marker_type = jpeg_data[i + 1];
+
+        // Stop at SOS (start of scan) or EOI
+        if marker_type == 0xDA || marker_type == 0xD9 {
+            break;
+        }
+
+        // Markers without length (RST, SOI, EOI, TEM)
+        if marker_type == 0x00 || marker_type == 0x01 || (0xD0..=0xD7).contains(&marker_type) {
+            i += 2;
+            continue;
+        }
+
+        let length = ((jpeg_data[i + 2] as usize) << 8) | (jpeg_data[i + 3] as usize);
+        if length < 2 || i + 2 + length > jpeg_data.len() {
+            break;
+        }
+
+        // Check for APP2 with ICC_PROFILE signature
+        if marker_type == 0xE2 && length >= 16 && &jpeg_data[i + 4..i + 16] == ICC_PROFILE_SIGNATURE
+        {
+            let chunk_num = jpeg_data[i + 16];
+            let _total_chunks = jpeg_data[i + 17];
+            let icc_data = jpeg_data[i + 18..i + 2 + length].to_vec();
+            chunks.push((chunk_num, icc_data));
+        }
+
+        i += 2 + length;
     }
 
     if chunks.is_empty() {
