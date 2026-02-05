@@ -4,7 +4,7 @@
 
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
 
 use super::JpegParser;
 
@@ -47,7 +47,11 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(vec![64u8; num_blocks]);
+                self.coeff_counts.push(try_alloc_filled(
+                    num_blocks,
+                    64u8,
+                    "allocating coefficient counts",
+                )?);
             }
         }
 
@@ -157,7 +161,11 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                self.coeff_counts.push(vec![64u8; num_blocks]);
+                self.coeff_counts.push(try_alloc_filled(
+                    num_blocks,
+                    64u8,
+                    "allocating coefficient counts",
+                )?);
             }
         }
 
