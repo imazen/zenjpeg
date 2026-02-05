@@ -15,7 +15,7 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
 use crate::foundation::consts::MAX_HUFFMAN_TABLES;
 use crate::huffman::HuffmanDecodeTable;
 
-use super::super::Strictness;
+use super::super::DecodeWarning;
 use super::JpegParser;
 
 /// Progressive scan decoding methods for JpegParser.
@@ -142,6 +142,7 @@ impl<'a> JpegParser<'a> {
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
+        let mut had_progressive_truncation = false;
 
         if is_dc_scan {
             // DC scan - can be interleaved (multiple components) or non-interleaved (single component)
@@ -177,11 +178,7 @@ impl<'a> JpegParser<'a> {
                         match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
                             ScanRead::Value(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                if self.strictness == Strictness::Strict {
-                                    return Err(Error::truncated_data(
-                                        "progressive DC scan truncated",
-                                    ));
-                                }
+                                had_progressive_truncation = true;
                                 break;
                             }
                         }
@@ -189,11 +186,7 @@ impl<'a> JpegParser<'a> {
                         match decoder.decode_dc_refine(al)? {
                             ScanRead::Value(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                if self.strictness == Strictness::Strict {
-                                    return Err(Error::truncated_data(
-                                        "progressive DC refine scan truncated",
-                                    ));
-                                }
+                                had_progressive_truncation = true;
                                 break;
                             }
                         }
@@ -254,11 +247,7 @@ impl<'a> JpegParser<'a> {
                                                 self.coeffs[*comp_idx][block_idx][0] = dc;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                                if self.strictness == Strictness::Strict {
-                                                    return Err(Error::truncated_data(
-                                                        "progressive DC scan truncated",
-                                                    ));
-                                                }
+                                                had_progressive_truncation = true;
                                                 break 'dc_scan;
                                             }
                                         }
@@ -269,11 +258,7 @@ impl<'a> JpegParser<'a> {
                                                 self.coeffs[*comp_idx][block_idx][0] |= bit;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
-                                                if self.strictness == Strictness::Strict {
-                                                    return Err(Error::truncated_data(
-                                                        "progressive DC refine scan truncated",
-                                                    ));
-                                                }
+                                                had_progressive_truncation = true;
                                                 break 'dc_scan;
                                             }
                                         }
@@ -343,9 +328,7 @@ impl<'a> JpegParser<'a> {
                         ScanRead::Value(()) => {}
                         ScanRead::EndOfScan | ScanRead::Truncated => {
                             // End of scan may be normal (implicit EOB) or truncation
-                            if self.strictness == Strictness::Strict {
-                                return Err(Error::truncated_data("progressive AC scan truncated"));
-                            }
+                            had_progressive_truncation = true;
                             break;
                         }
                     }
@@ -361,11 +344,7 @@ impl<'a> JpegParser<'a> {
                     )? {
                         ScanRead::Value(()) => {}
                         ScanRead::EndOfScan | ScanRead::Truncated => {
-                            if self.strictness == Strictness::Strict {
-                                return Err(Error::truncated_data(
-                                    "progressive AC refine scan truncated",
-                                ));
-                            }
+                            had_progressive_truncation = true;
                             break;
                         }
                     }
@@ -384,7 +363,16 @@ impl<'a> JpegParser<'a> {
             );
         }
 
+        // Consume decoder position before warn() (which borrows self mutably,
+        // conflicting with decoder's immutable borrows of self.dc_tables/ac_tables).
         self.position += decoder.position();
+        drop(decoder);
+
+        // Emit warning for progressive scan truncation (or error in Strict mode)
+        if had_progressive_truncation {
+            self.warn(DecodeWarning::TruncatedProgressiveScan)?;
+        }
+
         Ok(())
     }
 }

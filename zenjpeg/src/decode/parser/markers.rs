@@ -15,7 +15,7 @@ use crate::foundation::consts::{
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
 
-use super::super::Strictness;
+use super::super::DecodeWarning;
 use super::JpegParser;
 
 /// Marker parsing methods for JpegParser.
@@ -296,13 +296,11 @@ impl<'a> JpegParser<'a> {
         } else if self.height != num_lines {
             // Height was already specified - this is technically invalid.
             // mozjpeg ignores DNL entirely (skip_variable), so Balanced matches that.
-            // Only Strict errors on this spec violation.
-            if self.strictness == Strictness::Strict {
-                return Err(Error::invalid_jpeg_data(
-                    "DNL marker conflicts with SOF height (spec violation)",
-                ));
-            }
-            // Balanced/Lenient: ignore DNL, keep original SOF height
+            // Strict errors via warn(), Balanced/Lenient: ignore DNL, keep SOF height.
+            self.warn(DecodeWarning::DnlHeightConflict {
+                sof_height: self.height,
+                dnl_height: num_lines,
+            })?;
         }
 
         Ok(())

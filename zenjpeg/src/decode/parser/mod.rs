@@ -17,7 +17,7 @@ mod scan;
 use super::extras::{
     should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
 };
-use super::{JpegInfo, ScanInfo, Strictness};
+use super::{DecodeWarning, JpegInfo, ScanInfo, Strictness};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
@@ -94,6 +94,10 @@ pub(super) struct JpegParser<'a> {
 
     /// Strictness level for error handling
     pub(super) strictness: Strictness,
+
+    /// Warnings collected during decode (Balanced/Lenient only).
+    /// In Strict mode, warnings become errors instead of being collected.
+    pub(super) warnings: Vec<DecodeWarning>,
 }
 
 impl<'a> JpegParser<'a> {
@@ -154,7 +158,40 @@ impl<'a> JpegParser<'a> {
             mpf_header_pos: 0,
             adobe_transform: None,
             strictness,
+            warnings: Vec::new(),
         })
+    }
+
+    /// Record a warning (Balanced/Lenient) or return an error (Strict).
+    ///
+    /// In Strict mode, the warning is converted to an error with the warning's
+    /// Display message. In Balanced/Lenient, it's collected for later retrieval.
+    /// Duplicate warnings are suppressed.
+    pub(super) fn warn(&mut self, warning: DecodeWarning) -> Result<()> {
+        if self.strictness == Strictness::Strict {
+            return Err(Error::invalid_jpeg_data(match &warning {
+                DecodeWarning::MissingHuffmanTables => {
+                    "missing Huffman table (DHT not defined before scan)"
+                }
+                DecodeWarning::TruncatedScan { .. } => "scan data truncated",
+                DecodeWarning::PaddingBlockError => "padding block decode failed",
+                DecodeWarning::DnlHeightConflict { .. } => {
+                    "DNL marker conflicts with SOF height (spec violation)"
+                }
+                DecodeWarning::TruncatedProgressiveScan => "progressive scan data truncated",
+            }));
+        }
+        // Deduplicate: don't add the same warning twice
+        // (MissingHuffmanTables may fire for each component, but one warning suffices)
+        if !self.warnings.contains(&warning) {
+            self.warnings.push(warning);
+        }
+        Ok(())
+    }
+
+    /// Take warnings out of the parser (for use after decode).
+    pub(super) fn take_warnings(&mut self) -> Vec<DecodeWarning> {
+        core::mem::take(&mut self.warnings)
     }
 
     /// Take the extras out of the parser (for use after decode).

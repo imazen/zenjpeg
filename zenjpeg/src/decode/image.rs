@@ -8,6 +8,7 @@
 use crate::types::PixelFormat;
 
 use super::extras::DecodedExtras;
+use super::DecodeWarning;
 use wide::f32x8;
 
 /// A decoded image with dimensions and pixel data.
@@ -27,6 +28,8 @@ pub struct DecodedImage {
     pub data: Vec<u8>,
     /// Preserved metadata and secondary images (if preservation was enabled)
     pub(crate) extras: Option<DecodedExtras>,
+    /// Warnings collected during decode (empty in Strict mode, which errors instead).
+    pub(crate) warnings: Vec<DecodeWarning>,
 }
 
 impl core::fmt::Debug for DecodedImage {
@@ -93,6 +96,22 @@ impl DecodedImage {
         self.extras.take()
     }
 
+    /// Returns warnings collected during decode.
+    ///
+    /// In [`Strictness::Strict`] mode, this is always empty because warnings
+    /// become errors. In [`Strictness::Balanced`] and [`Strictness::Lenient`]
+    /// modes, issues like truncation or missing DHT are collected here.
+    #[must_use]
+    pub fn warnings(&self) -> &[DecodeWarning] {
+        &self.warnings
+    }
+
+    /// Returns true if any warnings were collected during decode.
+    #[must_use]
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
     /// Decompose the image into its parts.
     #[must_use]
     pub fn into_parts(self) -> (Vec<u8>, u32, u32, PixelFormat, Option<DecodedExtras>) {
@@ -123,6 +142,8 @@ pub struct DecodedImageF32 {
     pub format: PixelFormat,
     /// Float pixel data in range 0.0-1.0
     pub data: Vec<f32>,
+    /// Warnings collected during decode (empty in Strict mode).
+    pub(crate) warnings: Vec<DecodeWarning>,
 }
 
 impl DecodedImageF32 {
@@ -204,6 +225,7 @@ impl DecodedImageF32 {
             format: self.format,
             data,
             extras: None,
+            warnings: self.warnings.clone(),
         }
     }
 
@@ -243,6 +265,22 @@ impl DecodedImageF32 {
             result[i] = (self.data[i] * 65535.0).round().clamp(0.0, 65535.0) as u16;
         }
         result
+    }
+
+    /// Returns warnings collected during decode.
+    ///
+    /// In [`Strictness::Strict`] mode, this is always empty because warnings
+    /// become errors. In [`Strictness::Balanced`] and [`Strictness::Lenient`]
+    /// modes, issues like truncation or missing DHT are collected here.
+    #[must_use]
+    pub fn warnings(&self) -> &[DecodeWarning] {
+        &self.warnings
+    }
+
+    /// Returns true if any warnings were collected during decode.
+    #[must_use]
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
     }
 }
 
