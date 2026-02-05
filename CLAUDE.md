@@ -508,16 +508,7 @@ sensitivity tables, and preset baselines.
    - EOB optimization: deleted (was broken, destroyed quality). See commit history.
    - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
 
-2. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
-   produces "AC coefficient index out of bounds" errors when decoding very small images
-   (1x1, 8x8, 17x31, etc.) and some 4:2:0/4:2:2 subsampled images (100x100).
-   - Affects: `zenjpeg/src/entropy/decoder.rs:1092`
-   - Root cause: Unknown, likely progressive scan parsing edge case
-   - Impact: Tests use `.progressive(false)` for small image decoding
-   - Workaround: Use baseline mode for images <64 pixels or when decoding fidelity is critical
-   - Priority: Medium - encoder works correctly, only affects roundtrip tests
-
-3. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
+2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
    are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
    was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
    points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
@@ -527,7 +518,7 @@ sensitivity tables, and preset baselines.
 
 ### Fixed Bugs (historical reference)
 
-See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, etc.).
+See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, progressive decoder small images, etc.).
 
 ## Planned Features / TODO
 

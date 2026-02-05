@@ -18,9 +18,11 @@ use super::super::idct::inverse_dct_8x8;
 use super::super::idct_int::{idct_int_auto, idct_int_tiered};
 use super::super::upsample::upsample_fancy;
 use crate::color::{
-    gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
-    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
+    cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
+    gray_f32_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
+    ycbcr_planes_i16_to_rgb_u8, ycck_planes_to_rgb_u8,
 };
+use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
@@ -823,6 +825,39 @@ impl<'a> JpegParser<'a> {
                         &planes_f32[2],
                         &mut rgb,
                     );
+                }
+                Ok(rgb)
+            }
+            (4, PixelFormat::Rgb) => {
+                // CMYK or YCCK to RGB conversion
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = vec![0u8; rgb_size];
+
+                // Check Adobe transform to determine conversion type
+                // YCCK (transform=2) uses YCbCr→CMY then applies K
+                // CMYK (transform=0 or absent) uses raw CMYK with Adobe inversion
+                match self.adobe_transform {
+                    Some(AdobeColorTransform::Ycck) => {
+                        // YCCK: YCbCr channels + K
+                        ycck_planes_to_rgb_u8(
+                            &planes_f32[0],
+                            &planes_f32[1],
+                            &planes_f32[2],
+                            &planes_f32[3],
+                            &mut rgb,
+                        );
+                    }
+                    _ => {
+                        // CMYK (Adobe inverted format)
+                        cmyk_planes_to_rgb_u8(
+                            &planes_f32[0],
+                            &planes_f32[1],
+                            &planes_f32[2],
+                            &planes_f32[3],
+                            &mut rgb,
+                        );
+                    }
                 }
                 Ok(rgb)
             }

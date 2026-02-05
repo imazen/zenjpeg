@@ -14,7 +14,9 @@ mod output;
 mod progressive;
 mod scan;
 
-use super::extras::{should_preserve_mpf_image, DecodedExtras, MpfImageType, PreserveConfig};
+use super::extras::{
+    should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
+};
 use super::{JpegInfo, ScanInfo};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
@@ -86,6 +88,9 @@ pub(super) struct JpegParser<'a> {
     extras: Option<DecodedExtras>,
     /// Position of MPF TIFF header (after "MPF\0") for calculating absolute offsets
     mpf_header_pos: usize,
+
+    /// Adobe APP14 color transform (for CMYK/YCCK detection)
+    pub(super) adobe_transform: Option<AdobeColorTransform>,
 }
 
 impl<'a> JpegParser<'a> {
@@ -133,6 +138,7 @@ impl<'a> JpegParser<'a> {
             preserve_config,
             extras,
             mpf_header_pos: 0,
+            adobe_transform: None,
         })
     }
 

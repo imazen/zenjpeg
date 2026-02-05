@@ -23,9 +23,9 @@ pub use ycbcr::{rgb_to_ycbcr_f32, ycbcr_to_rgb_f32};
 // Decoder-only YCbCr->RGB conversions
 #[cfg(feature = "decoder")]
 pub use ycbcr::{
-    gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
-    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
-    ycbcr_to_rgb,
+    cmyk_adobe_to_rgb, cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8,
+    gray_f32_to_rgb_f32, gray_f32_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
+    ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycck_planes_to_rgb_u8, ycck_to_rgb,
 };
 
 // Re-export commonly used items from xyb

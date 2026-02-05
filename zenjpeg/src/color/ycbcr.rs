@@ -843,6 +843,116 @@ pub fn rgb_to_cmyk(r: u8, g: u8, b: u8) -> (u8, u8, u8, u8) {
     )
 }
 
+/// Converts Adobe CMYK to RGB.
+///
+/// Adobe JPEG CMYK stores values inverted: 0 = full ink, 255 = no ink.
+/// This function handles the inversion automatically.
+#[inline]
+#[must_use]
+pub fn cmyk_adobe_to_rgb(c: u8, m: u8, y: u8, k: u8) -> (u8, u8, u8) {
+    // Adobe stores inverted: 0 = full ink, 255 = no ink
+    // The formula with inverted values becomes:
+    // R = C * K / 255, G = M * K / 255, B = Y * K / 255
+    // (This is equivalent to: R = (255-C') * (255-K') / 255 with non-inverted C', K')
+    let c32 = c as u32;
+    let m32 = m as u32;
+    let y32 = y as u32;
+    let k32 = k as u32;
+
+    // Compute R = C * K / 255, etc.
+    // Using integer math with rounding: (a * b + 127) / 255
+    let r = ((c32 * k32 + 127) / 255) as u8;
+    let g = ((m32 * k32 + 127) / 255) as u8;
+    let b = ((y32 * k32 + 127) / 255) as u8;
+
+    (r, g, b)
+}
+
+/// Converts YCCK to RGB.
+///
+/// YCCK stores YCbCr (representing CMY values directly) plus K (Adobe-inverted).
+/// The YCbCr→RGB gives CMY values where 255=full ink (subtractive).
+/// K is stored inverted: K_adobe=255 means no black, K_adobe=0 means full black.
+///
+/// Formula: R = (255 - C) * K_adobe / 255
+#[inline]
+#[must_use]
+pub fn ycck_to_rgb(y: u8, cb: u8, cr: u8, k: u8) -> (u8, u8, u8) {
+    // Convert YCbCr to RGB, which gives us the CMY values directly
+    // (where 255 = full ink in subtractive model)
+    let (c, m, yy) = ycbcr_to_rgb(y, cb, cr);
+
+    // Convert CMY + K (Adobe-inverted) to RGB
+    // R = (255 - C) * K_adobe / 255
+    // G = (255 - M) * K_adobe / 255
+    // B = (255 - Y) * K_adobe / 255
+    let k32 = k as u32;
+    let r = (((255 - c as u32) * k32 + 127) / 255) as u8;
+    let g = (((255 - m as u32) * k32 + 127) / 255) as u8;
+    let b = (((255 - yy as u32) * k32 + 127) / 255) as u8;
+
+    (r, g, b)
+}
+
+/// Batch convert CMYK planes (Adobe format) to interleaved RGB.
+///
+/// Each plane contains values in Adobe inverted format (0 = full ink).
+/// Output is interleaved RGB bytes.
+pub fn cmyk_planes_to_rgb_u8(
+    c_plane: &[f32],
+    m_plane: &[f32],
+    y_plane: &[f32],
+    k_plane: &[f32],
+    rgb: &mut [u8],
+) {
+    debug_assert_eq!(c_plane.len(), m_plane.len());
+    debug_assert_eq!(c_plane.len(), y_plane.len());
+    debug_assert_eq!(c_plane.len(), k_plane.len());
+    debug_assert_eq!(rgb.len(), c_plane.len() * 3);
+
+    for i in 0..c_plane.len() {
+        // Level shift and clamp to 0-255 range
+        let c = (c_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let m = (m_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let y = (y_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let k = (k_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+
+        let (r, g, b) = cmyk_adobe_to_rgb(c, m, y, k);
+        rgb[i * 3] = r;
+        rgb[i * 3 + 1] = g;
+        rgb[i * 3 + 2] = b;
+    }
+}
+
+/// Batch convert YCCK planes to interleaved RGB.
+///
+/// Takes Y, Cb, Cr, K planes (f32, centered at 0) and outputs RGB.
+pub fn ycck_planes_to_rgb_u8(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    k_plane: &[f32],
+    rgb: &mut [u8],
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(y_plane.len(), k_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    for i in 0..y_plane.len() {
+        // Level shift and clamp
+        let y = (y_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let cb = (cb_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let cr = (cr_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let k = (k_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+
+        let (r, g, b) = ycck_to_rgb(y, cb, cr, k);
+        rgb[i * 3] = r;
+        rgb[i * 3 + 1] = g;
+        rgb[i * 3 + 2] = b;
+    }
+}
+
 /// Extracts a single channel from a pixel buffer.
 ///
 /// # Errors
