@@ -260,8 +260,12 @@ pub struct HuffmanDecodeTable {
     /// Only used for AC tables. Format: (value << 8) | (run << 4) | total_bits
     /// where value is sign-extended and fits in i8, or 0 if not applicable.
     pub fast_ac: Option<Box<[i16; 1 << Self::FAST_BITS]>>,
-    /// Maximum code value for each bit length (pre-shifted for fast comparison)
+    /// Maximum code value for each bit length (raw, not shifted).
     pub maxcode: [i32; MAX_CODE_LENGTH + 2],
+    /// Maximum code values pre-shifted for 16-bit peek comparison.
+    /// `maxcode_16bit[len] = (maxcode[len] + 1) << (16 - len)` for valid lengths.
+    /// Sentinel at index 17 ensures the loop always terminates.
+    pub maxcode_16bit: [i32; MAX_CODE_LENGTH + 2],
     /// Offset for decoding codes of each length
     pub valoffset: [i32; MAX_CODE_LENGTH + 2],
     /// Symbol values
@@ -281,6 +285,7 @@ impl HuffmanDecodeTable {
             fast_lookup: [-1; 1 << Self::FAST_BITS],
             fast_ac: None,
             maxcode: [-1; MAX_CODE_LENGTH + 2],
+            maxcode_16bit: [i32::MAX; MAX_CODE_LENGTH + 2],
             valoffset: [0; MAX_CODE_LENGTH + 2],
             values: Vec::new(),
             valid: false,
@@ -346,6 +351,19 @@ impl HuffmanDecodeTable {
         // Note: maxcode[16] will be set by the loop if there are length-16 codes,
         // but we also set a sentinel at index 17 for safety
         table.maxcode[17] = 0x7FFF_FFFF;
+
+        // Build pre-shifted maxcode for 16-bit peek comparison.
+        // For a code of length N with max value M, when we peek 16 bits the top N bits
+        // contain the code. We need: (peeked >> (16-N)) <= M, which is equivalent to
+        // peeked < (M+1) << (16-N). Pre-compute this threshold.
+        for i in 1..=MAX_CODE_LENGTH {
+            if table.maxcode[i] >= 0 {
+                table.maxcode_16bit[i] = (table.maxcode[i] + 1) << (16 - i);
+            } else {
+                table.maxcode_16bit[i] = 0; // No codes at this length, comparison always fails
+            }
+        }
+        table.maxcode_16bit[17] = i32::MAX; // Sentinel ensures loop terminates
 
         // Build fast lookup table (9-bit)
         // Format: (symbol & 0xFF) | (length << 8), -1 means too long
@@ -476,18 +494,24 @@ impl HuffmanDecodeTable {
     }
 
     /// Slow decode path for codes longer than FAST_BITS.
-    /// Input: 16 bits from top of buffer, code_length starts at FAST_BITS + 1.
+    /// Input: 16 bits peeked from the top of the buffer.
+    /// Uses pre-shifted `maxcode_16bit` for direct comparison without per-iteration shifts.
     /// Returns (symbol, code_length) or None if invalid.
-    #[inline]
+    #[inline(always)]
     pub fn decode_slow(&self, bits16: i32) -> Option<(u8, u8)> {
-        // Start from FAST_BITS + 1 since fast path already checked shorter codes
-        for code_length in (Self::FAST_BITS + 1)..=16 {
-            if bits16 < self.maxcode[code_length] {
-                let symbol_bits = bits16 >> (16 - code_length);
-                let idx = (symbol_bits + self.valoffset[code_length]) as usize;
-                if idx < self.values.len() {
-                    return Some((self.values[idx], code_length as u8));
-                }
+        // Start from FAST_BITS + 1 since fast path already checked shorter codes.
+        // maxcode_16bit is pre-shifted: maxcode_16bit[len] = (maxcode[len]+1) << (16-len)
+        // so we compare the raw 16-bit peeked value directly.
+        let mut code_length = Self::FAST_BITS + 1;
+        // Sentinel at maxcode_16bit[17] = i32::MAX ensures this terminates
+        while bits16 >= self.maxcode_16bit[code_length] {
+            code_length += 1;
+        }
+        if code_length <= 16 {
+            let symbol_bits = bits16 >> (16 - code_length);
+            let idx = (symbol_bits as i32 + self.valoffset[code_length]) as usize;
+            if idx < self.values.len() {
+                return Some((self.values[idx], code_length as u8));
             }
         }
         None

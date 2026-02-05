@@ -43,7 +43,7 @@ fn decode_huffman_symbol_lenient(
     table: &HuffmanDecodeTable,
     lenient: bool,
 ) -> Result<HuffmanResult> {
-    // Try fast lookup first (most common path)
+    // Try fast lookup first (9-bit table covers ~90% of codes)
     if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
         let lookup = table.fast_lookup[bits as usize];
         if lookup >= 0 {
@@ -54,7 +54,15 @@ fn decode_huffman_symbol_lenient(
         }
     }
 
-    // Slow path for longer codes
+    // Slow path: peek 16 bits and use pre-shifted maxcode for fast comparison
+    if let Some(bits16) = reader.peek_bits_refill(16) {
+        if let Some((symbol, len)) = table.decode_slow(bits16 as i32) {
+            reader.skip_bits_fast(len);
+            return Ok(HuffmanResult::Symbol(symbol));
+        }
+    }
+
+    // Edge case: near end of scan, can't peek 16 bits.
     let mut code = 0u32;
     for len in 1..=16 {
         let bit = match reader.read_bits(1)? {
@@ -72,7 +80,6 @@ fn decode_huffman_symbol_lenient(
     }
 
     // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
-    // This happens when fill bits at end of scan don't form a valid Huffman code.
     if reader.is_exhausted() {
         return Ok(if reader.marker_found().is_some() {
             HuffmanResult::EndOfScan
@@ -181,7 +188,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// In lenient mode, returns 0 (EOB) on invalid codes instead of erroring.
     #[inline(always)]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> ScanResult<u8> {
-        // Try fast lookup first
+        // Try fast lookup first (9-bit table covers ~90% of codes)
         if let Some(bits) = self
             .reader
             .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
@@ -195,7 +202,17 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         }
 
-        // Slow path for longer codes
+        // Slow path: peek 16 bits and use pre-shifted maxcode for fast comparison.
+        // This replaces the bit-by-bit loop with a single peek + table scan.
+        if let Some(bits16) = self.reader.peek_bits_refill(16) {
+            if let Some((symbol, len)) = table.decode_slow(bits16 as i32) {
+                self.reader.skip_bits_fast(len);
+                return Ok(ScanRead::Value(symbol));
+            }
+        }
+
+        // Edge case: near end of scan, can't peek 16 bits.
+        // Fall back to bit-by-bit for the last few codes.
         let mut code = 0u32;
         for len in 1..=16 {
             let bit = match self.reader.read_bits(1)? {
@@ -213,7 +230,6 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         }
 
         // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
-        // This happens when fill bits at end of scan don't form a valid Huffman code.
         if self.reader.is_exhausted() {
             return Ok(if self.reader.marker_found().is_some() {
                 ScanRead::EndOfScan
