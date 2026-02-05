@@ -12,6 +12,7 @@
 //! ```
 //! cargo test --test multi_decoder_compatibility -- --nocapture
 //! ```
+use enough::Unstoppable;
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
@@ -110,7 +111,7 @@ fn max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
 fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     let start = std::time::Instant::now();
     let decoder = zenjpeg::decoder::Decoder::new();
-    match decoder.decode(data) {
+    match decoder.decode(data, Unstoppable) {
         Ok(img) => Some(DecoderResult {
             decoder_name: "zenjpeg".to_string(),
             pixels: img.data,

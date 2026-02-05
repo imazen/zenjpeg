@@ -9,6 +9,7 @@
 //!
 //! Fix: Use component_index for AC context assignment to ensure Y always
 //! uses luma table and Cb/Cr use chroma table, regardless of scan order.
+use enough::Unstoppable;
 
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
@@ -38,7 +39,7 @@ fn test_s440_progressive_roundtrip() {
     );
 
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = decoder.decode(&encoded).expect("decode should succeed");
+    let decoded = decoder.decode(&encoded, Unstoppable).expect("decode should succeed");
 
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
@@ -72,7 +73,7 @@ fn test_all_subsampling_progressive() {
         };
 
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        match decoder.decode(&encoded) {
+        match decoder.decode(&encoded, Unstoppable) {
             Ok(img) => {
                 assert_eq!(img.width, width, "{} width mismatch", name);
                 assert_eq!(img.height, height, "{} height mismatch", name);
@@ -115,7 +116,7 @@ fn test_progressive_subsampling_various_sizes() {
 
             let decoder = Decoder::new().output_format(PixelFormat::Rgb);
             let decoded = decoder
-                .decode(&encoded)
+                .decode(&encoded, Unstoppable)
                 .unwrap_or_else(|e| panic!("{}x{} {} decode failed: {:?}", width, height, name, e));
 
             assert_eq!(decoded.width as usize, width);

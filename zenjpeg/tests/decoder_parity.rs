@@ -2,6 +2,7 @@
 //!
 //! This file verifies that the Rust decoder produces identical or near-identical
 //! output to C++ djpegli for various JPEG configurations.
+use enough::Unstoppable;
 
 use dssim::Dssim;
 use rgb::RGBA8;
@@ -86,7 +87,7 @@ fn encode_rust(
 /// Decode with Rust decoder
 fn decode_rust(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let decoder = Decoder::new();
-    match decoder.decode(jpeg) {
+    match decoder.decode(jpeg, Unstoppable) {
         Ok(img) => Some((img.data, img.width, img.height)),
         Err(_) => None,
     }

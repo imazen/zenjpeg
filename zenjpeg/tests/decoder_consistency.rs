@@ -2,6 +2,7 @@
 //!
 //! Verifies that the decoder produces consistent output across multiple roundtrips
 //! and that encode→decode→encode→decode produces stable results.
+use enough::Unstoppable;
 
 use zenjpeg::{
     decoder::Decoder,
@@ -52,19 +53,19 @@ fn test_baseline_roundtrip_consistency() {
     let jpeg1 = encode_rgb(width, height, &rgb, &config);
 
     // Decode
-    let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
+    let decoded1 = Decoder::new().decode(&jpeg1, Unstoppable).expect("decode 1 failed");
 
     // Re-encode from decoded
     let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
 
     // Decode again
-    let decoded2 = Decoder::new().decode(&jpeg2).expect("decode 2 failed");
+    let decoded2 = Decoder::new().decode(&jpeg2, Unstoppable).expect("decode 2 failed");
 
     // The decoder should produce identical output when decoding the same JPEG
     // Re-encoded JPEGs will differ due to quantization, but decoding identical
     // bitstreams should always produce identical pixels
-    let decode_same_1 = Decoder::new().decode(&jpeg1).expect("decode same 1 failed");
-    let decode_same_2 = Decoder::new().decode(&jpeg1).expect("decode same 2 failed");
+    let decode_same_1 = Decoder::new().decode(&jpeg1, Unstoppable).expect("decode same 1 failed");
+    let decode_same_2 = Decoder::new().decode(&jpeg1, Unstoppable).expect("decode same 2 failed");
     assert_eq!(
         decode_same_1.data, decode_same_2.data,
         "Decoding same JPEG twice should produce identical pixels"
@@ -92,13 +93,13 @@ fn test_progressive_roundtrip_consistency() {
     let jpeg1 = encode_rgb(width, height, &rgb, &config);
 
     // Decode
-    let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
+    let decoded1 = Decoder::new().decode(&jpeg1, Unstoppable).expect("decode 1 failed");
 
     // Re-encode from decoded
     let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
 
     // Decode again
-    let decoded2 = Decoder::new().decode(&jpeg2).expect("decode 2 failed");
+    let decoded2 = Decoder::new().decode(&jpeg2, Unstoppable).expect("decode 2 failed");
 
     // After one roundtrip, quality should stabilize
     let max_diff = max_pixel_diff(&decoded1.data, &decoded2.data);
@@ -119,7 +120,7 @@ fn test_decoder_produces_correct_dimensions() {
 
         let jpeg = encode_rgb(width as u32, height as u32, &rgb, &config);
 
-        let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
 
         assert_eq!(
             decoded.width as usize, width,
@@ -154,7 +155,7 @@ fn test_multiple_roundtrips_converge() {
     for i in 0..5 {
         let jpeg = encode_rgb(width, height, &current_pixels, &config);
 
-        let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
         let max_diff = max_pixel_diff(&current_pixels, &decoded.data);
 
         // After first roundtrip, differences should not grow significantly
@@ -182,7 +183,7 @@ fn test_high_quality_roundtrip_low_error() {
     let config = EncoderConfig::ycbcr(100.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &rgb, &config);
 
-    let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
 
     let max_diff = max_pixel_diff(&rgb, &decoded.data);
 

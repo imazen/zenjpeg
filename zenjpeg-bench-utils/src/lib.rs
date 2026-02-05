@@ -1163,9 +1163,10 @@ pub fn decode_jpeg_to_rgb(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
 /// describing the XYB color space. Standard decoders that ignore ICC
 /// will produce garbage colors.
 pub fn decode_jpeg_with_icc(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
+    use enough::Unstoppable;
     let decoded = zenjpeg::decoder::Decoder::new()
         .apply_icc(true)
-        .decode(data)
+        .decode(data, Unstoppable)
         .map_err(|e| JpegDecodeError::Decode(format!("{:?}", e)))?;
 
     Ok(bytes_to_rgb(

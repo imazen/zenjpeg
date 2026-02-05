@@ -1664,7 +1664,7 @@ mod tests {
 
             // Decode and verify
             let decoded_strip = crate::decode::Decoder::new()
-                .decode(&jpeg_strip)
+                .decode(&jpeg_strip, enough::Unstoppable)
                 .expect("strip decode failed");
 
             // Check dimensions match

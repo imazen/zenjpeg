@@ -4,6 +4,7 @@
 //! Enforces strict 1% size tolerance to catch edge handling bugs.
 //!
 //! Run with: cargo test --release -p zenjpeg --test strip_edge_cpp_comparison -- --nocapture --ignored
+use enough::Unstoppable;
 
 use dssim::Dssim;
 use rgb::RGBA8;

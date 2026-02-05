@@ -1,6 +1,6 @@
 //! Test the encoder/decoder API.
-
 use enough::Unstoppable;
+
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
@@ -64,7 +64,7 @@ fn test_decode() {
 
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
-    let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -183,7 +183,7 @@ fn test_decode_f32() {
 
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
-    let decoded = Decoder::new().decode_f32(&jpeg).expect("decode_f32 failed");
+    let decoded = Decoder::new().decode_f32(&jpeg, Unstoppable).expect("decode_f32 failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -205,7 +205,7 @@ fn test_decode_to_format_rgb() {
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
     let decoded = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .decode(&jpeg)
+        .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
     assert_eq!(decoded.width(), width);
@@ -224,7 +224,7 @@ fn test_decoder_new() {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
 
-    let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
 }
@@ -241,7 +241,7 @@ fn test_decoder_builder() {
     let decoded = Decoder::new()
         .output_format(PixelFormat::Rgb)
         .fancy_upsampling(true)
-        .decode(&jpeg)
+        .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
     assert_eq!(decoded.width(), width);

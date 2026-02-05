@@ -38,7 +38,7 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
 
 fn decode_jpegli(jpeg_data: &[u8]) {
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let result = decoder.decode(jpeg_data).expect("jpegli decode failed");
+    let result = decoder.decode(jpeg_data, Unstoppable).expect("jpegli decode failed");
     black_box(result);
 }
 

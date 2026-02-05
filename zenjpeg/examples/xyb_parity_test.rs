@@ -100,7 +100,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     // Use ICC-aware decoder for proper XYB→sRGB conversion
     Decoder::new()
         .apply_icc(true)
-        .decode(data)
+        .decode(data, Unstoppable)
         .expect("decode")
         .data
 }

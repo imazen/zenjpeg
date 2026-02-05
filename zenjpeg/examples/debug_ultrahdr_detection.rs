@@ -1,4 +1,5 @@
 //! Debug UltraHDR detection issue
+use enough::Unstoppable;
 
 use std::fs;
 use zenjpeg::ultrahdr::UltraHdrExtras;
@@ -205,7 +206,7 @@ fn main() {
     // Decode the standard way and check extras
     println!("\n=== zenjpeg standard decode extras ===");
     use zenjpeg::decoder::Decoder;
-    let decoded = Decoder::new().decode(&data).expect("decode");
+    let decoded = Decoder::new().decode(&data, Unstoppable).expect("decode");
     if let Some(extras) = decoded.extras() {
         println!("has_xmp: {}", extras.xmp().is_some());
         println!("is_ultrahdr: {}", extras.is_ultrahdr());

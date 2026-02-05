@@ -1,4 +1,5 @@
 //! Test arithmetic decoding with tolerance for rounding differences.
+use enough::Unstoppable;
 
 use zenjpeg::decode::Decoder;
 use std::process::Command;
@@ -12,7 +13,7 @@ const TESTIMGARI_PATH: &str = concat!(
 fn arithmetic_decode_with_tolerance() {
     let data = std::fs::read(TESTIMGARI_PATH).expect("failed to read file");
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&data).expect("failed to decode");
+    let decoded = decoder.decode(&data, Unstoppable).expect("failed to decode");
     
     // Get djpeg reference
     let output = Command::new("djpeg")

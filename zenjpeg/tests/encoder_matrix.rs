@@ -10,6 +10,7 @@
 //! ```
 //! cargo test --test encoder_matrix -- --nocapture
 //! ```
+use enough::Unstoppable;
 
 use zenjpeg::{
     decoder::Decoder,
@@ -75,7 +76,7 @@ fn encode_gray(
 
 /// Decode with zenjpeg
 fn decode_jpegli(data: &[u8]) -> bool {
-    Decoder::new().decode(data).is_ok()
+    Decoder::new().decode(data, Unstoppable).is_ok()
 }
 
 /// Decode with zune-jpeg

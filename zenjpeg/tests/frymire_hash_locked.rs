@@ -9,6 +9,7 @@
 //!   cargo test --release --test frymire_hash_locked print_all_hashes -- --ignored --nocapture
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
+use enough::Unstoppable;
 
 use sha2::{Digest, Sha256};
 use std::fs;

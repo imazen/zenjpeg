@@ -2,6 +2,7 @@
 //!
 //! Run with:
 //!   cargo run --release --example real_alloc_profile --features alloc-instrument
+use enough::Unstoppable;
 
 use std::fs::File;
 use std::io::BufReader;

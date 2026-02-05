@@ -7,6 +7,7 @@
 //!
 //! Symptom: "Corrupt JPEG data: N extraneous bytes before marker" from djpeg,
 //! and all subsampled progressive modes produce the same file size as 4:4:4.
+use enough::Unstoppable;
 
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
@@ -62,7 +63,7 @@ fn test_progressive_subsampling_external_decoder_compat() {
         );
 
         // Test with our own decoder
-        let our_result = Decoder::new().output_format(PixelFormat::Rgb).decode(&jpeg);
+        let our_result = Decoder::new().output_format(PixelFormat::Rgb).decode(&jpeg, Unstoppable);
 
         assert!(
             our_result.is_ok(),

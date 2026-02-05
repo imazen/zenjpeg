@@ -4,6 +4,7 @@
 //!
 //! Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- --nocapture --ignored
 
+use enough::Unstoppable;
 use std::fs;
 use std::path::Path;
 
@@ -32,7 +33,7 @@ fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
 fn decode_zenjpeg(data: &[u8]) -> Result<(), String> {
     use zenjpeg::decoder::Decoder;
     Decoder::new()
-        .decode(data)
+        .decode(data, Unstoppable)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -41,7 +42,7 @@ fn decode_zenjpeg_lenient(data: &[u8]) -> Result<(), String> {
     use zenjpeg::decoder::{Decoder, Strictness};
     Decoder::new()
         .strictness(Strictness::Lenient)
-        .decode(data)
+        .decode(data, Unstoppable)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

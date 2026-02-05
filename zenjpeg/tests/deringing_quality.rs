@@ -3,6 +3,7 @@
 //! These tests verify that the deringing algorithm (pioneered by @kornel in mozjpeg)
 //! reduces artifacts on images with sharp black/white transitions.
 //! Deringing is enabled by default in zenjpeg.
+use enough::Unstoppable;
 
 use dssim::Dssim;
 use zenjpeg::{
@@ -57,7 +58,7 @@ fn encode_gray_with_deringing(
 
 fn decode_gray(jpeg: &[u8]) -> Vec<u8> {
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
-    let decoded = decoder.decode(jpeg).expect("decode failed");
+    let decoded = decoder.decode(jpeg, Unstoppable).expect("decode failed");
     decoded.data
 }
 

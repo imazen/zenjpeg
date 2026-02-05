@@ -1,6 +1,7 @@
 //! Decoder API conformance tests.
 //!
 //! Tests matching C++ jpegli decode_api_test.cc functionality.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -54,7 +55,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
 fn test_decode_basic() {
     let jpeg = create_test_jpeg(128, 128, 90.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
@@ -70,7 +71,7 @@ fn test_decode_grayscale() {
     let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
@@ -84,7 +85,7 @@ fn test_decode_dimensions() {
     let decoder = Decoder::new();
 
     // Decode and verify dimensions
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
     assert_eq!(decoded.width, 256);
     assert_eq!(decoded.height, 192);
 }
@@ -102,7 +103,7 @@ fn test_decode_dimensions() {
 fn test_decode_various_sizes(width: u32, height: u32) {
     let jpeg = create_test_jpeg(width, height, 90.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
@@ -113,13 +114,13 @@ fn test_decode_non_square() {
     // Wide
     let wide_jpeg = create_test_jpeg(256, 64, 90.0);
     let decoder = Decoder::new();
-    let wide = decoder.decode(&wide_jpeg).expect("decode wide failed");
+    let wide = decoder.decode(&wide_jpeg, Unstoppable).expect("decode wide failed");
     assert_eq!(wide.width, 256);
     assert_eq!(wide.height, 64);
 
     // Tall
     let tall_jpeg = create_test_jpeg(64, 256, 90.0);
-    let tall = decoder.decode(&tall_jpeg).expect("decode tall failed");
+    let tall = decoder.decode(&tall_jpeg, Unstoppable).expect("decode tall failed");
     assert_eq!(tall.width, 64);
     assert_eq!(tall.height, 256);
 }
@@ -136,7 +137,7 @@ fn test_decode_non_square() {
 fn test_decode_various_qualities(quality: f32) {
     let jpeg = create_test_jpeg(128, 128, quality);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
@@ -154,7 +155,7 @@ fn test_decode_progressive() {
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode progressive failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode progressive failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode progressive failed");
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
@@ -173,7 +174,7 @@ fn test_decode_reuse_decoder() {
         let size = 64 + i * 16;
         let jpeg = create_test_jpeg(size, size, 85.0);
         let decoded = decoder
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .unwrap_or_else(|_| panic!("decode {} failed", i));
         assert_eq!(decoded.width, size);
         assert_eq!(decoded.height, size);
@@ -195,7 +196,7 @@ fn test_decode_flower_420() {
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap())
+        .decode(&jpeg_data.unwrap(), Unstoppable)
         .expect("decode flower failed");
 
     // flower.png is 2268x1512
@@ -214,7 +215,7 @@ fn test_decode_flower_444() {
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap())
+        .decode(&jpeg_data.unwrap(), Unstoppable)
         .expect("decode flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -232,7 +233,7 @@ fn test_decode_flower_progressive() {
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap())
+        .decode(&jpeg_data.unwrap(), Unstoppable)
         .expect("decode progressive flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -250,7 +251,7 @@ fn test_decode_flower_grayscale() {
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap())
+        .decode(&jpeg_data.unwrap(), Unstoppable)
         .expect("decode grayscale flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -277,7 +278,7 @@ fn test_decode_various_subsampling() {
     for filename in &subsampling_files {
         if let Some(jpeg_data) = read_test_data(filename) {
             let decoded = decoder
-                .decode(&jpeg_data)
+                .decode(&jpeg_data, Unstoppable)
                 .unwrap_or_else(|_| panic!("decode {} failed", filename));
             assert_eq!(decoded.width, 2268, "Width mismatch for {}", filename);
             assert_eq!(decoded.height, 1512, "Height mismatch for {}", filename);
@@ -294,7 +295,7 @@ fn test_decode_validates_soi() {
     // Missing SOI marker
     let bad_jpeg = vec![0xFF, 0xE0, 0x00, 0x10]; // No SOI
     let decoder = Decoder::new();
-    assert!(decoder.decode(&bad_jpeg).is_err());
+    assert!(decoder.decode(&bad_jpeg, Unstoppable).is_err());
 }
 
 #[test]
@@ -305,7 +306,7 @@ fn test_decode_validates_eoi() {
 
     let decoder = Decoder::new();
     // Should still decode (EOI is optional per spec, but may fail)
-    let result = decoder.decode(&truncated);
+    let result = decoder.decode(&truncated, Unstoppable);
     // We just verify it doesn't panic - behavior varies by implementation
     let _ = result;
 }
@@ -313,21 +314,21 @@ fn test_decode_validates_eoi() {
 #[test]
 fn test_decode_empty_input() {
     let decoder = Decoder::new();
-    assert!(decoder.decode(&[]).is_err());
+    assert!(decoder.decode(&[], Unstoppable).is_err());
 }
 
 #[test]
 fn test_decode_too_small() {
     let decoder = Decoder::new();
-    assert!(decoder.decode(&[0xFF]).is_err());
-    assert!(decoder.decode(&[0xFF, 0xD8]).is_err()); // Only SOI
+    assert!(decoder.decode(&[0xFF], Unstoppable).is_err());
+    assert!(decoder.decode(&[0xFF, 0xD8], Unstoppable).is_err()); // Only SOI
 }
 
 #[test]
 fn test_decode_random_garbage() {
     let decoder = Decoder::new();
     let garbage: Vec<u8> = (0..1000).map(|i| (i * 7) as u8).collect();
-    assert!(decoder.decode(&garbage).is_err());
+    assert!(decoder.decode(&garbage, Unstoppable).is_err());
 }
 
 // ============================================================================
@@ -350,7 +351,7 @@ fn test_decode_pixel_range() {
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     // Ensure there's actual data
     assert!(!decoded.data.is_empty(), "Decoded data should not be empty");
@@ -364,7 +365,7 @@ fn test_decode_pixel_range() {
 fn test_decode_large_image() {
     let jpeg = create_test_jpeg(1024, 768, 85.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode large failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode large failed");
 
     assert_eq!(decoded.width, 1024);
     assert_eq!(decoded.height, 768);
@@ -381,8 +382,8 @@ fn test_decode_deterministic() {
     let decoder = Decoder::new();
 
     // Decode same JPEG multiple times
-    let decoded1 = decoder.decode(&jpeg).expect("decode 1 failed");
-    let decoded2 = decoder.decode(&jpeg).expect("decode 2 failed");
+    let decoded1 = decoder.decode(&jpeg, Unstoppable).expect("decode 1 failed");
+    let decoded2 = decoder.decode(&jpeg, Unstoppable).expect("decode 2 failed");
 
     // Results should be identical
     assert_eq!(decoded1.data, decoded2.data);
@@ -400,7 +401,7 @@ fn test_decode_1x1_pixel() {
     let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("encode 1x1 failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode 1x1 failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode 1x1 failed");
 
     assert_eq!(decoded.width, 1);
     assert_eq!(decoded.height, 1);
@@ -411,7 +412,7 @@ fn test_decode_minimum_mcu() {
     // 8x8 is minimum MCU size
     let jpeg = create_test_jpeg(8, 8, 90.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode 8x8 failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode 8x8 failed");
 
     assert_eq!(decoded.width, 8);
     assert_eq!(decoded.height, 8);

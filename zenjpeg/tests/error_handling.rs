@@ -2,6 +2,7 @@
 //!
 //! Tests matching C++ jpegli error handling scenarios from error_handling_test.cc
 //! and various *_test.cc files.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -119,28 +120,28 @@ fn test_encode_quality_boundary_high() {
 #[test]
 fn test_decode_empty_input() {
     let decoder = Decoder::new();
-    let result = decoder.decode(&[]);
+    let result = decoder.decode(&[], Unstoppable);
     assert!(result.is_err(), "Should reject empty input");
 }
 
 #[test]
 fn test_decode_single_byte() {
     let decoder = Decoder::new();
-    let result = decoder.decode(&[0xFF]);
+    let result = decoder.decode(&[0xFF], Unstoppable);
     assert!(result.is_err(), "Should reject single byte");
 }
 
 #[test]
 fn test_decode_only_soi() {
     let decoder = Decoder::new();
-    let result = decoder.decode(&[0xFF, 0xD8]);
+    let result = decoder.decode(&[0xFF, 0xD8], Unstoppable);
     assert!(result.is_err(), "Should reject SOI-only input");
 }
 
 #[test]
 fn test_decode_only_soi_eoi() {
     let decoder = Decoder::new();
-    let result = decoder.decode(&[0xFF, 0xD8, 0xFF, 0xD9]);
+    let result = decoder.decode(&[0xFF, 0xD8, 0xFF, 0xD9], Unstoppable);
     assert!(
         result.is_err(),
         "Should reject minimal SOI+EOI (no image data)"
@@ -152,7 +153,7 @@ fn test_decode_missing_soi() {
     // Valid-looking structure but wrong start marker
     let bad = vec![0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46];
     let decoder = Decoder::new();
-    let result = decoder.decode(&bad);
+    let result = decoder.decode(&bad, Unstoppable);
     assert!(result.is_err(), "Should reject missing SOI");
 }
 
@@ -161,7 +162,7 @@ fn test_decode_wrong_magic() {
     // Not a JPEG at all
     let png_header = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let decoder = Decoder::new();
-    let result = decoder.decode(&png_header);
+    let result = decoder.decode(&png_header, Unstoppable);
     assert!(result.is_err(), "Should reject PNG data");
 }
 
@@ -169,7 +170,7 @@ fn test_decode_wrong_magic() {
 fn test_decode_random_data() {
     let random: Vec<u8> = (0..1000).map(|i| ((i * 17 + 31) % 256) as u8).collect();
     let decoder = Decoder::new();
-    let result = decoder.decode(&random);
+    let result = decoder.decode(&random, Unstoppable);
     assert!(result.is_err(), "Should reject random data");
 }
 
@@ -188,7 +189,7 @@ fn test_decode_truncated_header() {
     // Truncate in the header area
     let truncated = &jpeg[..20.min(jpeg.len())];
     let decoder = Decoder::new();
-    let result = decoder.decode(truncated);
+    let result = decoder.decode(truncated, Unstoppable);
     assert!(result.is_err(), "Should reject truncated header");
 }
 
@@ -198,7 +199,7 @@ fn test_decode_truncated_tables() {
     // Truncate after APP0 but before scan data
     let truncated = &jpeg[..100.min(jpeg.len())];
     let decoder = Decoder::new();
-    let result = decoder.decode(truncated);
+    let result = decoder.decode(truncated, Unstoppable);
     assert!(result.is_err(), "Should reject truncated tables");
 }
 
@@ -210,7 +211,7 @@ fn test_decode_truncated_scan_data() {
         let truncated = &jpeg[..jpeg.len() - 100];
         let decoder = Decoder::new();
         // May succeed with partial data or fail - implementation dependent
-        let _ = decoder.decode(truncated);
+        let _ = decoder.decode(truncated, Unstoppable);
     }
 }
 
@@ -222,7 +223,7 @@ fn test_decode_truncated_before_eoi() {
         let truncated = &jpeg[..jpeg.len() - 2];
         let decoder = Decoder::new();
         // May succeed (EOI optional) or fail
-        let _ = decoder.decode(truncated);
+        let _ = decoder.decode(truncated, Unstoppable);
     }
 }
 
@@ -242,7 +243,7 @@ fn test_decode_corrupted_dqt_length() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject corrupted DQT length");
 }
 
@@ -257,7 +258,7 @@ fn test_decode_corrupted_dht_length() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject corrupted DHT length");
 }
 
@@ -272,7 +273,7 @@ fn test_decode_corrupted_sof_length() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject corrupted SOF length");
 }
 
@@ -292,7 +293,7 @@ fn test_decode_zero_width_in_sof() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     // Implementation may accept or reject corrupted SOF - just ensure no panic
     // Some decoders may recover from this corruption
     let _ = result;
@@ -309,7 +310,7 @@ fn test_decode_zero_height_in_sof() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     // Note: Some decoders handle DNL (Define Number of Lines) which allows height=0
     // so this may succeed or fail depending on implementation
     let _ = result;
@@ -329,7 +330,7 @@ fn test_decode_zero_components() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject zero components");
 }
 
@@ -343,7 +344,7 @@ fn test_decode_too_many_components() {
         }
     }
     let decoder = Decoder::new();
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject too many components");
 }
 
@@ -366,7 +367,7 @@ fn test_decode_spurious_restart_markers() {
     }
     let decoder = Decoder::new();
     // This may succeed or fail depending on restart interval handling
-    let _ = decoder.decode(&jpeg);
+    let _ = decoder.decode(&jpeg, Unstoppable);
 }
 
 // ============================================================================
@@ -385,7 +386,7 @@ fn test_decode_missing_stuffing_byte() {
     }
     let decoder = Decoder::new();
     // May produce incorrect output or fail
-    let _ = decoder.decode(&jpeg);
+    let _ = decoder.decode(&jpeg, Unstoppable);
 }
 
 // ============================================================================
@@ -401,7 +402,7 @@ fn test_decode_progressive_truncated() {
     let truncated = &jpeg[..jpeg.len() / 2];
     let decoder = Decoder::new();
     // Should fail or produce incomplete image
-    let _ = decoder.decode(truncated);
+    let _ = decoder.decode(truncated, Unstoppable);
 }
 
 // ============================================================================
@@ -423,7 +424,7 @@ fn test_decode_huge_dimensions_in_sof() {
     }
     let decoder = Decoder::new();
     // Should reject or handle gracefully without OOM
-    let result = decoder.decode(&jpeg);
+    let result = decoder.decode(&jpeg, Unstoppable);
     assert!(result.is_err(), "Should reject impossibly large dimensions");
 }
 
@@ -457,7 +458,7 @@ fn test_encode_decode_concurrent() {
                 let jpeg = encode_rgb(size, size, &img.pixels).expect("encode failed");
 
                 let decoder = Decoder::new();
-                let decoded = decoder.decode(&jpeg).expect("decode failed");
+                let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
                 assert_eq!(decoded.width, size);
                 assert_eq!(decoded.height, size);
             })
@@ -492,7 +493,7 @@ fn test_decode_many_images() {
         let img = generate_gradient_d(size, size, 3);
         let jpeg = encode_rgb(size, size, &img.pixels).expect("encode failed");
 
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, size, "Width mismatch on iteration {}", i);
         assert_eq!(decoded.height, size, "Height mismatch on iteration {}", i);
     }

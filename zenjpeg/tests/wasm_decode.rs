@@ -15,6 +15,7 @@
 
 #![cfg(all(target_arch = "wasm32", feature = "decoder"))]
 
+use enough::Unstoppable;
 use wasm_bindgen_test::*;
 
 // Enable browser testing to reproduce the crash
@@ -52,7 +53,7 @@ fn test_wasm_decode_rgb() {
     // Decode RGB
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data)
+        .decode(&jpeg_data, Unstoppable)
         .expect("RGB decode should work in WASM");
 
     assert_eq!(decoded.width, 8);
@@ -78,7 +79,7 @@ fn test_wasm_decode_grayscale_gainmap() {
 
     // This line crashes in browser WASM with "RuntimeError: unreachable"
     let decoded = decoder
-        .decode(GAINMAP_GRAY_64X64)
+        .decode(GAINMAP_GRAY_64X64, Unstoppable)
         .expect("Grayscale gain map decode should work in WASM");
 
     // Verify dimensions match expected gain map size
@@ -105,7 +106,7 @@ fn test_wasm_decode_grayscale_explicit_format() {
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
 
     let decoded = decoder
-        .decode(GAINMAP_GRAY_64X64)
+        .decode(GAINMAP_GRAY_64X64, Unstoppable)
         .expect("Explicit grayscale decode should work in WASM");
 
     assert_eq!(decoded.width, 64);
@@ -145,7 +146,7 @@ fn test_wasm_grayscale_roundtrip() {
     // Decode - this may crash in browser WASM
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
     let decoded = decoder
-        .decode(&jpeg_data)
+        .decode(&jpeg_data, Unstoppable)
         .expect("Synthetic grayscale roundtrip should work");
 
     assert_eq!(decoded.width, 64);

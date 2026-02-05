@@ -19,6 +19,7 @@
 //!
 //! To regenerate values:
 //!   cargo run --release -p zenjpeg --example get_locked_values
+use enough::Unstoppable;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

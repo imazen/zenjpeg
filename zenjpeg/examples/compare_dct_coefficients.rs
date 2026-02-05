@@ -146,10 +146,10 @@ fn main() {
     // Decode both and extract coefficients
     let decoder = Decoder::new();
     let rust_coeffs = decoder
-        .decode_coefficients(&rust_jpeg)
+        .decode_coefficients(&rust_jpeg, Unstoppable)
         .expect("decode rust coefficients");
     let cpp_coeffs = decoder
-        .decode_coefficients(&cpp_jpeg)
+        .decode_coefficients(&cpp_jpeg, Unstoppable)
         .expect("decode cpp coefficients");
 
     // Print quant tables for verification

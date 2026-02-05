@@ -2,6 +2,7 @@
 //!
 //! Progressive XYB JPEGs use non-standard component IDs (R=82, G=71, B=66)
 //! and require proper EndOfScanData handling during progressive DC scans.
+use enough::Unstoppable;
 
 use zenjpeg::encoder::XybSubsampling;
 
@@ -110,7 +111,7 @@ fn zune_jpeg_decodes_progressive_xyb() {
 /// to avoid failing when scan data ends before all blocks are decoded.
 #[test]
 fn jpegli_decodes_progressive_xyb() {
-    let result = zenjpeg::decoder::Decoder::new().decode(PROGRESSIVE_XYB_JPEG);
+    let result = zenjpeg::decoder::Decoder::new().decode(PROGRESSIVE_XYB_JPEG, Unstoppable);
 
     assert!(
         result.is_ok(),
@@ -148,7 +149,7 @@ fn jpegli_decodes_baseline_xyb() {
     );
 
     // Decode with zenjpeg
-    let result = zenjpeg::decoder::Decoder::new().decode(&jpeg_data);
+    let result = zenjpeg::decoder::Decoder::new().decode(&jpeg_data, Unstoppable);
     assert!(
         result.is_ok(),
         "zenjpeg should decode baseline XYB: {:?}",

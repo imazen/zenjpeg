@@ -1,6 +1,7 @@
 //! Quality matrix tests comparing Rust vs C++ jpegli across all configurations.
 //!
 //! Requires `ffi-tests` feature due to libjpeg FFI linkage requirements.
+use enough::Unstoppable;
 
 #![cfg(feature = "ffi-tests")]
 //!
@@ -1364,7 +1365,7 @@ fn test_ffi_encoding_works() {
     // Try to decode with jpegli decoder to verify it's valid
     let decoder = zenjpeg::decoder::Decoder::new();
     let decoded = decoder
-        .decode(&jpeg[..])
+        .decode(&jpeg[..], Unstoppable)
         .expect("Failed to decode FFI-encoded JPEG");
 
     assert_eq!(decoded.width, width);

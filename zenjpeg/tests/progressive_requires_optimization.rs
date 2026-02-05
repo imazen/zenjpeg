@@ -1,4 +1,5 @@
 //! Test that progressive mode requires Huffman optimization
+use enough::Unstoppable;
 
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};

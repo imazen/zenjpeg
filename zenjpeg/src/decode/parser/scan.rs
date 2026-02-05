@@ -7,6 +7,7 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
+use enough::Stop;
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
@@ -21,7 +22,9 @@ use crate::color::ycbcr_planes_i16_to_rgb_u8;
 /// Scan parsing and baseline decoding methods for JpegParser.
 impl<'a> JpegParser<'a> {
     /// Parse and decode a scan (SOS marker + entropy-coded data).
-    pub(super) fn parse_scan(&mut self) -> Result<()> {
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
+    pub(super) fn parse_scan(&mut self, stop: &impl Stop) -> Result<()> {
         let _length = self.read_u16()?;
         let num_components = self.read_u8()?;
 
@@ -88,23 +91,23 @@ impl<'a> JpegParser<'a> {
         // Decode entropy-coded segment based on mode
         match self.mode {
             JpegMode::Progressive => {
-                self.decode_progressive_scan(&scan_components, ss, se, ah, al)?;
+                self.decode_progressive_scan(&scan_components, ss, se, ah, al, stop)?;
             }
             JpegMode::ArithmeticSequential => {
-                self.decode_arithmetic_scan(&scan_components)?;
+                self.decode_arithmetic_scan(&scan_components, stop)?;
             }
             JpegMode::ArithmeticProgressive => {
-                self.decode_arithmetic_progressive_scan(&scan_components, ss, se, ah, al)?;
+                self.decode_arithmetic_progressive_scan(&scan_components, ss, se, ah, al, stop)?;
             }
             _ => {
                 // Baseline/Extended Huffman modes
                 if self.prefer_streaming && self.can_use_streaming() && self.streaming_rgb.is_none()
                 {
                     // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
-                    let rgb = self.decode_baseline_streaming_rgb(&scan_components)?;
+                    let rgb = self.decode_baseline_streaming_rgb(&scan_components, stop)?;
                     self.streaming_rgb = Some(rgb);
                 } else {
-                    self.decode_scan(&scan_components)?;
+                    self.decode_scan(&scan_components, stop)?;
                 }
             }
         }
@@ -113,7 +116,13 @@ impl<'a> JpegParser<'a> {
     }
 
     /// Decode a baseline sequential scan (all coefficients at once).
-    pub(super) fn decode_scan(&mut self, scan_components: &[(usize, u8, u8)]) -> Result<()> {
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
+    pub(super) fn decode_scan(
+        &mut self,
+        scan_components: &[(usize, u8, u8)],
+        stop: &impl Stop,
+    ) -> Result<()> {
         // DNL mode (height=0 in SOF) requires dynamic buffer growth during decode,
         // which is not yet implemented. For now, we need height before decoding.
         if self.height == 0 {
@@ -224,6 +233,11 @@ impl<'a> JpegParser<'a> {
         let mut truncation_mcu: Option<u32> = None;
 
         for mcu_y in 0..mcu_rows {
+            // Check for cancellation at each MCU row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             for mcu_x in 0..mcu_cols {
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -421,9 +435,12 @@ impl<'a> JpegParser<'a> {
     /// Streaming decode for baseline 4:4:4 YCbCr images.
     /// Combines Huffman decode + dequantize + IDCT + color convert in one pass.
     /// No coefficient storage - processes MCU row by row directly to RGB output.
+    ///
+    /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn decode_baseline_streaming_rgb(
         &mut self,
         scan_components: &[(usize, u8, u8)],
+        stop: &impl Stop,
     ) -> Result<Vec<u8>> {
         // DNL mode not supported for streaming decode
         if self.height == 0 {
@@ -531,6 +548,11 @@ impl<'a> JpegParser<'a> {
 
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
+            // Check for cancellation at each MCU row
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
             // Decode one MCU row's worth of blocks
             for mcu_x in 0..mcu_cols {
                 // Check for restart marker

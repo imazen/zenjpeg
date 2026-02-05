@@ -3,6 +3,7 @@
 //!
 //! This test answers: "How many distinct colors can survive a roundtrip
 //! through jpegli for each input/output format combination?"
+use enough::Unstoppable;
 
 use std::collections::HashSet;
 use zenjpeg::decoder::Decoder;
@@ -273,7 +274,7 @@ fn test_combination(
     let mut results = Vec::new();
 
     // Decode to u8
-    if let Ok(decoded_u8) = decoder.decode(&jpeg) {
+    if let Ok(decoded_u8) = decoder.decode(&jpeg, Unstoppable) {
         let unique = if is_gray {
             // For grayscale, the decoder outputs RGB, so take just R channel
             count_unique_gray_u8(
@@ -297,7 +298,7 @@ fn test_combination(
     }
 
     // Decode to f32
-    if let Ok(decoded_f32) = decoder.decode_f32(&jpeg) {
+    if let Ok(decoded_f32) = decoder.decode_f32(&jpeg, Unstoppable) {
         // f32 at 8-bit precision (for comparison with u8)
         let unique_8bit = if is_gray {
             count_unique_gray_f32(
@@ -638,8 +639,8 @@ fn test_precision_improvement_summary() {
 
     let decoder = Decoder::new();
 
-    let decoded_u8 = decoder.decode(&jpeg).expect("u8 decode failed");
-    let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decode failed");
+    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
+    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
 
     let unique_input = count_unique_rgb_u8(&input);
     let unique_u8 = count_unique_rgb_u8(&decoded_u8.data);
@@ -722,8 +723,8 @@ fn test_10plus_bit_demonstration() {
     println!("JPEG size: {} bytes", jpeg.len());
 
     let decoder = Decoder::new();
-    let decoded_u8 = decoder.decode(&jpeg).expect("u8 decode failed");
-    let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decode failed");
+    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
+    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
 
     // For grayscale, decoder outputs RGB, so extract just one channel
     let u8_gray: Vec<u8> = decoded_u8.data.iter().step_by(3).cloned().collect();

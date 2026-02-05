@@ -38,12 +38,12 @@ fn bench_jpegli(jpeg_data: &[u8], iterations: usize) -> f64 {
 
     // Warmup - more iterations to ensure CPU turbo is active
     for _ in 0..10 {
-        let _ = decoder.decode(jpeg_data);
+        let _ = decoder.decode(jpeg_data, Unstoppable);
     }
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = decoder.decode(jpeg_data);
+        let _ = decoder.decode(jpeg_data, Unstoppable);
     }
     let elapsed = start.elapsed();
 

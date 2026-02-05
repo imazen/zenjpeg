@@ -1,6 +1,7 @@
 //! Encoder API conformance tests.
 //!
 //! Tests matching C++ jpegli encode_api_test.cc functionality.
+use enough::Unstoppable;
 
 #[path = "../src/test_utils.rs"]
 mod test_utils;
@@ -130,7 +131,7 @@ fn test_encode_quality_levels(quality: f32) {
 
     // Decode and verify roundtrip
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
 }
@@ -199,7 +200,7 @@ fn test_encode_various_sizes(width: u32, height: u32) {
 
     // Verify dimensions in decoded output
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 }
@@ -212,7 +213,7 @@ fn test_encode_non_square() {
     let jpeg = encode_rgb(256, 64, &wide.pixels, &config).expect("encode wide failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode wide failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode wide failed");
     assert_eq!(decoded.width, 256);
     assert_eq!(decoded.height, 64);
 
@@ -220,7 +221,7 @@ fn test_encode_non_square() {
     let tall = generate_gradient_h(64, 256, 3);
     let jpeg = encode_rgb(64, 256, &tall.pixels, &config).expect("encode tall failed");
 
-    let decoded = decoder.decode(&jpeg).expect("decode tall failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode tall failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 256);
 }
@@ -333,7 +334,7 @@ fn test_encode_reuse_encoder() {
 
         // Verify decodes correctly
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 64);
         assert_eq!(decoded.height, 64);
     }
@@ -361,7 +362,7 @@ fn test_encode_solid_color() {
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg).expect("decode failed");
+        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
         // Solid colors should roundtrip very well
         let rms = distance_rms(&img.pixels, &decoded.data);
@@ -376,7 +377,7 @@ fn test_encode_checkerboard() {
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     // Checkerboard has sharp edges, expect some ringing
     let rms = distance_rms(&img.pixels, &decoded.data);
@@ -393,7 +394,7 @@ fn test_encode_color_bars() {
     let jpeg = encode_rgb(128, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     let rms = distance_rms(&img.pixels, &decoded.data);
     // Color bars have sharp edges which cause ringing - allow higher RMS
@@ -418,7 +419,7 @@ fn test_encode_minimum_dimensions() {
     assert!(!jpeg.is_empty(), "1x1 JPEG should not be empty");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode 1x1 failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode 1x1 failed");
     assert_eq!(decoded.width, 1);
     assert_eq!(decoded.height, 1);
 }
@@ -438,7 +439,7 @@ fn test_encode_large_image() {
     );
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode large failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode large failed");
     assert_eq!(decoded.width, 1024);
     assert_eq!(decoded.height, 768);
 }
@@ -558,7 +559,7 @@ fn test_xyb_optimized_huffman_decodable() {
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode XYB optimized failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode XYB optimized failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
 }
@@ -574,7 +575,7 @@ fn test_xyb_standard_huffman_decodable() {
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode XYB standard failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode XYB standard failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
 }
@@ -588,7 +589,7 @@ fn test_ycbcr_optimized_huffman_decodable() {
     // Should be decodable by our decoder
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg)
+        .decode(&jpeg, Unstoppable)
         .expect("decode YCbCr optimized failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
@@ -605,7 +606,7 @@ fn test_ycbcr_standard_huffman_decodable() {
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode YCbCr standard failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode YCbCr standard failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
 }
@@ -681,7 +682,7 @@ fn test_encode_ycbcr8_input() {
 
     // Verify it decodes
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode should succeed");
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 }
@@ -725,7 +726,7 @@ fn test_encode_ycbcr_f32_input() {
 
     // Verify it decodes
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode should succeed");
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 }
@@ -781,8 +782,8 @@ fn test_encode_ycbcr8_vs_rgb_both_valid() {
 
     // Verify both decode successfully
     let decoder = Decoder::new();
-    let decoded_rgb = decoder.decode(&jpeg_rgb).expect("RGB decode failed");
-    let decoded_ycbcr = decoder.decode(&jpeg_ycbcr).expect("YCbCr decode failed");
+    let decoded_rgb = decoder.decode(&jpeg_rgb, Unstoppable).expect("RGB decode failed");
+    let decoded_ycbcr = decoder.decode(&jpeg_ycbcr, Unstoppable).expect("YCbCr decode failed");
 
     // Verify dimensions match
     assert_eq!(decoded_rgb.width, width);
@@ -834,7 +835,7 @@ fn test_encode_ycbcr8_with_subsampling() {
 
     // Verify it decodes
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode should succeed");
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 }
@@ -873,7 +874,7 @@ fn test_encode_ycbcr8_progressive() {
 
     // Verify it decodes
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode should succeed");
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 }

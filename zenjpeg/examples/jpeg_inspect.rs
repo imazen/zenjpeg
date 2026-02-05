@@ -29,6 +29,7 @@
 //!   # Detailed Huffman analysis
 //!   cargo run --release --example jpeg_inspect -- --huffman image.jpg
 
+use enough::Unstoppable;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -545,7 +546,7 @@ fn validate_jpeg(data: &[u8], path: &str) {
 
     // Test with zenjpeg decoder
     print!("  zenjpeg:  ");
-    match zenjpeg::decoder::Decoder::new().decode(data) {
+    match zenjpeg::decoder::Decoder::new().decode(data, Unstoppable) {
         Ok(img) => println!(
             "OK ({}x{}, {} bytes)",
             img.width,

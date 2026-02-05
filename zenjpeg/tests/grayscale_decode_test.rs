@@ -3,6 +3,7 @@
 //! This tests the decoder with:
 //! 1. A standard grayscale test image (flower_gray.jpg)
 //! 2. An extracted gain map from an UltraHDR image (if available)
+use enough::Unstoppable;
 
 use imgref::ImgRefMut;
 use zenjpeg::decoder::{Decoder, PixelFormat};
@@ -28,7 +29,7 @@ fn test_grayscale_decode_basic() {
     };
 
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
-    let decoded = decoder.decode(&data).expect("decode grayscale image");
+    let decoded = decoder.decode(&data, Unstoppable).expect("decode grayscale image");
 
     println!(
         "Grayscale image: {}x{}, {} bytes",
@@ -59,7 +60,7 @@ fn test_grayscale_decode_to_rgb() {
 
     // Decode grayscale as RGB (should expand gray to R=G=B)
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = decoder.decode(&data).expect("decode grayscale as RGB");
+    let decoded = decoder.decode(&data, Unstoppable).expect("decode grayscale as RGB");
 
     println!(
         "Grayscale→RGB: {}x{}, {} bytes",
@@ -134,7 +135,7 @@ fn test_ultrahdr_gainmap_extraction() {
     };
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&data).expect("decode UltraHDR image");
+    let decoded = decoder.decode(&data, Unstoppable).expect("decode UltraHDR image");
 
     println!(
         "Primary image: {}x{}, format: {:?}",
@@ -164,7 +165,7 @@ fn test_ultrahdr_gainmap_extraction() {
             // Decode the gain map
             let gm_decoded = Decoder::new()
                 .output_format(PixelFormat::Gray)
-                .decode(gainmap_jpeg)
+                .decode(gainmap_jpeg, Unstoppable)
                 .expect("decode gain map");
 
             println!(
@@ -191,7 +192,7 @@ fn test_gainmap_grayscale_decode_streaming() {
         return;
     };
 
-    let decoded = Decoder::new().decode(&data).expect("decode");
+    let decoded = Decoder::new().decode(&data, Unstoppable).expect("decode");
     let extras = match decoded.extras() {
         Some(e) if e.is_ultrahdr() => e,
         _ => {
@@ -259,7 +260,7 @@ fn test_gainmap_grayscale_decode_streaming() {
     // Non-streaming decode should always work
     let gm_decoded = Decoder::new()
         .output_format(PixelFormat::Gray)
-        .decode(gainmap_jpeg)
+        .decode(gainmap_jpeg, Unstoppable)
         .expect("non-streaming decode should work");
 
     println!(

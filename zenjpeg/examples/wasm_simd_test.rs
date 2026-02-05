@@ -39,7 +39,7 @@ fn main() {
 
     println!("Decoding JPEG...");
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = decoder.decode(&jpeg).expect("decoding failed");
+    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding failed");
 
     println!(
         "Decoded {}x{} image with {} bytes",

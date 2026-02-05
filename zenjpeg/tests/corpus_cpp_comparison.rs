@@ -2,9 +2,11 @@
 //!
 //! Compares Rust jpegli against C++ jpegli on a large corpus.
 //! Run with: cargo test --test corpus_cpp_comparison --features corpus-tests -- --ignored --nocapture
+
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
+use enough::Unstoppable;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zenjpeg::encoder::ChromaSubsampling;

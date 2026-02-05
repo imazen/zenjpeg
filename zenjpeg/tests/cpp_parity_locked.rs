@@ -15,6 +15,7 @@
 //! Last regenerated: 2026-01-16
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify reference values without re-running C++ cjpegli.
+use enough::Unstoppable;
 
 use butteraugli::ButteraugliParams;
 use dssim::Dssim;
@@ -488,7 +489,7 @@ fn test_regression_s444_optimized() {
         // Check DSSIM regression
         let decoded = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
         let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
 
@@ -542,7 +543,7 @@ fn test_regression_s444_fixed() {
 
         let decoded = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
         let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
 
@@ -596,7 +597,7 @@ fn test_regression_s420() {
 
         let decoded = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
         let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
 
@@ -650,7 +651,7 @@ fn test_regression_s422() {
 
         let decoded = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .decode(&jpeg)
+            .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
         let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
 
@@ -711,7 +712,7 @@ fn print_current_values() {
 
             let decoded = Decoder::new()
                 .output_format(PixelFormat::Rgb)
-                .decode(&jpeg)
+                .decode(&jpeg, Unstoppable)
                 .expect("Decoding failed");
             let rgba_dec = rgb_to_rgba(&decoded.data);
             let dec_img = dssim

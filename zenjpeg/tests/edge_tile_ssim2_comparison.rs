@@ -7,6 +7,7 @@
 //! 4. Comparing SSIMULACRA2 of the tiled edge regions
 //!
 //! Run with: cargo test --release -p zenjpeg --test edge_tile_ssim2_comparison -- --nocapture --ignored
+use enough::Unstoppable;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -172,7 +173,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 /// Decode JPEG to RGB
 fn decode_jpeg(jpeg: &[u8]) -> Vec<u8> {
     let decoded = zenjpeg::decoder::Decoder::new()
-        .decode(jpeg)
+        .decode(jpeg, Unstoppable)
         .expect("decode failed");
     decoded.data
 }

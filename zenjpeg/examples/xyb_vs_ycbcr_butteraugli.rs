@@ -95,7 +95,7 @@ fn main() {
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     // Use jpegli decoder which applies ICC profiles for XYB images
     let decoder = zenjpeg::decode::Decoder::new().apply_icc(true);
-    match decoder.decode(data) {
+    match decoder.decode(data, Unstoppable) {
         Ok(img) => {
             // eprintln!("  jpegli decode OK, {} bytes", img.data.len());
             img.data

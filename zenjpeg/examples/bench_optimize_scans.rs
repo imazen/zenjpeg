@@ -1,6 +1,7 @@
 //! Benchmark optimize_scans on a corpus of images.
 //!
 //! Usage: cargo run --release -p zenjpeg --example bench_optimize_scans -- [corpus_dir]
+use enough::Unstoppable;
 
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 

@@ -2,6 +2,7 @@
 //!
 //! Tests Rust vs C++ progressive encoding on various image types to identify
 //! patterns in where differences occur.
+use enough::Unstoppable;
 
 use std::fs;
 use std::path::Path;
