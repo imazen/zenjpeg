@@ -76,6 +76,8 @@ use crate::error::{Error, Result};
 /// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan |
 /// | Missing DHT before scan | Invalid (B.2.4.2) | std_huff_tables() fallback | Error | Std tables | Std tables |
 /// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
+/// | AC index overflow | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB |
+/// | Invalid Huffman mid-scan | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB |
 /// | Bad DQT/DHT structure | Invalid | ERREXIT (fatal) | Error | Error | Error |
 /// | Bad component ID in SOS | Invalid (B.2.3) | ERREXIT (fatal) | Error | Error | Error |
 ///
@@ -120,12 +122,14 @@ pub enum Strictness {
 
     /// Recover from all errors when possible.
     ///
-    /// Currently identical to Balanced. Reserved for future recovery
-    /// behaviors that go beyond what mozjpeg supports.
+    /// Goes beyond mozjpeg's error handling with additional recovery:
+    /// - AC coefficient index overflow (treated as end-of-block)
+    /// - Invalid Huffman codes mid-scan (treated as end-of-block)
     ///
     /// Use for:
     /// - Corrupt file recovery
     /// - Maximum compatibility
+    /// - Forensic analysis of damaged files
     Lenient,
 }
 
@@ -192,6 +196,18 @@ pub enum DecodeWarning {
 
     /// Progressive scan data was truncated; remaining coefficients filled with zeros.
     TruncatedProgressiveScan,
+
+    /// AC coefficient index exceeded block bounds; treated as end-of-block.
+    ///
+    /// Only recovered in Lenient mode. Indicates malformed run-length data
+    /// where the run + position would exceed the 64-coefficient block.
+    AcIndexOverflow,
+
+    /// Invalid Huffman code encountered; treated as end-of-block.
+    ///
+    /// Only recovered in Lenient mode. Indicates corrupted entropy data
+    /// where a bit sequence doesn't match any valid Huffman code.
+    InvalidHuffmanCode,
 }
 
 impl core::fmt::Display for DecodeWarning {
@@ -224,6 +240,12 @@ impl core::fmt::Display for DecodeWarning {
                     f,
                     "progressive scan truncated; remaining coefficients are zero"
                 )
+            }
+            Self::AcIndexOverflow => {
+                write!(f, "AC index overflow; treated as end-of-block")
+            }
+            Self::InvalidHuffmanCode => {
+                write!(f, "invalid Huffman code; treated as end-of-block")
             }
         }
     }

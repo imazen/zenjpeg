@@ -15,7 +15,7 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
 use crate::foundation::consts::MAX_HUFFMAN_TABLES;
 use crate::huffman::HuffmanDecodeTable;
 
-use super::super::DecodeWarning;
+use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 
 /// Progressive scan decoding methods for JpegParser.
@@ -98,6 +98,11 @@ impl<'a> JpegParser<'a> {
         }
 
         let mut decoder = EntropyDecoder::new(scan_data);
+
+        // Enable lenient mode for maximum error recovery
+        if self.strictness == Strictness::Lenient {
+            decoder.set_lenient(true);
+        }
 
         for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
@@ -363,14 +368,21 @@ impl<'a> JpegParser<'a> {
             );
         }
 
-        // Consume decoder position before warn() (which borrows self mutably,
-        // conflicting with decoder's immutable borrows of self.dc_tables/ac_tables).
+        // Extract warning flags before dropping decoder
+        let had_ac_overflow = decoder.had_ac_overflow;
+        let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
         drop(decoder);
 
         // Emit warning for progressive scan truncation (or error in Strict mode)
         if had_progressive_truncation {
             self.warn(DecodeWarning::TruncatedProgressiveScan)?;
+        }
+        if had_ac_overflow {
+            self.warn(DecodeWarning::AcIndexOverflow)?;
+        }
+        if had_invalid_huffman {
+            self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
 
         Ok(())

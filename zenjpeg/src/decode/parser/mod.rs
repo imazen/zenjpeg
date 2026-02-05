@@ -179,6 +179,8 @@ impl<'a> JpegParser<'a> {
                     "DNL marker conflicts with SOF height (spec violation)"
                 }
                 DecodeWarning::TruncatedProgressiveScan => "progressive scan data truncated",
+                DecodeWarning::AcIndexOverflow => "AC coefficient index out of bounds",
+                DecodeWarning::InvalidHuffmanCode => "invalid Huffman code mid-scan",
             }));
         }
         // Deduplicate: don't add the same warning twice
