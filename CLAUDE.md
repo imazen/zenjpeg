@@ -374,23 +374,20 @@ See `docs/TUNING_HISTORY.md` for callgrind analysis and per-function comparison 
 
 ### Scanline Decoder Performance (2026-02-05)
 
-Scanline decoder (`ScanlineReader`) investigated due to 2x slowdown vs buffered decode.
+Scanline decoder (`ScanlineReader`) optimized to outperform buffered decode for 4:2:0 content.
 
-**Results after fix (2048x2048 baseline JPEG):**
-- `scanline-444`: 9.3ms (1.1x baseline) ✓
-- `scanline-420`: 17.4ms (2.1x baseline) ✗ - chroma upsampling overhead
+**Results (2048x2048 baseline JPEG):**
+- `zune-jpeg`: 4.27ms (reference, fastest)
+- `jpegli-baseline` (buffered): 7.44ms (1.0x)
+- `jpegli-scanline-420`: **5.93ms (0.80x)** ← faster than buffered!
+- `jpegli-scanline-444`: 9.32ms (1.25x)
 
-**Root cause analysis (callgrind):**
-- 486M (21%) in `slice/index.rs` - bounds checking on every array access
-- 220M (9.5%) in `quant/mod.rs` - dequantization overhead
-- 148M (6.4%) in `cmp.rs` - min/max/clamp comparisons
-- 18M (0.8%) in `entropy/decoder.rs` - actual entropy decoding
+**Optimizations applied:**
+1. Pre-validate quant tables before MCU loop (was allocating Error per-block)
+2. AVX2 SIMD chroma upsampling (`upsample_h2v2_i16_fancy_strided`)
 
-**Fixed:** Pre-validate quant tables before MCU loop (was allocating Error per-block)
-
-**Remaining 4:2:0 bottleneck:** Chroma upsampling in `upsample_h2v2` dominates. The 4:4:4
-case (no upsampling) is now near parity with buffered decode. To fix 4:2:0, would need
-SIMD-optimized upsampling or deferred upsampling during color conversion.
+The scanline-420 mode is now 20% faster than buffered decode due to efficient AVX2
+vertical+horizontal separable upsampling and better cache utilization (streaming vs whole-image).
 
 ## Failed Explorations
 
