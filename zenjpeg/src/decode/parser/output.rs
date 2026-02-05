@@ -21,6 +21,7 @@ use crate::color::{
     cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
     gray_f32_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
     ycbcr_planes_i16_to_rgb_u8, ycck_planes_to_rgb_u8,
+    ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8,
 };
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
@@ -461,71 +462,75 @@ impl<'a> JpegParser<'a> {
                     ),
                 }
             } else {
-                // Box filter (simple pixel duplication)
-                use crate::decode::upsample::upsample_h2v2_i16_box;
-                // Only 4:2:0 has a box filter implementation; others use fancy even without flag
+                // Box filter path
                 if h_ratio == 2 && v_ratio == 2 {
-                    upsample_h2v2_i16_box(
-                        &cb_strip_sub,
-                        c_strip_width,
-                        c_rows_this_mcu,
-                        &mut cb_strip,
-                        y_strip_width,
-                        y_rows_this_mcu,
-                    );
-                    upsample_h2v2_i16_box(
-                        &cr_strip_sub,
-                        c_strip_width,
-                        c_rows_this_mcu,
-                        &mut cr_strip,
-                        y_strip_width,
-                        y_rows_this_mcu,
-                    );
-                } else {
-                    // Fall back to fancy for 4:2:2 and 4:4:0
-                    match (h_ratio, v_ratio) {
-                        (2, 1) => {
-                            upsample_h2v1_i16_fancy(
-                                &cb_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cb_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                            upsample_h2v1_i16_fancy(
-                                &cr_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cr_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                        }
-                        (1, 2) => {
-                            upsample_h1v2_i16_fancy(
-                                &cb_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cb_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                            upsample_h1v2_i16_fancy(
-                                &cr_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cr_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                        }
-                        _ => unreachable!(),
+                    // Fused box-filter 4:2:0 upsample + YCbCr→RGB conversion.
+                    // Eliminates intermediate cb_strip/cr_strip buffers entirely.
+                    let y_start = imcu_row * mcu_height;
+                    let c_cols = (y_cols_this_mcu + 1) / 2;
+
+                    for row in 0..y_rows_this_mcu {
+                        let y_offset = row * y_strip_width;
+                        // Box filter: each chroma row covers 2 output rows
+                        let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
+                        let c_offset = c_row * c_strip_width;
+                        let rgb_offset = (y_start + row) * width * 3;
+
+                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                            &y_strip[y_offset..y_offset + y_cols_this_mcu],
+                            &cb_strip_sub[c_offset..c_offset + c_cols],
+                            &cr_strip_sub[c_offset..c_offset + c_cols],
+                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_mcu * 3],
+                            y_cols_this_mcu,
+                        );
                     }
+                    continue; // Skip the separate color convert below
+                }
+
+                // Fall back to fancy for 4:2:2 and 4:4:0 (no fused kernel)
+                match (h_ratio, v_ratio) {
+                    (2, 1) => {
+                        upsample_h2v1_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h2v1_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                    }
+                    (1, 2) => {
+                        upsample_h1v2_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h1v2_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                    }
+                    _ => unreachable!(),
                 }
             }
 
             // Color convert and write to output
+            // (Skipped for fused 4:2:0 box path via `continue` above)
             let y_start = imcu_row * mcu_height;
             for row in 0..y_rows_this_mcu {
                 let strip_offset = row * y_strip_width;
