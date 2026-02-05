@@ -11,10 +11,38 @@ use crate::huffman::HuffmanDecodeTable;
 
 use super::decode_value;
 
+/// Result of lenient Huffman decode - includes flag for invalid code recovery.
+pub(crate) enum HuffmanResult {
+    /// Normal symbol decoded.
+    Symbol(u8),
+    /// End of scan (marker found).
+    EndOfScan,
+    /// Truncated data.
+    Truncated,
+    /// Invalid code recovered as EOB (lenient mode only).
+    InvalidCodeRecovered,
+}
+
 /// Decodes a Huffman symbol from the bit reader using the provided table.
 /// This is a standalone function to avoid borrow conflicts in decode_block.
 #[inline(always)]
 fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> ScanResult<u8> {
+    decode_huffman_symbol_lenient(reader, table, false).map(|r| match r {
+        HuffmanResult::Symbol(s) => ScanRead::Value(s),
+        HuffmanResult::EndOfScan => ScanRead::EndOfScan,
+        HuffmanResult::Truncated => ScanRead::Truncated,
+        HuffmanResult::InvalidCodeRecovered => ScanRead::EndOfScan, // Shouldn't happen without lenient
+    })
+}
+
+/// Decodes a Huffman symbol with optional lenient mode.
+/// In lenient mode, invalid codes are treated as EOB (symbol 0x00).
+#[inline(always)]
+fn decode_huffman_symbol_lenient(
+    reader: &mut BitReader,
+    table: &HuffmanDecodeTable,
+    lenient: bool,
+) -> Result<HuffmanResult> {
     // Try fast lookup first (most common path)
     if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
         let lookup = table.fast_lookup[bits as usize];
@@ -22,7 +50,7 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
             let symbol = (lookup & 0xFF) as u8;
             let len = (lookup >> 8) as u8;
             reader.skip_bits_fast(len);
-            return Ok(ScanRead::Value(symbol));
+            return Ok(HuffmanResult::Symbol(symbol));
         }
     }
 
@@ -31,14 +59,14 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
     for len in 1..=16 {
         let bit = match reader.read_bits(1)? {
             ScanRead::Value(b) => b,
-            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            ScanRead::EndOfScan => return Ok(HuffmanResult::EndOfScan),
+            ScanRead::Truncated => return Ok(HuffmanResult::Truncated),
         };
         code = (code << 1) | bit;
         if (code as i32) <= table.maxcode[len] {
             let idx = (code as i32 + table.valoffset[len]) as usize;
             if idx < table.values.len() {
-                return Ok(ScanRead::Value(table.values[idx]));
+                return Ok(HuffmanResult::Symbol(table.values[idx]));
             }
         }
     }
@@ -47,10 +75,15 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
     // This happens when fill bits at end of scan don't form a valid Huffman code.
     if reader.is_exhausted() {
         return Ok(if reader.marker_found().is_some() {
-            ScanRead::EndOfScan
+            HuffmanResult::EndOfScan
         } else {
-            ScanRead::Truncated
+            HuffmanResult::Truncated
         });
+    }
+
+    // Lenient mode: treat invalid Huffman code as end-of-block
+    if lenient {
+        return Ok(HuffmanResult::InvalidCodeRecovered);
     }
 
     Err(Error::invalid_huffman_table(0, "invalid code"))
@@ -74,6 +107,12 @@ pub struct EntropyDecoder<'data, 'tables> {
     /// Number of positions written in coeff_buffer that need clearing before next use.
     /// Positions 0..last_written need to be zeroed; rest are already zero.
     last_written: u8,
+    /// Lenient mode: recover from AC index overflow and invalid Huffman codes.
+    lenient: bool,
+    /// Tracks if lenient recovery was used (AC index overflow).
+    pub(crate) had_ac_overflow: bool,
+    /// Tracks if lenient recovery was used (invalid Huffman code).
+    pub(crate) had_invalid_huffman: bool,
 }
 
 /// Saved state of an EntropyDecoder for speculative decoding.
@@ -94,7 +133,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             prev_dc: [0; 4],
             coeff_buffer: [0i16; DCT_BLOCK_SIZE],
             last_written: 0,
+            lenient: false,
+            had_ac_overflow: false,
+            had_invalid_huffman: false,
         }
+    }
+
+    /// Enables lenient mode for maximum error recovery.
+    ///
+    /// In lenient mode:
+    /// - AC coefficient index overflow is treated as end-of-block
+    /// - Invalid Huffman codes mid-scan are treated as end-of-block
+    pub fn set_lenient(&mut self, lenient: bool) {
+        self.lenient = lenient;
     }
 
     /// Sets a DC Huffman table (borrowed, not cloned).
@@ -127,6 +178,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     }
 
     /// Decodes a Huffman symbol.
+    /// In lenient mode, returns 0 (EOB) on invalid codes instead of erroring.
     #[inline]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> ScanResult<u8> {
         // Try fast lookup first
@@ -168,6 +220,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 ScanRead::Truncated
             });
+        }
+
+        // Lenient mode: treat invalid Huffman code as EOB
+        if self.lenient {
+            self.had_invalid_huffman = true;
+            return Ok(ScanRead::Value(0)); // 0 = EOB symbol
         }
 
         Err(Error::invalid_huffman_table(0, "invalid code"))
@@ -275,6 +333,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run as usize;
                         if i >= DCT_BLOCK_SIZE {
+                            if self.lenient {
+                                self.had_ac_overflow = true;
+                                break; // Treat as EOB
+                            }
                             return Err(Error::invalid_jpeg_data(
                                 "AC coefficient index out of bounds",
                             ));
@@ -293,10 +355,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
-                ScanRead::Value(v) => v,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                HuffmanResult::Symbol(v) => v,
+                HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
+                HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
+                HuffmanResult::InvalidCodeRecovered => {
+                    self.had_invalid_huffman = true;
+                    break; // Treat as EOB
+                }
             };
 
             if symbol == 0 {
@@ -318,6 +384,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run as usize;
                 if i >= DCT_BLOCK_SIZE {
+                    if self.lenient {
+                        self.had_ac_overflow = true;
+                        break; // Treat as EOB
+                    }
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));
@@ -460,6 +530,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
+                            if self.lenient {
+                                self.had_ac_overflow = true;
+                                break; // Treat as EOB
+                            }
                             return Err(Error::invalid_jpeg_data(
                                 "AC coefficient index out of bounds",
                             ));
@@ -492,15 +566,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
-                ScanRead::Value(v) => v,
-                ScanRead::EndOfScan => {
+            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                HuffmanResult::Symbol(v) => v,
+                HuffmanResult::EndOfScan => {
                     self.last_written = DCT_BLOCK_SIZE as u8;
                     return Ok(ScanRead::EndOfScan);
                 }
-                ScanRead::Truncated => {
+                HuffmanResult::Truncated => {
                     self.last_written = DCT_BLOCK_SIZE as u8;
                     return Ok(ScanRead::Truncated);
+                }
+                HuffmanResult::InvalidCodeRecovered => {
+                    self.had_invalid_huffman = true;
+                    break; // Treat as EOB
                 }
             };
 
@@ -523,6 +601,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
+                    if self.lenient {
+                        self.had_ac_overflow = true;
+                        break; // Treat as EOB
+                    }
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));
@@ -681,6 +763,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run;
                         if i >= DCT_BLOCK_SIZE {
+                            if self.lenient {
+                                self.had_ac_overflow = true;
+                                break; // Treat as EOB
+                            }
                             return Err(Error::invalid_jpeg_data(
                                 "AC coefficient index out of bounds",
                             ));
@@ -704,10 +790,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path
-            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
-                ScanRead::Value(v) => v,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                HuffmanResult::Symbol(v) => v,
+                HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
+                HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
+                HuffmanResult::InvalidCodeRecovered => {
+                    self.had_invalid_huffman = true;
+                    break; // Treat as EOB
+                }
             };
 
             if symbol == 0 {
@@ -726,6 +816,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
+                    if self.lenient {
+                        self.had_ac_overflow = true;
+                        break; // Treat as EOB
+                    }
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));
@@ -889,6 +983,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 } else {
                     i += run;
                     if i >= DCT_BLOCK_SIZE {
+                        if self.lenient {
+                            self.had_ac_overflow = true;
+                            break; // Treat as EOB
+                        }
                         return Err(Error::invalid_jpeg_data(
                             "AC coefficient index out of bounds",
                         ));
@@ -909,9 +1007,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes
-            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
-                ScanRead::Value(v) => v,
-                ScanRead::EndOfScan | ScanRead::Truncated => break,
+            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                HuffmanResult::Symbol(v) => v,
+                HuffmanResult::EndOfScan | HuffmanResult::Truncated => break,
+                HuffmanResult::InvalidCodeRecovered => {
+                    self.had_invalid_huffman = true;
+                    break; // Treat as EOB
+                }
             };
 
             if symbol == 0 {
@@ -930,6 +1032,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run;
                 if i >= DCT_BLOCK_SIZE {
+                    if self.lenient {
+                        self.had_ac_overflow = true;
+                        break; // Treat as EOB
+                    }
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));
@@ -1089,6 +1195,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 k += run as usize;
                 if k > se as usize {
+                    if self.lenient {
+                        self.had_ac_overflow = true;
+                        return Ok(ScanRead::Value(())); // Treat as EOB
+                    }
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));

@@ -2088,6 +2088,7 @@ dependencies = [
  "wide 1.1.1",
  "yuv",
  "zenjpeg-bench-utils",
+ "zune-core",
  "zune-jpeg",
 ]
 

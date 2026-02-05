@@ -74,6 +74,8 @@ serde_json = { workspace = true }
 smallvec = "1.13"
 sha2 = "0.10"
 jpeg-decoder = "0.3.2"
+zune-jpeg.workspace = true
+zune-core = "0.5.1"
 
 # WASM testing dependencies (browser + Node.js)
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

@@ -147,6 +147,11 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
+        // Enable lenient mode for maximum error recovery
+        if self.strictness == Strictness::Lenient {
+            decoder.set_lenient(true);
+        }
+
         // Check for missing DHT and emit warning/error BEFORE borrowing tables.
         // This avoids borrow conflicts between self.warn() (mutable) and self.dc_tables (immutable).
         {
@@ -347,8 +352,10 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Consume decoder before warn() to avoid borrow conflicts
+        // Extract warning flags before dropping decoder
         // (decoder holds immutable refs to self.dc_tables/ac_tables)
+        let had_ac_overflow = decoder.had_ac_overflow;
+        let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
         drop(decoder);
 
@@ -362,6 +369,12 @@ impl<'a> JpegParser<'a> {
         }
         if had_padding_error {
             self.warn(DecodeWarning::PaddingBlockError)?;
+        }
+        if had_ac_overflow {
+            self.warn(DecodeWarning::AcIndexOverflow)?;
+        }
+        if had_invalid_huffman {
+            self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
 
         Ok(())
@@ -446,6 +459,11 @@ impl<'a> JpegParser<'a> {
         // Set up entropy decoder
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
+
+        // Enable lenient mode for maximum error recovery
+        if self.strictness == Strictness::Lenient {
+            decoder.set_lenient(true);
+        }
 
         for (comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
@@ -580,7 +598,9 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Consume decoder before warn() to avoid borrow conflicts
+        // Extract warning flags before dropping decoder
+        let had_ac_overflow = decoder.had_ac_overflow;
+        let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
         drop(decoder);
 
@@ -591,6 +611,12 @@ impl<'a> JpegParser<'a> {
                 blocks_decoded: at_mcu,
                 blocks_expected: total_mcus,
             })?;
+        }
+        if had_ac_overflow {
+            self.warn(DecodeWarning::AcIndexOverflow)?;
+        }
+        if had_invalid_huffman {
+            self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
 
         Ok(rgb)
