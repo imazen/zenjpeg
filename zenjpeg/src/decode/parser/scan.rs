@@ -151,12 +151,17 @@ impl<'a> JpegParser<'a> {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
 
-            // Use explicit table if provided, otherwise use standard JPEG tables.
-            // MJPEG files often omit DHT markers and expect standard tables.
-            // Tables are borrowed, not cloned (~1.5KB savings per table).
+            // Use explicit table if provided, otherwise behavior depends on strictness:
+            // - Strict/Balanced: error on missing DHT (matches mozjpeg JERR_NO_HUFF_TABLE)
+            // - Lenient: fall back to standard JPEG tables (for MJPEG compatibility)
             let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
                 Some(table) => table,
                 None => {
+                    if self.strictness != Strictness::Lenient {
+                        return Err(Error::invalid_jpeg_data(
+                            "missing Huffman table (DHT not defined before scan)",
+                        ));
+                    }
                     if dc_idx == 0 {
                         HuffmanDecodeTable::std_dc_luminance()
                     } else {
@@ -169,6 +174,11 @@ impl<'a> JpegParser<'a> {
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
                 None => {
+                    if self.strictness != Strictness::Lenient {
+                        return Err(Error::invalid_jpeg_data(
+                            "missing Huffman table (DHT not defined before scan)",
+                        ));
+                    }
                     if ac_idx == 0 {
                         HuffmanDecodeTable::std_ac_luminance()
                     } else {
@@ -246,11 +256,29 @@ impl<'a> JpegParser<'a> {
                             if is_padding {
                                 // For padding blocks in multi-component images, behavior depends on strictness:
                                 // - Strict: require all padding blocks (error if missing)
-                                // - Balanced: require padding blocks but allow truncation at scan end
-                                // - Lenient: speculatively decode, fill with zeros if missing
+                                // - Balanced/Lenient: speculatively decode, fill with zeros if missing
+                                //   (matches mozjpeg: missing padding blocks produce zero-filled output)
 
-                                if self.strictness == Strictness::Lenient {
-                                    // Lenient: speculative decoding with recovery
+                                if self.strictness == Strictness::Strict {
+                                    // Strict: require padding blocks, propagate errors
+                                    let count = match decoder.decode_block_into(
+                                        &mut self.coeffs[*comp_idx][block_idx],
+                                        prev_coeff_counts[*comp_idx],
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    )? {
+                                        ScanRead::Value(c) => c,
+                                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                                            return Err(Error::invalid_jpeg_data(
+                                                "padding blocks missing (encoder omitted MCU padding)",
+                                            ));
+                                        }
+                                    };
+                                    self.coeff_counts[*comp_idx][block_idx] = count;
+                                    prev_coeff_counts[*comp_idx] = count;
+                                } else {
+                                    // Balanced/Lenient: speculative decoding with recovery
                                     let saved_state = decoder.save_state();
                                     match decoder.decode_block_into(
                                         &mut self.coeffs[*comp_idx][block_idx],
@@ -281,24 +309,6 @@ impl<'a> JpegParser<'a> {
                                             );
                                         }
                                     }
-                                } else {
-                                    // Strict/Balanced: require padding blocks, propagate errors
-                                    let count = match decoder.decode_block_into(
-                                        &mut self.coeffs[*comp_idx][block_idx],
-                                        prev_coeff_counts[*comp_idx],
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
-                                    )? {
-                                        ScanRead::Value(c) => c,
-                                        ScanRead::EndOfScan | ScanRead::Truncated => {
-                                            return Err(Error::invalid_jpeg_data(
-                                                "padding blocks missing (encoder omitted MCU padding)",
-                                            ));
-                                        }
-                                    };
-                                    self.coeff_counts[*comp_idx][block_idx] = count;
-                                    prev_coeff_counts[*comp_idx] = count;
                                 }
                             } else {
                                 // Non-padding block: decode with strictness-aware truncation handling
@@ -404,7 +414,7 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Set up Huffman tables
+        // Set up Huffman tables (same strictness logic as decode_scan)
         for (comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
@@ -412,6 +422,11 @@ impl<'a> JpegParser<'a> {
             let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
                 Some(table) => table,
                 None => {
+                    if self.strictness != Strictness::Lenient {
+                        return Err(Error::invalid_jpeg_data(
+                            "missing Huffman table (DHT not defined before scan)",
+                        ));
+                    }
                     if dc_idx == 0 {
                         HuffmanDecodeTable::std_dc_luminance()
                     } else {
@@ -424,6 +439,11 @@ impl<'a> JpegParser<'a> {
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
                 None => {
+                    if self.strictness != Strictness::Lenient {
+                        return Err(Error::invalid_jpeg_data(
+                            "missing Huffman table (DHT not defined before scan)",
+                        ));
+                    }
                     if ac_idx == 0 {
                         HuffmanDecodeTable::std_ac_luminance()
                     } else {

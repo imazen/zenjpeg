@@ -59,14 +59,33 @@ use crate::error::{Error, Result};
 
 /// Controls how the decoder handles non-fatal errors.
 ///
-/// The default is [`Strictness::Balanced`], which rejects clear spec violations
-/// but recovers from truncation where possible.
+/// The default is [`Strictness::Balanced`], which matches mozjpeg/libjpeg-turbo
+/// behavior: structural errors (missing tables, bad IDs) are fatal, but data
+/// errors (truncation, missing padding, DNL conflicts) recover gracefully.
 ///
 /// Use [`Strictness::Strict`] for validation/conformance testing,
-/// [`Strictness::Lenient`] for maximum compatibility with corrupt files.
+/// [`Strictness::Lenient`] for maximum compatibility including MJPEG without DHT.
+///
+/// # Behavior matrix
+///
+/// | Situation | ITU-T T.81 spec | mozjpeg | Strict | Balanced | Lenient |
+/// |---|---|---|---|---|---|
+/// | Truncated scan data | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
+/// | Missing padding blocks | Invalid (MCUs required) | Implicit zero fill | Error | Speculative+zero | Speculative+zero |
+/// | DNL conflicts with SOF | Invalid (B.2.5) | Ignored entirely | Error | Ignored | Ignored |
+/// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan |
+/// | Missing DHT before scan | Invalid (B.2.4.2) | JERR_NO_HUFF_TABLE (fatal) | Error | Error | Std tables |
+/// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
+/// | Bad DQT/DHT structure | Invalid | ERREXIT (fatal) | Error | Error | Error |
+/// | Bad component ID in SOS | Invalid (B.2.3) | ERREXIT (fatal) | Error | Error | Error |
+///
+/// "Speculative+zero" means: attempt to decode the block; if the data is
+/// missing or invalid, restore decoder state and fill with zeros.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Strictness {
     /// Fail on any spec violation, truncation, or recoverable error.
+    ///
+    /// Stricter than mozjpeg. Errors on everything mozjpeg would warn about.
     ///
     /// Use for:
     /// - Validation/conformance testing
@@ -74,29 +93,30 @@ pub enum Strictness {
     /// - Quality assurance pipelines
     Strict,
 
-    /// Reject clear spec violations but recover from truncation (default).
+    /// Match mozjpeg/libjpeg-turbo error handling behavior (default).
     ///
-    /// Errors on:
-    /// - DNL marker conflicts with SOF height
-    /// - Invalid padding block structure
+    /// Errors on structural violations (like mozjpeg's ERREXIT):
+    /// - Missing Huffman table (DHT not defined before scan)
     ///
-    /// Recovers from:
+    /// Recovers from data errors (like mozjpeg's WARNMS):
     /// - Truncated scan data (fills remaining with zeros)
+    /// - Missing padding blocks (speculative decode, zero fill)
+    /// - DNL marker conflicts with SOF height (ignored)
     /// - End-of-scan fill bits that don't form valid Huffman codes
     ///
     /// Use for:
     /// - General image processing
-    /// - Production pipelines that want to catch malformed files
+    /// - Production pipelines expecting mozjpeg-compatible behavior
     #[default]
     Balanced,
 
-    /// Recover from truncation and minor violations when possible.
+    /// Recover from all errors when possible, including structural ones.
     ///
-    /// Returns partial results for truncated images, fills missing blocks with
-    /// zeros, and silently handles common spec violations.
+    /// More lenient than mozjpeg. Additionally recovers from:
+    /// - Missing Huffman tables (falls back to standard JPEG tables for MJPEG)
     ///
     /// Use for:
-    /// - Image display/thumbnails
+    /// - MJPEG streams (which often omit DHT markers)
     /// - Corrupt file recovery
     /// - Maximum compatibility
     Lenient,

@@ -294,18 +294,15 @@ impl<'a> JpegParser<'a> {
         if self.height == 0 {
             self.height = num_lines;
         } else if self.height != num_lines {
-            // Height was already specified - this is technically invalid
-            // Strictness determines whether to error or ignore
-            match self.strictness {
-                Strictness::Strict | Strictness::Balanced => {
-                    return Err(Error::invalid_jpeg_data(
-                        "DNL marker conflicts with SOF height (spec violation)",
-                    ));
-                }
-                Strictness::Lenient => {
-                    // Ignore DNL, keep original SOF height
-                }
+            // Height was already specified - this is technically invalid.
+            // mozjpeg ignores DNL entirely (skip_variable), so Balanced matches that.
+            // Only Strict errors on this spec violation.
+            if self.strictness == Strictness::Strict {
+                return Err(Error::invalid_jpeg_data(
+                    "DNL marker conflicts with SOF height (spec violation)",
+                ));
             }
+            // Balanced/Lenient: ignore DNL, keep original SOF height
         }
 
         Ok(())
