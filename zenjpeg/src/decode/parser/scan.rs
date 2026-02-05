@@ -14,7 +14,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::JpegMode;
 
-use super::super::idct_int::idct_int_tiered;
+use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 use crate::color::ycbcr_planes_i16_to_rgb_u8;
@@ -598,17 +598,20 @@ impl<'a> JpegParser<'a> {
                         _ => &mut cr_strip,
                     };
 
-                    // Fused dequantize + unzigzag into reusable buffer
-                    dequantize_unzigzag_i32_into_partial(&coeffs, quant, &mut dequant_buf, coeff_count);
-
                     // IDCT directly to strip buffer
                     let dst_offset = mcu_x * 8;
-                    idct_int_tiered(
-                        &mut dequant_buf,
-                        &mut strip[dst_offset..],
-                        strip_width,
-                        coeff_count,
-                    );
+                    if coeff_count <= 1 {
+                        let dc = coeffs[0] as i32 * quant[0] as i32;
+                        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                    } else {
+                        dequantize_unzigzag_i32_into_partial(&coeffs, quant, &mut dequant_buf, coeff_count);
+                        idct_int_tiered(
+                            &mut dequant_buf,
+                            &mut strip[dst_offset..],
+                            strip_width,
+                            coeff_count,
+                        );
+                    }
                 }
 
                 mcu_count += 1;

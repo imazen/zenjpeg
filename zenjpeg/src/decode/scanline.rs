@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use super::idct_int::idct_int_tiered;
+use super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::upsample::upsample_h2v2_i16_fancy_strided;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
@@ -500,13 +500,6 @@ impl<'a> ScanlineReader<'a> {
                         self.prev_coeff_counts[comp_idx] =
                             self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        dequantize_unzigzag_i32_into_partial(
-                            &self.coeffs_buf,
-                            quant,
-                            &mut self.dequant_buf,
-                            coeff_count,
-                        );
-
                         // Calculate destination offset in strip buffer (using aligned stride)
                         let (strip, stride) = match comp_idx {
                             0 => {
@@ -529,7 +522,18 @@ impl<'a> ScanlineReader<'a> {
                             }
                         };
 
-                        idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                        if coeff_count <= 1 {
+                            let dc = self.coeffs_buf[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, strip, stride);
+                        } else {
+                            dequantize_unzigzag_i32_into_partial(
+                                &self.coeffs_buf,
+                                quant,
+                                &mut self.dequant_buf,
+                                coeff_count,
+                            );
+                            idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                        }
                     }
                 }
             }
