@@ -621,17 +621,29 @@ impl<'a> JpegParser<'a> {
             let y_start = mcu_y * 8;
             let rows_this_mcu = 8.min(height.saturating_sub(y_start));
             let cols_this_mcu = width.min(strip_width);
+            let is_rgb = self.is_rgb_jpeg();
 
             for row in 0..rows_this_mcu {
                 let strip_offset = row * strip_width;
                 let rgb_offset = (y_start + row) * width * 3;
 
-                ycbcr_planes_i16_to_rgb_u8(
-                    &y_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &cb_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &cr_strip[strip_offset..strip_offset + cols_this_mcu],
-                    &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
-                );
+                if is_rgb {
+                    // RGB JPEG: interleave planes without YCbCr→RGB matrix
+                    for px in 0..cols_this_mcu {
+                        let i = strip_offset + px;
+                        let o = rgb_offset + px * 3;
+                        rgb[o] = y_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                        rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
+                    }
+                } else {
+                    ycbcr_planes_i16_to_rgb_u8(
+                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                    );
+                }
             }
         }
 
