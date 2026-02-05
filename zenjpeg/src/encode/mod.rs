@@ -127,6 +127,9 @@ pub use blocks::HuffmanSymbolFrequencies;
 pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_config::EncoderConfig;
+#[cfg(feature = "trellis")]
+#[allow(unused_imports)] // Public API re-export
+pub use encoder_types::ExpertConfig;
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ParallelEncoding;
@@ -144,9 +147,6 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "optimized-tables")]
 #[allow(unused_imports)] // Public API re-export
 pub use optimized_tables::OptimizedTables;
-#[cfg(feature = "trellis")]
-#[allow(unused_imports)] // Public API re-export
-pub use encoder_types::ExpertConfig;
 /// Flat config struct for external optimization (SA, CMA-ES). Internal use.
 #[cfg(feature = "trellis")]
 #[doc(hidden)]

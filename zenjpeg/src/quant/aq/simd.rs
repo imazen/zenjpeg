@@ -1554,7 +1554,6 @@ pub(crate) mod archmage_impl {
             let updated = _mm512_add_ps(existing, result);
             _mm512_storeu_ps(output.as_mut_ptr().add(x), updated);
         }
-
     }
 
     /// Helper for processing 8 pixels (AVX2) - used by V4 for remainder handling.
@@ -1582,15 +1581,12 @@ pub(crate) mod archmage_impl {
         let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
         let zero = _mm256_setzero_ps();
 
-        let pixels = safe_simd::_mm256_loadu_ps(
-            <&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap(),
-        );
-        let left = safe_simd::_mm256_loadu_ps(
-            <&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap(),
-        );
-        let right = safe_simd::_mm256_loadu_ps(
-            <&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap(),
-        );
+        let pixels =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap());
+        let left =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap());
+        let right =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap());
         let top = safe_simd::_mm256_loadu_ps(
             <&[f32; 8]>::try_from(&row_above[buf_x..buf_x + 8]).unwrap(),
         );
@@ -1621,9 +1617,8 @@ pub(crate) mod archmage_impl {
         let sqrt_inner = _mm256_sqrt_ps(inner);
         let result = _mm256_mul_ps(quarter, sqrt_inner);
 
-        let existing = safe_simd::_mm256_loadu_ps(
-            <&[f32; 8]>::try_from(&output[out_x..out_x + 8]).unwrap(),
-        );
+        let existing =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&output[out_x..out_x + 8]).unwrap());
         let updated = _mm256_add_ps(existing, result);
         safe_simd::_mm256_storeu_ps(
             <&mut [f32; 8]>::try_from(&mut output[out_x..out_x + 8]).unwrap(),
@@ -1651,7 +1646,9 @@ pub(crate) mod archmage_impl {
 
         // Try AVX-512 first
         if let Some(v4_token) = X64V4Token::summon() {
-            mage_pre_erosion_row_padded_inner_v4(v4_token, row, row_above, row_below, output, width);
+            mage_pre_erosion_row_padded_inner_v4(
+                v4_token, row, row_above, row_below, output, width,
+            );
 
             // AVX-512 processes 16 at a time, handle 8-15 pixel remainder with AVX2
             let v4_processed = (width / 16) * 16;

@@ -23,8 +23,7 @@ use std::path::PathBuf;
 #[cfg(feature = "optimized-tables")]
 use zenjpeg::encode::OptimizedTables;
 use zenjpeg::encode::{
-    ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout,
-    SearchConfig,
+    ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout, SearchConfig,
 };
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,

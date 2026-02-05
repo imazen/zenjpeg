@@ -866,12 +866,9 @@ impl EncoderConfig {
     }
 
     /// Sets custom Huffman tables for single-pass encoding.
-        #[doc(hidden)]
+    #[doc(hidden)]
     #[must_use]
-    pub fn custom_huffman_tables(
-        self,
-        tables: crate::huffman::optimize::HuffmanTableSet,
-    ) -> Self {
+    pub fn custom_huffman_tables(self, tables: crate::huffman::optimize::HuffmanTableSet) -> Self {
         self.huffman(tables)
     }
 
