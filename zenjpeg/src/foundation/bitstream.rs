@@ -536,7 +536,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Fills the bit buffer to have at least `count` bits.
-    #[inline]
+    #[inline(always)]
     fn fill_buffer(&mut self, count: u8) -> Result<bool> {
         if self.bits_in_buffer < count {
             self.refill()?;
@@ -550,7 +550,7 @@ impl<'a> BitReader<'a> {
     /// Returns:
     /// - `Ok(ScanRead::EndOfScan)` if a marker was encountered
     /// - `Ok(ScanRead::Truncated)` if data ended without a marker
-    #[inline]
+    #[inline(always)]
     pub fn peek_bits(&mut self, count: u8) -> ScanResult<u32> {
         debug_assert!(count <= 32);
         self.fill_buffer(count)?;
@@ -643,7 +643,7 @@ impl<'a> BitReader<'a> {
     /// Returns:
     /// - `Ok(ScanRead::EndOfScan)` if a marker was encountered
     /// - `Ok(ScanRead::Truncated)` if data ended without a marker
-    #[inline]
+    #[inline(always)]
     pub fn read_bits(&mut self, count: u8) -> ScanResult<u32> {
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {

@@ -179,7 +179,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Decodes a Huffman symbol.
     /// In lenient mode, returns 0 (EOB) on invalid codes instead of erroring.
-    #[inline]
+    #[inline(always)]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> ScanResult<u8> {
         // Try fast lookup first
         if let Some(bits) = self
