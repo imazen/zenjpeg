@@ -431,6 +431,27 @@ impl<'a> ScanlineReader<'a> {
             decoder.restore_state(*state);
         }
 
+        // Pre-validate quant tables outside the hot loop (error allocation happens ONCE, not per-block)
+        // This avoids ~490K heap allocations for Error::internal() in a 2048x2048 image
+        let quant_y = self.quant_tables[self.quant_indices[0]]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Y quantization table"))?;
+        let quant_cb = if self.num_components > 1 {
+            self.quant_tables[self.quant_indices[1]]
+                .as_ref()
+                .ok_or_else(|| Error::internal("missing Cb quantization table"))?
+        } else {
+            quant_y // Placeholder, won't be accessed for grayscale
+        };
+        let quant_cr = if self.num_components > 2 {
+            self.quant_tables[self.quant_indices[2]]
+                .as_ref()
+                .ok_or_else(|| Error::internal("missing Cr quantization table"))?
+        } else {
+            quant_y // Placeholder, won't be accessed
+        };
+        let quant_refs: [&[u16; 64]; 4] = [quant_y, quant_cb, quant_cr, quant_y];
+
         // Decode one MCU row
         for mcu_x in 0..self.mcu_cols {
             // Check for restart marker
@@ -452,10 +473,7 @@ impl<'a> ScanlineReader<'a> {
                 let v_blocks = self.v_samp[comp_idx] as usize;
 
                 let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-                let quant_idx = self.quant_indices[comp_idx];
-                let quant = self.quant_tables[quant_idx]
-                    .as_ref()
-                    .ok_or(Error::internal("missing quantization table"))?;
+                let quant = quant_refs[comp_idx]; // Pre-validated, no allocation
 
                 // Decode h_blocks * v_blocks blocks for this component
                 for v in 0..v_blocks {
