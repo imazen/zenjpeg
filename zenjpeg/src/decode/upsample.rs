@@ -315,6 +315,284 @@ pub fn upsample_h2v2_i16_fancy(
     upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
 }
 
+/// Triangle filter 2x2 upsampling with explicit strides (for SIMD-aligned buffers).
+///
+/// Same algorithm as `upsample_h2v2_i16_fancy` but supports buffers where
+/// stride > width (common for SIMD alignment).
+#[inline]
+pub fn upsample_h2v2_i16_fancy_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            upsample_h2v2_i16_fancy_strided_avx2(
+                token, input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+            );
+            return;
+        }
+    }
+
+    // Scalar fallback
+    upsample_h2v2_i16_fancy_strided_scalar(
+        input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+    );
+}
+
+/// Scalar implementation of strided bilinear upsampling
+fn upsample_h2v2_i16_fancy_strided_scalar(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height - 1);
+        let is_top_half = out_y % 2 == 0;
+
+        let v_neighbor_y = if is_top_half {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height - 1)
+        };
+
+        let curr_row = &input[in_y * in_stride..];
+        let v_neighbor_row = &input[v_neighbor_y * in_stride..];
+        let out_row = &mut output[out_y * out_stride..][..out_width];
+
+        upsample_row_h2_fancy_bilinear(curr_row, v_neighbor_row, in_width, out_row, is_top_half);
+    }
+}
+
+/// AVX2 SIMD implementation of strided bilinear upsampling
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[arcane]
+fn upsample_h2v2_i16_fancy_strided_avx2(
+    token: archmage::Avx2Token,
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    // Stack-allocated scratch for one row of vertical interpolation results
+    const MAX_SCRATCH: usize = 4096;
+    let mut scratch_storage = [0i16; MAX_SCRATCH];
+
+    if in_width > MAX_SCRATCH {
+        // Fall back to scalar for very wide images
+        upsample_h2v2_i16_fancy_strided_scalar(
+            input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+        );
+        return;
+    }
+
+    let scratch = &mut scratch_storage[..in_width];
+
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let is_top_half = out_y % 2 == 0;
+
+        let v_neighbor_y = if is_top_half {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        // Use stride for row addressing
+        let curr_row = &input[in_y * in_stride..][..in_width];
+        let v_neighbor_row = &input[v_neighbor_y * in_stride..][..in_width];
+        let out_row = &mut output[out_y * out_stride..][..out_width];
+
+        // Vertical pass: compute vertically-interpolated row into scratch
+        upsample_vertical_row_strided_avx2(token, curr_row, v_neighbor_row, scratch);
+
+        // Horizontal pass: horizontally interpolate scratch into output
+        upsample_horizontal_row_strided_avx2(token, scratch, out_row);
+    }
+}
+
+/// Vertical upsampling helper (AVX2) - processes one row
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn upsample_vertical_row_strided_avx2(
+    _token: archmage::Avx2Token,
+    curr_row: &[i16],
+    v_neighbor_row: &[i16],
+    out: &mut [i16],
+) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    let len = curr_row.len().min(v_neighbor_row.len()).min(out.len());
+    let chunks = len / 16;
+
+    let three = _mm256_set1_epi16(3);
+    let two = _mm256_set1_epi16(2);
+
+    for i in 0..chunks {
+        let offset = i * 16;
+        let curr = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&curr_row[offset..offset + 16]).unwrap(),
+        );
+        let neighbor = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&v_neighbor_row[offset..offset + 16]).unwrap(),
+        );
+
+        // (3 * curr + neighbor + 2) >> 2
+        let curr3 = _mm256_mullo_epi16(curr, three);
+        let sum = _mm256_add_epi16(curr3, neighbor);
+        let sum = _mm256_add_epi16(sum, two);
+        let result = _mm256_srai_epi16(sum, 2);
+
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut out[offset..offset + 16]).unwrap(),
+            result,
+        );
+    }
+
+    // Handle remaining elements
+    for i in (chunks * 16)..len {
+        let curr = curr_row[i] as i32;
+        let neighbor = v_neighbor_row[i] as i32;
+        out[i] = ((3 * curr + neighbor + 2) >> 2) as i16;
+    }
+}
+
+/// Horizontal upsampling helper (AVX2) - expands one row to 2x width
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[arcane]
+#[inline(always)]
+fn upsample_horizontal_row_strided_avx2(
+    _token: archmage::Avx2Token,
+    input: &[i16],
+    output: &mut [i16],
+) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    let in_len = input.len();
+    let out_len = output.len();
+
+    if in_len == 0 || out_len == 0 {
+        return;
+    }
+
+    let three = _mm256_set1_epi16(3);
+    let two = _mm256_set1_epi16(2);
+
+    // Process 16 input pixels at a time -> 32 output pixels
+    let chunks = in_len / 16;
+
+    for i in 0..chunks {
+        let offset = i * 16;
+        let out_offset = offset * 2;
+
+        if out_offset + 32 > out_len {
+            break;
+        }
+
+        let curr = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&input[offset..offset + 16]).unwrap(),
+        );
+
+        // Create neighbor vectors (shifted by 1, with edge replication)
+        let neighbor_right = if offset + 17 <= in_len {
+            safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&input[offset + 1..offset + 17]).unwrap(),
+            )
+        } else {
+            // Edge case: replicate last element
+            let mut tmp = [0i16; 16];
+            for j in 0..16 {
+                tmp[j] = input[(offset + j + 1).min(in_len - 1)];
+            }
+            safe_simd::_mm256_loadu_si256(&tmp)
+        };
+
+        let neighbor_left = if offset > 0 {
+            safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&input[offset - 1..offset + 15]).unwrap(),
+            )
+        } else {
+            // Edge case: replicate first element
+            let mut tmp = [0i16; 16];
+            tmp[0] = input[0];
+            for j in 1..16 {
+                tmp[j] = input[j - 1];
+            }
+            safe_simd::_mm256_loadu_si256(&tmp)
+        };
+
+        // Left output: (3 * curr + left_neighbor + 2) >> 2
+        let curr3 = _mm256_mullo_epi16(curr, three);
+        let sum_left = _mm256_add_epi16(curr3, neighbor_left);
+        let sum_left = _mm256_add_epi16(sum_left, two);
+        let left = _mm256_srai_epi16(sum_left, 2);
+
+        // Right output: (3 * curr + right_neighbor + 2) >> 2
+        let sum_right = _mm256_add_epi16(curr3, neighbor_right);
+        let sum_right = _mm256_add_epi16(sum_right, two);
+        let right = _mm256_srai_epi16(sum_right, 2);
+
+        // Interleave left and right: [L0, R0, L1, R1, ...]
+        let lo = _mm256_unpacklo_epi16(left, right);
+        let hi = _mm256_unpackhi_epi16(left, right);
+
+        // AVX2 unpack works on 128-bit lanes, need to permute
+        let out0 = _mm256_permute2x128_si256(lo, hi, 0x20);
+        let out1 = _mm256_permute2x128_si256(lo, hi, 0x31);
+
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_offset..out_offset + 16]).unwrap(),
+            out0,
+        );
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_offset + 16..out_offset + 32]).unwrap(),
+            out1,
+        );
+    }
+
+    // Handle remaining elements with scalar code
+    for i in (chunks * 16)..in_len {
+        let curr = input[i] as i32;
+        let left = if i > 0 { input[i - 1] } else { input[0] } as i32;
+        let right = if i + 1 < in_len { input[i + 1] } else { input[in_len - 1] } as i32;
+
+        let out_idx = i * 2;
+        if out_idx < out_len {
+            output[out_idx] = ((3 * curr + left + 2) >> 2) as i16;
+        }
+        if out_idx + 1 < out_len {
+            output[out_idx + 1] = ((3 * curr + right + 2) >> 2) as i16;
+        }
+    }
+}
+
 /// Scalar implementation of bilinear upsampling
 fn upsample_h2v2_i16_fancy_scalar(
     input: &[i16],

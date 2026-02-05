@@ -25,6 +25,7 @@
 //! ```
 
 use super::idct_int::idct_int_tiered;
+use super::upsample::upsample_h2v2_i16_fancy_strided;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
@@ -645,6 +646,7 @@ impl<'a> ScanlineReader<'a> {
     }
 
     /// Both horizontal and vertical 2x upsampling (4:2:0) with triangle filter.
+    /// 2x2 bilinear upsampling using SIMD-optimized implementation.
     fn upsample_h2v2(&mut self) {
         let in_width = self.chroma_strip_width;
         let in_stride = self.chroma_strip_stride;
@@ -653,56 +655,29 @@ impl<'a> ScanlineReader<'a> {
         let out_stride = self.strip_stride;
         let out_height = self.mcu_height;
 
-        for out_y in 0..out_height {
-            let in_y = out_y / 2;
-            let is_top = out_y % 2 == 0;
+        // Use SIMD-optimized strided upsampling for Cb
+        upsample_h2v2_i16_fancy_strided(
+            &self.cb_strip,
+            in_width,
+            in_stride,
+            in_height,
+            &mut self.cb_upsampled,
+            out_width,
+            out_stride,
+            out_height,
+        );
 
-            for out_x in 0..out_width {
-                let in_x = out_x / 2;
-                let is_left = out_x % 2 == 0;
-
-                // Get the four neighbors for bilinear interpolation
-                let in_x_clamped = in_x.min(in_width - 1);
-                let in_y_clamped = in_y.min(in_height - 1);
-
-                let curr_idx = in_y_clamped * in_stride + in_x_clamped;
-                let cb_curr = self.cb_strip[curr_idx] as i32;
-                let cr_curr = self.cr_strip[curr_idx] as i32;
-
-                // Vertical neighbor
-                let v_neighbor_y = if is_top {
-                    in_y_clamped.saturating_sub(1)
-                } else {
-                    (in_y + 1).min(in_height - 1)
-                };
-                let v_idx = v_neighbor_y * in_stride + in_x_clamped;
-                let cb_v = self.cb_strip[v_idx] as i32;
-                let cr_v = self.cr_strip[v_idx] as i32;
-
-                // Horizontal neighbor
-                let h_neighbor_x = if is_left {
-                    in_x_clamped.saturating_sub(1)
-                } else {
-                    (in_x + 1).min(in_width - 1)
-                };
-                let h_idx = in_y_clamped * in_stride + h_neighbor_x;
-                let cb_h = self.cb_strip[h_idx] as i32;
-                let cr_h = self.cr_strip[h_idx] as i32;
-
-                // Diagonal neighbor
-                let d_idx = v_neighbor_y * in_stride + h_neighbor_x;
-                let cb_d = self.cb_strip[d_idx] as i32;
-                let cr_d = self.cr_strip[d_idx] as i32;
-
-                // Bilinear weights: 9:3:3:1 for curr:h:v:d
-                let cb_val = ((9 * cb_curr + 3 * cb_h + 3 * cb_v + cb_d + 8) >> 4) as i16;
-                let cr_val = ((9 * cr_curr + 3 * cr_h + 3 * cr_v + cr_d + 8) >> 4) as i16;
-
-                let out_idx = out_y * out_stride + out_x;
-                self.cb_upsampled[out_idx] = cb_val;
-                self.cr_upsampled[out_idx] = cr_val;
-            }
-        }
+        // Use SIMD-optimized strided upsampling for Cr
+        upsample_h2v2_i16_fancy_strided(
+            &self.cr_strip,
+            in_width,
+            in_stride,
+            in_height,
+            &mut self.cr_upsampled,
+            out_width,
+            out_stride,
+            out_height,
+        );
     }
 
     /// Advances to the next MCU row.
