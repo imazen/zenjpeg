@@ -15,7 +15,7 @@
 //! - `to_ycbcr_planes_f32`: Raw YCbCr planes for custom processing
 
 use super::super::idct::inverse_dct_8x8;
-use super::super::idct_int::{idct_int_auto, idct_int_tiered};
+use super::super::idct_int::{idct_int_auto, idct_int_dc_only, idct_int_tiered};
 use super::super::upsample::upsample_fancy;
 use crate::color::{
     cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
@@ -187,20 +187,21 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[comp_idx][block_idx];
                         let coeff_count = self.coeff_counts[comp_idx][block_idx];
-
-                        // Fused dequantize + unzigzag (single pass)
-                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
-
-                        // IDCT writes directly to strip buffer (no intermediate copy)
-                        // Use tiered IDCT based on coefficient count for speed
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * strip_width + base_px;
-                        idct_int_tiered(
-                            &mut dequant_i32,
-                            &mut strip[dst_offset..],
-                            strip_width,
-                            coeff_count,
-                        );
+
+                        if coeff_count <= 1 {
+                            let dc = coeffs[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
+                        } else {
+                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            idct_int_tiered(
+                                &mut dequant_i32,
+                                &mut strip[dst_offset..],
+                                strip_width,
+                                coeff_count,
+                            );
+                        }
                     }
                 }
             }
@@ -313,16 +314,21 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[0][block_idx];
                         let coeff_count = self.coeff_counts[0][block_idx];
-
-                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * y_strip_width + base_px;
-                        idct_int_tiered(
-                            &mut dequant_i32,
-                            &mut y_strip[dst_offset..],
-                            y_strip_width,
-                            coeff_count,
-                        );
+
+                        if coeff_count <= 1 {
+                            let dc = coeffs[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
+                        } else {
+                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            idct_int_tiered(
+                                &mut dequant_i32,
+                                &mut y_strip[dst_offset..],
+                                y_strip_width,
+                                coeff_count,
+                            );
+                        }
                     }
                 }
             }
@@ -346,16 +352,21 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[1][block_idx];
                         let coeff_count = self.coeff_counts[1][block_idx];
-
-                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * c_strip_width + base_px;
-                        idct_int_tiered(
-                            &mut dequant_i32,
-                            &mut cb_strip_sub[dst_offset..],
-                            c_strip_width,
-                            coeff_count,
-                        );
+
+                        if coeff_count <= 1 {
+                            let dc = coeffs[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, &mut cb_strip_sub[dst_offset..], c_strip_width);
+                        } else {
+                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            idct_int_tiered(
+                                &mut dequant_i32,
+                                &mut cb_strip_sub[dst_offset..],
+                                c_strip_width,
+                                coeff_count,
+                            );
+                        }
                     }
                 }
             }
@@ -379,16 +390,21 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[2][block_idx];
                         let coeff_count = self.coeff_counts[2][block_idx];
-
-                        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * c_strip_width + base_px;
-                        idct_int_tiered(
-                            &mut dequant_i32,
-                            &mut cr_strip_sub[dst_offset..],
-                            c_strip_width,
-                            coeff_count,
-                        );
+
+                        if coeff_count <= 1 {
+                            let dc = coeffs[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, &mut cr_strip_sub[dst_offset..], c_strip_width);
+                        } else {
+                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            idct_int_tiered(
+                                &mut dequant_i32,
+                                &mut cr_strip_sub[dst_offset..],
+                                c_strip_width,
+                                coeff_count,
+                            );
+                        }
                     }
                 }
             }
