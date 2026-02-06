@@ -3451,7 +3451,7 @@ mod tests {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[test]
     fn test_archmage_fuzzy_erosion_matches_scalar() {
-        use archmage::{X64V3Token, SimdToken};
+        use archmage::{SimdToken, X64V3Token};
 
         let Some(token) = X64V3Token::summon() else {
             println!("AVX2+FMA not available, skipping archmage test");
