@@ -576,6 +576,7 @@ impl<'data> ArithmeticDecoder<'data> {
     pub fn decode_ac_first(
         &mut self,
         block: &mut [i16; 64],
+        bitmap: &mut u64,
         tbl: usize,
         ss: u8,
         se: u8,
@@ -647,6 +648,7 @@ impl<'data> ArithmeticDecoder<'data> {
 
             // Store in zigzag order (position k), not natural order
             block[k] = (v << al) as i16;
+            *bitmap |= 1u64 << (k & 63);
             k += 1;
         }
 
@@ -658,6 +660,7 @@ impl<'data> ArithmeticDecoder<'data> {
     pub fn decode_ac_refine(
         &mut self,
         block: &mut [i16; 64],
+        bitmap: &mut u64,
         tbl: usize,
         ss: u8,
         se: u8,
@@ -716,6 +719,7 @@ impl<'data> ArithmeticDecoder<'data> {
                     } else {
                         block[k] = p1;
                     }
+                    *bitmap |= 1u64 << (k & 63);
                     break;
                 }
 

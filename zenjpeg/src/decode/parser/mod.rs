@@ -104,6 +104,9 @@ pub(super) struct JpegParser<'a> {
     // Decoded coefficient data (used for progressive and non-streaming baseline)
     pub(super) coeffs: Vec<Vec<[i16; DCT_BLOCK_SIZE]>>, // Per component
     pub(super) coeff_counts: Vec<Vec<u8>>, // Coefficient count per block (for tiered IDCT)
+    // Nonzero coefficient bitmap per block (bit k set = coeffs[k] != 0).
+    // Used by AC refinement to skip zero positions via trailing_zeros().
+    pub(super) nonzero_bitmaps: Vec<Vec<u64>>,
 
     // Streaming decode result (used for baseline 4:4:4 JPEGs)
     pub(super) streaming_rgb: Option<Vec<u8>>,
@@ -188,6 +191,7 @@ impl<'a> JpegParser<'a> {
             restart_interval: 0,
             coeffs: Vec::new(),
             coeff_counts: Vec::new(),
+            nonzero_bitmaps: Vec::new(),
             streaming_rgb: None,
             prefer_streaming: true, // Default to streaming for RGB decode
             icc_profile,
