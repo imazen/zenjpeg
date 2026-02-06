@@ -451,9 +451,7 @@ fn upsample_horizontal_row_strided_avx2(
             // Edge case: replicate first element
             let mut tmp = [0i16; 16];
             tmp[0] = input[0];
-            for j in 1..16 {
-                tmp[j] = input[j - 1];
-            }
+            tmp[1..16].copy_from_slice(&input[0..15]);
             safe_simd::_mm256_loadu_si256(&tmp)
         };
 
@@ -1122,12 +1120,6 @@ fn upsample_horizontal_row_avx2(_token: archmage::Avx2Token, input: &[i16], outp
     }
 }
 
-/// Scalar fallback for horizontal upsampling
-#[allow(dead_code)]
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
 // ============================================================================
 // Nearest-Neighbor Upsampling (Box Filter)
 // ============================================================================
@@ -1782,6 +1774,12 @@ fn upsample_h2v2_f32_libjpeg(
 // Existing Scalar Horizontal Row (for reference/internal use)
 // ============================================================================
 
+/// Scalar fallback for horizontal upsampling
+#[allow(dead_code)]
+#[cfg(all(
+    feature = "archmage-simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
     let in_width = input.len();
     let out_width = output.len();
