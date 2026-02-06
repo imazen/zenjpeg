@@ -483,7 +483,9 @@ impl<'a> JpegParser<'a> {
                 // Replicate last valid chroma row to fill padding rows.
                 // Valid chroma rows for this MCU row:
                 let c_row_start = imcu_row * c_strip_height;
-                let c_valid = chroma_height_total.saturating_sub(c_row_start).min(c_strip_height);
+                let c_valid = chroma_height_total
+                    .saturating_sub(c_row_start)
+                    .min(c_strip_height);
                 if c_valid > 0 && c_valid < c_strip_height {
                     let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
                     for pad_row in c_valid..c_strip_height {
