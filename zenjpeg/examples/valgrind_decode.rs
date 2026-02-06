@@ -2,8 +2,9 @@
 //!
 //! Usage:
 //!   cargo build --release --example valgrind_decode
-//!   valgrind --tool=callgrind --cache-sim=yes ./target/release/examples/valgrind_decode jpegli
-//!   valgrind --tool=callgrind --cache-sim=yes ./target/release/examples/valgrind_decode zune
+//!   valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 2048
+//!   valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 2048 progressive
+//!   valgrind --tool=callgrind ./target/release/examples/valgrind_decode zune 2048
 //!   kcachegrind callgrind.out.*  # To visualize
 
 use enough::Unstoppable;
@@ -18,17 +19,28 @@ use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
-fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
+    // Use noise+patches pattern (not gradients — see CLAUDE.md)
     let mut data = vec![0u8; (width * height * 3) as usize];
+    let mut rng: u32 = 0xDEADBEEF;
     for y in 0..height as usize {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
-            data[idx] = ((x * 255) / width as usize) as u8;
-            data[idx + 1] = ((y * 255) / height as usize) as u8;
-            data[idx + 2] = 128;
+            // Simple LCG noise + patch pattern
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            let noise = ((rng >> 16) & 0xFF) as u8;
+            let patch_x = (x / 64) & 3;
+            let patch_y = (y / 64) & 3;
+            let base = ((patch_x * 64 + patch_y * 32) & 255) as u8;
+            data[idx] = base.wrapping_add(noise >> 2);
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            data[idx + 1] = base.wrapping_add(((rng >> 16) & 0x3F) as u8);
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            data[idx + 2] = (255 - base).wrapping_add(((rng >> 16) & 0x1F) as u8);
         }
     }
-    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+    let config =
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -56,16 +68,26 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: {} <jpegli|zune> [size]", args[0]);
+        eprintln!("Usage: {} <jpegli|zune> [size] [progressive]", args[0]);
         eprintln!("  size: 512 (default), 1024, or 2048");
+        eprintln!("  progressive: add 'progressive' or 'prog' for progressive JPEG");
         std::process::exit(1);
     }
 
     let decoder_type = &args[1];
     let size: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(512);
+    let progressive = args
+        .get(3)
+        .map(|s| s.starts_with("prog"))
+        .unwrap_or(false);
 
-    eprintln!("Creating {}x{} test JPEG...", size, size);
-    let jpeg_data = create_test_jpeg(size, size);
+    eprintln!(
+        "Creating {}x{} {} test JPEG...",
+        size,
+        size,
+        if progressive { "progressive" } else { "baseline" }
+    );
+    let jpeg_data = create_test_jpeg(size, size, progressive);
     eprintln!("JPEG size: {} bytes", jpeg_data.len());
 
     eprintln!("Decoding with {}...", decoder_type);
