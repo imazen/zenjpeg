@@ -844,6 +844,7 @@ impl<'a> JpegParser<'a> {
         format: PixelFormat,
         is_xyb: bool,
         chroma_upsampling: super::super::ChromaUpsampling,
+        dequant_bias: bool,
         _stop: &impl Stop,
     ) -> Result<Vec<u8>> {
         // If streaming decode was used, return its result directly (zero-copy)
@@ -858,12 +859,13 @@ impl<'a> JpegParser<'a> {
         }
 
         // Try fast integer path for non-XYB 4:4:4 RGB images
-        if self.can_use_fast_i16_path(format, is_xyb) {
+        // (dequant_bias requires f32 path for fractional bias application)
+        if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
             return self.to_pixels_fast_i16(chroma_upsampling);
         }
 
         // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
-        if self.can_use_fast_i16_subsampled(format, is_xyb) {
+        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
             return self.to_pixels_fast_i16_subsampled(chroma_upsampling);
         }
 
@@ -892,7 +894,7 @@ impl<'a> JpegParser<'a> {
                 }
 
                 // IDCT for this component in this MCU row
-                let _biases = &component_biases[comp_idx];
+                let biases = &component_biases[comp_idx];
                 let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
 
                 for iy in 0..info.v_samp {
@@ -922,9 +924,14 @@ impl<'a> JpegParser<'a> {
                         let base_px = bx * DCT_SIZE;
                         let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
 
-                        if is_xyb {
-                            // XYB mode: use f32 IDCT for extended gamut precision
-                            let dequant = dequantize_block(&natural_coeffs, quant);
+                        if is_xyb || dequant_bias {
+                            // f32 IDCT path: XYB needs extended gamut precision,
+                            // dequant_bias needs fractional bias application
+                            let dequant = if dequant_bias && !is_xyb {
+                                dequantize_block_with_bias(&natural_coeffs, quant, biases)
+                            } else {
+                                dequantize_block(&natural_coeffs, quant)
+                            };
                             let pixels = inverse_dct_8x8(&dequant);
 
                             if cols_to_copy == DCT_SIZE {

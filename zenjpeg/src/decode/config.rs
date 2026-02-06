@@ -263,6 +263,16 @@ pub struct DecoderConfig {
     /// How to handle recoverable errors (truncation, minor spec violations).
     /// Default is [`Strictness::Balanced`].
     pub strictness: Strictness,
+    /// Apply optimal Laplacian dequantization biases (Price & Rabbani 2000)
+    /// for reduced reconstruction error.
+    ///
+    /// When enabled, the decoder uses f32 dequantization with per-coefficient
+    /// biases computed from DCT coefficient statistics, instead of the default
+    /// integer dequantization. This produces higher-quality output at the cost
+    /// of slower decoding (falls through to the f32 IDCT path).
+    ///
+    /// Default: `false`.
+    pub dequant_bias: bool,
 }
 
 impl core::fmt::Debug for DecoderConfig {
@@ -276,6 +286,7 @@ impl core::fmt::Debug for DecoderConfig {
             .field("max_memory", &self.max_memory)
             .field("preserve", &self.preserve)
             .field("strictness", &self.strictness)
+            .field("dequant_bias", &self.dequant_bias)
             .finish()
     }
 }
@@ -292,6 +303,7 @@ impl Default for DecoderConfig {
             max_memory: DEFAULT_MAX_MEMORY,
             preserve: PreserveConfig::default(),
             strictness: Strictness::default(),
+            dequant_bias: false,
         }
     }
 }
