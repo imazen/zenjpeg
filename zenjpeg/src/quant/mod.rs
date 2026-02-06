@@ -852,8 +852,7 @@ pub fn dequantize_unzigzag_i32_partial(
     // Positions beyond count are guaranteed zero from entropy decoder.
     for zigzag_idx in 0..count {
         let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
-        result[natural_idx] =
-            zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
     }
 
     result
@@ -879,8 +878,7 @@ pub fn dequantize_unzigzag_i32_into_partial(
 
     for zigzag_idx in 0..count {
         let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
-        result[natural_idx] =
-            zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
     }
 }
 

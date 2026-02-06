@@ -639,8 +639,12 @@ fn test_precision_improvement_summary() {
 
     let decoder = Decoder::new();
 
-    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
-    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
+    let decoded_u8 = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("u8 decode failed");
+    let decoded_f32 = decoder
+        .decode_f32(&jpeg, Unstoppable)
+        .expect("f32 decode failed");
 
     let unique_input = count_unique_rgb_u8(&input);
     let unique_u8 = count_unique_rgb_u8(&decoded_u8.data);
@@ -723,8 +727,12 @@ fn test_10plus_bit_demonstration() {
     println!("JPEG size: {} bytes", jpeg.len());
 
     let decoder = Decoder::new();
-    let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decode failed");
-    let decoded_f32 = decoder.decode_f32(&jpeg, Unstoppable).expect("f32 decode failed");
+    let decoded_u8 = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("u8 decode failed");
+    let decoded_f32 = decoder
+        .decode_f32(&jpeg, Unstoppable)
+        .expect("f32 decode failed");
 
     // For grayscale, decoder outputs RGB, so extract just one channel
     let u8_gray: Vec<u8> = decoded_u8.data.iter().step_by(3).cloned().collect();

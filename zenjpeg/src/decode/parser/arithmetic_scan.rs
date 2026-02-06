@@ -332,10 +332,7 @@ impl<'a> JpegParser<'a> {
                             let block_y = mcu_y * v_samp + v;
                             let block_idx = block_y * comp_blocks_h + block_x;
 
-                            decoder.decode_dc_refine(
-                                &mut self.coeffs[*comp_idx][block_idx],
-                                al,
-                            )?;
+                            decoder.decode_dc_refine(&mut self.coeffs[*comp_idx][block_idx], al)?;
                         }
                     }
                 }

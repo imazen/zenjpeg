@@ -63,7 +63,9 @@ fn test_progressive_subsampling_external_decoder_compat() {
         );
 
         // Test with our own decoder
-        let our_result = Decoder::new().output_format(PixelFormat::Rgb).decode(&jpeg, Unstoppable);
+        let our_result = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .decode(&jpeg, Unstoppable);
 
         assert!(
             our_result.is_ok(),

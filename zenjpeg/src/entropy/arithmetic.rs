@@ -26,35 +26,120 @@ pub const NUM_ARITH_TBLS: usize = 4;
 /// - Bit 23: Switch_MPS (whether to switch MPS after LPS)
 /// - Bits 24-30: Next_Index_MPS (next state after MPS)
 const ARITAB: [u32; 114] = [
-    0x0181_5a1d, 0x020e_2586, 0x0310_1114, 0x0412_080b,
-    0x0514_03d8, 0x0617_01da, 0x0719_00e5, 0x081c_006f,
-    0x091e_0036, 0x0a21_001a, 0x0b23_000d, 0x0c09_0006,
-    0x0d0a_0003, 0x0d0c_0001, 0x0f8f_5a7f, 0x1024_3f25,
-    0x1126_2cf2, 0x1227_207c, 0x1328_17b9, 0x142a_1182,
-    0x152b_0cef, 0x162d_09a1, 0x172e_072f, 0x1830_055c,
-    0x1931_0406, 0x1a33_0303, 0x1b34_0240, 0x1c36_01b1,
-    0x1d38_0144, 0x1e39_00f5, 0x1f3b_00b7, 0x203c_008a,
-    0x213e_0068, 0x223f_004e, 0x2320_003b, 0x0921_002c,
-    0x25a5_5ae1, 0x2640_484c, 0x2741_3a0d, 0x2843_2ef1,
-    0x2944_261f, 0x2a45_1f33, 0x2b46_19a8, 0x2c48_1518,
-    0x2d49_1177, 0x2e4a_0e74, 0x2f4b_0bfb, 0x304d_09f8,
-    0x314e_0861, 0x324f_0706, 0x3330_05cd, 0x3432_04de,
-    0x3532_040f, 0x3633_0363, 0x3734_02d4, 0x3835_025c,
-    0x3936_01f8, 0x3a37_01a4, 0x3b38_0160, 0x3c39_0125,
-    0x3d3a_00f6, 0x3e3b_00cb, 0x3f3d_00ab, 0x203d_008f,
-    0x41c1_5b12, 0x4250_4d04, 0x4351_412c, 0x4452_37d8,
-    0x4553_2fe8, 0x4654_293c, 0x4756_2379, 0x4857_1edf,
-    0x4957_1aa9, 0x4a48_174e, 0x4b48_1424, 0x4c4a_119c,
-    0x4d4a_0f6b, 0x4e4b_0d51, 0x4f4d_0bb6, 0x304d_0a40,
-    0x51d0_5832, 0x5258_4d1c, 0x5359_438e, 0x545a_3bdd,
-    0x555b_34ee, 0x565c_2eae, 0x575d_299a, 0x4756_2516,
-    0x59d8_5570, 0x5a5f_4ca9, 0x5b60_44d9, 0x5c61_3e22,
-    0x5d63_3824, 0x5e63_32b4, 0x565d_2e17, 0x60df_56a8,
-    0x6165_4f46, 0x6266_47e5, 0x6367_41cf, 0x6468_3c3d,
-    0x5d63_375e, 0x6669_5231, 0x676a_4c0f, 0x686b_4639,
-    0x6367_415e, 0x6ae9_5627, 0x6b6c_50e7, 0x676d_4b85,
-    0x6d6e_5597, 0x6b6f_504f, 0x6fee_5a10, 0x6d70_5522,
-    0x6ff0_59eb, 0x7171_5a1d,
+    0x0181_5a1d,
+    0x020e_2586,
+    0x0310_1114,
+    0x0412_080b,
+    0x0514_03d8,
+    0x0617_01da,
+    0x0719_00e5,
+    0x081c_006f,
+    0x091e_0036,
+    0x0a21_001a,
+    0x0b23_000d,
+    0x0c09_0006,
+    0x0d0a_0003,
+    0x0d0c_0001,
+    0x0f8f_5a7f,
+    0x1024_3f25,
+    0x1126_2cf2,
+    0x1227_207c,
+    0x1328_17b9,
+    0x142a_1182,
+    0x152b_0cef,
+    0x162d_09a1,
+    0x172e_072f,
+    0x1830_055c,
+    0x1931_0406,
+    0x1a33_0303,
+    0x1b34_0240,
+    0x1c36_01b1,
+    0x1d38_0144,
+    0x1e39_00f5,
+    0x1f3b_00b7,
+    0x203c_008a,
+    0x213e_0068,
+    0x223f_004e,
+    0x2320_003b,
+    0x0921_002c,
+    0x25a5_5ae1,
+    0x2640_484c,
+    0x2741_3a0d,
+    0x2843_2ef1,
+    0x2944_261f,
+    0x2a45_1f33,
+    0x2b46_19a8,
+    0x2c48_1518,
+    0x2d49_1177,
+    0x2e4a_0e74,
+    0x2f4b_0bfb,
+    0x304d_09f8,
+    0x314e_0861,
+    0x324f_0706,
+    0x3330_05cd,
+    0x3432_04de,
+    0x3532_040f,
+    0x3633_0363,
+    0x3734_02d4,
+    0x3835_025c,
+    0x3936_01f8,
+    0x3a37_01a4,
+    0x3b38_0160,
+    0x3c39_0125,
+    0x3d3a_00f6,
+    0x3e3b_00cb,
+    0x3f3d_00ab,
+    0x203d_008f,
+    0x41c1_5b12,
+    0x4250_4d04,
+    0x4351_412c,
+    0x4452_37d8,
+    0x4553_2fe8,
+    0x4654_293c,
+    0x4756_2379,
+    0x4857_1edf,
+    0x4957_1aa9,
+    0x4a48_174e,
+    0x4b48_1424,
+    0x4c4a_119c,
+    0x4d4a_0f6b,
+    0x4e4b_0d51,
+    0x4f4d_0bb6,
+    0x304d_0a40,
+    0x51d0_5832,
+    0x5258_4d1c,
+    0x5359_438e,
+    0x545a_3bdd,
+    0x555b_34ee,
+    0x565c_2eae,
+    0x575d_299a,
+    0x4756_2516,
+    0x59d8_5570,
+    0x5a5f_4ca9,
+    0x5b60_44d9,
+    0x5c61_3e22,
+    0x5d63_3824,
+    0x5e63_32b4,
+    0x565d_2e17,
+    0x60df_56a8,
+    0x6165_4f46,
+    0x6266_47e5,
+    0x6367_41cf,
+    0x6468_3c3d,
+    0x5d63_375e,
+    0x6669_5231,
+    0x676a_4c0f,
+    0x686b_4639,
+    0x6367_415e,
+    0x6ae9_5627,
+    0x6b6c_50e7,
+    0x676d_4b85,
+    0x6d6e_5597,
+    0x6b6f_504f,
+    0x6fee_5a10,
+    0x6d70_5522,
+    0x6ff0_59eb,
+    0x7171_5a1d,
 ];
 
 /// Core arithmetic decoding state (separated from stats tables for borrow checker).
@@ -360,12 +445,7 @@ impl<'data> ArithmeticDecoder<'data> {
 
     /// Decodes AC coefficients for a block.
     /// Direct port of libjpeg-turbo's decode_mcu_AC_first for sequential mode.
-    pub fn decode_ac(
-        &mut self,
-        block: &mut [i16; 64],
-        tbl: usize,
-        se: u8,
-    ) -> ScanResult<()> {
+    pub fn decode_ac(&mut self, block: &mut [i16; 64], tbl: usize, se: u8) -> ScanResult<()> {
         if self.state.ct == -1 {
             return Ok(ScanRead::EndOfScan);
         }
@@ -408,7 +488,9 @@ impl<'data> ArithmeticDecoder<'data> {
                         m <<= 1;
                         if m == 0x8000 {
                             self.state.ct = -1;
-                            return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
+                            return Err(Error::invalid_jpeg_data(
+                                "arithmetic AC magnitude overflow",
+                            ));
                         }
                         st += 1;
                     }
@@ -538,7 +620,9 @@ impl<'data> ArithmeticDecoder<'data> {
                         m <<= 1;
                         if m == 0x8000 {
                             self.state.ct = -1;
-                            return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
+                            return Err(Error::invalid_jpeg_data(
+                                "arithmetic AC magnitude overflow",
+                            ));
                         }
                         st += 1;
                     }

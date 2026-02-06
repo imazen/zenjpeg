@@ -64,7 +64,9 @@ fn test_decode() {
 
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("decode failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -183,7 +185,9 @@ fn test_decode_f32() {
 
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
-    let decoded = Decoder::new().decode_f32(&jpeg, Unstoppable).expect("decode_f32 failed");
+    let decoded = Decoder::new()
+        .decode_f32(&jpeg, Unstoppable)
+        .expect("decode_f32 failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -224,7 +228,9 @@ fn test_decoder_new() {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
 
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("decode failed");
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
 }

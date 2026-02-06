@@ -92,7 +92,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decode::Decoder;
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
                 });
             },
         );
@@ -109,7 +111,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)
                         .fancy_upsampling(false);
-                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
                 });
             },
         );
@@ -141,7 +145,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decode::Decoder;
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
                 });
             },
         );
@@ -158,7 +164,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)
                         .fancy_upsampling(false);
-                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
                 });
             },
         );
@@ -225,7 +233,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decode::Decoder;
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-                    decoder.decode(black_box(data), Unstoppable).expect("decode failed")
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
                 });
             },
         );

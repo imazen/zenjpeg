@@ -62,7 +62,9 @@ fn test_solid_color(r: u8, g: u8, b: u8, name: &str, distance: f32) {
     let rust_coeffs = decoder
         .decode_coefficients(&rust_jpeg, Unstoppable)
         .expect("decode rust");
-    let cpp_coeffs = decoder.decode_coefficients(&cpp_jpeg, Unstoppable).expect("decode cpp");
+    let cpp_coeffs = decoder
+        .decode_coefficients(&cpp_jpeg, Unstoppable)
+        .expect("decode cpp");
 
     println!(
         "=== {} (RGB={},{},{}) distance={:.2} ===",

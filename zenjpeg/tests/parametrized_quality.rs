@@ -42,7 +42,9 @@ fn roundtrip_quality(
 
     let jpeg_data = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode failed");
+    let decoded = decoder
+        .decode(&jpeg_data, Unstoppable)
+        .expect("decode failed");
 
     let rms = distance_rms(&img.pixels, &decoded.data);
     let max_diff = max_pixel_diff(&img.pixels, &decoded.data);

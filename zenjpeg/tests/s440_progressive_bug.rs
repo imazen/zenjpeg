@@ -39,7 +39,9 @@ fn test_s440_progressive_roundtrip() {
     );
 
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = decoder.decode(&encoded, Unstoppable).expect("decode should succeed");
+    let decoded = decoder
+        .decode(&encoded, Unstoppable)
+        .expect("decode should succeed");
 
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);

@@ -371,15 +371,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
-                HuffmanResult::Symbol(v) => v,
-                HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
-                HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
-                HuffmanResult::InvalidCodeRecovered => {
-                    self.had_invalid_huffman = true;
-                    break; // Treat as EOB
-                }
-            };
+            let symbol =
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                    HuffmanResult::Symbol(v) => v,
+                    HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
+                    HuffmanResult::InvalidCodeRecovered => {
+                        self.had_invalid_huffman = true;
+                        break; // Treat as EOB
+                    }
+                };
 
             if symbol == 0 {
                 // EOB - remaining coefficients are zero
@@ -582,21 +583,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
-                HuffmanResult::Symbol(v) => v,
-                HuffmanResult::EndOfScan => {
-                    self.last_written = DCT_BLOCK_SIZE as u8;
-                    return Ok(ScanRead::EndOfScan);
-                }
-                HuffmanResult::Truncated => {
-                    self.last_written = DCT_BLOCK_SIZE as u8;
-                    return Ok(ScanRead::Truncated);
-                }
-                HuffmanResult::InvalidCodeRecovered => {
-                    self.had_invalid_huffman = true;
-                    break; // Treat as EOB
-                }
-            };
+            let symbol =
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                    HuffmanResult::Symbol(v) => v,
+                    HuffmanResult::EndOfScan => {
+                        self.last_written = DCT_BLOCK_SIZE as u8;
+                        return Ok(ScanRead::EndOfScan);
+                    }
+                    HuffmanResult::Truncated => {
+                        self.last_written = DCT_BLOCK_SIZE as u8;
+                        return Ok(ScanRead::Truncated);
+                    }
+                    HuffmanResult::InvalidCodeRecovered => {
+                        self.had_invalid_huffman = true;
+                        break; // Treat as EOB
+                    }
+                };
 
             if symbol == 0 {
                 // EOB - remaining coefficients are zero
@@ -806,15 +808,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path
-            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
-                HuffmanResult::Symbol(v) => v,
-                HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
-                HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
-                HuffmanResult::InvalidCodeRecovered => {
-                    self.had_invalid_huffman = true;
-                    break; // Treat as EOB
-                }
-            };
+            let symbol =
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                    HuffmanResult::Symbol(v) => v,
+                    HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
+                    HuffmanResult::InvalidCodeRecovered => {
+                        self.had_invalid_huffman = true;
+                        break; // Treat as EOB
+                    }
+                };
 
             if symbol == 0 {
                 break; // EOB
@@ -1023,14 +1026,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes
-            let symbol = match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
-                HuffmanResult::Symbol(v) => v,
-                HuffmanResult::EndOfScan | HuffmanResult::Truncated => break,
-                HuffmanResult::InvalidCodeRecovered => {
-                    self.had_invalid_huffman = true;
-                    break; // Treat as EOB
-                }
-            };
+            let symbol =
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
+                    HuffmanResult::Symbol(v) => v,
+                    HuffmanResult::EndOfScan | HuffmanResult::Truncated => break,
+                    HuffmanResult::InvalidCodeRecovered => {
+                        self.had_invalid_huffman = true;
+                        break; // Treat as EOB
+                    }
+                };
 
             if symbol == 0 {
                 break;

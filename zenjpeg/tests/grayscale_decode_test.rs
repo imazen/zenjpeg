@@ -29,7 +29,9 @@ fn test_grayscale_decode_basic() {
     };
 
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
-    let decoded = decoder.decode(&data, Unstoppable).expect("decode grayscale image");
+    let decoded = decoder
+        .decode(&data, Unstoppable)
+        .expect("decode grayscale image");
 
     println!(
         "Grayscale image: {}x{}, {} bytes",
@@ -60,7 +62,9 @@ fn test_grayscale_decode_to_rgb() {
 
     // Decode grayscale as RGB (should expand gray to R=G=B)
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = decoder.decode(&data, Unstoppable).expect("decode grayscale as RGB");
+    let decoded = decoder
+        .decode(&data, Unstoppable)
+        .expect("decode grayscale as RGB");
 
     println!(
         "Grayscale→RGB: {}x{}, {} bytes",
@@ -135,7 +139,9 @@ fn test_ultrahdr_gainmap_extraction() {
     };
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&data, Unstoppable).expect("decode UltraHDR image");
+    let decoded = decoder
+        .decode(&data, Unstoppable)
+        .expect("decode UltraHDR image");
 
     println!(
         "Primary image: {}x{}, format: {:?}",

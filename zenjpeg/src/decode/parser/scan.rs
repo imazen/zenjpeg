@@ -7,12 +7,12 @@
 
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
-use enough::Stop;
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::JpegMode;
+use enough::Stop;
 
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::super::{DecodeWarning, Strictness};
@@ -604,7 +604,12 @@ impl<'a> JpegParser<'a> {
                         let dc = coeffs[0] as i32 * quant[0] as i32;
                         idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
                     } else {
-                        dequantize_unzigzag_i32_into_partial(&coeffs, quant, &mut dequant_buf, coeff_count);
+                        dequantize_unzigzag_i32_into_partial(
+                            &coeffs,
+                            quant,
+                            &mut dequant_buf,
+                            coeff_count,
+                        );
                         idct_int_tiered(
                             &mut dequant_buf,
                             &mut strip[dst_offset..],
