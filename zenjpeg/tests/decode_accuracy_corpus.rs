@@ -218,8 +218,14 @@ fn compute_dssim(a: &[u8], b: &[u8], width: usize, height: usize, channels: usiz
             (a_r, b_r)
         }
         3 => {
-            let a_r: Vec<RGBA8> = a.chunks(3).map(|c| RGBA8::new(c[0], c[1], c[2], 255)).collect();
-            let b_r: Vec<RGBA8> = b.chunks(3).map(|c| RGBA8::new(c[0], c[1], c[2], 255)).collect();
+            let a_r: Vec<RGBA8> = a
+                .chunks(3)
+                .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
+                .collect();
+            let b_r: Vec<RGBA8> = b
+                .chunks(3)
+                .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
+                .collect();
             (a_r, b_r)
         }
         _ => return 99.0,
@@ -307,10 +313,18 @@ fn corpus_decode_accuracy() {
         let jd = decode_jpeg_decoder_crate(&data);
         let dj = decode_djpeg(path);
 
-        if zen.is_some() { success_counts[0] += 1; }
-        if zune.is_some() { success_counts[1] += 1; }
-        if jd.is_some() { success_counts[2] += 1; }
-        if dj.is_some() { success_counts[3] += 1; }
+        if zen.is_some() {
+            success_counts[0] += 1;
+        }
+        if zune.is_some() {
+            success_counts[1] += 1;
+        }
+        if jd.is_some() {
+            success_counts[2] += 1;
+        }
+        if dj.is_some() {
+            success_counts[3] += 1;
+        }
 
         decoded_files.push(Decoded {
             name: fname,
@@ -321,11 +335,16 @@ fn corpus_decode_accuracy() {
         });
     }
 
-    eprintln!("Decode success: zenjpeg={}/{} zune={}/{} jpeg-decoder={}/{} djpeg(libjpeg-turbo)={}/{}",
-        success_counts[0], files.len(),
-        success_counts[1], files.len(),
-        success_counts[2], files.len(),
-        success_counts[3], files.len(),
+    eprintln!(
+        "Decode success: zenjpeg={}/{} zune={}/{} jpeg-decoder={}/{} djpeg(libjpeg-turbo)={}/{}",
+        success_counts[0],
+        files.len(),
+        success_counts[1],
+        files.len(),
+        success_counts[2],
+        files.len(),
+        success_counts[3],
+        files.len(),
     );
     eprintln!();
 
@@ -357,18 +376,29 @@ fn corpus_decode_accuracy() {
             };
 
             if a.width != b.width || a.height != b.height {
-                stats.skip(format!("{}: dimension mismatch {}x{} vs {}x{}", d.name, a.width, a.height, b.width, b.height));
+                stats.skip(format!(
+                    "{}: dimension mismatch {}x{} vs {}x{}",
+                    d.name, a.width, a.height, b.width, b.height
+                ));
                 continue;
             }
 
             // Handle channel mismatch (e.g., CMYK→RGB conversion differences)
             if a.channels != b.channels {
-                stats.skip(format!("{}: channel mismatch {} vs {}", d.name, a.channels, b.channels));
+                stats.skip(format!(
+                    "{}: channel mismatch {} vs {}",
+                    d.name, a.channels, b.channels
+                ));
                 continue;
             }
 
             if a.pixels.len() != b.pixels.len() {
-                stats.skip(format!("{}: pixel data length mismatch {} vs {}", d.name, a.pixels.len(), b.pixels.len()));
+                stats.skip(format!(
+                    "{}: pixel data length mismatch {} vs {}",
+                    d.name,
+                    a.pixels.len(),
+                    b.pixels.len()
+                ));
                 continue;
             }
 
@@ -383,7 +413,10 @@ fn corpus_decode_accuracy() {
 
     // Per-file details for zenjpeg vs djpeg (the C reference)
     eprintln!("\n=== Per-file: zenjpeg vs djpeg(libjpeg-turbo) ===");
-    eprintln!("{:<45} {:>8} {:>10} {:>12}", "File", "MaxDiff", "MeanDiff", "DSSIM");
+    eprintln!(
+        "{:<45} {:>8} {:>10} {:>12}",
+        "File", "MaxDiff", "MeanDiff", "DSSIM"
+    );
     eprintln!("{}", "-".repeat(80));
 
     let mut good_count = 0;
@@ -395,14 +428,21 @@ fn corpus_decode_accuracy() {
         let (Some(a), Some(b)) = (&d.zenjpeg, &d.djpeg) else {
             continue;
         };
-        if a.width != b.width || a.height != b.height || a.channels != b.channels || a.pixels.len() != b.pixels.len() {
+        if a.width != b.width
+            || a.height != b.height
+            || a.channels != b.channels
+            || a.pixels.len() != b.pixels.len()
+        {
             continue;
         }
 
         let max_diff = max_pixel_diff(&a.pixels, &b.pixels);
         let mean_diff = mean_abs_diff(&a.pixels, &b.pixels);
         let dssim = compute_dssim(&a.pixels, &b.pixels, a.width, a.height, a.channels);
-        eprintln!("{:<45} {:>8} {:>10.4} {:>12.8}", d.name, max_diff, mean_diff, dssim);
+        eprintln!(
+            "{:<45} {:>8} {:>10.4} {:>12.8}",
+            d.name, max_diff, mean_diff, dssim
+        );
 
         // Track "normal" images (max_diff <= 30, DSSIM < 0.001) vs outliers
         if max_diff <= 30 && dssim < 0.001 {
@@ -410,14 +450,25 @@ fn corpus_decode_accuracy() {
             good_max_diff = good_max_diff.max(max_diff);
             good_dssim_sum += dssim;
         } else {
-            outliers.push(format!("  {} (max_diff={}, dssim={:.6})", d.name, max_diff, dssim));
+            outliers.push(format!(
+                "  {} (max_diff={}, dssim={:.6})",
+                d.name, max_diff, dssim
+            ));
         }
     }
 
     eprintln!("\n=== Summary (excluding outliers) ===");
-    eprintln!("Normal images: {}/{} with max_pixel_diff <= {} and mean DSSIM = {:.8}",
-        good_count, good_count + outliers.len(), good_max_diff,
-        if good_count > 0 { good_dssim_sum / good_count as f64 } else { 0.0 });
+    eprintln!(
+        "Normal images: {}/{} with max_pixel_diff <= {} and mean DSSIM = {:.8}",
+        good_count,
+        good_count + outliers.len(),
+        good_max_diff,
+        if good_count > 0 {
+            good_dssim_sum / good_count as f64
+        } else {
+            0.0
+        }
+    );
     if !outliers.is_empty() {
         eprintln!("Outliers ({}):", outliers.len());
         for o in &outliers {
@@ -427,39 +478,59 @@ fn corpus_decode_accuracy() {
 
     // Now compare zenjpeg vs zune-jpeg per-file
     eprintln!("\n=== Per-file: zenjpeg vs zune-jpeg ===");
-    eprintln!("{:<45} {:>8} {:>10} {:>12}", "File", "MaxDiff", "MeanDiff", "DSSIM");
+    eprintln!(
+        "{:<45} {:>8} {:>10} {:>12}",
+        "File", "MaxDiff", "MeanDiff", "DSSIM"
+    );
     eprintln!("{}", "-".repeat(80));
 
     for d in &decoded_files {
         let (Some(a), Some(b)) = (&d.zenjpeg, &d.zune) else {
             continue;
         };
-        if a.width != b.width || a.height != b.height || a.channels != b.channels || a.pixels.len() != b.pixels.len() {
+        if a.width != b.width
+            || a.height != b.height
+            || a.channels != b.channels
+            || a.pixels.len() != b.pixels.len()
+        {
             continue;
         }
 
         let max_diff = max_pixel_diff(&a.pixels, &b.pixels);
         let mean_diff = mean_abs_diff(&a.pixels, &b.pixels);
         let dssim = compute_dssim(&a.pixels, &b.pixels, a.width, a.height, a.channels);
-        eprintln!("{:<45} {:>8} {:>10.4} {:>12.8}", d.name, max_diff, mean_diff, dssim);
+        eprintln!(
+            "{:<45} {:>8} {:>10.4} {:>12.8}",
+            d.name, max_diff, mean_diff, dssim
+        );
     }
 
     // Also compare zune vs djpeg per-file to establish the "normal" inter-decoder variance
     eprintln!("\n=== Per-file: zune-jpeg vs djpeg(libjpeg-turbo) ===");
-    eprintln!("{:<45} {:>8} {:>10} {:>12}", "File", "MaxDiff", "MeanDiff", "DSSIM");
+    eprintln!(
+        "{:<45} {:>8} {:>10} {:>12}",
+        "File", "MaxDiff", "MeanDiff", "DSSIM"
+    );
     eprintln!("{}", "-".repeat(80));
 
     for d in &decoded_files {
         let (Some(a), Some(b)) = (&d.zune, &d.djpeg) else {
             continue;
         };
-        if a.width != b.width || a.height != b.height || a.channels != b.channels || a.pixels.len() != b.pixels.len() {
+        if a.width != b.width
+            || a.height != b.height
+            || a.channels != b.channels
+            || a.pixels.len() != b.pixels.len()
+        {
             continue;
         }
 
         let max_diff = max_pixel_diff(&a.pixels, &b.pixels);
         let mean_diff = mean_abs_diff(&a.pixels, &b.pixels);
         let dssim = compute_dssim(&a.pixels, &b.pixels, a.width, a.height, a.channels);
-        eprintln!("{:<45} {:>8} {:>10.4} {:>12.8}", d.name, max_diff, mean_diff, dssim);
+        eprintln!(
+            "{:<45} {:>8} {:>10.4} {:>12.8}",
+            d.name, max_diff, mean_diff, dssim
+        );
     }
 }

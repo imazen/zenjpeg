@@ -25,7 +25,11 @@
 //! ```
 
 use super::idct_int::{idct_int_dc_only, idct_int_tiered};
-use super::upsample::upsample_h2v2_i16_fancy_strided;
+use super::upsample::{
+    upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
+    upsample_h2v2_i16_nearest_strided,
+};
+use super::ChromaUpsampling;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
@@ -146,6 +150,8 @@ pub struct ScanlineReader<'a> {
     is_xyb: bool,
     /// True for Adobe RGB JPEGs (APP14 transform=0) - skip YCbCr→RGB conversion
     is_rgb: bool,
+    /// Chroma upsampling method
+    chroma_upsampling: ChromaUpsampling,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -169,6 +175,7 @@ impl<'a> ScanlineReader<'a> {
         restart_interval: u16,
         is_xyb: bool,
         is_rgb: bool,
+        chroma_upsampling: ChromaUpsampling,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -287,6 +294,7 @@ impl<'a> ScanlineReader<'a> {
             prev_coeff_counts: [64; 4], // Start with full zeroing
             is_xyb,
             is_rgb,
+            chroma_upsampling,
         })
     }
 
@@ -303,7 +311,6 @@ impl<'a> ScanlineReader<'a> {
         pixels: Vec<u8>,
         is_xyb: bool,
     ) -> Self {
-
         Self {
             data,
             width,
@@ -348,6 +355,7 @@ impl<'a> ScanlineReader<'a> {
             prev_coeff_counts: [64; 4],
             is_xyb,
             is_rgb: false, // Buffered mode: pixels already color-converted
+            chroma_upsampling: ChromaUpsampling::default(), // Unused in buffered mode
         }
     }
 
@@ -569,7 +577,7 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
-    /// Horizontal 2x upsampling (4:2:2) with triangle filter.
+    /// Horizontal 2x upsampling (4:2:2) with configurable filter.
     fn upsample_h2v1(&mut self) {
         let in_width = self.chroma_strip_width;
         let in_stride = self.chroma_strip_stride;
@@ -579,41 +587,120 @@ impl<'a> ScanlineReader<'a> {
 
         for y in 0..height {
             let in_row = y.min(self.chroma_strip_height - 1);
-            for out_x in 0..out_width {
-                let in_x = out_x / 2;
-                let in_idx = in_row * in_stride + in_x.min(in_width - 1);
 
-                let cb_curr = self.cb_strip[in_idx] as i32;
-                let cr_curr = self.cr_strip[in_idx] as i32;
+            match self.chroma_upsampling {
+                ChromaUpsampling::NearestNeighbor => {
+                    for out_x in 0..out_width {
+                        let in_x = (out_x / 2).min(in_width - 1);
+                        let in_idx = in_row * in_stride + in_x;
+                        let out_idx = y * out_stride + out_x;
+                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
+                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
+                    }
+                }
+                ChromaUpsampling::Triangle => {
+                    for out_x in 0..out_width {
+                        let in_x = out_x / 2;
+                        let in_idx = in_row * in_stride + in_x.min(in_width - 1);
+                        let cb_curr = self.cb_strip[in_idx] as i32;
+                        let cr_curr = self.cr_strip[in_idx] as i32;
 
-                let (cb_val, cr_val) = if out_x % 2 == 0 {
-                    // Left pixel: weight 3:1 with left neighbor
-                    let left_idx = in_row * in_stride + in_x.saturating_sub(1);
-                    let cb_left = self.cb_strip[left_idx] as i32;
-                    let cr_left = self.cr_strip[left_idx] as i32;
-                    (
-                        ((3 * cb_curr + cb_left + 2) >> 2) as i16,
-                        ((3 * cr_curr + cr_left + 2) >> 2) as i16,
-                    )
-                } else {
-                    // Right pixel: weight 3:1 with right neighbor
-                    let right_idx = in_row * in_stride + (in_x + 1).min(in_width - 1);
-                    let cb_right = self.cb_strip[right_idx] as i32;
-                    let cr_right = self.cr_strip[right_idx] as i32;
-                    (
-                        ((3 * cb_curr + cb_right + 2) >> 2) as i16,
-                        ((3 * cr_curr + cr_right + 2) >> 2) as i16,
-                    )
-                };
+                        let (cb_val, cr_val) = if out_x % 2 == 0 {
+                            let left_idx = in_row * in_stride + in_x.saturating_sub(1);
+                            let cb_left = self.cb_strip[left_idx] as i32;
+                            let cr_left = self.cr_strip[left_idx] as i32;
+                            (
+                                ((3 * cb_curr + cb_left + 2) >> 2) as i16,
+                                ((3 * cr_curr + cr_left + 2) >> 2) as i16,
+                            )
+                        } else {
+                            let right_idx = in_row * in_stride + (in_x + 1).min(in_width - 1);
+                            let cb_right = self.cb_strip[right_idx] as i32;
+                            let cr_right = self.cr_strip[right_idx] as i32;
+                            (
+                                ((3 * cb_curr + cb_right + 2) >> 2) as i16,
+                                ((3 * cr_curr + cr_right + 2) >> 2) as i16,
+                            )
+                        };
 
-                let out_idx = y * out_stride + out_x;
-                self.cb_upsampled[out_idx] = cb_val;
-                self.cr_upsampled[out_idx] = cr_val;
+                        let out_idx = y * out_stride + out_x;
+                        self.cb_upsampled[out_idx] = cb_val;
+                        self.cr_upsampled[out_idx] = cr_val;
+                    }
+                }
+                ChromaUpsampling::LibjpegCompat => {
+                    // libjpeg-turbo h2v1: alternating +1/+2 bias
+                    if in_width == 0 {
+                        continue;
+                    }
+                    let cb_in = &self.cb_strip[in_row * in_stride..];
+                    let cr_in = &self.cr_strip[in_row * in_stride..];
+                    let out_base = y * out_stride;
+
+                    if in_width == 1 {
+                        self.cb_upsampled[out_base] = cb_in[0];
+                        self.cr_upsampled[out_base] = cr_in[0];
+                        if out_width > 1 {
+                            self.cb_upsampled[out_base + 1] = cb_in[0];
+                            self.cr_upsampled[out_base + 1] = cr_in[0];
+                        }
+                        continue;
+                    }
+
+                    // First column
+                    let cb0 = cb_in[0] as i32;
+                    let cr0 = cr_in[0] as i32;
+                    self.cb_upsampled[out_base] = cb0 as i16;
+                    self.cr_upsampled[out_base] = cr0 as i16;
+                    if out_width > 1 {
+                        self.cb_upsampled[out_base + 1] =
+                            ((cb0 * 3 + cb_in[1] as i32 + 2) >> 2) as i16;
+                        self.cr_upsampled[out_base + 1] =
+                            ((cr0 * 3 + cr_in[1] as i32 + 2) >> 2) as i16;
+                    }
+
+                    // Interior columns
+                    for in_x in 1..in_width.saturating_sub(1) {
+                        let cb_prev = cb_in[in_x - 1] as i32;
+                        let cb_curr = cb_in[in_x] as i32;
+                        let cb_next = cb_in[in_x + 1] as i32;
+                        let cr_prev = cr_in[in_x - 1] as i32;
+                        let cr_curr = cr_in[in_x] as i32;
+                        let cr_next = cr_in[in_x + 1] as i32;
+                        let left = out_base + in_x * 2;
+                        let right = left + 1;
+                        if left < out_base + out_width {
+                            self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
+                            self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
+                        }
+                        if right < out_base + out_width {
+                            self.cb_upsampled[right] = ((cb_curr * 3 + cb_next + 2) >> 2) as i16;
+                            self.cr_upsampled[right] = ((cr_curr * 3 + cr_next + 2) >> 2) as i16;
+                        }
+                    }
+
+                    // Last column
+                    let last = in_width - 1;
+                    let cb_prev = cb_in[last - 1] as i32;
+                    let cb_curr = cb_in[last] as i32;
+                    let cr_prev = cr_in[last - 1] as i32;
+                    let cr_curr = cr_in[last] as i32;
+                    let left = out_base + last * 2;
+                    let right = left + 1;
+                    if left < out_base + out_width {
+                        self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
+                        self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
+                    }
+                    if right < out_base + out_width {
+                        self.cb_upsampled[right] = cb_curr as i16;
+                        self.cr_upsampled[right] = cr_curr as i16;
+                    }
+                }
             }
         }
     }
 
-    /// Vertical 2x upsampling (4:4:0) with triangle filter.
+    /// Vertical 2x upsampling (4:4:0) with configurable filter.
     fn upsample_h1v2(&mut self) {
         let in_width = self.chroma_strip_width;
         let in_stride = self.chroma_strip_stride;
@@ -624,39 +711,62 @@ impl<'a> ScanlineReader<'a> {
 
         for out_y in 0..out_height {
             let in_y = out_y / 2;
-            let is_top = out_y % 2 == 0;
+            let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+            let is_upper = out_y % 2 == 0;
 
-            for out_x in 0..out_width {
-                let in_x = out_x.min(in_width - 1);
-                let in_y_clamped = in_y.min(in_height - 1);
+            let far_y = if is_upper {
+                in_y_clamped.saturating_sub(1)
+            } else {
+                (in_y + 1).min(in_height.saturating_sub(1))
+            };
 
-                let curr_idx = in_y_clamped * in_stride + in_x;
-                let cb_curr = self.cb_strip[curr_idx] as i32;
-                let cr_curr = self.cr_strip[curr_idx] as i32;
+            match self.chroma_upsampling {
+                ChromaUpsampling::NearestNeighbor => {
+                    for out_x in 0..out_width {
+                        let in_x = out_x.min(in_width.saturating_sub(1));
+                        let in_idx = in_y_clamped * in_stride + in_x;
+                        let out_idx = out_y * out_stride + out_x;
+                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
+                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
+                    }
+                }
+                ChromaUpsampling::Triangle => {
+                    for out_x in 0..out_width {
+                        let in_x = out_x.min(in_width.saturating_sub(1));
+                        let curr_idx = in_y_clamped * in_stride + in_x;
+                        let neighbor_idx = far_y * in_stride + in_x;
+                        let cb_curr = self.cb_strip[curr_idx] as i32;
+                        let cr_curr = self.cr_strip[curr_idx] as i32;
+                        let cb_neighbor = self.cb_strip[neighbor_idx] as i32;
+                        let cr_neighbor = self.cr_strip[neighbor_idx] as i32;
 
-                // Vertical neighbor
-                let neighbor_y = if is_top {
-                    in_y_clamped.saturating_sub(1)
-                } else {
-                    (in_y + 1).min(in_height - 1)
-                };
-                let neighbor_idx = neighbor_y * in_stride + in_x;
-                let cb_neighbor = self.cb_strip[neighbor_idx] as i32;
-                let cr_neighbor = self.cr_strip[neighbor_idx] as i32;
+                        let out_idx = out_y * out_stride + out_x;
+                        self.cb_upsampled[out_idx] = ((3 * cb_curr + cb_neighbor + 2) >> 2) as i16;
+                        self.cr_upsampled[out_idx] = ((3 * cr_curr + cr_neighbor + 2) >> 2) as i16;
+                    }
+                }
+                ChromaUpsampling::LibjpegCompat => {
+                    // libjpeg-turbo h1v2: alternating +1/+2 bias
+                    let bias = if is_upper { 1i32 } else { 2i32 };
+                    for out_x in 0..out_width {
+                        let in_x = out_x.min(in_width.saturating_sub(1));
+                        let near_idx = in_y_clamped * in_stride + in_x;
+                        let far_idx = far_y * in_stride + in_x;
+                        let cb_near = self.cb_strip[near_idx] as i32;
+                        let cr_near = self.cr_strip[near_idx] as i32;
+                        let cb_far = self.cb_strip[far_idx] as i32;
+                        let cr_far = self.cr_strip[far_idx] as i32;
 
-                // Triangle filter weights: 3:1
-                let cb_val = ((3 * cb_curr + cb_neighbor + 2) >> 2) as i16;
-                let cr_val = ((3 * cr_curr + cr_neighbor + 2) >> 2) as i16;
-
-                let out_idx = out_y * out_stride + out_x;
-                self.cb_upsampled[out_idx] = cb_val;
-                self.cr_upsampled[out_idx] = cr_val;
+                        let out_idx = out_y * out_stride + out_x;
+                        self.cb_upsampled[out_idx] = ((cb_near * 3 + cb_far + bias) >> 2) as i16;
+                        self.cr_upsampled[out_idx] = ((cr_near * 3 + cr_far + bias) >> 2) as i16;
+                    }
+                }
             }
         }
     }
 
-    /// Both horizontal and vertical 2x upsampling (4:2:0) with triangle filter.
-    /// 2x2 bilinear upsampling using SIMD-optimized implementation.
+    /// Both horizontal and vertical 2x upsampling (4:2:0) with configurable filter.
     fn upsample_h2v2(&mut self) {
         let in_width = self.chroma_strip_width;
         let in_stride = self.chroma_strip_stride;
@@ -665,8 +775,15 @@ impl<'a> ScanlineReader<'a> {
         let out_stride = self.strip_stride;
         let out_height = self.mcu_height;
 
-        // Use SIMD-optimized strided upsampling for Cb
-        upsample_h2v2_i16_fancy_strided(
+        // Select strided upsampling function based on method
+        type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
+        let upsample_fn: StridedFn = match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy_strided,
+            ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg_strided,
+            ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
+        };
+
+        upsample_fn(
             &self.cb_strip,
             in_width,
             in_stride,
@@ -676,9 +793,7 @@ impl<'a> ScanlineReader<'a> {
             out_stride,
             out_height,
         );
-
-        // Use SIMD-optimized strided upsampling for Cr
-        upsample_h2v2_i16_fancy_strided(
+        upsample_fn(
             &self.cr_strip,
             in_width,
             in_stride,
@@ -843,7 +958,11 @@ impl<'a> ScanlineReader<'a> {
                 let cb = cb_buf[strip_offset + x];
                 let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = if self.is_rgb {
-                    (y.clamp(0, 255) as u8, cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
+                    (
+                        y.clamp(0, 255) as u8,
+                        cb.clamp(0, 255) as u8,
+                        cr.clamp(0, 255) as u8,
+                    )
                 } else {
                     ycbcr_to_rgb(
                         y.clamp(0, 255) as u8,
@@ -929,7 +1048,11 @@ impl<'a> ScanlineReader<'a> {
                 let cb = cb_buf[strip_offset + x];
                 let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = if self.is_rgb {
-                    (y.clamp(0, 255) as u8, cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
+                    (
+                        y.clamp(0, 255) as u8,
+                        cb.clamp(0, 255) as u8,
+                        cr.clamp(0, 255) as u8,
+                    )
                 } else {
                     ycbcr_to_rgb(
                         y.clamp(0, 255) as u8,
@@ -1486,7 +1609,9 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -1542,7 +1667,9 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         // Read in small chunks (3 rows at a time)
         let mut reader = decoder
@@ -1585,7 +1712,9 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 85.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1656,7 +1785,9 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1814,7 +1945,9 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         let mut reader = decoder
             .scanline_reader(&jpeg)
@@ -1864,7 +1997,9 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -1943,7 +2078,9 @@ mod tests {
 
         // Decode normally for comparison
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = decoder
@@ -2026,7 +2163,9 @@ mod tests {
 
         // Decode normally for comparison - use Gray output format
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         // Decode via scanline reader
         let mut reader = Decoder::new()
@@ -2091,7 +2230,9 @@ mod tests {
 
         // Use Gray output format for comparison
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
 
         let mut reader = Decoder::new()
             .scanline_reader(&jpeg)
@@ -2278,7 +2419,9 @@ mod tests {
         assert_eq!(rows_read, height as usize, "Should read all rows");
 
         // Compare with full-frame decode
-        let decoded = decoder.decode(&progressive_jpeg, enough::Unstoppable).expect("decode failed");
+        let decoded = decoder
+            .decode(&progressive_jpeg, enough::Unstoppable)
+            .expect("decode failed");
         let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
 
         // Should be identical (same decode path for progressive)

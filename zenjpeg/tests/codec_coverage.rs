@@ -18,7 +18,7 @@ use test_utils::{
     generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb, TestImage,
 };
 use zenjpeg::{
-    decoder::{Decoder, DecoderConfig, PixelFormat},
+    decoder::{ChromaUpsampling, Decoder, DecoderConfig, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
 
@@ -477,13 +477,17 @@ mod decode_coverage {
         // Wide
         let jpeg = create_test_jpeg(256, 64, 90.0);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("wide decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("wide decode failed");
         assert_eq!(decoded.width, 256);
         assert_eq!(decoded.height, 64);
 
         // Tall
         let jpeg = create_test_jpeg(64, 256, 90.0);
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("tall decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("tall decode failed");
         assert_eq!(decoded.width, 64);
         assert_eq!(decoded.height, 256);
     }
@@ -494,7 +498,9 @@ mod decode_coverage {
     fn decode_progressive() {
         let jpeg = create_progressive_jpeg(128, 128);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("progressive decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("progressive decode failed");
         assert_eq!(decoded.width, 128);
         assert_eq!(decoded.height, 128);
     }
@@ -505,7 +511,9 @@ mod decode_coverage {
     fn decode_subsampling_444() {
         let jpeg = create_subsampled_jpeg(128, 128, ChromaSubsampling::None);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("444 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("444 decode failed");
         assert_eq!(decoded.width, 128);
     }
 
@@ -513,7 +521,9 @@ mod decode_coverage {
     fn decode_subsampling_422() {
         let jpeg = create_subsampled_jpeg(128, 128, ChromaSubsampling::HalfHorizontal);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("422 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("422 decode failed");
         assert_eq!(decoded.width, 128);
     }
 
@@ -521,7 +531,9 @@ mod decode_coverage {
     fn decode_subsampling_420() {
         let jpeg = create_subsampled_jpeg(128, 128, ChromaSubsampling::Quarter);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("420 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("420 decode failed");
         assert_eq!(decoded.width, 128);
     }
 
@@ -529,7 +541,9 @@ mod decode_coverage {
     fn decode_subsampling_440() {
         let jpeg = create_subsampled_jpeg(128, 128, ChromaSubsampling::HalfVertical);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("440 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("440 decode failed");
         assert_eq!(decoded.width, 128);
     }
 
@@ -542,7 +556,9 @@ mod decode_coverage {
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("XYB decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("XYB decode failed");
         assert_eq!(decoded.width, 64);
         assert_eq!(decoded.height, 64);
     }
@@ -555,7 +571,7 @@ mod decode_coverage {
 
         let config = DecoderConfig {
             output_format: Some(PixelFormat::Rgb),
-            fancy_upsampling: true,
+            chroma_upsampling: ChromaUpsampling::Triangle,
             block_smoothing: true,
             apply_icc: false,
             max_pixels: 1000000,
@@ -564,7 +580,9 @@ mod decode_coverage {
         };
 
         let decoder = Decoder::from_config(config);
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("config decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("config decode failed");
         assert_eq!(decoded.width, 128);
     }
 
@@ -606,7 +624,9 @@ mod decode_coverage {
         let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("1x1 encode failed");
 
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("1x1 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("1x1 decode failed");
         assert_eq!(decoded.width, 1);
         assert_eq!(decoded.height, 1);
     }
@@ -615,7 +635,9 @@ mod decode_coverage {
     fn decode_8x8_mcu() {
         let jpeg = create_test_jpeg(8, 8, 90.0);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("8x8 decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("8x8 decode failed");
         assert_eq!(decoded.width, 8);
         assert_eq!(decoded.height, 8);
     }
@@ -624,7 +646,9 @@ mod decode_coverage {
     fn decode_large_image() {
         let jpeg = create_test_jpeg(1024, 768, 85.0);
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("large decode failed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("large decode failed");
         assert_eq!(decoded.width, 1024);
         assert_eq!(decoded.height, 768);
     }
@@ -704,7 +728,9 @@ mod roundtrip_coverage {
         let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
 
-        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
+        let decoded = Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .expect("decode failed");
         (img.pixels, decoded.data)
     }
 
@@ -733,7 +759,9 @@ mod roundtrip_coverage {
             let config = EncoderConfig::ycbcr(90.0, subsampling);
             let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
-            let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode failed");
+            let decoded = Decoder::new()
+                .decode(&jpeg, Unstoppable)
+                .expect("decode failed");
             assert_eq!(decoded.width, 128);
             assert_eq!(decoded.height, 128);
         }
@@ -758,7 +786,9 @@ mod roundtrip_coverage {
         let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
-        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("XYB decode failed");
+        let decoded = Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .expect("XYB decode failed");
         assert_eq!(decoded.width, 64);
         assert_eq!(decoded.height, 64);
     }
@@ -769,7 +799,9 @@ mod roundtrip_coverage {
         let config = EncoderConfig::grayscale(90.0);
         let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("gray encode failed");
 
-        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("gray decode failed");
+        let decoded = Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .expect("gray decode failed");
         assert_eq!(decoded.width, 64);
         assert_eq!(decoded.height, 64);
     }
