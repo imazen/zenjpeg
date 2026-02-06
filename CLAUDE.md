@@ -358,23 +358,29 @@ crate f32x4 maps directly to v128 operations. Explicit WASM intrinsics only impr
 by 7% (not worth the complexity). Build with `RUSTFLAGS="-C target-feature=+simd128"`.
 Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables and intrinsics investigation.
 
-## Decoder Performance (2026-02-05)
+## Decoder Performance (2026-02-06)
 
 Scanline decoder matches or beats zune-jpeg. Buffered fast mode within 15%.
-Progressive still slower due to multi-pass AC refinement overhead.
+Progressive ~1.3x at 2048x2048, faster at smaller sizes.
 
-**Wall-clock (2048x2048, commit 4ae7ed6):**
+**Wall-clock progressive (commit 3a32e1e):**
+| Size | zune-jpeg | zenjpeg prog | ratio | zenjpeg fast | ratio |
+|------|-----------|-------------|-------|-------------|-------|
+| 256 | 257µs | 200µs | **0.78x** | 179µs | **0.70x** |
+| 512 | 901µs | 744µs | **0.83x** | 704µs | **0.78x** |
+| 1024 | 2696µs | 2908µs | 1.08x | 2736µs | 1.01x |
+| 2048 | 8996µs | 12023µs | 1.34x | 11388µs | 1.27x |
+
+**Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
 |------|-----------|---------|-------|
 | Baseline | 4.09ms | 5.51ms | 1.35x |
 | Baseline-fast | 4.09ms | 4.72ms | 1.15x |
 | **Scanline-420** | **4.09ms** | **4.03ms** | **0.99x** |
-| Progressive | 10.0ms | 12.5ms | 1.25x |
-| Progressive-fast | 10.0ms | 11.9ms | 1.19x |
 | **Baseline-444** | **6.34ms** | **5.64ms** | **0.89x** |
 | **Scanline-444** | **6.34ms** | **5.78ms** | **0.91x** |
 
-**Optimizations applied (this session):**
+**Optimizations applied:**
 1. Fused box-filter 4:2:0 upsample + YCbCr→RGB AVX2 kernel (`color/ycbcr.rs`)
 2. Partial dequantize based on coeff_count (skip zero coefficients)
 3. DC-only fast path bypassing dequant buffer entirely
@@ -382,6 +388,8 @@ Progressive still slower due to multi-pass AC refinement overhead.
 5. Force-inline hot path BitReader and Huffman functions
 6. 16-bit peek Huffman slow path with pre-shifted maxcode table
 7. Fast AC refinement bit reads via `read_bit_refine()` (no ScanRead enum, no bit_buffer sync)
+8. Natural-order dequant with sequential writes (30% reduction in dequant instructions)
+9. AVX-512 dispatch for YCbCr→RGB (correct but no measurable benefit on Zen 4)
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -393,13 +401,15 @@ color conversion instead of bilinear. 5-10% faster, minimal quality difference.
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.25x gap** (down from 1.92x after three optimizations):
-- `read_bit_refine()` eliminated ScanRead enum wrapping for per-bit reads
-- Removed `bit_buffer` mask sync from `drop_bits`/`skip_bits_fast`/`read_bits_fast`
-  (adopted from zune-jpeg: only `aligned_buffer` is authoritative, `bit_buffer`
-  reconstructed lazily in `refill()`)
-- All-zeros block early exit skips refinement loop for sparse high-frequency blocks
-- Remaining gap is two-pass architecture overhead (same as buffered baseline)
+**Progressive 1.34x gap at 2048x2048** (down from 1.92x; faster at <=512):
+- AC refinement is **67% of decode instructions** (330M/493M for 2048x2048)
+- Already optimized: `read_bit_refine()`, lazy bit_buffer sync, all-zeros early exit
+- Remaining overhead is inherent loop iteration: bounds checks, zero checks, bit reads
+- `decode_ac_refine` is fully inlined, bounds-check-free (verified via cargo asm)
+- Size-dependent gap: at <=512, coefficient data fits L2 cache (two-pass is fine);
+  at 2048, 12.6 MB of coefficients exceeds L2, causing cache misses in output pass
+- **Potential optimization:** nonzero coefficient bitmap (u64 per block) to skip zero
+  positions via `trailing_zeros()` — would need per-block state across progressive scans
 
 ## Failed Explorations
 
