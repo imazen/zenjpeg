@@ -369,8 +369,8 @@ Progressive still slower due to multi-pass AC refinement overhead.
 | Baseline | 4.09ms | 5.51ms | 1.35x |
 | Baseline-fast | 4.09ms | 4.72ms | 1.15x |
 | **Scanline-420** | **4.09ms** | **4.03ms** | **0.99x** |
-| Progressive | 10.25ms | 18.36ms | 1.79x |
-| Progressive-fast | 10.25ms | 17.03ms | 1.66x |
+| Progressive | 10.0ms | 12.5ms | 1.25x |
+| Progressive-fast | 10.0ms | 11.9ms | 1.19x |
 | **Baseline-444** | **6.34ms** | **5.64ms** | **0.89x** |
 | **Scanline-444** | **6.34ms** | **5.78ms** | **0.91x** |
 
@@ -393,12 +393,13 @@ color conversion instead of bilinear. 5-10% faster, minimal quality difference.
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.66x gap** (down from 1.85x after `read_bit_refine()` optimization):
-- AC refinement entropy decode still dominates (inherently serial per-bit reads)
-- `read_bit_refine()` eliminated ScanRead enum wrapping and bit_buffer sync overhead
-- Remaining gap is from two-pass architecture (same as buffered baseline) plus
-  inherent multi-scan overhead (each progressive scan pass has Huffman table setup,
-  restart marker processing, and coefficient storage)
+**Progressive 1.25x gap** (down from 1.92x after three optimizations):
+- `read_bit_refine()` eliminated ScanRead enum wrapping for per-bit reads
+- Removed `bit_buffer` mask sync from `drop_bits`/`skip_bits_fast`/`read_bits_fast`
+  (adopted from zune-jpeg: only `aligned_buffer` is authoritative, `bit_buffer`
+  reconstructed lazily in `refill()`)
+- All-zeros block early exit skips refinement loop for sparse high-frequency blocks
+- Remaining gap is two-pass architecture overhead (same as buffered baseline)
 
 ## Failed Explorations
 
