@@ -369,8 +369,8 @@ Progressive still slower due to multi-pass AC refinement overhead.
 | Baseline | 4.09ms | 5.51ms | 1.35x |
 | Baseline-fast | 4.09ms | 4.72ms | 1.15x |
 | **Scanline-420** | **4.09ms** | **4.03ms** | **0.99x** |
-| Progressive | 10.27ms | 19.75ms | 1.92x |
-| Progressive-fast | 10.27ms | 19.00ms | 1.85x |
+| Progressive | 10.25ms | 18.36ms | 1.79x |
+| Progressive-fast | 10.25ms | 17.03ms | 1.66x |
 | **Baseline-444** | **6.34ms** | **5.64ms** | **0.89x** |
 | **Scanline-444** | **6.34ms** | **5.78ms** | **0.91x** |
 
@@ -381,6 +381,7 @@ Progressive still slower due to multi-pass AC refinement overhead.
 4. Marker-based ICC profile scanning (was byte-by-byte O(n) scan)
 5. Force-inline hot path BitReader and Huffman functions
 6. 16-bit peek Huffman slow path with pre-shifted maxcode table
+7. Fast AC refinement bit reads via `read_bit_refine()` (no ScanRead enum, no bit_buffer sync)
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -392,10 +393,12 @@ color conversion instead of bilinear. 5-10% faster, minimal quality difference.
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.85x gap**:
-- AC refinement entropy decode dominates at 61% of decode time (497M instructions)
-- Each progressive scan refines coefficients bit-by-bit (inherently serial)
-- Not easily optimizable without fundamental architecture changes
+**Progressive 1.66x gap** (down from 1.85x after `read_bit_refine()` optimization):
+- AC refinement entropy decode still dominates (inherently serial per-bit reads)
+- `read_bit_refine()` eliminated ScanRead enum wrapping and bit_buffer sync overhead
+- Remaining gap is from two-pass architecture (same as buffered baseline) plus
+  inherent multi-scan overhead (each progressive scan pass has Huffman table setup,
+  restart marker processing, and coefficient storage)
 
 ## Failed Explorations
 
