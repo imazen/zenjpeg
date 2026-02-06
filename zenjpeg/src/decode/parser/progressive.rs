@@ -178,8 +178,8 @@ impl<'a> JpegParser<'a> {
                     // Check for cancellation periodically (every 256 blocks)
                     if block_idx & 0xFF == 0 {
                         if stop.should_stop() {
-                        return Err(Error::cancelled());
-                    }
+                            return Err(Error::cancelled());
+                        }
                     }
 
                     // Check for restart marker

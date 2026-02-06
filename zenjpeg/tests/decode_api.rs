@@ -114,13 +114,17 @@ fn test_decode_non_square() {
     // Wide
     let wide_jpeg = create_test_jpeg(256, 64, 90.0);
     let decoder = Decoder::new();
-    let wide = decoder.decode(&wide_jpeg, Unstoppable).expect("decode wide failed");
+    let wide = decoder
+        .decode(&wide_jpeg, Unstoppable)
+        .expect("decode wide failed");
     assert_eq!(wide.width, 256);
     assert_eq!(wide.height, 64);
 
     // Tall
     let tall_jpeg = create_test_jpeg(64, 256, 90.0);
-    let tall = decoder.decode(&tall_jpeg, Unstoppable).expect("decode tall failed");
+    let tall = decoder
+        .decode(&tall_jpeg, Unstoppable)
+        .expect("decode tall failed");
     assert_eq!(tall.width, 64);
     assert_eq!(tall.height, 256);
 }
@@ -155,7 +159,9 @@ fn test_decode_progressive() {
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode progressive failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode progressive failed");
+    let decoded = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("decode progressive failed");
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
@@ -365,7 +371,9 @@ fn test_decode_pixel_range() {
 fn test_decode_large_image() {
     let jpeg = create_test_jpeg(1024, 768, 85.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode large failed");
+    let decoded = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("decode large failed");
 
     assert_eq!(decoded.width, 1024);
     assert_eq!(decoded.height, 768);
@@ -401,7 +409,9 @@ fn test_decode_1x1_pixel() {
     let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("encode 1x1 failed");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode 1x1 failed");
+    let decoded = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("decode 1x1 failed");
 
     assert_eq!(decoded.width, 1);
     assert_eq!(decoded.height, 1);
@@ -412,7 +422,9 @@ fn test_decode_minimum_mcu() {
     // 8x8 is minimum MCU size
     let jpeg = create_test_jpeg(8, 8, 90.0);
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode 8x8 failed");
+    let decoded = decoder
+        .decode(&jpeg, Unstoppable)
+        .expect("decode 8x8 failed");
 
     assert_eq!(decoded.width, 8);
     assert_eq!(decoded.height, 8);

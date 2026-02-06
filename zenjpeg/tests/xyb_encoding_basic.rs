@@ -47,7 +47,9 @@ fn test_xyb_basic() {
         assert_eq!(jpeg[0..2], [0xFF, 0xD8], "not valid JPEG SOI");
 
         // Verify it can be decoded
-        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("failed to decode JPEG");
+        let decoded = Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .expect("failed to decode JPEG");
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
     }

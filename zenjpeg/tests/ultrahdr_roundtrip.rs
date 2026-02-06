@@ -68,7 +68,9 @@ fn test_encode_decode_roundtrip() {
     );
 
     // Decode and check for UltraHDR
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("Decoding failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
@@ -125,7 +127,9 @@ fn test_tonemapper_extraction() {
     .expect("Encoding failed");
 
     // Decode and extract tonemapper
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     let tonemapper =
@@ -171,7 +175,9 @@ fn test_metadata_passthrough() {
     .expect("Encoding failed");
 
     // Decode
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     // Should have XMP with UltraHDR metadata
@@ -197,7 +203,9 @@ fn test_gainmap_grayscale_roundtrip() {
     )
     .expect("Encoding failed");
 
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
 
     // Decode gainmap
@@ -254,7 +262,9 @@ fn test_gainmap_pixel_variance() {
     )
     .expect("Encoding failed");
 
-    let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("Decoding failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("Decoding failed");
     let extras = decoded.extras().expect("Should have extras");
     let gainmap = extras
         .decode_gainmap()
@@ -318,7 +328,9 @@ fn test_standalone_grayscale_encode_decode() {
     );
 
     // Decode and verify
-    let decoded = Decoder::new().decode(&jpeg_data, Unstoppable).expect("decode failed");
+    let decoded = Decoder::new()
+        .decode(&jpeg_data, Unstoppable)
+        .expect("decode failed");
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
 

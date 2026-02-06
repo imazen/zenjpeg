@@ -129,9 +129,15 @@ fn test_decoder_determinism() {
     let jpeg = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     // Decode multiple times
-    let decoded1 = Decoder::new().decode(&jpeg, Unstoppable).expect("decode 1 failed");
-    let decoded2 = Decoder::new().decode(&jpeg, Unstoppable).expect("decode 2 failed");
-    let decoded3 = Decoder::new().decode(&jpeg, Unstoppable).expect("decode 3 failed");
+    let decoded1 = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("decode 1 failed");
+    let decoded2 = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("decode 2 failed");
+    let decoded3 = Decoder::new()
+        .decode(&jpeg, Unstoppable)
+        .expect("decode 3 failed");
 
     assert_eq!(decoded1.data, decoded2.data, "Decoder is non-deterministic");
     assert_eq!(decoded2.data, decoded3.data, "Decoder is non-deterministic");

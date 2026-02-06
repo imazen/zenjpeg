@@ -126,7 +126,9 @@ fn test_subsampling_quality_size_tradeoff() {
 fn test_decode_cpp_420() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_420.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 420 failed");
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .expect("decode 420 failed");
 
         println!(
             "Decoded 4:2:0: {}x{}, {} bytes",
@@ -145,7 +147,9 @@ fn test_decode_cpp_420() {
 fn test_decode_cpp_422() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_422.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 422 failed");
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .expect("decode 422 failed");
 
         println!(
             "Decoded 4:2:2: {}x{}, {} bytes",
@@ -164,7 +168,9 @@ fn test_decode_cpp_422() {
 fn test_decode_cpp_440() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_440.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 440 failed");
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .expect("decode 440 failed");
 
         println!(
             "Decoded 4:4:0: {}x{}, {} bytes",
@@ -183,7 +189,9 @@ fn test_decode_cpp_440() {
 fn test_decode_cpp_444() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_444.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 444 failed");
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .expect("decode 444 failed");
 
         println!(
             "Decoded 4:4:4: {}x{}, {} bytes",
@@ -227,7 +235,9 @@ fn test_decode_cpp_asymmetric() {
 fn test_decode_cpp_444_1x2() {
     if let Some(jpeg_data) = read_test_data("jxl/flower/flower.png.im_q85_444_1x2.jpg") {
         let decoder = Decoder::new();
-        let decoded = decoder.decode(&jpeg_data, Unstoppable).expect("decode 444_1x2 failed");
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .expect("decode 444_1x2 failed");
 
         println!(
             "Decoded 4:4:4 1x2: {}x{}, {} bytes",

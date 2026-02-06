@@ -720,8 +720,9 @@ fn test_jpeg_conformance_invalid() {
         let filename = file.file_name().unwrap().to_string_lossy();
 
         // Use catch_unwind to detect panics
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            decoder.decode(&data, Unstoppable)
+        }));
 
         match result {
             Ok(Ok(img)) => {
@@ -817,8 +818,9 @@ fn test_jpeg_conformance_non_conformant() {
             let filename = file.file_name().unwrap().to_string_lossy();
 
             // Use catch_unwind to detect panics
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                decoder.decode(&data, Unstoppable)
+            }));
 
             match result {
                 Ok(Ok(img)) => {
@@ -960,8 +962,9 @@ fn test_full_fuzz_corpus() {
         };
 
         // Use catch_unwind to detect panics
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data, Unstoppable)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            decoder.decode(&data, Unstoppable)
+        }));
 
         match result {
             Ok(Ok(_)) => success += 1,

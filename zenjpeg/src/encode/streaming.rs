@@ -1928,7 +1928,9 @@ mod tests {
             .unwrap();
 
         #[allow(deprecated)]
-        let decoded = crate::decode::Decoder::new().decode(&jpeg, enough::Unstoppable).unwrap();
+        let decoded = crate::decode::Decoder::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
         assert_eq!(decoded.data.len(), width * height * 3);
@@ -1950,7 +1952,9 @@ mod tests {
             .unwrap();
 
         #[allow(deprecated)]
-        let decoded = crate::decode::Decoder::new().decode(&jpeg, enough::Unstoppable).unwrap();
+        let decoded = crate::decode::Decoder::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
     }
@@ -1971,7 +1975,9 @@ mod tests {
             .unwrap();
 
         #[allow(deprecated)]
-        let decoded = crate::decode::Decoder::new().decode(&jpeg, enough::Unstoppable).unwrap();
+        let decoded = crate::decode::Decoder::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
         assert_eq!(decoded.data.len(), width * height * 3);
@@ -1993,7 +1999,9 @@ mod tests {
             .unwrap();
 
         #[allow(deprecated)]
-        let decoded = crate::decode::Decoder::new().decode(&jpeg, enough::Unstoppable).unwrap();
+        let decoded = crate::decode::Decoder::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
     }

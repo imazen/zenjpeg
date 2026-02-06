@@ -201,7 +201,9 @@ fn test_quality_vs_cpp_decoded() {
     let rust_jpeg = encode_rgb(width, height, &original, &config).expect("Rust encode failed");
 
     let decoder = Decoder::new();
-    let rust_decoded = decoder.decode(&rust_jpeg, Unstoppable).expect("Rust decode failed");
+    let rust_decoded = decoder
+        .decode(&rust_jpeg, Unstoppable)
+        .expect("Rust decode failed");
 
     // Compare both against original
     let cpp_rms = distance_rms(&original, &cpp_pixels);

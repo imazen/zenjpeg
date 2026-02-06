@@ -22,7 +22,6 @@ use super::{DecodeWarning, JpegInfo, ScanInfo, Strictness};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
-use enough::Stop;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
     MARKER_DRI, MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES,
@@ -30,6 +29,7 @@ use crate::foundation::consts::{
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
+use enough::Stop;
 
 /// Pre-computed component info for decoding efficiency.
 ///

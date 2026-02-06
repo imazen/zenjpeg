@@ -139,10 +139,25 @@ fn compare_decoder_leniency() {
     println!();
 
     let results = vec![
-        test_decoder("zenjpeg (Balanced)", decode_zenjpeg, &valid_files, &invalid_files),
-        test_decoder("zenjpeg (Lenient)", decode_zenjpeg_lenient, &valid_files, &invalid_files),
+        test_decoder(
+            "zenjpeg (Balanced)",
+            decode_zenjpeg,
+            &valid_files,
+            &invalid_files,
+        ),
+        test_decoder(
+            "zenjpeg (Lenient)",
+            decode_zenjpeg_lenient,
+            &valid_files,
+            &invalid_files,
+        ),
         test_decoder("zune-jpeg", decode_zune, &valid_files, &invalid_files),
-        test_decoder("jpeg-decoder", decode_jpeg_decoder, &valid_files, &invalid_files),
+        test_decoder(
+            "jpeg-decoder",
+            decode_jpeg_decoder,
+            &valid_files,
+            &invalid_files,
+        ),
     ];
 
     // Summary table
@@ -181,7 +196,8 @@ fn compare_decoder_leniency() {
 
     // Files accepted by some but not all
     let mut all_valid_failed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut all_invalid_accepted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut all_invalid_accepted: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     for r in &results {
         for f in &r.valid_failed {
@@ -225,8 +241,12 @@ fn compare_decoder_leniency() {
                 .collect();
 
             if !rejecters.is_empty() {
-                println!("  {}: accepted by [{}], rejected by [{}]",
-                    f, acceptors.join(", "), rejecters.join(", "));
+                println!(
+                    "  {}: accepted by [{}], rejected by [{}]",
+                    f,
+                    acceptors.join(", "),
+                    rejecters.join(", ")
+                );
                 disagree_count += 1;
             }
         }

@@ -33,9 +33,7 @@ fn test_arithmetic_jpeg_decode_rgb() {
         .expect("failed to decode arithmetic JPEG");
 
     // Verify dimensions
-    let expected_size = (info.dimensions.width as usize)
-        * (info.dimensions.height as usize)
-        * 3;
+    let expected_size = (info.dimensions.width as usize) * (info.dimensions.height as usize) * 3;
     assert_eq!(decoded.data.len(), expected_size);
 
     // Basic sanity check - not all zeros
@@ -70,11 +68,7 @@ fn test_arithmetic_jpeg_decode_coefficients() {
     assert!(y_comp.blocks_high > 0);
 
     // Check coefficients aren't all zero
-    let nonzero_count: usize = y_comp
-        .coeffs
-        .iter()
-        .filter(|&&x| x != 0)
-        .count();
+    let nonzero_count: usize = y_comp.coeffs.iter().filter(|&&x| x != 0).count();
     assert!(
         nonzero_count > 100,
         "Y component has too few non-zero coefficients"
@@ -153,10 +147,14 @@ fn debug_arithmetic_output() {
     let decoder = Decoder::new();
     let info = decoder.read_info(&data).expect("failed to read info");
 
-    println!("Image: {}x{}, mode: {:?}",
-             info.dimensions.width, info.dimensions.height, info.mode);
+    println!(
+        "Image: {}x{}, mode: {:?}",
+        info.dimensions.width, info.dimensions.height, info.mode
+    );
 
-    let decoded = decoder.decode(&data, Unstoppable).expect("failed to decode");
+    let decoded = decoder
+        .decode(&data, Unstoppable)
+        .expect("failed to decode");
     println!("Decoded {} bytes", decoded.data.len());
 
     // Get djpeg output
@@ -203,16 +201,28 @@ fn debug_arithmetic_output() {
         println!("  diff=2: {} values", diff_hist[2]);
         println!("  diff=3: {} values", diff_hist[3]);
         println!("  diff>3: {} values", diff_hist[4..].iter().sum::<usize>());
-        println!("  diff>10: {} values", diff_hist[11..].iter().sum::<usize>());
-        println!("  diff>50: {} values", diff_hist[51..].iter().sum::<usize>());
-        println!("  diff>100: {} values", diff_hist[101..].iter().sum::<usize>());
+        println!(
+            "  diff>10: {} values",
+            diff_hist[11..].iter().sum::<usize>()
+        );
+        println!(
+            "  diff>50: {} values",
+            diff_hist[51..].iter().sum::<usize>()
+        );
+        println!(
+            "  diff>100: {} values",
+            diff_hist[101..].iter().sum::<usize>()
+        );
 
         println!("\nMax diff: {} at byte position {}", max_diff, max_diff_pos);
         let pixel_idx = max_diff_pos / 3;
         let channel = max_diff_pos % 3;
         let x = pixel_idx % 227;
         let y = pixel_idx / 227;
-        println!("  Pixel ({}, {}), channel {} (0=R, 1=G, 2=B)", x, y, channel);
+        println!(
+            "  Pixel ({}, {}), channel {} (0=R, 1=G, 2=B)",
+            x, y, channel
+        );
         println!("  Our value: {}", decoded.data[max_diff_pos]);
         println!("  Ref value: {}", ref_rgb[max_diff_pos]);
 
@@ -220,14 +230,16 @@ fn debug_arithmetic_output() {
         let row_start = (pixel_idx / 227) * 227;
         println!("\nPixels around max diff (row {}):", y);
         for i in row_start.saturating_sub(2)..=(row_start + 10).min(decoded.data.len() / 3 - 1) {
-            let ours = &decoded.data[i*3..(i+1)*3];
-            let refs = &ref_rgb[i*3..(i+1)*3];
+            let ours = &decoded.data[i * 3..(i + 1) * 3];
+            let refs = &ref_rgb[i * 3..(i + 1) * 3];
             let diff_r = (ours[0] as i16 - refs[0] as i16).abs();
             let diff_g = (ours[1] as i16 - refs[1] as i16).abs();
             let diff_b = (ours[2] as i16 - refs[2] as i16).abs();
             if diff_r > 3 || diff_g > 3 || diff_b > 3 {
-                println!("  Pixel {}: ours=({:3},{:3},{:3}) ref=({:3},{:3},{:3}) diff=({},{},{})",
-                    i, ours[0], ours[1], ours[2], refs[0], refs[1], refs[2], diff_r, diff_g, diff_b);
+                println!(
+                    "  Pixel {}: ours=({:3},{:3},{:3}) ref=({:3},{:3},{:3}) diff=({},{},{})",
+                    i, ours[0], ours[1], ours[2], refs[0], refs[1], refs[2], diff_r, diff_g, diff_b
+                );
             }
         }
     }

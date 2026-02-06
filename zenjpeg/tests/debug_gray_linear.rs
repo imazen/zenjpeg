@@ -109,8 +109,12 @@ fn debug_gray_linear_encoding() {
 
     // Decode both
     let decoder = Decoder::new();
-    let dec8 = decoder.decode_f32(&jpeg8, Unstoppable).expect("Gray8 decode failed");
-    let dec16 = decoder.decode_f32(&jpeg16, Unstoppable).expect("Gray16 decode failed");
+    let dec8 = decoder
+        .decode_f32(&jpeg8, Unstoppable)
+        .expect("Gray8 decode failed");
+    let dec16 = decoder
+        .decode_f32(&jpeg16, Unstoppable)
+        .expect("Gray16 decode failed");
 
     // Extract just the red channel (grayscale outputs RGB with R=G=B)
     let vals8: Vec<f32> = dec8.data.iter().step_by(3).cloned().collect();
