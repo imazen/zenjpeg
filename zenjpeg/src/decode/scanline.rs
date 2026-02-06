@@ -155,28 +155,31 @@ pub struct ScanlineReader<'a> {
 }
 
 impl<'a> ScanlineReader<'a> {
-    /// Creates a new scanline reader from parsed JPEG data.
+    /// Creates a new scanline reader from parsed JPEG scan data.
     ///
     /// This is called internally by `Decoder::scanline_reader()`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        data: &'a [u8],
-        width: u32,
-        height: u32,
-        num_components: u8,
-        h_samp: [u8; 3],
-        v_samp: [u8; 3],
-        quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4],
-        quant_indices: [usize; 3],
-        dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-        ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
-        table_mapping: [(usize, usize); 3],
-        scan_data_start: usize,
-        restart_interval: u16,
-        is_xyb: bool,
-        is_rgb: bool,
+    pub(super) fn from_scan_data(
+        scan: super::parser::ParsedScanData<'a>,
         chroma_upsampling: ChromaUpsampling,
     ) -> Result<Self> {
+        let super::parser::ParsedScanData {
+            data,
+            width,
+            height,
+            num_components,
+            h_samp,
+            v_samp,
+            quant_tables,
+            quant_indices,
+            dc_tables,
+            ac_tables,
+            table_mapping,
+            scan_data_start,
+            restart_interval,
+            is_xyb,
+            is_rgb,
+        } = scan;
+
         let is_grayscale = num_components == 1;
 
         // For grayscale, use only Y component's sampling factors

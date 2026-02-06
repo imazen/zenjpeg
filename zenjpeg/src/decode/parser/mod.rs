@@ -18,7 +18,15 @@ mod scan;
 use super::extras::{
     should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
 };
-use super::{DecodeWarning, JpegInfo, ScanInfo, Strictness};
+use super::{DecodeWarning, JpegInfo, Strictness};
+
+/// Information about a scan needed for scanline reading.
+struct ScanInfo {
+    /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
+    table_mapping: [(usize, usize); 3],
+    /// Position in data where entropy-coded scan data begins
+    data_start: usize,
+}
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
@@ -46,6 +54,28 @@ pub(super) struct CompInfo {
     pub(super) comp_height: usize,
     /// True if this component has full resolution (no subsampling)
     pub(super) is_full_res: bool,
+}
+
+/// Parsed JPEG scan data needed to construct a scanline reader.
+///
+/// Bundles the parser fields that `ScanlineReader` needs, replacing
+/// the previous 16-parameter constructor. Created via `JpegParser::into_scan_data()`.
+pub(super) struct ParsedScanData<'a> {
+    pub data: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+    pub num_components: u8,
+    pub h_samp: [u8; 3],
+    pub v_samp: [u8; 3],
+    pub quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; MAX_QUANT_TABLES],
+    pub quant_indices: [usize; 3],
+    pub dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    pub ac_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
+    pub table_mapping: [(usize, usize); 3],
+    pub scan_data_start: usize,
+    pub restart_interval: u16,
+    pub is_xyb: bool,
+    pub is_rgb: bool,
 }
 
 /// Internal JPEG parser state.
@@ -501,8 +531,8 @@ impl<'a> JpegParser<'a> {
     }
 
     /// Finds the SOS marker and extracts scan info without decoding.
-    /// Used by scanline reader to get table mapping and data start position.
-    pub(super) fn find_scan_info(&mut self) -> Result<ScanInfo> {
+    /// Used by `into_scan_data()` to get table mapping and data start position.
+    fn find_scan_info(&mut self) -> Result<ScanInfo> {
         // Continue from current position to find SOS
         loop {
             let marker = self.read_marker()?;
@@ -662,6 +692,85 @@ impl<'a> JpegParser<'a> {
             has_icc_profile: self.icc_profile.is_some(),
             is_xyb,
         }
+    }
+
+    /// Extract scan data for constructing a scanline reader.
+    ///
+    /// This bundles all the parser fields needed by `ScanlineReader::new()`,
+    /// detecting RGB-JPEG and XYB along the way.
+    pub(super) fn into_scan_data(
+        mut self,
+        is_grayscale: bool,
+    ) -> Result<ParsedScanData<'a>> {
+        let is_xyb = self.info().is_xyb;
+
+        // Extract sampling factors
+        let h_samp = if is_grayscale {
+            [self.components[0].h_samp_factor, 1, 1]
+        } else {
+            [
+                self.components[0].h_samp_factor,
+                self.components[1].h_samp_factor,
+                self.components[2].h_samp_factor,
+            ]
+        };
+        let v_samp = if is_grayscale {
+            [self.components[0].v_samp_factor, 1, 1]
+        } else {
+            [
+                self.components[0].v_samp_factor,
+                self.components[1].v_samp_factor,
+                self.components[2].v_samp_factor,
+            ]
+        };
+
+        // Extract quant table indices
+        let quant_indices = if is_grayscale {
+            [self.components[0].quant_table_idx as usize, 0, 0]
+        } else {
+            [
+                self.components[0].quant_table_idx as usize,
+                self.components[1].quant_table_idx as usize,
+                self.components[2].quant_table_idx as usize,
+            ]
+        };
+
+        // Find SOS marker to get table mapping and scan data position
+        let scan_info = self.find_scan_info()?;
+
+        // Detect RGB JPEGs
+        let is_rgb = if self.num_components == 3 {
+            match self.adobe_transform {
+                Some(AdobeColorTransform::Unknown) => true,
+                Some(AdobeColorTransform::YCbCr) => false,
+                None => {
+                    self.components[0].id == b'R'
+                        && self.components[1].id == b'G'
+                        && self.components[2].id == b'B'
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        Ok(ParsedScanData {
+            data: self.data,
+            width: self.width,
+            height: self.height,
+            num_components: self.num_components,
+            h_samp,
+            v_samp,
+            quant_tables: self.quant_tables,
+            quant_indices,
+            dc_tables: self.dc_tables,
+            ac_tables: self.ac_tables,
+            table_mapping: scan_info.table_mapping,
+            scan_data_start: scan_info.data_start,
+            restart_interval: self.restart_interval,
+            is_xyb,
+            is_rgb,
+        })
     }
 
     pub(super) fn extract_coefficients(&self) -> Result<crate::decode::image::DecodedCoefficients> {
