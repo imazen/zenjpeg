@@ -187,8 +187,8 @@ impl StripProcessor {
         // Previous chroma row context for cross-strip vertical interpolation
         let (prev_cb_row, prev_cr_row) = if !is_grayscale && needs_vertical_upsample {
             (
-                vec![0i16; chroma_strip_stride],
-                vec![0i16; chroma_strip_stride],
+                try_alloc_maybeuninit(chroma_strip_stride, "prev Cb context row")?,
+                try_alloc_maybeuninit(chroma_strip_stride, "prev Cr context row")?,
             )
         } else {
             (Vec::new(), Vec::new())
