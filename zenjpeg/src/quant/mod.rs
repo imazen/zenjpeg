@@ -837,47 +837,51 @@ pub fn dequantize_block_i32(
 /// Partial dequantize + unzigzag: only processes the first `coeff_count` zigzag
 /// positions. Remaining positions are zero. For typical Q85 photos, most blocks
 /// have 10-15 non-zero coefficients, saving 75-85% of multiply work.
+///
+/// Uses natural-order iteration with sequential writes for cache efficiency.
+/// Coefficients beyond coeff_count are zero in the input (guaranteed by
+/// entropy decoder), so multiplying them by quant produces zero — same result
+/// as partial iteration without the zeroing overhead.
 #[inline(always)]
 pub fn dequantize_unzigzag_i32_partial(
     zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
     quant_natural: &[u16; DCT_BLOCK_SIZE],
-    coeff_count: u8,
+    _coeff_count: u8,
 ) -> [i32; DCT_BLOCK_SIZE] {
-    use crate::foundation::consts::JPEG_NATURAL_ORDER;
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
+    // Iterate in natural (raster) order: sequential writes to result,
+    // sequential reads from quant_natural, gathered reads from zigzag_coeffs.
+    // Every position is written so zeroing is redundant, but the compiler
+    // may not eliminate it without MaybeUninit (which requires unsafe).
     let mut result = [0i32; DCT_BLOCK_SIZE];
-    let count = (coeff_count as usize).min(DCT_BLOCK_SIZE);
-
-    // Iterate in zigzag order (0..count), mapping each to natural position.
-    // Positions beyond count are guaranteed zero from entropy decoder.
-    for zigzag_idx in 0..count {
-        let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
+    for natural_idx in 0..DCT_BLOCK_SIZE {
+        // Mask with 63 to prove zigzag_idx < 64 to the compiler,
+        // eliminating bounds checks. All JPEG_ZIGZAG_ORDER values are 0-63
+        // so the mask is a no-op for correctness.
+        let zigzag_idx = (JPEG_ZIGZAG_ORDER[natural_idx] & 63) as usize;
         result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
     }
 
     result
 }
 
-/// Partial dequantize + unzigzag into an existing buffer.
-/// Caller must ensure `result` is zeroed for positions beyond `coeff_count`.
-/// For buffer reuse patterns, zero the full buffer once, then after each IDCT
-/// (which destroys the buffer), re-zero before the next partial dequant.
+/// Dequantize + unzigzag into an existing buffer (full overwrite).
+///
+/// Writes every position in natural order, so no pre-zeroing is needed.
+/// Coefficients beyond coeff_count are zero in zigzag_coeffs (entropy
+/// decoder invariant), producing zero after multiply.
 #[inline(always)]
 pub fn dequantize_unzigzag_i32_into_partial(
     zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
     quant_natural: &[u16; DCT_BLOCK_SIZE],
     result: &mut [i32; DCT_BLOCK_SIZE],
-    coeff_count: u8,
+    _coeff_count: u8,
 ) {
-    use crate::foundation::consts::JPEG_NATURAL_ORDER;
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
-    let count = (coeff_count as usize).min(DCT_BLOCK_SIZE);
-
-    // Zero the full buffer (IDCT destroys contents, so we must re-zero)
-    *result = [0i32; DCT_BLOCK_SIZE];
-
-    for zigzag_idx in 0..count {
-        let natural_idx = JPEG_NATURAL_ORDER[zigzag_idx] as usize;
+    for natural_idx in 0..DCT_BLOCK_SIZE {
+        let zigzag_idx = (JPEG_ZIGZAG_ORDER[natural_idx] & 63) as usize;
         result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
     }
 }
