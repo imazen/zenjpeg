@@ -516,7 +516,10 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 
 /// Batch YCbCr to RGB conversion for f32 planes to f32 output.
 ///
-/// Output values are normalized to 0.0-1.0 range.
+/// Input: centered YCbCr (Y, Cb, Cr all centered around 0 from f32 IDCT).
+/// Output: RGB normalized to approximately 0.0-1.0 range. Values may slightly
+/// exceed [0, 1] due to YCbCr→RGB color matrix expansion — this is intentional
+/// to preserve full precision. Callers should clamp only at final output if needed.
 #[inline(never)]
 pub fn ycbcr_planes_f32_to_rgb_f32(
     y_plane: &[f32],
@@ -542,23 +545,18 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
         let cb_to_b = f32x8::splat(CB_TO_B);
         let offset = f32x8::splat(128.0);
         let scale = f32x8::splat(1.0 / 255.0);
-        let zero = f32x8::splat(0.0);
-        let one = f32x8::splat(1.0);
 
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            // Use slice loads instead of manual gather
             let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
             let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
             let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
 
-            // YCbCr to RGB, level shift, normalize to 0-1 (using FMA)
-            let r = (cr_to_r.mul_add(cr, y + offset) * scale).max(zero).min(one);
-            let g = (cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale)
-                .max(zero)
-                .min(one);
-            let b = (cb_to_b.mul_add(cb, y + offset) * scale).max(zero).min(one);
+            // YCbCr to RGB, level shift, normalize — no clamping
+            let r = cr_to_r.mul_add(cr, y + offset) * scale;
+            let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale;
+            let b = cb_to_b.mul_add(cb, y + offset) * scale;
 
             let r_arr: [f32; 8] = r.into();
             let g_arr: [f32; 8] = g.into();
@@ -583,9 +581,9 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
             let b = CB_TO_B.mul_add(cb, y);
 
             let idx = i * 3;
-            rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
-            rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
-            rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx] = (r + 128.0) / 255.0;
+            rgb[idx + 1] = (g + 128.0) / 255.0;
+            rgb[idx + 2] = (b + 128.0) / 255.0;
         }
     }
 
@@ -600,9 +598,9 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
             let b = CB_TO_B.mul_add(cb, y);
 
             let idx = i * 3;
-            rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
-            rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
-            rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx] = (r + 128.0) / 255.0;
+            rgb[idx + 1] = (g + 128.0) / 255.0;
+            rgb[idx + 2] = (b + 128.0) / 255.0;
         }
     }
 }
@@ -658,6 +656,9 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
 }
 
 /// Batch grayscale to RGB conversion for f32 to f32.
+///
+/// Input: centered grayscale (Y centered around 0 from f32 IDCT).
+/// Output: normalized to approximately 0.0-1.0 range without clamping.
 #[inline(never)]
 pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
@@ -667,15 +668,13 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
     {
         let offset = f32x8::splat(128.0);
         let scale = f32x8::splat(1.0 / 255.0);
-        let zero = f32x8::splat(0.0);
-        let one = f32x8::splat(1.0);
 
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
             let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-            let val = ((y + offset) * scale).max(zero).min(one);
+            let val = (y + offset) * scale;
             let arr: [f32; 8] = val.into();
 
             for j in 0..8 {
@@ -688,7 +687,7 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
 
         // Remainder
         for i in (chunks * 8)..num_pixels {
-            let val = ((y_plane[i] + 128.0) / 255.0).clamp(0.0, 1.0);
+            let val = (y_plane[i] + 128.0) / 255.0;
             let idx = i * 3;
             rgb[idx] = val;
             rgb[idx + 1] = val;
@@ -698,7 +697,7 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
 
     {
         for (i, &y) in y_plane.iter().enumerate() {
-            let val = ((y + 128.0) / 255.0).clamp(0.0, 1.0);
+            let val = (y + 128.0) / 255.0;
             let idx = i * 3;
             rgb[idx] = val;
             rgb[idx + 1] = val;
@@ -745,7 +744,10 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
     }
 }
 
-/// Batch level shift for grayscale f32 to f32 (0.0-1.0).
+/// Batch level shift for grayscale f32 to f32 (approximately 0.0-1.0).
+///
+/// Input: centered grayscale (Y centered around 0 from f32 IDCT).
+/// Output: normalized without clamping to preserve full precision.
 #[inline(never)]
 pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
     debug_assert_eq!(y_plane.len(), output.len());
@@ -755,28 +757,26 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
     {
         let offset = f32x8::splat(128.0);
         let scale = f32x8::splat(1.0 / 255.0);
-        let zero = f32x8::splat(0.0);
-        let one = f32x8::splat(1.0);
 
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
             let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-            let val = ((y + offset) * scale).max(zero).min(one);
+            let val = (y + offset) * scale;
             let arr: [f32; 8] = val.into();
             output[base..base + 8].copy_from_slice(&arr);
         }
 
         // Remainder
         for i in (chunks * 8)..num_pixels {
-            output[i] = ((y_plane[i] + 128.0) / 255.0).clamp(0.0, 1.0);
+            output[i] = (y_plane[i] + 128.0) / 255.0;
         }
     }
 
     {
         for (y, out) in y_plane.iter().zip(output.iter_mut()) {
-            *out = ((*y + 128.0) / 255.0).clamp(0.0, 1.0);
+            *out = (*y + 128.0) / 255.0;
         }
     }
 }
