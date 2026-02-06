@@ -10,6 +10,9 @@
 use super::config::ChromaUpsampling;
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::upsample::{
+    upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
+    upsample_h1v2_i16_nearest_strided, upsample_h2v1_i16_fancy_strided,
+    upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
     upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
     upsample_h2v2_i16_nearest_strided,
 };
@@ -295,211 +298,70 @@ impl StripProcessor {
     // Upsampling implementations
     // =========================================================================
 
+    /// Upsample a single channel using a strided function pointer.
+    fn upsample_channel(
+        upsample_fn: fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize),
+        input: &[i16],
+        in_width: usize,
+        in_stride: usize,
+        in_height: usize,
+        output: &mut [i16],
+        out_width: usize,
+        out_stride: usize,
+        out_height: usize,
+    ) {
+        upsample_fn(
+            input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+        );
+    }
+
     /// Horizontal 2x upsampling (4:2:2) with configurable filter.
     fn upsample_h2v1(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let height = self.mcu_height;
-
-        for y in 0..height {
-            let in_row = y.min(self.chroma_strip_height - 1);
-
-            match self.chroma_upsampling {
-                ChromaUpsampling::NearestNeighbor => {
-                    for out_x in 0..out_width {
-                        let in_x = (out_x / 2).min(in_width - 1);
-                        let in_idx = in_row * in_stride + in_x;
-                        let out_idx = y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
-                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
-                    }
-                }
-                ChromaUpsampling::Triangle => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x / 2;
-                        let in_idx = in_row * in_stride + in_x.min(in_width - 1);
-                        let cb_curr = self.cb_strip[in_idx] as i32;
-                        let cr_curr = self.cr_strip[in_idx] as i32;
-
-                        let (cb_val, cr_val) = if out_x % 2 == 0 {
-                            let left_idx = in_row * in_stride + in_x.saturating_sub(1);
-                            let cb_left = self.cb_strip[left_idx] as i32;
-                            let cr_left = self.cr_strip[left_idx] as i32;
-                            (
-                                ((3 * cb_curr + cb_left + 2) >> 2) as i16,
-                                ((3 * cr_curr + cr_left + 2) >> 2) as i16,
-                            )
-                        } else {
-                            let right_idx = in_row * in_stride + (in_x + 1).min(in_width - 1);
-                            let cb_right = self.cb_strip[right_idx] as i32;
-                            let cr_right = self.cr_strip[right_idx] as i32;
-                            (
-                                ((3 * cb_curr + cb_right + 2) >> 2) as i16,
-                                ((3 * cr_curr + cr_right + 2) >> 2) as i16,
-                            )
-                        };
-
-                        let out_idx = y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = cb_val;
-                        self.cr_upsampled[out_idx] = cr_val;
-                    }
-                }
-                ChromaUpsampling::LibjpegCompat => {
-                    // libjpeg-turbo h2v1: alternating +1/+2 bias
-                    if in_width == 0 {
-                        continue;
-                    }
-                    let cb_in = &self.cb_strip[in_row * in_stride..];
-                    let cr_in = &self.cr_strip[in_row * in_stride..];
-                    let out_base = y * out_stride;
-
-                    if in_width == 1 {
-                        self.cb_upsampled[out_base] = cb_in[0];
-                        self.cr_upsampled[out_base] = cr_in[0];
-                        if out_width > 1 {
-                            self.cb_upsampled[out_base + 1] = cb_in[0];
-                            self.cr_upsampled[out_base + 1] = cr_in[0];
-                        }
-                        continue;
-                    }
-
-                    // First column
-                    let cb0 = cb_in[0] as i32;
-                    let cr0 = cr_in[0] as i32;
-                    self.cb_upsampled[out_base] = cb0 as i16;
-                    self.cr_upsampled[out_base] = cr0 as i16;
-                    if out_width > 1 {
-                        self.cb_upsampled[out_base + 1] =
-                            ((cb0 * 3 + cb_in[1] as i32 + 2) >> 2) as i16;
-                        self.cr_upsampled[out_base + 1] =
-                            ((cr0 * 3 + cr_in[1] as i32 + 2) >> 2) as i16;
-                    }
-
-                    // Interior columns
-                    for in_x in 1..in_width.saturating_sub(1) {
-                        let cb_prev = cb_in[in_x - 1] as i32;
-                        let cb_curr = cb_in[in_x] as i32;
-                        let cb_next = cb_in[in_x + 1] as i32;
-                        let cr_prev = cr_in[in_x - 1] as i32;
-                        let cr_curr = cr_in[in_x] as i32;
-                        let cr_next = cr_in[in_x + 1] as i32;
-                        let left = out_base + in_x * 2;
-                        let right = left + 1;
-                        if left < out_base + out_width {
-                            self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
-                            self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
-                        }
-                        if right < out_base + out_width {
-                            self.cb_upsampled[right] = ((cb_curr * 3 + cb_next + 2) >> 2) as i16;
-                            self.cr_upsampled[right] = ((cr_curr * 3 + cr_next + 2) >> 2) as i16;
-                        }
-                    }
-
-                    // Last column
-                    let last = in_width - 1;
-                    let cb_prev = cb_in[last - 1] as i32;
-                    let cb_curr = cb_in[last] as i32;
-                    let cr_prev = cr_in[last - 1] as i32;
-                    let cr_curr = cr_in[last] as i32;
-                    let left = out_base + last * 2;
-                    let right = left + 1;
-                    if left < out_base + out_width {
-                        self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
-                        self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
-                    }
-                    if right < out_base + out_width {
-                        self.cb_upsampled[right] = cb_curr as i16;
-                        self.cr_upsampled[right] = cr_curr as i16;
-                    }
-                }
-            }
-        }
+        type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
+        let upsample_fn: StridedFn = match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => upsample_h2v1_i16_fancy_strided,
+            ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg_strided,
+            ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
+        };
+        self.upsample_both_channels(upsample_fn);
     }
 
     /// Vertical 2x upsampling (4:4:0) with configurable filter.
     fn upsample_h1v2(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let in_height = self.chroma_strip_height;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let out_height = self.mcu_height;
-
-        for out_y in 0..out_height {
-            let in_y = out_y / 2;
-            let in_y_clamped = in_y.min(in_height.saturating_sub(1));
-            let is_upper = out_y % 2 == 0;
-
-            let far_y = if is_upper {
-                in_y_clamped.saturating_sub(1)
-            } else {
-                (in_y + 1).min(in_height.saturating_sub(1))
-            };
-
-            match self.chroma_upsampling {
-                ChromaUpsampling::NearestNeighbor => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let in_idx = in_y_clamped * in_stride + in_x;
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
-                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
-                    }
-                }
-                ChromaUpsampling::Triangle => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let curr_idx = in_y_clamped * in_stride + in_x;
-                        let neighbor_idx = far_y * in_stride + in_x;
-                        let cb_curr = self.cb_strip[curr_idx] as i32;
-                        let cr_curr = self.cr_strip[curr_idx] as i32;
-                        let cb_neighbor = self.cb_strip[neighbor_idx] as i32;
-                        let cr_neighbor = self.cr_strip[neighbor_idx] as i32;
-
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = ((3 * cb_curr + cb_neighbor + 2) >> 2) as i16;
-                        self.cr_upsampled[out_idx] = ((3 * cr_curr + cr_neighbor + 2) >> 2) as i16;
-                    }
-                }
-                ChromaUpsampling::LibjpegCompat => {
-                    let bias = if is_upper { 1i32 } else { 2i32 };
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let near_idx = in_y_clamped * in_stride + in_x;
-                        let far_idx = far_y * in_stride + in_x;
-                        let cb_near = self.cb_strip[near_idx] as i32;
-                        let cr_near = self.cr_strip[near_idx] as i32;
-                        let cb_far = self.cb_strip[far_idx] as i32;
-                        let cr_far = self.cr_strip[far_idx] as i32;
-
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = ((cb_near * 3 + cb_far + bias) >> 2) as i16;
-                        self.cr_upsampled[out_idx] = ((cr_near * 3 + cr_far + bias) >> 2) as i16;
-                    }
-                }
-            }
-        }
+        type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
+        let upsample_fn: StridedFn = match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => upsample_h1v2_i16_fancy_strided,
+            ChromaUpsampling::LibjpegCompat => upsample_h1v2_i16_libjpeg_strided,
+            ChromaUpsampling::NearestNeighbor => upsample_h1v2_i16_nearest_strided,
+        };
+        self.upsample_both_channels(upsample_fn);
     }
 
     /// Both horizontal and vertical 2x upsampling (4:2:0) with configurable filter.
     fn upsample_h2v2(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let in_height = self.chroma_strip_height;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let out_height = self.mcu_height;
-
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy_strided,
             ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg_strided,
             ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
         };
+        self.upsample_both_channels(upsample_fn);
+    }
 
-        upsample_fn(
+    /// Apply a strided upsample function to both Cb and Cr channels.
+    fn upsample_both_channels(
+        &mut self,
+        upsample_fn: fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize),
+    ) {
+        let in_width = self.chroma_strip_width;
+        let in_stride = self.chroma_strip_stride;
+        let in_height = self.chroma_strip_height;
+        let out_width = self.strip_width;
+        let out_stride = self.strip_stride;
+        let out_height = self.mcu_height;
+
+        Self::upsample_channel(
+            upsample_fn,
             &self.cb_strip,
             in_width,
             in_stride,
@@ -509,7 +371,8 @@ impl StripProcessor {
             out_stride,
             out_height,
         );
-        upsample_fn(
+        Self::upsample_channel(
+            upsample_fn,
             &self.cr_strip,
             in_width,
             in_stride,
