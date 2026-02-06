@@ -30,7 +30,11 @@ fn range_bitmap(lo: u8, hi: u8) -> u64 {
     debug_assert!(lo <= hi && hi < 64);
     // Shift trick: ((1 << (hi+1)) - 1) & !((1 << lo) - 1)
     // Handle hi=63 overflow: use wrapping shift
-    let top = if hi >= 63 { u64::MAX } else { (1u64 << (hi + 1)) - 1 };
+    let top = if hi >= 63 {
+        u64::MAX
+    } else {
+        (1u64 << (hi + 1)) - 1
+    };
     let bot = (1u64 << lo) - 1;
     top & !bot
 }
