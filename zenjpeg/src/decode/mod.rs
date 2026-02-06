@@ -451,52 +451,26 @@ impl Decoder {
         }
 
         // Baseline: use streaming mode
-        // Extract sampling factors - use defaults for missing components in grayscale
-        let h_samp = if is_grayscale {
-            [parser.components[0].h_samp_factor, 1, 1]
-        } else {
-            [
-                parser.components[0].h_samp_factor,
-                parser.components[1].h_samp_factor,
-                parser.components[2].h_samp_factor,
-            ]
-        };
-        let v_samp = if is_grayscale {
-            [parser.components[0].v_samp_factor, 1, 1]
-        } else {
-            [
-                parser.components[0].v_samp_factor,
-                parser.components[1].v_samp_factor,
-                parser.components[2].v_samp_factor,
-            ]
-        };
-
-        // Check sampling factors
-        let max_h = h_samp[..parser.num_components as usize]
+        // Check for high sampling factors (>2x2) which need buffered mode
+        let max_h = parser.components[..parser.num_components as usize]
             .iter()
-            .copied()
+            .map(|c| c.h_samp_factor)
             .max()
             .unwrap_or(1);
-        let max_v = v_samp[..parser.num_components as usize]
+        let max_v = parser.components[..parser.num_components as usize]
             .iter()
-            .copied()
+            .map(|c| c.v_samp_factor)
             .max()
             .unwrap_or(1);
 
-        // For high sampling factors (>2x2), use buffered mode (like progressive)
-        // This is rare but valid - full-frame decoder handles it
         if max_h > 2 || max_v > 2 {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;
-
-            // Compute subsampling from max sampling factors
             let subsampling = subsampling_from_max(max_h, max_v, is_grayscale);
 
-            // Fully decode the image (scanline reader doesn't support cancellation)
             parser.decode(&Unstoppable)?;
 
-            // Convert to pixels
             let output_format = if is_grayscale {
                 PixelFormat::Gray
             } else {
@@ -520,55 +494,9 @@ impl Decoder {
             ));
         }
 
-        // Extract quant table indices - use 0 for missing components in grayscale
-        let quant_indices = if is_grayscale {
-            [parser.components[0].quant_table_idx as usize, 0, 0]
-        } else {
-            [
-                parser.components[0].quant_table_idx as usize,
-                parser.components[1].quant_table_idx as usize,
-                parser.components[2].quant_table_idx as usize,
-            ]
-        };
-
-        // Find SOS marker to get table mapping and scan data position
-        let scan_info = parser.find_scan_info()?;
-
-        // Detect RGB JPEGs (Adobe APP14 transform=0 or RGB component IDs)
-        let is_rgb = if parser.num_components == 3 {
-            match parser.adobe_transform {
-                Some(AdobeColorTransform::Unknown) => true, // transform=0 → RGB
-                Some(AdobeColorTransform::YCbCr) => false,  // transform=1 → YCbCr
-                None => {
-                    // No Adobe marker: check for RGB component IDs
-                    parser.components[0].id == b'R'
-                        && parser.components[1].id == b'G'
-                        && parser.components[2].id == b'B'
-                }
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        ScanlineReader::new(
-            data,
-            parser.width,
-            parser.height,
-            parser.num_components,
-            h_samp,
-            v_samp,
-            parser.quant_tables,
-            quant_indices,
-            parser.dc_tables,
-            parser.ac_tables,
-            scan_info.table_mapping,
-            scan_info.data_start,
-            parser.restart_interval,
-            is_xyb,
-            is_rgb,
-            self.config.chroma_upsampling,
-        )
+        // Extract scan data and construct scanline reader
+        let scan_data = parser.into_scan_data(is_grayscale)?;
+        ScanlineReader::from_scan_data(scan_data, self.config.chroma_upsampling)
     }
 
     /// Decodes a JPEG image.
@@ -903,14 +831,6 @@ impl Default for Decoder {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Information about a scan needed for scanline reading.
-pub(crate) struct ScanInfo {
-    /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
-    pub table_mapping: [(usize, usize); 3],
-    /// Position in data where entropy-coded scan data begins
-    pub data_start: usize,
 }
 
 #[cfg(test)]
