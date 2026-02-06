@@ -287,6 +287,23 @@ impl Decoder {
         self.strictness(Strictness::Lenient)
     }
 
+    /// Apply optimal Laplacian dequantization biases (Price & Rabbani 2000).
+    ///
+    /// When enabled, the decoder computes per-coefficient biases from DCT
+    /// coefficient statistics and applies them during dequantization. This
+    /// reduces reconstruction error compared to the default midpoint
+    /// reconstruction, producing measurably higher quality output.
+    ///
+    /// Tradeoff: bypasses the fast integer IDCT path, using f32 dequantization
+    /// and IDCT instead. Expect ~1.3-2x slower decoding.
+    ///
+    /// Default: `false`.
+    #[must_use]
+    pub fn dequant_bias(mut self, enable: bool) -> Self {
+        self.config.dequant_bias = enable;
+        self
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         let mut parser = JpegParser::with_strictness(
@@ -437,6 +454,7 @@ impl Decoder {
                 output_format,
                 is_xyb,
                 self.config.chroma_upsampling,
+                self.config.dequant_bias,
                 &Unstoppable,
             )?;
 
@@ -481,6 +499,7 @@ impl Decoder {
                 output_format,
                 is_xyb,
                 self.config.chroma_upsampling,
+                self.config.dequant_bias,
                 &Unstoppable,
             )?;
 
@@ -524,6 +543,7 @@ impl Decoder {
             output_format,
             info.is_xyb,
             self.config.chroma_upsampling,
+            self.config.dequant_bias,
             &stop,
         )?;
 
