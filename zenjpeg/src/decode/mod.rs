@@ -64,7 +64,10 @@ use crate::error::{Error, Result};
 use crate::foundation::consts::MAX_COMPONENTS;
 
 /// Compute subsampling mode from component sampling factors.
-fn compute_subsampling(components: &[Component; MAX_COMPONENTS], num_components: u8) -> Subsampling {
+fn compute_subsampling(
+    components: &[Component; MAX_COMPONENTS],
+    num_components: u8,
+) -> Subsampling {
     if num_components == 1 {
         return Subsampling::S444; // Grayscale
     }
@@ -97,6 +100,45 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
         // For other patterns, approximate as 4:2:0
         _ => Subsampling::S420,
     }
+}
+
+/// Chroma upsampling method for subsampled JPEG images (4:2:0, 4:2:2, 4:4:0).
+///
+/// This controls how chroma (Cb/Cr) channels are upsampled to match luma (Y)
+/// resolution during decoding. Different methods produce slightly different
+/// pixel values, which matters for exact decoder matching.
+///
+/// # Compatibility
+///
+/// | Method | Matches |
+/// |--------|---------|
+/// | `Triangle` | jpegli (default zenjpeg behavior) |
+/// | `LibjpegCompat` | libjpeg-turbo, mozjpeg, djpeg |
+/// | `NearestNeighbor` | fastest, lowest quality |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ChromaUpsampling {
+    /// Pixel replication (box filter). Fastest, lowest quality.
+    ///
+    /// Each chroma sample is duplicated to fill the corresponding output pixels.
+    /// No interpolation is performed.
+    NearestNeighbor,
+
+    /// Separable triangle filter with uniform `+2` rounding bias (jpegli-style).
+    ///
+    /// Applies horizontal then vertical 3:1 interpolation. This is the default
+    /// and matches jpegli's upsampling behavior.
+    #[default]
+    Triangle,
+
+    /// Exact libjpeg-turbo/mozjpeg compatible triangle filter.
+    ///
+    /// Uses a fused 2D filter for h2v2 (not separable) with alternating rounding
+    /// bias (`+1`/`+2` for 1D, `+7`/`+8` for 2D). This avoids both systematic
+    /// rounding bias and intermediate rounding errors from separable passes.
+    ///
+    /// Use this mode when you need pixel-exact match with `djpeg` or mozjpeg output.
+    LibjpegCompat,
 }
 
 /// Controls how the decoder handles non-fatal errors.
@@ -302,8 +344,8 @@ use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 pub struct DecoderConfig {
     /// Output pixel format (None = use source format)
     pub output_format: Option<PixelFormat>,
-    /// Whether to apply fancy upsampling
-    pub fancy_upsampling: bool,
+    /// Chroma upsampling method for subsampled images
+    pub chroma_upsampling: ChromaUpsampling,
     /// Whether to apply block smoothing
     pub block_smoothing: bool,
     /// Whether to apply embedded ICC profile (requires cms feature)
@@ -325,7 +367,7 @@ impl core::fmt::Debug for DecoderConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DecoderConfig")
             .field("output_format", &self.output_format)
-            .field("fancy_upsampling", &self.fancy_upsampling)
+            .field("chroma_upsampling", &self.chroma_upsampling)
             .field("block_smoothing", &self.block_smoothing)
             .field("apply_icc", &self.apply_icc)
             .field("max_pixels", &self.max_pixels)
@@ -340,7 +382,7 @@ impl Default for DecoderConfig {
     fn default() -> Self {
         Self {
             output_format: None,
-            fancy_upsampling: true,
+            chroma_upsampling: ChromaUpsampling::default(),
             block_smoothing: false,
             // Apply ICC by default when CMS is available
             apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
@@ -398,10 +440,34 @@ impl Decoder {
         self
     }
 
-    /// Enables fancy upsampling.
+    /// Sets the chroma upsampling method.
+    ///
+    /// Controls how subsampled chroma channels (4:2:0, 4:2:2, 4:4:0) are
+    /// upsampled to match luma resolution.
+    ///
+    /// - [`ChromaUpsampling::Triangle`] (default): jpegli-style separable filter
+    /// - [`ChromaUpsampling::LibjpegCompat`]: exact libjpeg-turbo/mozjpeg match
+    /// - [`ChromaUpsampling::NearestNeighbor`]: fastest, lowest quality
+    #[must_use]
+    pub fn chroma_upsampling(mut self, method: ChromaUpsampling) -> Self {
+        self.config.chroma_upsampling = method;
+        self
+    }
+
+    /// Enables or disables fancy (triangle filter) upsampling.
+    ///
+    /// This is a convenience method for backwards compatibility.
+    /// `true` maps to [`ChromaUpsampling::Triangle`],
+    /// `false` maps to [`ChromaUpsampling::NearestNeighbor`].
+    ///
+    /// For more control, use [`chroma_upsampling()`](Self::chroma_upsampling).
     #[must_use]
     pub fn fancy_upsampling(mut self, enable: bool) -> Self {
-        self.config.fancy_upsampling = enable;
+        self.config.chroma_upsampling = if enable {
+            ChromaUpsampling::Triangle
+        } else {
+            ChromaUpsampling::NearestNeighbor
+        };
         self
     }
 
@@ -648,7 +714,9 @@ impl Decoder {
         // - CMYK (4-component streaming not implemented yet)
         let needs_buffered = matches!(
             parser.mode,
-            JpegMode::Progressive | JpegMode::ArithmeticSequential | JpegMode::ArithmeticProgressive
+            JpegMode::Progressive
+                | JpegMode::ArithmeticSequential
+                | JpegMode::ArithmeticProgressive
         ) || is_cmyk;
 
         if needs_buffered {
@@ -668,8 +736,12 @@ impl Decoder {
             } else {
                 PixelFormat::Rgb
             };
-            let pixels =
-                parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling, &Unstoppable)?;
+            let pixels = parser.to_pixels(
+                output_format,
+                is_xyb,
+                self.config.chroma_upsampling,
+                &Unstoppable,
+            )?;
 
             return Ok(ScanlineReader::new_buffered(
                 data,
@@ -734,8 +806,12 @@ impl Decoder {
             } else {
                 PixelFormat::Rgb
             };
-            let pixels =
-                parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling, &Unstoppable)?;
+            let pixels = parser.to_pixels(
+                output_format,
+                is_xyb,
+                self.config.chroma_upsampling,
+                &Unstoppable,
+            )?;
 
             return Ok(ScanlineReader::new_buffered(
                 data,
@@ -765,8 +841,8 @@ impl Decoder {
         // Detect RGB JPEGs (Adobe APP14 transform=0 or RGB component IDs)
         let is_rgb = if parser.num_components == 3 {
             match parser.adobe_transform {
-                Some(AdobeColorTransform::Unknown) => true,  // transform=0 → RGB
-                Some(AdobeColorTransform::YCbCr) => false,   // transform=1 → YCbCr
+                Some(AdobeColorTransform::Unknown) => true, // transform=0 → RGB
+                Some(AdobeColorTransform::YCbCr) => false,  // transform=1 → YCbCr
                 None => {
                     // No Adobe marker: check for RGB component IDs
                     parser.components[0].id == b'R'
@@ -795,6 +871,7 @@ impl Decoder {
             parser.restart_interval,
             is_xyb,
             is_rgb,
+            self.config.chroma_upsampling,
         )
     }
 
@@ -818,8 +895,12 @@ impl Decoder {
         // Convert to output format
         // For XYB images, use simple dequantization so ICC profile works correctly
         #[allow(unused_mut)] // pixels is mutated when cms features are enabled
-        let mut pixels =
-            parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling, &stop)?;
+        let mut pixels = parser.to_pixels(
+            output_format,
+            info.is_xyb,
+            self.config.chroma_upsampling,
+            &stop,
+        )?;
 
         // Apply ICC profile if enabled and present
         // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
@@ -894,8 +975,12 @@ impl Decoder {
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format as f32
-        let pixels =
-            parser.to_pixels_f32(output_format, info.is_xyb, self.config.fancy_upsampling, &stop)?;
+        let pixels = parser.to_pixels_f32(
+            output_format,
+            info.is_xyb,
+            self.config.chroma_upsampling,
+            &stop,
+        )?;
 
         let warnings = parser.take_warnings();
 
@@ -934,11 +1019,7 @@ impl Decoder {
     /// ```
     ///
     /// For analysis of large images, consider streaming APIs.
-    pub fn decode_coefficients(
-        &self,
-        data: &[u8],
-        stop: impl Stop,
-    ) -> Result<DecodedCoefficients> {
+    pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.config.max_pixels,
@@ -968,7 +1049,7 @@ impl Decoder {
     ///
     /// Chroma planes (Cb, Cr) are always upsampled to full resolution,
     /// matching the Y plane dimensions. The upsampling method is controlled
-    /// by the `fancy_upsampling` setting.
+    /// by the `chroma_upsampling` setting.
     ///
     /// # Example
     ///
@@ -1023,7 +1104,7 @@ impl Decoder {
         }
 
         // Get the YCbCr planes directly
-        let (y, cb, cr) = parser.to_ycbcr_planes_f32(self.config.fancy_upsampling)?;
+        let (y, cb, cr) = parser.to_ycbcr_planes_f32(self.config.chroma_upsampling)?;
 
         // Pass through ICC profile if present
         let icc_profile = parser.icc_profile.clone();
@@ -1149,7 +1230,7 @@ mod tests {
             .fancy_upsampling(true);
 
         assert_eq!(decoder.config.output_format, Some(PixelFormat::Rgb));
-        assert!(decoder.config.fancy_upsampling);
+        assert_eq!(decoder.config.chroma_upsampling, ChromaUpsampling::Triangle);
     }
 
     #[test]
@@ -1181,7 +1262,9 @@ mod tests {
 
         // Decode
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding should succeed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("decoding should succeed");
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
@@ -1223,7 +1306,9 @@ mod tests {
 
         // Decode
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding should succeed");
+        let decoded = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("decoding should succeed");
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
@@ -1279,7 +1364,9 @@ mod tests {
         }
 
         // Compare with u8 decode - converted f32 should match
-        let decoded_u8 = decoder.decode(&jpeg, Unstoppable).expect("u8 decoding should succeed");
+        let decoded_u8 = decoder
+            .decode(&jpeg, Unstoppable)
+            .expect("u8 decoding should succeed");
         let converted_u8 = decoded_f32.to_u8();
 
         // Values should be close - allow diff of 2 because u8 path uses integer IDCT

@@ -247,7 +247,8 @@ pub fn upsample_h2v2_i16_fancy_strided(
     {
         if let Some(token) = archmage::Avx2Token::try_new() {
             upsample_h2v2_i16_fancy_strided_avx2(
-                token, input, in_width, in_stride, in_height, output, out_width, out_stride, out_height,
+                token, input, in_width, in_stride, in_height, output, out_width, out_stride,
+                out_height,
             );
             return;
         }
@@ -489,7 +490,11 @@ fn upsample_horizontal_row_strided_avx2(
     for i in (chunks * 16)..in_len {
         let curr = input[i] as i32;
         let left = if i > 0 { input[i - 1] } else { input[0] } as i32;
-        let right = if i + 1 < in_len { input[i + 1] } else { input[in_len - 1] } as i32;
+        let right = if i + 1 < in_len {
+            input[i + 1]
+        } else {
+            input[in_len - 1]
+        } as i32;
 
         let out_idx = i * 2;
         if out_idx < out_len {
@@ -1123,6 +1128,660 @@ fn upsample_horizontal_row_avx2(_token: archmage::Avx2Token, input: &[i16], outp
     feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
+// ============================================================================
+// Nearest-Neighbor Upsampling (Box Filter)
+// ============================================================================
+
+/// Horizontal 2x + vertical 2x nearest-neighbor upsampling in i16 (4:2:0 → 4:4:4).
+///
+/// Each chroma sample is replicated to fill the corresponding 2x2 output area.
+pub fn upsample_h2v2_i16_nearest(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+/// Horizontal 2x nearest-neighbor upsampling in i16 (4:2:2 → 4:4:4).
+pub fn upsample_h2v1_i16_nearest(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+/// Vertical 2x nearest-neighbor upsampling in i16 (4:4:0 → 4:4:4).
+pub fn upsample_h1v2_i16_nearest(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = out_x.min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+/// Strided horizontal 2x + vertical 2x nearest-neighbor upsampling in i16 (4:2:0 → 4:4:4).
+pub fn upsample_h2v2_i16_nearest_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    _out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
+
+        for out_x in 0..in_width * 2 {
+            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+// ============================================================================
+// libjpeg-turbo Compatible Upsampling
+// ============================================================================
+
+/// Horizontal 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:2 → 4:4:4).
+///
+/// Uses alternating rounding bias: +1 for left pixel, +2 for right pixel.
+/// Matches libjpeg-turbo's `jdsample.c` h2v1_fancy_upsample.
+pub fn upsample_h2v1_i16_libjpeg(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        if in_width == 1 {
+            // Single column: just replicate
+            let val = input[in_row];
+            if out_width > 0 {
+                output[out_row] = val;
+            }
+            if out_width > 1 {
+                output[out_row + 1] = val;
+            }
+            continue;
+        }
+
+        // First column
+        let curr = input[in_row] as i32;
+        let next = input[in_row + 1] as i32;
+        output[out_row] = curr as i16;
+        if out_width > 1 {
+            output[out_row + 1] = ((curr * 3 + next + 2) >> 2) as i16;
+        }
+
+        // Interior columns
+        for in_x in 1..in_width.saturating_sub(1) {
+            let prev = input[in_row + in_x - 1] as i32;
+            let curr = input[in_row + in_x] as i32;
+            let next = input[in_row + in_x + 1] as i32;
+            let left_out = in_x * 2;
+            let right_out = left_out + 1;
+            if left_out < out_width {
+                output[out_row + left_out] = ((curr * 3 + prev + 1) >> 2) as i16;
+                // bias=1
+            }
+            if right_out < out_width {
+                output[out_row + right_out] = ((curr * 3 + next + 2) >> 2) as i16;
+                // bias=2
+            }
+        }
+
+        // Last column
+        let last = in_width - 1;
+        let prev = input[in_row + last - 1] as i32;
+        let curr = input[in_row + last] as i32;
+        let left_out = last * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[out_row + left_out] = ((curr * 3 + prev + 1) >> 2) as i16;
+        }
+        if right_out < out_width {
+            output[out_row + right_out] = curr as i16;
+        }
+    }
+}
+
+/// Vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:4:0 → 4:4:4).
+///
+/// Uses alternating rounding bias: +1 for upper row (v=0), +2 for lower row (v=1).
+/// This is the vertical equivalent of the h2v1 alternating bias pattern.
+pub fn upsample_h1v2_i16_libjpeg(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let is_upper = out_y % 2 == 0;
+        let out_row = out_y * out_width;
+
+        // For the upper row of a pair (v=0): near=curr, far=above
+        // For the lower row of a pair (v=1): near=curr, far=below
+        let far_y = if is_upper {
+            in_y_clamped.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let near_row = in_y_clamped * in_width;
+        let far_row = far_y * in_width;
+
+        let bias = if is_upper { 1i32 } else { 2i32 };
+
+        for out_x in 0..out_width {
+            let in_x = out_x.min(in_width.saturating_sub(1));
+            let near = input[near_row + in_x] as i32;
+            let far = input[far_row + in_x] as i32;
+            output[out_row + out_x] = ((near * 3 + far + bias) >> 2) as i16;
+        }
+    }
+}
+
+/// Horizontal 2x + vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:0 → 4:4:4).
+///
+/// Uses fused 2D filter (NOT separable) with alternating rounding bias (+7/+8).
+/// Matches libjpeg-turbo's `jdsample.c` h2v2_fancy_upsample exactly.
+///
+/// The fused algorithm avoids intermediate rounding errors from separable passes.
+pub fn upsample_h2v2_i16_libjpeg(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let is_upper = out_y % 2 == 0;
+
+        // near_row = current chroma row, far_row = vertical neighbor
+        let far_y = if is_upper {
+            in_y_clamped.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let near_row = in_y_clamped * in_width;
+        let far_row = far_y * in_width;
+        let out_row = out_y * out_width;
+
+        // Compute column sums: colsum[x] = near[x] * 3 + far[x]
+        // Then apply horizontal filter on column sums with /16 rounding
+        upsample_h2v2_libjpeg_row(
+            &input[near_row..near_row + in_width],
+            &input[far_row..far_row + in_width],
+            &mut output[out_row..],
+            in_width,
+            out_width,
+            is_upper,
+        );
+    }
+}
+
+/// Process one output row of fused h2v2 libjpeg-compat upsampling.
+///
+/// `is_upper` controls the rounding bias alternation pattern.
+#[inline]
+fn upsample_h2v2_libjpeg_row(
+    near: &[i16],
+    far: &[i16],
+    output: &mut [i16],
+    in_width: usize,
+    out_width: usize,
+    is_upper: bool,
+) {
+    if in_width == 1 {
+        // Single column: just vertical filter
+        let colsum = near[0] as i32 * 3 + far[0] as i32;
+        let val = ((colsum * 4 + 8) >> 4) as i16;
+        if out_width > 0 {
+            output[0] = val;
+        }
+        if out_width > 1 {
+            output[1] = val;
+        }
+        return;
+    }
+
+    // Rounding biases per libjpeg-turbo:
+    // For upper row (v=0): left=8, right=7
+    // For lower row (v=1): left=7, right=8
+    // This alternation eliminates systematic bias
+    let (bias_left, bias_right) = if is_upper { (8i32, 7i32) } else { (7i32, 8i32) };
+
+    // Column sums: near * 3 + far
+    let this_colsum = near[0] as i32 * 3 + far[0] as i32;
+    let next_colsum = near[1] as i32 * 3 + far[1] as i32;
+
+    // First column
+    output[0] = ((this_colsum * 4 + 8) >> 4) as i16;
+    if out_width > 1 {
+        output[1] = ((this_colsum * 3 + next_colsum + bias_right) >> 4) as i16;
+    }
+
+    // Interior columns
+    let mut last_colsum = this_colsum;
+    for in_x in 1..in_width.saturating_sub(1) {
+        let this_colsum = near[in_x] as i32 * 3 + far[in_x] as i32;
+        let next_colsum = near[in_x + 1] as i32 * 3 + far[in_x + 1] as i32;
+
+        let left_out = in_x * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[left_out] = ((this_colsum * 3 + last_colsum + bias_left) >> 4) as i16;
+        }
+        if right_out < out_width {
+            output[right_out] = ((this_colsum * 3 + next_colsum + bias_right) >> 4) as i16;
+        }
+        last_colsum = this_colsum;
+    }
+
+    // Last column
+    let last = in_width - 1;
+    let this_colsum = near[last] as i32 * 3 + far[last] as i32;
+    let left_out = last * 2;
+    let right_out = left_out + 1;
+    if left_out < out_width {
+        output[left_out] = ((this_colsum * 3 + last_colsum + bias_left) >> 4) as i16;
+    }
+    if right_out < out_width {
+        output[right_out] = ((this_colsum * 4 + bias_right) >> 4) as i16;
+    }
+}
+
+/// Strided horizontal 2x + vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding.
+///
+/// Same algorithm as `upsample_h2v2_i16_libjpeg` but supports SIMD-aligned stride > width.
+pub fn upsample_h2v2_i16_libjpeg_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let is_upper = out_y % 2 == 0;
+
+        let far_y = if is_upper {
+            in_y_clamped.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let near_row = in_y_clamped * in_stride;
+        let far_row = far_y * in_stride;
+        let out_row = out_y * out_stride;
+
+        upsample_h2v2_libjpeg_row(
+            &input[near_row..near_row + in_width],
+            &input[far_row..far_row + in_width],
+            &mut output[out_row..],
+            in_width,
+            out_width,
+            is_upper,
+        );
+    }
+}
+
+// ============================================================================
+// f32 Nearest-Neighbor and libjpeg-compat Upsampling
+// ============================================================================
+
+/// Nearest-neighbor upsampling for f32 planes.
+///
+/// Replaces the inline box filter code in output.rs.
+pub fn upsample_nearest_f32(
+    input: &[f32],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [f32],
+    out_width: usize,
+    out_height: usize,
+    scale_x: usize,
+    scale_y: usize,
+) {
+    for py in 0..out_height {
+        let sy = (py / scale_y).min(in_height.saturating_sub(1));
+        let out_row = py * out_width;
+        let in_row = sy * in_width;
+        for px in 0..out_width {
+            let sx = (px / scale_x).min(in_width.saturating_sub(1));
+            output[out_row + px] = input[in_row + sx];
+        }
+    }
+}
+
+/// libjpeg-turbo compatible upsampling for f32 planes.
+///
+/// Dispatches to the appropriate algorithm based on scale factors.
+pub fn upsample_libjpeg_f32(
+    input: &[f32],
+    in_width: usize,
+    in_height: usize,
+    out_width: usize,
+    out_height: usize,
+    scale_x: usize,
+    scale_y: usize,
+) -> Vec<f32> {
+    let mut output = vec![0.0f32; out_width * out_height];
+    match (scale_x, scale_y) {
+        (2, 2) => upsample_h2v2_f32_libjpeg(
+            input,
+            in_width,
+            in_height,
+            &mut output,
+            out_width,
+            out_height,
+        ),
+        (2, 1) => upsample_h2v1_f32_libjpeg(
+            input,
+            in_width,
+            in_height,
+            &mut output,
+            out_width,
+            out_height,
+        ),
+        (1, 2) => upsample_h1v2_f32_libjpeg(
+            input,
+            in_width,
+            in_height,
+            &mut output,
+            out_width,
+            out_height,
+        ),
+        (1, 1) => {
+            // No upsampling, just crop
+            for y in 0..out_height {
+                let in_y = y.min(in_height.saturating_sub(1));
+                for x in 0..out_width {
+                    let in_x = x.min(in_width.saturating_sub(1));
+                    output[y * out_width + x] = input[in_y * in_width + in_x];
+                }
+            }
+        }
+        _ => {
+            // Fall back to nearest-neighbor for unsupported ratios
+            upsample_nearest_f32(
+                input,
+                in_width,
+                in_height,
+                &mut output,
+                out_width,
+                out_height,
+                scale_x,
+                scale_y,
+            );
+        }
+    }
+    output
+}
+
+/// f32 version of libjpeg-turbo h2v1 upsampling with alternating bias.
+fn upsample_h2v1_f32_libjpeg(
+    input: &[f32],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [f32],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        if in_width == 1 {
+            let val = input[in_row];
+            if out_width > 0 {
+                output[out_row] = val;
+            }
+            if out_width > 1 {
+                output[out_row + 1] = val;
+            }
+            continue;
+        }
+
+        // First column
+        let curr = input[in_row];
+        let next = input[in_row + 1];
+        output[out_row] = curr;
+        if out_width > 1 {
+            output[out_row + 1] = curr * 0.75 + next * 0.25;
+        }
+
+        // Interior
+        for in_x in 1..in_width.saturating_sub(1) {
+            let prev = input[in_row + in_x - 1];
+            let curr = input[in_row + in_x];
+            let next = input[in_row + in_x + 1];
+            let left_out = in_x * 2;
+            let right_out = left_out + 1;
+            if left_out < out_width {
+                output[out_row + left_out] = curr * 0.75 + prev * 0.25;
+            }
+            if right_out < out_width {
+                output[out_row + right_out] = curr * 0.75 + next * 0.25;
+            }
+        }
+
+        // Last column
+        let last = in_width - 1;
+        let prev = input[in_row + last - 1];
+        let curr = input[in_row + last];
+        let left_out = last * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[out_row + left_out] = curr * 0.75 + prev * 0.25;
+        }
+        if right_out < out_width {
+            output[out_row + right_out] = curr;
+        }
+    }
+}
+
+/// f32 version of libjpeg-turbo h1v2 upsampling with alternating bias.
+fn upsample_h1v2_f32_libjpeg(
+    input: &[f32],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [f32],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let is_upper = out_y % 2 == 0;
+        let out_row = out_y * out_width;
+
+        let far_y = if is_upper {
+            in_y_clamped.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let near_row = in_y_clamped * in_width;
+        let far_row = far_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = out_x.min(in_width.saturating_sub(1));
+            let near = input[near_row + in_x];
+            let far = input[far_row + in_x];
+            output[out_row + out_x] = near * 0.75 + far * 0.25;
+        }
+    }
+}
+
+/// f32 version of libjpeg-turbo fused h2v2 upsampling.
+fn upsample_h2v2_f32_libjpeg(
+    input: &[f32],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [f32],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let is_upper = out_y % 2 == 0;
+
+        let far_y = if is_upper {
+            in_y_clamped.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let near_row = in_y_clamped * in_width;
+        let far_row = far_y * in_width;
+        let out_row = out_y * out_width;
+
+        if in_width == 1 {
+            let colsum = input[near_row] * 3.0 + input[far_row];
+            let val = colsum * 0.25;
+            if out_width > 0 {
+                output[out_row] = val;
+            }
+            if out_width > 1 {
+                output[out_row + 1] = val;
+            }
+            continue;
+        }
+
+        // Column sums
+        let this_colsum = input[near_row] * 3.0 + input[far_row];
+        let next_colsum = input[near_row + 1] * 3.0 + input[far_row + 1];
+
+        // First column
+        output[out_row] = this_colsum * 0.25;
+        if out_width > 1 {
+            output[out_row + 1] = (this_colsum * 3.0 + next_colsum) / 16.0;
+        }
+
+        let mut last_colsum = this_colsum;
+        for in_x in 1..in_width.saturating_sub(1) {
+            let this_colsum = input[near_row + in_x] * 3.0 + input[far_row + in_x];
+            let next_colsum = input[near_row + in_x + 1] * 3.0 + input[far_row + in_x + 1];
+            let left_out = in_x * 2;
+            let right_out = left_out + 1;
+            if left_out < out_width {
+                output[out_row + left_out] = (this_colsum * 3.0 + last_colsum) / 16.0;
+            }
+            if right_out < out_width {
+                output[out_row + right_out] = (this_colsum * 3.0 + next_colsum) / 16.0;
+            }
+            last_colsum = this_colsum;
+        }
+
+        // Last column
+        let last = in_width - 1;
+        let this_colsum = input[near_row + last] * 3.0 + input[far_row + last];
+        let left_out = last * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[out_row + left_out] = (this_colsum * 3.0 + last_colsum) / 16.0;
+        }
+        if right_out < out_width {
+            output[out_row + right_out] = this_colsum * 0.25;
+        }
+    }
+}
+
+// ============================================================================
+// Existing Scalar Horizontal Row (for reference/internal use)
+// ============================================================================
+
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
     let in_width = input.len();
     let out_width = output.len();

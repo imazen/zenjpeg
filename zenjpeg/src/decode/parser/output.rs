@@ -16,23 +16,22 @@
 
 use super::super::idct::inverse_dct_8x8;
 use super::super::idct_int::{idct_int_auto, idct_int_dc_only, idct_int_tiered};
-use super::super::upsample::upsample_fancy;
+use super::super::upsample::{upsample_fancy, upsample_libjpeg_f32, upsample_nearest_f32};
 use crate::color::{
     cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
-    gray_f32_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
-    ycbcr_planes_i16_to_rgb_u8, ycck_planes_to_rgb_u8,
-    ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8,
+    gray_f32_to_rgb_u8, ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32,
+    ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8, ycck_planes_to_rgb_u8,
 };
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
-use enough::Stop;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
     dequantize_unzigzag_i32_partial, DequantBiasStats,
 };
 use crate::types::PixelFormat;
+use enough::Stop;
 
 use super::JpegParser;
 
@@ -52,8 +51,8 @@ impl<'a> JpegParser<'a> {
         match self.adobe_transform {
             Some(AdobeColorTransform::YCbCr) => return false, // Explicitly YCbCr
             Some(AdobeColorTransform::Unknown) => return true, // Explicitly RGB (transform=0)
-            Some(AdobeColorTransform::Ycck) => return false,   // YCCK (shouldn't be 3-component)
-            None => {}                                          // No Adobe marker, check IDs
+            Some(AdobeColorTransform::Ycck) => return false,  // YCCK (shouldn't be 3-component)
+            None => {}                                        // No Adobe marker, check IDs
         }
         // No Adobe APP14: check component IDs for RGB ('R'=82, 'G'=71, 'B'=66)
         let ids: [u8; 3] = [
@@ -148,7 +147,10 @@ impl<'a> JpegParser<'a> {
     ///
     /// Streams MCU row by row to keep data in L2 cache.
     /// Only works for non-XYB 4:4:4 RGB output.
-    fn to_pixels_fast_i16(&self, _fancy_upsampling: bool) -> Result<Vec<u8>> {
+    fn to_pixels_fast_i16(
+        &self,
+        _chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
 
@@ -220,7 +222,8 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
                         } else {
-                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            let mut dequant_i32 =
+                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                             idct_int_tiered(
                                 &mut dequant_i32,
                                 &mut strip[dst_offset..],
@@ -273,9 +276,15 @@ impl<'a> JpegParser<'a> {
     /// - Integer IDCT (outputs i16 [0, 255])
     /// - Integer upsampling (i16 → i16)
     /// - Integer color conversion (i16 YCbCr → u8 RGB)
-    fn to_pixels_fast_i16_subsampled(&self, fancy_upsampling: bool) -> Result<Vec<u8>> {
+    fn to_pixels_fast_i16_subsampled(
+        &self,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<Vec<u8>> {
+        use super::super::ChromaUpsampling;
         use crate::decode::upsample::{
-            upsample_h1v2_i16_fancy, upsample_h2v1_i16_fancy, upsample_h2v2_i16_fancy,
+            upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
+            upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
+            upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
         let width = self.width as usize;
@@ -360,7 +369,8 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
                         } else {
-                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            let mut dequant_i32 =
+                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                             idct_int_tiered(
                                 &mut dequant_i32,
                                 &mut y_strip[dst_offset..],
@@ -398,7 +408,8 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut cb_strip_sub[dst_offset..], c_strip_width);
                         } else {
-                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            let mut dequant_i32 =
+                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                             idct_int_tiered(
                                 &mut dequant_i32,
                                 &mut cb_strip_sub[dst_offset..],
@@ -436,7 +447,8 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut cr_strip_sub[dst_offset..], c_strip_width);
                         } else {
-                            let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            let mut dequant_i32 =
+                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
                             idct_int_tiered(
                                 &mut dequant_i32,
                                 &mut cr_strip_sub[dst_offset..],
@@ -455,133 +467,112 @@ impl<'a> JpegParser<'a> {
                 .min((height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio);
             let _c_cols_this_mcu = (y_cols_this_mcu + h_ratio - 1) / h_ratio;
 
-            if fancy_upsampling {
-                match (h_ratio, v_ratio) {
-                    (2, 2) => {
-                        // Uses multiversion for automatic SIMD dispatch
-                        upsample_h2v2_i16_fancy(
-                            &cb_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cb_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                        upsample_h2v2_i16_fancy(
-                            &cr_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cr_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                    }
-                    (2, 1) => {
-                        upsample_h2v1_i16_fancy(
-                            &cb_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cb_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                        upsample_h2v1_i16_fancy(
-                            &cr_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cr_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                    }
-                    (1, 2) => {
-                        upsample_h1v2_i16_fancy(
-                            &cb_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cb_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                        upsample_h1v2_i16_fancy(
-                            &cr_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cr_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                    }
-                    _ => unreachable!(
-                        "unsupported ratio should be filtered by can_use_fast_i16_subsampled"
-                    ),
-                }
-            } else {
-                // Box filter path
-                if h_ratio == 2 && v_ratio == 2 {
-                    // Fused box-filter 4:2:0 upsample + YCbCr→RGB conversion.
-                    // Eliminates intermediate cb_strip/cr_strip buffers entirely.
-                    let y_start = imcu_row * mcu_height;
-                    let c_cols = (y_cols_this_mcu + 1) / 2;
+            // Select upsampling function based on method
+            type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
+            let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
+                UpsampleFn,
+                UpsampleFn,
+                UpsampleFn,
+            ) = match chroma_upsampling {
+                ChromaUpsampling::Triangle => (
+                    upsample_h2v2_i16_fancy,
+                    upsample_h2v1_i16_fancy,
+                    upsample_h1v2_i16_fancy,
+                ),
+                ChromaUpsampling::LibjpegCompat => (
+                    upsample_h2v2_i16_libjpeg,
+                    upsample_h2v1_i16_libjpeg,
+                    upsample_h1v2_i16_libjpeg,
+                ),
+                ChromaUpsampling::NearestNeighbor => {
+                    // For 4:2:0 nearest-neighbor, use fused box-filter path
+                    if h_ratio == 2 && v_ratio == 2 {
+                        let y_start = imcu_row * mcu_height;
+                        let c_cols = (y_cols_this_mcu + 1) / 2;
 
-                    for row in 0..y_rows_this_mcu {
-                        let y_offset = row * y_strip_width;
-                        // Box filter: each chroma row covers 2 output rows
-                        let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
-                        let c_offset = c_row * c_strip_width;
-                        let rgb_offset = (y_start + row) * width * 3;
+                        for row in 0..y_rows_this_mcu {
+                            let y_offset = row * y_strip_width;
+                            let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
+                            let c_offset = c_row * c_strip_width;
+                            let rgb_offset = (y_start + row) * width * 3;
 
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
-                            &y_strip[y_offset..y_offset + y_cols_this_mcu],
-                            &cb_strip_sub[c_offset..c_offset + c_cols],
-                            &cr_strip_sub[c_offset..c_offset + c_cols],
-                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_mcu * 3],
-                            y_cols_this_mcu,
-                        );
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_offset..y_offset + y_cols_this_mcu],
+                                &cb_strip_sub[c_offset..c_offset + c_cols],
+                                &cr_strip_sub[c_offset..c_offset + c_cols],
+                                &mut rgb[rgb_offset..rgb_offset + y_cols_this_mcu * 3],
+                                y_cols_this_mcu,
+                            );
+                        }
+                        continue; // Skip the separate color convert below
                     }
-                    continue; // Skip the separate color convert below
+                    // For 4:2:2 and 4:4:0, use nearest-neighbor functions
+                    (
+                        upsample_h2v2_i16_nearest,
+                        upsample_h2v1_i16_nearest,
+                        upsample_h1v2_i16_nearest,
+                    )
                 }
+            };
 
-                // Fall back to fancy for 4:2:2 and 4:4:0 (no fused kernel)
-                match (h_ratio, v_ratio) {
-                    (2, 1) => {
-                        upsample_h2v1_i16_fancy(
-                            &cb_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cb_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                        upsample_h2v1_i16_fancy(
-                            &cr_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cr_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                    }
-                    (1, 2) => {
-                        upsample_h1v2_i16_fancy(
-                            &cb_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cb_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                        upsample_h1v2_i16_fancy(
-                            &cr_strip_sub,
-                            c_strip_width,
-                            c_rows_this_mcu,
-                            &mut cr_strip,
-                            y_strip_width,
-                            y_rows_this_mcu,
-                        );
-                    }
-                    _ => unreachable!(),
+            match (h_ratio, v_ratio) {
+                (2, 2) => {
+                    upsample_h2v2(
+                        &cb_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cb_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                    upsample_h2v2(
+                        &cr_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cr_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
                 }
+                (2, 1) => {
+                    upsample_h2v1(
+                        &cb_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cb_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                    upsample_h2v1(
+                        &cr_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cr_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                }
+                (1, 2) => {
+                    upsample_h1v2(
+                        &cb_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cb_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                    upsample_h1v2(
+                        &cr_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cr_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                }
+                _ => unreachable!(
+                    "unsupported ratio should be filtered by can_use_fast_i16_subsampled"
+                ),
             }
 
             // Color convert and write to output
@@ -614,7 +605,7 @@ impl<'a> JpegParser<'a> {
         &mut self,
         format: PixelFormat,
         is_xyb: bool,
-        fancy_upsampling: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
         _stop: &impl Stop,
     ) -> Result<Vec<u8>> {
         // If streaming decode was used, return its result directly (zero-copy)
@@ -630,12 +621,12 @@ impl<'a> JpegParser<'a> {
 
         // Try fast integer path for non-XYB 4:4:4 RGB images
         if self.can_use_fast_i16_path(format, is_xyb) {
-            return self.to_pixels_fast_i16(fancy_upsampling);
+            return self.to_pixels_fast_i16(chroma_upsampling);
         }
 
         // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
         if self.can_use_fast_i16_subsampled(format, is_xyb) {
-            return self.to_pixels_fast_i16_subsampled(fancy_upsampling);
+            return self.to_pixels_fast_i16_subsampled(chroma_upsampling);
         }
 
         let width = self.width as usize;
@@ -807,46 +798,55 @@ impl<'a> JpegParser<'a> {
             let info = &comp_infos[comp_idx];
             let comp_plane_f32 = &comp_planes_f32[comp_idx];
 
-            let plane_f32 = if info.h_samp < max_h_samp as usize
-                || info.v_samp < max_v_samp as usize
-            {
-                let scale_x = max_h_samp as usize / info.h_samp;
-                let scale_y = max_v_samp as usize / info.v_samp;
+            let plane_f32 =
+                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                    let scale_x = max_h_samp as usize / info.h_samp;
+                    let scale_y = max_v_samp as usize / info.v_samp;
 
-                if fancy_upsampling {
-                    // Triangle filter (3:1 weights) - separable implementation
-                    // First upsample horizontally, then vertically
-                    upsample_fancy(
-                        comp_plane_f32,
-                        info.comp_width,
-                        info.comp_height,
-                        width,
-                        height,
-                        scale_x,
-                        scale_y,
-                    )
-                } else {
-                    // Box filter (nearest neighbor)
-                    let mut upsampled = vec![0.0f32; output_size];
-                    for py in 0..height {
-                        for px in 0..width {
-                            let sx = (px / scale_x).min(info.comp_width - 1);
-                            let sy = (py / scale_y).min(info.comp_height - 1);
-                            upsampled[py * width + px] = comp_plane_f32[sy * info.comp_width + sx];
+                    match chroma_upsampling {
+                        super::super::ChromaUpsampling::Triangle => upsample_fancy(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::LibjpegCompat => upsample_libjpeg_f32(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::NearestNeighbor => {
+                            let mut upsampled = vec![0.0f32; output_size];
+                            upsample_nearest_f32(
+                                comp_plane_f32,
+                                info.comp_width,
+                                info.comp_height,
+                                &mut upsampled,
+                                width,
+                                height,
+                                scale_x,
+                                scale_y,
+                            );
+                            upsampled
                         }
                     }
-                    upsampled
-                }
-            } else {
-                // Full resolution - just clip to image dimensions
-                let mut plane = vec![0.0f32; output_size];
-                for py in 0..height {
-                    for px in 0..width {
-                        plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                } else {
+                    // Full resolution - just clip to image dimensions
+                    let mut plane = vec![0.0f32; output_size];
+                    for py in 0..height {
+                        for px in 0..width {
+                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                        }
                     }
-                }
-                plane
-            };
+                    plane
+                };
 
             planes_f32.push(plane_f32);
         }
@@ -948,7 +948,7 @@ impl<'a> JpegParser<'a> {
         &self,
         format: PixelFormat,
         is_xyb: bool,
-        fancy_upsampling: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
         _stop: &impl Stop,
     ) -> Result<Vec<f32>> {
         if self.coeffs.is_empty() {
@@ -1082,44 +1082,54 @@ impl<'a> JpegParser<'a> {
             let info = &comp_infos[comp_idx];
             let comp_plane_f32 = &comp_planes_f32[comp_idx];
 
-            let plane_f32 = if info.h_samp < max_h_samp as usize
-                || info.v_samp < max_v_samp as usize
-            {
-                let scale_x = max_h_samp as usize / info.h_samp;
-                let scale_y = max_v_samp as usize / info.v_samp;
+            let plane_f32 =
+                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                    let scale_x = max_h_samp as usize / info.h_samp;
+                    let scale_y = max_v_samp as usize / info.v_samp;
 
-                if fancy_upsampling {
-                    // Triangle filter (3:1 weights) - separable implementation
-                    upsample_fancy(
-                        comp_plane_f32,
-                        info.comp_width,
-                        info.comp_height,
-                        width,
-                        height,
-                        scale_x,
-                        scale_y,
-                    )
-                } else {
-                    // Box filter (nearest neighbor)
-                    let mut upsampled = vec![0.0f32; output_size];
-                    for py in 0..height {
-                        for px in 0..width {
-                            let sx = (px / scale_x).min(info.comp_width - 1);
-                            let sy = (py / scale_y).min(info.comp_height - 1);
-                            upsampled[py * width + px] = comp_plane_f32[sy * info.comp_width + sx];
+                    match chroma_upsampling {
+                        super::super::ChromaUpsampling::Triangle => upsample_fancy(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::LibjpegCompat => upsample_libjpeg_f32(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::NearestNeighbor => {
+                            let mut upsampled = vec![0.0f32; output_size];
+                            upsample_nearest_f32(
+                                comp_plane_f32,
+                                info.comp_width,
+                                info.comp_height,
+                                &mut upsampled,
+                                width,
+                                height,
+                                scale_x,
+                                scale_y,
+                            );
+                            upsampled
                         }
                     }
-                    upsampled
-                }
-            } else {
-                let mut plane = vec![0.0f32; output_size];
-                for py in 0..height {
-                    for px in 0..width {
-                        plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                } else {
+                    let mut plane = vec![0.0f32; output_size];
+                    for py in 0..height {
+                        for px in 0..width {
+                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                        }
                     }
-                }
-                plane
-            };
+                    plane
+                };
 
             planes_f32.push(plane_f32);
         }
@@ -1181,7 +1191,7 @@ impl<'a> JpegParser<'a> {
     /// Chroma planes are upsampled to full resolution.
     pub(in crate::decode) fn to_ycbcr_planes_f32(
         &self,
-        fancy_upsampling: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         if self.coeffs.is_empty() {
             return Err(Error::internal("no decoded data"));
@@ -1333,44 +1343,55 @@ impl<'a> JpegParser<'a> {
             let info = &comp_infos[comp_idx];
             let comp_plane_f32 = &comp_planes_f32[comp_idx];
 
-            let plane_f32 = if info.h_samp < max_h_samp as usize
-                || info.v_samp < max_v_samp as usize
-            {
-                let scale_x = max_h_samp as usize / info.h_samp;
-                let scale_y = max_v_samp as usize / info.v_samp;
+            let plane_f32 =
+                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                    let scale_x = max_h_samp as usize / info.h_samp;
+                    let scale_y = max_v_samp as usize / info.v_samp;
 
-                if fancy_upsampling {
-                    upsample_fancy(
-                        comp_plane_f32,
-                        info.comp_width,
-                        info.comp_height,
-                        width,
-                        height,
-                        scale_x,
-                        scale_y,
-                    )
-                } else {
-                    // Box filter (nearest neighbor)
-                    let mut upsampled = vec![0.0f32; output_size];
-                    for py in 0..height {
-                        for px in 0..width {
-                            let sx = (px / scale_x).min(info.comp_width - 1);
-                            let sy = (py / scale_y).min(info.comp_height - 1);
-                            upsampled[py * width + px] = comp_plane_f32[sy * info.comp_width + sx];
+                    match chroma_upsampling {
+                        super::super::ChromaUpsampling::Triangle => upsample_fancy(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::LibjpegCompat => upsample_libjpeg_f32(
+                            comp_plane_f32,
+                            info.comp_width,
+                            info.comp_height,
+                            width,
+                            height,
+                            scale_x,
+                            scale_y,
+                        ),
+                        super::super::ChromaUpsampling::NearestNeighbor => {
+                            let mut upsampled = vec![0.0f32; output_size];
+                            upsample_nearest_f32(
+                                comp_plane_f32,
+                                info.comp_width,
+                                info.comp_height,
+                                &mut upsampled,
+                                width,
+                                height,
+                                scale_x,
+                                scale_y,
+                            );
+                            upsampled
                         }
                     }
-                    upsampled
-                }
-            } else {
-                // Full resolution - just clip to image dimensions
-                let mut plane = vec![0.0f32; output_size];
-                for py in 0..height {
-                    for px in 0..width {
-                        plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                } else {
+                    // Full resolution - just clip to image dimensions
+                    let mut plane = vec![0.0f32; output_size];
+                    for py in 0..height {
+                        for px in 0..width {
+                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                        }
                     }
-                }
-                plane
-            };
+                    plane
+                };
 
             planes_f32.push(plane_f32);
         }
