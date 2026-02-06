@@ -808,36 +808,9 @@ pub fn upsample_h2v1_i16_fancy(
     out_width: usize,
     out_height: usize,
 ) {
-    for out_y in 0..out_height {
-        let in_y = out_y.min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
-
-        for out_x in 0..out_width {
-            let in_x = out_x / 2;
-            let in_x_clamped = in_x.min(in_width.saturating_sub(1));
-            let curr = input[in_row + in_x_clamped] as i32;
-
-            let result = if out_x % 2 == 0 {
-                // Left half - blend with left neighbor
-                let left = if in_x > 0 {
-                    input[in_row + in_x - 1] as i32
-                } else {
-                    curr
-                };
-                (3 * curr + left + 2) >> 2
-            } else {
-                // Right half - blend with right neighbor
-                let right = if in_x + 1 < in_width {
-                    input[in_row + in_x + 1] as i32
-                } else {
-                    curr
-                };
-                (3 * curr + right + 2) >> 2
-            };
-            output[out_row + out_x] = result as i16;
-        }
-    }
+    upsample_h2v1_i16_fancy_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
 }
 
 /// Vertical 2x upsampling in i16 (4:4:0 → 4:4:4) with triangle filter.
@@ -850,10 +823,67 @@ pub fn upsample_h1v2_i16_fancy(
     out_width: usize,
     out_height: usize,
 ) {
+    upsample_h1v2_i16_fancy_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
+}
+
+/// Strided horizontal 2x upsampling in i16 (4:2:2 → 4:4:4) with triangle filter.
+pub fn upsample_h2v1_i16_fancy_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
+
+        for out_x in 0..out_width {
+            let in_x = out_x / 2;
+            let in_x_clamped = in_x.min(in_width.saturating_sub(1));
+            let curr = input[in_row + in_x_clamped] as i32;
+
+            let result = if out_x % 2 == 0 {
+                let left = if in_x > 0 {
+                    input[in_row + in_x - 1] as i32
+                } else {
+                    curr
+                };
+                (3 * curr + left + 2) >> 2
+            } else {
+                let right = if in_x + 1 < in_width {
+                    input[in_row + in_x + 1] as i32
+                } else {
+                    curr
+                };
+                (3 * curr + right + 2) >> 2
+            };
+            output[out_row + out_x] = result as i16;
+        }
+    }
+}
+
+/// Strided vertical 2x upsampling in i16 (4:4:0 → 4:4:4) with triangle filter.
+pub fn upsample_h1v2_i16_fancy_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
     for out_y in 0..out_height {
         let in_y = out_y / 2;
         let is_top = out_y % 2 == 0;
-        let out_row = out_y * out_width;
+        let out_row = out_y * out_stride;
 
         let neighbor_y = if is_top {
             in_y.saturating_sub(1)
@@ -862,8 +892,8 @@ pub fn upsample_h1v2_i16_fancy(
         };
 
         let in_y_clamped = in_y.min(in_height.saturating_sub(1));
-        let curr_row = in_y_clamped * in_width;
-        let neighbor_row = neighbor_y * in_width;
+        let curr_row = in_y_clamped * in_stride;
+        let neighbor_row = neighbor_y * in_stride;
 
         for out_x in 0..out_width {
             let in_x = out_x.min(in_width.saturating_sub(1));
@@ -1156,16 +1186,9 @@ pub fn upsample_h2v1_i16_nearest(
     out_width: usize,
     out_height: usize,
 ) {
-    for out_y in 0..out_height {
-        let in_y = out_y.min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
-
-        for out_x in 0..out_width {
-            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
-            output[out_row + out_x] = input[in_row + in_x];
-        }
-    }
+    upsample_h2v1_i16_nearest_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
 }
 
 /// Vertical 2x nearest-neighbor upsampling in i16 (4:4:0 → 4:4:4).
@@ -1177,10 +1200,49 @@ pub fn upsample_h1v2_i16_nearest(
     out_width: usize,
     out_height: usize,
 ) {
+    upsample_h1v2_i16_nearest_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
+}
+
+/// Strided horizontal 2x nearest-neighbor upsampling in i16 (4:2:2 → 4:4:4).
+pub fn upsample_h2v1_i16_nearest_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
+
+        for out_x in 0..out_width {
+            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+/// Strided vertical 2x nearest-neighbor upsampling in i16 (4:4:0 → 4:4:4).
+pub fn upsample_h1v2_i16_nearest_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
     for out_y in 0..out_height {
         let in_y = (out_y / 2).min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
 
         for out_x in 0..out_width {
             let in_x = out_x.min(in_width.saturating_sub(1));
@@ -1196,7 +1258,7 @@ pub fn upsample_h2v2_i16_nearest_strided(
     in_stride: usize,
     in_height: usize,
     output: &mut [i16],
-    _out_width: usize,
+    out_width: usize,
     out_stride: usize,
     out_height: usize,
 ) {
@@ -1205,7 +1267,7 @@ pub fn upsample_h2v2_i16_nearest_strided(
         let out_row = out_y * out_stride;
         let in_row = in_y * in_stride;
 
-        for out_x in 0..in_width * 2 {
+        for out_x in 0..out_width {
             let in_x = (out_x / 2).min(in_width.saturating_sub(1));
             output[out_row + out_x] = input[in_row + in_x];
         }
@@ -1228,17 +1290,51 @@ pub fn upsample_h2v1_i16_libjpeg(
     out_width: usize,
     out_height: usize,
 ) {
+    upsample_h2v1_i16_libjpeg_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
+}
+
+/// Vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:4:0 → 4:4:4).
+///
+/// Uses alternating rounding bias: +1 for upper row (v=0), +2 for lower row (v=1).
+pub fn upsample_h1v2_i16_libjpeg(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    upsample_h1v2_i16_libjpeg_strided(
+        input, in_width, in_width, in_height, output, out_width, out_width, out_height,
+    );
+}
+
+/// Strided horizontal 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:2:2 → 4:4:4).
+///
+/// Uses alternating rounding bias: +1 for left pixel, +2 for right pixel.
+/// Matches libjpeg-turbo's `jdsample.c` h2v1_fancy_upsample.
+pub fn upsample_h2v1_i16_libjpeg_strided(
+    input: &[i16],
+    in_width: usize,
+    in_stride: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_stride: usize,
+    out_height: usize,
+) {
     if in_width == 0 || in_height == 0 {
         return;
     }
 
     for out_y in 0..out_height {
         let in_y = out_y.min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
+        let out_row = out_y * out_stride;
+        let in_row = in_y * in_stride;
 
         if in_width == 1 {
-            // Single column: just replicate
             let val = input[in_row];
             if out_width > 0 {
                 output[out_row] = val;
@@ -1266,11 +1362,9 @@ pub fn upsample_h2v1_i16_libjpeg(
             let right_out = left_out + 1;
             if left_out < out_width {
                 output[out_row + left_out] = ((curr * 3 + prev + 1) >> 2) as i16;
-                // bias=1
             }
             if right_out < out_width {
                 output[out_row + right_out] = ((curr * 3 + next + 2) >> 2) as i16;
-                // bias=2
             }
         }
 
@@ -1289,16 +1383,17 @@ pub fn upsample_h2v1_i16_libjpeg(
     }
 }
 
-/// Vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:4:0 → 4:4:4).
+/// Strided vertical 2x upsampling in i16 with libjpeg-turbo compatible rounding (4:4:0 → 4:4:4).
 ///
 /// Uses alternating rounding bias: +1 for upper row (v=0), +2 for lower row (v=1).
-/// This is the vertical equivalent of the h2v1 alternating bias pattern.
-pub fn upsample_h1v2_i16_libjpeg(
+pub fn upsample_h1v2_i16_libjpeg_strided(
     input: &[i16],
     in_width: usize,
+    in_stride: usize,
     in_height: usize,
     output: &mut [i16],
     out_width: usize,
+    out_stride: usize,
     out_height: usize,
 ) {
     if in_width == 0 || in_height == 0 {
@@ -1309,18 +1404,16 @@ pub fn upsample_h1v2_i16_libjpeg(
         let in_y = out_y / 2;
         let in_y_clamped = in_y.min(in_height.saturating_sub(1));
         let is_upper = out_y % 2 == 0;
-        let out_row = out_y * out_width;
+        let out_row = out_y * out_stride;
 
-        // For the upper row of a pair (v=0): near=curr, far=above
-        // For the lower row of a pair (v=1): near=curr, far=below
         let far_y = if is_upper {
             in_y_clamped.saturating_sub(1)
         } else {
             (in_y + 1).min(in_height.saturating_sub(1))
         };
 
-        let near_row = in_y_clamped * in_width;
-        let far_row = far_y * in_width;
+        let near_row = in_y_clamped * in_stride;
+        let far_row = far_y * in_stride;
 
         let bias = if is_upper { 1i32 } else { 2i32 };
 
