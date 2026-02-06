@@ -19,7 +19,7 @@
 //!     --output-detail /mnt/v/output/zenjpeg/ssim2_pareto_detail.csv
 //! ```
 
-use codec_eval::stats::rd_knee::{BinScheme, CorpusAggregate, RDKnee};
+use codec_eval::stats::rd_knee::{BinScheme, CorpusAggregate, FixedFrame, RDKnee};
 use enough::Unstoppable;
 use std::collections::HashMap;
 use std::io::Write;
@@ -128,7 +128,7 @@ fn parse_args() -> Args {
 
 // --- Encode helpers ---
 
-fn encode_expert(expert: &ExpertConfig, color_mode: ColorMode, img: &ImageData) -> Option<Vec<u8>> {
+fn encode_expert(expert: &SearchConfig, color_mode: ColorMode, img: &ImageData) -> Option<Vec<u8>> {
     let config = expert.to_encoder_config(color_mode);
     let mut enc = config
         .encode_from_bytes(img.width as u32, img.height as u32, PixelLayout::Rgb8Srgb)
@@ -217,7 +217,7 @@ fn compute_cpp_knee(cpp_points: &[DataPoint], images: &[ImageData]) -> Option<RD
         image_count: n_images,
     };
 
-    agg.ssimulacra2_knee()
+    agg.ssimulacra2_knee(&FixedFrame::WEB)
 }
 
 // --- Main ---
@@ -307,7 +307,10 @@ fn main() {
         Some(k) => {
             println!(
                 "\nR-D knee: bpp = {:.4}, SSIM2 = {:.2} (norm: bpp={:.3}, q={:.3})",
-                k.bpp, k.quality, k.bpp_norm, k.quality_norm
+                k.bpp,
+                k.quality,
+                k.norm.normalize_bpp(k.bpp),
+                k.norm.normalize_quality(k.quality),
             );
             println!(
                 "  bpp range: [{:.4}, {:.4}], SSIM2 range: [{:.2}, {:.2}]",
@@ -326,12 +329,12 @@ fn main() {
 
     // Compute angles for C++ points
     for pt in &mut cpp_points {
-        pt.angle = knee.angle_to(pt.bpp, pt.ssim2);
+        pt.angle = FixedFrame::WEB.s2_angle(pt.bpp, pt.ssim2);
     }
 
     // Phase 1b: zenjpeg sweep (444 to match C++ baseline)
     let mut zen_points: Vec<DataPoint> = Vec::new();
-    let mut config_list: Vec<(String, ExpertConfig)> = Vec::new();
+    let mut config_list: Vec<(String, SearchConfig)> = Vec::new();
 
     // No-trellis presets (no lambda sweep)
     for (preset, name) in &NO_TRELLIS_PRESETS {
@@ -373,7 +376,7 @@ fn main() {
             if let Some(jpeg) = encode_expert(expert, color_mode, img) {
                 if let Some(ssim2) = compute_ssim2(img, &jpeg) {
                     let bpp = jpeg.len() as f64 * 8.0 / px as f64;
-                    let angle = knee.angle_to(bpp, ssim2);
+                    let angle = FixedFrame::WEB.s2_angle(bpp, ssim2);
                     zen_points.push(DataPoint {
                         config_name: cfg_name.clone(),
                         image_idx: img_idx,
