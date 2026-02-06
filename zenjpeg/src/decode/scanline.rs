@@ -24,31 +24,14 @@
 //! }
 //! ```
 
-use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
-use super::upsample::{
-    upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
-    upsample_h2v2_i16_nearest_strided,
-};
-use super::ChromaUpsampling;
+use super::pipeline::StripProcessor;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::try_alloc_maybeuninit;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::dequantize_unzigzag_i32_into_partial;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
-
-/// SIMD alignment for strip buffers (32 pixels = 64 bytes for i16).
-/// Covers AVX2 (256-bit) and AVX-512 (512-bit) with i16 data.
-const STRIP_ALIGNMENT: usize = 32;
-
-/// Round up to next multiple of alignment.
-#[inline]
-const fn align_up(value: usize, alignment: usize) -> usize {
-    (value + alignment - 1) & !(alignment - 1)
-}
 
 /// Information about the JPEG being decoded.
 #[derive(Debug, Clone)]
@@ -84,43 +67,14 @@ pub struct ScanlineReader<'a> {
     // When Some, we serve from this buffer instead of decoding on-the-fly
     buffered_rgb: Option<Vec<u8>>,
 
-    // MCU structure
-    #[allow(dead_code)]
-    mcu_rows: usize,
-    mcu_cols: usize,
-    /// Actual image width in pixels (for output clipping).
-    strip_width: usize,
-    /// SIMD-aligned stride for Y strip buffers (>= strip_width, multiple of 32).
-    strip_stride: usize,
-    mcu_height: usize, // Pixel rows per MCU row (8 for 4:4:4, 16 for 4:2:0)
-
-    // Sampling factors
-    h_samp: [u8; 3],
-    v_samp: [u8; 3],
-    max_h_samp: u8,
-    #[allow(dead_code)]
-    max_v_samp: u8,
-    subsampling: Subsampling,
+    // Strip processing (IDCT + upsampling)
+    strip: StripProcessor,
 
     // Current position
     current_row: usize,     // Current output row (0 to height-1)
     current_mcu_row: usize, // Current MCU row being processed
     row_in_mcu: usize,      // Row within current MCU (0 to mcu_height-1)
     mcu_row_decoded: bool,  // Whether current MCU row has been decoded
-
-    // Y strip buffer: full resolution, mcu_height rows
-    y_strip: Vec<i16>,
-    // Cb/Cr strip buffers at native chroma resolution
-    cb_strip: Vec<i16>,
-    cr_strip: Vec<i16>,
-    // Chroma dimensions (may be half of Y for 4:2:0)
-    chroma_strip_width: usize,
-    /// SIMD-aligned stride for chroma strip buffers (>= chroma_strip_width, multiple of 32).
-    chroma_strip_stride: usize,
-    chroma_strip_height: usize,
-    // Upsampled chroma buffers (full resolution, for non-4:4:4)
-    cb_upsampled: Vec<i16>,
-    cr_upsampled: Vec<i16>,
 
     // Quantization tables (copied, since we outlive the parser)
     quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4],
@@ -141,7 +95,6 @@ pub struct ScanlineReader<'a> {
     next_restart_num: u8,
 
     // Reusable buffers for zero-copy decode
-    dequant_buf: [i32; DCT_BLOCK_SIZE],
     coeffs_buf: [i16; DCT_BLOCK_SIZE],
     /// Track previous coefficient count per component for smart zeroing
     prev_coeff_counts: [u8; 4],
@@ -150,8 +103,6 @@ pub struct ScanlineReader<'a> {
     is_xyb: bool,
     /// True for Adobe RGB JPEGs (APP14 transform=0) - skip YCbCr→RGB conversion
     is_rgb: bool,
-    /// Chroma upsampling method
-    chroma_upsampling: ChromaUpsampling,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -160,7 +111,7 @@ impl<'a> ScanlineReader<'a> {
     /// This is called internally by `Decoder::scanline_reader()`.
     pub(super) fn from_scan_data(
         scan: super::parser::ParsedScanData<'a>,
-        chroma_upsampling: ChromaUpsampling,
+        chroma_upsampling: super::ChromaUpsampling,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
             data,
@@ -180,108 +131,19 @@ impl<'a> ScanlineReader<'a> {
             is_rgb,
         } = scan;
 
-        let is_grayscale = num_components == 1;
-
-        // For grayscale, use only Y component's sampling factors
-        // For color, determine max sampling factors across components
-        let (max_h_samp, max_v_samp) = if is_grayscale {
-            (h_samp[0], v_samp[0])
-        } else {
-            (
-                h_samp.iter().copied().max().unwrap_or(1),
-                v_samp.iter().copied().max().unwrap_or(1),
-            )
-        };
-
-        // Determine subsampling mode (grayscale is always 4:4:4 equivalent)
-        let subsampling = if is_grayscale {
-            Subsampling::S444
-        } else {
-            match (max_h_samp, max_v_samp) {
-                (1, 1) => Subsampling::S444,
-                (2, 1) => Subsampling::S422,
-                (2, 2) => Subsampling::S420,
-                (1, 2) => Subsampling::S440,
-                // For other sampling patterns, treat as 4:2:0
-                _ => Subsampling::S420,
-            }
-        };
-
-        // MCU dimensions depend on max sampling factors
-        let mcu_width = max_h_samp as usize * 8;
-        let mcu_height = max_v_samp as usize * 8;
-        let mcu_cols = (width as usize + mcu_width - 1) / mcu_width;
-        let mcu_rows = (height as usize + mcu_height - 1) / mcu_height;
-
-        // Y strip: full resolution with SIMD-aligned stride
-        let strip_width = mcu_cols * mcu_width;
-        let strip_stride = align_up(strip_width, STRIP_ALIGNMENT);
-        let y_strip_size = strip_stride * mcu_height;
-
-        // Chroma strip: at native (potentially subsampled) resolution with SIMD-aligned stride
-        // Only allocate for color images
-        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * 8 };
-        let chroma_strip_stride = if is_grayscale {
-            0
-        } else {
-            align_up(chroma_strip_width, STRIP_ALIGNMENT)
-        };
-        let chroma_strip_height = if is_grayscale { 0 } else { 8 };
-        let chroma_strip_size = chroma_strip_stride * chroma_strip_height;
-
-        // Allocate strip buffers (using aligned stride)
-        let y_strip = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
-
-        // Only allocate chroma buffers for color images
-        let (cb_strip, cr_strip) = if is_grayscale {
-            (Vec::new(), Vec::new())
-        } else {
-            (
-                try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?,
-                try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?,
-            )
-        };
-
-        // Upsampled chroma buffers (only needed for non-4:4:4 color images)
-        // These use full Y resolution with aligned stride
-        let (cb_upsampled, cr_upsampled) = if !is_grayscale && subsampling != Subsampling::S444 {
-            let upsampled_size = strip_stride * mcu_height;
-            (
-                try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?,
-                try_alloc_maybeuninit(upsampled_size, "Cr upsampled buffer")?,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let strip = StripProcessor::new(width, num_components, h_samp, v_samp, chroma_upsampling)?;
 
         Ok(Self {
             data,
             width,
             height,
             num_components,
-            buffered_rgb: None, // Streaming mode
-            mcu_rows,
-            mcu_cols,
-            strip_width,
-            strip_stride,
-            mcu_height,
-            h_samp,
-            v_samp,
-            max_h_samp,
-            max_v_samp,
-            subsampling,
+            buffered_rgb: None,
+            strip,
             current_row: 0,
             current_mcu_row: 0,
             row_in_mcu: 0,
             mcu_row_decoded: false,
-            y_strip,
-            cb_strip,
-            cr_strip,
-            chroma_strip_width,
-            chroma_strip_stride,
-            chroma_strip_height,
-            cb_upsampled,
-            cr_upsampled,
             quant_tables,
             quant_indices,
             dc_tables,
@@ -292,12 +154,10 @@ impl<'a> ScanlineReader<'a> {
             restart_interval,
             mcu_count: 0,
             next_restart_num: 0,
-            dequant_buf: [0i32; DCT_BLOCK_SIZE],
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
-            prev_coeff_counts: [64; 4], // Start with full zeroing
+            prev_coeff_counts: [64; 4],
             is_xyb,
             is_rgb,
-            chroma_upsampling,
         })
     }
 
@@ -320,29 +180,11 @@ impl<'a> ScanlineReader<'a> {
             height,
             num_components,
             buffered_rgb: Some(pixels),
-            // Streaming fields are unused in buffered mode but need defaults
-            mcu_rows: 0,
-            mcu_cols: 0,
-            strip_width: 0,
-            strip_stride: 0,
-            mcu_height: 8,
-            h_samp: [1, 1, 1],
-            v_samp: [1, 1, 1],
-            max_h_samp: 1,
-            max_v_samp: 1,
-            subsampling,
+            strip: StripProcessor::new_dummy(subsampling),
             current_row: 0,
             current_mcu_row: 0,
             row_in_mcu: 0,
             mcu_row_decoded: false,
-            y_strip: Vec::new(),
-            cb_strip: Vec::new(),
-            cr_strip: Vec::new(),
-            chroma_strip_width: 0,
-            chroma_strip_stride: 0,
-            chroma_strip_height: 0,
-            cb_upsampled: Vec::new(),
-            cr_upsampled: Vec::new(),
             quant_tables: [None, None, None, None],
             quant_indices: [0, 0, 0],
             dc_tables: [None, None, None, None],
@@ -353,12 +195,10 @@ impl<'a> ScanlineReader<'a> {
             restart_interval: 0,
             mcu_count: 0,
             next_restart_num: 0,
-            dequant_buf: [0i32; DCT_BLOCK_SIZE],
             coeffs_buf: [0i16; DCT_BLOCK_SIZE],
             prev_coeff_counts: [64; 4],
             is_xyb,
-            is_rgb: false, // Buffered mode: pixels already color-converted
-            chroma_upsampling: ChromaUpsampling::default(), // Unused in buffered mode
+            is_rgb: false,
         }
     }
 
@@ -387,14 +227,14 @@ impl<'a> ScanlineReader<'a> {
                 ColorSpace::YCbCr
             },
             is_xyb: self.is_xyb,
-            subsampling: self.subsampling,
+            subsampling: self.strip.subsampling,
         }
     }
 
     /// Returns the chroma subsampling mode.
     #[inline]
     pub fn subsampling(&self) -> Subsampling {
-        self.subsampling
+        self.strip.subsampling
     }
 
     /// Returns the current row position (0 to height-1).
@@ -449,7 +289,6 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Pre-validate quant tables outside the hot loop (error allocation happens ONCE, not per-block)
-        // This avoids ~490K heap allocations for Error::internal() in a 2048x2048 image
         let quant_y = self.quant_tables[self.quant_indices[0]]
             .as_ref()
             .ok_or_else(|| Error::internal("missing Y quantization table"))?;
@@ -458,19 +297,21 @@ impl<'a> ScanlineReader<'a> {
                 .as_ref()
                 .ok_or_else(|| Error::internal("missing Cb quantization table"))?
         } else {
-            quant_y // Placeholder, won't be accessed for grayscale
+            quant_y
         };
         let quant_cr = if self.num_components > 2 {
             self.quant_tables[self.quant_indices[2]]
                 .as_ref()
                 .ok_or_else(|| Error::internal("missing Cr quantization table"))?
         } else {
-            quant_y // Placeholder, won't be accessed
+            quant_y
         };
         let quant_refs: [&[u16; 64]; 4] = [quant_y, quant_cb, quant_cr, quant_y];
 
+        let mcu_cols = self.strip.mcu_cols();
+
         // Decode one MCU row
-        for mcu_x in 0..self.mcu_cols {
+        for mcu_x in 0..mcu_cols {
             // Check for restart marker
             if self.restart_interval > 0
                 && self.mcu_count > 0
@@ -480,25 +321,19 @@ impl<'a> ScanlineReader<'a> {
                 decoder.read_restart_marker(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
-                self.prev_coeff_counts = [64; 4]; // Force full zero after restart
+                self.prev_coeff_counts = [64; 4];
             }
 
             // Decode each component's blocks
-            // For 4:2:0: Y has h_samp[0]*v_samp[0] blocks, Cb/Cr have 1 each
             for comp_idx in 0..self.num_components as usize {
-                let h_blocks = self.h_samp[comp_idx] as usize;
-                let v_blocks = self.v_samp[comp_idx] as usize;
+                let h_blocks = self.strip.h_samp[comp_idx] as usize;
+                let v_blocks = self.strip.v_samp[comp_idx] as usize;
 
                 let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-                let quant = quant_refs[comp_idx]; // Pre-validated, no allocation
+                let quant = quant_refs[comp_idx];
 
-                // Decode h_blocks * v_blocks blocks for this component
                 for v in 0..v_blocks {
                     for h in 0..h_blocks {
-                        // Zero-copy decode into reusable buffer with smart zeroing
-                        // Note: prev_coeff_counts tracks the MAXIMUM coeff count seen since
-                        // last restart, not just the previous block's count. This ensures
-                        // we zero all positions that might have stale data.
                         let coeff_count = match decoder.decode_block_into(
                             &mut self.coeffs_buf,
                             self.prev_coeff_counts[comp_idx],
@@ -509,64 +344,21 @@ impl<'a> ScanlineReader<'a> {
                             ScanRead::Value(c) => c,
                             ScanRead::EndOfScan | ScanRead::Truncated => {
                                 self.prev_coeff_counts[comp_idx] = 64;
-                                continue; // End of scan mid-block
+                                continue;
                             }
                         };
-                        // Track maximum, not just previous, for reusable buffer correctness
                         self.prev_coeff_counts[comp_idx] =
                             self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        // Calculate destination offset in strip buffer (using aligned stride)
-                        let (strip, stride) = match comp_idx {
-                            0 => {
-                                // Y: full resolution, write to appropriate position
-                                // mcu_x determines horizontal MCU, h determines block within MCU
-                                // v determines vertical block row within MCU
-                                let x_offset = mcu_x * self.max_h_samp as usize * 8 + h * 8;
-                                let y_offset = v * 8 * self.strip_stride;
-                                (&mut self.y_strip[y_offset + x_offset..], self.strip_stride)
-                            }
-                            1 => {
-                                // Cb: chroma resolution (one 8x8 block per MCU)
-                                let x_offset = mcu_x * 8;
-                                (&mut self.cb_strip[x_offset..], self.chroma_strip_stride)
-                            }
-                            _ => {
-                                // Cr: chroma resolution (one 8x8 block per MCU)
-                                let x_offset = mcu_x * 8;
-                                (&mut self.cr_strip[x_offset..], self.chroma_strip_stride)
-                            }
-                        };
-
-                        if coeff_count <= 1 {
-                            let dc = self.coeffs_buf[0] as i32 * quant[0] as i32;
-                            idct_int_dc_only(dc, strip, stride);
-                        } else {
-                            dequantize_unzigzag_i32_into_partial(
-                                &self.coeffs_buf,
-                                quant,
-                                &mut self.dequant_buf,
-                                coeff_count,
-                            );
-                            match self.chroma_upsampling {
-                                ChromaUpsampling::LibjpegCompat => {
-                                    idct_int_tiered_libjpeg(
-                                        &mut self.dequant_buf,
-                                        strip,
-                                        stride,
-                                        coeff_count,
-                                    );
-                                }
-                                _ => {
-                                    idct_int_tiered(
-                                        &mut self.dequant_buf,
-                                        strip,
-                                        stride,
-                                        coeff_count,
-                                    );
-                                }
-                            }
-                        }
+                        self.strip.idct_block(
+                            comp_idx,
+                            mcu_x,
+                            h,
+                            v,
+                            &self.coeffs_buf,
+                            coeff_count,
+                            quant,
+                        );
                     }
                 }
             }
@@ -578,251 +370,11 @@ impl<'a> ScanlineReader<'a> {
         self.decoder_state = Some(decoder.save_state());
 
         // Upsample chroma if needed
-        if self.subsampling != Subsampling::S444 {
-            self.upsample_chroma();
-        }
+        self.strip.upsample_chroma();
 
         self.mcu_row_decoded = true;
 
         Ok(())
-    }
-
-    /// Upsamples chroma buffers to full resolution using bilinear interpolation.
-    fn upsample_chroma(&mut self) {
-        match self.subsampling {
-            Subsampling::S444 => {} // No upsampling needed
-            Subsampling::S422 => self.upsample_h2v1(),
-            Subsampling::S420 => self.upsample_h2v2(),
-            Subsampling::S440 => self.upsample_h1v2(),
-        }
-    }
-
-    /// Horizontal 2x upsampling (4:2:2) with configurable filter.
-    fn upsample_h2v1(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let height = self.mcu_height;
-
-        for y in 0..height {
-            let in_row = y.min(self.chroma_strip_height - 1);
-
-            match self.chroma_upsampling {
-                ChromaUpsampling::NearestNeighbor => {
-                    for out_x in 0..out_width {
-                        let in_x = (out_x / 2).min(in_width - 1);
-                        let in_idx = in_row * in_stride + in_x;
-                        let out_idx = y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
-                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
-                    }
-                }
-                ChromaUpsampling::Triangle => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x / 2;
-                        let in_idx = in_row * in_stride + in_x.min(in_width - 1);
-                        let cb_curr = self.cb_strip[in_idx] as i32;
-                        let cr_curr = self.cr_strip[in_idx] as i32;
-
-                        let (cb_val, cr_val) = if out_x % 2 == 0 {
-                            let left_idx = in_row * in_stride + in_x.saturating_sub(1);
-                            let cb_left = self.cb_strip[left_idx] as i32;
-                            let cr_left = self.cr_strip[left_idx] as i32;
-                            (
-                                ((3 * cb_curr + cb_left + 2) >> 2) as i16,
-                                ((3 * cr_curr + cr_left + 2) >> 2) as i16,
-                            )
-                        } else {
-                            let right_idx = in_row * in_stride + (in_x + 1).min(in_width - 1);
-                            let cb_right = self.cb_strip[right_idx] as i32;
-                            let cr_right = self.cr_strip[right_idx] as i32;
-                            (
-                                ((3 * cb_curr + cb_right + 2) >> 2) as i16,
-                                ((3 * cr_curr + cr_right + 2) >> 2) as i16,
-                            )
-                        };
-
-                        let out_idx = y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = cb_val;
-                        self.cr_upsampled[out_idx] = cr_val;
-                    }
-                }
-                ChromaUpsampling::LibjpegCompat => {
-                    // libjpeg-turbo h2v1: alternating +1/+2 bias
-                    if in_width == 0 {
-                        continue;
-                    }
-                    let cb_in = &self.cb_strip[in_row * in_stride..];
-                    let cr_in = &self.cr_strip[in_row * in_stride..];
-                    let out_base = y * out_stride;
-
-                    if in_width == 1 {
-                        self.cb_upsampled[out_base] = cb_in[0];
-                        self.cr_upsampled[out_base] = cr_in[0];
-                        if out_width > 1 {
-                            self.cb_upsampled[out_base + 1] = cb_in[0];
-                            self.cr_upsampled[out_base + 1] = cr_in[0];
-                        }
-                        continue;
-                    }
-
-                    // First column
-                    let cb0 = cb_in[0] as i32;
-                    let cr0 = cr_in[0] as i32;
-                    self.cb_upsampled[out_base] = cb0 as i16;
-                    self.cr_upsampled[out_base] = cr0 as i16;
-                    if out_width > 1 {
-                        self.cb_upsampled[out_base + 1] =
-                            ((cb0 * 3 + cb_in[1] as i32 + 2) >> 2) as i16;
-                        self.cr_upsampled[out_base + 1] =
-                            ((cr0 * 3 + cr_in[1] as i32 + 2) >> 2) as i16;
-                    }
-
-                    // Interior columns
-                    for in_x in 1..in_width.saturating_sub(1) {
-                        let cb_prev = cb_in[in_x - 1] as i32;
-                        let cb_curr = cb_in[in_x] as i32;
-                        let cb_next = cb_in[in_x + 1] as i32;
-                        let cr_prev = cr_in[in_x - 1] as i32;
-                        let cr_curr = cr_in[in_x] as i32;
-                        let cr_next = cr_in[in_x + 1] as i32;
-                        let left = out_base + in_x * 2;
-                        let right = left + 1;
-                        if left < out_base + out_width {
-                            self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
-                            self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
-                        }
-                        if right < out_base + out_width {
-                            self.cb_upsampled[right] = ((cb_curr * 3 + cb_next + 2) >> 2) as i16;
-                            self.cr_upsampled[right] = ((cr_curr * 3 + cr_next + 2) >> 2) as i16;
-                        }
-                    }
-
-                    // Last column
-                    let last = in_width - 1;
-                    let cb_prev = cb_in[last - 1] as i32;
-                    let cb_curr = cb_in[last] as i32;
-                    let cr_prev = cr_in[last - 1] as i32;
-                    let cr_curr = cr_in[last] as i32;
-                    let left = out_base + last * 2;
-                    let right = left + 1;
-                    if left < out_base + out_width {
-                        self.cb_upsampled[left] = ((cb_curr * 3 + cb_prev + 1) >> 2) as i16;
-                        self.cr_upsampled[left] = ((cr_curr * 3 + cr_prev + 1) >> 2) as i16;
-                    }
-                    if right < out_base + out_width {
-                        self.cb_upsampled[right] = cb_curr as i16;
-                        self.cr_upsampled[right] = cr_curr as i16;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Vertical 2x upsampling (4:4:0) with configurable filter.
-    fn upsample_h1v2(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let in_height = self.chroma_strip_height;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let out_height = self.mcu_height;
-
-        for out_y in 0..out_height {
-            let in_y = out_y / 2;
-            let in_y_clamped = in_y.min(in_height.saturating_sub(1));
-            let is_upper = out_y % 2 == 0;
-
-            let far_y = if is_upper {
-                in_y_clamped.saturating_sub(1)
-            } else {
-                (in_y + 1).min(in_height.saturating_sub(1))
-            };
-
-            match self.chroma_upsampling {
-                ChromaUpsampling::NearestNeighbor => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let in_idx = in_y_clamped * in_stride + in_x;
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = self.cb_strip[in_idx];
-                        self.cr_upsampled[out_idx] = self.cr_strip[in_idx];
-                    }
-                }
-                ChromaUpsampling::Triangle => {
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let curr_idx = in_y_clamped * in_stride + in_x;
-                        let neighbor_idx = far_y * in_stride + in_x;
-                        let cb_curr = self.cb_strip[curr_idx] as i32;
-                        let cr_curr = self.cr_strip[curr_idx] as i32;
-                        let cb_neighbor = self.cb_strip[neighbor_idx] as i32;
-                        let cr_neighbor = self.cr_strip[neighbor_idx] as i32;
-
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = ((3 * cb_curr + cb_neighbor + 2) >> 2) as i16;
-                        self.cr_upsampled[out_idx] = ((3 * cr_curr + cr_neighbor + 2) >> 2) as i16;
-                    }
-                }
-                ChromaUpsampling::LibjpegCompat => {
-                    // libjpeg-turbo h1v2: alternating +1/+2 bias
-                    let bias = if is_upper { 1i32 } else { 2i32 };
-                    for out_x in 0..out_width {
-                        let in_x = out_x.min(in_width.saturating_sub(1));
-                        let near_idx = in_y_clamped * in_stride + in_x;
-                        let far_idx = far_y * in_stride + in_x;
-                        let cb_near = self.cb_strip[near_idx] as i32;
-                        let cr_near = self.cr_strip[near_idx] as i32;
-                        let cb_far = self.cb_strip[far_idx] as i32;
-                        let cr_far = self.cr_strip[far_idx] as i32;
-
-                        let out_idx = out_y * out_stride + out_x;
-                        self.cb_upsampled[out_idx] = ((cb_near * 3 + cb_far + bias) >> 2) as i16;
-                        self.cr_upsampled[out_idx] = ((cr_near * 3 + cr_far + bias) >> 2) as i16;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Both horizontal and vertical 2x upsampling (4:2:0) with configurable filter.
-    fn upsample_h2v2(&mut self) {
-        let in_width = self.chroma_strip_width;
-        let in_stride = self.chroma_strip_stride;
-        let in_height = self.chroma_strip_height;
-        let out_width = self.strip_width;
-        let out_stride = self.strip_stride;
-        let out_height = self.mcu_height;
-
-        // Select strided upsampling function based on method
-        type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
-        let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy_strided,
-            ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg_strided,
-            ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
-        };
-
-        upsample_fn(
-            &self.cb_strip,
-            in_width,
-            in_stride,
-            in_height,
-            &mut self.cb_upsampled,
-            out_width,
-            out_stride,
-            out_height,
-        );
-        upsample_fn(
-            &self.cr_strip,
-            in_width,
-            in_stride,
-            in_height,
-            &mut self.cr_upsampled,
-            out_width,
-            out_stride,
-            out_height,
-        );
     }
 
     /// Advances to the next MCU row.
@@ -865,53 +417,28 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            // Ensure current MCU row is decoded
             self.decode_mcu_row()?;
 
-            // Copy rows from strip to output (using aligned stride for indexing)
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Get chroma references - use upsampled buffers for non-4:4:4
-            let (cb_slice, cr_slice) = if self.subsampling == Subsampling::S444 {
-                (
-                    &self.cb_strip[strip_offset..strip_offset + cols],
-                    &self.cr_strip[strip_offset..strip_offset + cols],
-                )
-            } else {
-                (
-                    &self.cb_upsampled[strip_offset..strip_offset + cols],
-                    &self.cr_upsampled[strip_offset..strip_offset + cols],
-                )
-            };
-
             if self.is_rgb {
-                // RGB JPEG: interleave planes without YCbCr→RGB matrix
-                let y_slice = &self.y_strip[strip_offset..strip_offset + cols];
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
                 for px in 0..cols {
-                    out_row[px * 3] = y_slice[px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 1] = cb_slice[px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 2] = cr_slice[px].clamp(0, 255) as u8;
+                    out_row[px * 3] = y[px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 1] = cb[px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 2] = cr[px].clamp(0, 255) as u8;
                 }
             } else {
-                // Convert YCbCr to RGB using the same function as the main decoder
-                ycbcr_planes_i16_to_rgb_u8(
-                    &self.y_strip[strip_offset..strip_offset + cols],
-                    cb_slice,
-                    cr_slice,
-                    out_row,
-                );
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
+                ycbcr_planes_i16_to_rgb_u8(y, cb, cr, out_row);
             }
 
             rows_written += 1;
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            // Move to next MCU row if needed
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -960,47 +487,36 @@ impl<'a> ScanlineReader<'a> {
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
 
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Get chroma references - use upsampled buffers for non-4:4:4
-            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
-                (&self.cb_strip, &self.cr_strip)
-            } else {
-                (&self.cb_upsampled, &self.cr_upsampled)
-            };
+            let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
 
             for x in 0..cols {
-                let y = self.y_strip[strip_offset + x];
-                let cb = cb_buf[strip_offset + x];
-                let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = if self.is_rgb {
                     (
-                        y.clamp(0, 255) as u8,
-                        cb.clamp(0, 255) as u8,
-                        cr.clamp(0, 255) as u8,
+                        y_row[x].clamp(0, 255) as u8,
+                        cb_row[x].clamp(0, 255) as u8,
+                        cr_row[x].clamp(0, 255) as u8,
                     )
                 } else {
                     ycbcr_to_rgb(
-                        y.clamp(0, 255) as u8,
-                        cb.clamp(0, 255) as u8,
-                        cr.clamp(0, 255) as u8,
+                        y_row[x].clamp(0, 255) as u8,
+                        cb_row[x].clamp(0, 255) as u8,
+                        cr_row[x].clamp(0, 255) as u8,
                     )
                 };
                 out_row[x * 4] = r;
                 out_row[x * 4 + 1] = g;
                 out_row[x * 4 + 2] = b;
-                out_row[x * 4 + 3] = 255; // Alpha/padding
+                out_row[x * 4 + 3] = 255;
             }
 
             rows_written += 1;
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -1050,49 +566,37 @@ impl<'a> ScanlineReader<'a> {
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
 
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Get chroma references - use upsampled buffers for non-4:4:4
-            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
-                (&self.cb_strip, &self.cr_strip)
-            } else {
-                (&self.cb_upsampled, &self.cr_upsampled)
-            };
+            let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
 
             for x in 0..cols {
-                let y = self.y_strip[strip_offset + x];
-                let cb = cb_buf[strip_offset + x];
-                let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = if self.is_rgb {
                     (
-                        y.clamp(0, 255) as u8,
-                        cb.clamp(0, 255) as u8,
-                        cr.clamp(0, 255) as u8,
+                        y_row[x].clamp(0, 255) as u8,
+                        cb_row[x].clamp(0, 255) as u8,
+                        cr_row[x].clamp(0, 255) as u8,
                     )
                 } else {
                     ycbcr_to_rgb(
-                        y.clamp(0, 255) as u8,
-                        cb.clamp(0, 255) as u8,
-                        cr.clamp(0, 255) as u8,
+                        y_row[x].clamp(0, 255) as u8,
+                        cb_row[x].clamp(0, 255) as u8,
+                        cr_row[x].clamp(0, 255) as u8,
                     )
                 };
 
-                // Convert sRGB u8 to linear f32
                 out_row[x * 4] = srgb_to_linear(r);
                 out_row[x * 4 + 1] = srgb_to_linear(g);
                 out_row[x * 4 + 2] = srgb_to_linear(b);
-                out_row[x * 4 + 3] = 1.0; // Alpha
+                out_row[x * 4 + 3] = 1.0;
             }
 
             rows_written += 1;
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -1176,32 +680,22 @@ impl<'a> ScanlineReader<'a> {
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
 
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_offset = rows_written * stride;
 
-            // Get chroma references - use upsampled buffers for non-4:4:4
-            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
-                (&self.cb_strip, &self.cr_strip)
-            } else {
-                (&self.cb_upsampled, &self.cr_upsampled)
-            };
+            let (y_slice, cb_slice, cr_slice) = self.strip.row_planes(self.row_in_mcu, cols);
 
             for x in 0..cols {
-                // Normalize: Y from [0, 255] to [0, 1]
-                // Cb/Cr from [0, 255] (centered at 128) to [-0.5, 0.5]
-                y_plane[out_offset + x] = self.y_strip[strip_offset + x] as f32 / 255.0;
-                cb_plane[out_offset + x] = (cb_buf[strip_offset + x] as f32 - 128.0) / 255.0;
-                cr_plane[out_offset + x] = (cr_buf[strip_offset + x] as f32 - 128.0) / 255.0;
+                y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
+                cb_plane[out_offset + x] = (cb_slice[x] as f32 - 128.0) / 255.0;
+                cr_plane[out_offset + x] = (cr_slice[x] as f32 - 128.0) / 255.0;
             }
 
             rows_written += 1;
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -1265,21 +759,14 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            // Ensure current MCU row is decoded
             self.decode_mcu_row()?;
 
-            // Copy rows from Y strip to output
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Copy Y values directly, clamping to u8 range
-            for (out, &y) in out_row[..cols]
-                .iter_mut()
-                .zip(&self.y_strip[strip_offset..strip_offset + cols])
-            {
+            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
+
+            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
                 *out = y.clamp(0, 255) as u8;
             }
 
@@ -1287,8 +774,7 @@ impl<'a> ScanlineReader<'a> {
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            // Move to next MCU row if needed
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -1359,17 +845,12 @@ impl<'a> ScanlineReader<'a> {
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
 
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Normalize Y from [0, 255] to [0, 1]
-            for (out, &y) in out_row[..cols]
-                .iter_mut()
-                .zip(&self.y_strip[strip_offset..strip_offset + cols])
-            {
+            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
+
+            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
                 *out = y.clamp(0, 255) as f32 / 255.0;
             }
 
@@ -1377,7 +858,7 @@ impl<'a> ScanlineReader<'a> {
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -1448,17 +929,12 @@ impl<'a> ScanlineReader<'a> {
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
 
-            let strip_row = self.row_in_mcu;
-            let strip_offset = strip_row * self.strip_stride;
-            let cols = width.min(self.strip_width);
-
+            let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            // Convert sRGB u8 to linear f32
-            for (out, &y) in out_row[..cols]
-                .iter_mut()
-                .zip(&self.y_strip[strip_offset..strip_offset + cols])
-            {
+            let y_slice = self.strip.y_row(self.row_in_mcu, cols);
+
+            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
                 *out = srgb_to_linear(y.clamp(0, 255) as u8);
             }
 
@@ -1466,7 +942,7 @@ impl<'a> ScanlineReader<'a> {
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= self.mcu_height {
+            if self.row_in_mcu >= self.strip.mcu_height {
                 self.advance_mcu_row();
             }
         }

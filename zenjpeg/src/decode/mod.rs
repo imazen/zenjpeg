@@ -24,6 +24,7 @@ mod config;
 mod extras;
 mod image;
 mod parser;
+mod pipeline;
 mod scanline;
 mod upsample;
 
