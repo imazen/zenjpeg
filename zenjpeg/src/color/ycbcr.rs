@@ -1277,6 +1277,15 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
     let len = y_plane.len();
 
+    // Use AVX-512 path when available (16 pixels with wider intermediates, fewer instructions)
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V4Token::summon() {
+            ycbcr_planes_i16_to_rgb_u8_avx512(token, y_plane, cb_plane, cr_plane, rgb);
+            return;
+        }
+    }
+
     // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
@@ -1453,6 +1462,163 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
         // Store 48 bytes (16 pixels * 3 channels)
+        safe_simd::_mm256_storeu_si256(
+            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
+            rgb0,
+        );
+        safe_simd::_mm_storeu_si128(
+            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
+            _mm256_castsi256_si128(rgb1),
+        );
+    }
+
+    // Handle remainder with scalar
+    let remainder_start = chunks * 16;
+    for i in remainder_start..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+
+        let idx = i * 3;
+        rgb[idx] = r.clamp(0, 255) as u8;
+        rgb[idx + 1] = g.clamp(0, 255) as u8;
+        rgb[idx + 2] = b.clamp(0, 255) as u8;
+    }
+}
+
+/// AVX-512 batch conversion of YCbCr planes to interleaved RGB.
+///
+/// Processes 16 pixels at a time using 512-bit intermediates for the i32 compute
+/// phase. Key advantages over AVX2:
+/// - `_mm512_cvtepi16_epi32` widens 16 i16→i32 in one instruction (vs manual unpack)
+/// - Single `_mm512_mullo_epi32` per multiply (vs lo+hi halves)
+/// - `_mm512_cvtsepi32_epi16` packs cleanly without permute fixup
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[arcane]
+fn ycbcr_planes_i16_to_rgb_u8_avx512(
+    _token: archmage::X64V4Token,
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgb: &mut [u8],
+) {
+    use core::arch::x86_64::*;
+
+    let len = y_plane.len();
+    let chunks = len / 16;
+
+    // Preload 512-bit constants
+    let y_coeff = _mm512_set1_epi32(Y_CF_INT);
+    let rounding = _mm512_set1_epi32(YUV_ROUND);
+    let cr_to_r = _mm512_set1_epi32(CR_TO_R_INT);
+    let cr_to_g = _mm512_set1_epi32(CR_TO_G_INT);
+    let cb_to_g = _mm512_set1_epi32(CB_TO_G_INT);
+    let cb_to_b = _mm512_set1_epi32(CB_TO_B_INT);
+    let bias_16 = _mm256_set1_epi16(128);
+    let zero_256 = _mm256_setzero_si256();
+
+    // RGB interleave masks (same as AVX2 — we pack down to __m256i for interleave)
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
+        9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15,
+    );
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0,
+    );
+
+    for chunk in 0..chunks {
+        let in_offset = chunk * 16;
+        let out_offset = chunk * 48;
+
+        // Load 16 i16 values per channel (256-bit loads)
+        let y_vec = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&y_plane[in_offset..in_offset + 16]).unwrap(),
+        );
+        let cb_vec = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&cb_plane[in_offset..in_offset + 16]).unwrap(),
+        );
+        let cr_vec = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&cr_plane[in_offset..in_offset + 16]).unwrap(),
+        );
+
+        // Subtract 128 from Cb and Cr (still 256-bit i16)
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias_16);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias_16);
+
+        // Widen to 512-bit i32 in ONE instruction each (vs 4+ instructions in AVX2)
+        let y_32 = _mm512_cvtepi16_epi32(y_vec);
+        let cb_32 = _mm512_cvtepi16_epi32(cb_centered);
+        let cr_32 = _mm512_cvtepi16_epi32(cr_centered);
+
+        // y_scaled = y * Y_CF + rounding (one multiply + one add, vs two each in AVX2)
+        let y_scaled = _mm512_add_epi32(_mm512_mullo_epi32(y_32, y_coeff), rounding);
+
+        // R = (y_scaled + cr * CR_TO_R) >> 14
+        let r_32 = _mm512_srai_epi32(
+            _mm512_add_epi32(y_scaled, _mm512_mullo_epi32(cr_32, cr_to_r)),
+            14,
+        );
+
+        // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
+        let g_32 = _mm512_srai_epi32(
+            _mm512_add_epi32(
+                y_scaled,
+                _mm512_add_epi32(
+                    _mm512_mullo_epi32(cr_32, cr_to_g),
+                    _mm512_mullo_epi32(cb_32, cb_to_g),
+                ),
+            ),
+            14,
+        );
+
+        // B = (y_scaled + cb * CB_TO_B) >> 14
+        let b_32 = _mm512_srai_epi32(
+            _mm512_add_epi32(y_scaled, _mm512_mullo_epi32(cb_32, cb_to_b)),
+            14,
+        );
+
+        // Pack i32 → i16 with saturation (512→256, naturally ordered!)
+        let r_16 = _mm512_cvtsepi32_epi16(r_32);
+        let g_16 = _mm512_cvtsepi32_epi16(g_32);
+        let b_16 = _mm512_cvtsepi32_epi16(b_32);
+
+        // Pack i16 → u8 with saturation (256→128, then fix lane ordering)
+        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero_256), 0b11_01_10_00);
+        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero_256), 0b11_01_10_00);
+        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero_256), 0b11_01_10_00);
+
+        // Interleave RGB (same shuffle+blend as AVX2 path)
+        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+        // Store 48 bytes (16 pixels × 3 channels)
         safe_simd::_mm256_storeu_si256(
             <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
             rgb0,
