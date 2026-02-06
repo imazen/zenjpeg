@@ -361,15 +361,16 @@ Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables a
 ## Decoder Performance (2026-02-06)
 
 Scanline decoder matches or beats zune-jpeg. Buffered fast mode within 15%.
-Progressive ~1.3x at 2048x2048, faster at smaller sizes.
+Progressive beats zune at ≤1024, within 9% at 4096.
 
-**Wall-clock progressive (commit 3a32e1e):**
+**Wall-clock progressive (commit aba9777):**
 | Size | zune-jpeg | zenjpeg prog | ratio | zenjpeg fast | ratio |
 |------|-----------|-------------|-------|-------------|-------|
-| 256 | 257µs | 200µs | **0.78x** | 179µs | **0.70x** |
-| 512 | 901µs | 744µs | **0.83x** | 704µs | **0.78x** |
-| 1024 | 2696µs | 2908µs | 1.08x | 2736µs | 1.01x |
-| 2048 | 8996µs | 12023µs | 1.34x | 11388µs | 1.27x |
+| 256 | 247µs | 164µs | **0.66x** | 143µs | **0.58x** |
+| 512 | 914µs | 595µs | **0.65x** | 532µs | **0.58x** |
+| 1024 | 2.68ms | 2.16ms | **0.81x** | 1.96ms | **0.73x** |
+| 2048 | 8.85ms | 9.16ms | 1.03x | 8.36ms | **0.94x** |
+| 4096 | 91.3ms | 99.1ms | 1.09x | 97.7ms | 1.07x |
 
 **Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
@@ -390,6 +391,8 @@ Progressive ~1.3x at 2048x2048, faster at smaller sizes.
 7. Fast AC refinement bit reads via `read_bit_refine()` (no ScanRead enum, no bit_buffer sync)
 8. Natural-order dequant with sequential writes (30% reduction in dequant instructions)
 9. AVX-512 dispatch for YCbCr→RGB (correct but no measurable benefit on Zen 4)
+10. Nonzero coefficient bitmap (u64 per block) for AC refinement — skip zero
+    positions via `trailing_zeros()`. 12% instruction reduction in AC refine.
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -401,15 +404,14 @@ color conversion instead of bilinear. 5-10% faster, minimal quality difference.
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.34x gap at 2048x2048** (down from 1.92x; faster at <=512):
-- AC refinement is **67% of decode instructions** (330M/493M for 2048x2048)
-- Already optimized: `read_bit_refine()`, lazy bit_buffer sync, all-zeros early exit
-- Remaining overhead is inherent loop iteration: bounds checks, zero checks, bit reads
-- `decode_ac_refine` is fully inlined, bounds-check-free (verified via cargo asm)
-- Size-dependent gap: at <=512, coefficient data fits L2 cache (two-pass is fine);
-  at 2048, 12.6 MB of coefficients exceeds L2, causing cache misses in output pass
-- **Potential optimization:** nonzero coefficient bitmap (u64 per block) to skip zero
-  positions via `trailing_zeros()` — would need per-block state across progressive scans
+**Progressive 1.09x gap at 4096x4096** (down from 1.92x originally):
+- AC refinement still dominates at 67% of decode instructions (289M/~430M at 2048)
+- Already heavily optimized: bitmap skip, `read_bit_refine()`, all-zeros early exit
+- Size-dependent gap: at ≤1024, coefficient data fits L2 cache (two-pass is fine);
+  at 4096+, coefficient data exceeds L2, causing cache misses in output pass
+- Remaining overhead is Huffman decode interspersed with refinement bits (inherently serial)
+- The tokenize_ac_refinement_scan encoder-side function also iterates coefficients
+  similarly but is not part of the decode path
 
 ## Failed Explorations
 
