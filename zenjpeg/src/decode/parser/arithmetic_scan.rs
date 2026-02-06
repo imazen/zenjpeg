@@ -56,6 +56,11 @@ impl<'a> JpegParser<'a> {
                     64u8,
                     "allocating coefficient counts",
                 )?);
+                self.nonzero_bitmaps.push(try_alloc_filled(
+                    num_blocks,
+                    0u64,
+                    "allocating nonzero bitmaps",
+                )?);
             }
         }
 
@@ -177,6 +182,11 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     64u8,
                     "allocating coefficient counts",
+                )?);
+                self.nonzero_bitmaps.push(try_alloc_filled(
+                    num_blocks,
+                    0u64,
+                    "allocating nonzero bitmaps",
                 )?);
             }
         }
@@ -371,6 +381,7 @@ impl<'a> JpegParser<'a> {
                 let block_idx = block_y * comp_blocks_h + block_x;
                 decoder.decode_ac_first(
                     &mut self.coeffs[comp_idx][block_idx],
+                    &mut self.nonzero_bitmaps[comp_idx][block_idx],
                     ac_tbl,
                     ss,
                     se,
@@ -410,6 +421,7 @@ impl<'a> JpegParser<'a> {
                 let block_idx = block_y * comp_blocks_h + block_x;
                 decoder.decode_ac_refine(
                     &mut self.coeffs[comp_idx][block_idx],
+                    &mut self.nonzero_bitmaps[comp_idx][block_idx],
                     ac_tbl,
                     ss,
                     se,

@@ -86,6 +86,8 @@ impl<'a> JpegParser<'a> {
                 // For progressive, we don't know coeff counts until all scans are done
                 // Default to 64 (full IDCT) - tiered IDCT is mainly for baseline
                 self.coeff_counts.push(vec![64u8; num_blocks]);
+                // Nonzero bitmap: all zeros initially (no coefficients placed yet)
+                self.nonzero_bitmaps.push(vec![0u64; num_blocks]);
             }
         }
 
@@ -347,6 +349,7 @@ impl<'a> JpegParser<'a> {
                     // AC first scan
                     match decoder.decode_ac_first(
                         &mut self.coeffs[comp_idx][block_idx],
+                        &mut self.nonzero_bitmaps[comp_idx][block_idx],
                         ac_table as usize,
                         ss,
                         se,
@@ -364,6 +367,7 @@ impl<'a> JpegParser<'a> {
                     // AC refinement scan
                     match decoder.decode_ac_refine(
                         &mut self.coeffs[comp_idx][block_idx],
+                        &mut self.nonzero_bitmaps[comp_idx][block_idx],
                         ac_table as usize,
                         ss,
                         se,

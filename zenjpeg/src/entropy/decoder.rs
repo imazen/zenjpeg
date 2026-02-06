@@ -23,6 +23,18 @@ pub(crate) enum HuffmanResult {
     InvalidCodeRecovered,
 }
 
+/// Returns a u64 bitmask with bits [lo..=hi] set (0-indexed, both inclusive).
+/// Used for masking nonzero bitmaps to a spectral selection range.
+#[inline(always)]
+fn range_bitmap(lo: u8, hi: u8) -> u64 {
+    debug_assert!(lo <= hi && hi < 64);
+    // Shift trick: ((1 << (hi+1)) - 1) & !((1 << lo) - 1)
+    // Handle hi=63 overflow: use wrapping shift
+    let top = if hi >= 63 { u64::MAX } else { (1u64 << (hi + 1)) - 1 };
+    let bot = (1u64 << lo) - 1;
+    top & !bot
+}
+
 /// Decodes a Huffman symbol from the bit reader using the provided table.
 /// This is a standalone function to avoid borrow conflicts in decode_block.
 #[inline(always)]
@@ -1166,6 +1178,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     pub fn decode_ac_first(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        bitmap: &mut u64,
         ac_table_idx: usize,
         ss: u8,
         se: u8,
@@ -1231,6 +1244,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 };
                 let value = decode_value(size, bits);
                 coeffs[k] = value << al;
+                *bitmap |= 1u64 << (k & 63);
                 k += 1;
             }
         }
@@ -1247,6 +1261,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     pub fn decode_ac_refine(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        bitmap: &mut u64,
         ac_table_idx: usize,
         ss: u8,
         se: u8,
@@ -1259,22 +1274,21 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return.
         // This is the most common path in progressive JPEGs — tight loop, no Huffman decodes.
         if *eob_run > 0 {
-            // Fast path: skip all-zero blocks entirely (common in high-frequency AC bands).
-            // No nonzero coefficients means no refinement bits to read.
-            let has_nonzero = coeffs[ss as usize..=se as usize].iter().any(|&c| c != 0);
-            if has_nonzero {
-                for k in ss as usize..=se as usize {
-                    if coeffs[k] != 0 {
-                        let bit = self.reader.read_bit_refine();
-                        if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                            if coeffs[k] > 0 {
-                                coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                            } else {
-                                coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                            }
-                        }
+            // Use bitmap to iterate only nonzero positions (skip zeros via trailing_zeros).
+            // Mask to the spectral selection range [ss, se].
+            let range_mask = range_bitmap(ss, se);
+            let mut nz = *bitmap & range_mask;
+            while nz != 0 {
+                let k = nz.trailing_zeros() as usize;
+                let bit = self.reader.read_bit_refine();
+                if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                    if coeffs[k] > 0 {
+                        coeffs[k] = coeffs[k].wrapping_add(bit_val);
+                    } else {
+                        coeffs[k] = coeffs[k].wrapping_sub(bit_val);
                     }
                 }
+                nz &= nz - 1; // clear lowest set bit
             }
             *eob_run -= 1;
             return Ok(ScanRead::Value(()));
@@ -1298,45 +1312,31 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // ZRL in refinement - skip 16 zeros (not 15!)
                     num_zeros_to_skip = 16;
                 } else {
-                    // EOB run
-                    if run == 0 {
-                        // Single EOB - apply refinement to remaining nonzero coeffs
-                        for j in k..=se as usize {
-                            if coeffs[j] != 0 {
-                                let bit = self.reader.read_bit_refine();
-                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                                    if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].wrapping_add(bit_val);
-                                    } else {
-                                        coeffs[j] = coeffs[j].wrapping_sub(bit_val);
-                                    }
-                                }
-                            }
-                        }
-                        return Ok(ScanRead::Value(()));
-                    } else {
-                        // EOB run
+                    // EOB — apply refinement to remaining nonzero coeffs via bitmap
+                    if run != 0 {
                         let extra = match self.reader.read_bits(run)? {
                             ScanRead::Value(v) => v as u16,
                             ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
                             ScanRead::Truncated => return Ok(ScanRead::Truncated),
                         };
                         *eob_run = (1 << run) + extra - 1;
-                        // Apply refinement to remaining nonzero coeffs in this block
-                        for j in k..=se as usize {
-                            if coeffs[j] != 0 {
-                                let bit = self.reader.read_bit_refine();
-                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                                    if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].wrapping_add(bit_val);
-                                    } else {
-                                        coeffs[j] = coeffs[j].wrapping_sub(bit_val);
-                                    }
-                                }
+                    }
+                    // Apply refinement to remaining nonzero coeffs [k..=se]
+                    let range_mask = range_bitmap(k as u8, se);
+                    let mut nz = *bitmap & range_mask;
+                    while nz != 0 {
+                        let j = nz.trailing_zeros() as usize;
+                        let bit = self.reader.read_bit_refine();
+                        if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                            if coeffs[j] > 0 {
+                                coeffs[j] = coeffs[j].wrapping_add(bit_val);
+                            } else {
+                                coeffs[j] = coeffs[j].wrapping_sub(bit_val);
                             }
                         }
-                        return Ok(ScanRead::Value(()));
+                        nz &= nz - 1;
                     }
+                    return Ok(ScanRead::Value(()));
                 }
             }
 
@@ -1349,14 +1349,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 None
             };
 
-            // Skip zeros and apply refinement bits to nonzero coefficients
+            // Skip zeros and apply refinement bits to nonzero coefficients.
+            // Must iterate in order because refinement bits are read sequentially.
             while k <= se as usize {
                 // For ZRL (size=0), stop immediately after skipping all 16 zeros.
                 if size == 0 && num_zeros_to_skip == 0 {
                     break;
                 }
 
-                if coeffs[k] != 0 {
+                if (*bitmap & (1u64 << (k & 63))) != 0 {
                     // Apply refinement bit for previously-nonzero coefficient
                     let bit = self.reader.read_bit_refine();
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
@@ -1377,8 +1378,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
             if let Some(val) = new_val {
                 if k <= se as usize {
-                    // Place newly-nonzero coefficient
+                    // Place newly-nonzero coefficient and update bitmap
                     coeffs[k] = val;
+                    *bitmap |= 1u64 << (k & 63);
                     k += 1; // Move past the placed coefficient
                 }
             }

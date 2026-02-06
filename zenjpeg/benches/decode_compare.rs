@@ -59,7 +59,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_compare");
 
     // Test sizes from small to large
-    for (width, height) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048)] {
+    for (width, height) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048), (4096, 4096)] {
         let jpeg_baseline = create_test_jpeg(width, height, 85.0, false);
         let jpeg_progressive = create_test_jpeg(width, height, 85.0, true);
         let pixels = (width * height) as u64;
