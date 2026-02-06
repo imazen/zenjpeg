@@ -397,6 +397,42 @@ Progressive beats zune at ≤1024, within 9% at 4096.
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
 
+### Dequantization Bias (2026-02-06)
+
+`Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
+(Price & Rabbani 2000). Computes per-coefficient biases from DCT statistics
+and applies them during f32 dequantization, reducing reconstruction error.
+Bypasses fast i16 IDCT path. Default: off.
+
+**SSIMULACRA2 vs original** (10 CID22 512px images, baseline 4:2:0, commit 86e3bef):
+
+| Quality | zenjpeg | zen+bias | cjpegli C++ | zune-jpeg | bias-zen | bias-cpp |
+|---------|---------|----------|-------------|-----------|----------|----------|
+| Q50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
+| Q75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
+| Q85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
+| Q95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
+
+- `bias-zen`: SSIM2 gain over default zenjpeg (positive = better)
+- `bias-cpp`: SSIM2 gap vs C++ jpegli (negative = C++ still slightly ahead)
+
+**Pairwise SSIMULACRA2** (between decoders, Q85, 6 images):
+
+| | zenjpeg | zen+bias | cjpegli | zune-jpeg |
+|---|---------|----------|---------|-----------|
+| zenjpeg | - | 91.39 | 91.42 | 100.00 |
+| zen+bias | | - | 94.31 | 91.23 |
+| cjpegli | | | - | 91.26 |
+
+Key findings:
+- zenjpeg default == zune-jpeg (identical output, both integer IDCT)
+- zen+bias↔cjpegli similarity: 94.31 (3 SSIM2 pts closer than default↔cjpegli at 91.42)
+- Max pixel diff between zen+bias and cjpegli: always 1 (IDCT rounding only)
+- Q75+: bias improves 0.14-0.39 SSIM2 pts over default, within 0.04-0.06 of C++
+- Q50: bias slightly worse (-0.21 pts) — noisy low-Q coefficients degrade bias estimates
+
+Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
+
 ### Remaining Bottlenecks
 
 **Buffered decoder 1.15x gap** (baseline-fast vs zune):
