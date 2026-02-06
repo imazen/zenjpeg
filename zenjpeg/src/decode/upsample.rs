@@ -211,7 +211,7 @@ pub fn upsample_h2v2_i16_fancy(
     // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2Token::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             upsample_h2v2_i16_fancy_avx2(
                 token, input, in_width, in_height, output, out_width, out_height,
             );
@@ -245,7 +245,7 @@ pub fn upsample_h2v2_i16_fancy_strided(
     // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2Token::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             upsample_h2v2_i16_fancy_strided_avx2(
                 token, input, in_width, in_stride, in_height, output, out_width, out_stride,
                 out_height,
@@ -293,7 +293,7 @@ fn upsample_h2v2_i16_fancy_strided_scalar(
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn upsample_h2v2_i16_fancy_strided_avx2(
-    token: archmage::Avx2Token,
+    token: archmage::X64V3Token,
     input: &[i16],
     in_width: usize,
     in_stride: usize,
@@ -345,7 +345,7 @@ fn upsample_h2v2_i16_fancy_strided_avx2(
 #[arcane]
 #[inline(always)]
 fn upsample_vertical_row_strided_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     curr_row: &[i16],
     v_neighbor_row: &[i16],
     out: &mut [i16],
@@ -395,7 +395,7 @@ fn upsample_vertical_row_strided_avx2(
 #[arcane]
 #[inline(always)]
 fn upsample_horizontal_row_strided_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     input: &[i16],
     output: &mut [i16],
 ) {
@@ -536,7 +536,7 @@ fn upsample_h2v2_i16_fancy_scalar(
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn upsample_h2v2_i16_fancy_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     input: &[i16],
     in_width: usize,
     in_height: usize,
@@ -906,7 +906,7 @@ pub fn upsample_h2v2_i16_fancy_simd(
         return;
     }
 
-    let Some(token) = archmage::Avx2Token::try_new() else {
+    let Some(token) = archmage::X64V3Token::summon() else {
         // Fall back to scalar if AVX2 not available
         upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
         return;
@@ -957,7 +957,7 @@ pub fn upsample_h2v2_i16_fancy_simd(
 ))]
 #[arcane]
 fn upsample_vertical_row_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     curr: &[i16],
     neighbor: &[i16],
     output: &mut [i16],
@@ -1014,7 +1014,7 @@ fn upsample_vertical_row_avx2(
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[arcane]
-fn upsample_horizontal_row_avx2(_token: archmage::Avx2Token, input: &[i16], output: &mut [i16]) {
+fn upsample_horizontal_row_avx2(_token: archmage::X64V3Token, input: &[i16], output: &mut [i16]) {
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]

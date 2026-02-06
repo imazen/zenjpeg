@@ -237,7 +237,7 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn gather_even_odd_x8_avx2(_token: archmage::Avx2Token, data: &[f32; 16]) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_avx2(_token: archmage::X64V3Token, data: &[f32; 16]) -> (f32x8, f32x8) {
     use std::arch::x86_64::*;
 
     // Load 16 consecutive floats as two YMM registers
@@ -338,7 +338,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
         // The branch is very predictable and intrinsics are inlined
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
         {
-            if let Some(token) = archmage::Avx2Token::try_new() {
+            if let Some(token) = archmage::X64V3Token::summon() {
                 return gather_even_odd_x8_avx2(token, slice.try_into().unwrap());
             } else {
                 return gather_even_odd_x8_scalar(slice);
@@ -365,7 +365,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn extract_r_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
+fn extract_r_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(0, 3, 6, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -376,7 +376,7 @@ fn extract_r_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn extract_g_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
+fn extract_g_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(1, 4, 7, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -387,7 +387,7 @@ fn extract_g_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn extract_b_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
+fn extract_b_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(2, 5, 8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -399,7 +399,7 @@ fn extract_b_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
+fn u8x4_to_f32x4_sse41(_token: archmage::X64V3Token, v: __m128i) -> __m128 {
     use core::arch::x86_64::_mm_cvtepi32_ps;
     // Zero-extend u8 to i32, then convert to f32
     let i32_vec = _mm_cvtepu8_epi32(v);
@@ -418,36 +418,33 @@ fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
 #[arcane]
 #[inline]
 pub(crate) fn rgb_to_ycbcr_8px_fma(
-    _token: archmage::Avx2FmaToken,
+    _token: archmage::X64V3Token,
     rgb_data: &[u8],
     y_out: &mut [f32; 8],
     cb_out: &mut [f32; 8],
     cr_out: &mut [f32; 8],
 ) {
-    // Intrinsics imported at module level
-    let avx2 = _token.avx2();
-
     // Load 24 bytes as two overlapping 16-byte loads
     let rgb0 = safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&rgb_data[..16]).unwrap());
     let rgb1 = safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&rgb_data[12..28]).unwrap());
 
     // Extract R, G, B for first 4 pixels
-    let r0_bytes = extract_r_ssse3(avx2, rgb0);
-    let g0_bytes = extract_g_ssse3(avx2, rgb0);
-    let b0_bytes = extract_b_ssse3(avx2, rgb0);
+    let r0_bytes = extract_r_ssse3(_token, rgb0);
+    let g0_bytes = extract_g_ssse3(_token, rgb0);
+    let b0_bytes = extract_b_ssse3(_token, rgb0);
 
     // Extract R, G, B for second 4 pixels
-    let r1_bytes = extract_r_ssse3(avx2, rgb1);
-    let g1_bytes = extract_g_ssse3(avx2, rgb1);
-    let b1_bytes = extract_b_ssse3(avx2, rgb1);
+    let r1_bytes = extract_r_ssse3(_token, rgb1);
+    let g1_bytes = extract_g_ssse3(_token, rgb1);
+    let b1_bytes = extract_b_ssse3(_token, rgb1);
 
     // Convert to f32
-    let r0: __m128 = u8x4_to_f32x4_sse41(avx2, r0_bytes);
-    let g0: __m128 = u8x4_to_f32x4_sse41(avx2, g0_bytes);
-    let b0: __m128 = u8x4_to_f32x4_sse41(avx2, b0_bytes);
-    let r1: __m128 = u8x4_to_f32x4_sse41(avx2, r1_bytes);
-    let g1: __m128 = u8x4_to_f32x4_sse41(avx2, g1_bytes);
-    let b1: __m128 = u8x4_to_f32x4_sse41(avx2, b1_bytes);
+    let r0: __m128 = u8x4_to_f32x4_sse41(_token, r0_bytes);
+    let g0: __m128 = u8x4_to_f32x4_sse41(_token, g0_bytes);
+    let b0: __m128 = u8x4_to_f32x4_sse41(_token, b0_bytes);
+    let r1: __m128 = u8x4_to_f32x4_sse41(_token, r1_bytes);
+    let g1: __m128 = u8x4_to_f32x4_sse41(_token, g1_bytes);
+    let b1: __m128 = u8x4_to_f32x4_sse41(_token, b1_bytes);
 
     // Coefficients
     let r_to_y = _mm_set1_ps(YCBCR_R_TO_Y);
@@ -557,7 +554,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
     // deinterleave instead of scalar gather, plus FMA operations)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2FmaToken::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             let chunks = num_pixels / 8;
 
             for chunk in 0..chunks {
@@ -1531,7 +1528,7 @@ mod tests {
     #[test]
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_matches_scalar() {
-        let Some(token) = archmage::Avx2FmaToken::try_new() else {
+        let Some(token) = archmage::X64V3Token::summon() else {
             return;
         };
 
@@ -1585,7 +1582,7 @@ mod tests {
     #[test]
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_brute_force() {
-        let Some(token) = archmage::Avx2FmaToken::try_new() else {
+        let Some(token) = archmage::X64V3Token::summon() else {
             return;
         };
 

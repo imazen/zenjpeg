@@ -598,7 +598,7 @@ fn mage_dct1d_8_avx512_inner(token: X64V4Token, m: &mut [__m512; 8]) {
 /// ```rust,ignore
 /// use archmage::{Avx512fToken, SimdToken};
 ///
-/// if let Some(token) = X64V4Token::try_new() {
+/// if let Some(token) = X64V4Token::summon() {
 ///     let block_a = [0.0f32; 64];
 ///     let block_b = [0.0f32; 64];
 ///     let mut out_a = [0.0f32; 64];
@@ -1698,7 +1698,7 @@ mod tests {
     fn test_mage_forward_dct_8x8_dual_flat_blocks() {
         use archmage::X64V4Token;
 
-        if let Some(token) = X64V4Token::try_new() {
+        if let Some(token) = X64V4Token::summon() {
             // Two flat blocks with different constant values
             let input_a = [128.0f32; 64];
             let input_b = [64.0f32; 64];
@@ -1745,7 +1745,7 @@ mod tests {
     fn test_mage_forward_dct_8x8_dual_matches_single() {
         use archmage::X64V4Token;
 
-        if let Some(token) = X64V4Token::try_new() {
+        if let Some(token) = X64V4Token::summon() {
             // Create test patterns
             let input_a: [f32; 64] = core::array::from_fn(|i| (i % 256) as f32);
             let input_b: [f32; 64] = core::array::from_fn(|i| ((i * 3 + 17) % 256) as f32);
@@ -1840,7 +1840,7 @@ mod tests {
     fn test_mage_transpose_8x8_dual() {
         use archmage::X64V4Token;
 
-        if let Some(token) = X64V4Token::try_new() {
+        if let Some(token) = X64V4Token::summon() {
             // Create test data: two 8x8 blocks
             let original_a: [f32; 64] = core::array::from_fn(|i| i as f32);
             let original_b: [f32; 64] = core::array::from_fn(|i| (i + 100) as f32);

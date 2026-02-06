@@ -1000,7 +1000,7 @@ pub fn ycbcr_to_rgb_i16_x16(
 ) {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2Token::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             ycbcr_to_rgb_i16_x16_avx2(token, y, cb, cr, rgb, offset);
             return;
         }
@@ -1043,7 +1043,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn ycbcr_to_rgb_i16_x16_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     y: &[i16; 16],
     cb: &[i16; 16],
     cr: &[i16; 16],
@@ -1280,7 +1280,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2Token::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             ycbcr_planes_i16_to_rgb_u8_avx2(token, y_plane, cb_plane, cr_plane, rgb);
             return;
         }
@@ -1310,7 +1310,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn ycbcr_planes_i16_to_rgb_u8_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     y_plane: &[i16],
     cb_plane: &[i16],
     cr_plane: &[i16],
@@ -1510,7 +1510,7 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
 
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        if let Some(token) = archmage::Avx2Token::try_new() {
+        if let Some(token) = archmage::X64V3Token::summon() {
             fused_h2v2_box_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
             return;
         }
@@ -1557,7 +1557,7 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[archmage::arcane]
 fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
-    _token: archmage::Avx2Token,
+    _token: archmage::X64V3Token,
     y_row: &[i16],
     cb_row: &[i16],
     cr_row: &[i16],
