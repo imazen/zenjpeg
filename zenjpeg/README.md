@@ -48,7 +48,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 ## Known Limitations
 
 - **XYB color space** - With progressive mode, matches or beats C++ jpegli file sizes. Baseline mode is 2-3% larger.
-- **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
+- **XYB decoder speed** - XYB images use f32 pipeline; standard JPEG decoding uses fast integer IDCT.
 
 ## Trellis Modes
 
@@ -322,6 +322,7 @@ println!("{}x{}, {} components", info.width, info.height, info.num_components);
 | `.fancy_upsampling(bool)` | Smooth chroma upsampling | `true` |
 | `.block_smoothing(bool)` | DCT block edge smoothing | `false` |
 | `.apply_icc(bool)` | Apply embedded ICC profile | `true` |
+| `.dequant_bias(bool)` | Laplacian dequantization biases (see below) | `false` |
 | `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
 | `.max_memory(n)` | Memory limit in bytes | 512 MB |
 
@@ -348,6 +349,7 @@ let image = Decoder::new()
     .fancy_upsampling(true)
     .block_smoothing(false)
     .apply_icc(true)
+    .dequant_bias(false)
     .max_pixels(100_000_000)
     .max_memory(512 * 1024 * 1024)
     .decode(&jpeg_data)?;
@@ -384,13 +386,37 @@ let decoder = Decoder::from_config(config);
 
 ### Decoding Speed
 
-| Decoder | Speed | Notes |
-|---------|-------|-------|
-| zune-jpeg | 392 MP/s | Integer IDCT, AVX2 |
-| jpeg-decoder | 120 MP/s | Integer IDCT |
-| **zenjpeg** | **47 MP/s** | f32 IDCT, 12-bit precision |
+The default decode path uses fast integer IDCT (matching zune-jpeg performance).
+The f32 pipeline is used for XYB images or when `dequant_bias(true)` is enabled.
 
-The decoder prioritizes precision over speed, matching C++ jpegli's 12-bit pipeline.
+| Mode | 2048x2048 | vs zune-jpeg | Notes |
+|------|-----------|--------------|-------|
+| Scanline 4:2:0 | 4.03ms | **0.99x** | Matches zune-jpeg |
+| Scanline 4:4:4 | 5.78ms | **0.91x** | Beats zune-jpeg |
+| Buffered fast | 4.72ms | 1.15x | Two-pass overhead |
+| Buffered default | 5.51ms | 1.35x | f32 upsampling |
+
+#### Dequantization Bias
+
+`Decoder::new().dequant_bias(true)` enables optimal Laplacian dequantization
+biases ([Price & Rabbani 2000](https://doi.org/10.1109/DCC.2000.838190)). This
+computes per-coefficient biases from DCT coefficient statistics and applies them
+during f32 dequantization, matching C++ jpegli's decoder behavior.
+
+**Tradeoff:** Bypasses the fast integer IDCT path. The quality difference vs the
+default integer IDCT is image-dependent and small in either direction:
+
+| Quality | Default SSIM2 | +bias SSIM2 | C++ jpegli | bias vs default |
+|---------|---------------|-------------|------------|-----------------|
+| Q50 | 37.28 | 35.95 | 36.01 | -1.32 pts |
+| Q85 | 50.45 | 50.18 | 50.21 | -0.27 pts |
+| Q95 | 53.28 | 53.25 | 53.27 | -0.03 pts |
+
+*(frymire 1118x1105, SSIMULACRA2 vs original, higher = better)*
+
+The bias path consistently tracks C++ jpegli output within 0.02-0.11 SSIMULACRA2
+points. Use it when you need decode output to match C++ jpegli, or when processing
+pipelines assume jpegli-style reconstruction.
 
 ## Table Optimization
 
