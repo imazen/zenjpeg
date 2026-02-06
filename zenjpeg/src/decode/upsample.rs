@@ -715,7 +715,7 @@ fn upsample_h2v2_i16_fancy_avx2(
 /// - Vertical neighbor: above if is_top_half, below otherwise
 /// - Result = (9*curr + 3*h_neighbor + 3*v_neighbor + hv_neighbor + 8) >> 4
 #[inline(always)]
-fn upsample_row_h2_fancy_bilinear(
+pub(super) fn upsample_row_h2_fancy_bilinear(
     curr_row: &[i16],
     v_neighbor_row: &[i16],
     in_width: usize,
@@ -1477,7 +1477,7 @@ pub fn upsample_h2v2_i16_libjpeg(
 ///
 /// `is_upper` controls the rounding bias alternation pattern.
 #[inline]
-fn upsample_h2v2_libjpeg_row(
+pub(super) fn upsample_h2v2_libjpeg_row(
     near: &[i16],
     far: &[i16],
     output: &mut [i16],
