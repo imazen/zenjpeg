@@ -39,8 +39,7 @@ fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
             data[idx + 2] = (255 - base).wrapping_add(((rng >> 16) & 0x1F) as u8);
         }
     }
-    let config =
-        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -76,16 +75,17 @@ fn main() {
 
     let decoder_type = &args[1];
     let size: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(512);
-    let progressive = args
-        .get(3)
-        .map(|s| s.starts_with("prog"))
-        .unwrap_or(false);
+    let progressive = args.get(3).map(|s| s.starts_with("prog")).unwrap_or(false);
 
     eprintln!(
         "Creating {}x{} {} test JPEG...",
         size,
         size,
-        if progressive { "progressive" } else { "baseline" }
+        if progressive {
+            "progressive"
+        } else {
+            "baseline"
+        }
     );
     let jpeg_data = create_test_jpeg(size, size, progressive);
     eprintln!("JPEG size: {} bytes", jpeg_data.len());
