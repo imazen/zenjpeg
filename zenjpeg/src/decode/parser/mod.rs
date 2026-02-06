@@ -698,10 +698,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// This bundles all the parser fields needed by `ScanlineReader::new()`,
     /// detecting RGB-JPEG and XYB along the way.
-    pub(super) fn into_scan_data(
-        mut self,
-        is_grayscale: bool,
-    ) -> Result<ParsedScanData<'a>> {
+    pub(super) fn into_scan_data(mut self, is_grayscale: bool) -> Result<ParsedScanData<'a>> {
         let is_xyb = self.info().is_xyb;
 
         // Extract sampling factors
