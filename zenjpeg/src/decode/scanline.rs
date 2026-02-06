@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use super::idct_int::{idct_int_dc_only, idct_int_tiered};
+use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::upsample::{
     upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
     upsample_h2v2_i16_nearest_strided,
@@ -545,7 +545,24 @@ impl<'a> ScanlineReader<'a> {
                                 &mut self.dequant_buf,
                                 coeff_count,
                             );
-                            idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                            match self.chroma_upsampling {
+                                ChromaUpsampling::LibjpegCompat => {
+                                    idct_int_tiered_libjpeg(
+                                        &mut self.dequant_buf,
+                                        strip,
+                                        stride,
+                                        coeff_count,
+                                    );
+                                }
+                                _ => {
+                                    idct_int_tiered(
+                                        &mut self.dequant_buf,
+                                        strip,
+                                        stride,
+                                        coeff_count,
+                                    );
+                                }
+                            }
                         }
                     }
                 }

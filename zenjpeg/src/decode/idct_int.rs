@@ -90,6 +90,215 @@ pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {
     coeffs[1..].iter().all(|&x| x == 0)
 }
 
+// ============================================================================
+// libjpeg-compatible IDCT (Loeffler algorithm, 13-bit precision)
+// ============================================================================
+//
+// This is a direct port of libjpeg-turbo's jpeg_idct_islow (jidctint.c).
+// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit constants
+// and PASS1_BITS=2. Produces output bit-identical to libjpeg-turbo for
+// matching dequantized input coefficients.
+//
+// Reference: C. Loeffler, A. Ligtenberg and G. Moschytz,
+//   "Practical Fast 1-D DCT Algorithms with 11 Multiplications",
+//   Proc. ICASSP '89, pp. 988-991.
+
+/// 13-bit fixed-point constants for the Loeffler IDCT.
+const LJ_FIX_0_298631336: i32 = 2446;
+const LJ_FIX_0_390180644: i32 = 3196;
+const LJ_FIX_0_541196100: i32 = 4433;
+const LJ_FIX_0_765366865: i32 = 6270;
+const LJ_FIX_0_899976223: i32 = 7373;
+const LJ_FIX_1_175875602: i32 = 9633;
+const LJ_FIX_1_501321110: i32 = 12299;
+const LJ_FIX_1_847759065: i32 = 15137;
+const LJ_FIX_1_961570560: i32 = 16069;
+const LJ_FIX_2_053119869: i32 = 16819;
+const LJ_FIX_2_562915447: i32 = 20995;
+const LJ_FIX_3_072711026: i32 = 25172;
+
+const LJ_CONST_BITS: u32 = 13;
+const LJ_PASS1_BITS: u32 = 2;
+
+/// Rounded right shift: (x + (1 << (n-1))) >> n
+#[inline(always)]
+const fn descale(x: i32, n: u32) -> i32 {
+    (x + (1 << (n - 1))) >> n
+}
+
+/// libjpeg-turbo compatible integer IDCT (Loeffler algorithm).
+///
+/// Input: dequantized DCT coefficients in natural (row-major) order.
+/// Output: pixel values level-shifted to [0, 255] as i16.
+///
+/// This produces output matching libjpeg-turbo's `jpeg_idct_islow` for
+/// identical dequantized input.
+#[allow(clippy::too_many_lines)]
+pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
+    // DC-only fast path (identical to libjpeg)
+    if is_dc_only_int(in_vector) {
+        return idct_int_dc_only(in_vector[0], out_vector, stride);
+    }
+
+    let mut workspace = [0i32; 64];
+
+    // Pass 1: process columns, store into workspace.
+    // Results are scaled up by sqrt(8) * 2^PASS1_BITS.
+    for col in 0..8 {
+        // Short-circuit for columns with all AC terms zero
+        if in_vector[col + 8] == 0
+            && in_vector[col + 16] == 0
+            && in_vector[col + 24] == 0
+            && in_vector[col + 32] == 0
+            && in_vector[col + 40] == 0
+            && in_vector[col + 48] == 0
+            && in_vector[col + 56] == 0
+        {
+            let dcval = in_vector[col] << LJ_PASS1_BITS;
+            workspace[col] = dcval;
+            workspace[col + 8] = dcval;
+            workspace[col + 16] = dcval;
+            workspace[col + 24] = dcval;
+            workspace[col + 32] = dcval;
+            workspace[col + 40] = dcval;
+            workspace[col + 48] = dcval;
+            workspace[col + 56] = dcval;
+            continue;
+        }
+
+        // Even part
+        let z2 = in_vector[col + 16];
+        let z3 = in_vector[col + 48];
+
+        let z1 = (z2 + z3) * LJ_FIX_0_541196100;
+        let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
+        let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
+
+        let z2 = in_vector[col];
+        let z3 = in_vector[col + 32];
+
+        let tmp0 = (z2 + z3) << LJ_CONST_BITS;
+        let tmp1 = (z2 - z3) << LJ_CONST_BITS;
+
+        let tmp10 = tmp0 + tmp3;
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        // Odd part
+        let mut tmp0 = in_vector[col + 56];
+        let mut tmp1 = in_vector[col + 40];
+        let mut tmp2 = in_vector[col + 24];
+        let mut tmp3 = in_vector[col + 8];
+
+        let z1 = tmp0 + tmp3;
+        let z2 = tmp1 + tmp2;
+        let z3 = tmp0 + tmp2;
+        let z4 = tmp1 + tmp3;
+        let z5 = (z3 + z4) * LJ_FIX_1_175875602;
+
+        tmp0 = tmp0 * LJ_FIX_0_298631336;
+        tmp1 = tmp1 * LJ_FIX_2_053119869;
+        tmp2 = tmp2 * LJ_FIX_3_072711026;
+        tmp3 = tmp3 * LJ_FIX_1_501321110;
+        let z1 = z1 * (-LJ_FIX_0_899976223);
+        let z2 = z2 * (-LJ_FIX_2_562915447);
+        let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
+        let z4 = z4 * (-LJ_FIX_0_390180644) + z5;
+
+        tmp0 += z1 + z3;
+        tmp1 += z2 + z4;
+        tmp2 += z2 + z3;
+        tmp3 += z1 + z4;
+
+        // Final output: descale by (CONST_BITS - PASS1_BITS)
+        workspace[col] = descale(tmp10 + tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 56] = descale(tmp10 - tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 8] = descale(tmp11 + tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 48] = descale(tmp11 - tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 16] = descale(tmp12 + tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 40] = descale(tmp12 - tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 24] = descale(tmp13 + tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[col + 32] = descale(tmp13 - tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
+    }
+
+    // Pass 2: process rows from workspace, store into output.
+    // Descale by factor of 8 (2^3) plus PASS1_BITS.
+    let total_shift = LJ_CONST_BITS + LJ_PASS1_BITS + 3;
+
+    for row in 0..8 {
+        let base = row * 8;
+
+        // Row DC-only short-circuit
+        if workspace[base + 1] == 0
+            && workspace[base + 2] == 0
+            && workspace[base + 3] == 0
+            && workspace[base + 4] == 0
+            && workspace[base + 5] == 0
+            && workspace[base + 6] == 0
+            && workspace[base + 7] == 0
+        {
+            let dcval = (descale(workspace[base], LJ_PASS1_BITS + 3) + 128).clamp(0, 255) as i16;
+            let out_base = row * stride;
+            out_vector[out_base..out_base + 8].fill(dcval);
+            continue;
+        }
+
+        // Even part
+        let z2 = workspace[base + 2];
+        let z3 = workspace[base + 6];
+
+        let z1 = (z2 + z3) * LJ_FIX_0_541196100;
+        let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
+        let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
+
+        let tmp0 = (workspace[base] + workspace[base + 4]) << LJ_CONST_BITS;
+        let tmp1 = (workspace[base] - workspace[base + 4]) << LJ_CONST_BITS;
+
+        let tmp10 = tmp0 + tmp3;
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        // Odd part
+        let mut tmp0 = workspace[base + 7];
+        let mut tmp1 = workspace[base + 5];
+        let mut tmp2 = workspace[base + 3];
+        let mut tmp3 = workspace[base + 1];
+
+        let z1 = tmp0 + tmp3;
+        let z2 = tmp1 + tmp2;
+        let z3 = tmp0 + tmp2;
+        let z4 = tmp1 + tmp3;
+        let z5 = (z3 + z4) * LJ_FIX_1_175875602;
+
+        tmp0 = tmp0 * LJ_FIX_0_298631336;
+        tmp1 = tmp1 * LJ_FIX_2_053119869;
+        tmp2 = tmp2 * LJ_FIX_3_072711026;
+        tmp3 = tmp3 * LJ_FIX_1_501321110;
+        let z1 = z1 * (-LJ_FIX_0_899976223);
+        let z2 = z2 * (-LJ_FIX_2_562915447);
+        let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
+        let z4 = z4 * (-LJ_FIX_0_390180644) + z5;
+
+        tmp0 += z1 + z3;
+        tmp1 += z2 + z4;
+        tmp2 += z2 + z3;
+        tmp3 += z1 + z4;
+
+        // Final output: descale + level shift (+128) + clamp
+        let out_base = row * stride;
+        out_vector[out_base] = (descale(tmp10 + tmp3, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 7] = (descale(tmp10 - tmp3, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 1] = (descale(tmp11 + tmp2, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 6] = (descale(tmp11 - tmp2, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 2] = (descale(tmp12 + tmp1, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 5] = (descale(tmp12 - tmp1, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 3] = (descale(tmp13 + tmp0, total_shift) + 128).clamp(0, 255) as i16;
+        out_vector[out_base + 4] = (descale(tmp13 - tmp0, total_shift) + 128).clamp(0, 255) as i16;
+    }
+}
+
 /// Integer IDCT for 8x8 block.
 ///
 /// # Arguments
@@ -790,6 +999,23 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
         }
         // Fallback to portable SIMD
         wide_simd::idct_int_wide(coeffs, output, stride);
+    }
+}
+
+/// libjpeg-compatible tiered IDCT dispatch.
+///
+/// Uses DC-only fast path for single-coefficient blocks, otherwise
+/// uses `idct_int_libjpeg` for bit-exact matching with libjpeg-turbo.
+pub fn idct_int_tiered_libjpeg(
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+    coeff_count: u8,
+) {
+    if coeff_count <= 1 {
+        idct_int_dc_only(coeffs[0], output, stride);
+    } else {
+        idct_int_libjpeg(coeffs, output, stride);
     }
 }
 

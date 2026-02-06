@@ -61,6 +61,26 @@ fn decode_zenjpeg(data: &[u8]) -> Option<DecodeResult> {
     })
 }
 
+fn decode_zenjpeg_libjpeg_compat(data: &[u8]) -> Option<DecodeResult> {
+    use zenjpeg::decode::ChromaUpsampling;
+    use zenjpeg::decoder::Decoder;
+    let img = Decoder::new()
+        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .decode(data, Unstoppable)
+        .ok()?;
+    let channels = if img.data.len() == (img.width as usize * img.height as usize) {
+        1
+    } else {
+        3
+    };
+    Some(DecodeResult {
+        pixels: img.data,
+        width: img.width as usize,
+        height: img.height as usize,
+        channels,
+    })
+}
+
 fn decode_zune(data: &[u8]) -> Option<DecodeResult> {
     use zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -95,11 +115,24 @@ fn decode_jpeg_decoder_crate(data: &[u8]) -> Option<DecodeResult> {
     })
 }
 
+/// Find libjpeg-turbo djpeg binary. Prefers the locally-built static binary
+/// over the system djpeg (which may be IJG libjpeg 9d, NOT libjpeg-turbo).
+fn find_turbo_djpeg() -> &'static str {
+    const TURBO_DJPEG: &str = "/tmp/libjpeg-turbo-build/djpeg-static";
+    if std::path::Path::new(TURBO_DJPEG).exists() {
+        TURBO_DJPEG
+    } else {
+        // Fall back to system djpeg (may be IJG, not turbo!)
+        "djpeg"
+    }
+}
+
 fn decode_djpeg(path: &Path) -> Option<DecodeResult> {
+    let djpeg_bin = find_turbo_djpeg();
     // Write to temp file to avoid binary data issues with stdout pipe
     let tmp_dir = std::env::temp_dir();
     let tmp_path = tmp_dir.join("_zenjpeg_djpeg_out.pnm");
-    let status = Command::new("djpeg")
+    let status = Command::new(djpeg_bin)
         .arg("-pnm")
         .arg("-outfile")
         .arg(&tmp_path)
@@ -532,5 +565,246 @@ fn corpus_decode_accuracy() {
             "{:<45} {:>8} {:>10.4} {:>12.8}",
             d.name, max_diff, mean_diff, dssim
         );
+    }
+}
+
+#[test]
+#[ignore]
+fn corpus_libjpeg_compat_vs_djpeg() {
+    let corpus = Path::new(CORPUS_DIR);
+    if !corpus.exists() {
+        eprintln!("Corpus not found at {CORPUS_DIR}");
+        return;
+    }
+
+    let files = collect_jpgs(corpus);
+    eprintln!(
+        "Found {} JPEG files — comparing Triangle vs LibjpegCompat vs djpeg\n",
+        files.len()
+    );
+
+    eprintln!(
+        "{:<45} {:>10} {:>10} {:>10} {:>10}",
+        "File", "Tri→djpeg", "LJC→djpeg", "Tri→LJC", "Tri→Zune"
+    );
+    eprintln!("{}", "-".repeat(95));
+
+    let mut tri_vs_djpeg_diffs = Vec::new();
+    let mut ljc_vs_djpeg_diffs = Vec::new();
+    let mut tri_vs_ljc_diffs = Vec::new();
+
+    for path in &files {
+        let fname = path.file_name().unwrap().to_string_lossy().to_string();
+        let data = fs::read(path).expect("read file");
+
+        let tri = decode_zenjpeg(&data);
+        let ljc = decode_zenjpeg_libjpeg_compat(&data);
+        let dj = decode_djpeg(path);
+        let zune = decode_zune(&data);
+
+        // Need all four for a useful comparison
+        let (Some(tri), Some(ljc), Some(dj)) = (&tri, &ljc, &dj) else {
+            eprintln!("{:<45} SKIPPED (decode failure)", fname);
+            continue;
+        };
+
+        if tri.width != dj.width
+            || tri.height != dj.height
+            || tri.channels != dj.channels
+            || tri.pixels.len() != dj.pixels.len()
+        {
+            eprintln!("{:<45} SKIPPED (dimension/channel mismatch)", fname);
+            continue;
+        }
+
+        let tri_dj = max_pixel_diff(&tri.pixels, &dj.pixels);
+        let ljc_dj = max_pixel_diff(&ljc.pixels, &dj.pixels);
+        let tri_ljc = max_pixel_diff(&tri.pixels, &ljc.pixels);
+
+        let tri_zune_str = if let Some(zune) = &zune {
+            if zune.width == tri.width
+                && zune.height == tri.height
+                && zune.channels == tri.channels
+                && zune.pixels.len() == tri.pixels.len()
+            {
+                let d = max_pixel_diff(&tri.pixels, &zune.pixels);
+                format!("{}", d)
+            } else {
+                "dim?".to_string()
+            }
+        } else {
+            "fail".to_string()
+        };
+
+        // Highlight improvements
+        let marker = if ljc_dj < tri_dj {
+            " <<"
+        } else if ljc_dj > tri_dj {
+            " !!"
+        } else {
+            ""
+        };
+
+        eprintln!(
+            "{:<45} {:>10} {:>10} {:>10} {:>10}{}",
+            fname, tri_dj, ljc_dj, tri_ljc, tri_zune_str, marker
+        );
+
+        tri_vs_djpeg_diffs.push((fname.clone(), tri_dj));
+        ljc_vs_djpeg_diffs.push((fname.clone(), ljc_dj));
+        tri_vs_ljc_diffs.push((fname, tri_ljc));
+    }
+
+    // Summary
+    eprintln!("\n=== Summary ===");
+    if !tri_vs_djpeg_diffs.is_empty() {
+        let tri_max: u8 = tri_vs_djpeg_diffs.iter().map(|(_, d)| *d).max().unwrap();
+        let ljc_max: u8 = ljc_vs_djpeg_diffs.iter().map(|(_, d)| *d).max().unwrap();
+        let tri_mean: f64 = tri_vs_djpeg_diffs
+            .iter()
+            .map(|(_, d)| *d as f64)
+            .sum::<f64>()
+            / tri_vs_djpeg_diffs.len() as f64;
+        let ljc_mean: f64 = ljc_vs_djpeg_diffs
+            .iter()
+            .map(|(_, d)| *d as f64)
+            .sum::<f64>()
+            / ljc_vs_djpeg_diffs.len() as f64;
+
+        eprintln!(
+            "Triangle   vs djpeg: max_pixel_diff max={:3}, mean={:.1}",
+            tri_max, tri_mean
+        );
+        eprintln!(
+            "LibjpegCompat vs djpeg: max_pixel_diff max={:3}, mean={:.1}",
+            ljc_max, ljc_mean
+        );
+
+        // Show worst files for each
+        let mut tri_sorted = tri_vs_djpeg_diffs.clone();
+        tri_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("\nWorst Triangle vs djpeg:");
+        for (name, diff) in tri_sorted.iter().take(5) {
+            eprintln!("  {:>3} {}", diff, name);
+        }
+
+        let mut ljc_sorted = ljc_vs_djpeg_diffs.clone();
+        ljc_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("\nWorst LibjpegCompat vs djpeg:");
+        for (name, diff) in ljc_sorted.iter().take(5) {
+            eprintln!("  {:>3} {}", diff, name);
+        }
+
+        // Count exact matches (0 diff)
+        let tri_exact = tri_vs_djpeg_diffs.iter().filter(|(_, d)| *d == 0).count();
+        let ljc_exact = ljc_vs_djpeg_diffs.iter().filter(|(_, d)| *d == 0).count();
+        eprintln!(
+            "\nExact matches: Triangle={}/{}, LibjpegCompat={}/{}",
+            tri_exact,
+            tri_vs_djpeg_diffs.len(),
+            ljc_exact,
+            ljc_vs_djpeg_diffs.len()
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn investigate_rst_diff() {
+    use zenjpeg::decode::ChromaUpsampling;
+    use zenjpeg::decoder::Decoder;
+
+    let path = Path::new(CORPUS_DIR).join("rst_1block.jpg");
+    if !path.exists() {
+        eprintln!("File not found");
+        return;
+    }
+    let data = fs::read(&path).expect("read");
+
+    // Decode with libjpeg-compat mode
+    let ljc = Decoder::new()
+        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .decode(&data, Unstoppable)
+        .expect("decode");
+
+    let dj = decode_djpeg(&path).expect("djpeg failed");
+
+    let w = ljc.width as usize;
+    let h = ljc.height as usize;
+    assert_eq!(w, dj.width);
+    assert_eq!(h, dj.height);
+
+    eprintln!(
+        "Image {}x{}, {} bytes vs {} bytes",
+        w,
+        h,
+        ljc.data.len(),
+        dj.pixels.len()
+    );
+
+    // Find top-N worst diffs with location and channel info
+    let mut diffs: Vec<(usize, usize, &str, i16, u8, u8)> = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            for (c, ch_name) in [(0, "R"), (1, "G"), (2, "B")] {
+                let idx = (y * w + x) * 3 + c;
+                if idx >= ljc.data.len() || idx >= dj.pixels.len() {
+                    continue;
+                }
+                let z = ljc.data[idx];
+                let d = dj.pixels[idx];
+                let diff = z as i16 - d as i16;
+                if diff.unsigned_abs() > 20 {
+                    diffs.push((x, y, ch_name, diff, z, d));
+                }
+            }
+        }
+    }
+
+    diffs.sort_by(|a, b| b.3.unsigned_abs().cmp(&a.3.unsigned_abs()));
+
+    eprintln!("\nTop 30 worst pixel diffs (|diff|>20):");
+    eprintln!(
+        "{:>4} {:>4} {:>2} {:>6} {:>4} {:>4}",
+        "x", "y", "ch", "diff", "zen", "dj"
+    );
+    for &(x, y, ch, diff, z, d) in diffs.iter().take(30) {
+        eprintln!("{:>4} {:>4} {:>2} {:>6} {:>4} {:>4}", x, y, ch, diff, z, d);
+    }
+
+    // Per-channel max diffs
+    let mut r_max = 0i16;
+    let mut g_max = 0i16;
+    let mut b_max = 0i16;
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            if idx + 2 >= ljc.data.len() || idx + 2 >= dj.pixels.len() {
+                continue;
+            }
+            r_max = r_max.max((ljc.data[idx] as i16 - dj.pixels[idx] as i16).abs());
+            g_max = g_max.max((ljc.data[idx + 1] as i16 - dj.pixels[idx + 1] as i16).abs());
+            b_max = b_max.max((ljc.data[idx + 2] as i16 - dj.pixels[idx + 2] as i16).abs());
+        }
+    }
+    eprintln!(
+        "\nPer-channel max diff: R={} G={} B={}",
+        r_max, g_max, b_max
+    );
+
+    // Check if worst diffs cluster in certain MCU block positions
+    eprintln!("\nDiffs by block position (block-relative x,y):");
+    let mut block_hist = std::collections::HashMap::new();
+    for &(x, y, _, diff, _, _) in &diffs {
+        if diff.unsigned_abs() > 40 {
+            let bx = x % 8;
+            let by = y % 8;
+            *block_hist.entry((bx, by)).or_insert(0u32) += 1;
+        }
+    }
+    let mut block_sorted: Vec<_> = block_hist.into_iter().collect();
+    block_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    for ((bx, by), count) in block_sorted.iter().take(10) {
+        eprintln!("  block_pos ({},{}) : {} high diffs", bx, by, count);
     }
 }
