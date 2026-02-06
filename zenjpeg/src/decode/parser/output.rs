@@ -286,10 +286,14 @@ impl<'a> JpegParser<'a> {
 
     /// Fast decode path for subsampled images (4:2:0, 4:2:2, 4:4:0) using i16 throughout.
     ///
-    /// This path avoids f32 entirely by using:
-    /// - Integer IDCT (outputs i16 [0, 255])
-    /// - Integer upsampling (i16 → i16)
-    /// - Integer color conversion (i16 YCbCr → u8 RGB)
+    /// Uses double-buffered extended chroma strips instead of full-plane allocation.
+    /// Each extended strip has `c_strip_height + 2` rows: one boundary context row
+    /// above, `c_strip_height` data rows (IDCT output), and one boundary context row
+    /// below. The upsampler's edge-replication logic (`saturating_sub(1)` and
+    /// `.min(in_height-1)`) naturally reads the context rows, producing correct
+    /// cross-MCU-boundary interpolation without any changes to the upsample functions.
+    ///
+    /// Memory: ~200KB for 2048x2048 vs ~20MB for full-plane approach.
     fn to_pixels_fast_i16_subsampled(
         &self,
         chroma_upsampling: super::super::ChromaUpsampling,
@@ -333,11 +337,9 @@ impl<'a> JpegParser<'a> {
         let y_strip_width = comp_infos[0].comp_width;
         let y_strip_size = y_strip_width * y_strip_height;
 
-        // Chroma dimensions (full image, subsampled)
+        // Chroma dimensions (per strip, subsampled)
         let c_strip_height = c_v * 8;
         let c_strip_width = comp_infos[1].comp_width;
-        let c_full_height = comp_infos[1].comp_blocks_v * DCT_SIZE;
-        let c_full_size = c_strip_width * c_full_height;
 
         // Pre-fetch quant tables outside the loop (avoids Error allocation per MCU row)
         let quant_y = self.quant_tables[comp_infos[0].quant_idx]
@@ -350,60 +352,7 @@ impl<'a> JpegParser<'a> {
             .as_ref()
             .ok_or_else(|| Error::internal("missing Cr quant table"))?;
 
-        // ===================================================================
-        // Phase 1: IDCT all chroma blocks into full-size planes.
-        // We do this first so that upsampling can correctly interpolate
-        // across MCU row boundaries (the previous per-MCU-row approach
-        // replicated border rows at MCU boundaries, causing discontinuities).
-        // ===================================================================
-        let mut cb_full: Vec<i16> = try_alloc_maybeuninit(c_full_size, "Cb full buffer")?;
-        let mut cr_full: Vec<i16> = try_alloc_maybeuninit(c_full_size, "Cr full buffer")?;
-
-        for comp_idx in 1..3 {
-            let info = &comp_infos[comp_idx];
-            let quant = if comp_idx == 1 { quant_cb } else { quant_cr };
-            let dst = if comp_idx == 1 {
-                &mut cb_full
-            } else {
-                &mut cr_full
-            };
-
-            for by in 0..info.comp_blocks_v {
-                for bx in 0..info.comp_blocks_h {
-                    let block_idx = by * info.comp_blocks_h + bx;
-                    if block_idx >= self.coeffs[comp_idx].len() {
-                        continue;
-                    }
-                    let coeffs = &self.coeffs[comp_idx][block_idx];
-                    let coeff_count = self.coeff_counts[comp_idx][block_idx];
-                    let base_px = bx * DCT_SIZE;
-                    let dst_offset = by * DCT_SIZE * c_strip_width + base_px;
-
-                    if coeff_count <= 1 {
-                        let dc = coeffs[0] as i32 * quant[0] as i32;
-                        idct_int_dc_only(dc, &mut dst[dst_offset..], c_strip_width);
-                    } else {
-                        let mut dequant_i32 =
-                            dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
-                        idct_fn(
-                            &mut dequant_i32,
-                            &mut dst[dst_offset..],
-                            c_strip_width,
-                            coeff_count,
-                        );
-                    }
-                }
-            }
-        }
-
-        // ===================================================================
-        // Phase 2: Upsample full chroma planes.
-        // Operating on the full plane means row 0 and the last row correctly
-        // use edge replication, and all interior rows (including MCU boundaries)
-        // correctly interpolate with their true neighbors.
-        // ===================================================================
         let y_cols_this_image = width.min(y_strip_width);
-        let chroma_height_for_upsample = (height + v_ratio - 1) / v_ratio; // actual chroma rows needed
 
         // Select upsampling function based on method
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
@@ -411,14 +360,7 @@ impl<'a> JpegParser<'a> {
             || h_ratio != 2
             || v_ratio != 2;
 
-        let mut cb_upsampled: Vec<i16>;
-        let mut cr_upsampled: Vec<i16>;
-
-        if needs_full_upsample {
-            let upsampled_size = y_strip_width * height;
-            cb_upsampled = try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?;
-            cr_upsampled = try_alloc_maybeuninit(upsampled_size, "Cr upsampled buffer")?;
-
+        let (upsample_fn, _): (UpsampleFn, ()) = if needs_full_upsample {
             let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
                 UpsampleFn,
                 UpsampleFn,
@@ -441,81 +383,157 @@ impl<'a> JpegParser<'a> {
                 ),
             };
 
-            match (h_ratio, v_ratio) {
-                (2, 2) => {
-                    upsample_h2v2(
-                        &cb_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cb_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                    upsample_h2v2(
-                        &cr_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cr_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                }
-                (2, 1) => {
-                    upsample_h2v1(
-                        &cb_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cb_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                    upsample_h2v1(
-                        &cr_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cr_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                }
-                (1, 2) => {
-                    upsample_h1v2(
-                        &cb_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cb_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                    upsample_h1v2(
-                        &cr_full,
-                        c_strip_width,
-                        chroma_height_for_upsample,
-                        &mut cr_upsampled,
-                        y_strip_width,
-                        height,
-                    );
-                }
+            let f = match (h_ratio, v_ratio) {
+                (2, 2) => upsample_h2v2,
+                (2, 1) => upsample_h2v1,
+                (1, 2) => upsample_h1v2,
                 _ => unreachable!(
                     "unsupported ratio should be filtered by can_use_fast_i16_subsampled"
                 ),
-            }
+            };
+            (f, ())
         } else {
-            // Placeholder — NearestNeighbor 4:2:0 uses the fused path below
-            cb_upsampled = Vec::new();
-            cr_upsampled = Vec::new();
-        }
+            // Placeholder — NearestNeighbor 4:2:0 uses the fused path
+            (upsample_h2v2_i16_nearest, ())
+        };
 
         // ===================================================================
-        // Phase 3: Per-MCU-row Y IDCT + color conversion.
-        // Y strip is still processed per MCU row for cache efficiency.
-        // Chroma uses the pre-upsampled full-plane data.
+        // Extended-buffer chroma strips (double-buffered).
+        //
+        // Each extended buffer has c_strip_height + 2 rows:
+        //   [row 0]                     = above context (last row from previous strip)
+        //   [rows 1..c_strip_height+1]  = IDCT output (current strip data)
+        //   [row c_strip_height+1]      = below context (first row from next strip)
+        //
+        // The upsampler sees in_height = c_strip_height + 2 and its edge
+        // replication reads the context rows, producing correct cross-MCU
+        // boundary interpolation without any changes to upsample functions.
         // ===================================================================
+        let ext_height = c_strip_height + 2;
+        let ext_size = ext_height * c_strip_width;
+
+        // Double buffers: ext_a is the current strip, ext_b holds the next
+        let mut ext_cb_a: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cb ext_a buffer")?;
+        let mut ext_cb_b: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cb ext_b buffer")?;
+        let mut ext_cr_a: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cr ext_a buffer")?;
+        let mut ext_cr_b: Vec<i16> = try_alloc_maybeuninit(ext_size, "Cr ext_b buffer")?;
+
+        // Upsampled output for one extended strip (used per MCU row)
+        let upsample_out_height = ext_height * v_ratio;
+        let upsample_out_size = upsample_out_height * y_strip_width;
+        let mut cb_up: Vec<i16> = if needs_full_upsample {
+            try_alloc_maybeuninit(upsample_out_size, "Cb upsample buffer")?
+        } else {
+            Vec::new()
+        };
+        let mut cr_up: Vec<i16> = if needs_full_upsample {
+            try_alloc_maybeuninit(upsample_out_size, "Cr upsample buffer")?
+        } else {
+            Vec::new()
+        };
+
         let mut y_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
+        // Total valid chroma rows for the whole image
+        let chroma_height_total = (height + v_ratio - 1) / v_ratio;
+
+        // Helper: IDCT one chroma strip into rows 1..c_strip_height+1 of ext buffer.
+        // Then replicate the last valid chroma row to fill any remaining data rows
+        // (needed when the image ends before a full MCU row of chroma).
+        let idct_chroma_strip =
+            |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64]| {
+                let info = &comp_infos[comp_idx];
+                let data_offset = 1 * c_strip_width; // skip context row 0
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+                    let strip_row = iy * DCT_SIZE;
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+                        let coeff_count = self.coeff_counts[comp_idx][block_idx];
+                        let base_px = bx * DCT_SIZE;
+                        let dst_offset = data_offset + strip_row * c_strip_width + base_px;
+
+                        if coeff_count <= 1 {
+                            let dc = coeffs[0] as i32 * quant[0] as i32;
+                            idct_int_dc_only(dc, &mut ext[dst_offset..], c_strip_width);
+                        } else {
+                            let mut dequant_i32 =
+                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            idct_fn(
+                                &mut dequant_i32,
+                                &mut ext[dst_offset..],
+                                c_strip_width,
+                                coeff_count,
+                            );
+                        }
+                    }
+                }
+
+                // Replicate last valid chroma row to fill padding rows.
+                // Valid chroma rows for this MCU row:
+                let c_row_start = imcu_row * c_strip_height;
+                let c_valid = chroma_height_total.saturating_sub(c_row_start).min(c_strip_height);
+                if c_valid > 0 && c_valid < c_strip_height {
+                    let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
+                    for pad_row in c_valid..c_strip_height {
+                        let pad_start = data_offset + pad_row * c_strip_width;
+                        // copy_within from the last valid row
+                        ext.copy_within(
+                            last_valid_start..last_valid_start + c_strip_width,
+                            pad_start,
+                        );
+                    }
+                }
+            };
+
+        // IDCT strip 0 into ext_a
+        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb);
+        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr);
+
+        // IDCT strip 1 into ext_b (if exists)
+        if mcu_rows > 1 {
+            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb);
+            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr);
+        }
+
+        // Set above context for first strip: edge replication (copy first data row)
+        ext_cb_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+        ext_cr_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+
         for imcu_row in 0..mcu_rows {
+            // Set below context for current strip (ext_a)
+            let last_data_row_start = c_strip_height * c_strip_width; // row c_strip_height in ext
+            let below_ctx_start = (c_strip_height + 1) * c_strip_width; // row c_strip_height+1
+            if imcu_row < mcu_rows - 1 {
+                // Below context = first data row of next strip (ext_b row 1)
+                let src_start = c_strip_width; // row 1 of ext_b
+                ext_cb_a[below_ctx_start..below_ctx_start + c_strip_width]
+                    .copy_from_slice(&ext_cb_b[src_start..src_start + c_strip_width]);
+                ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
+                    .copy_from_slice(&ext_cr_b[src_start..src_start + c_strip_width]);
+            } else {
+                // Last strip: edge replication (copy last data row)
+                ext_cb_a.copy_within(
+                    last_data_row_start..last_data_row_start + c_strip_width,
+                    below_ctx_start,
+                );
+                ext_cr_a.copy_within(
+                    last_data_row_start..last_data_row_start + c_strip_width,
+                    below_ctx_start,
+                );
+            }
+
             // IDCT Y blocks (full resolution)
             {
                 let info = &comp_infos[0];
@@ -558,40 +576,79 @@ impl<'a> JpegParser<'a> {
             let y_start = imcu_row * mcu_height;
 
             if !needs_full_upsample {
-                // NearestNeighbor 4:2:0: fused box-filter path (no pre-upsampled chroma needed)
+                // NearestNeighbor 4:2:0: fused box-filter path
+                // Read chroma from ext_a data region (rows 1..c_strip_height+1)
                 let c_rows_this_mcu = c_strip_height
                     .min((height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio);
                 let c_cols = (y_cols_this_image + 1) / 2;
-                let c_base = imcu_row * c_strip_height * c_strip_width;
 
                 for row in 0..y_rows_this_mcu {
                     let y_offset = row * y_strip_width;
                     let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
-                    let c_offset = c_base + c_row * c_strip_width;
+                    // +1 to skip the above-context row in the extended buffer
+                    let c_offset = (1 + c_row) * c_strip_width;
                     let rgb_offset = (y_start + row) * width * 3;
 
                     fused_h2v2_box_ycbcr_to_rgb_u8(
                         &y_strip[y_offset..y_offset + y_cols_this_image],
-                        &cb_full[c_offset..c_offset + c_cols],
-                        &cr_full[c_offset..c_offset + c_cols],
+                        &ext_cb_a[c_offset..c_offset + c_cols],
+                        &ext_cr_a[c_offset..c_offset + c_cols],
                         &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
                         y_cols_this_image,
                     );
                 }
             } else {
-                // Use pre-upsampled chroma for color conversion
+                // Upsample extended strip → upsampled output buffer
+                upsample_fn(
+                    &ext_cb_a,
+                    c_strip_width,
+                    ext_height,
+                    &mut cb_up,
+                    y_strip_width,
+                    upsample_out_height,
+                );
+                upsample_fn(
+                    &ext_cr_a,
+                    c_strip_width,
+                    ext_height,
+                    &mut cr_up,
+                    y_strip_width,
+                    upsample_out_height,
+                );
+
+                // Use upsampled rows starting at offset v_ratio (skip context rows)
                 for row in 0..y_rows_this_mcu {
                     let strip_offset = row * y_strip_width;
-                    let global_row = y_start + row;
-                    let chroma_offset = global_row * y_strip_width;
-                    let rgb_offset = global_row * width * 3;
+                    let up_row = v_ratio + row; // skip the v_ratio context output rows
+                    let chroma_offset = up_row * y_strip_width;
+                    let rgb_offset = (y_start + row) * width * 3;
 
                     ycbcr_planes_i16_to_rgb_u8(
                         &y_strip[strip_offset..strip_offset + y_cols_this_image],
-                        &cb_upsampled[chroma_offset..chroma_offset + y_cols_this_image],
-                        &cr_upsampled[chroma_offset..chroma_offset + y_cols_this_image],
+                        &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
+                        &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
                         &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
                     );
+                }
+            }
+
+            // Prepare for next iteration: swap buffers
+            if imcu_row + 1 < mcu_rows {
+                // ext_b's above context = last data row of ext_a
+                let last_data_start = c_strip_height * c_strip_width;
+                ext_cb_b[..c_strip_width]
+                    .copy_from_slice(&ext_cb_a[last_data_start..last_data_start + c_strip_width]);
+                ext_cr_b[..c_strip_width]
+                    .copy_from_slice(&ext_cr_a[last_data_start..last_data_start + c_strip_width]);
+
+                // Swap: ext_b becomes ext_a (current), ext_a becomes ext_b (free for next IDCT)
+                core::mem::swap(&mut ext_cb_a, &mut ext_cb_b);
+                core::mem::swap(&mut ext_cr_a, &mut ext_cr_b);
+
+                // IDCT the strip after next into the now-free ext_b
+                if imcu_row + 2 < mcu_rows {
+                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb);
+                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr);
                 }
             }
         }
