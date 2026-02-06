@@ -1259,14 +1259,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return.
         // This is the most common path in progressive JPEGs — tight loop, no Huffman decodes.
         if *eob_run > 0 {
-            for k in ss as usize..=se as usize {
-                if coeffs[k] != 0 {
-                    let bit = self.reader.read_bit_refine();
-                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                        if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].saturating_add(bit_val);
-                        } else {
-                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
+            // Fast path: skip all-zero blocks entirely (common in high-frequency AC bands).
+            // No nonzero coefficients means no refinement bits to read.
+            let has_nonzero = coeffs[ss as usize..=se as usize].iter().any(|&c| c != 0);
+            if has_nonzero {
+                for k in ss as usize..=se as usize {
+                    if coeffs[k] != 0 {
+                        let bit = self.reader.read_bit_refine();
+                        if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                            if coeffs[k] > 0 {
+                                coeffs[k] = coeffs[k].wrapping_add(bit_val);
+                            } else {
+                                coeffs[k] = coeffs[k].wrapping_sub(bit_val);
+                            }
                         }
                     }
                 }
@@ -1301,9 +1306,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 let bit = self.reader.read_bit_refine();
                                 if bit != 0 && (coeffs[j] & bit_val) == 0 {
                                     if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
+                                        coeffs[j] = coeffs[j].wrapping_add(bit_val);
                                     } else {
-                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
+                                        coeffs[j] = coeffs[j].wrapping_sub(bit_val);
                                     }
                                 }
                             }
@@ -1323,9 +1328,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 let bit = self.reader.read_bit_refine();
                                 if bit != 0 && (coeffs[j] & bit_val) == 0 {
                                     if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
+                                        coeffs[j] = coeffs[j].wrapping_add(bit_val);
                                     } else {
-                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
+                                        coeffs[j] = coeffs[j].wrapping_sub(bit_val);
                                     }
                                 }
                             }
@@ -1356,9 +1361,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     let bit = self.reader.read_bit_refine();
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
                         if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].saturating_add(bit_val);
+                            coeffs[k] = coeffs[k].wrapping_add(bit_val);
                         } else {
-                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
+                            coeffs[k] = coeffs[k].wrapping_sub(bit_val);
                         }
                     }
                 } else if num_zeros_to_skip > 0 {

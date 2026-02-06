@@ -612,35 +612,21 @@ impl<'a> BitReader<'a> {
     }
 
     /// Skip bits without any checks. Only call after successful peek.
-    /// NOTE: This must keep bit_buffer in sync for refill() to work correctly.
+    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     pub fn skip_bits_fast(&mut self, count: u8) {
         self.bits_in_buffer -= count;
         self.aligned_buffer <<= count;
-        // Keep bit_buffer in sync (needed for refill to work correctly)
-        let mask = if self.bits_in_buffer >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << self.bits_in_buffer).wrapping_sub(1)
-        };
-        self.bit_buffer &= mask;
     }
 
     /// Read bits without refill. Only call when you know enough bits are available.
     /// Returns the bits and consumes them.
-    /// NOTE: This must keep bit_buffer in sync for refill() to work correctly.
+    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     pub fn read_bits_fast(&mut self, count: u8) -> u32 {
         let bits = (self.aligned_buffer >> (64 - count)) as u32;
         self.bits_in_buffer -= count;
         self.aligned_buffer <<= count;
-        // Keep bit_buffer in sync (needed for refill to work correctly)
-        let mask = if self.bits_in_buffer >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << self.bits_in_buffer).wrapping_sub(1)
-        };
-        self.bit_buffer &= mask;
         bits
     }
 
@@ -690,19 +676,12 @@ impl<'a> BitReader<'a> {
         Ok(ScanRead::Value(bits))
     }
 
-    /// Drops `count` bits from the buffer (fast path).
-    /// Updates both buffers to keep them in sync for refill.
+    /// Drops `count` bits from the buffer.
+    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     fn drop_bits(&mut self, count: u8) {
         self.bits_in_buffer = self.bits_in_buffer.saturating_sub(count);
         self.aligned_buffer <<= count;
-        // Keep bit_buffer in sync: mask off the dropped MSBs
-        let mask = if self.bits_in_buffer >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << self.bits_in_buffer).wrapping_sub(1)
-        };
-        self.bit_buffer &= mask;
     }
 
     /// Skips `count` bits.
@@ -750,11 +729,21 @@ impl<'a> BitReader<'a> {
     }
 
     /// Saves the current reader state for potential rollback.
+    /// Reconstructs bit_buffer from aligned_buffer (may be stale from lazy-sync reads).
     #[must_use]
     pub fn save_state(&self) -> BitReaderState {
+        // Reconstruct bit_buffer from aligned_buffer since drop_bits/skip_bits_fast
+        // leave bit_buffer stale (only aligned_buffer is authoritative).
+        let bit_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
+            self.aligned_buffer >> (64 - self.bits_in_buffer)
+        } else if self.bits_in_buffer == 64 {
+            self.aligned_buffer
+        } else {
+            0
+        };
         BitReaderState {
             position: self.position,
-            bit_buffer: self.bit_buffer,
+            bit_buffer,
             aligned_buffer: self.aligned_buffer,
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
