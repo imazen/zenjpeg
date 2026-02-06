@@ -1240,6 +1240,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Decodes AC refinement for progressive scan (ah>0).
     /// Updates coefficients in range [ss, se].
+    ///
+    /// Hot path optimization: refinement bit reads use `read_bit_refine()` which
+    /// avoids ScanRead enum wrapping, bit_buffer sync, and fill checks per bit.
+    /// Returns 0 on exhaustion (safe: means "don't modify coefficient").
     pub fn decode_ac_refine(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
@@ -1252,34 +1256,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
 
-        /// Helper macro to read a refinement bit, handling EndOfScan
-        macro_rules! read_refine_bit {
-            ($self:expr) => {
-                match $self.reader.read_bits(1)? {
-                    ScanRead::Value(v) => v as i16,
-                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
-                }
-            };
-        }
-
-        /// Helper to apply refinement bit to a coefficient
-        fn apply_refine(coeff: &mut i16, bit: i16, bit_val: i16) {
-            if bit != 0 && (*coeff & bit_val) == 0 {
-                if *coeff > 0 {
-                    *coeff = coeff.saturating_add(bit_val);
-                } else {
-                    *coeff = coeff.saturating_sub(bit_val);
-                }
-            }
-        }
-
-        // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return
+        // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return.
+        // This is the most common path in progressive JPEGs — tight loop, no Huffman decodes.
         if *eob_run > 0 {
             for k in ss as usize..=se as usize {
                 if coeffs[k] != 0 {
-                    let bit = read_refine_bit!(self);
-                    apply_refine(&mut coeffs[k], bit, bit_val);
+                    let bit = self.reader.read_bit_refine();
+                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        if coeffs[k] > 0 {
+                            coeffs[k] = coeffs[k].saturating_add(bit_val);
+                        } else {
+                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
+                        }
+                    }
                 }
             }
             *eob_run -= 1;
@@ -1288,6 +1277,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         let mut k = ss as usize;
         while k <= se as usize {
+            // Huffman decode uses normal path (infrequent, needs ScanRead handling)
             let symbol = match self.decode_huffman(ac_table)? {
                 ScanRead::Value(v) => v,
                 ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
@@ -1308,8 +1298,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // Single EOB - apply refinement to remaining nonzero coeffs
                         for j in k..=se as usize {
                             if coeffs[j] != 0 {
-                                let bit = read_refine_bit!(self);
-                                apply_refine(&mut coeffs[j], bit, bit_val);
+                                let bit = self.reader.read_bit_refine();
+                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    if coeffs[j] > 0 {
+                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
+                                    } else {
+                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
+                                    }
+                                }
                             }
                         }
                         return Ok(ScanRead::Value(()));
@@ -1324,8 +1320,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // Apply refinement to remaining nonzero coeffs in this block
                         for j in k..=se as usize {
                             if coeffs[j] != 0 {
-                                let bit = read_refine_bit!(self);
-                                apply_refine(&mut coeffs[j], bit, bit_val);
+                                let bit = self.reader.read_bit_refine();
+                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    if coeffs[j] > 0 {
+                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
+                                    } else {
+                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
+                                    }
+                                }
                             }
                         }
                         return Ok(ScanRead::Value(()));
@@ -1336,7 +1338,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // For NEW_NZ (size=1), read sign bit FIRST, before refinement bits
             // This matches the JPEG spec bit order: [Huffman] [sign] [refinement bits]
             let new_val = if size != 0 {
-                let sign_bit = read_refine_bit!(self);
+                let sign_bit = self.reader.read_bit_refine();
                 Some(if sign_bit != 0 { bit_val } else { -bit_val })
             } else {
                 None
@@ -1351,8 +1353,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                 if coeffs[k] != 0 {
                     // Apply refinement bit for previously-nonzero coefficient
-                    let bit = read_refine_bit!(self);
-                    apply_refine(&mut coeffs[k], bit, bit_val);
+                    let bit = self.reader.read_bit_refine();
+                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        if coeffs[k] > 0 {
+                            coeffs[k] = coeffs[k].saturating_add(bit_val);
+                        } else {
+                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
+                        }
+                    }
                 } else if num_zeros_to_skip > 0 {
                     num_zeros_to_skip -= 1;
                 } else {

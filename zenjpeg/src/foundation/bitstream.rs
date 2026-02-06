@@ -487,6 +487,17 @@ impl<'a> BitReader<'a> {
             return Ok(true);
         }
 
+        // Reconstruct bit_buffer from aligned_buffer.
+        // This handles lazy sync from read_bit_refine() which only updates aligned_buffer.
+        // Cost: one right-shift, amortized over 32+ bits consumed between refills.
+        self.bit_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
+            self.aligned_buffer >> (64 - self.bits_in_buffer)
+        } else if self.bits_in_buffer == 64 {
+            self.aligned_buffer
+        } else {
+            0
+        };
+
         // If we've found a marker or are overreading, extend with zeros
         if self.marker_found.is_some() || self.overread_by > 0 {
             // Shift in zeros (important: actually fill with zeros, not just claim more bits)
@@ -533,6 +544,30 @@ impl<'a> BitReader<'a> {
         }
         self.sync_aligned();
         Ok(self.bits_in_buffer > 0)
+    }
+
+    /// Fast single-bit read for AC refinement hot path.
+    ///
+    /// Returns 0 or 1 as i32. Returns 0 when buffer is exhausted (safe for
+    /// refinement — a 0 bit means "don't modify coefficient").
+    ///
+    /// Only updates `aligned_buffer` and `bits_in_buffer` — leaves `bit_buffer`
+    /// stale. This is safe because `refill()` reconstructs `bit_buffer` from
+    /// `aligned_buffer` before use. Other methods (`skip_bits_fast`, `drop_bits`,
+    /// etc.) keep both in sync, so mixing fast and normal reads is safe as long
+    /// as `refill()` is called before any normal reads after `read_bit_refine()`.
+    #[inline(always)]
+    pub fn read_bit_refine(&mut self) -> i32 {
+        if self.bits_in_buffer == 0 {
+            let _ = self.refill();
+            if self.bits_in_buffer == 0 {
+                return 0;
+            }
+        }
+        let bit = (self.aligned_buffer >> 63) as i32;
+        self.aligned_buffer <<= 1;
+        self.bits_in_buffer -= 1;
+        bit
     }
 
     /// Fills the bit buffer to have at least `count` bits.
