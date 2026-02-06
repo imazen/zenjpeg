@@ -1,9 +1,10 @@
-//! Decoder comparison benchmark: zenjpeg vs zune-jpeg.
+//! Decoder comparison benchmark: zenjpeg vs zune-jpeg vs C++ jpegli.
 //!
 //! Compares:
 //! - zune-jpeg (baseline and progressive)
 //! - zenjpeg full-frame decoder (baseline and progressive)
 //! - zenjpeg scanline reader (baseline only, 4:2:0 and 4:4:4)
+//! - C++ jpegli decoder via FFI (baseline and progressive)
 //!
 //! Run with:
 //! ```sh
@@ -17,6 +18,67 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
+
+/// Decode JPEG data using C++ jpegli FFI (libjpeg-compatible API).
+/// Returns RGB pixel data.
+#[cfg(feature = "decoder")]
+unsafe fn decode_with_cjpegli(data: &[u8]) -> Vec<u8> {
+    use jpegli_internals_sys::*;
+    use std::mem::MaybeUninit;
+
+    // Set up error handler
+    let mut err: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
+    jpeg_std_error(err.as_mut_ptr());
+    let mut err = err.assume_init();
+
+    // Create decompressor
+    let mut cinfo: MaybeUninit<jpeg_decompress_struct> = MaybeUninit::zeroed();
+    let cinfo_ptr = cinfo.as_mut_ptr();
+    (*cinfo_ptr).err = &mut err;
+    jpeg_CreateDecompress(
+        cinfo_ptr,
+        JPEG_LIB_VERSION as i32,
+        std::mem::size_of::<jpeg_decompress_struct>(),
+    );
+    let cinfo_ptr = cinfo.as_mut_ptr();
+
+    // Set memory source
+    jpeg_mem_src(cinfo_ptr, data.as_ptr(), data.len() as _);
+
+    // Read header
+    jpeg_read_header(cinfo_ptr, 1);
+
+    // Request RGB output
+    (*cinfo_ptr).out_color_space = JCS_EXT_RGB as u32;
+
+    // Start decompression
+    jpeg_start_decompress(cinfo_ptr);
+
+    let width = (*cinfo_ptr).output_width as usize;
+    let height = (*cinfo_ptr).output_height as usize;
+    let components = (*cinfo_ptr).output_components as usize;
+    let row_stride = width * components;
+
+    let mut output = vec![0u8; height * row_stride];
+
+    // Read scanlines in batches for efficiency
+    let batch = 8u32;
+    let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
+    while ((*cinfo_ptr).output_scanline as usize) < height {
+        let start = (*cinfo_ptr).output_scanline as usize;
+        let remaining = height - start;
+        let count = remaining.min(batch as usize);
+        for i in 0..count {
+            row_ptrs[i] = output[(start + i) * row_stride..].as_mut_ptr();
+        }
+        jpeg_read_scanlines(cinfo_ptr, row_ptrs.as_mut_ptr(), count as u32);
+    }
+
+    jpeg_finish_decompress(cinfo_ptr);
+    jpeg_destroy_decompress(cinfo_ptr);
+
+    output
+}
 
 fn create_test_jpeg_with_subsampling(
     width: u32,
@@ -85,7 +147,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg baseline
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-baseline", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-baseline", format!("{}x{}", width, height)),
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
@@ -102,7 +164,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg baseline fast mode (box filter + fused upsample)
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-baseline-fast", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-baseline-fast", format!("{}x{}", width, height)),
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
@@ -115,6 +177,16 @@ fn bench_decode_comparison(c: &mut Criterion) {
                         .decode(black_box(data), Unstoppable)
                         .expect("decode failed")
                 });
+            },
+        );
+
+        // C++ jpegli baseline
+        #[cfg(feature = "decoder")]
+        group.bench_with_input(
+            BenchmarkId::new("cjpegli-baseline", format!("{}x{}", width, height)),
+            &jpeg_baseline,
+            |b, data| {
+                b.iter(|| unsafe { decode_with_cjpegli(black_box(data)) });
             },
         );
 
@@ -138,7 +210,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg progressive
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-progressive", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-progressive", format!("{}x{}", width, height)),
             &jpeg_progressive,
             |b, data| {
                 b.iter(|| {
@@ -155,7 +227,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg progressive fast mode
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-progressive-fast", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-progressive-fast", format!("{}x{}", width, height)),
             &jpeg_progressive,
             |b, data| {
                 b.iter(|| {
@@ -171,10 +243,20 @@ fn bench_decode_comparison(c: &mut Criterion) {
             },
         );
 
+        // C++ jpegli progressive
+        #[cfg(feature = "decoder")]
+        group.bench_with_input(
+            BenchmarkId::new("cjpegli-progressive", format!("{}x{}", width, height)),
+            &jpeg_progressive,
+            |b, data| {
+                b.iter(|| unsafe { decode_with_cjpegli(black_box(data)) });
+            },
+        );
+
         // zenjpeg scanline reader (baseline 4:2:0)
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-scanline-420", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-scanline-420", format!("{}x{}", width, height)),
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
@@ -226,7 +308,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         // zenjpeg full-frame 4:4:4
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-baseline-444", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-baseline-444", format!("{}x{}", width, height)),
             &jpeg_444,
             |b, data| {
                 b.iter(|| {
@@ -240,10 +322,20 @@ fn bench_decode_comparison(c: &mut Criterion) {
             },
         );
 
+        // C++ jpegli 4:4:4
+        #[cfg(feature = "decoder")]
+        group.bench_with_input(
+            BenchmarkId::new("cjpegli-baseline-444", format!("{}x{}", width, height)),
+            &jpeg_444,
+            |b, data| {
+                b.iter(|| unsafe { decode_with_cjpegli(black_box(data)) });
+            },
+        );
+
         // zenjpeg scanline reader 4:4:4 (fast path)
         #[cfg(feature = "decoder")]
         group.bench_with_input(
-            BenchmarkId::new("jpegli-scanline-444", format!("{}x{}", width, height)),
+            BenchmarkId::new("zenjpeg-scanline-444", format!("{}x{}", width, height)),
             &jpeg_444,
             |b, data| {
                 b.iter(|| {
