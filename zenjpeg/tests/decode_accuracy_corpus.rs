@@ -808,3 +808,175 @@ fn investigate_rst_diff() {
         eprintln!("  block_pos ({},{}) : {} high diffs", bx, by, count);
     }
 }
+
+/// Test that border pixels at partial MCU boundaries are as accurate as interior pixels.
+/// For 4:2:0 images with non-aligned dimensions, the rightmost columns and bottom rows
+/// sit at partial MCU boundaries where chroma upsampling and IDCT clipping interact.
+/// This test verifies those specific pixels aren't worse than interior pixels.
+#[test]
+#[ignore]
+fn border_pixel_accuracy() {
+    let corpus = Path::new(CORPUS_DIR);
+    if !corpus.exists() {
+        eprintln!("Corpus not found at {CORPUS_DIR}");
+        return;
+    }
+
+    let files = collect_jpgs(corpus);
+
+    eprintln!("{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}",
+        "File", "W", "H", "Samp", "Edge", "Interior", "RightEdge", "BottomEdge", "Corner");
+    eprintln!("{}", "-".repeat(120));
+
+    let mut any_border_worse = false;
+
+    for path in &files {
+        let fname = path.file_name().unwrap().to_string_lossy().to_string();
+        let data = fs::read(path).expect("read file");
+
+        let zen = match decode_zenjpeg(&data) {
+            Some(d) => d,
+            None => continue,
+        };
+        let dj = match decode_djpeg(path) {
+            Some(d) => d,
+            None => continue,
+        };
+
+        if zen.width != dj.width || zen.height != dj.height
+            || zen.channels != dj.channels || zen.pixels.len() != dj.pixels.len()
+        {
+            continue;
+        }
+
+        let w = zen.width;
+        let h = zen.height;
+        let ch = zen.channels;
+
+        // Determine MCU size from subsampling (read SOF marker)
+        // For now, detect from image: if 4:2:0, MCU=16x16; if 4:4:4, MCU=8x8
+        // We'll use the JPEG parser to get actual sampling factors
+        let (mcu_w, mcu_h) = detect_mcu_size(&data);
+
+        let edge_w = w % mcu_w; // partial columns at right edge (0 = aligned)
+        let edge_h = h % mcu_h; // partial rows at bottom edge (0 = aligned)
+
+        // Skip images that are fully MCU-aligned (no partial boundary to test)
+        if edge_w == 0 && edge_h == 0 {
+            continue;
+        }
+
+        // Compute max pixel diff in regions:
+        // Interior: not touching any edge MCU boundary
+        // RightEdge: rightmost edge_w columns (or last mcu_w columns if edge_w == 0)
+        // BottomEdge: bottom edge_h rows (or last mcu_h rows if edge_h == 0)
+        // Corner: intersection of right and bottom edges
+
+        let right_start = if edge_w > 0 { w - edge_w } else { w };
+        let bottom_start = if edge_h > 0 { h - edge_h } else { h };
+
+        let mut interior_max = 0u8;
+        let mut right_max = 0u8;
+        let mut bottom_max = 0u8;
+        let mut corner_max = 0u8;
+
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * ch;
+                let mut pixel_max = 0u8;
+                for c in 0..ch {
+                    let diff = (zen.pixels[idx + c] as i16 - dj.pixels[idx + c] as i16).unsigned_abs() as u8;
+                    pixel_max = pixel_max.max(diff);
+                }
+
+                let in_right = x >= right_start && edge_w > 0;
+                let in_bottom = y >= bottom_start && edge_h > 0;
+
+                if in_right && in_bottom {
+                    corner_max = corner_max.max(pixel_max);
+                } else if in_right {
+                    right_max = right_max.max(pixel_max);
+                } else if in_bottom {
+                    bottom_max = bottom_max.max(pixel_max);
+                } else {
+                    interior_max = interior_max.max(pixel_max);
+                }
+            }
+        }
+
+        let samp_str = format!("{}x{}", mcu_w / 8, mcu_h / 8);
+        let edge_str = if edge_w > 0 && edge_h > 0 {
+            format!("{}x{}", edge_w, edge_h)
+        } else if edge_w > 0 {
+            format!("{}xOK", edge_w)
+        } else {
+            format!("OKx{}", edge_h)
+        };
+
+        // Flag if border is worse than interior
+        let worst_border = right_max.max(bottom_max).max(corner_max);
+        let flag = if worst_border > interior_max + 1 { " !!!" } else { "" };
+        if worst_border > interior_max + 1 {
+            any_border_worse = true;
+        }
+
+        eprintln!("{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}{}",
+            fname, w, h, samp_str, edge_str,
+            interior_max, right_max, bottom_max, corner_max, flag);
+    }
+
+    eprintln!();
+    if any_border_worse {
+        eprintln!("WARNING: Some border regions have significantly worse accuracy than interior!");
+    } else {
+        eprintln!("OK: Border pixel accuracy is comparable to interior pixels.");
+    }
+
+    assert!(!any_border_worse, "Border pixels should not be significantly worse than interior");
+}
+
+/// Detect MCU dimensions from JPEG sampling factors
+fn detect_mcu_size(data: &[u8]) -> (usize, usize) {
+    // Quick parse: find SOF marker and read sampling factors
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] == 0xFF {
+            let marker = data[i + 1];
+            match marker {
+                0xC0 | 0xC1 | 0xC2 => {
+                    // SOF0/SOF1/SOF2
+                    if i + 11 < data.len() {
+                        let nf = data[i + 9] as usize; // number of components
+                        if nf >= 1 && i + 10 + nf * 3 <= data.len() {
+                            let mut max_h = 1usize;
+                            let mut max_v = 1usize;
+                            for c in 0..nf {
+                                let sampling = data[i + 11 + c * 3];
+                                let h = (sampling >> 4) as usize;
+                                let v = (sampling & 0x0F) as usize;
+                                max_h = max_h.max(h);
+                                max_v = max_v.max(v);
+                            }
+                            return (max_h * 8, max_v * 8);
+                        }
+                    }
+                    return (8, 8); // fallback
+                }
+                0xD8 | 0xD9 | 0x00 => {
+                    i += 2;
+                    continue;
+                }
+                _ => {
+                    // Skip marker segment
+                    if i + 3 < data.len() {
+                        let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+                        i += 2 + len;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    (8, 8) // default
+}
