@@ -824,8 +824,10 @@ fn border_pixel_accuracy() {
 
     let files = collect_jpgs(corpus);
 
-    eprintln!("{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}",
-        "File", "W", "H", "Samp", "Edge", "Interior", "RightEdge", "BottomEdge", "Corner");
+    eprintln!(
+        "{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}",
+        "File", "W", "H", "Samp", "Edge", "Interior", "RightEdge", "BottomEdge", "Corner"
+    );
     eprintln!("{}", "-".repeat(120));
 
     let mut any_border_worse = false;
@@ -843,8 +845,10 @@ fn border_pixel_accuracy() {
             None => continue,
         };
 
-        if zen.width != dj.width || zen.height != dj.height
-            || zen.channels != dj.channels || zen.pixels.len() != dj.pixels.len()
+        if zen.width != dj.width
+            || zen.height != dj.height
+            || zen.channels != dj.channels
+            || zen.pixels.len() != dj.pixels.len()
         {
             continue;
         }
@@ -885,7 +889,8 @@ fn border_pixel_accuracy() {
                 let idx = (y * w + x) * ch;
                 let mut pixel_max = 0u8;
                 for c in 0..ch {
-                    let diff = (zen.pixels[idx + c] as i16 - dj.pixels[idx + c] as i16).unsigned_abs() as u8;
+                    let diff = (zen.pixels[idx + c] as i16 - dj.pixels[idx + c] as i16)
+                        .unsigned_abs() as u8;
                     pixel_max = pixel_max.max(diff);
                 }
 
@@ -915,14 +920,19 @@ fn border_pixel_accuracy() {
 
         // Flag if border is worse than interior
         let worst_border = right_max.max(bottom_max).max(corner_max);
-        let flag = if worst_border > interior_max + 1 { " !!!" } else { "" };
+        let flag = if worst_border > interior_max + 1 {
+            " !!!"
+        } else {
+            ""
+        };
         if worst_border > interior_max + 1 {
             any_border_worse = true;
         }
 
-        eprintln!("{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}{}",
-            fname, w, h, samp_str, edge_str,
-            interior_max, right_max, bottom_max, corner_max, flag);
+        eprintln!(
+            "{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}{}",
+            fname, w, h, samp_str, edge_str, interior_max, right_max, bottom_max, corner_max, flag
+        );
     }
 
     eprintln!();
@@ -932,7 +942,10 @@ fn border_pixel_accuracy() {
         eprintln!("OK: Border pixel accuracy is comparable to interior pixels.");
     }
 
-    assert!(!any_border_worse, "Border pixels should not be significantly worse than interior");
+    assert!(
+        !any_border_worse,
+        "Border pixels should not be significantly worse than interior"
+    );
 }
 
 /// Detect MCU dimensions from JPEG sampling factors
