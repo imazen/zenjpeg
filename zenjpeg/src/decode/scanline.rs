@@ -25,7 +25,7 @@
 //! ```
 
 use super::pipeline::StripProcessor;
-use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
+use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
@@ -573,22 +573,22 @@ impl<'a> ScanlineReader<'a> {
 
             for x in 0..cols {
                 let (r, g, b) = if self.is_rgb {
+                    // RGB JPEG: planes are already R, G, B in [0, 255]
                     (
-                        y_row[x].clamp(0, 255) as u8,
-                        cb_row[x].clamp(0, 255) as u8,
-                        cr_row[x].clamp(0, 255) as u8,
+                        y_row[x] as f32 / 255.0,
+                        cb_row[x] as f32 / 255.0,
+                        cr_row[x] as f32 / 255.0,
                     )
                 } else {
-                    ycbcr_to_rgb(
-                        y_row[x].clamp(0, 255) as u8,
-                        cb_row[x].clamp(0, 255) as u8,
-                        cr_row[x].clamp(0, 255) as u8,
-                    )
+                    // YCbCr: convert in f32 domain, normalize to [0, 1]
+                    let (rf, gf, bf) =
+                        ycbcr_to_rgb_f32(y_row[x] as f32, cb_row[x] as f32, cr_row[x] as f32);
+                    (rf / 255.0, gf / 255.0, bf / 255.0)
                 };
 
-                out_row[x * 4] = srgb_to_linear(r);
-                out_row[x * 4 + 1] = srgb_to_linear(g);
-                out_row[x * 4 + 2] = srgb_to_linear(b);
+                out_row[x * 4] = srgb_to_linear_f32(r);
+                out_row[x * 4 + 1] = srgb_to_linear_f32(g);
+                out_row[x * 4 + 2] = srgb_to_linear_f32(b);
                 out_row[x * 4 + 3] = 1.0;
             }
 
@@ -851,7 +851,8 @@ impl<'a> ScanlineReader<'a> {
             let y_slice = self.strip.y_row(self.row_in_mcu, cols);
 
             for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
-                *out = y.clamp(0, 255) as f32 / 255.0;
+                // i16 values already level-shifted to [0, 255] by integer IDCT
+                *out = y as f32 / 255.0;
             }
 
             rows_written += 1;
@@ -935,7 +936,9 @@ impl<'a> ScanlineReader<'a> {
             let y_slice = self.strip.y_row(self.row_in_mcu, cols);
 
             for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
-                *out = srgb_to_linear(y.clamp(0, 255) as u8);
+                // i16 values already level-shifted to [0, 255] by integer IDCT;
+                // normalize to [0, 1] then apply sRGB→linear in f32 domain
+                *out = srgb_to_linear_f32(y as f32 / 255.0);
             }
 
             rows_written += 1;
@@ -954,7 +957,15 @@ impl<'a> ScanlineReader<'a> {
 /// Convert sRGB u8 to linear f32.
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
-    let s = srgb as f32 / 255.0;
+    srgb_to_linear_f32(srgb as f32 / 255.0)
+}
+
+/// Convert sRGB f32 (0.0-1.0) to linear f32, preserving full precision.
+///
+/// Values outside [0, 1] are handled gracefully (negative → negative linear,
+/// >1 → >1 linear) to avoid destroying out-of-range data from IDCT.
+#[inline]
+fn srgb_to_linear_f32(s: f32) -> f32 {
     if s <= 0.04045 {
         s / 12.92
     } else {

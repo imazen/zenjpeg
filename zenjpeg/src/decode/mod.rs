@@ -995,9 +995,15 @@ mod tests {
         assert_eq!(decoded_f32.height, height);
         assert_eq!(decoded_f32.data.len(), (width * height * 3) as usize);
 
-        // Verify values are in 0.0-1.0 range
+        // Verify values are approximately in 0.0-1.0 range.
+        // YCbCr→RGB color matrix can produce values slightly outside [0, 1]
+        // due to ringing — this is intentional to preserve full precision.
         for &v in &decoded_f32.data {
-            assert!((0.0..=1.0).contains(&v), "f32 value {} out of range", v);
+            assert!(
+                (-0.05..=1.05).contains(&v),
+                "f32 value {} too far out of range",
+                v
+            );
         }
 
         // Compare with u8 decode - converted f32 should match

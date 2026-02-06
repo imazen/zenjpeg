@@ -124,9 +124,8 @@ mod comparison {
     }
 
     fn compute_ssim2(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
-        let to_pixels = |d: &[u8]| -> Vec<[u8; 3]> {
-            d.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
-        };
+        let to_pixels =
+            |d: &[u8]| -> Vec<[u8; 3]> { d.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect() };
         let a_img = ImgVec::new(to_pixels(a), width, height);
         let b_img = ImgVec::new(to_pixels(b), width, height);
         compute_ssimulacra2(a_img.as_ref(), b_img.as_ref()).unwrap_or(0.0)
@@ -215,7 +214,12 @@ mod comparison {
                 let name = img_path.file_stem().unwrap().to_str().unwrap();
                 println!(
                     "{:<20} {:>10.4} {:>10.4} {:>10.4} {:>10.4}  {:>8} {:>8.4}",
-                    name, scores[0], scores[1], scores[2], scores[3], max_diff_bias_cpp,
+                    name,
+                    scores[0],
+                    scores[1],
+                    scores[2],
+                    scores[3],
+                    max_diff_bias_cpp,
                     mean_diff_bias_cpp
                 );
 
@@ -292,7 +296,14 @@ mod comparison {
         println!();
         println!(
             "{:>5} {:>8} {:>10} {:>10} {:>10} {:>10}  {:>9} {:>9} {:>6}",
-            "Q", "bytes", "zenjpeg", "zen+bias", "cjpegli", "zune-jpeg", "bias-zen", "bias-cpp",
+            "Q",
+            "bytes",
+            "zenjpeg",
+            "zen+bias",
+            "cjpegli",
+            "zune-jpeg",
+            "bias-zen",
+            "bias-cpp",
             "maxdif"
         );
 
@@ -314,14 +325,23 @@ mod comparison {
 
             println!(
                 "{:>5.0} {:>8} {:>10.4} {:>10.4} {:>10.4} {:>10.4}  {:>+9.4} {:>+9.4} {:>6}",
-                quality, size, s_zen, s_bias, s_cpp, s_zune,
-                s_bias - s_zen, s_bias - s_cpp, max_diff
+                quality,
+                size,
+                s_zen,
+                s_bias,
+                s_cpp,
+                s_zune,
+                s_bias - s_zen,
+                s_bias - s_cpp,
+                max_diff
             );
         }
 
         println!();
         println!("bias-zen: SSIM2 gain of dequant_bias over default (positive = better)");
-        println!("bias-cpp: SSIM2 gap vs C++ jpegli (positive = bias better, negative = C++ better)");
+        println!(
+            "bias-cpp: SSIM2 gap vs C++ jpegli (positive = bias better, negative = C++ better)"
+        );
         println!("maxdif:   max pixel diff between zen+bias and cjpegli");
     }
 
