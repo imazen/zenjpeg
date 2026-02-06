@@ -401,22 +401,41 @@ color conversion instead of bilinear. 5-10% faster, minimal quality difference.
 
 `Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
 (Price & Rabbani 2000). Computes per-coefficient biases from DCT statistics
-and applies them during f32 dequantization, reducing reconstruction error.
-Bypasses fast i16 IDCT path. Default: off.
+and applies them during f32 dequantization. Bypasses fast i16 IDCT path.
+Default: off.
 
-**SSIMULACRA2 vs original** (10 CID22 512px images, baseline 4:2:0, commit 86e3bef):
+**Frymire quality sweep** (1118x1105 photograph, baseline 4:2:0, commit 86e3bef):
 
-| Quality | zenjpeg | zen+bias | cjpegli C++ | zune-jpeg | bias-zen | bias-cpp |
-|---------|---------|----------|-------------|-----------|----------|----------|
-| Q50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
-| Q75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
-| Q85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
-| Q95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
+| Q | bytes | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp | maxdif |
+|---|-------|---------|----------|---------|-----------|----------|----------|--------|
+| 10 | 116K | 5.25 | 1.88 | 1.99 | 5.25 | -3.37 | -0.11 | 1 |
+| 20 | 171K | 21.35 | 18.54 | 18.61 | 21.35 | -2.82 | -0.07 | 1 |
+| 30 | 219K | 30.59 | 28.57 | 28.59 | 30.59 | -2.03 | -0.03 | 1 |
+| 40 | 243K | 34.21 | 32.37 | 32.44 | 34.21 | -1.84 | -0.07 | 1 |
+| 50 | 271K | 37.28 | 35.95 | 36.01 | 37.28 | -1.32 | -0.06 | 1 |
+| 60 | 309K | 41.07 | 40.07 | 40.10 | 41.07 | -0.99 | -0.03 | 1 |
+| 70 | 362K | 45.00 | 44.24 | 44.31 | 45.00 | -0.76 | -0.07 | 1 |
+| 80 | 438K | 48.72 | 48.25 | 48.32 | 48.72 | -0.47 | -0.07 | 1 |
+| 85 | 494K | 50.45 | 50.18 | 50.21 | 50.45 | -0.27 | -0.03 | 1 |
+| 90 | 583K | 51.94 | 51.81 | 51.83 | 51.94 | -0.14 | -0.02 | 1 |
+| 95 | 742K | 53.28 | 53.25 | 53.27 | 53.28 | -0.03 | -0.02 | 1 |
+| 97 | 848K | 53.71 | 53.68 | 53.73 | 53.71 | -0.03 | -0.05 | 1 |
+| 99 | 1034K | 54.00 | 54.03 | 54.07 | 54.00 | +0.03 | -0.05 | 1 |
 
-- `bias-zen`: SSIM2 gain over default zenjpeg (positive = better)
-- `bias-cpp`: SSIM2 gap vs C++ jpegli (negative = C++ still slightly ahead)
+**CID22 mean** (10 images, 512px, baseline 4:2:0):
 
-**Pairwise SSIMULACRA2** (between decoders, Q85, 6 images):
+| Q | zenjpeg | zen+bias | cjpegli | zune-jpeg | bias-zen | bias-cpp |
+|---|---------|----------|---------|-----------|----------|----------|
+| 50 | 65.23 | 65.03 | 65.07 | 65.23 | -0.21 | -0.05 |
+| 75 | 75.05 | 75.19 | 75.24 | 75.05 | +0.14 | -0.06 |
+| 85 | 79.85 | 80.17 | 80.22 | 79.85 | +0.33 | -0.04 |
+| 95 | 86.65 | 87.05 | 87.11 | 86.65 | +0.39 | -0.06 |
+
+- `bias-zen`: SSIM2 pt gain over default (positive = better)
+- `bias-cpp`: SSIM2 pt gap vs C++ jpegli (negative = C++ better)
+- `maxdif`: max pixel diff between zen+bias and cjpegli
+
+**Pairwise SSIMULACRA2** (between decoders, Q85, 6 CID22 images):
 
 | | zenjpeg | zen+bias | cjpegli | zune-jpeg |
 |---|---------|----------|---------|-----------|
@@ -424,12 +443,18 @@ Bypasses fast i16 IDCT path. Default: off.
 | zen+bias | | - | 94.31 | 91.23 |
 | cjpegli | | | - | 91.26 |
 
-Key findings:
+**Key findings:**
 - zenjpeg default == zune-jpeg (identical output, both integer IDCT)
-- zen+bias↔cjpegli similarity: 94.31 (3 SSIM2 pts closer than default↔cjpegli at 91.42)
+- zen+bias↔cjpegli similarity: 94.31 vs default↔cjpegli 91.42 (3 pts closer)
 - Max pixel diff between zen+bias and cjpegli: always 1 (IDCT rounding only)
-- Q75+: bias improves 0.14-0.39 SSIM2 pts over default, within 0.04-0.06 of C++
-- Q50: bias slightly worse (-0.21 pts) — noisy low-Q coefficients degrade bias estimates
+- **Image-dependent quality tradeoff**: on CID22 (small, diverse), bias helps
+  +0.14 to +0.39 at Q75+. On frymire (large photograph), default integer IDCT
+  wins by 0.03-3.37 pts across all qualities. Bias only breaks even at Q99.
+- C++ jpegli shows the same pattern: also behind integer IDCT on frymire.
+  The f32 IDCT + bias path and integer IDCT path have different rounding
+  characteristics; which wins depends on image content.
+- bias-cpp gap is consistently tiny (0.02-0.11 pts), confirming zen+bias
+  closely matches C++ jpegli decoder behavior regardless of image.
 
 Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored`
 

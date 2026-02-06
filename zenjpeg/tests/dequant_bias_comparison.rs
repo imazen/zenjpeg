@@ -267,6 +267,64 @@ mod comparison {
         println!("Units: SSIMULACRA2 points (100 = identical to original)");
     }
 
+    /// Frymire quality sweep: single photographic image (1118x1105), fine quality steps.
+    #[test]
+    #[ignore]
+    fn compare_decoder_quality_frymire() {
+        let corpus = corpus_dir().expect("codec-corpus not found");
+        let frymire = corpus.join("imageflow/test_inputs/frymire.png");
+        assert!(frymire.exists(), "frymire.png not found at {:?}", frymire);
+
+        let (rgb, width, height) = load_png_rgb(&frymire).expect("failed to load frymire.png");
+        let w = width as usize;
+        let h = height as usize;
+
+        let qualities: Vec<f32> = vec![
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 87.0, 90.0, 92.0,
+            95.0, 97.0, 99.0,
+        ];
+
+        println!();
+        println!(
+            "=== Frymire ({}x{}) Decoder Quality Sweep (SSIMULACRA2 vs Original) ===",
+            width, height
+        );
+        println!();
+        println!(
+            "{:>5} {:>8} {:>10} {:>10} {:>10} {:>10}  {:>9} {:>9} {:>6}",
+            "Q", "bytes", "zenjpeg", "zen+bias", "cjpegli", "zune-jpeg", "bias-zen", "bias-cpp",
+            "maxdif"
+        );
+
+        for &quality in &qualities {
+            let jpeg = encode_jpeg(&rgb, width, height, quality, false);
+            let size = jpeg.len();
+
+            let pixels_zen = decode_zenjpeg(&jpeg, false);
+            let pixels_bias = decode_zenjpeg(&jpeg, true);
+            let pixels_cpp = unsafe { decode_cjpegli(&jpeg) };
+            let pixels_zune = decode_zune(&jpeg);
+
+            let s_zen = compute_ssim2(&rgb, &pixels_zen, w, h);
+            let s_bias = compute_ssim2(&rgb, &pixels_bias, w, h);
+            let s_cpp = compute_ssim2(&rgb, &pixels_cpp, w, h);
+            let s_zune = compute_ssim2(&rgb, &pixels_zune, w, h);
+
+            let max_diff = max_pixel_diff(&pixels_bias, &pixels_cpp);
+
+            println!(
+                "{:>5.0} {:>8} {:>10.4} {:>10.4} {:>10.4} {:>10.4}  {:>+9.4} {:>+9.4} {:>6}",
+                quality, size, s_zen, s_bias, s_cpp, s_zune,
+                s_bias - s_zen, s_bias - s_cpp, max_diff
+            );
+        }
+
+        println!();
+        println!("bias-zen: SSIM2 gain of dequant_bias over default (positive = better)");
+        println!("bias-cpp: SSIM2 gap vs C++ jpegli (positive = bias better, negative = C++ better)");
+        println!("maxdif:   max pixel diff between zen+bias and cjpegli");
+    }
+
     #[test]
     #[ignore]
     fn compare_decoder_pairwise() {
