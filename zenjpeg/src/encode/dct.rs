@@ -702,7 +702,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[inline(always)]
     pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
-        let token = archmage::X64V3Token::try_new().unwrap();
+        let token = archmage::X64V3Token::summon().unwrap();
         let scale = mf32x8::splat(token, 1.0 / 8.0);
 
         let mut reg = mf32x8::load_8x8(input);

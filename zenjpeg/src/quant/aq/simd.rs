@@ -1264,6 +1264,11 @@ fn sum_2x2_blocks_simd(
 pub(crate) mod archmage_impl {
     use archmage::{arcane, SimdToken, X64V3Token, X64V4Token};
     use core::arch::x86_64::*;
+    // Safe unaligned load/store (shadow the unsafe core::arch versions)
+    #[allow(unused_imports)]
+    use safe_unaligned_simd::x86_64::{
+        _mm256_loadu_ps, _mm256_storeu_ps, _mm512_loadu_ps, _mm512_storeu_ps,
+    };
 
     use super::{
         GAMMA_OFFSET, K_DEN_MUL_RATIO, K_MASKING_LOG_OFFSET, K_MASKING_MUL, K_NUM_MUL_RATIO,
@@ -1514,12 +1519,12 @@ pub(crate) mod archmage_impl {
             let x = chunk * 16;
             let buf_x = x + 1; // Data offset due to padding
 
-            // Load 16 pixels at once (unaligned loads)
-            let pixels = _mm512_loadu_ps(row.as_ptr().add(buf_x));
-            let left = _mm512_loadu_ps(row.as_ptr().add(buf_x - 1));
-            let right = _mm512_loadu_ps(row.as_ptr().add(buf_x + 1));
-            let top = _mm512_loadu_ps(row_above.as_ptr().add(buf_x));
-            let bottom = _mm512_loadu_ps(row_below.as_ptr().add(buf_x));
+            // Load 16 pixels at once (safe unaligned loads via safe_unaligned_simd)
+            let pixels = _mm512_loadu_ps(row[buf_x..][..16].try_into().unwrap());
+            let left = _mm512_loadu_ps(row[buf_x - 1..][..16].try_into().unwrap());
+            let right = _mm512_loadu_ps(row[buf_x + 1..][..16].try_into().unwrap());
+            let top = _mm512_loadu_ps(row_above[buf_x..][..16].try_into().unwrap());
+            let bottom = _mm512_loadu_ps(row_below[buf_x..][..16].try_into().unwrap());
 
             // base = 0.25 * (left + right + top + bottom)
             let sum_lr = _mm512_add_ps(left, right);
@@ -1550,9 +1555,9 @@ pub(crate) mod archmage_impl {
             let result = _mm512_mul_ps(quarter, sqrt_inner);
 
             // Load existing, add result, store back
-            let existing = _mm512_loadu_ps(output.as_ptr().add(x));
+            let existing = _mm512_loadu_ps(output[x..][..16].try_into().unwrap());
             let updated = _mm512_add_ps(existing, result);
-            _mm512_storeu_ps(output.as_mut_ptr().add(x), updated);
+            _mm512_storeu_ps((&mut output[x..][..16]).try_into().unwrap(), updated);
         }
     }
 
@@ -1755,7 +1760,8 @@ pub(crate) mod archmage_impl {
     #[inline(always)]
     fn mage_hf_gamma_sum_8x8(
         token: X64V3Token,
-        block_ptr: *const f32,
+        block: &[f32],
+        block_offset: usize,
         stride: usize,
         // Pre-broadcast constants (avoid repeated broadcasts)
         zero: __m256,
@@ -1771,11 +1777,11 @@ pub(crate) mod archmage_impl {
 
         // Process 8 rows
         for dy in 0..8usize {
-            let row_ptr = block_ptr.add(dy * stride);
+            let row_start = block_offset + dy * stride;
 
             // Load row[0:8] and row[1:9]
-            let row = _mm256_loadu_ps(row_ptr);
-            let row_right = _mm256_loadu_ps(row_ptr.add(1));
+            let row = _mm256_loadu_ps(block[row_start..][..8].try_into().unwrap());
+            let row_right = _mm256_loadu_ps(block[row_start + 1..][..8].try_into().unwrap());
 
             // HF horizontal: |row - row_right| * mask (first 7 positions)
             let h_diff = _mm256_sub_ps(row, row_right);
@@ -1785,8 +1791,8 @@ pub(crate) mod archmage_impl {
 
             // HF vertical: |row - next_row| for rows 0..6
             if dy < 7 {
-                let next_row_ptr = block_ptr.add((dy + 1) * stride);
-                let next_row = _mm256_loadu_ps(next_row_ptr);
+                let next_start = block_offset + (dy + 1) * stride;
+                let next_row = _mm256_loadu_ps(block[next_start..][..8].try_into().unwrap());
                 let v_diff = _mm256_sub_ps(row, next_row);
                 let v_abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), v_diff);
                 hf_acc = _mm256_add_ps(hf_acc, v_abs);
@@ -1864,7 +1870,6 @@ pub(crate) mod archmage_impl {
         }
 
         let y_start = by * 8;
-        let input_ptr = input.as_ptr();
 
         // Broadcast constants once (these live in ymm registers throughout)
         let zero = _mm256_setzero_ps();
@@ -1891,11 +1896,11 @@ pub(crate) mod archmage_impl {
 
             // Fused HF + Gamma for 8x8 block
             let block_offset = y_start * stride + x_start;
-            let block_ptr = input_ptr.add(block_offset);
 
             let (hf_sum, gamma_sum) = mage_hf_gamma_sum_8x8(
                 token,
-                block_ptr,
+                input,
+                block_offset,
                 stride,
                 zero,
                 bias,
@@ -3446,9 +3451,9 @@ mod tests {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[test]
     fn test_archmage_fuzzy_erosion_matches_scalar() {
-        use archmage::{Avx2FmaToken, SimdToken};
+        use archmage::{X64V3Token, SimdToken};
 
-        let Some(token) = Avx2FmaToken::try_new() else {
+        let Some(token) = X64V3Token::summon() else {
             println!("AVX2+FMA not available, skipping archmage test");
             return;
         };

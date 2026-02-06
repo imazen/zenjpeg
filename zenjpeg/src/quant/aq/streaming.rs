@@ -243,7 +243,7 @@ impl StreamingAQ {
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
             #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-            archmage_token: X64V3Token::try_new(),
+            archmage_token: X64V3Token::summon(),
         })
     }
 
