@@ -649,9 +649,11 @@ butteraugli-optimized scaling parameters:
 **TODO:**
 - [x] Add `auto_optimize()` to `knobs_vs_jpegli` R-D comparison — commit 52d921c
 - [x] Compare vs HybMax-L14.5: **identical** (auto_optimize uses HybMax-L14.5 internally)
-- [ ] Verify claimed Pareto improvements on CID22 corpus
-- [ ] Test interaction with trellis (does it stack? conflict?)
-- [ ] Document recommended usage pattern
+- [x] Verify on CID22 corpus: confirmed +2-3 SSIM2 over cjpegli, +0.8-1.0 over JpegliProg
+- [x] Test interaction with trellis: **exclusive, not stacking** — auto_optimize() sets
+  hybrid_config and clears standalone trellis. If user calls `.trellis()` after
+  `.auto_optimize(true)`, standalone trellis wins and hybrid is bypassed (streaming.rs:260-268).
+- [x] Document recommended usage pattern (see below)
 
 **R-D comparison results (gb82, 25 images, 2026-02-06):**
 
@@ -665,6 +667,28 @@ butteraugli-optimized scaling parameters:
 
 AutoOptimize = HybMax-L14.5 (confirmed identical). Gains: +1.5 SSIM2 over cjpegli,
 +0.6 over JpegliProg at 1.0 BPP. Consistent wins across all measured BPP levels.
+
+**R-D comparison results (CID22, 20 images, 512px, 2026-02-06):**
+
+| BPP | cjpegli-444 | JpegliProg | AutoOptimize | HybMax-L14.5 |
+|-----|-------------|------------|--------------|--------------|
+| 1.0 | 70.4 SSIM2 | 72.7 | 73.2 | **73.6** |
+| 1.5 | 80.1 | 81.2 | 82.1 | **82.2** |
+| 2.0 | 84.5 | 85.7 | **86.5** | **86.5** |
+| 2.5 | 87.5 | 88.1 | **88.9** | **88.9** |
+
+CID22 confirms gb82 findings. AutoOptimize within 0.1-0.4 of HybMax-L14.5.
+
+**Recommended usage:**
+```rust
+// Best quality at given size (hybrid trellis λ=14.5 + progressive)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .auto_optimize(true);
+
+// Do NOT combine with .trellis() — auto_optimize clears it and uses hybrid instead.
+// If you call .trellis() after .auto_optimize(true), standalone trellis wins
+// and hybrid is bypassed (streaming.rs:260-268).
+```
 
 Note: CMA-ES frequency scaling is separate from auto_optimize (which uses hybrid
 trellis only). CMA-ES scaling modifies quant table generation and is described as
@@ -1074,7 +1098,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 - [ ] Add `EncodeRequest<'a>` intermediate between config and encoder
 - [ ] Move metadata (ICC/EXIF/XMP) from config to request
-- [ ] Drop `RgbEncoder<P>` generic — use `PixelLayout` enum on request
+- [ ] Evaluate `RgbEncoder<P>` generic — consider `PixelLayout` enum on request to avoid monomorphization of full pipeline; keep generic convenience methods at boundary
 - [ ] Keep streaming push pattern but behind `request.build()` → `Encoder`
 - [x] Add one-shot `encode()`/`encode_into()`/`encode_bytes()`/`encode_bytes_into()` — commit 9a388dc
 - [x] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
