@@ -48,7 +48,9 @@ pub use image::{
 
 // New unified types
 #[allow(unused_imports)]
-pub use config::{DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget};
+pub use config::{
+    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+};
 use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
@@ -331,12 +333,7 @@ impl DecodeConfig {
 
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            None,
-            self.strictness,
-        )?;
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
         Ok(parser.info())
     }
@@ -412,12 +409,7 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            None,
-            self.strictness,
-        )?;
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
 
         // DNL mode (height=0 in SOF) not supported - scanline reader needs dimensions upfront
@@ -541,7 +533,7 @@ impl DecodeConfig {
 
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
-        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling)
+        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
     }
 
     /// Decodes a JPEG image.
@@ -631,12 +623,7 @@ impl DecodeConfig {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImageF32> {
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            None,
-            self.strictness,
-        )?;
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         // Disable streaming - f32 decode needs coefficients for precision
         parser.prefer_streaming = false;
         parser.decode(&stop)?;
@@ -645,12 +632,8 @@ impl DecodeConfig {
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format as f32
-        let pixels = parser.to_pixels_f32(
-            output_format,
-            info.is_xyb,
-            self.chroma_upsampling,
-            &stop,
-        )?;
+        let pixels =
+            parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
 
         let warnings = parser.take_warnings();
 
@@ -690,12 +673,7 @@ impl DecodeConfig {
     ///
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            None,
-            self.strictness,
-        )?;
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         // Disable streaming - we need coefficients stored
         parser.prefer_streaming = false;
         parser.decode(&stop)?;
@@ -747,12 +725,7 @@ impl DecodeConfig {
     ///
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            None,
-            self.strictness,
-        )?;
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.prefer_streaming = false;
         parser.decode(&stop)?;

@@ -354,9 +354,8 @@ let image = Decoder::new()
     .max_memory(512 * 1024 * 1024)
     .decode(&jpeg_data)?;
 
-// Or construct DecoderConfig directly:
-let config = DecoderConfig::default();
-let decoder = Decoder::from_config(config);
+// Or construct DecodeConfig directly:
+let decoder = DecodeConfig::default();
 ```
 
 ## Performance
