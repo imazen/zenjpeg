@@ -193,6 +193,112 @@ pub fn apply_icc_transform(
     Ok(rgb_data.to_vec())
 }
 
+// ============================================================================
+// f32 ICC transform variants
+// ============================================================================
+
+/// Apply ICC profile transformation to f32 RGB image data.
+///
+/// Input and output are interleaved RGB f32 in [0.0, 1.0] range.
+/// Converts from the input profile's color space to sRGB.
+#[cfg(feature = "cms-lcms2")]
+pub fn apply_icc_transform_f32(
+    rgb_data: &[f32],
+    _width: usize,
+    _height: usize,
+    icc_profile: &[u8],
+) -> Result<Vec<f32>> {
+    use lcms2::{Intent, PixelFormat, Profile, Transform};
+
+    let input_profile =
+        Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
+
+    let srgb = Profile::new_srgb();
+
+    let transform = Transform::new(
+        &input_profile,
+        PixelFormat::RGB_FLT,
+        &srgb,
+        PixelFormat::RGB_FLT,
+        Intent::RelativeColorimetric,
+    )
+    .map_err(|e| Error::icc_error(format!("lcms2 f32 transform: {e}")))?;
+
+    let pixels: Vec<[f32; 3]> = rgb_data
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+
+    let mut output = vec![[0f32; 3]; pixels.len()];
+    transform.transform_pixels(&pixels, &mut output);
+
+    Ok(output.into_iter().flatten().collect())
+}
+
+/// Apply ICC profile transformation to f32 using moxcms (pure Rust).
+#[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
+pub fn apply_icc_transform_f32(
+    rgb_data: &[f32],
+    _width: usize,
+    _height: usize,
+    icc_profile: &[u8],
+) -> Result<Vec<f32>> {
+    use moxcms::{ColorProfile, Layout, TransformOptions};
+
+    let input_profile = ColorProfile::new_from_slice(icc_profile)
+        .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
+
+    let srgb = ColorProfile::new_srgb();
+
+    let transform = input_profile
+        .create_transform_f32(Layout::Rgb, &srgb, Layout::Rgb, TransformOptions::default())
+        .map_err(|e| Error::icc_error(format!("moxcms f32 transform: {e:?}")))?;
+
+    let mut output = vec![0f32; rgb_data.len()];
+    transform
+        .transform(rgb_data, &mut output)
+        .map_err(|e| Error::icc_error(format!("moxcms f32 transform execution: {e:?}")))?;
+
+    Ok(output)
+}
+
+/// Fallback when no CMS feature is enabled.
+#[cfg(not(any(feature = "cms-lcms2", feature = "cms-moxcms")))]
+pub fn apply_icc_transform_f32(
+    rgb_data: &[f32],
+    _width: usize,
+    _height: usize,
+    _icc_profile: &[u8],
+) -> Result<Vec<f32>> {
+    Ok(rgb_data.to_vec())
+}
+
+// ============================================================================
+// sRGB → Linear transfer function
+// ============================================================================
+
+/// Convert sRGB gamma-encoded f32 values to linear light.
+///
+/// Applies the sRGB EOTF (Electro-Optical Transfer Function) per IEC 61966-2-1.
+/// Input values should be in [0.0, 1.0] nominal range (may exceed for unclamped data).
+#[inline]
+pub fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Convert an entire f32 RGB pixel buffer from sRGB gamma to linear light.
+///
+/// Operates in-place for efficiency. Each channel is independently linearized.
+pub fn srgb_to_linear_inplace(pixels: &mut [f32]) {
+    for v in pixels.iter_mut() {
+        *v = srgb_to_linear(*v);
+    }
+}
+
 /// Decode JPEG with automatic ICC profile application.
 ///
 /// This is a convenience function that:

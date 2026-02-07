@@ -126,6 +126,8 @@ pub type Decoder = DecodeConfig;
 
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
+#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+use crate::color::icc::apply_icc_transform_f32;
 
 impl DecodeConfig {
     /// Creates a new decoder configuration with default settings.
@@ -569,8 +571,36 @@ impl DecodeConfig {
 
         let mut result = if self.output_target.is_f32() {
             // f32 output path
-            let pixels =
+            #[allow(unused_mut)]
+            let mut pixels =
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
+
+            // Apply ICC profile if enabled and present
+            #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+            if self.apply_icc && output_format == PixelFormat::Rgb {
+                if let Some(ref icc_profile) = parser.icc_profile {
+                    match apply_icc_transform_f32(
+                        &pixels,
+                        info.dimensions.width as usize,
+                        info.dimensions.height as usize,
+                        icc_profile,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC f32 transform failed, using original colors: {_e:?}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Apply sRGB→linear transfer if requested
+            if self.output_target.is_linear() {
+                crate::color::icc::srgb_to_linear_inplace(&mut pixels);
+            }
+
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
             DecodeResult::new_f32(
