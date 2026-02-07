@@ -554,6 +554,11 @@ impl DecodeResult {
         }
     }
 
+    /// Set the gain map result.
+    pub(crate) fn set_gain_map(&mut self, gain_map: Option<GainMapResult>) {
+        self.gain_map = gain_map;
+    }
+
     /// Image width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {

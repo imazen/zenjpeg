@@ -269,6 +269,29 @@ impl<'a> ScanlineReader<'a> {
         self.num_components
     }
 
+    /// Extract gain map JPEG bytes from an UltraHDR image, if present.
+    ///
+    /// Returns the raw gain map JPEG as a zero-copy slice into the original
+    /// JPEG data. Returns `None` for regular JPEGs without UltraHDR metadata.
+    ///
+    /// This allows streaming decoders to detect and access gain maps without
+    /// requiring the full `ultrahdr_reader()` API.
+    #[cfg(feature = "ultrahdr")]
+    pub fn gain_map_jpeg(&self) -> Option<&'a [u8]> {
+        // Parse the JPEG header markers to find gain map
+        // We need a temporary parser just for marker scanning
+        let mut parser = match super::parser::JpegParser::new(self.data, u64::MAX, None) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+        if parser.read_header().is_err() {
+            return None;
+        }
+        let (range, _metadata) = parser.extract_gainmap_early(self.data).ok()?;
+        let (start, end) = range?;
+        Some(&self.data[start..end])
+    }
+
     /// Decodes the current MCU row into strip buffers.
     fn decode_mcu_row(&mut self) -> Result<()> {
         if self.mcu_row_decoded {
