@@ -178,10 +178,9 @@ impl<'a> JpegParser<'a> {
 
                 for block_idx in 0..total_blocks {
                     // Check for cancellation periodically (every 256 blocks)
-                    if block_idx & 0xFF == 0
-                        && stop.should_stop() {
-                            return Err(Error::cancelled());
-                        }
+                    if block_idx & 0xFF == 0 && stop.should_stop() {
+                        return Err(Error::cancelled());
+                    }
 
                     // Check for restart marker
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -325,10 +324,9 @@ impl<'a> JpegParser<'a> {
 
             for block_idx in 0..total_blocks {
                 // Check for cancellation periodically (every 256 blocks)
-                if block_idx & 0xFF == 0
-                    && stop.should_stop() {
-                        return Err(Error::cancelled());
-                    }
+                if block_idx & 0xFF == 0 && stop.should_stop() {
+                    return Err(Error::cancelled());
+                }
 
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {

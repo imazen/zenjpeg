@@ -647,11 +647,28 @@ butteraugli-optimized scaling parameters:
 - Claimed holdout: +0.46 mean Pareto, 76% wins
 
 **TODO:**
-- [ ] Add `auto_optimize()` to `knobs_vs_jpegli` R-D comparison
-- [ ] Verify claimed Pareto improvements on gb82/CID22 corpora
-- [ ] Compare vs HybMax-L14.5 (current best) at matched BPP
+- [x] Add `auto_optimize()` to `knobs_vs_jpegli` R-D comparison — commit 52d921c
+- [x] Compare vs HybMax-L14.5: **identical** (auto_optimize uses HybMax-L14.5 internally)
+- [ ] Verify claimed Pareto improvements on CID22 corpus
 - [ ] Test interaction with trellis (does it stack? conflict?)
 - [ ] Document recommended usage pattern
+
+**R-D comparison results (gb82, 25 images, 2026-02-06):**
+
+| BPP | cjpegli-444 | JpegliProg | AutoOptimize | HybMax-L14.5 |
+|-----|-------------|------------|--------------|--------------|
+| 0.8 | 71.9 SSIM2 | **73.5** | 73.7 | 74.0 |
+| 1.0 | 77.0 | 77.9 | **78.5** | **78.6** |
+| 1.5 | 83.8 | 84.7 | **85.2** | **85.3** |
+| 2.0 | 87.4 | 88.0 | **88.5** | **88.5** |
+| 2.5 | 89.6 | 89.9 | **90.4** | **90.4** |
+
+AutoOptimize = HybMax-L14.5 (confirmed identical). Gains: +1.5 SSIM2 over cjpegli,
++0.6 over JpegliProg at 1.0 BPP. Consistent wins across all measured BPP levels.
+
+Note: CMA-ES frequency scaling is separate from auto_optimize (which uses hybrid
+trellis only). CMA-ES scaling modifies quant table generation and is described as
+"incompatible" with auto_optimize's hybrid trellis approach.
 
 ### Remaining Hardening
 

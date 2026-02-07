@@ -517,20 +517,12 @@ impl StripProcessor {
                 &mut stats,
             )?,
             cb_strip: if is_color {
-                try_alloc_zeroed_f32_tracked(
-                    padded_width * strip_height,
-                    "cb_strip",
-                    &mut stats,
-                )?
+                try_alloc_zeroed_f32_tracked(padded_width * strip_height, "cb_strip", &mut stats)?
             } else {
                 Vec::new()
             },
             cr_strip: if is_color {
-                try_alloc_zeroed_f32_tracked(
-                    padded_width * strip_height,
-                    "cr_strip",
-                    &mut stats,
-                )?
+                try_alloc_zeroed_f32_tracked(padded_width * strip_height, "cr_strip", &mut stats)?
             } else {
                 Vec::new()
             },
@@ -577,45 +569,21 @@ impl StripProcessor {
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
             pending: PendingBuffers {
                 y: [
-                    try_with_capacity_tracked(
-                        pending_y_capacity,
-                        "pending_y[0]",
-                        &mut stats,
-                    )?,
-                    try_with_capacity_tracked(
-                        pending_y_capacity,
-                        "pending_y[1]",
-                        &mut stats,
-                    )?,
+                    try_with_capacity_tracked(pending_y_capacity, "pending_y[0]", &mut stats)?,
+                    try_with_capacity_tracked(pending_y_capacity, "pending_y[1]", &mut stats)?,
                 ],
                 cb: if is_color {
                     [
-                        try_with_capacity_tracked(
-                            pending_c_capacity,
-                            "pending_cb[0]",
-                            &mut stats,
-                        )?,
-                        try_with_capacity_tracked(
-                            pending_c_capacity,
-                            "pending_cb[1]",
-                            &mut stats,
-                        )?,
+                        try_with_capacity_tracked(pending_c_capacity, "pending_cb[0]", &mut stats)?,
+                        try_with_capacity_tracked(pending_c_capacity, "pending_cb[1]", &mut stats)?,
                     ]
                 } else {
                     [Vec::new(), Vec::new()]
                 },
                 cr: if is_color {
                     [
-                        try_with_capacity_tracked(
-                            pending_c_capacity,
-                            "pending_cr[0]",
-                            &mut stats,
-                        )?,
-                        try_with_capacity_tracked(
-                            pending_c_capacity,
-                            "pending_cr[1]",
-                            &mut stats,
-                        )?,
+                        try_with_capacity_tracked(pending_c_capacity, "pending_cr[0]", &mut stats)?,
+                        try_with_capacity_tracked(pending_c_capacity, "pending_cr[1]", &mut stats)?,
                     ]
                 } else {
                     [Vec::new(), Vec::new()]
