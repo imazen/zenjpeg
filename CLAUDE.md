@@ -1111,3 +1111,5 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Lossy/lossless split: N/A — JPEG is lossy-only, single `EncoderConfig` is correct
 - [x] Standardize `AllocationStats` → `EncodeStats` — commit ef84b22
 - [x] Add `DecodeError` type alias — commit 0385d9f
+- [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
+- [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
