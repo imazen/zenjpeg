@@ -27,10 +27,10 @@
 
 // Note: Currently re-exporting internal error types since the decoder
 // types we re-export from crate::decode use them internally.
-// TODO: Create wrapper types or unified error type in the future.
-
 // === Error types ===
-// Re-export internal error types since the decoder types use them
+/// Errors that can occur during JPEG decoding.
+pub type DecodeError = crate::error::Error;
+// Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
 
 // === Main decoder types ===
