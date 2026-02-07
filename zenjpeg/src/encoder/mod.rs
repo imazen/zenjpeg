@@ -128,6 +128,7 @@ pub use crate::encode::encoder_types::{
     ProgressiveScanMode, Quality, XybSubsampling, YCbCrPlanes,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
+pub use crate::encode::request::EncodeRequest;
 pub use crate::encode::Stop;
 pub use crate::foundation::alloc::EncodeStats;
 pub use crate::types::Limits;

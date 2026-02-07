@@ -75,6 +75,7 @@ pub mod encoder_config;
 pub mod encoder_types;
 pub mod exif;
 pub mod extras;
+pub mod request;
 
 /// Default quantization and zero-bias tables for customization.
 ///
@@ -147,6 +148,8 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "optimized-tables")]
 #[allow(unused_imports)] // Public API re-export
 pub use optimized_tables::OptimizedTables;
+#[allow(unused_imports)] // Public API re-export
+pub use request::EncodeRequest;
 /// Flat config struct for external optimization (SA, CMA-ES). Internal use.
 #[cfg(feature = "trellis")]
 #[doc(hidden)]

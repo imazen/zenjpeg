@@ -14,7 +14,10 @@ use test_utils::{
 use test_case::test_case;
 use zenjpeg::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
+    encoder::{
+        ChromaSubsampling, EncodeRequest, EncoderConfig, Exif, Orientation, PixelLayout, Quality,
+        XybSubsampling,
+    },
 };
 
 // ============================================================================
@@ -956,4 +959,209 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
             result.err()
         );
     }
+}
+
+// ============================================================================
+// EncodeRequest API Tests
+// ============================================================================
+
+#[test]
+fn request_oneshot_matches_direct_bytes() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+
+    let direct = config
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    let via_req = config
+        .request()
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    assert_eq!(
+        direct, via_req,
+        "request() without metadata must produce byte-identical output"
+    );
+}
+
+#[test]
+fn request_oneshot_matches_direct_rgb() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+    let pixels: &[rgb::RGB<u8>] =
+        unsafe { core::slice::from_raw_parts(img.pixels.as_ptr().cast(), (64 * 64) as usize) };
+
+    let direct = config.encode(pixels, 64, 64).unwrap();
+    let via_req = config.request().encode(pixels, 64, 64).unwrap();
+    assert_eq!(direct, via_req);
+}
+
+#[test]
+fn request_streaming_matches_direct() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+
+    // Direct streaming
+    let mut enc = config
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&img.pixels, Unstoppable).unwrap();
+    let direct = enc.finish().unwrap();
+
+    // Via request
+    let mut enc = config
+        .request()
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&img.pixels, Unstoppable).unwrap();
+    let via_req = enc.finish().unwrap();
+
+    assert_eq!(direct, via_req);
+}
+
+#[test]
+fn request_with_icc_profile() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+    let icc_data = b"fake-icc-profile-data-for-testing";
+
+    let jpeg = config
+        .request()
+        .icc_profile(icc_data.as_slice())
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    // ICC profiles are in APP2 with "ICC_PROFILE\0" signature
+    let icc_sig = b"ICC_PROFILE\0";
+    assert!(
+        jpeg.windows(icc_sig.len()).any(|w| w == icc_sig.as_slice()),
+        "JPEG should contain ICC_PROFILE APP2 marker"
+    );
+}
+
+#[test]
+fn request_with_exif() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+
+    let jpeg = config
+        .request()
+        .exif(Exif::build().orientation(Orientation::Rotate90))
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    let exif_sig = b"Exif\0\0";
+    assert!(
+        jpeg.windows(exif_sig.len())
+            .any(|w| w == exif_sig.as_slice()),
+        "JPEG should contain Exif APP1 marker"
+    );
+}
+
+#[test]
+fn request_with_icc_and_exif() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+    let icc_data = b"fake-icc-profile-data-for-testing";
+
+    let jpeg = config
+        .request()
+        .icc_profile(icc_data.as_slice())
+        .exif(Exif::build().orientation(Orientation::Rotate90))
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    assert!(jpeg.windows(12).any(|w| w == b"ICC_PROFILE\0".as_slice()));
+    assert!(jpeg.windows(6).any(|w| w == b"Exif\0\0".as_slice()));
+}
+
+#[test]
+fn request_with_stop_cancels() {
+    use enough::{Stop, StopReason};
+
+    /// A Stop implementation that always cancels.
+    struct AlwaysStop;
+    impl Stop for AlwaysStop {
+        fn check(&self) -> core::result::Result<(), StopReason> {
+            Err(StopReason::Cancelled)
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(256, 256, 8, 3);
+
+    let stop = AlwaysStop;
+    let result = config.request().stop(&stop).encode_bytes(
+        &img.pixels,
+        img.width,
+        img.height,
+        PixelLayout::Rgb8Srgb,
+    );
+
+    assert!(result.is_err(), "should fail when stop token is set");
+}
+
+#[test]
+fn config_reused_across_requests() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+
+    let icc1 = b"icc-profile-one";
+    let icc2 = b"icc-profile-two";
+
+    let jpeg1 = config
+        .request()
+        .icc_profile(icc1.as_slice())
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    let jpeg2 = config
+        .request()
+        .icc_profile(icc2.as_slice())
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+
+    assert_ne!(jpeg1, jpeg2, "different ICC profiles should differ");
+
+    // Without metadata, should match bare config
+    let jpeg3 = config
+        .request()
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    let jpeg_bare = config
+        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    assert_eq!(jpeg3, jpeg_bare);
+}
+
+#[test]
+fn request_encode_into_buffer() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let img = generate_checkerboard(64, 64, 8, 3);
+
+    let mut output = Vec::new();
+    config
+        .request()
+        .encode_bytes_into(
+            &img.pixels,
+            img.width,
+            img.height,
+            PixelLayout::Rgb8Srgb,
+            &mut output,
+        )
+        .unwrap();
+
+    assert!(!output.is_empty());
+    assert_eq!(&output[..2], &[0xFF, 0xD8], "should start with SOI");
+    assert_eq!(
+        &output[output.len() - 2..],
+        &[0xFF, 0xD9],
+        "should end with EOI"
+    );
+}
+
+#[test]
+fn encode_request_type_accessible() {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let _request: EncodeRequest<'_> = config.request();
 }
