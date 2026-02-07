@@ -944,6 +944,30 @@ impl EncoderConfig {
         Ok(())
     }
 
+    // === Request Builder ===
+
+    /// Create a per-image encode request from this config.
+    ///
+    /// Returns an [`EncodeRequest`] that can bind per-image metadata (ICC, EXIF, XMP)
+    /// and controls (stop token, limits) without modifying the reusable config.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
+    ///
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    ///
+    /// // Reuse config, vary metadata per image
+    /// let jpeg = config.request()
+    ///     .icc_profile(&srgb_bytes)
+    ///     .exif(Exif::build().orientation(Orientation::Rotate90))
+    ///     .encode(&pixels, 1920, 1080)?;
+    /// ```
+    #[must_use]
+    pub fn request(&self) -> super::request::EncodeRequest<'_> {
+        super::request::EncodeRequest::new(self)
+    }
+
     // === Encoder Creation ===
 
     /// Create an encoder from raw bytes with explicit pixel layout.
