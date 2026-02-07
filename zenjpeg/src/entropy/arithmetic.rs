@@ -480,21 +480,18 @@ impl<'data> ArithmeticDecoder<'data> {
             // Figure F.23: Decoding the magnitude category of v
             st += 2;
             let mut m: i32 = self.state.decode(&mut self.ac_stats[tbl][st]) as i32;
-            if m != 0
-                && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
+            if m != 0 && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
+                m <<= 1;
+                st = if (k as u8) <= kx { 189 } else { 217 };
+                while self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
                     m <<= 1;
-                    st = if (k as u8) <= kx { 189 } else { 217 };
-                    while self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
-                        m <<= 1;
-                        if m == 0x8000 {
-                            self.state.ct = -1;
-                            return Err(Error::invalid_jpeg_data(
-                                "arithmetic AC magnitude overflow",
-                            ));
-                        }
-                        st += 1;
+                    if m == 0x8000 {
+                        self.state.ct = -1;
+                        return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
+                    st += 1;
                 }
+            }
 
             // Figure F.24: Decoding the magnitude bit pattern of v
             let mut v = m;
@@ -612,21 +609,18 @@ impl<'data> ArithmeticDecoder<'data> {
             // Decode magnitude category
             st += 2;
             let mut m: i32 = self.state.decode(&mut self.ac_stats[tbl][st]) as i32;
-            if m != 0
-                && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
+            if m != 0 && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
+                m <<= 1;
+                st = if (k as u8) <= kx { 189 } else { 217 };
+                while self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
                     m <<= 1;
-                    st = if (k as u8) <= kx { 189 } else { 217 };
-                    while self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
-                        m <<= 1;
-                        if m == 0x8000 {
-                            self.state.ct = -1;
-                            return Err(Error::invalid_jpeg_data(
-                                "arithmetic AC magnitude overflow",
-                            ));
-                        }
-                        st += 1;
+                    if m == 0x8000 {
+                        self.state.ct = -1;
+                        return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
+                    st += 1;
                 }
+            }
 
             // Decode magnitude bit pattern
             let mut v = m;
@@ -687,10 +681,9 @@ impl<'data> ArithmeticDecoder<'data> {
             let mut st = 3 * (k - 1);
 
             // EOB flag - only check if past previous EOB position
-            if k > kex
-                && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
-                    break;
-                }
+            if k > kex && self.state.decode(&mut self.ac_stats[tbl][st]) != 0 {
+                break;
+            }
 
             loop {
                 // Use zigzag order (position k)
