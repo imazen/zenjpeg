@@ -1029,6 +1029,77 @@ impl EncoderConfig {
         YCbCrPlanarEncoder::new(self.clone(), width, height)
     }
 
+    // === One-shot Convenience ===
+
+    /// Encode a complete image from rgb crate pixel types in one call.
+    ///
+    /// This is a convenience wrapper around `encode_from_rgb` + `push_packed` + `finish`.
+    /// For streaming or partial-image encoding, use [`encode_from_rgb`](Self::encode_from_rgb).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use rgb::RGB;
+    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+    ///
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    /// let jpeg = config.encode(&pixels, 1920, 1080)?;
+    /// ```
+    pub fn encode<P: super::byte_encoders::Pixel>(
+        &self,
+        pixels: &[P],
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
+        let mut enc = self.encode_from_rgb::<P>(width, height)?;
+        enc.push_packed(pixels, enough::Unstoppable)?;
+        enc.finish()
+    }
+
+    /// Encode a complete image into a caller-provided buffer.
+    ///
+    /// Like [`encode`](Self::encode) but writes into an existing `Vec<u8>` instead
+    /// of allocating a new one.
+    pub fn encode_into<P: super::byte_encoders::Pixel>(
+        &self,
+        pixels: &[P],
+        width: u32,
+        height: u32,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        let mut enc = self.encode_from_rgb::<P>(width, height)?;
+        enc.push_packed(pixels, enough::Unstoppable)?;
+        enc.finish_into(output)
+    }
+
+    /// Encode a complete image from raw byte data in one call.
+    ///
+    /// This is a convenience wrapper around `encode_from_bytes` + `push_packed` + `finish`.
+    pub fn encode_bytes(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<Vec<u8>> {
+        let mut enc = self.encode_from_bytes(width, height, layout)?;
+        enc.push_packed(data, enough::Unstoppable)?;
+        enc.finish()
+    }
+
+    /// Encode a complete image from raw byte data into a caller-provided buffer.
+    pub fn encode_bytes_into(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        let mut enc = self.encode_from_bytes(width, height, layout)?;
+        enc.push_packed(data, enough::Unstoppable)?;
+        enc.finish_into(output)
+    }
+
     // === Resource Estimation ===
 
     /// Estimate peak memory usage for encoding an image of the given dimensions.
