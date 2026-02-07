@@ -41,22 +41,23 @@ fn main() {
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decoding failed");
 
+    let pixels = decoded.pixels_u8().unwrap();
     println!(
         "Decoded {}x{} image with {} bytes",
         decoded.width,
         decoded.height,
-        decoded.data.len()
+        pixels.len()
     );
 
     // Verify dimensions match
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
-    assert_eq!(decoded.data.len(), (width * height * 3) as usize);
+    assert_eq!(pixels.len(), (width * height * 3) as usize);
 
     // Check pixel values are reasonable
     let mut max_diff = 0i32;
     for i in 0..input.len() {
-        let diff = (input[i] as i32 - decoded.data[i] as i32).abs();
+        let diff = (input[i] as i32 - pixels[i] as i32).abs();
         max_diff = max_diff.max(diff);
     }
     println!("Max pixel difference: {}", max_diff);

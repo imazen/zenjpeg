@@ -275,18 +275,12 @@ fn test_combination(
 
     // Decode to u8
     if let Ok(decoded_u8) = decoder.decode(&jpeg, Unstoppable) {
+        let pixels = decoded_u8.pixels_u8().unwrap();
         let unique = if is_gray {
             // For grayscale, the decoder outputs RGB, so take just R channel
-            count_unique_gray_u8(
-                &decoded_u8
-                    .data
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            )
+            count_unique_gray_u8(&pixels.iter().step_by(3).cloned().collect::<Vec<_>>())
         } else {
-            count_unique_rgb_u8(&decoded_u8.data)
+            count_unique_rgb_u8(pixels)
         };
         results.push(PrecisionResult {
             encode_format: encode_name,
@@ -299,19 +293,15 @@ fn test_combination(
 
     // Decode to f32
     if let Ok(decoded_f32) = decoder.decode_f32(&jpeg, Unstoppable) {
+        let f32_pixels = decoded_f32.pixels_f32().unwrap();
         // f32 at 8-bit precision (for comparison with u8)
         let unique_8bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32
-                    .data
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                &f32_pixels.iter().step_by(3).cloned().collect::<Vec<_>>(),
                 8,
             )
         } else {
-            count_unique_rgb_f32(&decoded_f32.data, 8)
+            count_unique_rgb_f32(f32_pixels, 8)
         };
         results.push(PrecisionResult {
             encode_format: encode_name,
@@ -324,16 +314,11 @@ fn test_combination(
         // f32 at 10-bit precision
         let unique_10bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32
-                    .data
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                &f32_pixels.iter().step_by(3).cloned().collect::<Vec<_>>(),
                 10,
             )
         } else {
-            count_unique_rgb_f32(&decoded_f32.data, 10)
+            count_unique_rgb_f32(f32_pixels, 10)
         };
         results.push(PrecisionResult {
             encode_format: encode_name,
@@ -346,16 +331,11 @@ fn test_combination(
         // f32 at 12-bit precision
         let unique_12bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32
-                    .data
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                &f32_pixels.iter().step_by(3).cloned().collect::<Vec<_>>(),
                 12,
             )
         } else {
-            count_unique_rgb_f32(&decoded_f32.data, 12)
+            count_unique_rgb_f32(f32_pixels, 12)
         };
         results.push(PrecisionResult {
             encode_format: encode_name,
@@ -368,16 +348,11 @@ fn test_combination(
         // f32 at 16-bit precision
         let unique_16bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32
-                    .data
-                    .iter()
-                    .step_by(3)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                &f32_pixels.iter().step_by(3).cloned().collect::<Vec<_>>(),
                 16,
             )
         } else {
-            count_unique_rgb_f32(&decoded_f32.data, 16)
+            count_unique_rgb_f32(f32_pixels, 16)
         };
         results.push(PrecisionResult {
             encode_format: encode_name,
@@ -388,7 +363,11 @@ fn test_combination(
         });
 
         // Convert to u16 and count
-        let data_u16 = decoded_f32.to_u16();
+        // TODO: to_u16 migration - DecodeResult doesn't have to_u16(), inline the conversion
+        let data_u16: Vec<u16> = f32_pixels
+            .iter()
+            .map(|&v| (v * 65535.0).round().clamp(0.0, 65535.0) as u16)
+            .collect();
         let unique_u16 = if is_gray {
             let gray: HashSet<u16> = data_u16.iter().step_by(3).cloned().collect();
             gray.len()
@@ -647,11 +626,11 @@ fn test_precision_improvement_summary() {
         .expect("f32 decode failed");
 
     let unique_input = count_unique_rgb_u8(&input);
-    let unique_u8 = count_unique_rgb_u8(&decoded_u8.data);
-    let unique_f32_8 = count_unique_rgb_f32(&decoded_f32.data, 8);
-    let unique_f32_10 = count_unique_rgb_f32(&decoded_f32.data, 10);
-    let unique_f32_12 = count_unique_rgb_f32(&decoded_f32.data, 12);
-    let unique_f32_16 = count_unique_rgb_f32(&decoded_f32.data, 16);
+    let unique_u8 = count_unique_rgb_u8(decoded_u8.pixels_u8().unwrap());
+    let unique_f32_8 = count_unique_rgb_f32(decoded_f32.pixels_f32().unwrap(), 8);
+    let unique_f32_10 = count_unique_rgb_f32(decoded_f32.pixels_f32().unwrap(), 10);
+    let unique_f32_12 = count_unique_rgb_f32(decoded_f32.pixels_f32().unwrap(), 12);
+    let unique_f32_16 = count_unique_rgb_f32(decoded_f32.pixels_f32().unwrap(), 16);
 
     println!("Input unique colors:     {:>6}", unique_input);
     println!("─────────────────────────────────");
@@ -735,8 +714,20 @@ fn test_10plus_bit_demonstration() {
         .expect("f32 decode failed");
 
     // For grayscale, decoder outputs RGB, so extract just one channel
-    let u8_gray: Vec<u8> = decoded_u8.data.iter().step_by(3).cloned().collect();
-    let f32_gray: Vec<f32> = decoded_f32.data.iter().step_by(3).cloned().collect();
+    let u8_gray: Vec<u8> = decoded_u8
+        .pixels_u8()
+        .unwrap()
+        .iter()
+        .step_by(3)
+        .cloned()
+        .collect();
+    let f32_gray: Vec<f32> = decoded_f32
+        .pixels_f32()
+        .unwrap()
+        .iter()
+        .step_by(3)
+        .cloned()
+        .collect();
 
     let unique_u8 = count_unique_gray_u8(&u8_gray);
     let unique_f32_8 = count_unique_gray_f32(&f32_gray, 8);

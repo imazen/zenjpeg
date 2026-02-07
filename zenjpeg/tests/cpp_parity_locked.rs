@@ -491,7 +491,12 @@ fn test_regression_s444_optimized() {
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
-        let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
+        let dssim = compute_dssim(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
 
         assert!(
             (dssim - expected_dssim).abs() < DSSIM_REGRESSION_TOLERANCE,
@@ -502,7 +507,12 @@ fn test_regression_s444_optimized() {
         );
 
         // Check Butteraugli regression (relative tolerance)
-        let bfly = compute_butteraugli(&rgb, &decoded.data, width as usize, height as usize);
+        let bfly = compute_butteraugli(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
         let bfly_diff_pct = (bfly - expected_bfly).abs() / expected_bfly;
         assert!(
             bfly_diff_pct < BUTTERAUGLI_REGRESSION_TOLERANCE,
@@ -545,7 +555,12 @@ fn test_regression_s444_fixed() {
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
-        let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
+        let dssim = compute_dssim(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
 
         assert!(
             (dssim - expected_dssim).abs() < DSSIM_REGRESSION_TOLERANCE,
@@ -556,7 +571,12 @@ fn test_regression_s444_fixed() {
         );
 
         // Check Butteraugli regression (relative tolerance)
-        let bfly = compute_butteraugli(&rgb, &decoded.data, width as usize, height as usize);
+        let bfly = compute_butteraugli(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
         let bfly_diff_pct = (bfly - expected_bfly).abs() / expected_bfly;
         assert!(
             bfly_diff_pct < BUTTERAUGLI_REGRESSION_TOLERANCE,
@@ -599,7 +619,12 @@ fn test_regression_s420() {
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
-        let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
+        let dssim = compute_dssim(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
 
         assert!(
             (dssim - expected_dssim).abs() < DSSIM_REGRESSION_TOLERANCE,
@@ -610,7 +635,12 @@ fn test_regression_s420() {
         );
 
         // Check Butteraugli regression (relative tolerance)
-        let bfly = compute_butteraugli(&rgb, &decoded.data, width as usize, height as usize);
+        let bfly = compute_butteraugli(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
         let bfly_diff_pct = (bfly - expected_bfly).abs() / expected_bfly;
         assert!(
             bfly_diff_pct < BUTTERAUGLI_REGRESSION_TOLERANCE,
@@ -653,7 +683,12 @@ fn test_regression_s422() {
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("Decoding failed");
-        let dssim = compute_dssim(&rgb, &decoded.data, width as usize, height as usize);
+        let dssim = compute_dssim(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
 
         assert!(
             (dssim - expected_dssim).abs() < DSSIM_REGRESSION_TOLERANCE,
@@ -664,7 +699,12 @@ fn test_regression_s422() {
         );
 
         // Check Butteraugli regression (relative tolerance)
-        let bfly = compute_butteraugli(&rgb, &decoded.data, width as usize, height as usize);
+        let bfly = compute_butteraugli(
+            &rgb,
+            decoded.pixels_u8().unwrap(),
+            width as usize,
+            height as usize,
+        );
         let bfly_diff_pct = (bfly - expected_bfly).abs() / expected_bfly;
         assert!(
             bfly_diff_pct < BUTTERAUGLI_REGRESSION_TOLERANCE,
@@ -714,7 +754,7 @@ fn print_current_values() {
                 .output_format(PixelFormat::Rgb)
                 .decode(&jpeg, Unstoppable)
                 .expect("Decoding failed");
-            let rgba_dec = rgb_to_rgba(&decoded.data);
+            let rgba_dec = rgb_to_rgba(decoded.pixels_u8().unwrap());
             let dec_img = dssim
                 .create_image_rgba(&rgba_dec, width as usize, height as usize)
                 .unwrap();
@@ -722,7 +762,7 @@ fn print_current_values() {
 
             let bfly = butteraugli::compute_butteraugli(
                 &rgb,
-                &decoded.data,
+                decoded.pixels_u8().unwrap(),
                 width as usize,
                 height as usize,
                 &bfly_params,

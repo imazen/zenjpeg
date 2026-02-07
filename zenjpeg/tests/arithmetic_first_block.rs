@@ -27,9 +27,9 @@ fn compare_first_block_pixels() {
         print!("  row {}: ", y);
         for x in 0..8 {
             let idx = y * stride + x * 3;
-            let r = decoded.data[idx];
-            let g = decoded.data[idx + 1];
-            let b = decoded.data[idx + 2];
+            let r = decoded.pixels_u8().unwrap()[idx];
+            let g = decoded.pixels_u8().unwrap()[idx + 1];
+            let b = decoded.pixels_u8().unwrap()[idx + 2];
             print!("({:3},{:3},{:3}) ", r, g, b);
         }
         println!();
@@ -77,7 +77,7 @@ fn compare_first_block_pixels() {
             for x in 0..8 {
                 let idx = y * stride + x * 3;
                 for c in 0..3 {
-                    our_avg[c] += decoded.data[idx + c] as u64;
+                    our_avg[c] += decoded.pixels_u8().unwrap()[idx + c] as u64;
                     ref_avg[c] += ref_rgb[idx + c] as u64;
                 }
             }

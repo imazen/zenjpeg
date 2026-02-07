@@ -58,7 +58,7 @@ fn test_baseline_roundtrip_consistency() {
         .expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
+    let jpeg2 = encode_rgb(width, height, decoded1.pixels_u8().unwrap(), &config);
 
     // Decode again
     let decoded2 = Decoder::new()
@@ -75,13 +75,14 @@ fn test_baseline_roundtrip_consistency() {
         .decode(&jpeg1, Unstoppable)
         .expect("decode same 2 failed");
     assert_eq!(
-        decode_same_1.data, decode_same_2.data,
+        decode_same_1.pixels_u8().unwrap(),
+        decode_same_2.pixels_u8().unwrap(),
         "Decoding same JPEG twice should produce identical pixels"
     );
 
     // After one roundtrip, quality should stabilize
     // The second roundtrip shouldn't introduce additional significant error
-    let max_diff = max_pixel_diff(&decoded1.data, &decoded2.data);
+    let max_diff = max_pixel_diff(decoded1.pixels_u8().unwrap(), decoded2.pixels_u8().unwrap());
     assert!(
         max_diff <= 10,
         "Roundtrip stability: max diff {} too high (expected <= 10)",
@@ -106,7 +107,7 @@ fn test_progressive_roundtrip_consistency() {
         .expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
+    let jpeg2 = encode_rgb(width, height, decoded1.pixels_u8().unwrap(), &config);
 
     // Decode again
     let decoded2 = Decoder::new()
@@ -114,7 +115,7 @@ fn test_progressive_roundtrip_consistency() {
         .expect("decode 2 failed");
 
     // After one roundtrip, quality should stabilize
-    let max_diff = max_pixel_diff(&decoded1.data, &decoded2.data);
+    let max_diff = max_pixel_diff(decoded1.pixels_u8().unwrap(), decoded2.pixels_u8().unwrap());
     assert!(
         max_diff <= 10,
         "Progressive roundtrip stability: max diff {} too high",
@@ -147,7 +148,7 @@ fn test_decoder_produces_correct_dimensions() {
             width, height
         );
         assert_eq!(
-            decoded.data.len(),
+            decoded.pixels_u8().unwrap().len(),
             width * height * 3,
             "Decoded data size mismatch"
         );
@@ -172,7 +173,7 @@ fn test_multiple_roundtrips_converge() {
         let decoded = Decoder::new()
             .decode(&jpeg, Unstoppable)
             .expect("decode failed");
-        let max_diff = max_pixel_diff(&current_pixels, &decoded.data);
+        let max_diff = max_pixel_diff(&current_pixels, decoded.pixels_u8().unwrap());
 
         // After first roundtrip, differences should not grow significantly
         if i > 0 {
@@ -186,7 +187,7 @@ fn test_multiple_roundtrips_converge() {
         }
 
         previous_diff = max_diff;
-        current_pixels = decoded.data;
+        current_pixels = decoded.into_pixels_u8().unwrap();
     }
 }
 
@@ -203,7 +204,7 @@ fn test_high_quality_roundtrip_low_error() {
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
-    let max_diff = max_pixel_diff(&rgb, &decoded.data);
+    let max_diff = max_pixel_diff(&rgb, decoded.pixels_u8().unwrap());
 
     // Q100 should have very low per-pixel error
     // JPEG is lossy, so some pixels will differ, but max difference should be small

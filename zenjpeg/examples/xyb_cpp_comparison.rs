@@ -143,7 +143,13 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
         .expect("decode jpeg");
 
     let params = ButteraugliParams::default();
-    match compute_butteraugli(orig_pixels, &decoded.data, width, height, &params) {
+    match compute_butteraugli(
+        orig_pixels,
+        decoded.pixels_u8().unwrap(),
+        width,
+        height,
+        &params,
+    ) {
         Ok(result) => result.score,
         Err(_) => 999.0,
     }

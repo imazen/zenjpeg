@@ -46,8 +46,8 @@ fn roundtrip_quality(
         .decode(&jpeg_data, Unstoppable)
         .expect("decode failed");
 
-    let rms = distance_rms(&img.pixels, &decoded.data);
-    let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
+    let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
+    let max_diff = max_pixel_diff(&img.pixels, decoded.pixels_u8().unwrap());
 
     (rms, max_diff, jpeg_data.len())
 }

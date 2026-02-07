@@ -193,7 +193,8 @@ fn test_decoded_image_has_extras_method() {
     let _extras_opt = decoded.extras();
 
     // The into_parts() method should work
-    let (data, w, h, fmt, extras) = decoded.into_parts();
+    let (data_u8, _data_f32, w, h, fmt, extras) = decoded.into_parts();
+    let data = data_u8.expect("u8 data should be present");
     assert_eq!(w, 32);
     assert_eq!(h, 32);
     assert!(!data.is_empty());

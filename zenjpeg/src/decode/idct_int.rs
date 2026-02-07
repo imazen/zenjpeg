@@ -1237,10 +1237,10 @@ pub fn idct_int_libjpeg_unclamped(
         let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
         let z4 = z4 * (-LJ_FIX_0_390180644) + z5;
 
-        let mut tmp0 = tmp0 + z1 + z3;
-        let mut tmp1 = tmp1 + z2 + z4;
-        let mut tmp2 = tmp2 + z2 + z3;
-        let mut tmp3 = tmp3 + z1 + z4;
+        let tmp0 = tmp0 + z1 + z3;
+        let tmp1 = tmp1 + z2 + z4;
+        let tmp2 = tmp2 + z2 + z3;
+        let tmp3 = tmp3 + z1 + z4;
 
         // Unclamped output: level shift (+128) but NO clamp to [0, 255]
         let out_base = row * stride;

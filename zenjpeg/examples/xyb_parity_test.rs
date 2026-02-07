@@ -102,7 +102,8 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
         .apply_icc(true)
         .decode(data, Unstoppable)
         .expect("decode")
-        .data
+        .into_pixels_u8()
+        .unwrap()
 }
 
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {

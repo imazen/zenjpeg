@@ -36,7 +36,10 @@ fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize
 /// Decode JPEG using zenjpeg decoder (works for YCbCr)
 fn decode_jpegli(data: &[u8]) -> Option<Vec<u8>> {
     let decoder = zenjpeg::decoder::Decoder::new().apply_icc(true);
-    decoder.decode(data, Unstoppable).ok().map(|r| r.data)
+    decoder
+        .decode(data, Unstoppable)
+        .ok()
+        .and_then(|r| r.into_pixels_u8())
 }
 
 /// Decode XYB JPEG using Python/Pillow with ICC conversion

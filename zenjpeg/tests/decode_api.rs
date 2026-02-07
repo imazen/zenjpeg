@@ -60,7 +60,7 @@ fn test_decode_basic() {
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
     assert_eq!(decoded.format, PixelFormat::Rgb);
-    assert_eq!(decoded.data.len(), 128 * 128 * 3);
+    assert_eq!(decoded.pixels_u8().unwrap().len(), 128 * 128 * 3);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_decode_grayscale() {
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
     // Grayscale decodes to RGB by default
-    assert!(decoded.data.len() >= 64 * 64);
+    assert!(decoded.pixels_u8().unwrap().len() >= 64 * 64);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn test_decode_various_qualities(quality: f32) {
 
     assert_eq!(decoded.width, 128);
     assert_eq!(decoded.height, 128);
-    assert_eq!(decoded.data.len(), 128 * 128 * 3);
+    assert_eq!(decoded.pixels_u8().unwrap().len(), 128 * 128 * 3);
 }
 
 // ============================================================================
@@ -360,7 +360,10 @@ fn test_decode_pixel_range() {
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     // Ensure there's actual data
-    assert!(!decoded.data.is_empty(), "Decoded data should not be empty");
+    assert!(
+        !decoded.pixels_u8().unwrap().is_empty(),
+        "Decoded data should not be empty"
+    );
 }
 
 // ============================================================================
@@ -377,7 +380,7 @@ fn test_decode_large_image() {
 
     assert_eq!(decoded.width, 1024);
     assert_eq!(decoded.height, 768);
-    assert_eq!(decoded.data.len(), 1024 * 768 * 3);
+    assert_eq!(decoded.pixels_u8().unwrap().len(), 1024 * 768 * 3);
 }
 
 // ============================================================================
@@ -394,7 +397,7 @@ fn test_decode_deterministic() {
     let decoded2 = decoder.decode(&jpeg, Unstoppable).expect("decode 2 failed");
 
     // Results should be identical
-    assert_eq!(decoded1.data, decoded2.data);
+    assert_eq!(decoded1.pixels_u8().unwrap(), decoded2.pixels_u8().unwrap());
 }
 
 // ============================================================================

@@ -48,15 +48,14 @@ struct DecodeResult {
 fn decode_zenjpeg(data: &[u8]) -> Option<DecodeResult> {
     use zenjpeg::decoder::Decoder;
     let img = Decoder::new().decode(data, Unstoppable).ok()?;
-    let channels = if img.data.len() == (img.width as usize * img.height as usize) {
-        1
-    } else {
-        3
-    };
+    let w = img.width as usize;
+    let h = img.height as usize;
+    let pixels = img.into_pixels_u8().unwrap();
+    let channels = if pixels.len() == (w * h) { 1 } else { 3 };
     Some(DecodeResult {
-        pixels: img.data,
-        width: img.width as usize,
-        height: img.height as usize,
+        pixels,
+        width: w,
+        height: h,
         channels,
     })
 }
@@ -68,15 +67,14 @@ fn decode_zenjpeg_libjpeg_compat(data: &[u8]) -> Option<DecodeResult> {
         .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
         .decode(data, Unstoppable)
         .ok()?;
-    let channels = if img.data.len() == (img.width as usize * img.height as usize) {
-        1
-    } else {
-        3
-    };
+    let w = img.width as usize;
+    let h = img.height as usize;
+    let pixels = img.into_pixels_u8().unwrap();
+    let channels = if pixels.len() == (w * h) { 1 } else { 3 };
     Some(DecodeResult {
-        pixels: img.data,
-        width: img.width as usize,
-        height: img.height as usize,
+        pixels,
+        width: w,
+        height: h,
         channels,
     })
 }
@@ -731,6 +729,7 @@ fn investigate_rst_diff() {
 
     let w = ljc.width as usize;
     let h = ljc.height as usize;
+    let ljc_data = ljc.into_pixels_u8().unwrap();
     assert_eq!(w, dj.width);
     assert_eq!(h, dj.height);
 
@@ -738,7 +737,7 @@ fn investigate_rst_diff() {
         "Image {}x{}, {} bytes vs {} bytes",
         w,
         h,
-        ljc.data.len(),
+        ljc_data.len(),
         dj.pixels.len()
     );
 
@@ -748,10 +747,10 @@ fn investigate_rst_diff() {
         for x in 0..w {
             for (c, ch_name) in [(0, "R"), (1, "G"), (2, "B")] {
                 let idx = (y * w + x) * 3 + c;
-                if idx >= ljc.data.len() || idx >= dj.pixels.len() {
+                if idx >= ljc_data.len() || idx >= dj.pixels.len() {
                     continue;
                 }
-                let z = ljc.data[idx];
+                let z = ljc_data[idx];
                 let d = dj.pixels[idx];
                 let diff = z as i16 - d as i16;
                 if diff.unsigned_abs() > 20 {
@@ -779,12 +778,12 @@ fn investigate_rst_diff() {
     for y in 0..h {
         for x in 0..w {
             let idx = (y * w + x) * 3;
-            if idx + 2 >= ljc.data.len() || idx + 2 >= dj.pixels.len() {
+            if idx + 2 >= ljc_data.len() || idx + 2 >= dj.pixels.len() {
                 continue;
             }
-            r_max = r_max.max((ljc.data[idx] as i16 - dj.pixels[idx] as i16).abs());
-            g_max = g_max.max((ljc.data[idx + 1] as i16 - dj.pixels[idx + 1] as i16).abs());
-            b_max = b_max.max((ljc.data[idx + 2] as i16 - dj.pixels[idx + 2] as i16).abs());
+            r_max = r_max.max((ljc_data[idx] as i16 - dj.pixels[idx] as i16).abs());
+            g_max = g_max.max((ljc_data[idx + 1] as i16 - dj.pixels[idx + 1] as i16).abs());
+            b_max = b_max.max((ljc_data[idx + 2] as i16 - dj.pixels[idx + 2] as i16).abs());
         }
     }
     eprintln!(

@@ -93,7 +93,7 @@ fn test_xyb_output_quality() {
     // Compute DSSIM
     let dssim = Dssim::new();
     let orig_rgba = rgb_to_rgba(&rgb);
-    let decoded_rgba = rgb_to_rgba(&decoded.data);
+    let decoded_rgba = rgb_to_rgba(decoded.pixels_u8().unwrap());
 
     let orig_img = dssim
         .create_image_rgba(&orig_rgba, width as usize, height as usize)

@@ -1681,12 +1681,13 @@ mod tests {
 
             // Check decoded data size matches
             let expected_size = width * height * 3;
+            let decoded_pixels = decoded_strip.pixels_u8().unwrap();
             assert_eq!(
-                decoded_strip.data.len(),
+                decoded_pixels.len(),
                 expected_size,
                 "strip data size mismatch at height {}: got {} expected {}",
                 height,
-                decoded_strip.data.len(),
+                decoded_pixels.len(),
                 expected_size
             );
 
@@ -1697,7 +1698,7 @@ mod tests {
             // tests/strip_edge_cpp_comparison.rs which uses corpus images.
             let mut sum_sq_err: u64 = 0;
             let mut max_diff: i32 = 0;
-            for (&orig, &dec) in rgb.iter().zip(decoded_strip.data.iter()) {
+            for (&orig, &dec) in rgb.iter().zip(decoded_pixels.iter()) {
                 let diff = (orig as i32 - dec as i32).abs();
                 sum_sq_err += (diff as u64) * (diff as u64);
                 if diff > max_diff {

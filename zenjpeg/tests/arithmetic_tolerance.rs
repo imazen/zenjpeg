@@ -39,21 +39,25 @@ fn arithmetic_decode_with_tolerance() {
     }
     let ref_rgb = &ppm[rgb_start..];
 
-    assert_eq!(decoded.data.len(), ref_rgb.len(), "size mismatch");
+    assert_eq!(
+        decoded.pixels_u8().unwrap().len(),
+        ref_rgb.len(),
+        "size mismatch"
+    );
 
     // Calculate statistics
     let mut diff_hist = [0usize; 256];
     let mut sum_abs_diff: u64 = 0;
     let mut sum_sq_diff: f64 = 0.0;
 
-    for (&ours, &reference) in decoded.data.iter().zip(ref_rgb.iter()) {
+    for (&ours, &reference) in decoded.pixels_u8().unwrap().iter().zip(ref_rgb.iter()) {
         let diff = (ours as i16 - reference as i16).abs() as u8;
         diff_hist[diff as usize] += 1;
         sum_abs_diff += diff as u64;
         sum_sq_diff += (diff as f64).powi(2);
     }
 
-    let n = decoded.data.len();
+    let n = decoded.pixels_u8().unwrap().len();
     let mae = sum_abs_diff as f64 / n as f64; // Mean Absolute Error
     let rmse = (sum_sq_diff / n as f64).sqrt(); // Root Mean Square Error
 

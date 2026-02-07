@@ -50,8 +50,8 @@ fn roundtrip_with_subsampling(
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
-    let rms = distance_rms(&img.pixels, &decoded.data);
-    let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
+    let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
+    let max_diff = max_pixel_diff(&img.pixels, decoded.pixels_u8().unwrap());
 
     (rms, max_diff, jpeg.len())
 }
@@ -134,7 +134,7 @@ fn test_decode_cpp_420() {
             "Decoded 4:2:0: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);
@@ -155,7 +155,7 @@ fn test_decode_cpp_422() {
             "Decoded 4:2:2: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);
@@ -176,7 +176,7 @@ fn test_decode_cpp_440() {
             "Decoded 4:4:0: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);
@@ -197,7 +197,7 @@ fn test_decode_cpp_444() {
             "Decoded 4:4:4: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);
@@ -222,7 +222,7 @@ fn test_decode_cpp_asymmetric() {
             "Decoded asymmetric: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);
@@ -243,7 +243,7 @@ fn test_decode_cpp_444_1x2() {
             "Decoded 4:4:4 1x2: {}x{}, {} bytes",
             decoded.width,
             decoded.height,
-            decoded.data.len()
+            decoded.pixels_u8().unwrap().len()
         );
 
         assert_eq!(decoded.width, 2268);

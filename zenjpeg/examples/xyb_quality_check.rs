@@ -71,9 +71,10 @@ fn main() {
         let mut max_diff = 0i16;
         let mut diff_count = 0;
         for (r, c) in rust_decoded_raw
-            .data
+            .pixels_u8()
+            .unwrap()
             .iter()
-            .zip(cpp_decoded_raw.data.iter())
+            .zip(cpp_decoded_raw.pixels_u8().unwrap().iter())
         {
             let d = (*r as i16 - *c as i16).abs();
             if d > 0 {
@@ -86,8 +87,8 @@ fn main() {
             "Raw XYB data (no ICC): max diff = {}, pixels different = {} / {} ({:.2}%)",
             max_diff,
             diff_count,
-            rust_decoded_raw.data.len(),
-            (diff_count as f64 / rust_decoded_raw.data.len() as f64) * 100.0
+            rust_decoded_raw.pixels_u8().unwrap().len(),
+            (diff_count as f64 / rust_decoded_raw.pixels_u8().unwrap().len() as f64) * 100.0
         );
 
         // Try decoding with libjpeg-turbo (doesn't understand XYB ICC, treats as regular JPEG)
@@ -121,7 +122,8 @@ fn main() {
 
         let rust_rgb = Rgb::new(
             rust_decoded
-                .data
+                .pixels_u8()
+                .unwrap()
                 .chunks(3)
                 .map(|c| {
                     [
@@ -140,7 +142,8 @@ fn main() {
 
         let cpp_rgb = Rgb::new(
             cpp_decoded
-                .data
+                .pixels_u8()
+                .unwrap()
                 .chunks(3)
                 .map(|c| {
                     [
@@ -167,12 +170,24 @@ fn main() {
 
         // Butteraugli (should be used for XYB but we're comparing raw data)
         let params = ButteraugliParams::default();
-        let rust_bfly = compute_butteraugli(rgb, &rust_decoded.data, width, height, &params)
-            .unwrap()
-            .score;
-        let cpp_bfly = compute_butteraugli(rgb, &cpp_decoded.data, width, height, &params)
-            .unwrap()
-            .score;
+        let rust_bfly = compute_butteraugli(
+            rgb,
+            &rust_decoded.pixels_u8().unwrap(),
+            width,
+            height,
+            &params,
+        )
+        .unwrap()
+        .score;
+        let cpp_bfly = compute_butteraugli(
+            rgb,
+            &cpp_decoded.pixels_u8().unwrap(),
+            width,
+            height,
+            &params,
+        )
+        .unwrap()
+        .score;
 
         println!("\nButteraugli (raw XYB treated as sRGB - NOT correct!):");
         println!("  Rust XYB: {:.3}", rust_bfly);

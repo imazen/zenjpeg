@@ -49,8 +49,8 @@ fn test_size(size: u32) {
     match decoder.decode(&jpeg, Unstoppable) {
         Ok(decoded) => {
             let mut max_err = 0i32;
-            for i in 0..pixels.len().min(decoded.data.len()) {
-                let err = (pixels[i] as i32 - decoded.data[i] as i32).abs();
+            for i in 0..pixels.len().min(decoded.pixels_u8().unwrap().len()) {
+                let err = (pixels[i] as i32 - decoded.pixels_u8().unwrap()[i] as i32).abs();
                 if err > max_err {
                     max_err = err;
                 }

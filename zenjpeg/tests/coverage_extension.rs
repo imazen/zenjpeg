@@ -323,7 +323,7 @@ mod decode_coverage {
         // Verify f32 values are approximately in [0, 1] range.
         // YCbCr→RGB matrix can produce values slightly outside [0, 1] — this is
         // intentional to preserve full precision (clamping destroys information).
-        for &val in decoded.data.iter() {
+        for &val in decoded.pixels_f32().unwrap().iter() {
             assert!(
                 (-0.05..=1.05).contains(&val),
                 "f32 value {} too far out of range",
@@ -345,7 +345,7 @@ mod decode_coverage {
             .expect("decode failed");
         assert_eq!(decoded.width, 64);
         // Grayscale decoded to RGB should have 3x the pixels
-        assert!(decoded.data.len() >= 64 * 64);
+        assert!(decoded.pixels_u8().unwrap().len() >= 64 * 64);
     }
 
     #[test]

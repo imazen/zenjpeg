@@ -160,11 +160,11 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
 
 /// Decode a gain map JPEG to GainMap struct.
 fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
-    let decoded = Decoder::new().decode(jpeg_data)?;
+    let decoded = Decoder::new().decode(jpeg_data, enough::Unstoppable)?;
 
     let width = decoded.width();
     let height = decoded.height();
-    let pixels = decoded.pixels().to_vec();
+    let pixels = decoded.pixels_u8().unwrap().to_vec();
 
     // Determine if single-channel or multi-channel based on decoded format
     // The decoder typically outputs RGB, so we take the R channel for grayscale

@@ -80,7 +80,7 @@ fn main() {
                     .apply_icc(true)
                     .decode(&jpeg, Unstoppable)
                     .expect("decode failed");
-                let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
+                let ssim2 = compute_ssim2(&rgb, decoded.pixels_u8().unwrap(), width, height);
                 let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                 if ssim2 < 85.0 {
                     all_pass = false;
@@ -129,7 +129,7 @@ fn main() {
                     .apply_icc(true)
                     .decode(&jpeg, Unstoppable)
                     .expect("decode failed");
-                let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
+                let ssim2 = compute_ssim2(&rgb, decoded.pixels_u8().unwrap(), width, height);
                 let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                 if ssim2 < 85.0 {
                     all_pass = false;
@@ -180,7 +180,7 @@ fn main() {
                     let decoded = zenjpeg::decoder::Decoder::new()
                         .decode(&jpeg, Unstoppable)
                         .expect("decode failed");
-                    let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
+                    let ssim2 = compute_ssim2(&rgb, decoded.pixels_u8().unwrap(), width, height);
                     let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                     if ssim2 < 85.0 {
                         all_pass = false;
