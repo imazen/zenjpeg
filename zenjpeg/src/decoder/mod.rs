@@ -48,7 +48,7 @@ pub use crate::decode::{
 };
 
 // === Types used in public structs ===
-pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};
+pub use crate::types::{ColorSpace, Dimensions, JpegMode, Limits, PixelFormat, Subsampling};
 
 // === ICC profile support ===
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]

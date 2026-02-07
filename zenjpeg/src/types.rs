@@ -577,6 +577,76 @@ impl Dimensions {
     }
 }
 
+/// Resource limits for encoding and decoding operations.
+///
+/// All fields are `Option<u64>` — `None` means no limit (unlimited).
+/// This struct provides consistent resource management across encoder and decoder.
+///
+/// # Defaults
+///
+/// By default, all limits are `None` (unlimited). Use the builder methods to set specific limits.
+///
+/// # Example
+///
+/// ```
+/// use zenjpeg::encoder::Limits;
+///
+/// let limits = Limits::default()
+///     .max_pixels(100_000_000)       // 100 megapixels
+///     .max_memory(512 * 1024 * 1024) // 512 MB
+///     .max_output(50 * 1024 * 1024); // 50 MB output
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Limits {
+    /// Maximum number of pixels (width * height). Prevents DoS from decompression bombs.
+    pub max_pixels: Option<u64>,
+    /// Maximum total memory allocation in bytes.
+    pub max_memory: Option<u64>,
+    /// Maximum output size in bytes (for encoding).
+    pub max_output: Option<u64>,
+}
+
+impl Limits {
+    /// Sets the maximum number of pixels allowed.
+    #[must_use]
+    pub fn max_pixels(mut self, pixels: u64) -> Self {
+        self.max_pixels = Some(pixels);
+        self
+    }
+
+    /// Sets the maximum total memory allocation in bytes.
+    #[must_use]
+    pub fn max_memory(mut self, bytes: u64) -> Self {
+        self.max_memory = Some(bytes);
+        self
+    }
+
+    /// Sets the maximum output size in bytes.
+    #[must_use]
+    pub fn max_output(mut self, bytes: u64) -> Self {
+        self.max_output = Some(bytes);
+        self
+    }
+
+    /// Returns the pixel limit, or `u64::MAX` if unlimited.
+    #[must_use]
+    pub fn effective_max_pixels(&self) -> u64 {
+        self.max_pixels.unwrap_or(u64::MAX)
+    }
+
+    /// Returns the memory limit, or `u64::MAX` if unlimited.
+    #[must_use]
+    pub fn effective_max_memory(&self) -> u64 {
+        self.max_memory.unwrap_or(u64::MAX)
+    }
+
+    /// Returns the output size limit, or `u64::MAX` if unlimited.
+    #[must_use]
+    pub fn effective_max_output(&self) -> u64 {
+        self.max_output.unwrap_or(u64::MAX)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
