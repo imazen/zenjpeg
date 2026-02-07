@@ -6,7 +6,6 @@
 //! Usage:
 //!   cargo run --release --example hybrid_parameter_sweep
 //!   cargo run --release --example hybrid_parameter_sweep -- /path/to/image.png
-use enough::Unstoppable;
 
 use std::env;
 use std::path::Path;

@@ -445,7 +445,7 @@ impl<'a> JpegParser<'a> {
         let idct_chroma_strip =
             |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64]| {
                 let info = &comp_infos[comp_idx];
-                let data_offset = 1 * c_strip_width; // skip context row 0
+                let data_offset = c_strip_width; // skip context row 0
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;

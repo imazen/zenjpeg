@@ -1227,7 +1227,7 @@ mod tests {
         );
         assert_slices_equal_u8(
             &scanline_pixels,
-            &decoded.pixels_u8().unwrap(),
+            decoded.pixels_u8().unwrap(),
             "test_scanline_reader_rgb8",
         );
     }
@@ -1278,7 +1278,7 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_slices_equal_u8(
             &scanline_pixels,
-            &decoded.pixels_u8().unwrap(),
+            decoded.pixels_u8().unwrap(),
             "test_scanline_reader_partial_reads",
         );
     }
@@ -1553,7 +1553,7 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_slices_equal_u8(
             &scanline_pixels,
-            &decoded.pixels_u8().unwrap(),
+            decoded.pixels_u8().unwrap(),
             "test_scanline_reader_non_mcu_aligned",
         );
     }
@@ -1795,7 +1795,7 @@ mod tests {
         );
 
         let (max_diff, diff_count, _) =
-            compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
+            compare_u8_slices(&scanline_pixels, decoded.pixels_u8().unwrap());
         assert!(
             max_diff <= 2,
             "grayscale scanline reader max_diff {} > 2 (diff_count: {})",
@@ -1847,7 +1847,7 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        let (max_diff, _, _) = compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
+        let (max_diff, _, _) = compare_u8_slices(&scanline_pixels, decoded.pixels_u8().unwrap());
         assert!(
             max_diff <= 2,
             "grayscale non-MCU-aligned max_diff {} > 2",
@@ -2017,7 +2017,7 @@ mod tests {
             .decode(&progressive_jpeg, enough::Unstoppable)
             .expect("decode failed");
         let (max_diff, diff_count, _) =
-            compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
+            compare_u8_slices(&scanline_pixels, decoded.pixels_u8().unwrap());
 
         // Should be identical (same decode path for progressive)
         assert_eq!(

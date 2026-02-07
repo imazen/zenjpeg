@@ -3,7 +3,6 @@
 //! Run with:
 //!   heaptrack cargo run --release --example heaptrack_encode -- baseline
 //!   heaptrack cargo run --release --example heaptrack_encode -- progressive
-use enough::Unstoppable;
 
 use std::env;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};

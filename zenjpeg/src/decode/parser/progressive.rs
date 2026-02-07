@@ -178,11 +178,10 @@ impl<'a> JpegParser<'a> {
 
                 for block_idx in 0..total_blocks {
                     // Check for cancellation periodically (every 256 blocks)
-                    if block_idx & 0xFF == 0 {
-                        if stop.should_stop() {
+                    if block_idx & 0xFF == 0
+                        && stop.should_stop() {
                             return Err(Error::cancelled());
                         }
-                    }
 
                     // Check for restart marker
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -326,11 +325,10 @@ impl<'a> JpegParser<'a> {
 
             for block_idx in 0..total_blocks {
                 // Check for cancellation periodically (every 256 blocks)
-                if block_idx & 0xFF == 0 {
-                    if stop.should_stop() {
+                if block_idx & 0xFF == 0
+                    && stop.should_stop() {
                         return Err(Error::cancelled());
                     }
-                }
 
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -399,7 +397,6 @@ impl<'a> JpegParser<'a> {
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
-        drop(decoder);
 
         // Emit warning for progressive scan truncation (or error in Strict mode)
         if had_progressive_truncation {

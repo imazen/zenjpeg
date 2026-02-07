@@ -493,7 +493,7 @@ fn output_target_srgb_f32_returns_f32() {
     let pixels = result.pixels_f32().unwrap();
     for &v in pixels {
         assert!(
-            v >= -0.1 && v <= 1.1,
+            (-0.1..=1.1).contains(&v),
             "sRGB f32 value {v} out of expected range"
         );
     }
@@ -600,8 +600,8 @@ fn srgb_f32_preserves_unclamped_ringing() {
     assert_eq!(u8_px.len(), f32_px.len());
 
     // Check that Srgb8 clamps but SrgbF32 may not
-    let u8_has_zero = u8_px.iter().any(|&v| v == 0);
-    let u8_has_255 = u8_px.iter().any(|&v| v == 255);
+    let u8_has_zero = u8_px.contains(&0);
+    let u8_has_255 = u8_px.contains(&255);
     let f32_has_negative = f32_px.iter().any(|&v| v < 0.0);
     let f32_has_over_one = f32_px.iter().any(|&v| v > 1.0);
 
@@ -616,7 +616,7 @@ fn srgb_f32_preserves_unclamped_ringing() {
     // We just verify the f32 values are reasonable.
     for &v in f32_px {
         assert!(
-            v >= -1.0 && v <= 2.0,
+            (-1.0..=2.0).contains(&v),
             "f32 value {v} unreasonably out of range"
         );
     }

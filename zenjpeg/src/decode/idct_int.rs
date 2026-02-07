@@ -197,10 +197,10 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
         let z4 = tmp1 + tmp3;
         let z5 = (z3 + z4) * LJ_FIX_1_175875602;
 
-        tmp0 = tmp0 * LJ_FIX_0_298631336;
-        tmp1 = tmp1 * LJ_FIX_2_053119869;
-        tmp2 = tmp2 * LJ_FIX_3_072711026;
-        tmp3 = tmp3 * LJ_FIX_1_501321110;
+        tmp0 *= LJ_FIX_0_298631336;
+        tmp1 *= LJ_FIX_2_053119869;
+        tmp2 *= LJ_FIX_3_072711026;
+        tmp3 *= LJ_FIX_1_501321110;
         let z1 = z1 * (-LJ_FIX_0_899976223);
         let z2 = z2 * (-LJ_FIX_2_562915447);
         let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
@@ -272,10 +272,10 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
         let z4 = tmp1 + tmp3;
         let z5 = (z3 + z4) * LJ_FIX_1_175875602;
 
-        tmp0 = tmp0 * LJ_FIX_0_298631336;
-        tmp1 = tmp1 * LJ_FIX_2_053119869;
-        tmp2 = tmp2 * LJ_FIX_3_072711026;
-        tmp3 = tmp3 * LJ_FIX_1_501321110;
+        tmp0 *= LJ_FIX_0_298631336;
+        tmp1 *= LJ_FIX_2_053119869;
+        tmp2 *= LJ_FIX_3_072711026;
+        tmp3 *= LJ_FIX_1_501321110;
         let z1 = z1 * (-LJ_FIX_0_899976223);
         let z2 = z2 * (-LJ_FIX_2_562915447);
         let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
@@ -1170,7 +1170,7 @@ pub fn idct_int_libjpeg_unclamped(
 
         workspace[col] = descale(tmp10 + tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
         workspace[7 * 8 + col] = descale(tmp10 - tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
-        workspace[1 * 8 + col] = descale(tmp11 + tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[8 + col] = descale(tmp11 + tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
         workspace[6 * 8 + col] = descale(tmp11 - tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
         workspace[2 * 8 + col] = descale(tmp12 + tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
         workspace[5 * 8 + col] = descale(tmp12 - tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);

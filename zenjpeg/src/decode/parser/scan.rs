@@ -378,12 +378,10 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Extract warning flags before dropping decoder
-        // (decoder holds immutable refs to self.dc_tables/ac_tables)
+        // Extract warning flags (decoder borrows self.dc_tables/ac_tables)
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
-        drop(decoder);
 
         // Emit warnings for any issues detected during decode
         let total_mcus = (mcu_rows * mcu_cols) as u32;
@@ -652,11 +650,10 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Extract warning flags before dropping decoder
+        // Extract warning flags (decoder borrows self tables)
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
         self.position += decoder.position();
-        drop(decoder);
 
         // Emit truncation warning (or error in Strict mode)
         let total_mcus = (mcu_rows * mcu_cols) as u32;

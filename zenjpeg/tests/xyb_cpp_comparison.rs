@@ -1,7 +1,6 @@
 //! Test XYB mode output against C++ jpegli reference.
 #![cfg(feature = "ffi-tests")]
 
-use enough::Unstoppable;
 use zenjpeg::encoder::XybSubsampling;
 
 use std::fs;

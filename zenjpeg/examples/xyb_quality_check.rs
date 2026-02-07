@@ -172,7 +172,7 @@ fn main() {
         let params = ButteraugliParams::default();
         let rust_bfly = compute_butteraugli(
             rgb,
-            &rust_decoded.pixels_u8().unwrap(),
+            rust_decoded.pixels_u8().unwrap(),
             width,
             height,
             &params,
@@ -181,7 +181,7 @@ fn main() {
         .score;
         let cpp_bfly = compute_butteraugli(
             rgb,
-            &cpp_decoded.pixels_u8().unwrap(),
+            cpp_decoded.pixels_u8().unwrap(),
             width,
             height,
             &params,

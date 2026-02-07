@@ -790,43 +790,6 @@ impl DecodeConfig {
         })
     }
 
-    /// Creates a streaming reader for UltraHDR JPEGs.
-    ///
-    /// This allows decoding UltraHDR images row-by-row with configurable output modes:
-    /// - **SDR-only**: Fastest decode, ignores gain map
-    /// - **HDR**: Applies gain map to reconstruct HDR output
-    /// - **SDR+HDR**: Dual output for preview + processing workflows
-    /// - **SDR+GainMap**: For editing workflows that preserve gain maps
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::decode::{Decoder, UltraHdrReaderConfig, UltraHdrMode};
-    ///
-    /// let config = UltraHdrReaderConfig::new()
-    ///     .mode(UltraHdrMode::Hdr)
-    ///     .display_boost(4.0);
-    ///
-    /// let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
-    ///
-    /// while !reader.is_finished() {
-    ///     let rows = reader.read_rows(16, None, Some(&mut hdr_buf), None)?;
-    ///     // Process HDR rows...
-    /// }
-    /// ```
-    ///
-    /// # Memory Efficiency
-    ///
-    /// For a 4K image (3840×2160):
-    /// - SdrOnly: ~500 KB peak
-    /// - Hdr (Full): ~1 MB peak
-    /// - Hdr (Streaming): ~515 KB peak
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The JPEG cannot be parsed
-    /// - The image is not a baseline JPEG
     /// Extract gain map from UltraHDR image if present.
     ///
     /// Called during `decode()` when `gain_map != Discard`.
@@ -865,6 +828,43 @@ impl DecodeConfig {
         }))
     }
 
+    /// Creates a streaming reader for UltraHDR JPEGs.
+    ///
+    /// This allows decoding UltraHDR images row-by-row with configurable output modes:
+    /// - **SDR-only**: Fastest decode, ignores gain map
+    /// - **HDR**: Applies gain map to reconstruct HDR output
+    /// - **SDR+HDR**: Dual output for preview + processing workflows
+    /// - **SDR+GainMap**: For editing workflows that preserve gain maps
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, UltraHdrReaderConfig, UltraHdrMode};
+    ///
+    /// let config = UltraHdrReaderConfig::new()
+    ///     .mode(UltraHdrMode::Hdr)
+    ///     .display_boost(4.0);
+    ///
+    /// let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
+    ///
+    /// while !reader.is_finished() {
+    ///     let rows = reader.read_rows(16, None, Some(&mut hdr_buf), None)?;
+    ///     // Process HDR rows...
+    /// }
+    /// ```
+    ///
+    /// # Memory Efficiency
+    ///
+    /// For a 4K image (3840x2160):
+    /// - SdrOnly: ~500 KB peak
+    /// - Hdr (Full): ~1 MB peak
+    /// - Hdr (Streaming): ~515 KB peak
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The JPEG cannot be parsed
+    /// - The image is not a baseline JPEG
     /// - The image is grayscale
     #[cfg(feature = "ultrahdr")]
     pub fn ultrahdr_reader<'a>(
