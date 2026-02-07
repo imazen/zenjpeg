@@ -214,6 +214,21 @@ impl DecodeConfig {
         self
     }
 
+    /// Sets resource limits from a [`Limits`] struct.
+    ///
+    /// This applies `max_pixels` and `max_memory` from the `Limits` struct.
+    /// `None` values in `Limits` are treated as unlimited (0).
+    #[must_use]
+    pub fn limits(mut self, limits: crate::types::Limits) -> Self {
+        if let Some(pixels) = limits.max_pixels {
+            self.max_pixels = pixels;
+        }
+        if let Some(memory) = limits.max_memory {
+            self.max_memory = memory as usize;
+        }
+        self
+    }
+
     /// Configure what metadata and secondary images to preserve during decode.
     ///
     /// By default, most metadata (EXIF, XMP, ICC, IPTC) and gain maps are preserved.
