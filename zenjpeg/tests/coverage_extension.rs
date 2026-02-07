@@ -9,7 +9,7 @@ mod test_utils;
 
 use test_utils::{generate_gradient_d, generate_noise};
 use zenjpeg::{
-    decoder::{ChromaUpsampling, ColorSpace, Decoder, DecoderConfig, Dimensions},
+    decoder::{ChromaUpsampling, ColorSpace, DecodeConfig, Decoder, Dimensions},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
 
@@ -355,12 +355,12 @@ mod decode_coverage {
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
         // Test with custom memory limits
-        let decode_config = DecoderConfig {
+        let decoder = DecodeConfig {
             max_pixels: 10_000_000,
             max_memory: 500 * 1024 * 1024,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(decode_config);
+
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 128);
     }
@@ -371,11 +371,11 @@ mod decode_coverage {
         let config = EncoderConfig::ycbcr(30.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
-        let decode_config = DecoderConfig {
+        let decoder = DecodeConfig {
             block_smoothing: true,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(decode_config);
+
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 64);
     }
@@ -386,11 +386,11 @@ mod decode_coverage {
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
-        let decode_config = DecoderConfig {
+        let decoder = DecodeConfig {
             chroma_upsampling: ChromaUpsampling::Triangle,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(decode_config);
+
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 128);
     }
@@ -402,11 +402,11 @@ mod decode_coverage {
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         // Decode with ICC application (requires cms feature)
-        let decode_config = DecoderConfig {
+        let decoder = DecodeConfig {
             apply_icc: true,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(decode_config);
+
         let decoded = decoder
             .decode(&jpeg, Unstoppable)
             .expect("XYB decode failed");
@@ -805,12 +805,12 @@ mod alloc_coverage {
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         // Test with very strict limits (but still enough for this image)
-        let decode_config = DecoderConfig {
+        let decoder = DecodeConfig {
             max_pixels: 100_000,
             max_memory: 10 * 1024 * 1024,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(decode_config);
+
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 64);
     }

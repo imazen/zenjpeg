@@ -7,8 +7,11 @@
 //!
 //! Both the scanline decoder and buffered decoder share this code path.
 
-use super::config::ChromaUpsampling;
-use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
+use super::config::{ChromaUpsampling, OutputTarget};
+use super::idct_int::{
+    idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
+    idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
+};
 use super::upsample::{
     upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
     upsample_h1v2_i16_nearest_strided, upsample_h2v1_i16_fancy_strided,
@@ -78,6 +81,7 @@ pub(super) struct StripProcessor {
 
     // Config
     pub chroma_upsampling: ChromaUpsampling,
+    pub output_target: OutputTarget,
 }
 
 impl StripProcessor {
@@ -107,6 +111,7 @@ impl StripProcessor {
             has_prev_context: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling: ChromaUpsampling::default(),
+            output_target: OutputTarget::default(),
         }
     }
 
@@ -117,6 +122,7 @@ impl StripProcessor {
         h_samp: [u8; 3],
         v_samp: [u8; 3],
         chroma_upsampling: ChromaUpsampling,
+        output_target: OutputTarget,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -216,6 +222,7 @@ impl StripProcessor {
             has_prev_context: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
+            output_target,
         })
     }
 
@@ -262,17 +269,34 @@ impl StripProcessor {
             }
         };
 
+        let unclamped = self.output_target.needs_unclamped_idct();
+
         if coeff_count <= 1 {
             let dc = coeffs[0] as i32 * quant[0] as i32;
-            idct_int_dc_only(dc, strip, stride);
+            if unclamped {
+                idct_int_dc_only_unclamped(dc, strip, stride);
+            } else {
+                idct_int_dc_only(dc, strip, stride);
+            }
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
-            match self.chroma_upsampling {
-                ChromaUpsampling::LibjpegCompat => {
+            match (unclamped, self.chroma_upsampling) {
+                (false, ChromaUpsampling::LibjpegCompat) => {
                     idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
-                _ => {
+                (false, _) => {
                     idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                }
+                (true, ChromaUpsampling::LibjpegCompat) => {
+                    idct_int_tiered_libjpeg_unclamped(
+                        &mut self.dequant_buf,
+                        strip,
+                        stride,
+                        coeff_count,
+                    );
+                }
+                (true, _) => {
+                    idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
             }
         }

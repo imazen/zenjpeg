@@ -112,6 +112,7 @@ impl<'a> ScanlineReader<'a> {
     pub(super) fn from_scan_data(
         scan: super::parser::ParsedScanData<'a>,
         chroma_upsampling: super::ChromaUpsampling,
+        output_target: super::OutputTarget,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
             data,
@@ -131,7 +132,14 @@ impl<'a> ScanlineReader<'a> {
             is_rgb,
         } = scan;
 
-        let strip = StripProcessor::new(width, num_components, h_samp, v_samp, chroma_upsampling)?;
+        let strip = StripProcessor::new(
+            width,
+            num_components,
+            h_samp,
+            v_samp,
+            chroma_upsampling,
+            output_target,
+        )?;
 
         Ok(Self {
             data,

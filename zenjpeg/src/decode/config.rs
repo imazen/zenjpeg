@@ -496,14 +496,8 @@ impl core::fmt::Debug for DecodeResult {
             .field("height", &self.height)
             .field("format", &self.format)
             .field("output_target", &self.output_target)
-            .field(
-                "pixels_u8_len",
-                &self.pixels_u8.as_ref().map(|v| v.len()),
-            )
-            .field(
-                "pixels_f32_len",
-                &self.pixels_f32.as_ref().map(|v| v.len()),
-            )
+            .field("pixels_u8_len", &self.pixels_u8.as_ref().map(|v| v.len()))
+            .field("pixels_f32_len", &self.pixels_f32.as_ref().map(|v| v.len()))
             .field("has_gain_map", &self.gain_map.is_some())
             .field("has_extras", &self.extras.is_some())
             .finish()

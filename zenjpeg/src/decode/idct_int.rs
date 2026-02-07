@@ -874,7 +874,7 @@ mod wide_simd {
     ///
     /// This is the core IDCT computation, called twice (columns then rows).
     #[inline(always)]
-    fn idct_pass(rows: &mut [i32x8; 8], scale_bits: i32x8, shift: i32) {
+    pub(super) fn idct_pass(rows: &mut [i32x8; 8], scale_bits: i32x8, shift: i32) {
         // Even part (rows 0, 2, 4, 6)
         let p1 = (rows[2] + rows[6]) * i32x8::splat(C2217);
         let t2 = p1 + rows[6] * i32x8::splat(CN7567);
@@ -1039,6 +1039,252 @@ pub fn pixels_i16_to_f32_centered(pixels: &[i16; 64]) -> [f32; 64] {
         out[i] = p as f32 - 128.0;
     }
     out
+}
+
+// =============================================================================
+// Unclamped IDCT variants (for f32 output targets)
+//
+// These skip the [0, 255] clamping at the end, preserving ringing outside
+// the nominal range. The level shift (+128) is still applied. Values
+// typically land in [-30, 285] which is safe for all downstream consumers
+// (upsampling uses i32 intermediates, YCbCr→RGB clamps at output).
+// =============================================================================
+
+/// Unclamped DC-only IDCT. Level-shifted but not clamped to [0, 255].
+#[inline]
+pub fn idct_int_dc_only_unclamped(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
+    let coeff = wa(wa(dc_coeff, 4), 1024).wrapping_shr(3) as i16;
+
+    let mut out = out_vector;
+    out[..8].fill(coeff);
+    for _ in 0..7 {
+        out = &mut out[stride..];
+        out[..8].fill(coeff);
+    }
+}
+
+/// Unclamped wide SIMD IDCT.
+fn idct_int_wide_unclamped(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
+    use wide::i32x8;
+
+    let mut rows: [i32x8; 8] = [
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap()),
+        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap()),
+    ];
+
+    wide_simd::idct_pass(&mut rows, i32x8::splat(512), 10);
+    rows = i32x8::transpose(rows);
+    wide_simd::idct_pass(&mut rows, i32x8::splat(SCALE_BITS), 17);
+    rows = i32x8::transpose(rows);
+
+    // Store WITHOUT clamping
+    let mut out_pos = 0;
+    for row in &rows {
+        let arr = row.to_array();
+        for (j, &val) in arr.iter().enumerate() {
+            out_vector[out_pos + j] = val as i16;
+        }
+        out_pos += stride;
+    }
+}
+
+/// Unclamped libjpeg-compatible IDCT.
+pub fn idct_int_libjpeg_unclamped(
+    in_vector: &mut [i32; 64],
+    out_vector: &mut [i16],
+    stride: usize,
+) {
+    // Same butterfly as idct_int_libjpeg, but without clamping.
+    // We reuse the column pass (which writes to workspace), then do the row pass
+    // with unclamped output.
+    let mut workspace = [0i32; 64];
+
+    // Column pass (same as clamped version)
+    for col in 0..8 {
+        let base = col;
+
+        // DC-only shortcut
+        if in_vector[base + 8] == 0
+            && in_vector[base + 16] == 0
+            && in_vector[base + 24] == 0
+            && in_vector[base + 32] == 0
+            && in_vector[base + 40] == 0
+            && in_vector[base + 48] == 0
+            && in_vector[base + 56] == 0
+        {
+            let dcval = in_vector[base] << LJ_PASS1_BITS;
+            for r in 0..8 {
+                workspace[r * 8 + col] = dcval;
+            }
+            continue;
+        }
+
+        let z2 = in_vector[base + 16];
+        let z3 = in_vector[base + 48];
+
+        let z1 = (z2 + z3) * LJ_FIX_0_541196100;
+        let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
+        let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
+
+        let z2 = in_vector[base];
+        let z3 = in_vector[base + 32];
+
+        let tmp0 = (z2 + z3) << LJ_CONST_BITS;
+        let tmp1 = (z2 - z3) << LJ_CONST_BITS;
+
+        let tmp10 = tmp0 + tmp3;
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        let tmp0 = in_vector[base + 56];
+        let tmp1 = in_vector[base + 40];
+        let tmp2 = in_vector[base + 24];
+        let tmp3 = in_vector[base + 8];
+
+        let z1 = tmp0 + tmp3;
+        let z2 = tmp1 + tmp2;
+        let z3 = tmp0 + tmp2;
+        let z4 = tmp1 + tmp3;
+        let z5 = (z3 + z4) * LJ_FIX_1_175875602;
+
+        let tmp0 = tmp0 * LJ_FIX_0_298631336;
+        let tmp1 = tmp1 * LJ_FIX_2_053119869;
+        let tmp2 = tmp2 * LJ_FIX_3_072711026;
+        let tmp3 = tmp3 * LJ_FIX_1_501321110;
+        let z1 = z1 * (-LJ_FIX_0_899976223);
+        let z2 = z2 * (-LJ_FIX_2_562915447);
+        let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
+        let z4 = z4 * (-LJ_FIX_0_390180644) + z5;
+
+        let tmp0 = tmp0 + z1 + z3;
+        let tmp1 = tmp1 + z2 + z4;
+        let tmp2 = tmp2 + z2 + z3;
+        let tmp3 = tmp3 + z1 + z4;
+
+        workspace[col] = descale(tmp10 + tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[7 * 8 + col] = descale(tmp10 - tmp3, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[1 * 8 + col] = descale(tmp11 + tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[6 * 8 + col] = descale(tmp11 - tmp2, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[2 * 8 + col] = descale(tmp12 + tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[5 * 8 + col] = descale(tmp12 - tmp1, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[3 * 8 + col] = descale(tmp13 + tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
+        workspace[4 * 8 + col] = descale(tmp13 - tmp0, LJ_CONST_BITS - LJ_PASS1_BITS);
+    }
+
+    // Row pass (unclamped output)
+    let total_shift = LJ_CONST_BITS + LJ_PASS1_BITS + 3;
+
+    for row in 0..8 {
+        let base = row * 8;
+
+        // DC-only shortcut
+        if workspace[base + 1] == 0
+            && workspace[base + 2] == 0
+            && workspace[base + 3] == 0
+            && workspace[base + 4] == 0
+            && workspace[base + 5] == 0
+            && workspace[base + 6] == 0
+            && workspace[base + 7] == 0
+        {
+            let dcval = (descale(workspace[base], LJ_PASS1_BITS + 3) + 128) as i16;
+            let out_base = row * stride;
+            out_vector[out_base..out_base + 8].fill(dcval);
+            continue;
+        }
+
+        let z2 = workspace[base + 2];
+        let z3 = workspace[base + 6];
+
+        let z1 = (z2 + z3) * LJ_FIX_0_541196100;
+        let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
+        let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
+
+        let z2 = workspace[base];
+        let z3 = workspace[base + 4];
+
+        let tmp0 = (z2 + z3) << LJ_CONST_BITS;
+        let tmp1 = (z2 - z3) << LJ_CONST_BITS;
+
+        let tmp10 = tmp0 + tmp3;
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        let tmp0 = workspace[base + 7];
+        let tmp1 = workspace[base + 5];
+        let tmp2 = workspace[base + 3];
+        let tmp3 = workspace[base + 1];
+
+        let z1 = tmp0 + tmp3;
+        let z2 = tmp1 + tmp2;
+        let z3 = tmp0 + tmp2;
+        let z4 = tmp1 + tmp3;
+        let z5 = (z3 + z4) * LJ_FIX_1_175875602;
+
+        let tmp0 = tmp0 * LJ_FIX_0_298631336;
+        let tmp1 = tmp1 * LJ_FIX_2_053119869;
+        let tmp2 = tmp2 * LJ_FIX_3_072711026;
+        let tmp3 = tmp3 * LJ_FIX_1_501321110;
+        let z1 = z1 * (-LJ_FIX_0_899976223);
+        let z2 = z2 * (-LJ_FIX_2_562915447);
+        let z3 = z3 * (-LJ_FIX_1_961570560) + z5;
+        let z4 = z4 * (-LJ_FIX_0_390180644) + z5;
+
+        let mut tmp0 = tmp0 + z1 + z3;
+        let mut tmp1 = tmp1 + z2 + z4;
+        let mut tmp2 = tmp2 + z2 + z3;
+        let mut tmp3 = tmp3 + z1 + z4;
+
+        // Unclamped output: level shift (+128) but NO clamp to [0, 255]
+        let out_base = row * stride;
+        out_vector[out_base] = (descale(tmp10 + tmp3, total_shift) + 128) as i16;
+        out_vector[out_base + 7] = (descale(tmp10 - tmp3, total_shift) + 128) as i16;
+        out_vector[out_base + 1] = (descale(tmp11 + tmp2, total_shift) + 128) as i16;
+        out_vector[out_base + 6] = (descale(tmp11 - tmp2, total_shift) + 128) as i16;
+        out_vector[out_base + 2] = (descale(tmp12 + tmp1, total_shift) + 128) as i16;
+        out_vector[out_base + 5] = (descale(tmp12 - tmp1, total_shift) + 128) as i16;
+        out_vector[out_base + 3] = (descale(tmp13 + tmp0, total_shift) + 128) as i16;
+        out_vector[out_base + 4] = (descale(tmp13 - tmp0, total_shift) + 128) as i16;
+    }
+}
+
+/// Unclamped tiered IDCT dispatch (default upsampling mode).
+pub fn idct_int_tiered_unclamped(
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+    coeff_count: u8,
+) {
+    if coeff_count <= 1 {
+        idct_int_dc_only_unclamped(coeffs[0], output, stride);
+    } else {
+        // AVX2 path outputs clamped values via pack_store macro.
+        // For unclamped, use the wide SIMD path which we can easily modify.
+        // The performance difference is minimal since unclamped is only used
+        // for f32 output paths where IDCT is not the bottleneck.
+        idct_int_wide_unclamped(coeffs, output, stride);
+    }
+}
+
+/// Unclamped libjpeg-compatible tiered IDCT dispatch.
+pub fn idct_int_tiered_libjpeg_unclamped(
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+    coeff_count: u8,
+) {
+    if coeff_count <= 1 {
+        idct_int_dc_only_unclamped(coeffs[0], output, stride);
+    } else {
+        idct_int_libjpeg_unclamped(coeffs, output, stride);
+    }
 }
 
 #[cfg(test)]
