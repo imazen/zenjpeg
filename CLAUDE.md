@@ -618,6 +618,19 @@ sensitivity tables, and preset baselines.
    - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
    - Verified: `cargo run --release -p zenjpeg --example knobs_vs_jpegli --features optimized-tables`
 
+3. **Parallel feature non-deterministic output (2026-02-06)** - `locked_values` test fails
+   with `--features parallel` because the parallel encoding path produces slightly different
+   output due to threading non-determinism. The locked hashes are generated with default
+   (sequential) features. This is expected behavior for parallel encoding, but the test
+   should either be skipped with parallel or have separate locked values.
+   - Impact: `cargo test --release --all-features --test locked_values` fails
+   - Workaround: Run without `parallel` feature, or skip the test
+
+4. **Grayscale scanline reader panic (FIXED 2026-02-06)** - Streaming scanline reader methods
+   (`read_rows_rgb8`, `read_rows_rgbx8`, `read_rows_rgba_f32`, `read_rows_ycbcr_planes`)
+   panicked on grayscale (1-component) images because they called `row_planes()` which
+   requires cb/cr buffers that are empty for grayscale. Fixed: commit be24fac.
+
 ### Fixed Bugs (historical reference)
 
 See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, progressive decoder small images, etc.).
@@ -1049,7 +1062,8 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Add one-shot `request.encode()`/`encode_into()`/`encode_to()` convenience
 - [ ] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
 - [ ] `encode_to()`/`finish_to()` std-only
-- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
-- [ ] Rename `Error` → `EncodeError`
+- [x] Add `Limits` struct (all fields `Option<u64>`, default None = no limit) — commit ad91910
+- [x] Rename `Error` → `EncodeError` (type alias, legacy re-export kept) — commit 0385d9f
 - [ ] Switch from `impl Stop` per push to `&dyn Stop` on request
-- [ ] Standardize `AllocationStats` → `EncodeStats`
+- [x] Standardize `AllocationStats` → `EncodeStats` — commit ef84b22
+- [x] Add `DecodeError` type alias — commit 0385d9f
