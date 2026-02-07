@@ -324,8 +324,12 @@ pub enum PixelLayout {
     Rgb8Srgb,
     /// BGR, 3 bytes/pixel, sRGB gamma (Windows/GDI order)
     Bgr8Srgb,
+    /// RGBA, 4 bytes/pixel, sRGB gamma (alpha ignored)
+    Rgba8Srgb,
     /// RGBX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
     Rgbx8Srgb,
+    /// BGRA, 4 bytes/pixel, sRGB gamma (alpha ignored)
+    Bgra8Srgb,
     /// BGRX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
     Bgrx8Srgb,
     /// Grayscale, 1 byte/pixel, sRGB gamma
@@ -335,6 +339,8 @@ pub enum PixelLayout {
 
     /// RGB, 6 bytes/pixel, linear light (0–65535)
     Rgb16Linear,
+    /// RGBA, 8 bytes/pixel, linear light (alpha ignored)
+    Rgba16Linear,
     /// RGBX, 8 bytes/pixel, linear light (4th channel ignored)
     Rgbx16Linear,
     /// Grayscale, 2 bytes/pixel, linear light
@@ -344,6 +350,8 @@ pub enum PixelLayout {
 
     /// RGB, 12 bytes/pixel, linear light (0.0–1.0)
     RgbF32Linear,
+    /// RGBA, 16 bytes/pixel, linear light (alpha ignored)
+    RgbaF32Linear,
     /// RGBX, 16 bytes/pixel, linear light (4th channel ignored)
     RgbxF32Linear,
     /// Grayscale, 4 bytes/pixel, linear light
@@ -364,11 +372,12 @@ impl PixelLayout {
             Self::Gray8Srgb => 1,
             Self::Gray16Linear => 2,
             Self::Rgb8Srgb | Self::Bgr8Srgb | Self::YCbCr8 => 3,
-            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::GrayF32Linear => 4,
+            Self::Rgba8Srgb | Self::Rgbx8Srgb | Self::Bgra8Srgb
+            | Self::Bgrx8Srgb | Self::GrayF32Linear => 4,
             Self::Rgb16Linear => 6,
-            Self::Rgbx16Linear => 8,
+            Self::Rgba16Linear | Self::Rgbx16Linear => 8,
             Self::RgbF32Linear | Self::YCbCrF32 => 12,
-            Self::RgbxF32Linear => 16,
+            Self::RgbaF32Linear | Self::RgbxF32Linear => 16,
         }
     }
 
@@ -378,8 +387,9 @@ impl PixelLayout {
             Self::Gray8Srgb | Self::Gray16Linear | Self::GrayF32Linear => 1,
             Self::Rgb8Srgb | Self::Bgr8Srgb | Self::Rgb16Linear
             | Self::RgbF32Linear | Self::YCbCr8 | Self::YCbCrF32 => 3,
-            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::Rgbx16Linear
-            | Self::RgbxF32Linear => 4,
+            Self::Rgba8Srgb | Self::Rgbx8Srgb | Self::Bgra8Srgb
+            | Self::Bgrx8Srgb | Self::Rgba16Linear | Self::Rgbx16Linear
+            | Self::RgbaF32Linear | Self::RgbxF32Linear => 4,
         }
     }
 
@@ -466,17 +476,17 @@ pub trait Pixel: Copy + 'static {
 }
 
 impl Pixel for RGB<u8>  { const LAYOUT: PixelLayout = PixelLayout::Rgb8Srgb; }
-impl Pixel for RGBA<u8> { const LAYOUT: PixelLayout = PixelLayout::Rgbx8Srgb; }
+impl Pixel for RGBA<u8> { const LAYOUT: PixelLayout = PixelLayout::Rgba8Srgb; }
 impl Pixel for BGR<u8>  { const LAYOUT: PixelLayout = PixelLayout::Bgr8Srgb; }
-impl Pixel for BGRA<u8> { const LAYOUT: PixelLayout = PixelLayout::Bgrx8Srgb; }
+impl Pixel for BGRA<u8> { const LAYOUT: PixelLayout = PixelLayout::Bgra8Srgb; }
 impl Pixel for Gray<u8> { const LAYOUT: PixelLayout = PixelLayout::Gray8Srgb; }
 
 impl Pixel for RGB<u16>  { const LAYOUT: PixelLayout = PixelLayout::Rgb16Linear; }
-impl Pixel for RGBA<u16> { const LAYOUT: PixelLayout = PixelLayout::Rgbx16Linear; }
+impl Pixel for RGBA<u16> { const LAYOUT: PixelLayout = PixelLayout::Rgba16Linear; }
 impl Pixel for Gray<u16> { const LAYOUT: PixelLayout = PixelLayout::Gray16Linear; }
 
 impl Pixel for RGB<f32>  { const LAYOUT: PixelLayout = PixelLayout::RgbF32Linear; }
-impl Pixel for RGBA<f32> { const LAYOUT: PixelLayout = PixelLayout::RgbxF32Linear; }
+impl Pixel for RGBA<f32> { const LAYOUT: PixelLayout = PixelLayout::RgbaF32Linear; }
 impl Pixel for Gray<f32> { const LAYOUT: PixelLayout = PixelLayout::GrayF32Linear; }
 
 /// Encoder for rgb crate pixel types.
