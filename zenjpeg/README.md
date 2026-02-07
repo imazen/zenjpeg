@@ -224,11 +224,12 @@ let config = EncoderConfig::ycbcr(
 | Layout | Bytes/px | Notes |
 |--------|----------|-------|
 | `Rgb8Srgb` | 3 | Default, sRGB gamma |
-| `Bgr8Srgb` / `Bgrx8Srgb` | 3/4 | Windows/GDI order |
-| `Rgbx8Srgb` | 4 | 4th byte ignored |
+| `Bgr8Srgb` | 3 | Windows/GDI order |
+| `Rgba8Srgb` / `Rgbx8Srgb` | 4 | Alpha/pad ignored |
+| `Bgra8Srgb` / `Bgrx8Srgb` | 4 | BGR + alpha/pad ignored |
 | `Gray8Srgb` | 1 | Grayscale sRGB |
-| `Rgb16Linear` | 6 | 16-bit linear |
-| `RgbF32Linear` | 12 | HDR float (0.0-1.0) |
+| `Rgb16Linear` / `Rgba16Linear` | 6/8 | 16-bit linear |
+| `RgbF32Linear` / `RgbaF32Linear` | 12/16 | HDR float (0.0-1.0) |
 | `YCbCr8` / `YCbCrF32` | 3/12 | Pre-converted YCbCr |
 
 #### Chroma Subsampling
@@ -326,6 +327,20 @@ println!("{}x{}, {} components", info.width, info.height, info.num_components);
 | `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
 | `.max_memory(n)` | Memory limit in bytes | 512 MB |
 
+#### Output Formats
+
+| `PixelFormat` | Bytes/px | Description |
+|---------------|----------|-------------|
+| `Rgb` | 3 | R-G-B (default) |
+| `Bgr` | 3 | B-G-R (Windows/GDI) |
+| `Rgba` | 4 | R-G-B-A, alpha = 255 |
+| `Bgra` | 4 | B-G-R-A, alpha = 255 |
+| `Bgrx` | 4 | B-G-R-X, pad = 255 |
+| `Gray` | 1 | Grayscale |
+
+All formats work with buffered decode (`.decode()`), the fast i16 path,
+and the streaming scanline reader.
+
 #### Decoded Image Methods
 
 ```rust
@@ -357,6 +372,38 @@ let image = Decoder::new()
 // Or construct DecodeConfig directly:
 let decoder = DecodeConfig::default();
 ```
+
+#### Streaming Decode (Scanline Reader)
+
+Decode row-by-row for minimal memory usage:
+
+```rust
+use zenjpeg::decoder::Decoder;
+use imgref::ImgRefMut;
+
+let mut reader = Decoder::new().scanline_reader(&jpeg_data)?;
+let (w, h) = (reader.width() as usize, reader.height() as usize);
+let mut buf = vec![0u8; w * h * 4];
+
+let mut rows = 0;
+while !reader.is_finished() {
+    let slice = &mut buf[rows * w * 4..];
+    let output = ImgRefMut::new(slice, w * 4, h - rows);
+    rows += reader.read_rows_bgra8(output)?;
+}
+```
+
+| Method | Bytes/px | Format |
+|--------|----------|--------|
+| `read_rows_rgb8()` | 3 | R-G-B |
+| `read_rows_bgr8()` | 3 | B-G-R |
+| `read_rows_rgbx8()` | 4 | R-G-B-X (pad=255) |
+| `read_rows_rgba8()` | 4 | R-G-B-A (A=255) |
+| `read_rows_bgra8()` | 4 | B-G-R-A (A=255) |
+| `read_rows_bgrx8()` | 4 | B-G-R-X (pad=255) |
+| `read_rows_rgba_f32()` | 16 | Linear f32 RGBA |
+| `read_rows_gray8()` | 1 | Grayscale u8 |
+| `read_rows_gray_f32()` | 4 | Grayscale f32 |
 
 ## Performance
 
