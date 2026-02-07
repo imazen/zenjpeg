@@ -130,3 +130,16 @@ wasm-magetypes:
     RUSTFLAGS="-C target-feature=+simd128" \
     cargo run --release -p zenjpeg --example wasm_magetypes_bench \
         --target wasm32-wasip1 --no-default-features --features "std,magetypes-simd"
+
+# Cross-compile and test on i686 (32-bit x86) via QEMU
+test-i686:
+    cross test -p zenjpeg --lib --target i686-unknown-linux-gnu
+
+# Cross-compile and test on armv7 (32-bit ARM) via QEMU
+test-armv7:
+    cross test -p zenjpeg --lib --target armv7-unknown-linux-gnueabihf
+
+# Run all cross-compilation targets
+test-cross:
+    just test-i686
+    just test-armv7
