@@ -386,6 +386,25 @@ fn main() {
         all_results.extend(sa_hyb_results);
     }
 
+    // --- AutoOptimize 444 (auto_optimize(true)) ---
+    print!("AutoOptimize 444...");
+    std::io::stdout().flush().ok();
+    let auto_results = sweep_zen(
+        "AutoOptimize",
+        QUALITY_LEVELS
+            .iter()
+            .map(|&q| {
+                (
+                    format!("q{:.0}", q),
+                    EncoderConfig::ycbcr(q, ChromaSubsampling::None).auto_optimize(true),
+                )
+            })
+            .collect(),
+        &images,
+    );
+    println!(" done ({} points)", auto_results.len());
+    all_results.extend(auto_results);
+
     // --- Print grouped R-D tables ---
     println!("\n{}", "=".repeat(90));
 
