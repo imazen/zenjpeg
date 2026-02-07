@@ -446,6 +446,7 @@ impl<'a> ScanlineReader<'a> {
 
         // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
+        let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
@@ -453,7 +454,15 @@ impl<'a> ScanlineReader<'a> {
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            if self.is_rgb {
+            if is_grayscale {
+                let y = self.strip.y_row(self.row_in_mcu, cols);
+                for px in 0..cols {
+                    let v = y[px].clamp(0, 255) as u8;
+                    out_row[px * 3] = v;
+                    out_row[px * 3 + 1] = v;
+                    out_row[px * 3 + 2] = v;
+                }
+            } else if self.is_rgb {
                 let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
                 for px in 0..cols {
                     out_row[px * 3] = y[px].clamp(0, 255) as u8;
@@ -514,6 +523,7 @@ impl<'a> ScanlineReader<'a> {
 
         // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
+        let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
@@ -521,26 +531,37 @@ impl<'a> ScanlineReader<'a> {
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
+            if is_grayscale {
+                let y_row = self.strip.y_row(self.row_in_mcu, cols);
+                for x in 0..cols {
+                    let v = y_row[x].clamp(0, 255) as u8;
+                    out_row[x * 4] = v;
+                    out_row[x * 4 + 1] = v;
+                    out_row[x * 4 + 2] = v;
+                    out_row[x * 4 + 3] = 255;
+                }
+            } else {
+                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
 
-            for x in 0..cols {
-                let (r, g, b) = if self.is_rgb {
-                    (
-                        y_row[x].clamp(0, 255) as u8,
-                        cb_row[x].clamp(0, 255) as u8,
-                        cr_row[x].clamp(0, 255) as u8,
-                    )
-                } else {
-                    ycbcr_to_rgb(
-                        y_row[x].clamp(0, 255) as u8,
-                        cb_row[x].clamp(0, 255) as u8,
-                        cr_row[x].clamp(0, 255) as u8,
-                    )
-                };
-                out_row[x * 4] = r;
-                out_row[x * 4 + 1] = g;
-                out_row[x * 4 + 2] = b;
-                out_row[x * 4 + 3] = 255;
+                for x in 0..cols {
+                    let (r, g, b) = if self.is_rgb {
+                        (
+                            y_row[x].clamp(0, 255) as u8,
+                            cb_row[x].clamp(0, 255) as u8,
+                            cr_row[x].clamp(0, 255) as u8,
+                        )
+                    } else {
+                        ycbcr_to_rgb(
+                            y_row[x].clamp(0, 255) as u8,
+                            cb_row[x].clamp(0, 255) as u8,
+                            cr_row[x].clamp(0, 255) as u8,
+                        )
+                    };
+                    out_row[x * 4] = r;
+                    out_row[x * 4 + 1] = g;
+                    out_row[x * 4 + 2] = b;
+                    out_row[x * 4 + 3] = 255;
+                }
             }
 
             rows_written += 1;
@@ -593,6 +614,7 @@ impl<'a> ScanlineReader<'a> {
 
         // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
+        let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
@@ -600,27 +622,39 @@ impl<'a> ScanlineReader<'a> {
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-            let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
+            if is_grayscale {
+                let y_row = self.strip.y_row(self.row_in_mcu, cols);
+                for x in 0..cols {
+                    let v = y_row[x].clamp(0, 255) as f32 / 255.0;
+                    let linear = srgb_to_linear_f32(v);
+                    out_row[x * 4] = linear;
+                    out_row[x * 4 + 1] = linear;
+                    out_row[x * 4 + 2] = linear;
+                    out_row[x * 4 + 3] = 1.0;
+                }
+            } else {
+                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
 
-            for x in 0..cols {
-                let (r, g, b) = if self.is_rgb {
-                    // RGB JPEG: planes are already R, G, B in [0, 255]
-                    (
-                        y_row[x] as f32 / 255.0,
-                        cb_row[x] as f32 / 255.0,
-                        cr_row[x] as f32 / 255.0,
-                    )
-                } else {
-                    // YCbCr: convert in f32 domain, normalize to [0, 1]
-                    let (rf, gf, bf) =
-                        ycbcr_to_rgb_f32(y_row[x] as f32, cb_row[x] as f32, cr_row[x] as f32);
-                    (rf / 255.0, gf / 255.0, bf / 255.0)
-                };
+                for x in 0..cols {
+                    let (r, g, b) = if self.is_rgb {
+                        // RGB JPEG: planes are already R, G, B in [0, 255]
+                        (
+                            y_row[x] as f32 / 255.0,
+                            cb_row[x] as f32 / 255.0,
+                            cr_row[x] as f32 / 255.0,
+                        )
+                    } else {
+                        // YCbCr: convert in f32 domain, normalize to [0, 1]
+                        let (rf, gf, bf) =
+                            ycbcr_to_rgb_f32(y_row[x] as f32, cb_row[x] as f32, cr_row[x] as f32);
+                        (rf / 255.0, gf / 255.0, bf / 255.0)
+                    };
 
-                out_row[x * 4] = srgb_to_linear_f32(r);
-                out_row[x * 4 + 1] = srgb_to_linear_f32(g);
-                out_row[x * 4 + 2] = srgb_to_linear_f32(b);
-                out_row[x * 4 + 3] = 1.0;
+                    out_row[x * 4] = srgb_to_linear_f32(r);
+                    out_row[x * 4 + 1] = srgb_to_linear_f32(g);
+                    out_row[x * 4 + 2] = srgb_to_linear_f32(b);
+                    out_row[x * 4 + 3] = 1.0;
+                }
             }
 
             rows_written += 1;
@@ -707,6 +741,7 @@ impl<'a> ScanlineReader<'a> {
 
         // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
+        let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
             self.decode_mcu_row()?;
@@ -714,12 +749,20 @@ impl<'a> ScanlineReader<'a> {
             let cols = width.min(self.strip.strip_width);
             let out_offset = rows_written * stride;
 
-            let (y_slice, cb_slice, cr_slice) = self.strip.row_planes(self.row_in_mcu, cols);
-
-            for x in 0..cols {
-                y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
-                cb_plane[out_offset + x] = (cb_slice[x] as f32 - 128.0) / 255.0;
-                cr_plane[out_offset + x] = (cr_slice[x] as f32 - 128.0) / 255.0;
+            if is_grayscale {
+                let y_slice = self.strip.y_row(self.row_in_mcu, cols);
+                for x in 0..cols {
+                    y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
+                    cb_plane[out_offset + x] = 0.0;
+                    cr_plane[out_offset + x] = 0.0;
+                }
+            } else {
+                let (y_slice, cb_slice, cr_slice) = self.strip.row_planes(self.row_in_mcu, cols);
+                for x in 0..cols {
+                    y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
+                    cb_plane[out_offset + x] = (cb_slice[x] as f32 - 128.0) / 255.0;
+                    cr_plane[out_offset + x] = (cr_slice[x] as f32 - 128.0) / 255.0;
+                }
             }
 
             rows_written += 1;

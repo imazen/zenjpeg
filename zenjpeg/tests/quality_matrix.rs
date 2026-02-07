@@ -539,7 +539,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
     zenjpeg::decoder::Decoder::new()
         .apply_icc(true)
-        .decode(data)
+        .decode(data, enough::Unstoppable)
         .expect("jpegli decode failed")
         .into_pixels_u8()
         .unwrap()
@@ -1364,7 +1364,7 @@ fn test_ffi_encoding_works() {
     // Try to decode with jpegli decoder to verify it's valid
     let decoder = zenjpeg::decoder::Decoder::new();
     let decoded = decoder
-        .decode(&jpeg[..], Unstoppable)
+        .decode(&jpeg[..], enough::Unstoppable)
         .expect("Failed to decode FFI-encoded JPEG");
 
     assert_eq!(decoded.width, width);
