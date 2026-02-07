@@ -1040,9 +1040,16 @@ API will have breaking changes.
 
 See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
 
-- [ ] Move metadata (ICC/EXIF/XMP) from `EncoderConfig` to encoder/per-encode — config should be reusable
-- [ ] Add one-shot convenience method (like zenwebp's `encode()`) for simple use cases
-- [ ] Add `Limits` struct for resource management (like zengif)
-- [ ] Standardize output method names: `finish()` → Vec, `finish_into()` → caller buf, `finish_to(impl Write)` → std-only (already close)
-- [ ] Standardize dimension types to `u32` (currently uses `u16`)
-- [ ] Consider `S: Stop` generic on encoder (currently `impl Stop` per push — already good, just ensure naming matches)
+**Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
+
+- [ ] Add `EncodeRequest<'a>` intermediate between config and encoder
+- [ ] Move metadata (ICC/EXIF/XMP) from config to request
+- [ ] Drop `RgbEncoder<P>` generic — use `PixelLayout` enum on request
+- [ ] Keep streaming push pattern but behind `request.build()` → `Encoder`
+- [ ] Add one-shot `request.encode()`/`encode_into()`/`encode_to()` convenience
+- [ ] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
+- [ ] `encode_to()`/`finish_to()` std-only
+- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
+- [ ] Rename `Error` → `EncodeError`
+- [ ] Switch from `impl Stop` per push to `&dyn Stop` on request
+- [ ] Standardize `AllocationStats` → `EncodeStats`
