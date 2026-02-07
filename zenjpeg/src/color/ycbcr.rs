@@ -793,6 +793,58 @@ pub fn bgra_to_rgba(bgra: &[u8; 4]) -> [u8; 4] {
     [bgra[2], bgra[1], bgra[0], bgra[3]]
 }
 
+/// Swaps R and B channels in-place for a packed RGB/BGR u8 buffer.
+///
+/// The buffer length must be a multiple of 3.
+#[cfg(feature = "decoder")]
+pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    for pixel in data.chunks_exact_mut(3) {
+        pixel.swap(0, 2);
+    }
+}
+
+/// Converts packed RGB u8 to packed RGBA u8 (alpha = 255).
+///
+/// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
+#[cfg(feature = "decoder")]
+pub fn rgb_u8_to_rgba_u8(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 3, 0);
+    let npixels = src.len() / 3;
+    debug_assert!(dst.len() >= npixels * 4);
+    for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = 255;
+    }
+}
+
+/// Converts packed RGB u8 to packed BGRA u8 (alpha = 255, R/B swapped).
+///
+/// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
+#[cfg(feature = "decoder")]
+pub fn rgb_u8_to_bgra_u8(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len() % 3, 0);
+    let npixels = src.len() / 3;
+    debug_assert!(dst.len() >= npixels * 4);
+    for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
+        d[0] = s[2]; // B
+        d[1] = s[1]; // G
+        d[2] = s[0]; // R
+        d[3] = 255;
+    }
+}
+
+/// Converts packed RGB u8 to packed BGRX u8 (pad = 255, R/B swapped).
+///
+/// Identical to [`rgb_u8_to_bgra_u8`] — the pad byte is set to 255.
+#[cfg(feature = "decoder")]
+#[inline]
+pub fn rgb_u8_to_bgrx_u8(src: &[u8], dst: &mut [u8]) {
+    rgb_u8_to_bgra_u8(src, dst);
+}
+
 /// Converts CMYK to RGB.
 ///
 /// Note: This is a simple conversion without ICC profile.
@@ -1991,6 +2043,42 @@ mod tests {
     fn test_bgr_conversion() {
         assert_eq!(bgr_to_rgb(&[1, 2, 3]), [3, 2, 1]);
         assert_eq!(bgra_to_rgba(&[1, 2, 3, 4]), [3, 2, 1, 4]);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn test_rgb_u8_swap_rb_inplace() {
+        let mut data = vec![10, 20, 30, 40, 50, 60]; // 2 pixels
+        rgb_u8_swap_rb_inplace(&mut data);
+        assert_eq!(data, [30, 20, 10, 60, 50, 40]);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn test_rgb_u8_to_rgba_u8() {
+        let src = [10, 20, 30, 40, 50, 60]; // 2 pixels
+        let mut dst = [0u8; 8];
+        rgb_u8_to_rgba_u8(&src, &mut dst);
+        assert_eq!(dst, [10, 20, 30, 255, 40, 50, 60, 255]);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn test_rgb_u8_to_bgra_u8() {
+        let src = [10, 20, 30, 40, 50, 60]; // 2 RGB pixels
+        let mut dst = [0u8; 8];
+        rgb_u8_to_bgra_u8(&src, &mut dst);
+        // R=10,G=20,B=30 → B=30,G=20,R=10,A=255
+        assert_eq!(dst, [30, 20, 10, 255, 60, 50, 40, 255]);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn test_rgb_u8_to_bgrx_u8() {
+        let src = [10, 20, 30];
+        let mut dst = [0u8; 4];
+        rgb_u8_to_bgrx_u8(&src, &mut dst);
+        assert_eq!(dst, [30, 20, 10, 255]);
     }
 
     #[test]

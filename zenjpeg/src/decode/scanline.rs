@@ -486,18 +486,139 @@ impl<'a> ScanlineReader<'a> {
         Ok(rows_written)
     }
 
-    /// Read rows into an RGBX8 buffer (RGB with padding byte).
+    /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
     ///
     /// Returns the number of rows actually written.
-    pub fn read_rows_rgbx8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
+    pub fn read_rows_rgbx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_xrgb_4bpp(output, false)
+    }
+
+    /// Read rows into a BGR8 buffer (3 bytes per pixel, B-G-R order).
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_bgr8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
+        let max_rows = output.height();
+        let width = self.width as usize;
+
+        if output.width() < width * 3 {
+            return Err(Error::internal("output buffer too narrow for BGR8"));
+        }
+
+        // Buffered mode: serve from pre-decoded RGB buffer with R/B swap
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+            let row_bytes = width * 3;
+
+            while rows_written < max_rows && self.current_row < self.height as usize {
+                let src_offset = self.current_row * row_bytes;
+                let out_row = output.rows_mut().nth(rows_written).unwrap();
+                // Copy with R/B swap
+                for x in 0..width {
+                    out_row[x * 3] = buffer[src_offset + x * 3 + 2]; // B
+                    out_row[x * 3 + 1] = buffer[src_offset + x * 3 + 1]; // G
+                    out_row[x * 3 + 2] = buffer[src_offset + x * 3]; // R
+                }
+                rows_written += 1;
+                self.current_row += 1;
+            }
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly, fused YCbCr→BGR
+        let mut rows_written = 0;
+        let is_grayscale = self.num_components == 1;
+
+        while rows_written < max_rows && self.current_row < self.height as usize {
+            self.decode_mcu_row()?;
+
+            let cols = width.min(self.strip.strip_width);
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+            if is_grayscale {
+                // Grayscale: R==G==B, so BGR order is just v,v,v
+                let y = self.strip.y_row(self.row_in_mcu, cols);
+                for px in 0..cols {
+                    let v = y[px].clamp(0, 255) as u8;
+                    out_row[px * 3] = v;
+                    out_row[px * 3 + 1] = v;
+                    out_row[px * 3 + 2] = v;
+                }
+            } else if self.is_rgb {
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
+                for px in 0..cols {
+                    out_row[px * 3] = cr[px].clamp(0, 255) as u8; // B
+                    out_row[px * 3 + 1] = cb[px].clamp(0, 255) as u8; // G
+                    out_row[px * 3 + 2] = y[px].clamp(0, 255) as u8; // R
+                }
+            } else {
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
+                // Fused YCbCr→BGR: compute RGB then write as B,G,R
+                for px in 0..cols {
+                    let (r, g, b) = ycbcr_to_rgb(
+                        y[px].clamp(0, 255) as u8,
+                        cb[px].clamp(0, 255) as u8,
+                        cr[px].clamp(0, 255) as u8,
+                    );
+                    out_row[px * 3] = b;
+                    out_row[px * 3 + 1] = g;
+                    out_row[px * 3 + 2] = r;
+                }
+            }
+
+            rows_written += 1;
+            self.current_row += 1;
+            self.row_in_mcu += 1;
+
+            if self.row_in_mcu >= self.strip.mcu_height {
+                self.advance_mcu_row();
+            }
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Read rows into an RGBA8 buffer (4 bytes per pixel, R-G-B-A order, A=255).
+    ///
+    /// Identical layout to `read_rows_rgbx8` — the fourth byte is always 255.
+    /// Returns the number of rows actually written.
+    #[inline]
+    pub fn read_rows_rgba8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_rgbx8(output)
+    }
+
+    /// Read rows into a BGRA8 buffer (4 bytes per pixel, B-G-R-A=255).
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_bgra8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_xrgb_4bpp(output, true)
+    }
+
+    /// Read rows into a BGRX8 buffer (4 bytes per pixel, B-G-R-X=255).
+    ///
+    /// Identical to `read_rows_bgra8` — the pad byte is always 255.
+    /// Returns the number of rows actually written.
+    #[inline]
+    pub fn read_rows_bgrx8(&mut self, output: ImgRefMut<'_, u8>) -> Result<usize> {
+        self.read_rows_bgra8(output)
+    }
+
+    /// Internal: fused 4-bpp output with optional R/B swap.
+    ///
+    /// When `swap_rb` is true, writes B-G-R-255 (BGRA/BGRX).
+    /// When false, writes R-G-B-255 (RGBA/RGBX).
+    fn read_rows_xrgb_4bpp(
+        &mut self,
+        mut output: ImgRefMut<'_, u8>,
+        swap_rb: bool,
+    ) -> Result<usize> {
         let max_rows = output.height();
         let width = self.width as usize;
 
         if output.width() < width * 4 {
-            return Err(Error::internal("output buffer too narrow for RGBX8"));
+            return Err(Error::internal("output buffer too narrow for 4bpp"));
         }
 
-        // Buffered mode: serve from pre-decoded RGB buffer, expanding to RGBX
+        // Buffered mode: serve from pre-decoded RGB buffer
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
             let src_row_bytes = width * 3;
@@ -506,12 +627,20 @@ impl<'a> ScanlineReader<'a> {
                 let src_offset = self.current_row * src_row_bytes;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                // Expand RGB to RGBX
-                for x in 0..width {
-                    out_row[x * 4] = buffer[src_offset + x * 3];
-                    out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
-                    out_row[x * 4 + 2] = buffer[src_offset + x * 3 + 2];
-                    out_row[x * 4 + 3] = 255;
+                if swap_rb {
+                    for x in 0..width {
+                        out_row[x * 4] = buffer[src_offset + x * 3 + 2]; // B
+                        out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1]; // G
+                        out_row[x * 4 + 2] = buffer[src_offset + x * 3]; // R
+                        out_row[x * 4 + 3] = 255;
+                    }
+                } else {
+                    for x in 0..width {
+                        out_row[x * 4] = buffer[src_offset + x * 3];
+                        out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
+                        out_row[x * 4 + 2] = buffer[src_offset + x * 3 + 2];
+                        out_row[x * 4 + 3] = 255;
+                    }
                 }
 
                 rows_written += 1;
@@ -521,7 +650,7 @@ impl<'a> ScanlineReader<'a> {
             return Ok(rows_written);
         }
 
-        // Streaming mode: decode on-the-fly
+        // Streaming mode: fused decode → 4bpp output
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
 
@@ -557,9 +686,15 @@ impl<'a> ScanlineReader<'a> {
                             cr_row[x].clamp(0, 255) as u8,
                         )
                     };
-                    out_row[x * 4] = r;
-                    out_row[x * 4 + 1] = g;
-                    out_row[x * 4 + 2] = b;
+                    if swap_rb {
+                        out_row[x * 4] = b;
+                        out_row[x * 4 + 1] = g;
+                        out_row[x * 4 + 2] = r;
+                    } else {
+                        out_row[x * 4] = r;
+                        out_row[x * 4 + 1] = g;
+                        out_row[x * 4 + 2] = b;
+                    }
                     out_row[x * 4 + 3] = 255;
                 }
             }
