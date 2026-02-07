@@ -112,10 +112,12 @@
 
 // Note: Currently re-exporting internal error types since the encoder
 // types we re-export from crate::encode use them internally.
-// TODO: Create wrapper types or unified error type in the future.
-
 // === Error types ===
-// Re-export internal error types since the encoder types use them
+/// Errors that can occur during JPEG encoding.
+pub type EncodeError = crate::error::Error;
+/// Result type for encoder operations.
+pub type EncodeResult<T> = core::result::Result<T, EncodeError>;
+// Keep legacy aliases for backward compatibility
 pub use crate::error::{Error, Result};
 
 // === Main encoder types (from encode root modules) ===
