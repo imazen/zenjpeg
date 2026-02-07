@@ -254,8 +254,8 @@ impl BytesEncoder {
     ///
     /// This tracks all major allocations made during encoding setup.
     #[must_use]
-    pub fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
-        self.inner.allocation_stats()
+    pub fn encode_stats(&self) -> &crate::foundation::alloc::EncodeStats {
+        self.inner.encode_stats()
     }
 
     /// Get the pixel layout.
@@ -785,8 +785,8 @@ impl<P: Pixel> RgbEncoder<P> {
     ///
     /// This tracks all major allocations made during encoding setup.
     #[must_use]
-    pub fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
-        self.inner.allocation_stats()
+    pub fn encode_stats(&self) -> &crate::foundation::alloc::EncodeStats {
+        self.inner.encode_stats()
     }
 
     // === Finish ===

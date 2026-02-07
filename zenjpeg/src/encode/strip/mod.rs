@@ -43,7 +43,7 @@ use crate::encode::encoder_types::DownsamplingMethod;
 use crate::encode::layout::LayoutParams;
 use crate::error::Result;
 use crate::foundation::alloc::{
-    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, AllocationStats,
+    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, EncodeStats,
 };
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
@@ -411,7 +411,7 @@ pub struct StripProcessor {
 
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
-    alloc_stats: crate::foundation::alloc::AllocationStats,
+    stats: crate::foundation::alloc::EncodeStats,
 
     // === Optional preprocessing ===
     /// Enable overshoot deringing (on by default)
@@ -499,7 +499,7 @@ impl StripProcessor {
         let is_color = !pixel_format.is_grayscale();
 
         // Track all allocations
-        let mut alloc_stats = AllocationStats::new();
+        let mut stats = EncodeStats::new();
 
         // Initialize streaming AQ from layout and quant tables
         let y_quant_01 = quant.y_quant.values[1]; // Position [0,1] in zigzag
@@ -514,13 +514,13 @@ impl StripProcessor {
             y_strip: try_alloc_zeroed_f32_tracked(
                 padded_width * strip_height,
                 "y_strip",
-                &mut alloc_stats,
+                &mut stats,
             )?,
             cb_strip: if is_color {
                 try_alloc_zeroed_f32_tracked(
                     padded_width * strip_height,
                     "cb_strip",
-                    &mut alloc_stats,
+                    &mut stats,
                 )?
             } else {
                 Vec::new()
@@ -529,7 +529,7 @@ impl StripProcessor {
                 try_alloc_zeroed_f32_tracked(
                     padded_width * strip_height,
                     "cr_strip",
-                    &mut alloc_stats,
+                    &mut stats,
                 )?
             } else {
                 Vec::new()
@@ -538,7 +538,7 @@ impl StripProcessor {
                 try_alloc_zeroed_f32_tracked(
                     padded_c_width * c_strip_height,
                     "cb_down",
-                    &mut alloc_stats,
+                    &mut stats,
                 )?
             } else {
                 Vec::new()
@@ -550,20 +550,20 @@ impl StripProcessor {
                 } else {
                     padded_c_width * c_strip_height
                 };
-                try_alloc_zeroed_f32_tracked(cr_down_size, "cr_down", &mut alloc_stats)?
+                try_alloc_zeroed_f32_tracked(cr_down_size, "cr_down", &mut stats)?
             } else {
                 Vec::new()
             },
 
             // Final i16 block storage (pre-allocated capacity)
-            y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut alloc_stats)?,
+            y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut stats)?,
             cb_blocks: if is_color {
-                try_with_capacity_tracked(total_c_blocks, "cb_blocks", &mut alloc_stats)?
+                try_with_capacity_tracked(total_c_blocks, "cb_blocks", &mut stats)?
             } else {
                 Vec::new()
             },
             cr_blocks: if is_color {
-                try_with_capacity_tracked(total_c_blocks, "cr_blocks", &mut alloc_stats)?
+                try_with_capacity_tracked(total_c_blocks, "cr_blocks", &mut stats)?
             } else {
                 Vec::new()
             },
@@ -580,12 +580,12 @@ impl StripProcessor {
                     try_with_capacity_tracked(
                         pending_y_capacity,
                         "pending_y[0]",
-                        &mut alloc_stats,
+                        &mut stats,
                     )?,
                     try_with_capacity_tracked(
                         pending_y_capacity,
                         "pending_y[1]",
-                        &mut alloc_stats,
+                        &mut stats,
                     )?,
                 ],
                 cb: if is_color {
@@ -593,12 +593,12 @@ impl StripProcessor {
                         try_with_capacity_tracked(
                             pending_c_capacity,
                             "pending_cb[0]",
-                            &mut alloc_stats,
+                            &mut stats,
                         )?,
                         try_with_capacity_tracked(
                             pending_c_capacity,
                             "pending_cb[1]",
-                            &mut alloc_stats,
+                            &mut stats,
                         )?,
                     ]
                 } else {
@@ -609,12 +609,12 @@ impl StripProcessor {
                         try_with_capacity_tracked(
                             pending_c_capacity,
                             "pending_cr[0]",
-                            &mut alloc_stats,
+                            &mut stats,
                         )?,
                         try_with_capacity_tracked(
                             pending_c_capacity,
                             "pending_cr[1]",
-                            &mut alloc_stats,
+                            &mut stats,
                         )?,
                     ]
                 } else {
@@ -629,13 +629,13 @@ impl StripProcessor {
             all_aq_strengths: try_with_capacity_tracked(
                 total_y_blocks,
                 "all_aq_strengths",
-                &mut alloc_stats,
+                &mut stats,
             )?,
 
             aq_state,
 
             // Allocation tracking
-            alloc_stats,
+            stats,
 
             // Optional preprocessing (deringing on by default)
             deringing: true,
@@ -680,8 +680,8 @@ impl StripProcessor {
 
     /// Returns allocation statistics for this processor.
     #[must_use]
-    pub fn allocation_stats(&self) -> &AllocationStats {
-        &self.alloc_stats
+    pub fn encode_stats(&self) -> &EncodeStats {
+        &self.stats
     }
 
     /// Takes ownership of all quantized blocks, leaving empty vectors.
@@ -695,7 +695,7 @@ impl StripProcessor {
             cb_blocks: std::mem::take(&mut self.cb_blocks),
             cr_blocks: std::mem::take(&mut self.cr_blocks),
             aq_strengths: std::mem::take(&mut self.all_aq_strengths),
-            alloc_stats: AllocationStats::new(), // Fresh stats for remaining work
+            stats: EncodeStats::new(), // Fresh stats for remaining work
             y_dc_raw: std::mem::take(&mut self.y_dc_raw),
             cb_dc_raw: std::mem::take(&mut self.cb_dc_raw),
             cr_dc_raw: std::mem::take(&mut self.cr_dc_raw),
@@ -1360,7 +1360,7 @@ impl StripProcessor {
             cb_blocks: self.cb_blocks,
             cr_blocks: self.cr_blocks,
             aq_strengths: self.all_aq_strengths,
-            alloc_stats: self.alloc_stats,
+            stats: self.stats,
             y_dc_raw: self.y_dc_raw,
             cb_dc_raw: self.cb_dc_raw,
             cr_dc_raw: self.cr_dc_raw,
@@ -1564,7 +1564,7 @@ pub struct StripProcessorOutput {
     /// Per-block AQ strengths (for optional re-quantization)
     pub aq_strengths: Vec<f32>,
     /// Allocation statistics from the encoding process
-    pub alloc_stats: AllocationStats,
+    pub stats: EncodeStats,
     /// Y channel raw DC coefficients (scaled, for DC trellis post-processing).
     /// Empty if DC trellis was not enabled.
     pub y_dc_raw: Vec<i32>,

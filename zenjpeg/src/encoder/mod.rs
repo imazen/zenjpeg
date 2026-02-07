@@ -127,6 +127,7 @@ pub use crate::encode::encoder_types::{
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::Stop;
+pub use crate::foundation::alloc::EncodeStats;
 
 // === Default tables for customization ===
 /// Default quantization and zero-bias tables.
