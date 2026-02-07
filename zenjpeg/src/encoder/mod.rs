@@ -62,10 +62,11 @@
 //! |--------|----------|-------------|
 //! | `Rgb8Srgb` | 3 | RGB, sRGB gamma (default) |
 //! | `Bgr8Srgb` | 3 | BGR, sRGB gamma (Windows/GDI) |
-//! | `Rgbx8Srgb` / `Bgrx8Srgb` | 4 | 4th byte ignored |
+//! | `Rgba8Srgb` / `Rgbx8Srgb` | 4 | RGBA/RGBX, alpha/pad ignored |
+//! | `Bgra8Srgb` / `Bgrx8Srgb` | 4 | BGRA/BGRX, alpha/pad ignored |
 //! | `Gray8Srgb` | 1 | Grayscale, sRGB gamma |
-//! | `Rgb16Linear` / `Rgbx16Linear` | 6/8 | 16-bit linear |
-//! | `RgbF32Linear` / `RgbxF32Linear` | 12/16 | Float linear (0.0-1.0) |
+//! | `Rgb16Linear` / `Rgba16Linear` | 6/8 | 16-bit linear (alpha ignored) |
+//! | `RgbF32Linear` / `RgbaF32Linear` | 12/16 | Float linear 0.0-1.0 (alpha ignored) |
 //! | `YCbCr8` / `YCbCrF32` | 3/12 | Pre-converted YCbCr |
 //!
 //! # Cancellation
