@@ -5,7 +5,6 @@
 //!
 //! NOTE: We use zune-jpeg for decoder verification as it handles
 //! our progressive output correctly.
-use enough::Unstoppable;
 
 use std::io::Cursor;
 use std::process::Command;

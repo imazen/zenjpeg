@@ -2,7 +2,6 @@
 //!
 //! This test encodes jpegli/tests/images/1.png at various quality levels
 //! and writes the results to jpegli/tests/outputs/ for visual inspection.
-use enough::Unstoppable;
 
 use std::fs;
 use std::path::PathBuf;

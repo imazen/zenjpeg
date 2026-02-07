@@ -1,4 +1,3 @@
-use enough::Unstoppable;
 use std::fs;
 use std::path::Path;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

@@ -1,5 +1,4 @@
 //! Tests verifying that EncodingTables actually affect encoder output.
-use enough::Unstoppable;
 
 use zenjpeg::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

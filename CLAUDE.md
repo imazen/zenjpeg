@@ -1043,6 +1043,6 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Move metadata (ICC/EXIF/XMP) from `EncoderConfig` to encoder/per-encode — config should be reusable
 - [ ] Add one-shot convenience method (like zenwebp's `encode()`) for simple use cases
 - [ ] Add `Limits` struct for resource management (like zengif)
-- [ ] Standardize output method names: `finish()` → Vec, `finish_into()` → caller buf, `finish_to()` → Write (already close)
+- [ ] Standardize output method names: `finish()` → Vec, `finish_into()` → caller buf, `finish_to(impl Write)` → std-only (already close)
 - [ ] Standardize dimension types to `u32` (currently uses `u16`)
 - [ ] Consider `S: Stop` generic on encoder (currently `impl Stop` per push — already good, just ensure naming matches)

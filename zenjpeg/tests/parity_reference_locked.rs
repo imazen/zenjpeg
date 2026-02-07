@@ -9,7 +9,6 @@
 //! the encoder algorithm is modified for valid reasons.
 //!
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
-use enough::Unstoppable;
 
 use std::collections::HashMap;
 use std::process::Command;

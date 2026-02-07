@@ -1,7 +1,6 @@
 //! Q100-specific comparison test for fast iteration during debugging.
 //!
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
-use enough::Unstoppable;
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -4,7 +4,6 @@
 //! - `kamadak-exif`: EXIF parsing (verifies JPEG structure doesn't confuse parsers)
 //! - `img-parts`: JPEG segment manipulation (ICC profile extraction/injection)
 //! - `ultrahdr`: Ultra HDR JPEG encoding (using jpegli as base encoder)
-use enough::Unstoppable;
 
 use rgb::RGB;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation};
