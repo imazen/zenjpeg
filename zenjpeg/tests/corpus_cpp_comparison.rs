@@ -6,7 +6,6 @@
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
-use enough::Unstoppable;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zenjpeg::encoder::ChromaSubsampling;

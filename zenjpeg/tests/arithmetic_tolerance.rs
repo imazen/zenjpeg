@@ -51,7 +51,7 @@ fn arithmetic_decode_with_tolerance() {
     let mut sum_sq_diff: f64 = 0.0;
 
     for (&ours, &reference) in decoded.pixels_u8().unwrap().iter().zip(ref_rgb.iter()) {
-        let diff = (ours as i16 - reference as i16).abs() as u8;
+        let diff = (ours as i16 - reference as i16).unsigned_abs() as u8;
         diff_hist[diff as usize] += 1;
         sum_abs_diff += diff as u64;
         sum_sq_diff += (diff as f64).powi(2);

@@ -108,6 +108,7 @@ mod comparison {
         let mut output = vec![0u8; height * row_stride];
 
         let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
+        #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
         while ((*cinfo_ptr).output_scanline as usize) < height {
             let start = (*cinfo_ptr).output_scanline as usize;
             let remaining = height - start;

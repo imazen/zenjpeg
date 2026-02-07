@@ -509,7 +509,7 @@ impl HuffmanDecodeTable {
         }
         if code_length <= 16 {
             let symbol_bits = bits16 >> (16 - code_length);
-            let idx = (symbol_bits as i32 + self.valoffset[code_length]) as usize;
+            let idx = (symbol_bits + self.valoffset[code_length]) as usize;
             if idx < self.values.len() {
                 return Some((self.values[idx], code_length as u8));
             }

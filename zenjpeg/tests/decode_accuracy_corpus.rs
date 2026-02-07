@@ -955,7 +955,7 @@ fn detect_mcu_size(data: &[u8]) -> (usize, usize) {
         if data[i] == 0xFF {
             let marker = data[i + 1];
             match marker {
-                0xC0 | 0xC1 | 0xC2 => {
+                0xC0..=0xC2 => {
                     // SOF0/SOF1/SOF2
                     if i + 11 < data.len() {
                         let nf = data[i + 9] as usize; // number of components

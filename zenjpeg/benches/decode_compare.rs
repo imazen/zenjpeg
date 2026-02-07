@@ -64,6 +64,7 @@ unsafe fn decode_with_cjpegli(data: &[u8]) -> Vec<u8> {
     // Read scanlines in batches for efficiency
     let batch = 8u32;
     let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
+    #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
     while ((*cinfo_ptr).output_scanline as usize) < height {
         let start = (*cinfo_ptr).output_scanline as usize;
         let remaining = height - start;
