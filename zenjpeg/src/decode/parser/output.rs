@@ -844,9 +844,11 @@ impl<'a> JpegParser<'a> {
         format: PixelFormat,
         is_xyb: bool,
         chroma_upsampling: super::super::ChromaUpsampling,
-        dequant_bias: bool,
+        output_target: super::super::OutputTarget,
         _stop: &impl Stop,
     ) -> Result<Vec<u8>> {
+        let dequant_bias = output_target.uses_dequant_bias();
+
         // If streaming decode was used, return its result directly (zero-copy)
         if format == PixelFormat::Rgb && !is_xyb {
             if let Some(rgb) = self.streaming_rgb.take() {

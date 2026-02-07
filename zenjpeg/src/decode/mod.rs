@@ -479,7 +479,7 @@ impl DecodeConfig {
                 output_format,
                 is_xyb,
                 self.chroma_upsampling,
-                self.output_target.uses_dequant_bias(),
+                OutputTarget::Srgb8,
                 &Unstoppable,
             )?;
 
@@ -524,7 +524,7 @@ impl DecodeConfig {
                 output_format,
                 is_xyb,
                 self.chroma_upsampling,
-                self.output_target.uses_dequant_bias(),
+                OutputTarget::Srgb8,
                 &Unstoppable,
             )?;
 
@@ -568,7 +568,7 @@ impl DecodeConfig {
             output_format,
             info.is_xyb,
             self.chroma_upsampling,
-            self.output_target.uses_dequant_bias(),
+            self.output_target,
             &stop,
         )?;
 
