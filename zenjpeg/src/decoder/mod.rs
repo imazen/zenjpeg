@@ -5,23 +5,23 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use zenjpeg::decoder::{Decoder, DecodedImage, Result};
+//! use zenjpeg::decoder::{DecodeConfig, DecodeResult, Result};
 //!
-//! fn decode_jpeg(data: &[u8]) -> Result<DecodedImage> {
-//!     Decoder::new().decode(data)
+//! fn decode_jpeg(data: &[u8]) -> Result<DecodeResult> {
+//!     DecodeConfig::new().decode(data, enough::Unstoppable)
 //! }
 //! ```
 //!
 //! # Decode to specific format
 //!
 //! ```rust,ignore
-//! use zenjpeg::decoder::{Decoder, PixelFormat, Result};
+//! use zenjpeg::decoder::{DecodeConfig, OutputTarget, PixelFormat, Result};
 //!
-//! fn decode_rgba(data: &[u8]) -> Result<Vec<u8>> {
-//!     let image = Decoder::new()
-//!         .output_format(PixelFormat::Rgba)
-//!         .decode(data)?;
-//!     Ok(image.into_pixels())
+//! fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
+//!     let result = DecodeConfig::new()
+//!         .output_target(OutputTarget::SrgbF32)
+//!         .decode(data, enough::Unstoppable)?;
+//!     Ok(result.into_pixels_f32().unwrap())
 //! }
 //! ```
 
@@ -35,8 +35,9 @@ pub use crate::error::{Error, Result};
 
 // === Main decoder types ===
 pub use crate::decode::{
-    ChromaUpsampling, DecodeWarning, DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder,
-    DecoderConfig, JpegInfo, ScanlineInfo, ScanlineReader, Strictness,
+    ChromaUpsampling, DecodeConfig, DecodeInfo, DecodeResult, DecodeWarning, DecodedCoefficients,
+    DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig, GainMapHandling,
+    GainMapResult, JpegInfo, OutputTarget, ScanlineInfo, ScanlineReader, Strictness,
 };
 
 // === Metadata preservation types ===

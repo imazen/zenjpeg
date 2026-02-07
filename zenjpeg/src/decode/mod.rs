@@ -2,16 +2,24 @@
 //!
 //! This module provides the main decoder interface for reading JPEG images.
 //!
+//! # Quick Start
+//!
+//! ```ignore
+//! use zenjpeg::decode::DecodeConfig;
+//!
+//! let result = DecodeConfig::new().decode(&jpeg_data, enough::Unstoppable)?;
+//! let pixels: &[u8] = result.pixels_u8().unwrap();
+//! ```
+//!
 //! # ICC Profile Support
 //!
 //! The decoder can extract and apply embedded ICC profiles, including XYB profiles
 //! used by jpegli. ICC profile support requires enabling `cms-lcms2` or `cms-moxcms` feature.
 //!
 //! ```ignore
-//! use zenjpeg::decode::Decoder;
+//! use zenjpeg::decode::DecodeConfig;
 //!
-//! let decoder = Decoder::new().apply_icc(true);
-//! let decoded = decoder.decode(&jpeg_data)?;
+//! let result = DecodeConfig::new().apply_icc(true).decode(&jpeg_data, enough::Unstoppable)?;
 //! ```
 
 // IDCT modules (decoder-only)
@@ -37,6 +45,10 @@ pub use image::{
     CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
     DecodedImageF32, DecodedYCbCr,
 };
+
+// New unified types
+#[allow(unused_imports)]
+pub use config::{DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget};
 use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
@@ -107,33 +119,23 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 // Re-export config types (defined in config.rs, public API preserved)
 pub use config::{ChromaUpsampling, DecodeWarning, DecoderConfig, JpegInfo, Strictness};
 
+/// Backward compatibility alias: `Decoder` is now [`DecodeConfig`].
+pub type Decoder = DecodeConfig;
+
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
 
-/// JPEG decoder.
-pub struct Decoder {
-    config: DecoderConfig,
-}
-
-impl Decoder {
-    /// Creates a new decoder with default settings.
+impl DecodeConfig {
+    /// Creates a new decoder configuration with default settings.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            config: DecoderConfig::default(),
-        }
-    }
-
-    /// Creates a decoder from configuration.
-    #[must_use]
-    pub fn from_config(config: DecoderConfig) -> Self {
-        Self { config }
+        Self::default()
     }
 
     /// Sets the output pixel format.
     #[must_use]
     pub fn output_format(mut self, format: PixelFormat) -> Self {
-        self.config.output_format = Some(format);
+        self.output_format = Some(format);
         self
     }
 
@@ -147,7 +149,7 @@ impl Decoder {
     /// - [`ChromaUpsampling::NearestNeighbor`]: fastest, lowest quality
     #[must_use]
     pub fn chroma_upsampling(mut self, method: ChromaUpsampling) -> Self {
-        self.config.chroma_upsampling = method;
+        self.chroma_upsampling = method;
         self
     }
 
@@ -160,7 +162,7 @@ impl Decoder {
     /// For more control, use [`chroma_upsampling()`](Self::chroma_upsampling).
     #[must_use]
     pub fn fancy_upsampling(mut self, enable: bool) -> Self {
-        self.config.chroma_upsampling = if enable {
+        self.chroma_upsampling = if enable {
             ChromaUpsampling::Triangle
         } else {
             ChromaUpsampling::NearestNeighbor
@@ -171,7 +173,7 @@ impl Decoder {
     /// Enables block smoothing.
     #[must_use]
     pub fn block_smoothing(mut self, enable: bool) -> Self {
-        self.config.block_smoothing = enable;
+        self.block_smoothing = enable;
         self
     }
 
@@ -185,7 +187,7 @@ impl Decoder {
     /// Without a CMS feature, this setting has no effect.
     #[must_use]
     pub fn apply_icc(mut self, enable: bool) -> Self {
-        self.config.apply_icc = enable;
+        self.apply_icc = enable;
         self
     }
 
@@ -194,7 +196,7 @@ impl Decoder {
     /// Default is 100 megapixels. Set to 0 for unlimited.
     #[must_use]
     pub fn max_pixels(mut self, pixels: u64) -> Self {
-        self.config.max_pixels = pixels;
+        self.max_pixels = pixels;
         self
     }
 
@@ -204,7 +206,7 @@ impl Decoder {
     /// This prevents memory exhaustion attacks from malicious images.
     #[must_use]
     pub fn max_memory(mut self, bytes: usize) -> Self {
-        self.config.max_memory = bytes;
+        self.max_memory = bytes;
         self
     }
 
@@ -233,7 +235,7 @@ impl Decoder {
     /// ```
     #[must_use]
     pub fn preserve(mut self, config: PreserveConfig) -> Self {
-        self.config.preserve = config;
+        self.preserve = config;
         self
     }
 
@@ -271,7 +273,7 @@ impl Decoder {
     /// ```
     #[must_use]
     pub fn strictness(mut self, strictness: Strictness) -> Self {
-        self.config.strictness = strictness;
+        self.strictness = strictness;
         self
     }
 
@@ -287,7 +289,28 @@ impl Decoder {
         self.strictness(Strictness::Lenient)
     }
 
+    /// Sets the output target controlling precision, transfer function, and IDCT variant.
+    ///
+    /// See [`OutputTarget`] for available options.
+    #[must_use]
+    pub fn output_target(mut self, target: OutputTarget) -> Self {
+        self.output_target = target;
+        self
+    }
+
+    /// Sets how UltraHDR gain maps are handled.
+    ///
+    /// See [`GainMapHandling`] for available options.
+    #[must_use]
+    pub fn gain_map(mut self, handling: GainMapHandling) -> Self {
+        self.gain_map = handling;
+        self
+    }
+
     /// Apply optimal Laplacian dequantization biases (Price & Rabbani 2000).
+    ///
+    /// Convenience method equivalent to
+    /// `.output_target(OutputTarget::SrgbF32Precise)`.
     ///
     /// When enabled, the decoder computes per-coefficient biases from DCT
     /// coefficient statistics and applies them during dequantization. This
@@ -296,11 +319,13 @@ impl Decoder {
     ///
     /// Tradeoff: bypasses the fast integer IDCT path, using f32 dequantization
     /// and IDCT instead. Expect ~1.3-2x slower decoding.
-    ///
-    /// Default: `false`.
     #[must_use]
     pub fn dequant_bias(mut self, enable: bool) -> Self {
-        self.config.dequant_bias = enable;
+        if enable {
+            self.output_target = OutputTarget::SrgbF32Precise;
+        } else if self.output_target.is_precise() {
+            self.output_target = OutputTarget::Srgb8;
+        }
         self
     }
 
@@ -308,9 +333,9 @@ impl Decoder {
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
+            self.max_pixels,
             None,
-            self.config.strictness,
+            self.strictness,
         )?;
         parser.read_header()?;
         Ok(parser.info())
@@ -389,9 +414,9 @@ impl Decoder {
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
+            self.max_pixels,
             None,
-            self.config.strictness,
+            self.strictness,
         )?;
         parser.read_header()?;
 
@@ -453,8 +478,8 @@ impl Decoder {
             let pixels = parser.to_pixels(
                 output_format,
                 is_xyb,
-                self.config.chroma_upsampling,
-                self.config.dequant_bias,
+                self.chroma_upsampling,
+                self.output_target.uses_dequant_bias(),
                 &Unstoppable,
             )?;
 
@@ -498,8 +523,8 @@ impl Decoder {
             let pixels = parser.to_pixels(
                 output_format,
                 is_xyb,
-                self.config.chroma_upsampling,
-                self.config.dequant_bias,
+                self.chroma_upsampling,
+                self.output_target.uses_dequant_bias(),
                 &Unstoppable,
             )?;
 
@@ -516,7 +541,7 @@ impl Decoder {
 
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
-        ScanlineReader::from_scan_data(scan_data, self.config.chroma_upsampling)
+        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling)
     }
 
     /// Decodes a JPEG image.
@@ -527,14 +552,14 @@ impl Decoder {
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImage> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
-            Some(&self.config.preserve),
-            self.config.strictness,
+            self.max_pixels,
+            Some(&self.preserve),
+            self.strictness,
         )?;
         parser.decode(&stop)?;
 
         let info = parser.info();
-        let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
+        let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format
         // For XYB images, use simple dequantization so ICC profile works correctly
@@ -542,8 +567,8 @@ impl Decoder {
         let mut pixels = parser.to_pixels(
             output_format,
             info.is_xyb,
-            self.config.chroma_upsampling,
-            self.config.dequant_bias,
+            self.chroma_upsampling,
+            self.output_target.uses_dequant_bias(),
             &stop,
         )?;
 
@@ -551,7 +576,7 @@ impl Decoder {
         // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
         // rather than failing the decode, since the JPEG itself decoded successfully
         #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-        if self.config.apply_icc && output_format == PixelFormat::Rgb {
+        if self.apply_icc && output_format == PixelFormat::Rgb {
             if let Some(ref icc_profile) = parser.icc_profile {
                 match apply_icc_transform(
                     &pixels,
@@ -608,22 +633,22 @@ impl Decoder {
     pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImageF32> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
+            self.max_pixels,
             None,
-            self.config.strictness,
+            self.strictness,
         )?;
         // Disable streaming - f32 decode needs coefficients for precision
         parser.prefer_streaming = false;
         parser.decode(&stop)?;
 
         let info = parser.info();
-        let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
+        let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format as f32
         let pixels = parser.to_pixels_f32(
             output_format,
             info.is_xyb,
-            self.config.chroma_upsampling,
+            self.chroma_upsampling,
             &stop,
         )?;
 
@@ -667,9 +692,9 @@ impl Decoder {
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
+            self.max_pixels,
             None,
-            self.config.strictness,
+            self.strictness,
         )?;
         // Disable streaming - we need coefficients stored
         parser.prefer_streaming = false;
@@ -724,9 +749,9 @@ impl Decoder {
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
+            self.max_pixels,
             None,
-            self.config.strictness,
+            self.strictness,
         )?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.prefer_streaming = false;
@@ -749,7 +774,7 @@ impl Decoder {
         }
 
         // Get the YCbCr planes directly
-        let (y, cb, cr) = parser.to_ycbcr_planes_f32(self.config.chroma_upsampling)?;
+        let (y, cb, cr) = parser.to_ycbcr_planes_f32(self.chroma_upsampling)?;
 
         // Pass through ICC profile if present
         let icc_profile = parser.icc_profile.clone();
@@ -811,9 +836,9 @@ impl Decoder {
         // Parse the JPEG header and get scanline reader
         let mut parser = JpegParser::with_strictness(
             data,
-            self.config.max_pixels,
-            Some(&self.config.preserve),
-            self.config.strictness,
+            self.max_pixels,
+            Some(&self.preserve),
+            self.strictness,
         )?;
         parser.read_header()?;
 
@@ -848,12 +873,6 @@ impl Decoder {
     }
 }
 
-impl Default for Decoder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,8 +885,8 @@ mod tests {
             .output_format(PixelFormat::Rgb)
             .fancy_upsampling(true);
 
-        assert_eq!(decoder.config.output_format, Some(PixelFormat::Rgb));
-        assert_eq!(decoder.config.chroma_upsampling, ChromaUpsampling::Triangle);
+        assert_eq!(decoder.output_format, Some(PixelFormat::Rgb));
+        assert_eq!(decoder.chroma_upsampling, ChromaUpsampling::Triangle);
     }
 
     #[test]
