@@ -1096,6 +1096,12 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 **Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
 
+**No backwards compatibility required** — we have no external users. Just bump the 0.x major version for breaking changes. No deprecation shims or legacy aliases — delete old APIs.
+
+**Builder convention**: `with_` prefix for consuming builder setters, bare-name for getters.
+
+**Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. README with badges and usage examples. As of Rust 1.92, almost everything is in `core::` (including `Error`) — don't assume `std` is needed. Use `wasmtimer` crate for timing on wasm.
+
 - [x] Add `EncodeRequest<'a>` intermediate between config and encoder — commit a4b7a01
 - [ ] Move metadata (ICC/EXIF/XMP) from config to request (EncodeRequest supports them; config still has them too)
 - [ ] Evaluate `RgbEncoder<P>` generic monomorphization cost — build example using 1 type vs 4 types (RGB8, RGBA8, RGB16, RGBF32), measure binary size delta and compile time. If significant, switch to `PixelLayout` enum internally with generic convenience at boundary
@@ -1111,5 +1117,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Lossy/lossless split: N/A — JPEG is lossy-only, single `EncoderConfig` is correct
 - [x] Standardize `AllocationStats` → `EncodeStats` — commit ef84b22
 - [x] Add `DecodeError` type alias — commit 0385d9f
+- [ ] Adopt `with_` prefix convention for all builder setters on Config/Request
+- [ ] Support `Rgba8` and `Bgra8` for encode (ignore A on encode) — decode done: commit 001319b
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
