@@ -1156,10 +1156,14 @@ mod tests {
         // Compare outputs - should be identical
         assert_eq!(
             scanline_pixels.len(),
-            decoded.data.len(),
+            decoded.pixels_u8().unwrap().len(),
             "output size mismatch"
         );
-        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_rgb8");
+        assert_slices_equal_u8(
+            &scanline_pixels,
+            &decoded.pixels_u8().unwrap(),
+            "test_scanline_reader_rgb8",
+        );
     }
 
     #[test]
@@ -1208,7 +1212,7 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_slices_equal_u8(
             &scanline_pixels,
-            &decoded.data,
+            &decoded.pixels_u8().unwrap(),
             "test_scanline_reader_partial_reads",
         );
     }
@@ -1259,7 +1263,7 @@ mod tests {
 
                 for (c, name) in [(0, "R"), (1, "G"), (2, "B")] {
                     let actual = rgbx_pixels[rgbx_idx + c];
-                    let expected = decoded.data[rgb_idx + c];
+                    let expected = decoded.pixels_u8().unwrap()[rgb_idx + c];
                     let diff = (actual as i16 - expected as i16).unsigned_abs() as u8;
                     if diff > 0 {
                         diff_count += 1;
@@ -1351,7 +1355,7 @@ mod tests {
                 let rgba_idx = (y * width as usize + x) * 4;
 
                 for c in 0..3 {
-                    let expected_linear = srgb_to_linear(decoded.data[rgb_idx + c]);
+                    let expected_linear = srgb_to_linear(decoded.pixels_u8().unwrap()[rgb_idx + c]);
                     let actual_linear = rgba_pixels[rgba_idx + c];
                     let diff = (expected_linear - actual_linear).abs();
                     if diff > 0.01 {
@@ -1483,7 +1487,7 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_slices_equal_u8(
             &scanline_pixels,
-            &decoded.data,
+            &decoded.pixels_u8().unwrap(),
             "test_scanline_reader_non_mcu_aligned",
         );
     }
@@ -1542,7 +1546,7 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_eq!(
             scanline_pixels.len(),
-            decoded.data.len(),
+            decoded.pixels_u8().unwrap().len(),
             "output size mismatch"
         );
 
@@ -1550,7 +1554,11 @@ mod tests {
         // while regular decoder uses f32 with bias computation, so outputs won't be bit-identical
         let mut max_diff = 0i32;
         let mut total_diff = 0u64;
-        for (i, (&a, &b)) in scanline_pixels.iter().zip(decoded.data.iter()).enumerate() {
+        for (i, (&a, &b)) in scanline_pixels
+            .iter()
+            .zip(decoded.pixels_u8().unwrap().iter())
+            .enumerate()
+        {
             let diff = (a as i32 - b as i32).abs();
             max_diff = max_diff.max(diff);
             total_diff += diff as u64;
@@ -1617,14 +1625,18 @@ mod tests {
         assert_eq!(total_rows, height as usize);
         assert_eq!(
             scanline_pixels.len(),
-            decoded.data.len(),
+            decoded.pixels_u8().unwrap().len(),
             "output size mismatch"
         );
 
         // Compare with tolerance
         let mut max_diff = 0i32;
         let mut total_diff = 0u64;
-        for (i, (&a, &b)) in scanline_pixels.iter().zip(decoded.data.iter()).enumerate() {
+        for (i, (&a, &b)) in scanline_pixels
+            .iter()
+            .zip(decoded.pixels_u8().unwrap().iter())
+            .enumerate()
+        {
             let diff = (a as i32 - b as i32).abs();
             max_diff = max_diff.max(diff);
             total_diff += diff as u64;
@@ -1712,11 +1724,12 @@ mod tests {
         // Compare outputs - should match within JPEG compression tolerance
         assert_eq!(
             scanline_pixels.len(),
-            decoded.data.len(),
+            decoded.pixels_u8().unwrap().len(),
             "output size mismatch"
         );
 
-        let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+        let (max_diff, diff_count, _) =
+            compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
         assert!(
             max_diff <= 2,
             "grayscale scanline reader max_diff {} > 2 (diff_count: {})",
@@ -1768,7 +1781,7 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        let (max_diff, _, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+        let (max_diff, _, _) = compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
         assert!(
             max_diff <= 2,
             "grayscale non-MCU-aligned max_diff {} > 2",
@@ -1937,7 +1950,8 @@ mod tests {
         let decoded = decoder
             .decode(&progressive_jpeg, enough::Unstoppable)
             .expect("decode failed");
-        let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+        let (max_diff, diff_count, _) =
+            compare_u8_slices(&scanline_pixels, &decoded.pixels_u8().unwrap());
 
         // Should be identical (same decode path for progressive)
         assert_eq!(

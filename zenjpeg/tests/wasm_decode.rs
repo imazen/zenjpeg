@@ -90,11 +90,12 @@ fn test_wasm_decode_grayscale_gainmap() {
     // The decoder may expand grayscale to RGB for compatibility
     let expected_pixels = 64 * 64;
     assert!(
-        decoded.data.len() == expected_pixels || decoded.data.len() == expected_pixels * 3,
+        decoded.pixels_u8().unwrap().len() == expected_pixels
+            || decoded.pixels_u8().unwrap().len() == expected_pixels * 3,
         "Expected {} or {} bytes, got {}",
         expected_pixels,
         expected_pixels * 3,
-        decoded.data.len()
+        decoded.pixels_u8().unwrap().len()
     );
 }
 
@@ -113,7 +114,7 @@ fn test_wasm_decode_grayscale_explicit_format() {
     assert_eq!(decoded.height, 64);
     assert_eq!(decoded.format, PixelFormat::Gray);
     assert_eq!(
-        decoded.data.len(),
+        decoded.pixels_u8().unwrap().len(),
         64 * 64,
         "Grayscale should be 1 byte per pixel"
     );
@@ -170,5 +171,8 @@ fn test_wasm_decode_flower_gray() {
 
     assert!(decoded.width > 0, "width should be positive");
     assert!(decoded.height > 0, "height should be positive");
-    assert!(!decoded.data.is_empty(), "data should not be empty");
+    assert!(
+        !decoded.pixels_u8().unwrap().is_empty(),
+        "data should not be empty"
+    );
 }

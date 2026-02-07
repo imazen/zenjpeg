@@ -429,7 +429,7 @@ mod decode_coverage {
         assert_eq!(decoded.width, 128);
         assert_eq!(decoded.height, 128);
         assert_eq!(decoded.format, PixelFormat::Rgb);
-        assert_eq!(decoded.data.len(), 128 * 128 * 3);
+        assert_eq!(decoded.pixels_u8().unwrap().len(), 128 * 128 * 3);
     }
 
     #[test]
@@ -610,7 +610,7 @@ mod decode_coverage {
         let decoded1 = decoder.decode(&jpeg, Unstoppable).expect("decode 1 failed");
         let decoded2 = decoder.decode(&jpeg, Unstoppable).expect("decode 2 failed");
 
-        assert_eq!(decoded1.data, decoded2.data);
+        assert_eq!(decoded1.pixels_u8().unwrap(), decoded2.pixels_u8().unwrap());
     }
 
     // --- Edge Cases ---
@@ -711,7 +711,10 @@ mod decode_coverage {
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
         // Ensure we got actual pixel data
-        assert!(!decoded.data.is_empty(), "Decoded data should not be empty");
+        assert!(
+            !decoded.pixels_u8().unwrap().is_empty(),
+            "Decoded data should not be empty"
+        );
     }
 }
 
@@ -730,7 +733,7 @@ mod roundtrip_coverage {
         let decoded = Decoder::new()
             .decode(&jpeg, Unstoppable)
             .expect("decode failed");
-        (img.pixels, decoded.data)
+        (img.pixels, decoded.into_pixels_u8().unwrap())
     }
 
     #[test]

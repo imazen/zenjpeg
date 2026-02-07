@@ -37,7 +37,7 @@ fn test_grayscale_decode_basic() {
         "Grayscale image: {}x{}, {} bytes",
         decoded.width(),
         decoded.height(),
-        decoded.pixels().len()
+        decoded.pixels_u8().unwrap().len()
     );
 
     // Verify dimensions make sense
@@ -47,7 +47,7 @@ fn test_grayscale_decode_basic() {
     // Verify output size matches dimensions (1 byte per pixel for grayscale)
     let expected_size = (decoded.width() * decoded.height()) as usize;
     assert_eq!(
-        decoded.pixels().len(),
+        decoded.pixels_u8().unwrap().len(),
         expected_size,
         "grayscale output should have 1 byte per pixel"
     );
@@ -70,19 +70,19 @@ fn test_grayscale_decode_to_rgb() {
         "Grayscale→RGB: {}x{}, {} bytes",
         decoded.width(),
         decoded.height(),
-        decoded.pixels().len()
+        decoded.pixels_u8().unwrap().len()
     );
 
     // Verify output size (3 bytes per pixel for RGB)
     let expected_size = (decoded.width() * decoded.height() * 3) as usize;
     assert_eq!(
-        decoded.pixels().len(),
+        decoded.pixels_u8().unwrap().len(),
         expected_size,
         "RGB output should have 3 bytes per pixel"
     );
 
     // Verify R=G=B for grayscale content
-    let pixels = decoded.pixels();
+    let pixels = decoded.pixels_u8().unwrap();
     for chunk in pixels.chunks_exact(3).take(100) {
         assert_eq!(chunk[0], chunk[1], "R should equal G for grayscale content");
         assert_eq!(chunk[1], chunk[2], "G should equal B for grayscale content");
@@ -178,7 +178,7 @@ fn test_ultrahdr_gainmap_extraction() {
                 "Gain map decoded: {}x{}, {} bytes",
                 gm_decoded.width(),
                 gm_decoded.height(),
-                gm_decoded.pixels().len()
+                gm_decoded.pixels_u8().unwrap().len()
             );
 
             // Gain maps are typically grayscale or RGB

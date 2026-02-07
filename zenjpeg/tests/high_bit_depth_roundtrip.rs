@@ -183,8 +183,18 @@ fn test_16bit_input_preserves_good_precision() {
         .expect("decode 8-bit jpeg failed");
 
     // Extract red channel (same as green and blue for gray gradient)
-    let red_16: Vec<f32> = decoded_16.data.chunks(3).map(|c| c[0]).collect();
-    let red_8: Vec<f32> = decoded_8.data.chunks(3).map(|c| c[0]).collect();
+    let red_16: Vec<f32> = decoded_16
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
+    let red_8: Vec<f32> = decoded_8
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
 
     // Estimate effective bit depth
     let bits_16 = estimate_effective_bits(&red_16, 0.2);
@@ -247,13 +257,23 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let decoded_f32 = decoder
         .decode_f32(&jpeg, Unstoppable)
         .expect("f32 decode failed");
-    let f32_red: Vec<f32> = decoded_f32.data.chunks(3).map(|c| c[0]).collect();
+    let f32_red: Vec<f32> = decoded_f32
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
 
     // Decode to u8
     let decoded_u8 = decoder
         .decode(&jpeg, Unstoppable)
         .expect("u8 decode failed");
-    let u8_red: Vec<u8> = decoded_u8.data.chunks(3).map(|c| c[0]).collect();
+    let u8_red: Vec<u8> = decoded_u8
+        .pixels_u8()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
 
     // Count unique values in each output
     let mut f32_unique: Vec<i64> = f32_red.iter().map(|&v| (v * 1_000_000.0) as i64).collect();
@@ -305,7 +325,13 @@ fn test_to_u16_conversion_preserves_precision() {
         .expect("f32 decode failed");
 
     // Convert to u16
-    let data_u16 = decoded_f32.to_u16();
+    // TODO: to_u16 migration - DecodeResult doesn't have to_u16(), inline the conversion
+    let data_u16: Vec<u16> = decoded_f32
+        .pixels_f32()
+        .unwrap()
+        .iter()
+        .map(|&v| (v * 65535.0).round().clamp(0.0, 65535.0) as u16)
+        .collect();
 
     // Verify range is correct (should span roughly 0.4 to 0.6 * 65535)
     // The input is linear RGB that produces sRGB 0.4-0.6 after encoding
@@ -363,7 +389,7 @@ fn test_gradient_banding_reduced() {
 
     // Analyze horizontal gradient steps in the middle row
     let row_start = (height / 2) * width * 3;
-    let row: Vec<f32> = decoded.data[row_start..row_start + width * 3]
+    let row: Vec<f32> = decoded.pixels_f32().unwrap()[row_start..row_start + width * 3]
         .chunks(3)
         .map(|c| c[0]) // Red channel
         .collect();
@@ -463,8 +489,18 @@ fn test_full_pipeline_8bit_to_f32_precision() {
         .expect("u8 decode failed");
 
     // Extract red channel
-    let output_f32: Vec<f32> = decoded_f32.data.chunks(3).map(|c| c[0]).collect();
-    let output_u8: Vec<u8> = decoded_u8.data.chunks(3).map(|c| c[0]).collect();
+    let output_f32: Vec<f32> = decoded_f32
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
+    let output_u8: Vec<u8> = decoded_u8
+        .pixels_u8()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[0])
+        .collect();
 
     // Calculate error vs original (in 8-bit space for fair comparison)
     let reference: Vec<f32> = input_values.iter().map(|&v| v as f32 / 255.0).collect();
@@ -537,7 +573,12 @@ fn test_quality_affects_precision() {
         let decoded = decoder
             .decode_f32(&jpeg, Unstoppable)
             .expect("decode failed");
-        let red: Vec<f32> = decoded.data.chunks(3).map(|c| c[0]).collect();
+        let red: Vec<f32> = decoded
+            .pixels_f32()
+            .unwrap()
+            .chunks(3)
+            .map(|c| c[0])
+            .collect();
         let bits = estimate_effective_bits(&red, 0.2);
 
         println!(
@@ -597,8 +638,18 @@ fn test_subsampling_comparison() {
         .expect("420 decode failed");
 
     // Check green channel precision (affected by chroma subsampling)
-    let green_444: Vec<f32> = decoded_444.data.chunks(3).map(|c| c[1]).collect();
-    let green_420: Vec<f32> = decoded_420.data.chunks(3).map(|c| c[1]).collect();
+    let green_444: Vec<f32> = decoded_444
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[1])
+        .collect();
+    let green_420: Vec<f32> = decoded_420
+        .pixels_f32()
+        .unwrap()
+        .chunks(3)
+        .map(|c| c[1])
+        .collect();
 
     let bits_444 = estimate_effective_bits(&green_444, 1.0);
     let bits_420 = estimate_effective_bits(&green_420, 1.0);

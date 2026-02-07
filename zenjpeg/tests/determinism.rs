@@ -139,6 +139,14 @@ fn test_decoder_determinism() {
         .decode(&jpeg, Unstoppable)
         .expect("decode 3 failed");
 
-    assert_eq!(decoded1.data, decoded2.data, "Decoder is non-deterministic");
-    assert_eq!(decoded2.data, decoded3.data, "Decoder is non-deterministic");
+    assert_eq!(
+        decoded1.pixels_u8().unwrap(),
+        decoded2.pixels_u8().unwrap(),
+        "Decoder is non-deterministic"
+    );
+    assert_eq!(
+        decoded2.pixels_u8().unwrap(),
+        decoded3.pixels_u8().unwrap(),
+        "Decoder is non-deterministic"
+    );
 }

@@ -67,7 +67,7 @@ mod comparison {
     fn decode_zenjpeg(data: &[u8], bias: bool) -> Vec<u8> {
         let decoder = zenjpeg::decoder::Decoder::new().dequant_bias(bias);
         let img = decoder.decode(data, Unstoppable).expect("zenjpeg decode");
-        img.data
+        img.into_pixels_u8().unwrap()
     }
 
     fn decode_zune(data: &[u8]) -> Vec<u8> {

@@ -541,109 +541,94 @@ impl DecodeConfig {
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
-    pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImage> {
+    pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
             Some(&self.preserve),
             self.strictness,
         )?;
+        // f32 precise paths need coefficients stored (not streaming)
+        if self.output_target.is_precise() {
+            parser.prefer_streaming = false;
+        }
         parser.decode(&stop)?;
 
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
-        // Convert to output format
-        // For XYB images, use simple dequantization so ICC profile works correctly
-        #[allow(unused_mut)] // pixels is mutated when cms features are enabled
-        let mut pixels = parser.to_pixels(
-            output_format,
-            info.is_xyb,
-            self.chroma_upsampling,
-            self.output_target,
-            &stop,
-        )?;
+        if self.output_target.is_f32() {
+            // f32 output path
+            let pixels =
+                parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
+            let extras = parser.take_extras();
+            let warnings = parser.take_warnings();
+            Ok(DecodeResult::new_f32(
+                info.dimensions.width,
+                info.dimensions.height,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            ))
+        } else {
+            // u8 output path
+            #[allow(unused_mut)]
+            let mut pixels = parser.to_pixels(
+                output_format,
+                info.is_xyb,
+                self.chroma_upsampling,
+                self.output_target,
+                &stop,
+            )?;
 
-        // Apply ICC profile if enabled and present
-        // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
-        // rather than failing the decode, since the JPEG itself decoded successfully
-        #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-        if self.apply_icc && output_format == PixelFormat::Rgb {
-            if let Some(ref icc_profile) = parser.icc_profile {
-                match apply_icc_transform(
-                    &pixels,
-                    info.dimensions.width as usize,
-                    info.dimensions.height as usize,
-                    icc_profile,
-                ) {
-                    Ok(transformed) => pixels = transformed,
-                    Err(_e) => {
-                        // ICC transform failed - continue with un-color-managed pixels
-                        // This can happen with unusual profiles that CMS libraries don't support
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Warning: ICC profile transform failed, using original colors: {_e:?}"
-                        );
+            // Apply ICC profile if enabled and present
+            #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+            if self.apply_icc && output_format == PixelFormat::Rgb {
+                if let Some(ref icc_profile) = parser.icc_profile {
+                    match apply_icc_transform(
+                        &pixels,
+                        info.dimensions.width as usize,
+                        info.dimensions.height as usize,
+                        icc_profile,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC profile transform failed, using original colors: {_e:?}"
+                            );
+                        }
                     }
                 }
             }
+
+            let extras = parser.take_extras();
+            let warnings = parser.take_warnings();
+            Ok(DecodeResult::new_u8(
+                info.dimensions.width,
+                info.dimensions.height,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            ))
         }
-
-        // Extract preserved extras and warnings
-        let extras = parser.take_extras();
-        let warnings = parser.take_warnings();
-
-        Ok(DecodedImage {
-            width: info.dimensions.width,
-            height: info.dimensions.height,
-            format: output_format,
-            data: pixels,
-            extras,
-            warnings,
-        })
     }
 
     /// Decodes a JPEG image to 32-bit floating point pixels.
     ///
-    /// This preserves the full 12-bit internal precision of jpegli's decoder
-    /// without quantization to 8-bit. Values are normalized to range 0.0-1.0.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::decode::Decoder;
-    ///
-    /// let decoder = Decoder::new();
-    /// let image = decoder.decode_f32(&jpeg_data)?;
-    /// // image.data contains f32 values in range 0.0-1.0
-    /// ```
-    ///
-    /// Note: ICC profile application is not supported for f32 output.
-    /// If you need ICC profile transformation, decode to u8 first.
-    ///
-    /// For large images, consider using streaming APIs for memory-efficient decoding.
-    pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedImageF32> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
-        // Disable streaming - f32 decode needs coefficients for precision
-        parser.prefer_streaming = false;
-        parser.decode(&stop)?;
-
-        let info = parser.info();
-        let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
-
-        // Convert to output format as f32
-        let pixels =
-            parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
-
-        let warnings = parser.take_warnings();
-
-        Ok(DecodedImageF32 {
-            width: info.dimensions.width,
-            height: info.dimensions.height,
-            format: output_format,
-            data: pixels,
-            warnings,
-        })
+    /// **Deprecated**: Use `decode()` with `output_target(OutputTarget::SrgbF32)` instead.
+    /// This method exists for backward compatibility and will be removed.
+    pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        // Force SrgbF32 output target regardless of config
+        let mut config = self.clone();
+        if !config.output_target.is_f32() {
+            config.output_target = OutputTarget::SrgbF32;
+        }
+        config.decode(data, stop)
     }
 
     /// Decodes a JPEG and extracts raw quantized DCT coefficients.
@@ -897,12 +882,15 @@ mod tests {
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
-        assert_eq!(decoded.data.len(), (width * height) as usize);
+        assert_eq!(
+            decoded.pixels_u8().unwrap().len(),
+            (width * height) as usize
+        );
 
         // Check pixel values are reasonably close (JPEG is lossy)
         let mut max_diff = 0i32;
         for i in 0..input.len() {
-            let diff = (input[i] as i32 - decoded.data[i] as i32).abs();
+            let diff = (input[i] as i32 - decoded.pixels_u8().unwrap()[i] as i32).abs();
             max_diff = max_diff.max(diff);
         }
         // At quality 95, differences should be small
@@ -941,12 +929,15 @@ mod tests {
 
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
-        assert_eq!(decoded.data.len(), (width * height * 3) as usize);
+        assert_eq!(
+            decoded.pixels_u8().unwrap().len(),
+            (width * height * 3) as usize
+        );
 
         // Check pixel values are reasonably close
         let mut max_diff = 0i32;
         for i in 0..input.len() {
-            let diff = (input[i] as i32 - decoded.data[i] as i32).abs();
+            let diff = (input[i] as i32 - decoded.pixels_u8().unwrap()[i] as i32).abs();
             max_diff = max_diff.max(diff);
         }
         // At quality 95, differences should be small
@@ -985,12 +976,13 @@ mod tests {
 
         assert_eq!(decoded_f32.width, width);
         assert_eq!(decoded_f32.height, height);
-        assert_eq!(decoded_f32.data.len(), (width * height * 3) as usize);
+        let f32_pixels = decoded_f32.pixels_f32().unwrap();
+        assert_eq!(f32_pixels.len(), (width * height * 3) as usize);
 
         // Verify values are approximately in 0.0-1.0 range.
         // YCbCr→RGB color matrix can produce values slightly outside [0, 1]
         // due to ringing — this is intentional to preserve full precision.
-        for &v in &decoded_f32.data {
+        for &v in f32_pixels {
             assert!(
                 (-0.05..=1.05).contains(&v),
                 "f32 value {} too far out of range",
@@ -998,17 +990,23 @@ mod tests {
             );
         }
 
-        // Compare with u8 decode - converted f32 should match
+        // Compare with u8 decode
         let decoded_u8 = decoder
             .decode(&jpeg, Unstoppable)
             .expect("u8 decoding should succeed");
-        let converted_u8 = decoded_f32.to_u8();
+        let u8_pixels = decoded_u8.pixels_u8().unwrap();
+
+        // Convert f32→u8 manually for comparison
+        let converted: Vec<u8> = f32_pixels
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
 
         // Values should be close - allow diff of 2 because u8 path uses integer IDCT
         // while f32 path uses f32 IDCT (standard JPEG precision difference)
         let mut max_diff = 0i32;
-        for i in 0..decoded_u8.data.len() {
-            let diff = (decoded_u8.data[i] as i32 - converted_u8.data[i] as i32).abs();
+        for i in 0..u8_pixels.len() {
+            let diff = (u8_pixels[i] as i32 - converted[i] as i32).abs();
             max_diff = max_diff.max(diff);
         }
         assert!(
@@ -1053,7 +1051,7 @@ mod tests {
         // Check that f32 values show more precision than just u8/255
         // by verifying we have non-quantized intermediate values
         let mut found_fractional = false;
-        for &v in &decoded_f32.data {
+        for &v in decoded_f32.pixels_f32().unwrap() {
             let scaled = v * 255.0;
             let frac = scaled - scaled.round();
             if frac.abs() > 0.001 && frac.abs() < 0.999 {

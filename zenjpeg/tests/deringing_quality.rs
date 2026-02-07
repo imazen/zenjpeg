@@ -59,7 +59,7 @@ fn encode_gray_with_deringing(
 fn decode_gray(jpeg: &[u8]) -> Vec<u8> {
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
     let decoded = decoder.decode(jpeg, Unstoppable).expect("decode failed");
-    decoded.data
+    decoded.into_pixels_u8().unwrap()
 }
 
 fn compute_dssim_gray(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {

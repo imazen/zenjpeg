@@ -98,7 +98,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     match decoder.decode(data, Unstoppable) {
         Ok(img) => {
             // eprintln!("  jpegli decode OK, {} bytes", img.data.len());
-            img.data
+            img.into_pixels_u8().unwrap()
         }
         Err(e) => {
             eprintln!("  jpegli decode failed: {:?}, using jpeg-decoder", e);

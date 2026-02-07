@@ -191,10 +191,13 @@ fn test_decode_f32() {
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
-    assert_eq!(decoded.pixels().len(), (width * height * 3) as usize);
+    assert_eq!(
+        decoded.pixels_f32().unwrap().len(),
+        (width * height * 3) as usize
+    );
 
     // Values should be in 0.0-1.0 range
-    for &val in decoded.pixels() {
+    for &val in decoded.pixels_f32().unwrap() {
         assert!((0.0..=1.0).contains(&val), "f32 value {} out of range", val);
     }
 }
@@ -215,7 +218,10 @@ fn test_decode_to_format_rgb() {
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
     // RGB has 3 bytes per pixel
-    assert_eq!(decoded.pixels().len(), (width * height * 3) as usize);
+    assert_eq!(
+        decoded.pixels_u8().unwrap().len(),
+        (width * height * 3) as usize
+    );
     assert_eq!(decoded.bytes_per_pixel(), 3);
 }
 

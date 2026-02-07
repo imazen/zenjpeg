@@ -117,8 +117,20 @@ fn debug_gray_linear_encoding() {
         .expect("Gray16 decode failed");
 
     // Extract just the red channel (grayscale outputs RGB with R=G=B)
-    let vals8: Vec<f32> = dec8.data.iter().step_by(3).cloned().collect();
-    let vals16: Vec<f32> = dec16.data.iter().step_by(3).cloned().collect();
+    let vals8: Vec<f32> = dec8
+        .pixels_f32()
+        .unwrap()
+        .iter()
+        .step_by(3)
+        .cloned()
+        .collect();
+    let vals16: Vec<f32> = dec16
+        .pixels_f32()
+        .unwrap()
+        .iter()
+        .step_by(3)
+        .cloned()
+        .collect();
 
     println!("\n=== DECODED OUTPUT ===");
     println!("Gray8 decoded (f32):");

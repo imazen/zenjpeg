@@ -37,8 +37,8 @@ fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
-    let rms = distance_rms(&img.pixels, &decoded.data);
-    let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
+    let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
+    let max_diff = max_pixel_diff(&img.pixels, decoded.pixels_u8().unwrap());
 
     (rms, max_diff, jpeg.len(), img.pixels.len())
 }
@@ -361,7 +361,8 @@ fn test_decode_deterministic() {
     let decoded2 = decoder.decode(&jpeg, Unstoppable).expect("decode 2 failed");
 
     assert_eq!(
-        decoded1.data, decoded2.data,
+        decoded1.pixels_u8().unwrap(),
+        decoded2.pixels_u8().unwrap(),
         "Decoding should be deterministic"
     );
 }

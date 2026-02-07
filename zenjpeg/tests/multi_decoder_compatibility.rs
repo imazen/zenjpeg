@@ -112,13 +112,18 @@ fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     let start = std::time::Instant::now();
     let decoder = zenjpeg::decoder::Decoder::new();
     match decoder.decode(data, Unstoppable) {
-        Ok(img) => Some(DecoderResult {
-            decoder_name: "zenjpeg".to_string(),
-            pixels: img.data,
-            width: img.width as usize,
-            height: img.height as usize,
-            decode_time_us: start.elapsed().as_micros() as u64,
-        }),
+        Ok(img) => {
+            let width = img.width as usize;
+            let height = img.height as usize;
+            let decode_time_us = start.elapsed().as_micros() as u64;
+            Some(DecoderResult {
+                decoder_name: "zenjpeg".to_string(),
+                pixels: img.into_pixels_u8().unwrap(),
+                width,
+                height,
+                decode_time_us,
+            })
+        }
         Err(e) => {
             eprintln!("zenjpeg decode failed: {}", e);
             None

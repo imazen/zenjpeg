@@ -121,7 +121,7 @@ fn jpegli_decodes_progressive_xyb() {
     let image = result.unwrap();
     assert_eq!(image.width, 8);
     assert_eq!(image.height, 8);
-    assert_eq!(image.data.len(), 8 * 8 * 3);
+    assert_eq!(image.pixels_u8().unwrap().len(), 8 * 8 * 3);
 }
 
 /// Test that zenjpeg can decode baseline (non-progressive) XYB JPEGs.

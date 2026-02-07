@@ -743,11 +743,11 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 /// Decode a gain map JPEG to GainMap struct.
 #[cfg(feature = "ultrahdr")]
 fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
-    let decoded = crate::decode::Decoder::new().decode(jpeg_data)?;
+    let decoded = crate::decode::Decoder::new().decode(jpeg_data, enough::Unstoppable)?;
 
     let width = decoded.width();
     let height = decoded.height();
-    let pixels = decoded.pixels().to_vec();
+    let pixels = decoded.pixels_u8().unwrap().to_vec();
 
     // Determine if single-channel or multi-channel based on content
     let channels = if is_grayscale_content(&pixels) { 1 } else { 3 };

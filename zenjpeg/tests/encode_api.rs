@@ -369,7 +369,7 @@ fn test_encode_solid_color() {
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
         // Solid colors should roundtrip very well
-        let rms = distance_rms(&img.pixels, &decoded.data);
+        let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
         assert!(rms < 5.0, "Solid ({},{},{}) RMS {} too high", r, g, b, rms);
     }
 }
@@ -384,8 +384,8 @@ fn test_encode_checkerboard() {
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
     // Checkerboard has sharp edges, expect some ringing
-    let rms = distance_rms(&img.pixels, &decoded.data);
-    let max_diff = max_pixel_diff(&img.pixels, &decoded.data);
+    let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
+    let max_diff = max_pixel_diff(&img.pixels, decoded.pixels_u8().unwrap());
     println!("Checkerboard: RMS={:.2}, max_diff={}", rms, max_diff);
 
     assert!(rms < 20.0, "Checkerboard RMS {} too high", rms);
@@ -400,7 +400,7 @@ fn test_encode_color_bars() {
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
 
-    let rms = distance_rms(&img.pixels, &decoded.data);
+    let rms = distance_rms(&img.pixels, decoded.pixels_u8().unwrap());
     // Color bars have sharp edges which cause ringing - allow higher RMS
     assert!(
         rms < thresholds::Q90_MAX_RMS * 4.0,
@@ -814,8 +814,14 @@ fn test_encode_ycbcr8_vs_rgb_both_valid() {
     assert_eq!(decoded_ycbcr.height, height);
 
     // Verify pixel data has expected size
-    assert_eq!(decoded_rgb.data.len(), (width * height * 3) as usize);
-    assert_eq!(decoded_ycbcr.data.len(), (width * height * 3) as usize);
+    assert_eq!(
+        decoded_rgb.pixels_u8().unwrap().len(),
+        (width * height * 3) as usize
+    );
+    assert_eq!(
+        decoded_ycbcr.pixels_u8().unwrap().len(),
+        (width * height * 3) as usize
+    );
 
     // Both should produce reasonable quality (low RMS vs original for their respective inputs)
     // This is a weak test - just verify roundtrip doesn't completely corrupt data

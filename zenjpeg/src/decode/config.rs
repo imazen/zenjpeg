@@ -477,9 +477,12 @@ pub type DecoderConfig = DecodeConfig;
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodeResult {
-    width: u32,
-    height: u32,
-    format: crate::types::PixelFormat,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Pixel format of the decoded data.
+    pub format: crate::types::PixelFormat,
     output_target: OutputTarget,
     pixels_u8: Option<Vec<u8>>,
     pixels_f32: Option<Vec<f32>>,
@@ -645,6 +648,21 @@ impl DecodeResult {
     #[must_use]
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
+    }
+
+    /// Converts f32 pixel data to 16-bit integer format.
+    ///
+    /// Values are scaled from 0.0-1.0 to 0-65535 and clamped.
+    /// Returns `None` if the result doesn't contain f32 data.
+    #[must_use]
+    pub fn to_u16(&self) -> Option<Vec<u16>> {
+        let data = self.pixels_f32.as_ref()?;
+        let len = data.len();
+        let mut result = vec![0u16; len];
+        for i in 0..len {
+            result[i] = (data[i] * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        }
+        Some(result)
     }
 
     /// Decompose into parts: (pixels_u8, pixels_f32, width, height, format, extras).

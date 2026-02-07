@@ -1170,9 +1170,9 @@ pub fn decode_jpeg_with_icc(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
         .map_err(|e| JpegDecodeError::Decode(format!("{:?}", e)))?;
 
     Ok(bytes_to_rgb(
-        &decoded.data,
-        decoded.width as usize,
-        decoded.height as usize,
+        decoded.pixels_u8().unwrap(),
+        decoded.width() as usize,
+        decoded.height() as usize,
     ))
 }
 

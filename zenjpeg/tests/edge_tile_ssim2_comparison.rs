@@ -175,7 +175,7 @@ fn decode_jpeg(jpeg: &[u8]) -> Vec<u8> {
     let decoded = zenjpeg::decoder::Decoder::new()
         .decode(jpeg, Unstoppable)
         .expect("decode failed");
-    decoded.data
+    decoded.into_pixels_u8().unwrap()
 }
 
 /// Encode with C++ cjpegli, decode with djpegli, return RGB

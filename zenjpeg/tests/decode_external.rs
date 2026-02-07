@@ -29,7 +29,9 @@ fn decode_with_jpegli(data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     let img = decoder
         .decode(data, Unstoppable)
         .map_err(|e| e.to_string())?;
-    Ok((img.data, img.width as usize, img.height as usize))
+    let w = img.width as usize;
+    let h = img.height as usize;
+    Ok((img.into_pixels_u8().unwrap(), w, h))
 }
 
 /// Decode using zune-jpeg (fast pure Rust decoder)

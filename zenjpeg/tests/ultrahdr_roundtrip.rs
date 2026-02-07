@@ -335,7 +335,7 @@ fn test_standalone_grayscale_encode_decode() {
     assert_eq!(decoded.height(), height);
 
     // Decoded grayscale may be expanded to RGB - check either format
-    let decoded_pixels = decoded.pixels();
+    let decoded_pixels = decoded.pixels_u8().unwrap();
     let bytes_per_pixel = decoded_pixels.len() / (width * height) as usize;
 
     // Verify pixel values are approximately correct (lossy compression)

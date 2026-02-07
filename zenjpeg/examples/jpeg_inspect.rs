@@ -551,7 +551,7 @@ fn validate_jpeg(data: &[u8], path: &str) {
             "OK ({}x{}, {} bytes)",
             img.width,
             img.height,
-            img.data.len()
+            img.pixels_u8().unwrap().len()
         ),
         Err(e) => println!("ERROR: {}", e),
     }

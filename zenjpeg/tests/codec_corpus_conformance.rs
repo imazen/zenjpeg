@@ -161,7 +161,10 @@ fn test_fuzz_corpus_sample() {
                 // Valid JPEG - verify basic properties
                 assert!(img.width > 0, "Width should be positive");
                 assert!(img.height > 0, "Height should be positive");
-                assert!(!img.data.is_empty(), "Data should not be empty");
+                assert!(
+                    !img.pixels_u8().unwrap().is_empty(),
+                    "Data should not be empty"
+                );
             }
             Err(_e) => {
                 // Fuzz files may be invalid - this is expected
@@ -641,7 +644,10 @@ fn test_jpeg_conformance_valid() {
                 println!("{}: OK {}x{}", filename, img.width, img.height);
                 assert!(img.width > 0, "Width should be positive");
                 assert!(img.height > 0, "Height should be positive");
-                assert!(!img.data.is_empty(), "Data should not be empty");
+                assert!(
+                    !img.pixels_u8().unwrap().is_empty(),
+                    "Data should not be empty"
+                );
             }
             Err(e) => {
                 if is_unsupported_feature(&e) {

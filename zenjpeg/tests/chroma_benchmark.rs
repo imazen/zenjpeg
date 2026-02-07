@@ -219,7 +219,9 @@ fn encode_with_method(
 fn decode_jpeg(jpeg_data: &[u8]) -> Result<(Vec<u8>, u32, u32), Error> {
     let decoder = Decoder::new();
     let decoded = decoder.decode(jpeg_data, Unstoppable)?;
-    Ok((decoded.data, decoded.width, decoded.height))
+    let w = decoded.width;
+    let h = decoded.height;
+    Ok((decoded.into_pixels_u8().unwrap(), w, h))
 }
 
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {

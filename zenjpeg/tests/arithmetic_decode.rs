@@ -34,14 +34,15 @@ fn test_arithmetic_jpeg_decode_rgb() {
 
     // Verify dimensions
     let expected_size = (info.dimensions.width as usize) * (info.dimensions.height as usize) * 3;
-    assert_eq!(decoded.data.len(), expected_size);
+    assert_eq!(decoded.pixels_u8().unwrap().len(), expected_size);
 
     // Basic sanity check - not all zeros
-    let sum: u64 = decoded.data.iter().map(|&x| x as u64).sum();
+    let sum: u64 = decoded.pixels_u8().unwrap().iter().map(|&x| x as u64).sum();
     assert!(sum > 0, "decoded image is all zeros");
 
     // Check some pixels have variety (not all same color)
-    let unique_values: std::collections::HashSet<u8> = decoded.data.iter().copied().collect();
+    let unique_values: std::collections::HashSet<u8> =
+        decoded.pixels_u8().unwrap().iter().copied().collect();
     assert!(
         unique_values.len() > 10,
         "decoded image has too few unique values"
@@ -104,9 +105,10 @@ fn test_arithmetic_jpeg_reference_comparison() {
                 let ref_rgb = &ppm_data[rgb_start..];
 
                 // Compare
-                if ref_rgb.len() == decoded.data.len() {
+                if ref_rgb.len() == decoded.pixels_u8().unwrap().len() {
                     let mut max_diff = 0u8;
-                    for (ours, reference) in decoded.data.iter().zip(ref_rgb.iter()) {
+                    for (ours, reference) in decoded.pixels_u8().unwrap().iter().zip(ref_rgb.iter())
+                    {
                         let diff = (*ours as i16 - *reference as i16).unsigned_abs() as u8;
                         max_diff = max_diff.max(diff);
                     }
@@ -155,7 +157,7 @@ fn debug_arithmetic_output() {
     let decoded = decoder
         .decode(&data, Unstoppable)
         .expect("failed to decode");
-    println!("Decoded {} bytes", decoded.data.len());
+    println!("Decoded {} bytes", decoded.pixels_u8().unwrap().len());
 
     // Get djpeg output
     let output = Command::new("djpeg")
@@ -186,7 +188,13 @@ fn debug_arithmetic_output() {
         let mut max_diff = 0i16;
         let mut max_diff_pos = 0usize;
 
-        for (i, (&ours, &reference)) in decoded.data.iter().zip(ref_rgb.iter()).enumerate() {
+        for (i, (&ours, &reference)) in decoded
+            .pixels_u8()
+            .unwrap()
+            .iter()
+            .zip(ref_rgb.iter())
+            .enumerate()
+        {
             let diff = (ours as i16 - reference as i16).abs();
             diff_hist[diff as usize] += 1;
             if diff > max_diff {
@@ -223,14 +231,19 @@ fn debug_arithmetic_output() {
             "  Pixel ({}, {}), channel {} (0=R, 1=G, 2=B)",
             x, y, channel
         );
-        println!("  Our value: {}", decoded.data[max_diff_pos]);
+        println!(
+            "  Our value: {}",
+            decoded.pixels_u8().unwrap()[max_diff_pos]
+        );
         println!("  Ref value: {}", ref_rgb[max_diff_pos]);
 
         // Show pixels around the max diff
         let row_start = (pixel_idx / 227) * 227;
         println!("\nPixels around max diff (row {}):", y);
-        for i in row_start.saturating_sub(2)..=(row_start + 10).min(decoded.data.len() / 3 - 1) {
-            let ours = &decoded.data[i * 3..(i + 1) * 3];
+        for i in row_start.saturating_sub(2)
+            ..=(row_start + 10).min(decoded.pixels_u8().unwrap().len() / 3 - 1)
+        {
+            let ours = &decoded.pixels_u8().unwrap()[i * 3..(i + 1) * 3];
             let refs = &ref_rgb[i * 3..(i + 1) * 3];
             let diff_r = (ours[0] as i16 - refs[0] as i16).abs();
             let diff_g = (ours[1] as i16 - refs[1] as i16).abs();

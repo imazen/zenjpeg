@@ -42,7 +42,11 @@ fn decode_file_with_strictness(
     let image = decoder
         .decode(&data, Unstoppable)
         .map_err(|e| format!("decode error: {e}"))?;
-    Ok((image.width(), image.height(), image.pixels().len()))
+    Ok((
+        image.width(),
+        image.height(),
+        image.pixels_u8().unwrap().len(),
+    ))
 }
 
 #[test]

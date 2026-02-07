@@ -321,7 +321,12 @@ fn test_dssim_parity() {
                 Err(_) => continue,
             };
 
-            let rust_dssim = compute_dssim(&pixels, &decoded.data, width as usize, height as usize);
+            let rust_dssim = compute_dssim(
+                &pixels,
+                decoded.pixels_u8().unwrap(),
+                width as usize,
+                height as usize,
+            );
             let cpp_dssim = point.dssim;
 
             // 20% relative threshold (DSSIM values are small, so relative comparison)

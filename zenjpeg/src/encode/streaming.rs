@@ -1933,7 +1933,7 @@ mod tests {
             .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
-        assert_eq!(decoded.data.len(), width * height * 3);
+        assert_eq!(decoded.pixels_u8().unwrap().len(), width * height * 3);
     }
 
     /// Decode 4:2:0 streaming output and verify dimensions.
@@ -1980,7 +1980,7 @@ mod tests {
             .unwrap();
         assert_eq!(decoded.width, width as u32);
         assert_eq!(decoded.height, height as u32);
-        assert_eq!(decoded.data.len(), width * height * 3);
+        assert_eq!(decoded.pixels_u8().unwrap().len(), width * height * 3);
     }
 
     /// Decode non-aligned streaming output with 4:2:0.

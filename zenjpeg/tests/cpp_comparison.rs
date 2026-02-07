@@ -69,7 +69,9 @@ fn decode_test_jpeg(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
     let data = read_test_data(filename)?;
     let decoder = Decoder::new();
     let decoded = decoder.decode(&data, Unstoppable).ok()?;
-    Some((decoded.width, decoded.height, decoded.data))
+    let w = decoded.width;
+    let h = decoded.height;
+    Some((w, h, decoded.into_pixels_u8().unwrap()))
 }
 
 // ============================================================================
@@ -207,7 +209,7 @@ fn test_quality_vs_cpp_decoded() {
 
     // Compare both against original
     let cpp_rms = distance_rms(&original, &cpp_pixels);
-    let rust_rms = distance_rms(&original, &rust_decoded.data);
+    let rust_rms = distance_rms(&original, rust_decoded.pixels_u8().unwrap());
 
     println!("Quality comparison vs original:");
     println!("  C++ Q85:  RMS = {:.4}", cpp_rms);

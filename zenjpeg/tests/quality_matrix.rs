@@ -541,7 +541,8 @@ fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
         .apply_icc(true)
         .decode(data)
         .expect("jpegli decode failed")
-        .data
+        .into_pixels_u8()
+        .unwrap()
 }
 
 // ============================================================================
