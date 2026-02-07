@@ -38,6 +38,10 @@
 //!         └── .scanline_reader()     → ScanlineReader
 //!             ├── .read_rows_rgb8()
 //!             ├── .read_rows_rgbx8()
+//!             ├── .read_rows_bgr8()
+//!             ├── .read_rows_rgba8()
+//!             ├── .read_rows_bgra8()
+//!             ├── .read_rows_bgrx8()
 //!             ├── .read_rows_rgba_f32()
 //!             ├── .read_rows_gray8()
 //!             ├── .read_rows_gray_f32()
@@ -202,25 +206,165 @@ fn output_format_gray() {
     assert_eq!(result.bytes_per_pixel(), 1);
 }
 
-/// `PixelFormat::Bgr` / `PixelFormat::Bgra` exist in the enum but are not
-/// yet supported by the buffered decode path. Setting them via
-/// `.output_format()` returns an `UnsupportedFeature` error.
+/// `PixelFormat::Bgr` decodes to 3 bytes per pixel in B-G-R order.
+/// Pixels should match RGB output with R and B channels swapped.
 #[test]
-fn output_format_bgr_unsupported_in_buffered() {
+fn output_format_bgr() {
     let jpeg = test_jpeg_420();
-    let result = Decoder::new()
+    let rgb = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgr = Decoder::new()
         .output_format(PixelFormat::Bgr)
-        .decode(&jpeg, Unstoppable);
-    assert!(result.is_err(), "BGR not yet supported in buffered decode");
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(bgr.format(), PixelFormat::Bgr);
+    assert_eq!(bgr.bytes_per_pixel(), 3);
+    let rgb_px = rgb.pixels_u8().unwrap();
+    let bgr_px = bgr.pixels_u8().unwrap();
+    assert_eq!(rgb_px.len(), bgr_px.len());
+    for (rgb_chunk, bgr_chunk) in rgb_px.chunks_exact(3).zip(bgr_px.chunks_exact(3)) {
+        assert_eq!(rgb_chunk[0], bgr_chunk[2], "R != B-position in BGR");
+        assert_eq!(rgb_chunk[1], bgr_chunk[1], "G channels must match");
+        assert_eq!(rgb_chunk[2], bgr_chunk[0], "B != R-position in BGR");
+    }
 }
 
+/// `PixelFormat::Bgra` decodes to 4 bytes per pixel in B-G-R-A order (A=255).
 #[test]
-fn output_format_bgra_unsupported_in_buffered() {
+fn output_format_bgra() {
     let jpeg = test_jpeg_420();
-    let result = Decoder::new()
+    let rgb = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgra = Decoder::new()
         .output_format(PixelFormat::Bgra)
-        .decode(&jpeg, Unstoppable);
-    assert!(result.is_err(), "BGRA not yet supported in buffered decode");
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(bgra.format(), PixelFormat::Bgra);
+    assert_eq!(bgra.bytes_per_pixel(), 4);
+    let rgb_px = rgb.pixels_u8().unwrap();
+    let bgra_px = bgra.pixels_u8().unwrap();
+    assert_eq!(bgra_px.len(), 64 * 64 * 4);
+    for (rgb_chunk, bgra_chunk) in rgb_px.chunks_exact(3).zip(bgra_px.chunks_exact(4)) {
+        assert_eq!(rgb_chunk[0], bgra_chunk[2], "R in BGRA position 2");
+        assert_eq!(rgb_chunk[1], bgra_chunk[1], "G in BGRA position 1");
+        assert_eq!(rgb_chunk[2], bgra_chunk[0], "B in BGRA position 0");
+        assert_eq!(bgra_chunk[3], 255, "A must be 255");
+    }
+}
+
+/// `PixelFormat::Rgba` decodes to 4 bytes per pixel in R-G-B-A order (A=255).
+#[test]
+fn output_format_rgba() {
+    let jpeg = test_jpeg_420();
+    let rgb = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let rgba = Decoder::new()
+        .output_format(PixelFormat::Rgba)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(rgba.format(), PixelFormat::Rgba);
+    assert_eq!(rgba.bytes_per_pixel(), 4);
+    let rgb_px = rgb.pixels_u8().unwrap();
+    let rgba_px = rgba.pixels_u8().unwrap();
+    for (rgb_chunk, rgba_chunk) in rgb_px.chunks_exact(3).zip(rgba_px.chunks_exact(4)) {
+        assert_eq!(rgb_chunk[0], rgba_chunk[0]);
+        assert_eq!(rgb_chunk[1], rgba_chunk[1]);
+        assert_eq!(rgb_chunk[2], rgba_chunk[2]);
+        assert_eq!(rgba_chunk[3], 255);
+    }
+}
+
+/// `PixelFormat::Bgrx` decodes to 4 bytes per pixel in B-G-R-X order (X=255).
+#[test]
+fn output_format_bgrx() {
+    let jpeg = test_jpeg_444();
+    let bgra = Decoder::new()
+        .output_format(PixelFormat::Bgra)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgrx = Decoder::new()
+        .output_format(PixelFormat::Bgrx)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    assert_eq!(bgrx.format(), PixelFormat::Bgrx);
+    // BGRX and BGRA should produce identical bytes
+    assert_eq!(bgra.pixels_u8().unwrap(), bgrx.pixels_u8().unwrap());
+}
+
+/// BGR/BGRA/RGBA work with grayscale images.
+#[test]
+fn output_format_bgr_grayscale() {
+    let jpeg = test_jpeg_gray();
+    let bgr = Decoder::new()
+        .output_format(PixelFormat::Bgr)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgr_px = bgr.pixels_u8().unwrap();
+    // Grayscale: all channels equal, R/B swap is no-op
+    for chunk in bgr_px.chunks_exact(3) {
+        assert_eq!(chunk[0], chunk[1]);
+        assert_eq!(chunk[1], chunk[2]);
+    }
+
+    let bgra = Decoder::new()
+        .output_format(PixelFormat::Bgra)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgra_px = bgra.pixels_u8().unwrap();
+    for chunk in bgra_px.chunks_exact(4) {
+        assert_eq!(chunk[0], chunk[1]);
+        assert_eq!(chunk[1], chunk[2]);
+        assert_eq!(chunk[3], 255);
+    }
+}
+
+/// BGR/BGRA work with the fast i16 4:4:4 path.
+#[test]
+fn output_format_bgr_fast_444_path() {
+    let jpeg = test_jpeg_444();
+    let rgb = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgra = Decoder::new()
+        .output_format(PixelFormat::Bgra)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let rgb_px = rgb.pixels_u8().unwrap();
+    let bgra_px = bgra.pixels_u8().unwrap();
+    for (rgb_chunk, bgra_chunk) in rgb_px.chunks_exact(3).zip(bgra_px.chunks_exact(4)) {
+        assert_eq!(rgb_chunk[0], bgra_chunk[2]); // R
+        assert_eq!(rgb_chunk[1], bgra_chunk[1]); // G
+        assert_eq!(rgb_chunk[2], bgra_chunk[0]); // B
+        assert_eq!(bgra_chunk[3], 255);
+    }
+}
+
+/// BGR/BGRA work with progressive JPEGs (buffered decode path).
+#[test]
+fn output_format_bgr_progressive() {
+    let jpeg = test_jpeg_progressive();
+    let rgb = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let bgr = Decoder::new()
+        .output_format(PixelFormat::Bgr)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+    let rgb_px = rgb.pixels_u8().unwrap();
+    let bgr_px = bgr.pixels_u8().unwrap();
+    for (r, b) in rgb_px.chunks_exact(3).zip(bgr_px.chunks_exact(3)) {
+        assert_eq!(r[0], b[2]);
+        assert_eq!(r[1], b[1]);
+        assert_eq!(r[2], b[0]);
+    }
 }
 
 // ============================================================================
@@ -822,6 +966,182 @@ fn scanline_reader_rgbx8() {
         rows_decoded += n;
     }
     assert_eq!(rows_decoded, h);
+}
+
+// ============================================================================
+// 17b. Scanline reader — BGR/BGRA/RGBA/BGRX (fused output)
+// ============================================================================
+
+/// `read_rows_bgr8()` outputs 3 bytes per pixel in B-G-R order.
+#[test]
+fn scanline_reader_bgr8() {
+    let jpeg = test_jpeg_420();
+
+    // Decode with RGB for reference
+    let mut reader_rgb = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let w = reader_rgb.width() as usize;
+    let h = reader_rgb.height() as usize;
+    let stride3 = w * 3;
+    let mut rgb = vec![0u8; stride3 * h];
+    let mut n = 0;
+    while !reader_rgb.is_finished() {
+        let sl = &mut rgb[n * stride3..];
+        n += reader_rgb
+            .read_rows_rgb8(imgref::ImgRefMut::new(sl, stride3, h - n))
+            .unwrap();
+    }
+
+    // Decode with BGR
+    let mut reader_bgr = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let mut bgr = vec![0u8; stride3 * h];
+    let mut n = 0;
+    while !reader_bgr.is_finished() {
+        let sl = &mut bgr[n * stride3..];
+        n += reader_bgr
+            .read_rows_bgr8(imgref::ImgRefMut::new(sl, stride3, h - n))
+            .unwrap();
+    }
+
+    // Verify R/B swap
+    for (r, b) in rgb.chunks_exact(3).zip(bgr.chunks_exact(3)) {
+        assert_eq!(r[0], b[2], "R <-> B swap failed");
+        assert_eq!(r[1], b[1], "G must match");
+        assert_eq!(r[2], b[0], "B <-> R swap failed");
+    }
+}
+
+/// `read_rows_rgba8()` outputs 4 bytes per pixel in R-G-B-A order (A=255).
+#[test]
+fn scanline_reader_rgba8() {
+    let jpeg = test_jpeg_420();
+    let mut reader = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let w = reader.width() as usize;
+    let h = reader.height() as usize;
+    let stride4 = w * 4;
+    let mut pixels = vec![0u8; stride4 * h];
+
+    let mut n = 0;
+    while !reader.is_finished() {
+        let sl = &mut pixels[n * stride4..];
+        n += reader
+            .read_rows_rgba8(imgref::ImgRefMut::new(sl, stride4, h - n))
+            .unwrap();
+    }
+    assert_eq!(n, h);
+    // Every alpha must be 255
+    for chunk in pixels.chunks_exact(4) {
+        assert_eq!(chunk[3], 255, "alpha must be 255");
+    }
+}
+
+/// `read_rows_bgra8()` outputs 4 bytes per pixel in B-G-R-A order (A=255).
+#[test]
+fn scanline_reader_bgra8() {
+    let jpeg = test_jpeg_444();
+
+    // Reference RGB
+    let mut reader_rgb = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let w = reader_rgb.width() as usize;
+    let h = reader_rgb.height() as usize;
+    let stride3 = w * 3;
+    let mut rgb = vec![0u8; stride3 * h];
+    let mut n = 0;
+    while !reader_rgb.is_finished() {
+        let sl = &mut rgb[n * stride3..];
+        n += reader_rgb
+            .read_rows_rgb8(imgref::ImgRefMut::new(sl, stride3, h - n))
+            .unwrap();
+    }
+
+    // BGRA
+    let mut reader_bgra = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let stride4 = w * 4;
+    let mut bgra = vec![0u8; stride4 * h];
+    let mut n = 0;
+    while !reader_bgra.is_finished() {
+        let sl = &mut bgra[n * stride4..];
+        n += reader_bgra
+            .read_rows_bgra8(imgref::ImgRefMut::new(sl, stride4, h - n))
+            .unwrap();
+    }
+
+    for (rgb_chunk, bgra_chunk) in rgb.chunks_exact(3).zip(bgra.chunks_exact(4)) {
+        assert_eq!(rgb_chunk[0], bgra_chunk[2], "R in BGRA[2]");
+        assert_eq!(rgb_chunk[1], bgra_chunk[1], "G in BGRA[1]");
+        assert_eq!(rgb_chunk[2], bgra_chunk[0], "B in BGRA[0]");
+        assert_eq!(bgra_chunk[3], 255, "alpha must be 255");
+    }
+}
+
+/// `read_rows_bgrx8()` is identical to `read_rows_bgra8()`.
+#[test]
+fn scanline_reader_bgrx8() {
+    let jpeg = test_jpeg_420();
+
+    let mut reader_a = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let w = reader_a.width() as usize;
+    let h = reader_a.height() as usize;
+    let stride4 = w * 4;
+    let mut bgra = vec![0u8; stride4 * h];
+    let mut n = 0;
+    while !reader_a.is_finished() {
+        let sl = &mut bgra[n * stride4..];
+        n += reader_a
+            .read_rows_bgra8(imgref::ImgRefMut::new(sl, stride4, h - n))
+            .unwrap();
+    }
+
+    let mut reader_x = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let mut bgrx = vec![0u8; stride4 * h];
+    let mut n = 0;
+    while !reader_x.is_finished() {
+        let sl = &mut bgrx[n * stride4..];
+        n += reader_x
+            .read_rows_bgrx8(imgref::ImgRefMut::new(sl, stride4, h - n))
+            .unwrap();
+    }
+
+    assert_eq!(bgra, bgrx);
+}
+
+/// Scanline BGR/BGRA work on grayscale images.
+#[test]
+fn scanline_reader_bgr_grayscale() {
+    let jpeg = test_jpeg_gray();
+
+    let mut reader = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let w = reader.width() as usize;
+    let h = reader.height() as usize;
+    let stride3 = w * 3;
+    let mut bgr = vec![0u8; stride3 * h];
+    let mut n = 0;
+    while !reader.is_finished() {
+        let sl = &mut bgr[n * stride3..];
+        n += reader
+            .read_rows_bgr8(imgref::ImgRefMut::new(sl, stride3, h - n))
+            .unwrap();
+    }
+    // Grayscale: all three channels equal
+    for chunk in bgr.chunks_exact(3) {
+        assert_eq!(chunk[0], chunk[1]);
+        assert_eq!(chunk[1], chunk[2]);
+    }
+
+    let mut reader2 = Decoder::new().scanline_reader(&jpeg).unwrap();
+    let stride4 = w * 4;
+    let mut bgra = vec![0u8; stride4 * h];
+    let mut n = 0;
+    while !reader2.is_finished() {
+        let sl = &mut bgra[n * stride4..];
+        n += reader2
+            .read_rows_bgra8(imgref::ImgRefMut::new(sl, stride4, h - n))
+            .unwrap();
+    }
+    for chunk in bgra.chunks_exact(4) {
+        assert_eq!(chunk[0], chunk[1]);
+        assert_eq!(chunk[1], chunk[2]);
+        assert_eq!(chunk[3], 255);
+    }
 }
 
 // ============================================================================

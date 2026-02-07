@@ -21,8 +21,13 @@ use super::super::idct_int::{
 use super::super::upsample::{upsample_fancy, upsample_libjpeg_f32, upsample_nearest_f32};
 use crate::color::{
     cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
-    gray_f32_to_rgb_u8, ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_f32_to_rgb_f32,
-    ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8, ycck_planes_to_rgb_u8,
+    gray_f32_to_rgb_u8,
+    ycbcr::{
+        fused_h2v2_box_ycbcr_to_rgb_u8, rgb_u8_swap_rb_inplace, rgb_u8_to_bgra_u8,
+        rgb_u8_to_rgba_u8,
+    },
+    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
+    ycck_planes_to_rgb_u8,
 };
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
@@ -36,6 +41,53 @@ use crate::types::PixelFormat;
 use enough::Stop;
 
 use super::{CompInfo, JpegParser};
+
+/// Returns true for formats that decode via the RGB u8 fast paths
+/// (i16 IDCT → direct u8 output), then optionally reformat.
+fn is_rgb_family_u8(format: PixelFormat) -> bool {
+    matches!(
+        format,
+        PixelFormat::Rgb
+            | PixelFormat::Bgr
+            | PixelFormat::Rgba
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx
+    )
+}
+
+/// Reformats an RGB u8 buffer into the target `PixelFormat`.
+///
+/// - `Rgb` → passthrough (returns `rgb` unchanged)
+/// - `Bgr` → in-place R/B swap (returns same buffer)
+/// - `Rgba` → allocate 4-bpp buffer, copy with alpha = 255
+/// - `Bgra` / `Bgrx` → allocate 4-bpp buffer, swap R/B + alpha = 255
+fn reformat_rgb_output(
+    mut rgb: Vec<u8>,
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>> {
+    match format {
+        PixelFormat::Rgb => Ok(rgb),
+        PixelFormat::Bgr => {
+            rgb_u8_swap_rb_inplace(&mut rgb);
+            Ok(rgb)
+        }
+        PixelFormat::Rgba => {
+            let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+            let mut dst = vec![0u8; dst_size];
+            rgb_u8_to_rgba_u8(&rgb, &mut dst);
+            Ok(dst)
+        }
+        PixelFormat::Bgra | PixelFormat::Bgrx => {
+            let dst_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+            let mut dst = vec![0u8; dst_size];
+            rgb_u8_to_bgra_u8(&rgb, &mut dst);
+            Ok(dst)
+        }
+        _ => Err(Error::unsupported_feature("unsupported color conversion")),
+    }
+}
 
 /// Pixel output conversion methods for JpegParser.
 impl<'a> JpegParser<'a> {
@@ -70,12 +122,12 @@ impl<'a> JpegParser<'a> {
     /// Fast path requirements:
     /// - Non-XYB (standard JPEG)
     /// - 4:4:4 subsampling (no chroma downsampling to avoid f32 upsampling)
-    /// - RGB output format
+    /// - RGB-family output format (Rgb, Bgr, Rgba, Bgra, Bgrx)
     fn can_use_fast_i16_path(&self, format: PixelFormat, is_xyb: bool) -> bool {
         if is_xyb {
             return false;
         }
-        if format != PixelFormat::Rgb {
+        if !is_rgb_family_u8(format) {
             return false;
         }
         if self.num_components != 3 {
@@ -100,14 +152,14 @@ impl<'a> JpegParser<'a> {
     ///
     /// Fast path requirements:
     /// - Non-XYB (standard JPEG)
-    /// - RGB output format
+    /// - RGB-family output format (Rgb, Bgr, Rgba, Bgra, Bgrx)
     /// - 3 components (YCbCr)
     /// - Standard subsampling (Y full-res, Cb/Cr subsampled)
     fn can_use_fast_i16_subsampled(&self, format: PixelFormat, is_xyb: bool) -> bool {
         if is_xyb {
             return false;
         }
-        if format != PixelFormat::Rgb {
+        if !is_rgb_family_u8(format) {
             return false;
         }
         if self.num_components != 3 {
@@ -848,11 +900,14 @@ impl<'a> JpegParser<'a> {
         _stop: &impl Stop,
     ) -> Result<Vec<u8>> {
         let dequant_bias = output_target.uses_dequant_bias();
+        let width = self.width as usize;
+        let height = self.height as usize;
 
-        // If streaming decode was used, return its result directly (zero-copy)
-        if format == PixelFormat::Rgb && !is_xyb {
+        // If streaming decode was used, return its result directly (zero-copy for Rgb,
+        // reformat for Bgr/Rgba/Bgra/Bgrx)
+        if is_rgb_family_u8(format) && !is_xyb {
             if let Some(rgb) = self.streaming_rgb.take() {
-                return Ok(rgb);
+                return reformat_rgb_output(rgb, format, width, height);
             }
         }
 
@@ -860,15 +915,17 @@ impl<'a> JpegParser<'a> {
             return Err(Error::internal("no decoded data"));
         }
 
-        // Try fast integer path for non-XYB 4:4:4 RGB images
+        // Try fast integer path for non-XYB 4:4:4 images
         // (dequant_bias requires f32 path for fractional bias application)
         if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
-            return self.to_pixels_fast_i16(chroma_upsampling);
+            let rgb = self.to_pixels_fast_i16(chroma_upsampling)?;
+            return reformat_rgb_output(rgb, format, width, height);
         }
 
         // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
         if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
-            return self.to_pixels_fast_i16_subsampled(chroma_upsampling);
+            let rgb = self.to_pixels_fast_i16_subsampled(chroma_upsampling)?;
+            return reformat_rgb_output(rgb, format, width, height);
         }
 
         let num_components = self.num_components as usize;
@@ -1001,8 +1058,6 @@ impl<'a> JpegParser<'a> {
             chroma_upsampling,
         )?;
 
-        let width = self.width as usize;
-        let height = self.height as usize;
         let output_size = checked_size_2d(width, height)?;
 
         match (self.num_components, format) {
@@ -1012,14 +1067,15 @@ impl<'a> JpegParser<'a> {
                 gray_f32_to_gray_u8(&planes_f32[0], &mut output);
                 Ok(output)
             }
-            (1, PixelFormat::Rgb) => {
+            (1, f) if is_rgb_family_u8(f) => {
+                // Grayscale → RGB-family: produce RGB, then reformat
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = vec![0u8; rgb_size];
                 gray_f32_to_rgb_u8(&planes_f32[0], &mut rgb);
-                Ok(rgb)
+                reformat_rgb_output(rgb, f, width, height)
             }
-            (3, PixelFormat::Rgb) => {
+            (3, f) if is_rgb_family_u8(f) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = vec![0u8; rgb_size];
@@ -1054,10 +1110,10 @@ impl<'a> JpegParser<'a> {
                         &mut rgb,
                     );
                 }
-                Ok(rgb)
+                reformat_rgb_output(rgb, f, width, height)
             }
-            (4, PixelFormat::Rgb) => {
-                // CMYK or YCCK to RGB conversion
+            (4, f) if is_rgb_family_u8(f) => {
+                // CMYK or YCCK → RGB, then reformat
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = vec![0u8; rgb_size];
@@ -1087,7 +1143,7 @@ impl<'a> JpegParser<'a> {
                         );
                     }
                 }
-                Ok(rgb)
+                reformat_rgb_output(rgb, f, width, height)
             }
             _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
