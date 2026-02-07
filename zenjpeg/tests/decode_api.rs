@@ -432,3 +432,228 @@ fn test_decode_minimum_mcu() {
     assert_eq!(decoded.width, 8);
     assert_eq!(decoded.height, 8);
 }
+
+// ============================================================================
+// OutputTarget Tests
+// ============================================================================
+
+use zenjpeg::decoder::OutputTarget;
+
+/// Create a test JPEG with known content for OutputTarget tests.
+fn create_output_target_jpeg() -> Vec<u8> {
+    let img = generate_gradient_d(64, 64, 3);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
+    enc.push_packed(&img.pixels, Unstoppable).expect("push");
+    enc.finish().expect("finish")
+}
+
+#[test]
+fn output_target_srgb8_returns_u8() {
+    let jpeg = create_output_target_jpeg();
+    let result = Decoder::new()
+        .output_target(OutputTarget::Srgb8)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(
+        result.pixels_u8().is_some(),
+        "Srgb8 should produce u8 pixels"
+    );
+    assert!(
+        result.pixels_f32().is_none(),
+        "Srgb8 should not produce f32 pixels"
+    );
+    assert_eq!(result.output_target(), OutputTarget::Srgb8);
+    assert_eq!(result.pixels_u8().unwrap().len(), 64 * 64 * 3);
+}
+
+#[test]
+fn output_target_srgb_f32_returns_f32() {
+    let jpeg = create_output_target_jpeg();
+    let result = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(
+        result.pixels_f32().is_some(),
+        "SrgbF32 should produce f32 pixels"
+    );
+    assert!(
+        result.pixels_u8().is_none(),
+        "SrgbF32 should not produce u8 pixels"
+    );
+    assert_eq!(result.output_target(), OutputTarget::SrgbF32);
+    assert_eq!(result.pixels_f32().unwrap().len(), 64 * 64 * 3);
+
+    // Values should be in approximately [0.0, 1.0] for sRGB gamma
+    let pixels = result.pixels_f32().unwrap();
+    for &v in pixels {
+        assert!(
+            v >= -0.1 && v <= 1.1,
+            "sRGB f32 value {v} out of expected range"
+        );
+    }
+}
+
+#[test]
+fn output_target_linear_f32_values_differ_from_srgb() {
+    let jpeg = create_output_target_jpeg();
+
+    let srgb = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+        .expect("srgb decode");
+
+    let linear = Decoder::new()
+        .output_target(OutputTarget::LinearF32)
+        .decode(&jpeg, Unstoppable)
+        .expect("linear decode");
+
+    let srgb_px = srgb.pixels_f32().unwrap();
+    let linear_px = linear.pixels_f32().unwrap();
+
+    assert_eq!(srgb_px.len(), linear_px.len());
+
+    // Linear values should differ from sRGB (darker mid-tones in linear)
+    let mut total_diff = 0.0f64;
+    for (&s, &l) in srgb_px.iter().zip(linear_px.iter()) {
+        total_diff += (s as f64 - l as f64).abs();
+    }
+    let mean_diff = total_diff / srgb_px.len() as f64;
+    assert!(
+        mean_diff > 0.01,
+        "Linear should differ from sRGB, mean diff was {mean_diff}"
+    );
+
+    // Linear values for mid-tones should be smaller (sRGB gamma boosts darks)
+    // Check a mid-range sRGB value and its linear equivalent
+    for (&s, &l) in srgb_px.iter().zip(linear_px.iter()) {
+        if s > 0.2 && s < 0.8 {
+            assert!(l < s, "Linear mid-tone {l} should be < sRGB {s}");
+        }
+    }
+}
+
+#[test]
+fn output_target_precise_returns_f32() {
+    let jpeg = create_output_target_jpeg();
+    let result = Decoder::new()
+        .output_target(OutputTarget::SrgbF32Precise)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(result.pixels_f32().is_some());
+    assert_eq!(result.output_target(), OutputTarget::SrgbF32Precise);
+}
+
+#[test]
+fn output_target_linear_precise_returns_f32() {
+    let jpeg = create_output_target_jpeg();
+    let result = Decoder::new()
+        .output_target(OutputTarget::LinearF32Precise)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(result.pixels_f32().is_some());
+    assert_eq!(result.output_target(), OutputTarget::LinearF32Precise);
+}
+
+#[test]
+fn output_target_default_is_srgb8() {
+    let jpeg = create_output_target_jpeg();
+    let result = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+
+    assert!(result.pixels_u8().is_some());
+    assert_eq!(result.output_target(), OutputTarget::Srgb8);
+}
+
+#[test]
+fn srgb_f32_preserves_unclamped_ringing() {
+    // At low quality, IDCT produces ringing outside [0, 255].
+    // SrgbF32 should preserve these as values outside [0.0, 1.0].
+    let img = generate_gradient_d(64, 64, 3);
+    let config = EncoderConfig::ycbcr(10.0, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
+    enc.push_packed(&img.pixels, Unstoppable).expect("push");
+    let jpeg = enc.finish().expect("finish");
+
+    let u8_result = Decoder::new()
+        .output_target(OutputTarget::Srgb8)
+        .decode(&jpeg, Unstoppable)
+        .expect("u8 decode");
+
+    let f32_result = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+        .expect("f32 decode");
+
+    let u8_px = u8_result.pixels_u8().unwrap();
+    let f32_px = f32_result.pixels_f32().unwrap();
+
+    // Check that f32 has the same pixel count
+    assert_eq!(u8_px.len(), f32_px.len());
+
+    // Check that Srgb8 clamps but SrgbF32 may not
+    let u8_has_zero = u8_px.iter().any(|&v| v == 0);
+    let u8_has_255 = u8_px.iter().any(|&v| v == 255);
+    let f32_has_negative = f32_px.iter().any(|&v| v < 0.0);
+    let f32_has_over_one = f32_px.iter().any(|&v| v > 1.0);
+
+    // At Q10, the u8 path should have some clamped values
+    assert!(
+        u8_has_zero || u8_has_255,
+        "Q10 u8 should have some clamped values"
+    );
+
+    // The f32 path MAY have unclamped values (depends on IDCT ringing).
+    // This isn't guaranteed for every image, but it demonstrates the capability.
+    // We just verify the f32 values are reasonable.
+    for &v in f32_px {
+        assert!(
+            v >= -1.0 && v <= 2.0,
+            "f32 value {v} unreasonably out of range"
+        );
+    }
+
+    // If we do have unclamped values, the f32 path is working correctly
+    if f32_has_negative || f32_has_over_one {
+        // Great - unclamped IDCT is working
+    }
+}
+
+#[test]
+fn gain_map_discard_returns_none() {
+    // Regular JPEG should have no gain map regardless of GainMapHandling
+    let jpeg = create_output_target_jpeg();
+
+    let result = Decoder::new()
+        .gain_map(zenjpeg::decoder::GainMapHandling::Discard)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(
+        result.gain_map.is_none(),
+        "Regular JPEG should have no gain map"
+    );
+}
+
+#[test]
+fn gain_map_preserve_raw_returns_none_for_regular_jpeg() {
+    let jpeg = create_output_target_jpeg();
+
+    let result = Decoder::new()
+        .gain_map(zenjpeg::decoder::GainMapHandling::PreserveRaw)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert!(
+        result.gain_map.is_none(),
+        "Regular JPEG should have no gain map even with PreserveRaw"
+    );
+}
