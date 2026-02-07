@@ -554,16 +554,26 @@ impl DecodeConfig {
         }
         parser.decode(&stop)?;
 
+        // Extract gain map before pixel conversion (needs parser state)
+        #[cfg(feature = "ultrahdr")]
+        let gain_map_result = if self.gain_map != GainMapHandling::Discard {
+            self.extract_gain_map(&mut parser, data)?
+        } else {
+            None
+        };
+        #[cfg(not(feature = "ultrahdr"))]
+        let gain_map_result: Option<GainMapResult> = None;
+
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
 
-        if self.output_target.is_f32() {
+        let mut result = if self.output_target.is_f32() {
             // f32 output path
             let pixels =
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
-            Ok(DecodeResult::new_f32(
+            DecodeResult::new_f32(
                 info.dimensions.width,
                 info.dimensions.height,
                 output_format,
@@ -571,7 +581,7 @@ impl DecodeConfig {
                 pixels,
                 extras,
                 warnings,
-            ))
+            )
         } else {
             // u8 output path
             #[allow(unused_mut)]
@@ -606,7 +616,7 @@ impl DecodeConfig {
 
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
-            Ok(DecodeResult::new_u8(
+            DecodeResult::new_u8(
                 info.dimensions.width,
                 info.dimensions.height,
                 output_format,
@@ -614,8 +624,11 @@ impl DecodeConfig {
                 pixels,
                 extras,
                 warnings,
-            ))
-        }
+            )
+        };
+
+        result.set_gain_map(gain_map_result);
+        Ok(result)
     }
 
     /// Decodes a JPEG image to 32-bit floating point pixels.
@@ -784,6 +797,44 @@ impl DecodeConfig {
     /// Returns an error if:
     /// - The JPEG cannot be parsed
     /// - The image is not a baseline JPEG
+    /// Extract gain map from UltraHDR image if present.
+    ///
+    /// Called during `decode()` when `gain_map != Discard`.
+    #[cfg(feature = "ultrahdr")]
+    fn extract_gain_map(
+        &self,
+        parser: &mut JpegParser,
+        data: &[u8],
+    ) -> Result<Option<GainMapResult>> {
+        let (gainmap_range, _metadata) = parser.extract_gainmap_early(data)?;
+
+        let (start, end) = match gainmap_range {
+            Some(range) => range,
+            None => return Ok(None), // Not an UltraHDR image
+        };
+
+        let gainmap_jpeg = data[start..end].to_vec();
+
+        let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
+            // Decode the gain map JPEG to pixels
+            let gm_result = DecodeConfig::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
+            let w = gm_result.width;
+            let h = gm_result.height;
+            (Some(gm_result.into_pixels_u8().unwrap()), w, h)
+        } else {
+            // PreserveRaw: just get dimensions from header without decoding pixels
+            let gm_info = DecodeConfig::new().read_info(&gainmap_jpeg)?;
+            (None, gm_info.dimensions.width, gm_info.dimensions.height)
+        };
+
+        Ok(Some(GainMapResult {
+            jpeg: gainmap_jpeg,
+            pixels,
+            width,
+            height,
+        }))
+    }
+
     /// - The image is grayscale
     #[cfg(feature = "ultrahdr")]
     pub fn ultrahdr_reader<'a>(
