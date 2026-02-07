@@ -1108,5 +1108,6 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Switch from `impl Stop` per push to `&dyn Stop` on request
 - [x] Resource estimation: `estimate_memory()` / `estimate_memory_ceiling()` already on config
 - [ ] Factor metadata into `ImageMetadata` struct, move from config to request
+- [x] Lossy/lossless split: N/A — JPEG is lossy-only, single `EncoderConfig` is correct
 - [x] Standardize `AllocationStats` → `EncodeStats` — commit ef84b22
 - [x] Add `DecodeError` type alias — commit 0385d9f
