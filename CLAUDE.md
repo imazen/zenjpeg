@@ -1035,3 +1035,14 @@ API will have breaking changes.
 - `zenjpeg/docs/API_DESIGN.md` - Full API surface and proposed enhancements
 - `docs/TUNING_HISTORY.md` - Performance tuning data, SIMD analysis, investigation notes, fixed bugs
 - `docs/SECURITY.md` - Security considerations
+
+## API Convergence TODOs
+
+See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
+
+- [ ] Move metadata (ICC/EXIF/XMP) from `EncoderConfig` to encoder/per-encode — config should be reusable
+- [ ] Add one-shot convenience method (like zenwebp's `encode()`) for simple use cases
+- [ ] Add `Limits` struct for resource management (like zengif)
+- [ ] Standardize output method names: `finish()` → Vec, `finish_into()` → caller buf, `finish_to()` → Write (already close)
+- [ ] Standardize dimension types to `u32` (currently uses `u16`)
+- [ ] Consider `S: Stop` generic on encoder (currently `impl Stop` per push — already good, just ensure naming matches)
