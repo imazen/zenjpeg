@@ -167,7 +167,7 @@ impl AllocationInfo {
 /// When the `detailed` field is `true`, stores full `AllocationInfo` for each
 /// allocation including source location via `#[track_caller]`.
 #[derive(Debug, Clone, Default)]
-pub struct AllocationStats {
+pub struct EncodeStats {
     /// Number of allocations made
     pub count: usize,
     /// Total bytes allocated (sum of all allocations)
@@ -184,7 +184,7 @@ pub struct AllocationStats {
     pub detailed: bool,
 }
 
-impl AllocationStats {
+impl EncodeStats {
     /// Creates a new empty stats tracker.
     #[must_use]
     pub fn new() -> Self {
@@ -288,7 +288,7 @@ impl AllocationStats {
     }
 
     /// Merges another stats tracker into this one.
-    pub fn merge(&mut self, other: &AllocationStats) {
+    pub fn merge(&mut self, other: &EncodeStats) {
         self.count += other.count;
         self.total_bytes += other.total_bytes;
         self.by_context.extend(other.by_context.iter().cloned());
@@ -393,7 +393,7 @@ fn format_bytes(bytes: usize) -> String {
 pub fn try_alloc_vec_tracked<T: Default + Clone>(
     count: usize,
     context: &'static str,
-    stats: &mut AllocationStats,
+    stats: &mut EncodeStats,
 ) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
@@ -416,7 +416,7 @@ pub fn try_alloc_vec_tracked<T: Default + Clone>(
 pub fn try_alloc_zeroed_f32_tracked(
     count: usize,
     context: &'static str,
-    stats: &mut AllocationStats,
+    stats: &mut EncodeStats,
 ) -> Result<Vec<f32>> {
     let byte_size = count
         .checked_mul(4)
@@ -439,7 +439,7 @@ pub fn try_alloc_zeroed_f32_tracked(
 pub fn try_with_capacity_tracked<T>(
     capacity: usize,
     context: &'static str,
-    stats: &mut AllocationStats,
+    stats: &mut EncodeStats,
 ) -> Result<Vec<T>> {
     let byte_size = capacity
         .checked_mul(core::mem::size_of::<T>())
@@ -461,7 +461,7 @@ pub fn try_with_capacity_tracked<T>(
 pub fn try_alloc_dct_blocks_tracked(
     count: usize,
     context: &'static str,
-    stats: &mut AllocationStats,
+    stats: &mut EncodeStats,
 ) -> Result<Vec<[i16; 64]>> {
     let byte_size = count
         .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
@@ -858,8 +858,8 @@ mod tests {
     }
 
     #[test]
-    fn test_allocation_stats_basic() {
-        let mut stats = AllocationStats::new();
+    fn test_encode_stats_basic() {
+        let mut stats = EncodeStats::new();
         assert_eq!(stats.count, 0);
         assert_eq!(stats.total_bytes, 0);
         assert_eq!(stats.peak_bytes, 0);
@@ -876,8 +876,8 @@ mod tests {
     }
 
     #[test]
-    fn test_allocation_stats_peak_tracking() {
-        let mut stats = AllocationStats::new();
+    fn test_encode_stats_peak_tracking() {
+        let mut stats = EncodeStats::new();
 
         stats.record_alloc(1000);
         assert_eq!(stats.peak_bytes, 1000);
@@ -893,8 +893,8 @@ mod tests {
     }
 
     #[test]
-    fn test_allocation_stats_tracked_alloc() {
-        let mut stats = AllocationStats::new();
+    fn test_encode_stats_tracked_alloc() {
+        let mut stats = EncodeStats::new();
 
         let v: Vec<f32> = try_alloc_zeroed_f32_tracked(100, "test", &mut stats).unwrap();
         assert_eq!(v.len(), 100);
@@ -908,8 +908,8 @@ mod tests {
     }
 
     #[test]
-    fn test_allocation_stats_summary() {
-        let mut stats = AllocationStats::new();
+    fn test_encode_stats_summary() {
+        let mut stats = EncodeStats::new();
         stats.record_alloc(1024 * 1024); // 1 MB
         stats.record_alloc(512 * 1024); // 512 KB
 

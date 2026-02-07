@@ -398,8 +398,8 @@ impl StreamingEncoder {
     /// This tracks all major allocations made during encoding setup,
     /// including color plane buffers, DCT block storage, and AQ buffers.
     #[must_use]
-    pub(crate) fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
-        self.processor.allocation_stats()
+    pub(crate) fn encode_stats(&self) -> &crate::foundation::alloc::EncodeStats {
+        self.processor.encode_stats()
     }
 
     /// Returns whether this encoder is in streaming-through mode.

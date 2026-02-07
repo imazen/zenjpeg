@@ -28,7 +28,7 @@ fn encode_and_report(pixels: &[u8], width: u32, height: u32, quality: u8) {
         .expect("Failed to push pixels");
 
     // Print allocation stats BEFORE finish (which consumes encoder)
-    let stats = encoder.allocation_stats();
+    let stats = encoder.encode_stats();
     eprintln!("  Strip allocations: {}", stats.summary());
     eprintln!("{}", stats.by_context_summary());
 
