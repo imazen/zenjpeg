@@ -1059,9 +1059,9 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Move metadata (ICC/EXIF/XMP) from config to request
 - [ ] Drop `RgbEncoder<P>` generic — use `PixelLayout` enum on request
 - [ ] Keep streaming push pattern but behind `request.build()` → `Encoder`
-- [ ] Add one-shot `request.encode()`/`encode_into()`/`encode_to()` convenience
-- [ ] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
-- [ ] `encode_to()`/`finish_to()` std-only
+- [x] Add one-shot `encode()`/`encode_into()`/`encode_bytes()`/`encode_bytes_into()` — commit 9a388dc
+- [x] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
+- [x] `encode_to()`/`finish_to()` std-only (already gated with `#[cfg(feature = "std")]`)
 - [x] Add `Limits` struct (all fields `Option<u64>`, default None = no limit) — commit ad91910
 - [x] Rename `Error` → `EncodeError` (type alias, legacy re-export kept) — commit 0385d9f
 - [ ] Switch from `impl Stop` per push to `&dyn Stop` on request
