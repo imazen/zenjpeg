@@ -21,7 +21,6 @@
 //! # 5. Run tests
 //! cargo test --release -p zenjpeg --test locked_values
 //! ```
-use enough::Unstoppable;
 
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

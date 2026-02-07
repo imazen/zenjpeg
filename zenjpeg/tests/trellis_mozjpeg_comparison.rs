@@ -15,7 +15,6 @@
 //!
 //! Run full-encode (requires CID22 corpus + mozjpeg-tables feature):
 //!   cargo test --release -p zenjpeg --features mozjpeg-tables --test trellis_mozjpeg_comparison -- --nocapture --ignored
-use enough::Unstoppable;
 
 #[cfg(feature = "mozjpeg-tables")]
 use std::path::{Path, PathBuf};

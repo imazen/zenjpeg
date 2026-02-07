@@ -2,7 +2,6 @@
 //!
 //! These tests encode with zenjpeg and decode with jpeg-decoder (reference),
 //! then verify quality using DSSIM.
-use enough::Unstoppable;
 
 use dssim::Dssim;
 use rgb::RGBA8;

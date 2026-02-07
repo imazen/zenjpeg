@@ -2,7 +2,6 @@
 //!
 //! Verifies that optimize_scans produces valid JPEGs with identical decoded
 //! pixels and smaller-or-equal file sizes.
-use enough::Unstoppable;
 
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
