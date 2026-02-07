@@ -1096,9 +1096,9 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 **Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
 
-- [ ] Add `EncodeRequest<'a>` intermediate between config and encoder
-- [ ] Move metadata (ICC/EXIF/XMP) from config to request
-- [ ] Evaluate `RgbEncoder<P>` generic — consider `PixelLayout` enum on request to avoid monomorphization of full pipeline; keep generic convenience methods at boundary
+- [x] Add `EncodeRequest<'a>` intermediate between config and encoder — commit a4b7a01
+- [ ] Move metadata (ICC/EXIF/XMP) from config to request (EncodeRequest supports them; config still has them too)
+- [ ] Evaluate `RgbEncoder<P>` generic monomorphization cost — build example using 1 type vs 4 types (RGB8, RGBA8, RGB16, RGBF32), measure binary size delta and compile time. If significant, switch to `PixelLayout` enum internally with generic convenience at boundary
 - [ ] Keep streaming push pattern but behind `request.build()` → `Encoder`
 - [x] Add one-shot `encode()`/`encode_into()`/`encode_bytes()`/`encode_bytes_into()` — commit 9a388dc
 - [x] Streaming keeps `finish()`/`finish_into()`/`finish_to()` (already correct)
@@ -1106,5 +1106,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Add `Limits` struct (all fields `Option<u64>`, default None = no limit) — commit ad91910
 - [x] Rename `Error` → `EncodeError` (type alias, legacy re-export kept) — commit 0385d9f
 - [ ] Switch from `impl Stop` per push to `&dyn Stop` on request
+- [x] Resource estimation: `estimate_memory()` / `estimate_memory_ceiling()` already on config
+- [ ] Factor metadata into `ImageMetadata` struct, move from config to request
 - [x] Standardize `AllocationStats` → `EncodeStats` — commit ef84b22
 - [x] Add `DecodeError` type alias — commit 0385d9f
