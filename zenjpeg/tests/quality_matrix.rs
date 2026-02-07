@@ -1,23 +1,21 @@
-//! Quality matrix tests comparing Rust vs C++ jpegli across all configurations.
-//!
-//! Requires `ffi-tests` feature due to libjpeg FFI linkage requirements.
-use enough::Unstoppable;
-
 #![cfg(feature = "ffi-tests")]
-//!
-//! Tests SSIMULACRA2 scores for each encoder configuration:
-//! - Color spaces: YCbCr, XYB
-//! - Subsampling: 444, 422, 420, 440
-//! - Modes: Baseline, Progressive
-//!
-//! When `ffi-tests` feature is enabled, compares against live C++ jpegli.
-//! Otherwise, compares against stored reference values.
-//!
-//! Run with:
-//! ```
-//! cargo test --release --test quality_matrix -- --nocapture
-//! cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
-//! ```
+// Quality matrix tests comparing Rust vs C++ jpegli across all configurations.
+//
+// Requires `ffi-tests` feature due to libjpeg FFI linkage requirements.
+//
+// Tests SSIMULACRA2 scores for each encoder configuration:
+// - Color spaces: YCbCr, XYB
+// - Subsampling: 444, 422, 420, 440
+// - Modes: Baseline, Progressive
+//
+// When `ffi-tests` feature is enabled, compares against live C++ jpegli.
+// Otherwise, compares against stored reference values.
+//
+// Run with:
+// ```
+// cargo test --release --test quality_matrix -- --nocapture
+// cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
+// ```
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::path::PathBuf;
