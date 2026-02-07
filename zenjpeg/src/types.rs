@@ -281,14 +281,14 @@ impl From<crate::encode::encoder_types::PixelLayout> for PixelFormat {
         match layout {
             PixelLayout::Rgb8Srgb => Self::Rgb,
             PixelLayout::Bgr8Srgb => Self::Bgr,
-            PixelLayout::Rgbx8Srgb => Self::Rgba,
-            PixelLayout::Bgrx8Srgb => Self::Bgrx,
+            PixelLayout::Rgbx8Srgb | PixelLayout::Rgba8Srgb => Self::Rgba,
+            PixelLayout::Bgrx8Srgb | PixelLayout::Bgra8Srgb => Self::Bgrx,
             PixelLayout::Gray8Srgb => Self::Gray,
             PixelLayout::Rgb16Linear => Self::Rgb16,
-            PixelLayout::Rgbx16Linear => Self::Rgba16,
+            PixelLayout::Rgbx16Linear | PixelLayout::Rgba16Linear => Self::Rgba16,
             PixelLayout::Gray16Linear => Self::Gray16,
             PixelLayout::RgbF32Linear => Self::RgbF32,
-            PixelLayout::RgbxF32Linear => Self::RgbaF32,
+            PixelLayout::RgbxF32Linear | PixelLayout::RgbaF32Linear => Self::RgbaF32,
             PixelLayout::GrayF32Linear => Self::GrayF32,
             // YCbCr layouts don't have direct legacy equivalents
             PixelLayout::YCbCr8 | PixelLayout::YCbCrF32 => Self::Rgb,

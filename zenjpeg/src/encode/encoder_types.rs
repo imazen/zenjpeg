@@ -355,8 +355,12 @@ pub enum PixelLayout {
     Bgr8Srgb,
     /// RGBX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
     Rgbx8Srgb,
+    /// RGBA, 4 bytes/pixel, sRGB gamma (alpha ignored on encode)
+    Rgba8Srgb,
     /// BGRX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
     Bgrx8Srgb,
+    /// BGRA, 4 bytes/pixel, sRGB gamma (alpha ignored on encode)
+    Bgra8Srgb,
     /// Grayscale, 1 byte/pixel, sRGB gamma
     Gray8Srgb,
 
@@ -365,6 +369,8 @@ pub enum PixelLayout {
     Rgb16Linear,
     /// RGBX, 8 bytes/pixel, linear light (4th channel ignored)
     Rgbx16Linear,
+    /// RGBA, 8 bytes/pixel, linear light (alpha ignored on encode)
+    Rgba16Linear,
     /// Grayscale, 2 bytes/pixel, linear light
     Gray16Linear,
 
@@ -373,6 +379,8 @@ pub enum PixelLayout {
     RgbF32Linear,
     /// RGBX, 16 bytes/pixel, linear light (4th channel ignored)
     RgbxF32Linear,
+    /// RGBA, 16 bytes/pixel, linear light (alpha ignored on encode)
+    RgbaF32Linear,
     /// Grayscale, 4 bytes/pixel, linear light
     GrayF32Linear,
 
@@ -391,11 +399,15 @@ impl PixelLayout {
             Self::Gray8Srgb => 1,
             Self::Gray16Linear => 2,
             Self::Rgb8Srgb | Self::Bgr8Srgb | Self::YCbCr8 => 3,
-            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::GrayF32Linear => 4,
+            Self::Rgbx8Srgb
+            | Self::Rgba8Srgb
+            | Self::Bgrx8Srgb
+            | Self::Bgra8Srgb
+            | Self::GrayF32Linear => 4,
             Self::Rgb16Linear => 6,
-            Self::Rgbx16Linear => 8,
+            Self::Rgbx16Linear | Self::Rgba16Linear => 8,
             Self::RgbF32Linear | Self::YCbCrF32 => 12,
-            Self::RgbxF32Linear => 16,
+            Self::RgbxF32Linear | Self::RgbaF32Linear => 16,
         }
     }
 
@@ -410,7 +422,14 @@ impl PixelLayout {
             | Self::RgbF32Linear
             | Self::YCbCr8
             | Self::YCbCrF32 => 3,
-            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::Rgbx16Linear | Self::RgbxF32Linear => 4,
+            Self::Rgbx8Srgb
+            | Self::Rgba8Srgb
+            | Self::Bgrx8Srgb
+            | Self::Bgra8Srgb
+            | Self::Rgbx16Linear
+            | Self::Rgba16Linear
+            | Self::RgbxF32Linear
+            | Self::RgbaF32Linear => 4,
         }
     }
 
@@ -432,7 +451,7 @@ impl PixelLayout {
     /// Whether this uses BGR channel order.
     #[must_use]
     pub const fn is_bgr(&self) -> bool {
-        matches!(self, Self::Bgr8Srgb | Self::Bgrx8Srgb)
+        matches!(self, Self::Bgr8Srgb | Self::Bgrx8Srgb | Self::Bgra8Srgb)
     }
 
     /// Whether this is a float format (linear color space).
@@ -440,7 +459,11 @@ impl PixelLayout {
     pub const fn is_float(&self) -> bool {
         matches!(
             self,
-            Self::RgbF32Linear | Self::RgbxF32Linear | Self::GrayF32Linear | Self::YCbCrF32
+            Self::RgbF32Linear
+                | Self::RgbxF32Linear
+                | Self::RgbaF32Linear
+                | Self::GrayF32Linear
+                | Self::YCbCrF32
         )
     }
 
@@ -449,7 +472,7 @@ impl PixelLayout {
     pub const fn is_16bit(&self) -> bool {
         matches!(
             self,
-            Self::Rgb16Linear | Self::Rgbx16Linear | Self::Gray16Linear
+            Self::Rgb16Linear | Self::Rgbx16Linear | Self::Rgba16Linear | Self::Gray16Linear
         )
     }
 }

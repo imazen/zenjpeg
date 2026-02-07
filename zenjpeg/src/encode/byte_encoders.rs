@@ -685,13 +685,13 @@ impl Pixel for rgb::RGB<u8> {
     const LAYOUT: PixelLayout = PixelLayout::Rgb8Srgb;
 }
 impl Pixel for rgb::RGBA<u8> {
-    const LAYOUT: PixelLayout = PixelLayout::Rgbx8Srgb;
+    const LAYOUT: PixelLayout = PixelLayout::Rgba8Srgb;
 }
 impl Pixel for rgb::Bgr<u8> {
     const LAYOUT: PixelLayout = PixelLayout::Bgr8Srgb;
 }
 impl Pixel for rgb::Bgra<u8> {
-    const LAYOUT: PixelLayout = PixelLayout::Bgrx8Srgb;
+    const LAYOUT: PixelLayout = PixelLayout::Bgra8Srgb;
 }
 impl Pixel for rgb::Gray<u8> {
     const LAYOUT: PixelLayout = PixelLayout::Gray8Srgb;
@@ -701,7 +701,7 @@ impl Pixel for rgb::RGB<u16> {
     const LAYOUT: PixelLayout = PixelLayout::Rgb16Linear;
 }
 impl Pixel for rgb::RGBA<u16> {
-    const LAYOUT: PixelLayout = PixelLayout::Rgbx16Linear;
+    const LAYOUT: PixelLayout = PixelLayout::Rgba16Linear;
 }
 impl Pixel for rgb::Gray<u16> {
     const LAYOUT: PixelLayout = PixelLayout::Gray16Linear;
@@ -711,7 +711,7 @@ impl Pixel for rgb::RGB<f32> {
     const LAYOUT: PixelLayout = PixelLayout::RgbF32Linear;
 }
 impl Pixel for rgb::RGBA<f32> {
-    const LAYOUT: PixelLayout = PixelLayout::RgbxF32Linear;
+    const LAYOUT: PixelLayout = PixelLayout::RgbaF32Linear;
 }
 impl Pixel for rgb::Gray<f32> {
     const LAYOUT: PixelLayout = PixelLayout::GrayF32Linear;

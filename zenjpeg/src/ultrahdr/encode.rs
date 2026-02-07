@@ -224,7 +224,7 @@ fn encode_sdr_base(
 ) -> Result<Vec<u8>> {
     // Determine pixel layout from SDR format
     let layout = match sdr.format {
-        UhdrPixelFormat::Rgba8 => PixelLayout::Rgbx8Srgb,
+        UhdrPixelFormat::Rgba8 => PixelLayout::Rgba8Srgb,
         UhdrPixelFormat::Rgb8 => PixelLayout::Rgb8Srgb,
         _ => {
             return Err(Error::unsupported_feature(
