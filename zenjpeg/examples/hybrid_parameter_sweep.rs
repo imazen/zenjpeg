@@ -305,9 +305,10 @@ fn run_sweep(image_path: &str) {
 }
 
 fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset};
+    use zenjpeg::encode::search::ExpertConfig;
 
-    let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
 
@@ -317,9 +318,10 @@ fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
 }
 
 fn create_hybrid_config_multiplicative(quality: i32, coupling: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset};
+    use zenjpeg::encode::search::ExpertConfig;
 
-    let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
     expert.aq_trellis_multiplicative = true;
@@ -334,9 +336,10 @@ fn create_hybrid_config_with_threshold(
     coupling: f32,
     threshold: f32,
 ) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset};
+    use zenjpeg::encode::search::ExpertConfig;
 
-    let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
     expert.aq_trellis_threshold = threshold;
@@ -347,9 +350,10 @@ fn create_hybrid_config_with_threshold(
 }
 
 fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset};
+    use zenjpeg::encode::search::ExpertConfig;
 
-    let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
     expert.aq_trellis_exponent = exponent;
@@ -360,9 +364,10 @@ fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32
 }
 
 fn create_hybrid_config_with_max_adj(quality: i32, coupling: f32, max_adj: f32) -> EncoderConfig {
-    use zenjpeg::encode::{ColorMode, OptimizationPreset, SearchConfig};
+    use zenjpeg::encode::{ColorMode, OptimizationPreset};
+    use zenjpeg::encode::search::ExpertConfig;
 
-    let mut expert = SearchConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
     expert.aq_trellis_max_adjustment = max_adj;

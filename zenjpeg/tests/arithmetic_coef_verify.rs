@@ -9,6 +9,7 @@ const TESTIMGARI_PATH: &str = concat!(
 );
 
 #[test]
+#[ignore] // Requires manually generated /tmp/testimgari_huffman.jpg (jpegtran -copy none)
 fn verify_arithmetic_coefficients_match_huffman_transcode() {
     // Decode original arithmetic JPEG
     let ari_data = std::fs::read(TESTIMGARI_PATH).expect("failed to read arithmetic file");

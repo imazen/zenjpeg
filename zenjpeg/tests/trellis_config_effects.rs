@@ -1,3 +1,4 @@
+#![cfg(feature = "trellis")]
 //! Tests verifying that TrellisConfig actually affects encoder output.
 
 use zenjpeg::encode::trellis::{TrellisConfig, TrellisSpeedMode};
