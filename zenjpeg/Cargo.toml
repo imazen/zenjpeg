@@ -1,6 +1,6 @@
 [package]
 name = "zenjpeg"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/imazen/zenjpeg"
@@ -76,6 +76,7 @@ sha2 = "0.10"
 jpeg-decoder = "0.3.2"
 zune-jpeg.workspace = true
 zune-core = "0.5.1"
+codec-corpus = "1"
 
 # WASM testing dependencies (browser + Node.js)
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
@@ -98,7 +99,7 @@ approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
 png = { workspace = true }
-dssim = { workspace = true }
+dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }

@@ -15,7 +15,7 @@
 use enough::Unstoppable;
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::collections::HashMap;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

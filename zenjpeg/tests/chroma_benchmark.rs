@@ -17,7 +17,7 @@
 //! - Encoding time: Performance
 use enough::Unstoppable;
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use std::time::Instant;
 use zenjpeg::{
     decoder::Decoder,

@@ -22,12 +22,17 @@ fn load_png(path: &str) -> (Vec<u8>, u32, u32) {
 
 fn main() {
     // Try to load real image from codec-corpus - prefer high-res CID22
-    let corpus_path = std::env::var("CODEC_CORPUS")
-        .unwrap_or_else(|_| std::env::var("HOME").unwrap() + "/work/codec-eval/codec-corpus");
+    let corpus = codec_corpus::Corpus::new().ok();
 
     // CID22 has 2268x1512 images (like flower.png) - better test case than 768x512 Kodak
-    let cid22_path = format!("{}/cid22/flower.png", corpus_path);
-    let kodak_path = format!("{}/kodak/1.png", corpus_path);
+    let cid22_path = corpus.as_ref()
+        .and_then(|c| c.get("cid22").ok())
+        .map(|p| p.join("flower.png").to_string_lossy().to_string())
+        .unwrap_or_default();
+    let kodak_path = corpus.as_ref()
+        .and_then(|c| c.get("kodak").ok())
+        .map(|p| p.join("1.png").to_string_lossy().to_string())
+        .unwrap_or_default();
 
     let (pixels, width, height) = if std::path::Path::new(&cid22_path).exists() {
         eprintln!("Loading: {}", cid22_path);

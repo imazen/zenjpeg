@@ -37,8 +37,8 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
 
 # Quality metrics
-dssim = "3.2"
-fast-ssim2 = { version = "0.6", features = ["imgref"] }
+dssim-core = "3.4"
+fast-ssim2 = { version = "0.6.5", features = ["imgref"] }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -84,7 +84,7 @@ enough = { version = "0.3", features = ["std"] }
 almost-enough = { version = "0.3", features = ["std"] }
 
 # Published crates
-butteraugli = { version = "0.3", features = ["unsafe-perf"] }
+butteraugli = "0.4"
 mozjpeg-rs = "0.5.3"
 
 # Metadata crates (for integration testing)

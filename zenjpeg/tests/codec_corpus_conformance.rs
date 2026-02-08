@@ -19,27 +19,8 @@ use zenjpeg::decoder::Decoder;
 // Corpus Discovery
 // ============================================================================
 
-/// Find the codec-corpus directory, checking common locations.
-fn find_codec_corpus() -> Option<PathBuf> {
-    // Check environment variable first
-    if let Ok(dir) = std::env::var("CODEC_CORPUS_DIR") {
-        let path = PathBuf::from(dir);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Check relative paths
-    let candidates = [
-        PathBuf::from("../codec-eval/codec-corpus"),
-        PathBuf::from("../../codec-eval/codec-corpus"),
-        PathBuf::from("../codec-corpus"),
-        PathBuf::from("./codec-corpus"),
-    ];
-
-    candidates
-        .into_iter()
-        .find(|path| path.exists() && path.is_dir())
+fn corpus() -> Option<codec_corpus::Corpus> {
+    codec_corpus::Corpus::new().ok()
 }
 
 /// Collect all JPEG files from a directory recursively.
@@ -84,19 +65,18 @@ fn collect_jpeg_files(dir: &Path) -> Vec<PathBuf> {
 /// These files may be malformed - we just verify no panics or crashes.
 #[test]
 fn test_fuzz_corpus_no_panic() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let fuzz_dir = corpus_dir.join("zune/fuzz-corpus/jpeg");
-    if !fuzz_dir.exists() {
-        eprintln!("Skipping: fuzz corpus not found at {:?}", fuzz_dir);
-        return;
-    }
+    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let files = collect_jpeg_files(&fuzz_dir);
     println!("Testing {} fuzz corpus files", files.len());
@@ -131,15 +111,18 @@ fn test_fuzz_corpus_no_panic() {
 /// Test a sample of fuzz corpus with detailed output.
 #[test]
 fn test_fuzz_corpus_sample() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let fuzz_dir = corpus_dir.join("zune/fuzz-corpus/jpeg");
+    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpeg_files(&fuzz_dir);
 
     if files.is_empty() {
@@ -179,19 +162,18 @@ fn test_fuzz_corpus_sample() {
 
 #[test]
 fn test_zune_progressive() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("zune/test-images/jpeg");
-    if !test_dir.exists() {
-        eprintln!("Skipping: zune test images not found");
-        return;
-    }
+    let test_dir = match corpus.get("zune/test-images/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -223,19 +205,18 @@ fn test_zune_progressive() {
 
 #[test]
 fn test_zune_sampling_factors() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("zune/test-images/jpeg");
-    if !test_dir.exists() {
-        eprintln!("Skipping: zune test images not found");
-        return;
-    }
+    let test_dir = match corpus.get("zune/test-images/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -277,19 +258,18 @@ fn test_zune_sampling_factors() {
 
 #[test]
 fn test_zune_edge_cases() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("zune/test-images/jpeg");
-    if !test_dir.exists() {
-        eprintln!("Skipping: zune test images not found");
-        return;
-    }
+    let test_dir = match corpus.get("zune/test-images/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -337,19 +317,18 @@ fn test_zune_edge_cases() {
 
 #[test]
 fn test_image_rs_progressive() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("image-rs/test-images/jpg/progressive");
-    if !test_dir.exists() {
-        eprintln!("Skipping: image-rs progressive images not found");
-        return;
-    }
+    let test_dir = match corpus.get("image-rs/test-images/jpg/progressive") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
     let files = collect_jpeg_files(&test_dir);
@@ -377,19 +356,18 @@ fn test_image_rs_progressive() {
 
 #[test]
 fn test_image_rs_general() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("image-rs/test-images/jpg");
-    if !test_dir.exists() {
-        eprintln!("Skipping: image-rs test images not found");
-        return;
-    }
+    let test_dir = match corpus.get("image-rs/test-images/jpg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -430,19 +408,18 @@ fn test_image_rs_general() {
 
 #[test]
 fn test_mozjpeg_images() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let test_dir = corpus_dir.join("mozjpeg");
-    if !test_dir.exists() {
-        eprintln!("Skipping: mozjpeg test images not found");
-        return;
-    }
+    let test_dir = match corpus.get("mozjpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -505,15 +482,18 @@ fn test_mozjpeg_images() {
 
 #[test]
 fn test_fuzz_corpus_vs_reference() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let fuzz_dir = corpus_dir.join("zune/fuzz-corpus/jpeg");
+    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpeg_files(&fuzz_dir);
 
     if files.is_empty() {
@@ -601,22 +581,18 @@ const KNOWN_DECODER_BUGS: &[&str] = &[
 /// These are reference images, camera samples, and feature variants.
 #[test]
 fn test_jpeg_conformance_valid() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let valid_dir = corpus_dir.join("jpeg-conformance/valid");
-    if !valid_dir.exists() {
-        eprintln!(
-            "Skipping: jpeg-conformance/valid not found at {:?}",
-            valid_dir
-        );
-        return;
-    }
+    let valid_dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let files = collect_jpeg_files(&valid_dir);
     println!("Testing {} valid JPEG conformance files", files.len());
@@ -692,22 +668,18 @@ fn test_jpeg_conformance_valid() {
 /// The decoder MUST return an error, not panic or crash.
 #[test]
 fn test_jpeg_conformance_invalid() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let invalid_dir = corpus_dir.join("jpeg-conformance/invalid");
-    if !invalid_dir.exists() {
-        eprintln!(
-            "Skipping: jpeg-conformance/invalid not found at {:?}",
-            invalid_dir
-        );
-        return;
-    }
+    let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let files = collect_jpeg_files(&invalid_dir);
     println!("Testing {} invalid JPEG conformance files", files.len());
@@ -775,22 +747,18 @@ fn test_jpeg_conformance_invalid() {
 /// Documents our decoder's behavior on edge cases.
 #[test]
 fn test_jpeg_conformance_non_conformant() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let non_conformant_dir = corpus_dir.join("jpeg-conformance/non-conformant");
-    if !non_conformant_dir.exists() {
-        eprintln!(
-            "Skipping: jpeg-conformance/non-conformant not found at {:?}",
-            non_conformant_dir
-        );
-        return;
-    }
+    let non_conformant_dir = match corpus.get("jpeg-conformance/non-conformant") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let decoder = Decoder::new();
 
@@ -864,19 +832,18 @@ fn test_jpeg_conformance_non_conformant() {
 /// Compare our decoder behavior with jpeg-decoder on conformance suite.
 #[test]
 fn test_jpeg_conformance_vs_reference() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let valid_dir = corpus_dir.join("jpeg-conformance/valid");
-    if !valid_dir.exists() {
-        eprintln!("Skipping: jpeg-conformance/valid not found");
-        return;
-    }
+    let valid_dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     let files = collect_jpeg_files(&valid_dir);
     println!("Comparing {} valid files against jpeg-decoder", files.len());
@@ -939,15 +906,18 @@ fn test_jpeg_conformance_vs_reference() {
 #[test]
 #[ignore = "slow test - run with --ignored"]
 fn test_full_fuzz_corpus() {
-    let corpus_dir = match find_codec_corpus() {
-        Some(dir) => dir,
+    let corpus = match corpus() {
+        Some(c) => c,
         None => {
-            eprintln!("Skipping: codec-corpus not found");
+            eprintln!("Skipping: corpus unavailable");
             return;
         }
     };
 
-    let fuzz_dir = corpus_dir.join("zune/fuzz-corpus/jpeg");
+    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpeg_files(&fuzz_dir);
 
     println!("Testing ALL {} fuzz corpus files", files.len());

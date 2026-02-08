@@ -5,7 +5,7 @@
 //! Deringing is enabled by default in zenjpeg.
 use enough::Unstoppable;
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout},

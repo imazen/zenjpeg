@@ -31,7 +31,10 @@ use zenjpeg_bench_utils::{
     ScanMode,
 };
 
-const GB82_DIR: &str = "/home/lilith/work/codec-eval/codec-corpus/gb82";
+fn default_corpus_dir() -> PathBuf {
+    let cc = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+    cc.get("gb82").expect("gb82 corpus not available")
+}
 
 /// Quality levels spanning the useful range for JPEG.
 const QUALITY_LEVELS: [f32; 10] = [98.0, 95.0, 92.0, 90.0, 88.0, 85.0, 80.0, 75.0, 65.0, 50.0];
@@ -50,7 +53,7 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut args = Args {
-        corpus: PathBuf::from(GB82_DIR),
+        corpus: default_corpus_dir(),
         output: None,
         max_images: 50,
     };

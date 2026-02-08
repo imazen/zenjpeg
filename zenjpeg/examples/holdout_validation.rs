@@ -22,7 +22,9 @@ use zenjpeg::types::HuffmanMethod;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const CODEC_CORPUS: &str = "/home/lilith/work/codec-corpus";
+fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
+    Ok(codec_corpus::Corpus::new()?)
+}
 const FREQ_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
 
 const VALIDATION_QUALITIES: &[u8] = &[50, 75, 85, 90, 95];
@@ -95,13 +97,16 @@ fn main() -> Result<()> {
     let start = Instant::now();
 
     // Load all image sets
+    let cc = corpus_crate().expect("codec-corpus unavailable");
     let mut sets: Vec<(&ImageSet, Vec<PathBuf>)> = Vec::new();
     for set in IMAGE_SETS {
-        let dir = PathBuf::from(CODEC_CORPUS).join(set.rel_path);
-        if !dir.is_dir() {
-            eprintln!("SKIP: {} ({}) not found", set.name, dir.display());
-            continue;
-        }
+        let dir = match cc.get(set.rel_path) {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP: {} not available", set.name);
+                continue;
+            }
+        };
         let images = load_image_list(&dir)?;
         if !images.is_empty() {
             println!(

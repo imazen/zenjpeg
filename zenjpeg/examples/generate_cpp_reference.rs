@@ -214,7 +214,7 @@ fn main() {
     if flower_dir.exists() {
         corpus_paths.push(flower_dir);
     }
-    // Check common relative locations
+    // Check common relative locations and codec-corpus
     let candidates = [
         "../codec-eval/codec-corpus/kodak",
         "../codec-corpus/kodak",
@@ -224,6 +224,11 @@ fn main() {
         let p = PathBuf::from(c);
         if p.exists() {
             corpus_paths.push(p);
+        }
+    }
+    if let Ok(corpus) = codec_corpus::Corpus::new() {
+        if let Ok(kodak) = corpus.get("kodak") {
+            corpus_paths.push(kodak);
         }
     }
 

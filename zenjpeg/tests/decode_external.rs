@@ -3,7 +3,7 @@
 //! Verifies that zenjpeg decoder produces output matching zune-jpeg
 //! for JPEGs encoded by external tools (ImageMagick, etc.)
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use enough::Unstoppable;
 use rgb::RGBA8;
 use zune_jpeg::{zune_core::bytestream::ZCursor, JpegDecoder};

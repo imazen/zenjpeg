@@ -11,14 +11,16 @@
 //!
 //! Run with: cargo test --release --features decoder -p zenjpeg --test decode_accuracy_corpus -- --nocapture --ignored
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use enough::Unstoppable;
 use rgb::RGBA8;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const CORPUS_DIR: &str = "/home/lilith/work/codec-eval/codec-corpus/jpeg-conformance/valid";
+fn corpus() -> Option<codec_corpus::Corpus> {
+    codec_corpus::Corpus::new().ok()
+}
 
 fn collect_jpgs(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -314,13 +316,16 @@ fn percentile(values: &[u8], pct: usize) -> u8 {
 #[test]
 #[ignore]
 fn corpus_decode_accuracy() {
-    let corpus = Path::new(CORPUS_DIR);
-    if !corpus.exists() {
-        eprintln!("Corpus not found at {CORPUS_DIR}");
-        return;
-    }
+    let c = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let corpus = match c.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
-    let files = collect_jpgs(corpus);
+    let files = collect_jpgs(&corpus);
     eprintln!("Found {} JPEG files in conformance corpus\n", files.len());
 
     // Decode all files with each decoder
@@ -569,13 +574,16 @@ fn corpus_decode_accuracy() {
 #[test]
 #[ignore]
 fn corpus_libjpeg_compat_vs_djpeg() {
-    let corpus = Path::new(CORPUS_DIR);
-    if !corpus.exists() {
-        eprintln!("Corpus not found at {CORPUS_DIR}");
-        return;
-    }
+    let c = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let corpus = match c.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
-    let files = collect_jpgs(corpus);
+    let files = collect_jpgs(&corpus);
     eprintln!(
         "Found {} JPEG files — comparing Triangle vs LibjpegCompat vs djpeg\n",
         files.len()
@@ -712,7 +720,15 @@ fn investigate_rst_diff() {
     use zenjpeg::decode::ChromaUpsampling;
     use zenjpeg::decoder::Decoder;
 
-    let path = Path::new(CORPUS_DIR).join("rst_1block.jpg");
+    let c = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let corpus_dir = match c.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
+    let path = corpus_dir.join("rst_1block.jpg");
     if !path.exists() {
         eprintln!("File not found");
         return;
@@ -815,13 +831,16 @@ fn investigate_rst_diff() {
 #[test]
 #[ignore]
 fn border_pixel_accuracy() {
-    let corpus = Path::new(CORPUS_DIR);
-    if !corpus.exists() {
-        eprintln!("Corpus not found at {CORPUS_DIR}");
-        return;
-    }
+    let c = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let corpus = match c.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
-    let files = collect_jpgs(corpus);
+    let files = collect_jpgs(&corpus);
 
     eprintln!(
         "{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}",

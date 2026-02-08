@@ -8,11 +8,14 @@ use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
-    let images = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak/1.png",
-        "/home/lilith/work/codec-eval/codec-corpus/kodak/5.png",
-        "/home/lilith/work/codec-eval/codec-corpus/kodak/13.png",
-    ];
+    let kodak_dir = codec_corpus::Corpus::new().ok()
+        .and_then(|c| c.get("kodak").ok())
+        .expect("codec-corpus unavailable; need kodak images");
+    let image_paths: Vec<String> = ["1.png", "5.png", "13.png"]
+        .iter()
+        .map(|f| kodak_dir.join(f).to_string_lossy().to_string())
+        .collect();
+    let images: Vec<&str> = image_paths.iter().map(|s| s.as_str()).collect();
     let qualities = [70, 80, 90];
 
     println!("XYB Parity Test: Rust vs C jpegli");

@@ -4,7 +4,7 @@
 //! output to C++ djpegli for various JPEG configurations.
 use enough::Unstoppable;
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::process::Command;
 use zenjpeg::{

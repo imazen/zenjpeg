@@ -57,7 +57,7 @@ struct ParityBaseline {
     target_diff_pct: f64,
 }
 
-/// CID22-512 test images to fetch from GitHub
+/// CID22-512 test images to fetch from corpus
 #[allow(dead_code)] // Used conditionally based on test configuration
 const CID22_IMAGES: &[(&str, &str)] = &[
     ("1459534.png", "cid22_large"),        // 621KB - complex photo
@@ -66,52 +66,15 @@ const CID22_IMAGES: &[(&str, &str)] = &[
     ("nicubunu_Game_baddie_Policeman.png", "cid22_small"), // 77KB - graphics
 ];
 
-/// GitHub raw URL for imazen/codec-corpus
-const CORPUS_BASE_URL: &str = "https://raw.githubusercontent.com/imazen/codec-corpus/main";
-
-/// Download a file from GitHub if not available locally
+/// Get a file from the CID22 training corpus via codec-corpus crate
 fn fetch_corpus_image(filename: &str) -> Option<std::path::PathBuf> {
-    let cache_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("test_cache")
-        .join("cid22");
-
-    let cache_path = cache_dir.join(filename);
-
-    // Check if already cached
-    if cache_path.exists() {
-        return Some(cache_path);
-    }
-
-    // Check local corpus paths first
-    let local_paths = [
-        "../codec-comparison/codec-corpus/CID22/CID22-512/training",
-        "../codec-corpus/CID22/CID22-512/training",
-        "codec-corpus/CID22/CID22-512/training",
-    ];
-
-    for local_path in local_paths {
-        let full_path = std::path::PathBuf::from(local_path).join(filename);
-        if full_path.exists() {
-            return Some(full_path);
-        }
-    }
-
-    // Try to download from GitHub
-    fs::create_dir_all(&cache_dir).ok()?;
-
-    let url = format!("{}/CID22/CID22-512/training/{}", CORPUS_BASE_URL, filename);
-    eprintln!("Fetching {} from GitHub...", filename);
-
-    let output = Command::new("curl")
-        .args(["-fsSL", "-o", cache_path.to_str()?, &url])
-        .output()
-        .ok()?;
-
-    if output.status.success() && cache_path.exists() {
-        eprintln!("  Downloaded: {}", filename);
-        Some(cache_path)
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    let dir = corpus.get("CID22/CID22-512/training").ok()?;
+    let path = dir.join(filename);
+    if path.exists() {
+        Some(path)
     } else {
-        eprintln!("  Failed to download: {}", filename);
+        eprintln!("  File not found in corpus: {}", filename);
         None
     }
 }

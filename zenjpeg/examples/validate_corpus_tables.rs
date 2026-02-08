@@ -25,7 +25,9 @@ use zenjpeg::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const CODEC_CORPUS: &str = "/home/lilith/work/codec-corpus";
+fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
+    Ok(codec_corpus::Corpus::new()?)
+}
 const FREQ_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
 
 /// Validation quality tiers (subset for speed).
@@ -131,13 +133,16 @@ fn main() -> Result<()> {
     let start = Instant::now();
 
     // Load all corpus image lists
+    let cc = corpus_crate().expect("codec-corpus unavailable");
     let mut corpus_images: Vec<(&Corpus, Vec<PathBuf>)> = Vec::new();
     for corpus in CORPORA {
-        let dir = PathBuf::from(CODEC_CORPUS).join(corpus.rel_path);
-        if !dir.is_dir() {
-            eprintln!("SKIP: {} not found", corpus.name);
-            continue;
-        }
+        let dir = match cc.get(corpus.rel_path) {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP: {} not available", corpus.name);
+                continue;
+            }
+        };
         let images = load_image_list(&dir)?;
         if !images.is_empty() {
             corpus_images.push((corpus, images));

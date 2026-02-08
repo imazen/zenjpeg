@@ -901,7 +901,7 @@ impl QualityMetrics {
         assert_eq!(original.width(), distorted.width(), "Width mismatch");
         assert_eq!(original.height(), distorted.height(), "Height mismatch");
 
-        let attr = dssim::Dssim::new();
+        let attr = dssim_core::Dssim::new();
 
         let orig_rgba: Vec<RGBA8> = original
             .pixels()

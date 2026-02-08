@@ -34,7 +34,10 @@ use zenjpeg_bench_utils::{
 
 // --- Constants ---
 
-const CID22_DIR: &str = "/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/validation";
+fn corpus_cid22_dir() -> PathBuf {
+    let cc = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+    cc.get("CID22/CID22-512/validation").expect("CID22 corpus not available")
+}
 
 /// C++ distances spanning the full R-D curve (low quality → near-lossless).
 const CPP_DISTANCES: [f32; 13] = [
@@ -226,9 +229,10 @@ fn main() {
     let args = parse_args();
 
     // Load CID22 images
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(CID22_DIR)
+    let cid22_dir = corpus_cid22_dir();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&cid22_dir)
         .unwrap_or_else(|e| {
-            eprintln!("Cannot read {}: {}", CID22_DIR, e);
+            eprintln!("Cannot read {}: {}", cid22_dir.display(), e);
             std::process::exit(1);
         })
         .filter_map(|e| e.ok())
@@ -248,7 +252,7 @@ fn main() {
         .collect();
 
     if images.is_empty() {
-        eprintln!("No images loaded from {}", CID22_DIR);
+        eprintln!("No images loaded from {}", cid22_dir.display());
         std::process::exit(1);
     }
 

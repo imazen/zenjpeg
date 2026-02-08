@@ -7,7 +7,9 @@ use std::fs;
 use std::path::Path;
 use zenjpeg::decoder::{Decoder, Strictness};
 
-const CORPUS_BASE: &str = "/home/lilith/work/codec-eval/codec-corpus/jpeg-conformance";
+fn corpus() -> Option<codec_corpus::Corpus> {
+    codec_corpus::Corpus::new().ok()
+}
 
 fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
@@ -52,7 +54,14 @@ fn decode_file_with_strictness(
 #[test]
 #[ignore] // Run with --ignored
 fn test_valid_files() {
-    let dir = Path::new(CORPUS_BASE).join("valid");
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpgs(&dir);
 
     println!("\n=== VALID FILES ({} total) ===", files.len());
@@ -95,7 +104,14 @@ fn test_valid_files() {
 #[test]
 #[ignore] // Run with --ignored
 fn test_invalid_files() {
-    let dir = Path::new(CORPUS_BASE).join("invalid");
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let dir = match corpus.get("jpeg-conformance/invalid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpgs(&dir);
 
     println!("\n=== INVALID FILES ({} total) ===", files.len());
@@ -143,7 +159,14 @@ fn test_invalid_files() {
 #[test]
 #[ignore] // Run with --ignored
 fn test_nonconformant_files() {
-    let dir = Path::new(CORPUS_BASE).join("non-conformant");
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let dir = match corpus.get("jpeg-conformance/non-conformant") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
     let files = collect_jpgs(&dir);
 
     println!("\n=== NON-CONFORMANT FILES ({} total) ===", files.len());
@@ -203,10 +226,19 @@ fn test_nonconformant_files() {
 fn test_cmyk_files() {
     println!("\n=== CMYK/YCCK FILES ===\n");
 
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let valid_dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
+
     let cmyk_files = ["cmyk_logo.jpg", "cymk.jpg"];
 
     for name in cmyk_files {
-        let path = Path::new(CORPUS_BASE).join("valid").join(name);
+        let path = valid_dir.join(name);
         if !path.exists() {
             println!("⚠ {} not found", name);
             continue;
@@ -242,8 +274,20 @@ fn test_cmyk_files() {
 fn test_strictness_modes() {
     println!("\n=== STRICTNESS MODE COMPARISON ===\n");
 
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let valid_dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
+    let nonconf_dir = match corpus.get("jpeg-conformance/non-conformant") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
+
     // Test valid files with all strictness modes
-    let valid_dir = Path::new(CORPUS_BASE).join("valid");
     let valid_files = collect_jpgs(&valid_dir);
 
     println!("=== VALID FILES (all modes should accept) ===\n");
@@ -280,7 +324,6 @@ fn test_strictness_modes() {
     );
 
     // Test non-conformant files - expect Strict to reject more
-    let nonconf_dir = Path::new(CORPUS_BASE).join("non-conformant");
     let nonconf_files = collect_jpgs(&nonconf_dir);
 
     println!("\n=== NON-CONFORMANT FILES (strictness differences) ===\n");
