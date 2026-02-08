@@ -49,7 +49,7 @@ approx = "0.5"
 proptest = "1.4"
 criterion = "0.5"
 test-case = "3.3"
-codec-eval = { path = "/home/lilith/work/codec-eval" }  # Local dev only
+codec-eval = "0.3"
 
 # FFI
 libc = "0.2"

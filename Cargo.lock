@@ -210,15 +210,6 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "butteraugli"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7109f002c8068b17d531aefc9069a5b44feecea806f8805ad6e05501615b981"
-dependencies = [
- "wide 0.7.33",
-]
-
-[[package]]
-name = "butteraugli"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a20e0f3fc58327aeb1c5a8d7427ee35b4ed06cfe6fbff6bac3f2e0a59e700cb"
@@ -374,12 +365,16 @@ dependencies = [
 
 [[package]]
 name = "codec-eval"
-version = "0.2.0"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0172394d0b08a25a5916122265af791022a81b1c131efa4089da1f4ecf2b0e2c"
 dependencies = [
- "butteraugli 0.3.1",
+ "butteraugli",
  "chrono",
+ "codec-corpus",
  "csv",
  "dssim-core",
+ "fast-ssim2",
  "imgref",
  "jpeg-decoder",
  "moxcms 0.7.11",
@@ -387,7 +382,6 @@ dependencies = [
  "rgb",
  "serde",
  "serde_json",
- "ssimulacra2",
  "thiserror",
 ]
 
@@ -1580,19 +1574,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "ssimulacra2"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "700cb4e17f98c3f36756815b18dbec2b2e3c4f5028e9cdee3e23dd8c285e736c"
-dependencies = [
- "num-traits",
- "rayon",
- "thiserror",
- "yuvxyb",
- "yuvxyb-math",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,7 +2131,7 @@ dependencies = [
  "approx",
  "archmage 0.5.0",
  "bincode",
- "butteraugli 0.4.0",
+ "butteraugli",
  "bytemuck",
  "chrono",
  "codec-corpus",
@@ -2202,7 +2183,7 @@ dependencies = [
 name = "zenjpeg-bench-utils"
 version = "0.1.0"
 dependencies = [
- "butteraugli 0.4.0",
+ "butteraugli",
  "dssim-core",
  "enough",
  "fast-ssim2",
