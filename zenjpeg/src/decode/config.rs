@@ -401,7 +401,7 @@ pub struct GainMapResult {
 /// let pixels: &[f32] = result.pixels_f32().unwrap();
 /// ```
 #[derive(Clone)]
-pub struct Decoder {
+pub struct DecodeConfig {
     /// Output pixel format (None = use source format)
     pub output_format: Option<crate::types::PixelFormat>,
     /// Output target controlling precision, transfer function, and IDCT variant.
@@ -429,9 +429,9 @@ pub struct Decoder {
     pub strictness: Strictness,
 }
 
-impl core::fmt::Debug for Decoder {
+impl core::fmt::Debug for DecodeConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Decoder")
+        f.debug_struct("DecodeConfig")
             .field("output_format", &self.output_format)
             .field("output_target", &self.output_target)
             .field("gain_map", &self.gain_map)
@@ -446,7 +446,7 @@ impl core::fmt::Debug for Decoder {
     }
 }
 
-impl Default for Decoder {
+impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
             output_format: None,
