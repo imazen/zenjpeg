@@ -136,9 +136,9 @@ pub enum Strictness {
 /// # Example
 ///
 /// ```rust,ignore
-/// use zenjpeg::decoder::{DecodeConfig, DecodeWarning};
+/// use zenjpeg::decoder::{Decoder, DecodeWarning};
 ///
-/// let result = DecodeConfig::new().decode(&data, enough::Unstoppable)?;
+/// let result = Decoder::new().decode(&data, enough::Unstoppable)?;
 /// for warning in result.warnings() {
 ///     match warning {
 ///         DecodeWarning::MissingHuffmanTables => eprintln!("MJPEG: used standard tables"),
@@ -376,32 +376,32 @@ pub struct GainMapResult {
 }
 
 // ============================================================================
-// DecodeConfig — replaces the old Decoder struct
+// Decoder — replaces the old Decoder struct
 // ============================================================================
 
 /// JPEG decode configuration.
 ///
-/// This is the main entry point for decoding. Create a `DecodeConfig`, configure
-/// it with builder methods, then call [`decode()`](DecodeConfig::decode) or
-/// [`scanline_reader()`](DecodeConfig::scanline_reader).
+/// This is the main entry point for decoding. Create a `Decoder`, configure
+/// it with builder methods, then call [`decode()`](Decoder::decode) or
+/// [`scanline_reader()`](Decoder::scanline_reader).
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use zenjpeg::decoder::DecodeConfig;
+/// use zenjpeg::decoder::Decoder;
 ///
 /// // Default (u8 sRGB, fastest)
-/// let result = DecodeConfig::new().decode(&jpeg_data, enough::Unstoppable)?;
+/// let result = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
 /// let pixels: &[u8] = result.pixels_u8().unwrap();
 ///
 /// // f32 sRGB with unclamped IDCT
-/// let result = DecodeConfig::new()
+/// let result = Decoder::new()
 ///     .output_target(OutputTarget::SrgbF32)
 ///     .decode(&jpeg_data, enough::Unstoppable)?;
 /// let pixels: &[f32] = result.pixels_f32().unwrap();
 /// ```
 #[derive(Clone)]
-pub struct DecodeConfig {
+pub struct Decoder {
     /// Output pixel format (None = use source format)
     pub output_format: Option<crate::types::PixelFormat>,
     /// Output target controlling precision, transfer function, and IDCT variant.
@@ -429,9 +429,9 @@ pub struct DecodeConfig {
     pub strictness: Strictness,
 }
 
-impl core::fmt::Debug for DecodeConfig {
+impl core::fmt::Debug for Decoder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DecodeConfig")
+        f.debug_struct("Decoder")
             .field("output_format", &self.output_format)
             .field("output_target", &self.output_target)
             .field("gain_map", &self.gain_map)
@@ -446,7 +446,7 @@ impl core::fmt::Debug for DecodeConfig {
     }
 }
 
-impl Default for DecodeConfig {
+impl Default for Decoder {
     fn default() -> Self {
         Self {
             output_format: None,
@@ -463,9 +463,6 @@ impl Default for DecodeConfig {
         }
     }
 }
-
-/// Backward compatibility alias.
-pub type DecoderConfig = DecodeConfig;
 
 // ============================================================================
 // DecodeResult — unified output type
@@ -699,8 +696,8 @@ impl DecodeResult {
 // DecodeInfo — returned by decode_into_*
 // ============================================================================
 
-/// Metadata returned by [`DecodeConfig::decode_into_u8`] and
-/// [`DecodeConfig::decode_into_f32`].
+/// Metadata returned by [`Decoder::decode_into_u8`] and
+/// [`Decoder::decode_into_f32`].
 ///
 /// Contains everything except pixel data (which was written to the caller's buffer).
 #[derive(Debug, Clone)]
