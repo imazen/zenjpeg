@@ -416,10 +416,12 @@ pub struct DecodeConfig {
     pub apply_icc: bool,
     /// Maximum pixels allowed (for DoS protection).
     /// Default is 100 megapixels. Set to 0 for unlimited.
-    pub max_pixels: u64,
+    /// Use `max_pixels()` method to set.
+    pub(crate) max_pixels: u64,
     /// Maximum total memory for allocations (for DoS protection).
     /// Default is 512 MB. Set to 0 for unlimited.
-    pub max_memory: usize,
+    /// Use `max_memory()` method to set.
+    pub(crate) max_memory: u64,
     /// What metadata and secondary images to preserve during decode.
     pub preserve: PreserveConfig,
     /// How to handle recoverable errors (truncation, minor spec violations).
