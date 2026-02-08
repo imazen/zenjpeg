@@ -1,0 +1,382 @@
+//! ARM NEON SIMD implementations using archmage capability tokens.
+//!
+//! These functions provide NEON-optimized implementations for ARM AArch64.
+//! The `neon_` prefix distinguishes them from x86 AVX2 versions.
+//!
+//! # Token Model
+//!
+//! Each function requires a NeonToken that proves NEON is available.
+//! NEON is baseline on AArch64, so `NeonToken::summon()` always succeeds.
+//!
+//! # Vector Width
+//!
+//! NEON is 128-bit (4-wide for f32), compared to AVX2's 256-bit (8-wide).
+//! 8x8 DCT operations are implemented as two 4x4 blocks.
+
+#![cfg(all(feature = "archmage-simd", target_arch = "aarch64"))]
+
+use archmage::{arcane, NeonToken};
+use core::arch::aarch64::*;
+
+// Re-export NeonToken for callers
+pub use archmage::NeonToken;
+
+// ============================================================================
+// DCT Constants (same as x86 version)
+// ============================================================================
+
+const WC4_0: f32 = 0.541196100146197;
+const WC4_1: f32 = 1.3065629648763764;
+
+const WC8_0: f32 = 0.5097955791041592;
+const WC8_1: f32 = 0.6013448869350453;
+const WC8_2: f32 = 0.8999762231364156;
+const WC8_3: f32 = 2.5629154477415055;
+
+const SQRT2: f32 = 1.41421356237;
+
+// ============================================================================
+// 4x4 Transpose (Foundation for 8x8)
+// ============================================================================
+
+/// In-place 4x4 transpose on 4 float32x4_t registers using NEON.
+///
+/// Uses the zip1/zip2 (interleave) pattern:
+/// - Phase 1: Zip adjacent pairs (creates 2x4 blocks)
+/// - Phase 2: Zip the results (creates transposed 4x4)
+///
+/// This is the building block for 8x8 transposes.
+#[arcane]
+#[inline]
+fn neon_transpose_4x4_inplace_inner(_token: NeonToken, r: &mut [float32x4_t; 4]) {
+    unsafe {
+        // Phase 1: Interleave pairs
+        // After this, q0/q1 have rows 0&1 interleaved, q2/q3 have rows 2&3 interleaved
+        let q0 = vzip1q_f32(r[0], r[1]); // [r0[0], r1[0], r0[1], r1[1]]
+        let q1 = vzip2q_f32(r[0], r[1]); // [r0[2], r1[2], r0[3], r1[3]]
+        let q2 = vzip1q_f32(r[2], r[3]); // [r2[0], r3[0], r2[1], r3[1]]
+        let q3 = vzip2q_f32(r[2], r[3]); // [r2[2], r3[2], r2[3], r3[3]]
+
+        // Phase 2: Interleave 64-bit pairs (f32x2 treated as single 64-bit unit)
+        // This completes the transpose
+        r[0] = vreinterpretq_f32_f64(vzip1q_f64(
+            vreinterpretq_f64_f32(q0),
+            vreinterpretq_f64_f32(q2),
+        )); // Column 0
+        r[1] = vreinterpretq_f32_f64(vzip2q_f64(
+            vreinterpretq_f64_f32(q0),
+            vreinterpretq_f64_f32(q2),
+        )); // Column 1
+        r[2] = vreinterpretq_f32_f64(vzip1q_f64(
+            vreinterpretq_f64_f32(q1),
+            vreinterpretq_f64_f32(q3),
+        )); // Column 2
+        r[3] = vreinterpretq_f32_f64(vzip2q_f64(
+            vreinterpretq_f64_f32(q1),
+            vreinterpretq_f64_f32(q3),
+        )); // Column 3
+    }
+}
+
+/// Public wrapper for 4x4 transpose.
+#[inline]
+pub fn neon_transpose_4x4_inplace(token: NeonToken, r: &mut [float32x4_t; 4]) {
+    neon_transpose_4x4_inplace_inner(token, r);
+}
+
+// ============================================================================
+// 8x8 Transpose (Two 4x4 Blocks)
+// ============================================================================
+
+/// In-place 8x8 transpose implemented as two independent 4x4 transposes.
+///
+/// Input: 8 rows of 8 f32 values (64 total)
+/// Output: 8 columns (transposed)
+///
+/// Since NEON is 4-wide, we split the 8x8 into:
+/// - Top-left 4x4 block (rows 0-3, cols 0-3)
+/// - Top-right 4x4 block (rows 0-3, cols 4-7)
+/// - Bottom-left 4x4 block (rows 4-7, cols 0-3)
+/// - Bottom-right 4x4 block (rows 4-7, cols 4-7)
+///
+/// Then transpose each 4x4 independently and reassemble.
+#[arcane]
+#[inline]
+fn neon_transpose_8x8_inplace_inner(token: NeonToken, data: &mut [f32; 64]) {
+    unsafe {
+        // Load 8 rows as 16 float32x4_t registers (2 per row)
+        let mut r0_lo = vld1q_f32(data.as_ptr());
+        let mut r0_hi = vld1q_f32(data.as_ptr().add(4));
+        let mut r1_lo = vld1q_f32(data.as_ptr().add(8));
+        let mut r1_hi = vld1q_f32(data.as_ptr().add(12));
+        let mut r2_lo = vld1q_f32(data.as_ptr().add(16));
+        let mut r2_hi = vld1q_f32(data.as_ptr().add(20));
+        let mut r3_lo = vld1q_f32(data.as_ptr().add(24));
+        let mut r3_hi = vld1q_f32(data.as_ptr().add(28));
+        let mut r4_lo = vld1q_f32(data.as_ptr().add(32));
+        let mut r4_hi = vld1q_f32(data.as_ptr().add(36));
+        let mut r5_lo = vld1q_f32(data.as_ptr().add(40));
+        let mut r5_hi = vld1q_f32(data.as_ptr().add(44));
+        let mut r6_lo = vld1q_f32(data.as_ptr().add(48));
+        let mut r6_hi = vld1q_f32(data.as_ptr().add(52));
+        let mut r7_lo = vld1q_f32(data.as_ptr().add(56));
+        let mut r7_hi = vld1q_f32(data.as_ptr().add(60));
+
+        // Transpose top-left 4x4
+        let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
+        neon_transpose_4x4_inplace_inner(token, &mut tl);
+
+        // Transpose top-right 4x4
+        let mut tr = [r0_hi, r1_hi, r2_hi, r3_hi];
+        neon_transpose_4x4_inplace_inner(token, &mut tr);
+
+        // Transpose bottom-left 4x4
+        let mut bl = [r4_lo, r5_lo, r6_lo, r7_lo];
+        neon_transpose_4x4_inplace_inner(token, &mut bl);
+
+        // Transpose bottom-right 4x4
+        let mut br = [r4_hi, r5_hi, r6_hi, r7_hi];
+        neon_transpose_4x4_inplace_inner(token, &mut br);
+
+        // Store transposed blocks
+        // After transpose, what were rows are now columns:
+        // tl[0] = column 0, lanes 0-3 (from original rows 0-3)
+        // bl[0] = column 0, lanes 4-7 (from original rows 4-7)
+        vst1q_f32(data.as_mut_ptr(), tl[0]);
+        vst1q_f32(data.as_mut_ptr().add(4), bl[0]);
+        vst1q_f32(data.as_mut_ptr().add(8), tl[1]);
+        vst1q_f32(data.as_mut_ptr().add(12), bl[1]);
+        vst1q_f32(data.as_mut_ptr().add(16), tl[2]);
+        vst1q_f32(data.as_mut_ptr().add(20), bl[2]);
+        vst1q_f32(data.as_mut_ptr().add(24), tl[3]);
+        vst1q_f32(data.as_mut_ptr().add(28), bl[3]);
+        vst1q_f32(data.as_mut_ptr().add(32), tr[0]);
+        vst1q_f32(data.as_mut_ptr().add(36), br[0]);
+        vst1q_f32(data.as_mut_ptr().add(40), tr[1]);
+        vst1q_f32(data.as_mut_ptr().add(44), br[1]);
+        vst1q_f32(data.as_mut_ptr().add(48), tr[2]);
+        vst1q_f32(data.as_mut_ptr().add(52), br[2]);
+        vst1q_f32(data.as_mut_ptr().add(56), tr[3]);
+        vst1q_f32(data.as_mut_ptr().add(60), br[3]);
+    }
+}
+
+/// Public wrapper for 8x8 transpose.
+#[inline]
+pub fn neon_transpose_8x8(token: NeonToken, data: &mut [f32; 64]) {
+    neon_transpose_8x8_inplace_inner(token, data);
+}
+
+// ============================================================================
+// DCT Butterfly Operations (4-wide)
+// ============================================================================
+
+/// 2-point DCT butterfly using NEON FMA.
+///
+/// Implements: (m0 + m1, m0 - m1)
+#[arcane]
+#[inline]
+fn neon_dct1d_2_inner(_token: NeonToken, m0: &mut float32x4_t, m1: &mut float32x4_t) {
+    unsafe {
+        let sum = vaddq_f32(*m0, *m1);
+        let diff = vsubq_f32(*m0, *m1);
+        *m0 = sum;
+        *m1 = diff;
+    }
+}
+
+/// 4-point DCT butterfly using NEON FMA.
+///
+/// Implements the standard 4-point DCT transform with FMA optimizations.
+#[arcane]
+#[inline]
+fn neon_dct1d_4_inner(token: NeonToken, m: &mut [float32x4_t; 4]) {
+    unsafe {
+        // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
+        let sum03 = vaddq_f32(m[0], m[3]);
+        let sum12 = vaddq_f32(m[1], m[2]);
+        let diff12 = vsubq_f32(m[1], m[2]);
+        let diff03 = vsubq_f32(m[0], m[3]);
+
+        // Second layer: apply 2-point DCT to (sum03, sum12)
+        let mut t0 = sum03;
+        let mut t1 = sum12;
+        neon_dct1d_2_inner(token, &mut t0, &mut t1);
+
+        // Apply WC4 coefficients to differences using FMA
+        let wc4_0 = vdupq_n_f32(WC4_0);
+        let wc4_1 = vdupq_n_f32(WC4_1);
+
+        m[0] = t0;
+        m[1] = vfmaq_f32(vmulq_f32(diff12, wc4_0), diff03, wc4_1); // diff12 * WC4_0 + diff03 * WC4_1
+        m[2] = t1;
+        m[3] = vfmsq_f32(vmulq_f32(diff12, wc4_1), diff03, wc4_0); // diff12 * WC4_1 - diff03 * WC4_0
+    }
+}
+
+/// 8-point DCT butterfly using NEON FMA (processes 4 blocks in parallel).
+///
+/// This is the core 1D DCT-II transform applied to 4 parallel streams.
+#[arcane]
+#[inline]
+fn neon_dct1d_8_inner(token: NeonToken, m: &mut [float32x4_t; 8]) {
+    unsafe {
+        // First layer: butterfly on opposite ends
+        let sum07 = vaddq_f32(m[0], m[7]);
+        let sum16 = vaddq_f32(m[1], m[6]);
+        let sum25 = vaddq_f32(m[2], m[5]);
+        let sum34 = vaddq_f32(m[3], m[4]);
+        let diff07 = vsubq_f32(m[0], m[7]);
+        let diff16 = vsubq_f32(m[1], m[6]);
+        let diff25 = vsubq_f32(m[2], m[5]);
+        let diff34 = vsubq_f32(m[3], m[4]);
+
+        // Apply 4-point DCT to sums
+        let mut even = [sum07, sum16, sum25, sum34];
+        neon_dct1d_4_inner(token, &mut even);
+
+        // Apply WC8 coefficients to differences using FMA
+        let wc8_0 = vdupq_n_f32(WC8_0);
+        let wc8_1 = vdupq_n_f32(WC8_1);
+        let wc8_2 = vdupq_n_f32(WC8_2);
+        let wc8_3 = vdupq_n_f32(WC8_3);
+
+        // Odd part (complex FMA chains)
+        let t0 = vfmaq_f32(vmulq_f32(diff07, wc8_0), diff34, wc8_1);
+        let t1 = vfmaq_f32(vmulq_f32(diff16, wc8_2), diff25, wc8_3);
+        let t2 = vfmsq_f32(vmulq_f32(diff16, wc8_3), diff25, wc8_2);
+        let t3 = vfmsq_f32(vmulq_f32(diff07, wc8_1), diff34, wc8_0);
+
+        let odd0 = vaddq_f32(t0, t1);
+        let odd1 = vsubq_f32(t0, t1);
+        let odd2 = vaddq_f32(t2, t3);
+        let odd3 = vsubq_f32(t2, t3);
+
+        // Interleave even and odd results
+        m[0] = even[0];
+        m[1] = odd0;
+        m[2] = even[1];
+        m[3] = odd1;
+        m[4] = even[2];
+        m[5] = odd2;
+        m[6] = even[3];
+        m[7] = odd3;
+    }
+}
+
+// ============================================================================
+// Forward DCT 8x8
+// ============================================================================
+
+/// Forward DCT 8x8 using NEON.
+///
+/// Processes the DCT as two 4x4 blocks due to NEON's 4-wide registers.
+/// Each 4x4 block undergoes:
+/// 1. Load 4 rows
+/// 2. Apply 1D DCT to each row (4-point, extended to handle 8 points via splitting)
+/// 3. Transpose
+/// 4. Apply 1D DCT to each column
+/// 5. Transpose back
+///
+/// Note: This is a simplified version. Full 8-point DCT needs special handling.
+/// For now, this demonstrates the pattern.
+#[arcane]
+pub fn neon_forward_dct_8x8(token: NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+    unsafe {
+        // Load all 8 rows as float32x4_t pairs
+        let mut rows_lo: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
+        let mut rows_hi: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
+
+        for i in 0..8 {
+            rows_lo[i] = vld1q_f32(input.as_ptr().add(i * 8));
+            rows_hi[i] = vld1q_f32(input.as_ptr().add(i * 8 + 4));
+        }
+
+        // Apply 1D DCT to each row
+        neon_dct1d_8_inner(token, &mut rows_lo);
+        neon_dct1d_8_inner(token, &mut rows_hi);
+
+        // Transpose
+        let mut temp = [0.0f32; 64];
+        for i in 0..8 {
+            vst1q_f32(temp.as_mut_ptr().add(i * 8), rows_lo[i]);
+            vst1q_f32(temp.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
+        }
+        neon_transpose_8x8_inplace_inner(token, &mut temp);
+
+        // Reload transposed data
+        for i in 0..8 {
+            rows_lo[i] = vld1q_f32(temp.as_ptr().add(i * 8));
+            rows_hi[i] = vld1q_f32(temp.as_ptr().add(i * 8 + 4));
+        }
+
+        // Apply 1D DCT to each column (now rows after transpose)
+        neon_dct1d_8_inner(token, &mut rows_lo);
+        neon_dct1d_8_inner(token, &mut rows_hi);
+
+        // Store result
+        for i in 0..8 {
+            vst1q_f32(output.as_mut_ptr().add(i * 8), rows_lo[i]);
+            vst1q_f32(output.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_neon_transpose_4x4() {
+        if let Some(token) = NeonToken::summon() {
+            unsafe {
+                let input = [
+                    vld1q_f32([0.0, 1.0, 2.0, 3.0].as_ptr()),
+                    vld1q_f32([4.0, 5.0, 6.0, 7.0].as_ptr()),
+                    vld1q_f32([8.0, 9.0, 10.0, 11.0].as_ptr()),
+                    vld1q_f32([12.0, 13.0, 14.0, 15.0].as_ptr()),
+                ];
+
+                let mut r = input;
+                neon_transpose_4x4_inplace(token, &mut r);
+
+                let mut col0 = [0.0f32; 4];
+                let mut col1 = [0.0f32; 4];
+                let mut col2 = [0.0f32; 4];
+                let mut col3 = [0.0f32; 4];
+
+                vst1q_f32(col0.as_mut_ptr(), r[0]);
+                vst1q_f32(col1.as_mut_ptr(), r[1]);
+                vst1q_f32(col2.as_mut_ptr(), r[2]);
+                vst1q_f32(col3.as_mut_ptr(), r[3]);
+
+                assert_eq!(col0, [0.0, 4.0, 8.0, 12.0]);
+                assert_eq!(col1, [1.0, 5.0, 9.0, 13.0]);
+                assert_eq!(col2, [2.0, 6.0, 10.0, 14.0]);
+                assert_eq!(col3, [3.0, 7.0, 11.0, 15.0]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_neon_transpose_8x8() {
+        if let Some(token) = NeonToken::summon() {
+            let mut input = [0.0f32; 64];
+            for i in 0..64 {
+                input[i] = i as f32;
+            }
+
+            neon_transpose_8x8(token, &mut input);
+
+            // Check a few key positions
+            assert_eq!(input[0], 0.0); // Was [0,0], still [0,0]
+            assert_eq!(input[1], 8.0); // Was [1,0], now [0,1]
+            assert_eq!(input[8], 1.0); // Was [0,1], now [1,0]
+            assert_eq!(input[9], 9.0); // Was [1,1], still [1,1]
+        }
+    }
+}
