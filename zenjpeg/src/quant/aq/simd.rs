@@ -3420,7 +3420,7 @@ mod tests {
 
             // Archmage version
             let mut output_archmage = vec![0.0f32; width];
-            mage_pre_erosion_row_padded(
+            archmage_impl::mage_pre_erosion_row_padded(
                 token,
                 &row_padded,
                 &row_above_padded,

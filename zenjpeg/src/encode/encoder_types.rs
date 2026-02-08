@@ -493,6 +493,7 @@ pub struct YCbCrPlanes<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PixelFormat;
 
     #[test]
     fn test_quality_default() {
@@ -645,6 +646,62 @@ mod tests {
             OptimizationPreset::HybridMaxCompression.to_string(),
             "hybrid-max"
         );
+    }
+
+    #[test]
+    fn test_pixel_format_to_layout_conversion() {
+        // 8-bit → sRGB gamma
+        assert_eq!(PixelLayout::from(PixelFormat::Rgb), PixelLayout::Rgb8Srgb);
+        assert_eq!(PixelLayout::from(PixelFormat::Rgba), PixelLayout::Rgba8Srgb);
+        assert_eq!(PixelLayout::from(PixelFormat::Bgr), PixelLayout::Bgr8Srgb);
+        assert_eq!(PixelLayout::from(PixelFormat::Bgra), PixelLayout::Bgra8Srgb);
+        assert_eq!(PixelLayout::from(PixelFormat::Bgrx), PixelLayout::Bgrx8Srgb);
+        assert_eq!(PixelLayout::from(PixelFormat::Gray), PixelLayout::Gray8Srgb);
+
+        // 16-bit → linear light
+        assert_eq!(PixelLayout::from(PixelFormat::Rgb16), PixelLayout::Rgb16Linear);
+        assert_eq!(PixelLayout::from(PixelFormat::Rgba16), PixelLayout::Rgba16Linear);
+        assert_eq!(PixelLayout::from(PixelFormat::Gray16), PixelLayout::Gray16Linear);
+
+        // f32 → linear light
+        assert_eq!(PixelLayout::from(PixelFormat::RgbF32), PixelLayout::RgbF32Linear);
+        assert_eq!(PixelLayout::from(PixelFormat::RgbaF32), PixelLayout::RgbaF32Linear);
+        assert_eq!(PixelLayout::from(PixelFormat::GrayF32), PixelLayout::GrayF32Linear);
+    }
+
+    #[test]
+    fn test_pixel_layout_to_format_conversion() {
+        // sRGB 8-bit → 8-bit format
+        assert_eq!(PixelFormat::from(PixelLayout::Rgb8Srgb), PixelFormat::Rgb);
+        assert_eq!(PixelFormat::from(PixelLayout::Bgr8Srgb), PixelFormat::Bgr);
+        assert_eq!(PixelFormat::from(PixelLayout::Rgba8Srgb), PixelFormat::Rgba);
+        assert_eq!(PixelFormat::from(PixelLayout::Rgbx8Srgb), PixelFormat::Rgba); // RGBX maps to RGBA
+
+        // Linear 16-bit → 16-bit format
+        assert_eq!(PixelFormat::from(PixelLayout::Rgb16Linear), PixelFormat::Rgb16);
+        assert_eq!(PixelFormat::from(PixelLayout::Rgba16Linear), PixelFormat::Rgba16);
+
+        // Linear f32 → f32 format
+        assert_eq!(PixelFormat::from(PixelLayout::RgbF32Linear), PixelFormat::RgbF32);
+        assert_eq!(PixelFormat::from(PixelLayout::RgbaF32Linear), PixelFormat::RgbaF32);
+    }
+
+    #[test]
+    fn test_roundtrip_conversions() {
+        // Test that common formats roundtrip correctly
+        let formats = vec![
+            PixelFormat::Rgb,
+            PixelFormat::Bgr,
+            PixelFormat::Gray,
+            PixelFormat::Rgb16,
+            PixelFormat::RgbF32,
+        ];
+
+        for pf in formats {
+            let pl: PixelLayout = pf.into();
+            let pf2: PixelFormat = pl.into();
+            assert_eq!(pf, pf2, "Roundtrip failed for {:?} -> {:?} -> {:?}", pf, pl, pf2);
+        }
     }
 }
 
@@ -1281,5 +1338,39 @@ impl ExpertConfig {
     pub fn hybrid(mut self, config: super::trellis::HybridConfig) -> Self {
         self.hybrid = Some(config);
         self
+    }
+}
+
+/// Convert from legacy PixelFormat to explicit PixelLayout.
+///
+/// Assumes standard color space conventions:
+/// - 8-bit formats → sRGB gamma encoding
+/// - 16-bit formats → linear light
+/// - f32 formats → linear light
+impl From<crate::types::PixelFormat> for PixelLayout {
+    fn from(format: crate::types::PixelFormat) -> Self {
+        use crate::types::PixelFormat;
+        match format {
+            // 8-bit → sRGB gamma (standard assumption)
+            PixelFormat::Gray => Self::Gray8Srgb,
+            PixelFormat::Rgb => Self::Rgb8Srgb,
+            PixelFormat::Rgba => Self::Rgba8Srgb,
+            PixelFormat::Bgr => Self::Bgr8Srgb,
+            PixelFormat::Bgra => Self::Bgra8Srgb,
+            PixelFormat::Bgrx => Self::Bgrx8Srgb,
+
+            // 16-bit → linear light
+            PixelFormat::Gray16 => Self::Gray16Linear,
+            PixelFormat::Rgb16 => Self::Rgb16Linear,
+            PixelFormat::Rgba16 => Self::Rgba16Linear,
+
+            // f32 → linear light
+            PixelFormat::GrayF32 => Self::GrayF32Linear,
+            PixelFormat::RgbF32 => Self::RgbF32Linear,
+            PixelFormat::RgbaF32 => Self::RgbaF32Linear,
+
+            // CMYK → treat as RGB (best effort, will be converted)
+            PixelFormat::Cmyk => Self::Rgba8Srgb,
+        }
     }
 }
