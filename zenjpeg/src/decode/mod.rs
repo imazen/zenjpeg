@@ -49,8 +49,10 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    Decoder, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
 };
+/// Backward-compatible alias for [`DecodeConfig`].
+pub type Decoder = DecodeConfig;
 use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
@@ -126,7 +128,7 @@ use crate::color::icc::apply_icc_transform;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform_f32;
 
-impl Decoder {
+impl DecodeConfig {
     /// Creates a new decoder configuration with default settings.
     #[must_use]
     pub fn new() -> Self {
