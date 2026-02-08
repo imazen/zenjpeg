@@ -111,10 +111,135 @@ Requires `features = ["decoder"]` (prerelease API).
 
 ```rust
 use zenjpeg::decoder::Decoder;
+use enough::Unstoppable;
 
-let image = Decoder::new().decode(&jpeg_bytes)?;
-let rgb_pixels: &[u8] = image.pixels();
-let (width, height) = image.dimensions();
+let result = Decoder::new().decode(&jpeg_bytes, Unstoppable)?;
+let rgb_pixels: &[u8] = result.pixels_u8().expect("u8 output");
+let (width, height) = result.dimensions();
+```
+
+## Resource Limits and Cancellation
+
+### Resource Limits (DoS Protection)
+
+Protect against malicious images that could exhaust memory or CPU:
+
+```rust
+use zenjpeg::decoder::Decoder;
+use zenjpeg::types::Limits;
+
+// Set limits individually
+let decoder = Decoder::new()
+    .max_pixels(100_000_000)      // 100 megapixels max
+    .max_memory(512_000_000);     // 512 MB max allocation
+
+// Or use Limits struct
+let limits = Limits {
+    max_pixels: Some(100_000_000),
+    max_memory: Some(512_000_000),
+    max_output: None,
+};
+let decoder = Decoder::new().limits(limits);
+```
+
+**Default limits:**
+- `max_pixels`: 100 megapixels
+- `max_memory`: 512 MB
+
+Set to `0` or `None` for unlimited (not recommended for untrusted input).
+
+### Cooperative Cancellation
+
+Use `Stop` tokens for graceful shutdown in long-running operations:
+
+```rust
+use enough::{Stop, Unstoppable};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Simple case: never cancel
+let image = Decoder::new().decode(&jpeg_data, Unstoppable)?;
+
+// Custom stop token (e.g., user clicked cancel button)
+struct CancelToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Stop for CancelToken {
+    fn should_stop(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+}
+
+let cancel = CancelToken {
+    cancelled: Arc::new(AtomicBool::new(false)),
+};
+
+// Decode with cancellation support
+let result = Decoder::new().decode(&jpeg_data, &cancel);
+
+// In another thread: cancel.cancelled.store(true, Ordering::Relaxed);
+```
+
+**Encoder cancellation:**
+```rust
+let mut encoder = config.encode_from_bytes(width, height, layout)?;
+encoder.push_packed(&pixels, &cancel_token)?;  // Can be cancelled during push
+let jpeg = encoder.finish()?;
+```
+
+## Per-Image Metadata (Three-Layer Pattern)
+
+For encoding multiple images with the same config but different metadata:
+
+```rust
+use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
+
+// Layer 1: Reusable config (quality, color mode, optimization settings)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .auto_optimize(true)
+    .progressive(true);
+
+// Layer 2: Per-image request (metadata, limits, stop token)
+// Image 1: sRGB with orientation
+let jpeg1 = config.request()
+    .icc_profile(&srgb_icc_bytes)
+    .exif(Exif::build().orientation(Orientation::Rotate90))
+    .encode(&pixels1, 1920, 1080)?;
+
+// Image 2: Display P3 with different metadata
+let jpeg2 = config.request()
+    .icc_profile(&p3_icc_bytes)
+    .exif(Exif::build().copyright("© 2024 Example Corp"))
+    .encode(&pixels2, 3840, 2160)?;
+
+// Image 3: No metadata, with cancellation
+let jpeg3 = config.request()
+    .stop(&cancel_token)
+    .encode(&pixels3, 800, 600)?;
+```
+
+**Why three layers?**
+1. **EncoderConfig** - Reusable settings (quality, color mode, progressive)
+2. **EncodeRequest** - Per-image data (ICC profile, EXIF, XMP, limits, stop token)
+3. **Encoder** - Streaming execution (push rows, finish)
+
+**Request builder methods:**
+- `.icc_profile(&[u8])` - Borrowed ICC profile
+- `.icc_profile_owned(Vec<u8>)` - Owned ICC profile
+- `.exif(Exif)` - EXIF metadata
+- `.xmp(&[u8])` / `.xmp_owned(Vec<u8>)` - XMP metadata
+- `.stop(&dyn Stop)` - Cancellation token
+- `.limits(Limits)` - Resource limits (encoder future feature)
+
+**Streaming with request:**
+```rust
+let mut encoder = config.request()
+    .icc_profile(&srgb_bytes)
+    .encode_from_rgb::<rgb::RGB<u8>>(1920, 1080)?;
+
+encoder.push_packed(&pixels, Unstoppable)?;
+let jpeg = encoder.finish()?;
 ```
 
 ## API Reference
@@ -272,29 +397,43 @@ let ceiling = config.estimate_memory_ceiling(1920, 1080);
 All decoder types are in `zenjpeg::decoder`:
 
 ```rust
-use zenjpeg::decoder::{Decoder, DecodedImage, DecodedImageF32, DecoderConfig};
+use zenjpeg::decoder::{Decoder, DecodeResult};
 ```
 
 #### Basic Decoding
 
 ```rust
-// Decode to RGB (default)
-let image = Decoder::new().decode(&jpeg_data)?;
-let pixels: &[u8] = image.pixels();
-let (width, height) = image.dimensions();
+use zenjpeg::decoder::Decoder;
+use enough::Unstoppable;
+
+// Decode to u8 RGB (default)
+let result = Decoder::new().decode(&jpeg_data, Unstoppable)?;
+let pixels: &[u8] = result.pixels_u8().expect("u8 output");
+let (width, height) = result.dimensions();
 ```
 
 #### High-Precision Decoding (f32)
 
-Preserves jpegli's 12-bit internal precision:
+Use `OutputTarget` for f32 output with different transfer functions:
 
 ```rust
-let image: DecodedImageF32 = Decoder::new().decode_f32(&jpeg_data)?;
-let pixels: &[f32] = image.pixels();  // Values in 0.0-1.0
+use zenjpeg::decoder::{Decoder, OutputTarget};
+use enough::Unstoppable;
 
-// Convert to 8-bit or 16-bit when needed
-let u8_pixels: Vec<u8> = image.to_u8();
-let u16_pixels: Vec<u16> = image.to_u16();
+// sRGB gamma-encoded f32 (0.0-1.0 range)
+let result = Decoder::new()
+    .output_target(OutputTarget::SrgbF32)
+    .decode(&jpeg_data, Unstoppable)?;
+let pixels: &[f32] = result.pixels_f32().expect("f32 output");
+
+// Linear light f32 (for compositing, HDR)
+let result = Decoder::new()
+    .output_target(OutputTarget::LinearF32)
+    .decode(&jpeg_data, Unstoppable)?;
+
+// Convert f32 to u8 or u16 when needed
+let u8_pixels: Option<Vec<u8>> = result.to_u8();
+let u16_pixels: Option<Vec<u16>> = result.to_u16();
 ```
 
 #### YCbCr Output (Zero Color Conversion)

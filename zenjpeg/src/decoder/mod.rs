@@ -24,6 +24,32 @@
 //!     Ok(result.into_pixels_f32().unwrap())
 //! }
 //! ```
+//!
+//! # Resource Limits and Cancellation
+//!
+//! Protect against malicious images and support cooperative cancellation:
+//!
+//! ```rust,ignore
+//! use zenjpeg::decoder::Decoder;
+//! use zenjpeg::types::Limits;
+//! use enough::Unstoppable;
+//!
+//! // Set resource limits (DoS protection)
+//! let decoder = Decoder::new()
+//!     .max_pixels(100_000_000)      // 100 megapixels max
+//!     .max_memory(512_000_000);     // 512 MB max allocation
+//!
+//! // Or use Limits struct
+//! let limits = Limits {
+//!     max_pixels: Some(100_000_000),
+//!     max_memory: Some(512_000_000),
+//!     max_output: None,
+//! };
+//! let decoder = Decoder::new().limits(limits);
+//!
+//! // Custom stop token for cancellation
+//! let result = decoder.decode(data, &my_cancel_token)?;
+//! ```
 
 // Note: Currently re-exporting internal error types since the decoder
 // types we re-export from crate::decode use them internally.
