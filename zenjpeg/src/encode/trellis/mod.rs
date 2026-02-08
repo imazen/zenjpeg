@@ -33,15 +33,9 @@ pub use dc::{dc_trellis_optimize, dc_trellis_optimize_indexed, simple_quantize_b
 pub use compat::{TrellisConfig, TrellisSpeedMode};
 
 // Re-export hybrid types
-pub use hybrid::{
-    adaptive_config, detect_image_type, estimate_hybrid_improvement, should_use_hybrid,
-    HybridConfig, ImageType, StandardRateTables, SweepConfig, AQ_MEAN_THRESHOLD,
-};
+pub use hybrid::HybridConfig;
 
 // Re-export hybrid core functions
-pub use hybrid::{
-    dct_f32_to_i32, hybrid_quantize_block, hybrid_quantize_block_simple, scale_quant_by_aq,
-};
 
 // Encoder integration helpers (pub(crate) only)
 pub(crate) use hybrid::HybridQuantContext;

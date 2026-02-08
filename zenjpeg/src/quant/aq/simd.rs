@@ -2624,8 +2624,6 @@ pub(crate) mod archmage_impl {
     }
 }
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-pub use archmage_impl::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_pre_erosion_row_padded_v4;

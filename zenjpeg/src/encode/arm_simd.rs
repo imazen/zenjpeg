@@ -100,22 +100,22 @@ pub fn neon_transpose_4x4_inplace(token: NeonToken, r: &mut [float32x4_t; 4]) {
 #[inline]
 fn neon_transpose_8x8_inplace_inner(token: NeonToken, data: &mut [f32; 64]) {
     // Load 8 rows as 16 float32x4_t registers (2 per row)
-    let mut r0_lo = safe_simd::vld1q_f32(data[0..4].try_into().unwrap());
-    let mut r0_hi = safe_simd::vld1q_f32(data[4..8].try_into().unwrap());
-    let mut r1_lo = safe_simd::vld1q_f32(data[8..12].try_into().unwrap());
-    let mut r1_hi = safe_simd::vld1q_f32(data[12..16].try_into().unwrap());
-    let mut r2_lo = safe_simd::vld1q_f32(data[16..20].try_into().unwrap());
-    let mut r2_hi = safe_simd::vld1q_f32(data[20..24].try_into().unwrap());
-    let mut r3_lo = safe_simd::vld1q_f32(data[24..28].try_into().unwrap());
-    let mut r3_hi = safe_simd::vld1q_f32(data[28..32].try_into().unwrap());
-    let mut r4_lo = safe_simd::vld1q_f32(data[32..36].try_into().unwrap());
-    let mut r4_hi = safe_simd::vld1q_f32(data[36..40].try_into().unwrap());
-    let mut r5_lo = safe_simd::vld1q_f32(data[40..44].try_into().unwrap());
-    let mut r5_hi = safe_simd::vld1q_f32(data[44..48].try_into().unwrap());
-    let mut r6_lo = safe_simd::vld1q_f32(data[48..52].try_into().unwrap());
-    let mut r6_hi = safe_simd::vld1q_f32(data[52..56].try_into().unwrap());
-    let mut r7_lo = safe_simd::vld1q_f32(data[56..60].try_into().unwrap());
-    let mut r7_hi = safe_simd::vld1q_f32(data[60..64].try_into().unwrap());
+    let r0_lo = safe_simd::vld1q_f32(data[0..4].try_into().unwrap());
+    let r0_hi = safe_simd::vld1q_f32(data[4..8].try_into().unwrap());
+    let r1_lo = safe_simd::vld1q_f32(data[8..12].try_into().unwrap());
+    let r1_hi = safe_simd::vld1q_f32(data[12..16].try_into().unwrap());
+    let r2_lo = safe_simd::vld1q_f32(data[16..20].try_into().unwrap());
+    let r2_hi = safe_simd::vld1q_f32(data[20..24].try_into().unwrap());
+    let r3_lo = safe_simd::vld1q_f32(data[24..28].try_into().unwrap());
+    let r3_hi = safe_simd::vld1q_f32(data[28..32].try_into().unwrap());
+    let r4_lo = safe_simd::vld1q_f32(data[32..36].try_into().unwrap());
+    let r4_hi = safe_simd::vld1q_f32(data[36..40].try_into().unwrap());
+    let r5_lo = safe_simd::vld1q_f32(data[40..44].try_into().unwrap());
+    let r5_hi = safe_simd::vld1q_f32(data[44..48].try_into().unwrap());
+    let r6_lo = safe_simd::vld1q_f32(data[48..52].try_into().unwrap());
+    let r6_hi = safe_simd::vld1q_f32(data[52..56].try_into().unwrap());
+    let r7_lo = safe_simd::vld1q_f32(data[56..60].try_into().unwrap());
+    let r7_hi = safe_simd::vld1q_f32(data[60..64].try_into().unwrap());
 
     // Transpose top-left 4x4
     let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
@@ -375,33 +375,32 @@ mod tests {
 /// Processes two 4-wide columns in parallel using int32x4_t.
 #[arcane]
 pub fn neon_idct_int_8x8(
-    token: NeonToken,
+    _token: NeonToken,
     input: &[i32; 64],
     output: &mut [i16],
     stride: usize,
 ) {
     // Constants for Loeffler IDCT (13-bit fixed-point)
-    let fix_0_298631336 = vdupq_n_s32(2446);
-    let fix_0_390180644 = vdupq_n_s32(3196);
-    let fix_0_541196100 = vdupq_n_s32(4433);
-    let fix_0_765366865 = vdupq_n_s32(6270);
-    let fix_0_899976223 = vdupq_n_s32(7373);
-    let fix_1_175875602 = vdupq_n_s32(9633);
-    let fix_1_501321110 = vdupq_n_s32(12299);
-    let fix_1_847759065 = vdupq_n_s32(15137);
-    let fix_1_961570560 = vdupq_n_s32(16069);
-    let fix_2_053119869 = vdupq_n_s32(16819);
-    let fix_2_562915447 = vdupq_n_s32(20995);
-    let fix_3_072711026 = vdupq_n_s32(25172);
+    let _fix_0_298631336 = vdupq_n_s32(2446);
+    let _fix_0_390180644 = vdupq_n_s32(3196);
+    let _fix_0_541196100 = vdupq_n_s32(4433);
+    let _fix_0_765366865 = vdupq_n_s32(6270);
+    let _fix_0_899976223 = vdupq_n_s32(7373);
+    let _fix_1_175875602 = vdupq_n_s32(9633);
+    let _fix_1_501321110 = vdupq_n_s32(12299);
+    let _fix_1_847759065 = vdupq_n_s32(15137);
+    let _fix_1_961570560 = vdupq_n_s32(16069);
+    let _fix_2_053119869 = vdupq_n_s32(16819);
+    let _fix_2_562915447 = vdupq_n_s32(20995);
+    let _fix_3_072711026 = vdupq_n_s32(25172);
 
     const CONST_BITS: i32 = 13;
     const PASS1_BITS: i32 = 2;
     
     // DC-only fast path
-    let mut all_ac_zero = true;
+    let all_ac_zero = true;
     for i in 1..64 {
     if input[i] != 0 {
-        all_ac_zero = false;
         break;
     }
     
@@ -461,7 +460,7 @@ pub fn neon_ycbcr_to_rgb(
 /// output[2*i+1] = (3*input[i] + input[i+1] + 2) >> 2
 #[arcane]
 pub fn neon_upsample_h2v1(
-    token: NeonToken,
+    _token: NeonToken,
     input: &[f32],
     in_width: usize,
     output: &mut [f32],
