@@ -18,6 +18,50 @@
 
 use archmage::{arcane, Wasm128Token};
 use core::arch::wasm32::*;
+use safe_unaligned_simd::wasm32 as safe_simd;
+
+
+// Helper macros for type-constrained SIMD load/store (v128_load<T> is generic)
+macro_rules! load_f32x4 {
+    ($slice:expr) => {{
+        let arr: &[f32; 4] = $slice.try_into().unwrap();
+        safe_simd::v128_load(arr)
+    }};
+}
+
+macro_rules! store_f32x4 {
+    ($slice:expr, $val:expr) => {{
+        let arr: &mut [f32; 4] = $slice.try_into().unwrap();
+        safe_simd::v128_store(arr, $val)
+    }};
+}
+macro_rules! load_i16x8 {
+    ($slice:expr) => {{
+        let arr: &[i16; 8] = $slice.try_into().unwrap();
+        safe_simd::v128_load(arr)
+    }};
+}
+
+macro_rules! store_i16x8 {
+    ($slice:expr, $val:expr) => {{
+        let arr: &mut [i16; 8] = $slice.try_into().unwrap();
+        safe_simd::v128_store(arr, $val)
+    }};
+}
+
+macro_rules! load_u8x16 {
+    ($slice:expr) => {{
+        let arr: &[u8; 16] = $slice.try_into().unwrap();
+        safe_simd::v128_load(arr)
+    }};
+}
+
+macro_rules! store_u8x16 {
+    ($slice:expr, $val:expr) => {{
+        let arr: &mut [u8; 16] = $slice.try_into().unwrap();
+        safe_simd::v128_store(arr, $val)
+    }};
+}
 
 // ============================================================================
 // DCT Constants (same as x86/ARM versions)
@@ -46,8 +90,6 @@ const SQRT2: f32 = 1.41421356237;
 #[arcane]
 #[inline]
 fn wasm_transpose_4x4_inplace_inner(_token: Wasm128Token, r: &mut [v128; 4]) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // Phase 1: Interleave pairs (low and high 64-bit halves)
     // i32x4_shuffle takes two v128 and builds result from lanes selected by indices
     let q0 = i32x4_shuffle::<0, 4, 1, 5>(r[0], r[1]); // [r0[0], r1[0], r0[1], r1[1]]
@@ -60,7 +102,6 @@ fn wasm_transpose_4x4_inplace_inner(_token: Wasm128Token, r: &mut [v128; 4]) {
     r[1] = i64x2_shuffle::<1, 3>(q0, q2); // Column 1
     r[2] = i64x2_shuffle::<0, 2>(q1, q3); // Column 2
     r[3] = i64x2_shuffle::<1, 3>(q1, q3); // Column 3
-    }
 }
 
 /// Public wrapper for 4x4 transpose.
@@ -83,25 +124,23 @@ pub fn wasm_transpose_4x4_inplace(token: Wasm128Token, r: &mut [v128; 4]) {
 #[arcane]
 #[inline]
 fn wasm_transpose_8x8_inplace_inner(token: Wasm128Token, data: &mut [f32; 64]) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // Load 8 rows as 16 v128 registers (2 per row)
-    let mut r0_lo = v128_load(data.as_ptr() as *const v128);
-    let mut r0_hi = v128_load(data.as_ptr().add(4) as *const v128);
-    let mut r1_lo = v128_load(data.as_ptr().add(8) as *const v128);
-    let mut r1_hi = v128_load(data.as_ptr().add(12) as *const v128);
-    let mut r2_lo = v128_load(data.as_ptr().add(16) as *const v128);
-    let mut r2_hi = v128_load(data.as_ptr().add(20) as *const v128);
-    let mut r3_lo = v128_load(data.as_ptr().add(24) as *const v128);
-    let mut r3_hi = v128_load(data.as_ptr().add(28) as *const v128);
-    let mut r4_lo = v128_load(data.as_ptr().add(32) as *const v128);
-    let mut r4_hi = v128_load(data.as_ptr().add(36) as *const v128);
-    let mut r5_lo = v128_load(data.as_ptr().add(40) as *const v128);
-    let mut r5_hi = v128_load(data.as_ptr().add(44) as *const v128);
-    let mut r6_lo = v128_load(data.as_ptr().add(48) as *const v128);
-    let mut r6_hi = v128_load(data.as_ptr().add(52) as *const v128);
-    let mut r7_lo = v128_load(data.as_ptr().add(56) as *const v128);
-    let mut r7_hi = v128_load(data.as_ptr().add(60) as *const v128);
+    let mut r0_lo = load_f32x4!(&data[0..4]);
+    let mut r0_hi = load_f32x4!(&data[4..8]);
+    let mut r1_lo = load_f32x4!(&data[8..12]);
+    let mut r1_hi = load_f32x4!(&data[12..16]);
+    let mut r2_lo = load_f32x4!(&data[16..20]);
+    let mut r2_hi = load_f32x4!(&data[20..24]);
+    let mut r3_lo = load_f32x4!(&data[24..28]);
+    let mut r3_hi = load_f32x4!(&data[28..32]);
+    let mut r4_lo = load_f32x4!(&data[32..36]);
+    let mut r4_hi = load_f32x4!(&data[36..40]);
+    let mut r5_lo = load_f32x4!(&data[40..44]);
+    let mut r5_hi = load_f32x4!(&data[44..48]);
+    let mut r6_lo = load_f32x4!(&data[48..52]);
+    let mut r6_hi = load_f32x4!(&data[52..56]);
+    let mut r7_lo = load_f32x4!(&data[56..60]);
+    let mut r7_hi = load_f32x4!(&data[60..64]);
 
     // Transpose top-left 4x4
     let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
@@ -120,23 +159,22 @@ fn wasm_transpose_8x8_inplace_inner(token: Wasm128Token, data: &mut [f32; 64]) {
     wasm_transpose_4x4_inplace_inner(token, &mut br);
 
     // Store transposed blocks
-    v128_store(data.as_mut_ptr() as *mut v128, tl[0]);
-    v128_store(data.as_mut_ptr().add(4) as *mut v128, bl[0]);
-    v128_store(data.as_mut_ptr().add(8) as *mut v128, tl[1]);
-    v128_store(data.as_mut_ptr().add(12) as *mut v128, bl[1]);
-    v128_store(data.as_mut_ptr().add(16) as *mut v128, tl[2]);
-    v128_store(data.as_mut_ptr().add(20) as *mut v128, bl[2]);
-    v128_store(data.as_mut_ptr().add(24) as *mut v128, tl[3]);
-    v128_store(data.as_mut_ptr().add(28) as *mut v128, bl[3]);
-    v128_store(data.as_mut_ptr().add(32) as *mut v128, tr[0]);
-    v128_store(data.as_mut_ptr().add(36) as *mut v128, br[0]);
-    v128_store(data.as_mut_ptr().add(40) as *mut v128, tr[1]);
-    v128_store(data.as_mut_ptr().add(44) as *mut v128, br[1]);
-    v128_store(data.as_mut_ptr().add(48) as *mut v128, tr[2]);
-    v128_store(data.as_mut_ptr().add(52) as *mut v128, br[2]);
-    v128_store(data.as_mut_ptr().add(56) as *mut v128, tr[3]);
-    v128_store(data.as_mut_ptr().add(60) as *mut v128, br[3]);
-    }
+    store_f32x4!(&mut data[0..4], tl[0]);
+    store_f32x4!(&mut data[4..8], bl[0]);
+    store_f32x4!(&mut data[8..12], tl[1]);
+    store_f32x4!(&mut data[12..16], bl[1]);
+    store_f32x4!(&mut data[16..20], tl[2]);
+    store_f32x4!(&mut data[20..24], bl[2]);
+    store_f32x4!(&mut data[24..28], tl[3]);
+    store_f32x4!(&mut data[28..32], bl[3]);
+    store_f32x4!(&mut data[32..36], tr[0]);
+    store_f32x4!(&mut data[36..40], br[0]);
+    store_f32x4!(&mut data[40..44], tr[1]);
+    store_f32x4!(&mut data[44..48], br[1]);
+    store_f32x4!(&mut data[48..52], tr[2]);
+    store_f32x4!(&mut data[52..56], br[2]);
+    store_f32x4!(&mut data[56..60], tr[3]);
+    store_f32x4!(&mut data[60..64], br[3]);
 }
 
 /// Public wrapper for 8x8 transpose.
@@ -156,13 +194,10 @@ pub fn wasm_transpose_8x8(token: Wasm128Token, data: &mut [f32; 64]) {
 #[arcane]
 #[inline]
 fn wasm_dct1d_2_inner(_token: Wasm128Token, m0: &mut v128, m1: &mut v128) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     let sum = f32x4_add(*m0, *m1);
     let diff = f32x4_sub(*m0, *m1);
     *m0 = sum;
     *m1 = diff;
-    }
 }
 
 /// 4-point DCT butterfly using WASM SIMD128.
@@ -172,8 +207,6 @@ fn wasm_dct1d_2_inner(_token: Wasm128Token, m0: &mut v128, m1: &mut v128) {
 #[arcane]
 #[inline]
 fn wasm_dct1d_4_inner(token: Wasm128Token, m: &mut [v128; 4]) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
     let sum03 = f32x4_add(m[0], m[3]);
     let sum12 = f32x4_add(m[1], m[2]);
@@ -193,7 +226,6 @@ fn wasm_dct1d_4_inner(token: Wasm128Token, m: &mut [v128; 4]) {
     m[1] = f32x4_add(f32x4_mul(diff12, wc4_0), f32x4_mul(diff03, wc4_1));
     m[2] = t1;
     m[3] = f32x4_sub(f32x4_mul(diff12, wc4_1), f32x4_mul(diff03, wc4_0));
-    }
 }
 
 /// 8-point DCT butterfly using WASM SIMD128 (processes 4 blocks in parallel).
@@ -203,8 +235,6 @@ fn wasm_dct1d_4_inner(token: Wasm128Token, m: &mut [v128; 4]) {
 #[arcane]
 #[inline]
 fn wasm_dct1d_8_inner(token: Wasm128Token, m: &mut [v128; 8]) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // First layer: butterfly on opposite ends
     let sum07 = f32x4_add(m[0], m[7]);
     let sum16 = f32x4_add(m[1], m[6]);
@@ -245,7 +275,6 @@ fn wasm_dct1d_8_inner(token: Wasm128Token, m: &mut [v128; 8]) {
     m[5] = odd2;
     m[6] = even[3];
     m[7] = odd3;
-    }
 }
 
 // ============================================================================
@@ -257,17 +286,14 @@ fn wasm_dct1d_8_inner(token: Wasm128Token, m: &mut [v128; 8]) {
 /// Processes the DCT as two 4x4 blocks due to SIMD128's 4-wide registers.
 #[arcane]
 pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut [f32; 64]) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // Load all 8 rows as v128 pairs
     let zero = f32x4_splat(0.0);
     let mut rows_lo: [v128; 8] = [zero; 8];
     let mut rows_hi: [v128; 8] = [zero; 8];
 
     for i in 0..8 {
-        rows_lo[i] = v128_load(input.as_ptr().add(i * 8) as *const v128);
-        rows_hi[i] = v128_load(input.as_ptr().add(i * 8 + 4) as *const v128);
-    }
+    rows_lo[i] = load_f32x4!(&input[i * 8..][..4]);
+    rows_hi[i] = load_f32x4!(&input[i * 8 + 4..][..4]);
 
     // Apply 1D DCT to each row
     wasm_dct1d_8_inner(token, &mut rows_lo);
@@ -276,15 +302,15 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
     // Transpose
     let mut temp = [0.0f32; 64];
     for i in 0..8 {
-        v128_store(temp.as_mut_ptr().add(i * 8) as *mut v128, rows_lo[i]);
-        v128_store(temp.as_mut_ptr().add(i * 8 + 4) as *mut v128, rows_hi[i]);
+        store_f32x4!(&mut temp[i * 8..][..4], rows_lo[i]);
+        store_f32x4!(&mut temp[i * 8 + 4..][..4], rows_hi[i]);
     }
     wasm_transpose_8x8_inplace_inner(token, &mut temp);
 
     // Reload transposed data
     for i in 0..8 {
-        rows_lo[i] = v128_load(temp.as_ptr().add(i * 8) as *const v128);
-        rows_hi[i] = v128_load(temp.as_ptr().add(i * 8 + 4) as *const v128);
+        rows_lo[i] = load_f32x4!(&temp[i * 8..][..4]);
+        rows_hi[i] = load_f32x4!(&temp[i * 8 + 4..][..4]);
     }
 
     // Apply 1D DCT to each column (now rows after transpose)
@@ -293,8 +319,8 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
 
     // Store result
     for i in 0..8 {
-        v128_store(output.as_mut_ptr().add(i * 8) as *mut v128, rows_lo[i]);
-        v128_store(output.as_mut_ptr().add(i * 8 + 4) as *mut v128, rows_hi[i]);
+        store_f32x4!(&mut output[i * 8..][..4], rows_lo[i]);
+        store_f32x4!(&mut output[i * 8 + 4..][..4], rows_hi[i]);
     }
     }
 }
@@ -316,15 +342,12 @@ pub fn wasm_idct_int_8x8(
     output: &mut [i16],
     stride: usize,
 ) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // DC-only fast path
     let mut all_ac_zero = true;
     for i in 1..64 {
-        if input[i] != 0 {
-            all_ac_zero = false;
-            break;
-        }
+    if input[i] != 0 {
+        all_ac_zero = false;
+        break;
     }
     
     if all_ac_zero {
@@ -332,7 +355,7 @@ pub fn wasm_idct_int_8x8(
         let dc_vec = i16x8_splat(dc);
         let mut pos = 0;
         for _ in 0..8 {
-            v128_store(output[pos..].as_mut_ptr() as *mut v128, dc_vec);
+            store_i16x8!(&mut output[pos..][..4], dc_vec);
             pos += stride;
         }
         return;
@@ -359,8 +382,6 @@ pub fn wasm_ycbcr_to_rgb(
     cr: &[i16; 16],
     rgb: &mut [u8; 48],
 ) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     // Constants (14-bit fixed-point)
     let y_coeff = i16x8_splat(19595);
     let cr_to_r = i16x8_splat(22970);
@@ -371,9 +392,9 @@ pub fn wasm_ycbcr_to_rgb(
     let cb_cr_bias = i16x8_splat(128);
 
     // Process first 8 pixels
-    let y0 = v128_load(y.as_ptr() as *const v128);
-    let mut cb0 = v128_load(cb.as_ptr() as *const v128);
-    let mut cr0 = v128_load(cr.as_ptr() as *const v128);
+    let y0 = load_i16x8!(&y[0..4]);
+    let mut cb0 = load_i16x8!(&cb[0..4]);
+    let mut cr0 = load_i16x8!(&cr[0..4]);
 
     // Unbias Cb/Cr
     cb0 = i16x8_sub(cb0, cb_cr_bias);
@@ -394,10 +415,9 @@ pub fn wasm_ycbcr_to_rgb(
     let g_vec = u8x16_splat(128);
     let b_vec = u8x16_splat(128);
 
-    v128_store(rgb.as_mut_ptr() as *mut v128, r_vec);
-    v128_store(rgb[16..].as_mut_ptr() as *mut v128, g_vec);
-    v128_store(rgb[32..].as_mut_ptr() as *mut v128, b_vec);
-    }
+    store_u8x16!(&mut rgb[0..4], r_vec);
+    store_u8x16!(&mut rgb[16..][..4], g_vec);
+    store_u8x16!(&mut rgb[32..][..4], b_vec);
 }
 
 // ============================================================================
@@ -413,8 +433,6 @@ pub fn wasm_upsample_h2v1(
     output: &mut [f32],
     out_width: usize,
 ) {
-    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
-    unsafe {
     assert_eq!(out_width, in_width * 2);
     
     let v_three = f32x4_splat(3.0);
@@ -426,19 +444,18 @@ pub fn wasm_upsample_h2v1(
     // Process 4 input pixels at a time → 8 output pixels
     let chunks = in_width / 4;
     for i in 0..chunks {
-        let curr = v128_load(input[i * 4..].as_ptr() as *const v128);
-        let next = v128_load(input[i * 4 + 1..].as_ptr() as *const v128);
+    let curr = load_f32x4!(&input[i * 4..][..4]);
+    let next = load_f32x4!(&input[i * 4 + 1..][..4]);
 
-        // even = curr, odd = (3*curr + next) * 0.25
-        let odd = f32x4_mul(f32x4_add(f32x4_mul(curr, v_three), next), v_quarter);
+    // even = curr, odd = (3*curr + next) * 0.25
+    let odd = f32x4_mul(f32x4_add(f32x4_mul(curr, v_three), next), v_quarter);
 
-        // Interleave even and odd using shuffle
-        let out0 = i32x4_shuffle::<0, 4, 1, 5>(curr, odd);
-        let out1 = i32x4_shuffle::<2, 6, 3, 7>(curr, odd);
+    // Interleave even and odd using shuffle
+    let out0 = i32x4_shuffle::<0, 4, 1, 5>(curr, odd);
+    let out1 = i32x4_shuffle::<2, 6, 3, 7>(curr, odd);
 
-        v128_store(output[i * 8..].as_mut_ptr() as *mut v128, out0);
-        v128_store(output[i * 8 + 4..].as_mut_ptr() as *mut v128, out1);
-    }
+    store_f32x4!(&mut output[i * 8..][..4], out0);
+    store_f32x4!(&mut output[i * 8 + 4..][..4], out1);
 
     // Last pixel
     output[out_width - 1] = input[in_width - 1];
