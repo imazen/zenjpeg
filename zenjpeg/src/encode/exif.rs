@@ -101,7 +101,7 @@ impl From<ExifFields> for Exif {
 ///
 /// Created via [`Exif::build()`], this struct provides a type-safe builder
 /// for common EXIF tags. Chain methods to set fields, then pass to
-/// [`encoder::EncoderConfig::exif`][crate::encoder::EncoderConfig::exif].
+/// [`EncodeRequest::exif()`](super::request::EncodeRequest::exif).
 #[derive(Debug, Clone, Default)]
 pub struct ExifFields {
     orientation: Option<Orientation>,
