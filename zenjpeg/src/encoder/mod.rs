@@ -30,15 +30,11 @@
 //! ```rust,ignore
 //! use zenjpeg::encoder::{EncoderConfig, Quality, ChromaSubsampling, XybSubsampling};
 //!
-//! // YCbCr (standard JPEG)
+//! // YCbCr (standard JPEG) - reusable config
 //! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 //!     .progressive(true)                        // Progressive JPEG (~3% smaller)
 //!     .optimize_huffman(true)                   // Optimal Huffman tables (default)
 //!     .sharp_yuv(true)                          // Better color edges (~3x slower)
-//!     .icc_profile(bytes)                       // Attach ICC profile
-//!     .exif(Exif::build()                       // EXIF orientation/copyright
-//!         .orientation(Orientation::Rotate90)
-//!         .copyright("© 2024 Corp"))
 //!     .restart_interval(64);                    // MCUs between restart markers
 //!
 //! // XYB (perceptual color space)
@@ -52,6 +48,33 @@
 //! let config = EncoderConfig::ycbcr(Quality::ApproxMozjpeg(80), ChromaSubsampling::Quarter);
 //! let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(90.0), ChromaSubsampling::None);
 //! let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(1.0), ChromaSubsampling::Quarter);
+//! ```
+//!
+//! # Per-Image Metadata (Three-Layer Pattern)
+//!
+//! For encoding multiple images with different metadata:
+//!
+//! ```rust,ignore
+//! use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
+//!
+//! // Layer 1: Reusable config (quality, color mode)
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+//!     .auto_optimize(true)
+//!     .progressive(true);
+//!
+//! // Layer 2: Per-image request (metadata)
+//! let jpeg1 = config.request()
+//!     .icc_profile(&srgb_bytes)
+//!     .exif(Exif::build()
+//!         .orientation(Orientation::Rotate90)
+//!         .copyright("© 2024 Corp"))
+//!     .encode(&pixels1, 1920, 1080)?;
+//!
+//! // Different metadata for each image
+//! let jpeg2 = config.request()
+//!     .icc_profile(&p3_bytes)
+//!     .exif(Exif::build().copyright("Public Domain"))
+//!     .encode(&pixels2, 3840, 2160)?;
 //! ```
 //!
 //! # Pixel Layouts
