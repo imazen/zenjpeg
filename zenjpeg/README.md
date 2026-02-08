@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/zenjpeg.svg)](https://crates.io/crates/zenjpeg)
 [![Documentation](https://docs.rs/zenjpeg/badge.svg)](https://docs.rs/zenjpeg)
 [![CI](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml)
-[![License: AGPL-3.0-or-later](https://img.shields.io/crates/l/zenjpeg.svg)](LICENSE)
+[![License: AGPL/Commercial](https://img.shields.io/badge/License-AGPL%2FCommercial-blue.svg)](../LICENSE)
 
 A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
