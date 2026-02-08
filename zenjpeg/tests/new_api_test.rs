@@ -2,7 +2,7 @@
 use enough::Unstoppable;
 
 use zenjpeg::{
-    decoder::{Decoder, PixelFormat},
+    decoder::{Decoder, OutputTarget, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
 };
 
@@ -186,8 +186,9 @@ fn test_decode_f32() {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
     let decoded = Decoder::new()
-        .decode_f32(&jpeg, Unstoppable)
-        .expect("decode_f32 failed");
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode failed");
 
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);

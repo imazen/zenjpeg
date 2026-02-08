@@ -34,8 +34,12 @@ fn encode_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
 /// Encode with an ICC profile attached.
 fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).icc_profile(icc);
-    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let mut encoder = config
+        .request()
+        .icc_profile(icc)
+        .encode_from_rgb::<RGB<u8>>(width, height)
+        .unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
 }
@@ -43,9 +47,12 @@ fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) ->
 /// Encode with EXIF data attached using native API.
 fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config =
-        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).exif(Exif::raw(exif.to_vec()));
-    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let mut encoder = config
+        .request()
+        .exif(Exif::raw(exif.to_vec()))
+        .encode_from_rgb::<RGB<u8>>(width, height)
+        .unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
 }
@@ -53,8 +60,12 @@ fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u
 /// Encode with XMP data attached using native API.
 fn encode_with_xmp(width: u32, height: u32, quality: f32, xmp: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).xmp(xmp);
-    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let mut encoder = config
+        .request()
+        .xmp(xmp)
+        .encode_from_rgb::<RGB<u8>>(width, height)
+        .unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
 }
@@ -69,11 +80,14 @@ fn encode_with_all_metadata(
     icc: &[u8],
 ) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let mut encoder = config
+        .request()
         .exif(Exif::raw(exif.to_vec()))
         .xmp(xmp)
-        .icc_profile(icc);
-    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+        .icc_profile(icc)
+        .encode_from_rgb::<RGB<u8>>(width, height)
+        .unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
 }
@@ -285,9 +299,12 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
-            .exif(Exif::build().orientation(Orientation::Rotate90));
-        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter);
+        let mut encoder = config
+            .request()
+            .exif(Exif::build().orientation(Orientation::Rotate90))
+            .encode_from_rgb::<RGB<u8>>(128, 128)
+            .unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();
 
@@ -316,9 +333,12 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
-            .exif(Exif::build().copyright("© 2026 Test Corp"));
-        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter);
+        let mut encoder = config
+            .request()
+            .exif(Exif::build().copyright("© 2026 Test Corp"))
+            .encode_from_rgb::<RGB<u8>>(128, 128)
+            .unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();
 
@@ -346,12 +366,16 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter).exif(
-            Exif::build()
-                .orientation(Orientation::Rotate270)
-                .copyright("© 2026 Example"),
-        );
-        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter);
+        let mut encoder = config
+            .request()
+            .exif(
+                Exif::build()
+                    .orientation(Orientation::Rotate270)
+                    .copyright("© 2026 Example"),
+            )
+            .encode_from_rgb::<RGB<u8>>(128, 128)
+            .unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();
 
@@ -401,9 +425,12 @@ mod native_metadata_tests {
 
         for (orient, expected_value) in orientations {
             let pixels = create_test_image(64, 64);
-            let config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
-                .exif(Exif::build().orientation(orient));
-            let mut encoder = config.encode_from_rgb::<RGB<u8>>(64, 64).unwrap();
+            let config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter);
+            let mut encoder = config
+                .request()
+                .exif(Exif::build().orientation(orient))
+                .encode_from_rgb::<RGB<u8>>(64, 64)
+                .unwrap();
             encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
             let jpeg_data = encoder.finish().unwrap();
 

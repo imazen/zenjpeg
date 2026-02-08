@@ -6,8 +6,7 @@
 use enough::Unstoppable;
 
 use std::collections::HashSet;
-use zenjpeg::decoder::Decoder;
-use zenjpeg::decoder::PixelFormat;
+use zenjpeg::decoder::{Decoder, OutputTarget, PixelFormat};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Test image dimensions
@@ -292,7 +291,7 @@ fn test_combination(
     }
 
     // Decode to f32
-    if let Ok(decoded_f32) = decoder.decode_f32(&jpeg, Unstoppable) {
+    if let Ok(decoded_f32) = decoder.output_target(OutputTarget::SrgbF32).decode(&jpeg, Unstoppable) {
         let f32_pixels = decoded_f32.pixels_f32().unwrap();
         // f32 at 8-bit precision (for comparison with u8)
         let unique_8bit = if is_gray {
@@ -622,7 +621,8 @@ fn test_precision_improvement_summary() {
         .decode(&jpeg, Unstoppable)
         .expect("u8 decode failed");
     let decoded_f32 = decoder
-        .decode_f32(&jpeg, Unstoppable)
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("f32 decode failed");
 
     let unique_input = count_unique_rgb_u8(&input);
@@ -710,7 +710,8 @@ fn test_10plus_bit_demonstration() {
         .decode(&jpeg, Unstoppable)
         .expect("u8 decode failed");
     let decoded_f32 = decoder
-        .decode_f32(&jpeg, Unstoppable)
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("f32 decode failed");
 
     // For grayscale, decoder outputs RGB, so extract just one channel

@@ -30,7 +30,6 @@
 //!     │
 //!     ├── Full decode
 //!     │   ├── .decode()              → DecodeResult (u8 or f32)
-//!     │   ├── .decode_f32()          → DecodeResult (f32, deprecated)
 //!     │   ├── .decode_coefficients() → DecodedCoefficients
 //!     │   └── .decode_to_ycbcr_f32() → DecodedYCbCr
 //!     │
@@ -108,6 +107,7 @@ fn test_jpeg_with_exif() -> Vec<u8> {
     let img = generate_checkerboard(64, 64, 8, 3);
     EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
         .progressive(false)
+        .request()
         .exif(
             Exif::build()
                 .orientation(Orientation::Rotate90)
@@ -122,7 +122,8 @@ fn test_jpeg_with_icc() -> Vec<u8> {
     let img = generate_checkerboard(64, 64, 8, 3);
     EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
         .progressive(false)
-        .icc_profile(b"fake-icc-data-for-test".to_vec())
+        .request()
+        .icc_profile_owned(b"fake-icc-data-for-test".to_vec())
         .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
         .unwrap()
 }
@@ -886,16 +887,6 @@ fn decode_ycbcr_f32() {
 // ============================================================================
 // 15. Decode f32 (deprecated convenience)
 // ============================================================================
-
-/// `.decode_f32()` forces SrgbF32 output target. Deprecated; use
-/// `.output_target(OutputTarget::SrgbF32).decode()` instead.
-#[test]
-fn decode_f32_deprecated() {
-    let jpeg = test_jpeg_420();
-    let result = Decoder::new().decode_f32(&jpeg, Unstoppable).unwrap();
-    assert!(result.output_target().is_f32());
-    assert!(result.pixels_f32().is_some());
-}
 
 // ============================================================================
 // 16. Scanline reader — streaming decode

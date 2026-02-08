@@ -2,7 +2,7 @@
 use enough::Unstoppable;
 
 use std::collections::HashSet;
-use zenjpeg::decoder::Decoder;
+use zenjpeg::decoder::{Decoder, OutputTarget};
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn encode(
@@ -108,12 +108,12 @@ fn debug_gray_linear_encoding() {
     println!("Gray16 JPEG size: {} bytes", jpeg16.len());
 
     // Decode both
-    let decoder = Decoder::new();
+    let decoder = Decoder::new().output_target(OutputTarget::SrgbF32);
     let dec8 = decoder
-        .decode_f32(&jpeg8, Unstoppable)
+        .decode(&jpeg8, Unstoppable)
         .expect("Gray8 decode failed");
     let dec16 = decoder
-        .decode_f32(&jpeg16, Unstoppable)
+        .decode(&jpeg16, Unstoppable)
         .expect("Gray16 decode failed");
 
     // Extract just the red channel (grayscale outputs RGB with R=G=B)

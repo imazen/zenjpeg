@@ -15,7 +15,7 @@
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 use enough::Unstoppable;
 
-use zenjpeg::decoder::Decoder;
+use zenjpeg::decoder::{Decoder, OutputTarget};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // ============================================================================
@@ -173,13 +173,13 @@ fn test_16bit_input_preserves_good_precision() {
         .expect("8-bit encode should succeed");
 
     // Decode both to f32 for maximum precision comparison
-    let decoder = Decoder::new();
-
-    let decoded_16 = decoder
-        .decode_f32(&jpeg_16, Unstoppable)
+    let decoded_16 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg_16, Unstoppable)
         .expect("decode 16-bit jpeg failed");
-    let decoded_8 = decoder
-        .decode_f32(&jpeg_8, Unstoppable)
+    let decoded_8 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg_8, Unstoppable)
         .expect("decode 8-bit jpeg failed");
 
     // Extract red channel (same as green and blue for gray gradient)
@@ -251,11 +251,10 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let jpeg =
         encode_rgb(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
-    let decoder = Decoder::new();
-
     // Decode to f32 (high precision path)
-    let decoded_f32 = decoder
-        .decode_f32(&jpeg, Unstoppable)
+    let decoded_f32 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("f32 decode failed");
     let f32_red: Vec<f32> = decoded_f32
         .pixels_f32()
@@ -265,7 +264,7 @@ fn test_f32_decode_recovers_sub_sample_precision() {
         .collect();
 
     // Decode to u8
-    let decoded_u8 = decoder
+    let decoded_u8 = Decoder::new()
         .decode(&jpeg, Unstoppable)
         .expect("u8 decode failed");
     let u8_red: Vec<u8> = decoded_u8
@@ -321,7 +320,8 @@ fn test_to_u16_conversion_preserves_precision() {
 
     let decoder = Decoder::new();
     let decoded_f32 = decoder
-        .decode_f32(&jpeg, Unstoppable)
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("f32 decode failed");
 
     // Convert to u16
@@ -384,7 +384,8 @@ fn test_gradient_banding_reduced() {
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode_f32(&jpeg, Unstoppable)
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
     // Analyze horizontal gradient steps in the middle row
@@ -478,13 +479,13 @@ fn test_full_pipeline_8bit_to_f32_precision() {
         .expect("encode should succeed");
 
     // Decode to f32
-    let decoder = Decoder::new();
-    let decoded_f32 = decoder
-        .decode_f32(&jpeg, Unstoppable)
+    let decoded_f32 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 
     // Also decode to u8 for comparison
-    let decoded_u8 = decoder
+    let decoded_u8 = Decoder::new()
         .decode(&jpeg, Unstoppable)
         .expect("u8 decode failed");
 
@@ -560,8 +561,6 @@ fn test_quality_affects_precision() {
     let height = 32;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let decoder = Decoder::new();
-
     println!("=== Quality vs Precision Test ===");
     let mut prev_bits = f64::MAX;
 
@@ -570,8 +569,9 @@ fn test_quality_affects_precision() {
         let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
             .expect("encode should succeed");
 
-        let decoded = decoder
-            .decode_f32(&jpeg, Unstoppable)
+        let decoded = Decoder::new()
+            .output_target(OutputTarget::SrgbF32)
+            .decode(&jpeg, Unstoppable)
             .expect("decode failed");
         let red: Vec<f32> = decoded
             .pixels_f32()
@@ -620,8 +620,6 @@ fn test_subsampling_comparison() {
         }
     }
 
-    let decoder = Decoder::new();
-
     let config_444 = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
     let jpeg_444 =
         encode_rgb(width as u32, height as u32, &input, &config_444).expect("444 encode failed");
@@ -630,11 +628,13 @@ fn test_subsampling_comparison() {
     let jpeg_420 =
         encode_rgb(width as u32, height as u32, &input, &config_420).expect("420 encode failed");
 
-    let decoded_444 = decoder
-        .decode_f32(&jpeg_444, Unstoppable)
+    let decoded_444 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg_444, Unstoppable)
         .expect("444 decode failed");
-    let decoded_420 = decoder
-        .decode_f32(&jpeg_420, Unstoppable)
+    let decoded_420 = Decoder::new()
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg_420, Unstoppable)
         .expect("420 decode failed");
 
     // Check green channel precision (affected by chroma subsampling)
