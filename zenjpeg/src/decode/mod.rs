@@ -679,19 +679,6 @@ impl Decoder {
         Ok(result)
     }
 
-    /// Decodes a JPEG image to 32-bit floating point pixels.
-    ///
-    /// **Deprecated**: Use `decode()` with `output_target(OutputTarget::SrgbF32)` instead.
-    /// This method exists for backward compatibility and will be removed.
-    pub fn decode_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
-        // Force SrgbF32 output target regardless of config
-        let mut config = self.clone();
-        if !config.output_target.is_f32() {
-            config.output_target = OutputTarget::SrgbF32;
-        }
-        config.decode(data, stop)
-    }
-
     /// Decodes a JPEG and extracts raw quantized DCT coefficients.
     ///
     /// This provides access to the coefficients before IDCT and color conversion,
@@ -1080,9 +1067,11 @@ mod tests {
         let jpeg = enc.finish().expect("encoding should succeed");
 
         // Decode to f32
-        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoder = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .output_target(OutputTarget::SrgbF32);
         let decoded_f32 = decoder
-            .decode_f32(&jpeg, Unstoppable)
+            .decode(&jpeg, Unstoppable)
             .expect("f32 decoding should succeed");
 
         assert_eq!(decoded_f32.width, width);
@@ -1102,7 +1091,8 @@ mod tests {
         }
 
         // Compare with u8 decode
-        let decoded_u8 = decoder
+        let decoded_u8 = Decoder::new()
+            .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("u8 decoding should succeed");
         let u8_pixels = decoded_u8.pixels_u8().unwrap();
@@ -1154,9 +1144,11 @@ mod tests {
         let jpeg = enc.finish().expect("encoding should succeed");
 
         // Decode to f32
-        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoder = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .output_target(OutputTarget::SrgbF32);
         let decoded_f32 = decoder
-            .decode_f32(&jpeg, Unstoppable)
+            .decode(&jpeg, Unstoppable)
             .expect("f32 decoding should succeed");
 
         // Check that f32 values show more precision than just u8/255

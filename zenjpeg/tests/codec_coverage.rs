@@ -18,7 +18,7 @@ use test_utils::{
     generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb, TestImage,
 };
 use zenjpeg::{
-    decoder::{ChromaUpsampling, Decoder, Decoder, PixelFormat},
+    decoder::{ChromaUpsampling, Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
 
@@ -569,15 +569,13 @@ mod decode_coverage {
     fn decode_with_config() {
         let jpeg = create_test_jpeg(128, 128, 90.0);
 
-        let decoder = Decoder {
-            output_format: Some(PixelFormat::Rgb),
-            chroma_upsampling: ChromaUpsampling::Triangle,
-            block_smoothing: true,
-            apply_icc: false,
-            max_pixels: 1000000,
-            max_memory: 100 * 1024 * 1024,
-            ..Default::default()
-        };
+        let decoder = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .chroma_upsampling(ChromaUpsampling::Triangle)
+            .block_smoothing(true)
+            .apply_icc(false)
+            .max_pixels(1000000)
+            .max_memory(100 * 1024 * 1024);
 
         let decoded = decoder
             .decode(&jpeg, Unstoppable)
