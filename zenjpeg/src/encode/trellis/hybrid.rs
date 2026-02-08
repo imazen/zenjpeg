@@ -524,7 +524,7 @@ impl HybridConfig {
 
     /// Convert to TrellisConfig for a specific block.
     pub fn to_trellis_config(
-        &self,
+        self,
         aq_strength: f32,
         dampen: f32,
         is_chroma: bool,
