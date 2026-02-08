@@ -24,9 +24,6 @@ pub struct EncoderConfig {
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
-    pub(crate) icc_profile: Option<Vec<u8>>,
-    pub(crate) exif_data: Option<super::exif::Exif>,
-    pub(crate) xmp_data: Option<Vec<u8>>,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -186,9 +183,6 @@ impl EncoderConfig {
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
             restart_interval: 0,
-            icc_profile: None,
-            exif_data: None,
-            xmp_data: None,
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
@@ -665,90 +659,6 @@ impl EncoderConfig {
         self
     }
 
-    // === ICC Profile ===
-
-    /// Attach an ICC color profile to the output JPEG.
-    ///
-    /// The profile will be written as APP2 marker segments with the standard
-    /// "ICC_PROFILE" signature. Large profiles are automatically chunked
-    /// (max 65519 bytes per segment) as required by the ICC profile embedding spec.
-    ///
-    /// Common profiles:
-    /// - sRGB IEC61966-2.1 (~3KB)
-    /// - Display P3 (~0.5KB)
-    /// - Adobe RGB 1998 (~0.5KB)
-    ///
-    /// # Example
-    /// ```ignore
-    /// use zenjpeg::{EncoderConfig, ChromaSubsampling};
-    /// let srgb_profile = std::fs::read("sRGB.icc")?;
-    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    ///     .icc_profile(srgb_profile);
-    /// ```
-    #[must_use]
-    pub fn icc_profile(mut self, profile: impl Into<Vec<u8>>) -> Self {
-        self.icc_profile = Some(profile.into());
-        self
-    }
-
-    // === EXIF/XMP Metadata ===
-
-    /// Attach EXIF metadata to the output JPEG.
-    ///
-    /// Use [`Exif::raw`][super::exif::Exif::raw] for raw EXIF bytes, or
-    /// [`Exif::build`][super::exif::Exif::build] to construct from common fields.
-    ///
-    /// The two modes are mutually exclusive at compile time - you cannot
-    /// mix raw bytes with field-based building.
-    ///
-    /// # Examples
-    ///
-    /// Build from fields (orientation and copyright):
-    /// ```ignore
-    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
-    ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .exif(Exif::build()
-    ///         .orientation(Orientation::Rotate90)
-    ///         .copyright("© 2024 Example Corp"));
-    /// ```
-    ///
-    /// Use raw EXIF bytes:
-    /// ```ignore
-    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Exif};
-    ///
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-    ///     .exif(Exif::raw(my_exif_bytes));
-    /// ```
-    ///
-    /// # Notes
-    ///
-    /// - EXIF is placed immediately after SOI, before any other markers
-    /// - Raw bytes should be TIFF data without the "Exif\0\0" prefix (added automatically)
-    /// - Maximum size: 65527 bytes (larger data will be truncated)
-    #[must_use]
-    pub fn exif(mut self, exif: impl Into<super::exif::Exif>) -> Self {
-        self.exif_data = Some(exif.into());
-        self
-    }
-
-    /// Attach XMP metadata to the output JPEG.
-    ///
-    /// The data will be written as an APP1 marker segment with the standard
-    /// Adobe XMP namespace signature. The provided bytes should be the raw XMP
-    /// XML data without the APP1 marker or namespace prefix.
-    ///
-    /// XMP is placed after EXIF (if present) but before ICC profile.
-    ///
-    /// # Maximum Size
-    /// Standard XMP is limited to 65502 bytes (65535 - 2 length - 29 namespace - 2 padding).
-    /// For larger XMP data, use Extended XMP (not yet supported).
-    #[must_use]
-    pub fn xmp(mut self, data: impl Into<Vec<u8>>) -> Self {
-        self.xmp_data = Some(data.into());
-        self
-    }
-
     // === Color Mode ===
 
     /// Set the output color mode.
@@ -994,7 +904,7 @@ impl EncoderConfig {
         layout: PixelLayout,
     ) -> Result<BytesEncoder> {
         self.validate()?;
-        BytesEncoder::new(self.clone(), width, height, layout)
+        BytesEncoder::new(self.clone(), width, height, layout, None, None, None)
     }
 
     /// Create an encoder from rgb crate pixel types.
@@ -1021,7 +931,7 @@ impl EncoderConfig {
         height: u32,
     ) -> Result<RgbEncoder<P>> {
         self.validate()?;
-        RgbEncoder::new(self.clone(), width, height)
+        RgbEncoder::new(self.clone(), width, height, None, None, None)
     }
 
     /// Create an encoder from planar YCbCr data.
@@ -1050,7 +960,7 @@ impl EncoderConfig {
             ));
         }
 
-        YCbCrPlanarEncoder::new(self.clone(), width, height)
+        YCbCrPlanarEncoder::new(self.clone(), width, height, None, None, None)
     }
 
     // === One-shot Convenience ===
@@ -1239,24 +1149,6 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_separate_chroma_tables(&self) -> bool {
         self.quant_table_config.separate_chroma_tables()
-    }
-
-    /// Get the ICC profile, if set.
-    #[must_use]
-    pub fn get_icc_profile(&self) -> Option<&[u8]> {
-        self.icc_profile.as_deref()
-    }
-
-    /// Get the EXIF data, if set.
-    #[must_use]
-    pub fn get_exif(&self) -> Option<&super::exif::Exif> {
-        self.exif_data.as_ref()
-    }
-
-    /// Get the XMP data, if set.
-    #[must_use]
-    pub fn get_xmp(&self) -> Option<&[u8]> {
-        self.xmp_data.as_deref()
     }
 
     /// Internal: Get the configured edge padding.
