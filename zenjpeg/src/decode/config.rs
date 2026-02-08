@@ -758,4 +758,10 @@ pub struct JpegInfo {
     pub has_icc_profile: bool,
     /// Whether the ICC profile is an XYB profile
     pub is_xyb: bool,
+    /// ICC color profile (if embedded). Extracted during header parsing.
+    pub icc_profile: Option<Vec<u8>>,
+    /// EXIF metadata (raw bytes for external parsing). Extracted during header parsing.
+    pub exif: Option<Vec<u8>>,
+    /// XMP metadata string. Extracted during header parsing.
+    pub xmp: Option<String>,
 }
