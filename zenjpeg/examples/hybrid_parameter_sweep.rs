@@ -19,12 +19,17 @@ fn main() {
         args[1..].to_vec()
     } else {
         // Default test images (using CID22, NOT Kodak which is overfit by codecs)
-        vec![
+        let mut defaults = vec![
             "internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png".to_string(),
-            "../codec-eval/codec-corpus/qoi-benchmark/screenshot_web/apple.com.png".to_string(),
             // CID22 image (photographic)
             "../glassa/results/cid22_comparison/butteraugli_matched/pexels-photo-4577831/original.png".to_string(),
-        ]
+        ];
+        if let Ok(corpus) = codec_corpus::Corpus::new() {
+            if let Ok(d) = corpus.get("qoi-benchmark/screenshot_web") {
+                defaults.insert(1, d.join("apple.com.png").to_string_lossy().to_string());
+            }
+        }
+        defaults
     };
 
     // Filter to existing files

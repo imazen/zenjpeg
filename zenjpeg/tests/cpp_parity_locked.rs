@@ -18,7 +18,7 @@
 use enough::Unstoppable;
 
 use butteraugli::ButteraugliParams;
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;
 use zenjpeg::decoder::Decoder;

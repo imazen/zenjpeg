@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo test --release -p zenjpeg --test strip_edge_cpp_comparison -- --nocapture --ignored
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,22 +13,9 @@ use std::process::Command;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn find_corpus_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidates = [
-        format!(
-            "{}/work/codec-eval/codec-corpus/CID22/CID22-512/training",
-            home
-        ),
-        format!("{}/work/codec-eval/codec-corpus/kodak", home),
-        "../corpus/CID22-512".to_string(),
-    ];
-    for p in candidates {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    None
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    corpus.get("CID22/CID22-512/training").ok()
+        .or_else(|| corpus.get("kodak").ok())
 }
 
 fn cjpegli_path() -> Option<PathBuf> {

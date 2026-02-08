@@ -22,16 +22,24 @@ fn main() {
         args[1..].to_vec()
     } else {
         // Default test images - mix of photos and screenshots
-        vec![
-            // Photos
+        let mut defaults = vec![
+            // Local testdata
             "internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png".to_string(),
-            "../codec-eval/codec-corpus/cid22/cid22-source/p01.png".to_string(),
-            "../codec-eval/codec-corpus/cid22/cid22-source/p02.png".to_string(),
-            "../codec-eval/codec-corpus/cid22/cid22-source/p05.png".to_string(),
-            // Screenshots
-            "../codec-eval/codec-corpus/qoi-benchmark/screenshot_web/apple.com.png".to_string(),
-            "../codec-eval/codec-corpus/qoi-benchmark/screenshot_game/rb3_1.png".to_string(),
-        ]
+        ];
+        if let Ok(corpus) = codec_corpus::Corpus::new() {
+            if let Ok(d) = corpus.get("cid22/cid22-source") {
+                for f in ["p01.png", "p02.png", "p05.png"] {
+                    defaults.push(d.join(f).to_string_lossy().to_string());
+                }
+            }
+            if let Ok(d) = corpus.get("qoi-benchmark/screenshot_web") {
+                defaults.push(d.join("apple.com.png").to_string_lossy().to_string());
+            }
+            if let Ok(d) = corpus.get("qoi-benchmark/screenshot_game") {
+                defaults.push(d.join("rb3_1.png").to_string_lossy().to_string());
+            }
+        }
+        defaults
     };
 
     // Filter to existing files

@@ -46,8 +46,7 @@ fn encode_and_report(pixels: &[u8], width: u32, height: u32, quality: u8) {
 }
 
 fn main() {
-    let corpus_path = std::env::var("CODEC_CORPUS")
-        .unwrap_or_else(|_| std::env::var("HOME").unwrap() + "/work/codec-eval/codec-corpus");
+    let corpus = codec_corpus::Corpus::new().ok();
 
     eprintln!("=== Real Encoder Allocation Profile (CLIC 2025) ===\n");
 
@@ -59,8 +58,13 @@ fn main() {
         "11f2b039b293758398b1a7a8afa64bb2",
     ];
 
+    let clic_dir = corpus.as_ref()
+        .and_then(|c| c.get("clic2025/validation").ok());
+
     for img_hash in clic_images {
-        let path = format!("{}/clic2025/validation/{}.png", corpus_path, img_hash);
+        let path = clic_dir.as_ref()
+            .map(|d| d.join(format!("{}.png", img_hash)).to_string_lossy().to_string())
+            .unwrap_or_default();
         if let Some((pixels, width, height)) = load_png(&path) {
             let short_hash = &img_hash[..8];
             eprintln!("=== CLIC {}.. ({}x{}) ===", short_hash, width, height);

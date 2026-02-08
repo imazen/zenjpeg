@@ -57,7 +57,7 @@ fn test_xyb_basic() {
 
 #[test]
 fn test_xyb_output_quality() {
-    use dssim::Dssim;
+    use dssim_core::Dssim;
     use rgb::RGBA8;
 
     fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {

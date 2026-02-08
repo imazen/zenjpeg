@@ -27,7 +27,7 @@ zune-jpeg = { workspace = true }
 moxcms = { workspace = true }
 
 # Quality metrics
-dssim = { workspace = true }
+dssim-core = { workspace = true }
 fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 

@@ -100,7 +100,12 @@ fn bench_encode(
 fn main() {
     let source_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "/home/lilith/work/codec-eval/codec-corpus/kodak/1.png".to_string());
+        .or_else(|| {
+            codec_corpus::Corpus::new().ok()
+                .and_then(|c| c.get("kodak").ok())
+                .map(|p| p.join("1.png").to_string_lossy().to_string())
+        })
+        .expect("Usage: comprehensive_bench <image.png> or set up codec-corpus");
 
     println!("=== Comprehensive Encoder Benchmark ===");
     println!("Source: {}", source_path);

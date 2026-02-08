@@ -78,11 +78,16 @@ fn decode_jpeg_zune(jpeg_data: &[u8]) -> Vec<u8> {
 
 fn main() {
     let corpus_dir = std::env::args().nth(1).unwrap_or_else(|| {
-        let default = std::path::Path::new(
-            &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".to_string()),
-        )
-        .join("work/codec-eval/codec-corpus/clic2025/final-test");
-        default.to_string_lossy().to_string()
+        codec_corpus::Corpus::new().ok()
+            .and_then(|c| c.get("clic2025/final-test").ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                let default = std::path::Path::new(
+                    &std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+                )
+                .join("work/codec-eval/codec-corpus/clic2025/final-test");
+                default.to_string_lossy().to_string()
+            })
     });
 
     let dir = std::path::Path::new(&corpus_dir);

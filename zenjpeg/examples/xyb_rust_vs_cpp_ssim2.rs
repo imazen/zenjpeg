@@ -109,7 +109,11 @@ fn compute_channel_diff(img1: &[u8], img2: &[u8]) -> [(f64, f64, f64); 3] {
 }
 
 fn main() {
-    let src_path = "/home/lilith/work/codec-eval/codec-corpus/kodak/1.png";
+    let src_path_string = codec_corpus::Corpus::new().ok()
+        .and_then(|c| c.get("kodak").ok())
+        .map(|p| p.join("1.png").to_string_lossy().to_string())
+        .expect("codec-corpus unavailable; need kodak/1.png");
+    let src_path: &str = &src_path_string;
     let (pixels, width, height) = load_test_image(src_path);
 
     println!("XYB Rust vs C++ Direct Comparison (SSIMULACRA2)");

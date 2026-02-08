@@ -56,7 +56,7 @@ fn test_cpp_quality_comparison() {
         }
     };
 
-    let dssim = dssim::Dssim::new();
+    let dssim = dssim_core::Dssim::new();
     let orig_pixels: Vec<rgb::RGB<u8>> = data
         .chunks(3)
         .map(|c| rgb::RGB::new(c[0], c[1], c[2]))

@@ -22,7 +22,9 @@ use zenjpeg::huffman::optimize::FrequencyCounter;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const CODEC_CORPUS: &str = "/home/lilith/work/codec-corpus";
+fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
+    Ok(codec_corpus::Corpus::new()?)
+}
 const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
 
 // Q0-Q85 step 5, Q89-Q100 step 1
@@ -146,25 +148,30 @@ struct ModeResult {
 fn main() -> Result<()> {
     let start = Instant::now();
 
-    // Verify corpus root exists
-    if !Path::new(CODEC_CORPUS).is_dir() {
-        eprintln!("Codec corpus not found at {CODEC_CORPUS}");
-        std::process::exit(1);
-    }
+    // Initialize corpus
+    let cc = match corpus_crate() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Codec corpus not available: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Discover corpora and count images
     let mut corpus_images: Vec<(&Corpus, Vec<PathBuf>)> = Vec::new();
     let mut total_images = 0;
     for corpus in CORPORA {
-        let dir = PathBuf::from(CODEC_CORPUS).join(corpus.rel_path);
-        if !dir.is_dir() {
-            eprintln!(
-                "WARNING: Corpus '{}' not found at {}",
-                corpus.name,
-                dir.display()
-            );
-            continue;
-        }
+        let dir = match cc.get(corpus.rel_path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "WARNING: Corpus '{}' not available: {}",
+                    corpus.name,
+                    e
+                );
+                continue;
+            }
+        };
         let images = load_image_list(&dir)?;
         if images.is_empty() {
             eprintln!("WARNING: No PNG images in {}", dir.display());

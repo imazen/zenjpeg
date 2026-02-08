@@ -80,7 +80,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use dssim::Dssim;
+    use dssim_core::Dssim;
     use rgb::RGBA;
 
     let attr = Dssim::new();
@@ -171,21 +171,14 @@ fn test_file_size_parity() {
         }
     };
 
-    let corpus_paths = [
-        "../codec-eval/codec-corpus/kodak",
-        "../codec-corpus/kodak",
-        "codec-corpus/kodak",
-    ];
-
-    let corpus_dir = corpus_paths
-        .iter()
-        .find(|p| Path::new(p).exists())
-        .map(Path::new);
-
-    let Some(corpus_dir) = corpus_dir else {
-        eprintln!("Kodak corpus not found, skipping test");
-        return;
+    let corpus = match codec_corpus::Corpus::new().ok().and_then(|c| c.get("kodak").ok()) {
+        Some(p) => p,
+        None => {
+            eprintln!("Kodak corpus not found, skipping test");
+            return;
+        }
     };
+    let corpus_dir = corpus.as_path();
 
     let mut total_cpp_size = 0usize;
     let mut total_rust_size = 0usize;
@@ -275,21 +268,14 @@ fn test_dssim_parity() {
         }
     };
 
-    let corpus_paths = [
-        "../codec-eval/codec-corpus/kodak",
-        "../codec-corpus/kodak",
-        "codec-corpus/kodak",
-    ];
-
-    let corpus_dir = corpus_paths
-        .iter()
-        .find(|p| Path::new(p).exists())
-        .map(Path::new);
-
-    let Some(corpus_dir) = corpus_dir else {
-        eprintln!("Kodak corpus not found, skipping test");
-        return;
+    let corpus = match codec_corpus::Corpus::new().ok().and_then(|c| c.get("kodak").ok()) {
+        Some(p) => p,
+        None => {
+            eprintln!("Kodak corpus not found, skipping test");
+            return;
+        }
     };
+    let corpus_dir = corpus.as_path();
 
     let mut failures = Vec::new();
 

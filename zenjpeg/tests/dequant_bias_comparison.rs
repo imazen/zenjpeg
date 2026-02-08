@@ -17,16 +17,8 @@ mod comparison {
     use std::path::PathBuf;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-    fn corpus_dir() -> Option<PathBuf> {
-        let p = PathBuf::from(
-            std::env::var("CODEC_CORPUS")
-                .unwrap_or_else(|_| "/home/lilith/work/codec-eval/codec-corpus".into()),
-        );
-        if p.is_dir() {
-            Some(p)
-        } else {
-            None
-        }
+    fn corpus() -> Option<codec_corpus::Corpus> {
+        codec_corpus::Corpus::new().ok()
     }
 
     fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -152,8 +144,8 @@ mod comparison {
     #[test]
     #[ignore]
     fn compare_decoder_quality() {
-        let corpus = corpus_dir().expect("codec-corpus not found");
-        let cid22 = corpus.join("CID22/CID22-512/validation");
+        let corpus = corpus().expect("codec-corpus not found");
+        let cid22 = corpus.get("CID22/CID22-512/validation").expect("CID22 corpus not found");
         assert!(cid22.is_dir(), "CID22 validation dir not found");
 
         let mut images: Vec<PathBuf> = std::fs::read_dir(&cid22)
@@ -276,8 +268,9 @@ mod comparison {
     #[test]
     #[ignore]
     fn compare_decoder_quality_frymire() {
-        let corpus = corpus_dir().expect("codec-corpus not found");
-        let frymire = corpus.join("imageflow/test_inputs/frymire.png");
+        let corpus = corpus().expect("codec-corpus not found");
+        let frymire_dir = corpus.get("imageflow/test_inputs").expect("imageflow corpus not found");
+        let frymire = frymire_dir.join("frymire.png");
         assert!(frymire.exists(), "frymire.png not found at {:?}", frymire);
 
         let (rgb, width, height) = load_png_rgb(&frymire).expect("failed to load frymire.png");
@@ -349,8 +342,8 @@ mod comparison {
     #[test]
     #[ignore]
     fn compare_decoder_pairwise() {
-        let corpus = corpus_dir().expect("codec-corpus not found");
-        let cid22 = corpus.join("CID22/CID22-512/validation");
+        let corpus = corpus().expect("codec-corpus not found");
+        let cid22 = corpus.get("CID22/CID22-512/validation").expect("CID22 corpus not found");
         assert!(cid22.is_dir(), "CID22 validation dir not found");
 
         let mut images: Vec<PathBuf> = std::fs::read_dir(&cid22)

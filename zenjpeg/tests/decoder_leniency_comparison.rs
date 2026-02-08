@@ -8,7 +8,9 @@ use enough::Unstoppable;
 use std::fs;
 use std::path::Path;
 
-const CORPUS_BASE: &str = "/home/lilith/work/codec-eval/codec-corpus/jpeg-conformance";
+fn corpus() -> Option<codec_corpus::Corpus> {
+    codec_corpus::Corpus::new().ok()
+}
 
 fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
@@ -114,13 +116,18 @@ fn test_decoder(
 #[test]
 #[ignore]
 fn compare_decoder_leniency() {
-    let valid_dir = Path::new(CORPUS_BASE).join("valid");
-    let invalid_dir = Path::new(CORPUS_BASE).join("invalid");
-
-    if !valid_dir.exists() {
-        println!("Corpus not found at {}", CORPUS_BASE);
-        return;
-    }
+    let corpus = match corpus() {
+        Some(c) => c,
+        None => { eprintln!("Skipping: corpus unavailable"); return; }
+    };
+    let valid_dir = match corpus.get("jpeg-conformance/valid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
+    let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
+        Ok(p) => p,
+        Err(e) => { eprintln!("Skipping: {e}"); return; }
+    };
 
     // Load all files into memory
     let valid_files: Vec<_> = collect_jpgs(&valid_dir)

@@ -16,33 +16,10 @@ fn find_cjpegli_path() -> Option<PathBuf> {
 }
 
 fn find_corpus_path() -> Option<PathBuf> {
-    // Check environment variable first
-    if let Ok(dir) = std::env::var("CORPUS_DIR") {
-        let path = PathBuf::from(dir);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Check relative paths and well-known locations
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidates = [
-        format!(
-            "{}/work/codec-eval/codec-corpus/CID22/CID22-512/training",
-            home
-        ),
-        format!("{}/work/codec-eval/codec-corpus/kodak", home),
-        "../corpus/CID22-512".to_string(),
-        "../codec-corpus/CID22/CID22-512".to_string(),
-        "corpus/CID22-512".to_string(),
-    ];
-    for p in candidates {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    None
+    let corpus = codec_corpus::Corpus::new().ok()?;
+    // Try CID22 training first, then kodak
+    corpus.get("CID22/CID22-512/training").ok()
+        .or_else(|| corpus.get("kodak").ok())
 }
 
 /// Generic JPEG decoder using jpeg-decoder crate

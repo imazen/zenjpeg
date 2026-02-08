@@ -3,7 +3,7 @@
 //! These tests encode with zenjpeg and decode with jpeg-decoder (reference),
 //! then verify quality using DSSIM.
 
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;
 use std::path::Path;

@@ -25,7 +25,7 @@ fn compute_dssim(orig: &[u8], w1: u32, h1: u32, comp: &[u8], w2: u32, h2: u32) -
     if w1 != w2 || h1 != h2 {
         return f64::MAX;
     }
-    let attr = dssim::Dssim::new();
+    let attr = dssim_core::Dssim::new();
     let orig_rgba: Vec<RGBA<u8>> = orig
         .chunks(3)
         .map(|c| RGBA::new(c[0], c[1], c[2], 255))

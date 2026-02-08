@@ -436,12 +436,8 @@ mod full_encode {
     }
 
     fn find_cid22_dir() -> Option<PathBuf> {
-        let candidates = [
-            PathBuf::from("/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/validation"),
-            PathBuf::from("../codec-eval/codec-corpus/CID22/CID22-512/validation"),
-            PathBuf::from("../../codec-eval/codec-corpus/CID22/CID22-512/validation"),
-        ];
-        candidates.into_iter().find(|p| p.is_dir())
+        let corpus = codec_corpus::Corpus::new().ok()?;
+        corpus.get("CID22/CID22-512/validation").ok()
     }
 
     fn load_cid22_images(max_images: usize) -> Vec<(String, Vec<u8>, u32, u32)> {

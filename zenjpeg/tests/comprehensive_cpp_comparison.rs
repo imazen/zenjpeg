@@ -93,7 +93,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
-    let attr = dssim::Dssim::new();
+    let attr = dssim_core::Dssim::new();
 
     let orig_rgba: Vec<rgb::RGBA8> = orig
         .chunks(3)
