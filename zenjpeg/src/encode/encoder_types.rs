@@ -986,7 +986,7 @@ pub enum ParallelEncoding {
 /// - `FixedAnnexK`: Single-pass with JPEG Annex K standard tables.
 ///   Maximum compatibility, ~5-12% larger than optimal.
 /// - `Custom`: Single-pass encoding with caller-provided tables.
-///   Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
+///   Use `HuffmanTableSet::annex_k()` for the original JPEG standard tables,
 ///   or provide your own pre-computed tables.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -1002,7 +1002,7 @@ pub enum HuffmanStrategy {
     /// Maximum decoder compatibility. Enables streaming output.
     FixedAnnexK,
     /// Single-pass: use caller-provided tables.
-    /// Use [`HuffmanTableSet::annex_k()`] for Annex K, or provide custom tables.
+    /// Use `HuffmanTableSet::annex_k()` for Annex K, or provide custom tables.
     Custom(Box<crate::huffman::optimize::HuffmanTableSet>),
 }
 
@@ -1258,7 +1258,7 @@ impl ProgressiveScanMode {
         !matches!(self, Self::Baseline)
     }
 
-    /// Returns the internal [`ScanStrategy`] for this mode.
+    /// Returns the internal `ScanStrategy` for this mode.
     ///
     /// Baseline returns `Default` (ignored for non-progressive encoding).
     #[must_use]

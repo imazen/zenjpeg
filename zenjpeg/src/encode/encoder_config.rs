@@ -224,9 +224,6 @@ impl EncoderConfig {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, ProgressiveScanMode};
-    ///
     /// Set the progressive/baseline scan mode.
     ///
     /// Accepts `bool`, `ProgressiveScanMode`, or any type that converts to it.
@@ -314,8 +311,8 @@ impl EncoderConfig {
     /// for full control — it bundles table source, chroma layout, and custom
     /// tables into one type-safe enum.
     ///
-    /// - [`QuantTableSource::Jpegli`] → preserves current chroma table layout
-    /// - [`QuantTableSource::MozjpegDefault`] → sets `MozjpegRobidoux` (always 2 tables)
+    /// - `QuantTableSource::Jpegli` → preserves current chroma table layout
+    /// - `QuantTableSource::MozjpegDefault` → sets `MozjpegRobidoux` (always 2 tables)
     #[must_use]
     pub fn quant_source(mut self, source: QuantTableSource) -> Self {
         match source {
@@ -858,7 +855,7 @@ impl EncoderConfig {
 
     /// Create a per-image encode request from this config.
     ///
-    /// Returns an [`EncodeRequest`] that can bind per-image metadata (ICC, EXIF, XMP)
+    /// Returns an [`EncodeRequest`](super::request::EncodeRequest) that can bind per-image metadata (ICC, EXIF, XMP)
     /// and controls (stop token, limits) without modifying the reusable config.
     ///
     /// # Example
