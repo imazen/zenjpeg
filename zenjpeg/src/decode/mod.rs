@@ -5,9 +5,9 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use zenjpeg::decode::DecodeConfig;
+//! use zenjpeg::decode::Decoder;
 //!
-//! let result = DecodeConfig::new().decode(&jpeg_data, enough::Unstoppable)?;
+//! let result = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
 //! let pixels: &[u8] = result.pixels_u8().unwrap();
 //! ```
 //!
@@ -17,9 +17,9 @@
 //! used by jpegli. ICC profile support requires enabling `cms-lcms2` or `cms-moxcms` feature.
 //!
 //! ```ignore
-//! use zenjpeg::decode::DecodeConfig;
+//! use zenjpeg::decode::Decoder;
 //!
-//! let result = DecodeConfig::new().apply_icc(true).decode(&jpeg_data, enough::Unstoppable)?;
+//! let result = Decoder::new().apply_icc(true).decode(&jpeg_data, enough::Unstoppable)?;
 //! ```
 
 // IDCT modules (decoder-only)
@@ -49,7 +49,7 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+    Decoder, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
 };
 use parser::JpegParser;
 
@@ -119,17 +119,14 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 }
 
 // Re-export config types (defined in config.rs, public API preserved)
-pub use config::{ChromaUpsampling, DecodeWarning, DecoderConfig, JpegInfo, Strictness};
-
-/// Backward compatibility alias: `Decoder` is now [`DecodeConfig`].
-pub type Decoder = DecodeConfig;
+pub use config::{ChromaUpsampling, DecodeWarning, JpegInfo, Strictness};
 
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform_f32;
 
-impl DecodeConfig {
+impl Decoder {
     /// Creates a new decoder configuration with default settings.
     #[must_use]
     pub fn new() -> Self {
@@ -831,13 +828,13 @@ impl DecodeConfig {
 
         let (pixels, width, height) = if self.gain_map == GainMapHandling::Decode {
             // Decode the gain map JPEG to pixels
-            let gm_result = DecodeConfig::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
+            let gm_result = Decoder::new().decode(&gainmap_jpeg, enough::Unstoppable)?;
             let w = gm_result.width;
             let h = gm_result.height;
             (Some(gm_result.into_pixels_u8().unwrap()), w, h)
         } else {
             // PreserveRaw: just get dimensions from header without decoding pixels
-            let gm_info = DecodeConfig::new().read_info(&gainmap_jpeg)?;
+            let gm_info = Decoder::new().read_info(&gainmap_jpeg)?;
             (None, gm_info.dimensions.width, gm_info.dimensions.height)
         };
 
@@ -1190,7 +1187,7 @@ mod metadata_tests {
         // Create minimal valid JPEG
         let jpeg = include_bytes!("../../tests/outputs/1_q85.jpg");
 
-        let decoder = DecodeConfig::new();
+        let decoder = Decoder::new();
         let info = decoder.read_info(jpeg);
 
         // Should successfully parse
@@ -1212,7 +1209,7 @@ mod metadata_tests {
         // Test with UltraHDR sample which has XMP
         let jpeg = include_bytes!("../../tests/images/ultrahdr_sample.jpg");
 
-        let decoder = DecodeConfig::new();
+        let decoder = Decoder::new();
         let info = decoder.read_info(jpeg).expect("Should decode ultrahdr_sample.jpg");
 
         // Check that metadata extraction doesn't require full decode
@@ -1244,7 +1241,7 @@ mod limits_tests {
 
     #[test]
     fn test_limits_builder_methods() {
-        let config = DecodeConfig::new()
+        let config = Decoder::new()
             .max_pixels(50_000_000)
             .max_memory(256 * 1024 * 1024);
 
@@ -1260,7 +1257,7 @@ mod limits_tests {
             max_output: None,
         };
 
-        let config = DecodeConfig::new().limits(limits);
+        let config = Decoder::new().limits(limits);
 
         assert_eq!(config.get_max_pixels(), 10_000_000);
         assert_eq!(config.get_max_memory(), 128 * 1024 * 1024);
@@ -1270,7 +1267,7 @@ mod limits_tests {
     fn test_max_memory_is_u64() {
         // Verify max_memory is u64 and doesn't require casting
         let large_limit: u64 = 5_000_000_000; // 5GB, would overflow on 32-bit if usize
-        let config = DecodeConfig::new().max_memory(large_limit);
+        let config = Decoder::new().max_memory(large_limit);
         
         assert_eq!(config.get_max_memory(), large_limit);
     }
@@ -1278,7 +1275,7 @@ mod limits_tests {
     #[test]
     fn test_fields_not_directly_accessible() {
         // This test verifies that fields are private and must use methods
-        let config = DecodeConfig::new();
+        let config = Decoder::new();
         
         // These should compile (using getters)
         let _ = config.get_max_pixels();

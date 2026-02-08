@@ -5,7 +5,7 @@
 //! ## Architecture
 //!
 //! ```text
-//! DecodeConfig (aka Decoder, DecoderConfig)
+//! Decoder
 //!     │
 //!     ├── Configuration
 //!     │   ├── .output_format()       pixel format (Rgb, Gray, Rgba, ...)
@@ -56,8 +56,8 @@ use enough::Unstoppable;
 use test_utils::generate_checkerboard;
 use zenjpeg::{
     decoder::{
-        ChromaUpsampling, DecodeConfig, DecodeResult, DecodeWarning, Decoder, DecoderConfig,
-        GainMapHandling, OutputTarget, PixelFormat, PreserveConfig, ScanlineReader, Strictness,
+        ChromaUpsampling, DecodeResult, DecodeWarning, Decoder, GainMapHandling, OutputTarget,
+        PixelFormat, PreserveConfig, ScanlineReader, Strictness,
     },
     encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout},
     types::{ColorSpace, JpegMode, Limits},
@@ -128,15 +128,13 @@ fn test_jpeg_with_icc() -> Vec<u8> {
 }
 
 // ============================================================================
-// 1. Creating a decoder (type aliases)
+// 1. Creating a decoder
 // ============================================================================
 
-/// `Decoder`, `DecodeConfig`, and `DecoderConfig` are the same type.
+/// Create a decoder with default settings.
 #[test]
-fn type_aliases() {
-    let _a: Decoder = DecodeConfig::new();
-    let _b: DecoderConfig = DecodeConfig::new();
-    let _c: DecodeConfig = Decoder::new();
+fn create_decoder() {
+    let _decoder: Decoder = Decoder::new();
 }
 
 // ============================================================================
