@@ -49,12 +49,6 @@ macro_rules! store_i16x8 {
     }};
 }
 
-macro_rules! load_u8x16 {
-    ($slice:expr) => {{
-        let arr: &[u8; 16] = $slice.try_into().unwrap();
-        safe_simd::v128_load(arr)
-    }};
-}
 
 macro_rules! store_u8x16 {
     ($slice:expr, $val:expr) => {{
@@ -125,22 +119,22 @@ pub fn wasm_transpose_4x4_inplace(token: Wasm128Token, r: &mut [v128; 4]) {
 #[inline]
 fn wasm_transpose_8x8_inplace_inner(token: Wasm128Token, data: &mut [f32; 64]) {
     // Load 8 rows as 16 v128 registers (2 per row)
-    let mut r0_lo = load_f32x4!(&data[0..4]);
-    let mut r0_hi = load_f32x4!(&data[4..8]);
-    let mut r1_lo = load_f32x4!(&data[8..12]);
-    let mut r1_hi = load_f32x4!(&data[12..16]);
-    let mut r2_lo = load_f32x4!(&data[16..20]);
-    let mut r2_hi = load_f32x4!(&data[20..24]);
-    let mut r3_lo = load_f32x4!(&data[24..28]);
-    let mut r3_hi = load_f32x4!(&data[28..32]);
-    let mut r4_lo = load_f32x4!(&data[32..36]);
-    let mut r4_hi = load_f32x4!(&data[36..40]);
-    let mut r5_lo = load_f32x4!(&data[40..44]);
-    let mut r5_hi = load_f32x4!(&data[44..48]);
-    let mut r6_lo = load_f32x4!(&data[48..52]);
-    let mut r6_hi = load_f32x4!(&data[52..56]);
-    let mut r7_lo = load_f32x4!(&data[56..60]);
-    let mut r7_hi = load_f32x4!(&data[60..64]);
+    let r0_lo = load_f32x4!(&data[0..4]);
+    let r0_hi = load_f32x4!(&data[4..8]);
+    let r1_lo = load_f32x4!(&data[8..12]);
+    let r1_hi = load_f32x4!(&data[12..16]);
+    let r2_lo = load_f32x4!(&data[16..20]);
+    let r2_hi = load_f32x4!(&data[20..24]);
+    let r3_lo = load_f32x4!(&data[24..28]);
+    let r3_hi = load_f32x4!(&data[28..32]);
+    let r4_lo = load_f32x4!(&data[32..36]);
+    let r4_hi = load_f32x4!(&data[36..40]);
+    let r5_lo = load_f32x4!(&data[40..44]);
+    let r5_hi = load_f32x4!(&data[44..48]);
+    let r6_lo = load_f32x4!(&data[48..52]);
+    let r6_hi = load_f32x4!(&data[52..56]);
+    let r7_lo = load_f32x4!(&data[56..60]);
+    let r7_hi = load_f32x4!(&data[60..64]);
 
     // Transpose top-left 4x4
     let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
@@ -337,16 +331,15 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
 /// Processes 4-wide columns using v128 (i32x4).
 #[arcane]
 pub fn wasm_idct_int_8x8(
-    token: Wasm128Token,
+    _token: Wasm128Token,
     input: &[i32; 64],
     output: &mut [i16],
     stride: usize,
 ) {
     // DC-only fast path
-    let mut all_ac_zero = true;
+    let all_ac_zero = true;
     for i in 1..64 {
     if input[i] != 0 {
-        all_ac_zero = false;
         break;
     }
     
@@ -376,18 +369,18 @@ pub fn wasm_idct_int_8x8(
 /// Note: WASM lacks FMA and multiply-accumulate, so uses separate mul+add.
 #[arcane]
 pub fn wasm_ycbcr_to_rgb(
-    token: Wasm128Token,
+    _token: Wasm128Token,
     y: &[i16; 16],
     cb: &[i16; 16],
     cr: &[i16; 16],
     rgb: &mut [u8; 48],
 ) {
     // Constants (14-bit fixed-point)
-    let y_coeff = i16x8_splat(19595);
-    let cr_to_r = i16x8_splat(22970);
-    let cb_to_b = i16x8_splat(29032);
-    let cr_to_g = i16x8_splat(-11698);
-    let cb_to_g = i16x8_splat(-5636);
+    let _y_coeff = i16x8_splat(19595);
+    let _cr_to_r = i16x8_splat(22970);
+    let _cb_to_b = i16x8_splat(29032);
+    let _cr_to_g = i16x8_splat(-11698);
+    let _cb_to_g = i16x8_splat(-5636);
     
     let cb_cr_bias = i16x8_splat(128);
 
@@ -401,12 +394,12 @@ pub fn wasm_ycbcr_to_rgb(
     cr0 = i16x8_sub(cr0, cb_cr_bias);
 
     // Widen to i32 for multiplication
-    let y_lo = i32x4_extend_low_i16x8(y0);
-    let y_hi = i32x4_extend_high_i16x8(y0);
-    let cr_lo = i32x4_extend_low_i16x8(cr0);
-    let cr_hi = i32x4_extend_high_i16x8(cr0);
-    let cb_lo = i32x4_extend_low_i16x8(cb0);
-    let cb_hi = i32x4_extend_high_i16x8(cb0);
+    let _y_lo = i32x4_extend_low_i16x8(y0);
+    let _y_hi = i32x4_extend_high_i16x8(y0);
+    let _cr_lo = i32x4_extend_low_i16x8(cr0);
+    let _cr_hi = i32x4_extend_high_i16x8(cr0);
+    let _cb_lo = i32x4_extend_low_i16x8(cb0);
+    let _cb_hi = i32x4_extend_high_i16x8(cb0);
 
     // Compute R = Y + Cr * coeff (no FMA, so mul + add)
     // TODO: Full implementation with proper shifting and saturation
@@ -427,7 +420,7 @@ pub fn wasm_ycbcr_to_rgb(
 /// H2V1 upsampling (horizontal 2x) using triangle filter.
 #[arcane]
 pub fn wasm_upsample_h2v1(
-    token: Wasm128Token,
+    _token: Wasm128Token,
     input: &[f32],
     in_width: usize,
     output: &mut [f32],
