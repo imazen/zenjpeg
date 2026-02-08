@@ -1,13 +1,30 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! # jpegli
+//! # zenjpeg
 //!
-//! Pure Rust JPEG encoder with perceptual optimizations.
+//! Pure Rust JPEG encoder and decoder with perceptual optimizations.
 //!
-//! jpegli provides enhanced compression quality compared to standard JPEG
-//! through adaptive quantization, optional XYB color space, and other
-//! perceptual optimizations.
+//! Provides enhanced compression quality compared to standard JPEG through
+//! adaptive quantization, optional XYB color space, and other perceptual
+//! optimizations.
+//!
+//! ## Feature Requirements
+//!
+//! > **Important:** The decoder requires a feature flag. Add to `Cargo.toml`:
+//! > ```toml
+//! > [dependencies]
+//! > zenjpeg = { version = "0.6", features = ["decoder"] }
+//! > ```
+//!
+//! **Available features:**
+//! - `decoder` - Enable JPEG decoding (required for `zenjpeg::decoder` module)
+//! - `parallel` - Multi-threaded encoding via rayon
+//! - `archmage-simd` - Safe SIMD acceleration (default, ~10-20% faster)
+//! - `cms-lcms2` - ICC color management via lcms2 (default)
+//! - `ultrahdr` - UltraHDR gain map support
+//!
+//! See [Feature Flags](#feature-flags) section below for details.
 //!
 //! ## Quick Start
 //!
@@ -95,13 +112,36 @@
 //!
 //! ## Feature Flags
 //!
-//! | Feature | Default | Description |
-//! |---------|---------|-------------|
-//! | `decoder` | No | Enable decoder API (prerelease) |
-//! | `parallel` | No | Multi-threaded encoding via rayon |
-//! | `cms-lcms2` | Yes | Color management via lcms2 |
-//! | `cms-moxcms` | No | Pure Rust color management |
-//! | `archmage-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster) |
+//! | Feature | Default | Description | When to Use |
+//! |---------|---------|-------------|-------------|
+//! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
+//! | `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
+//! | `archmage-simd` | ✅ Yes | Safe SIMD via archmage (~10-20% faster) | Keep enabled for best performance |
+//! | `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, wide-gamut images |
+//! | `cms-moxcms` | ❌ No | Pure Rust color management (alternative to lcms2) | `no_std` or avoid C dependencies |
+//! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
+//! | `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |
+//! | `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |
+//! | `yuv` | ✅ Yes | SharpYUV chroma downsampling | Keep enabled for quality |
+//!
+//! ### Common Configurations
+//!
+//! ```toml
+//! # Decode + encode (most common)
+//! zenjpeg = { version = "0.6", features = ["decoder"] }
+//!
+//! # Encode only (default)
+//! zenjpeg = "0.6"
+//!
+//! # High-performance server
+//! zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
+//!
+//! # Embedded / no_std
+//! zenjpeg = { version = "0.6", default-features = false, features = ["cms-moxcms"] }
+//!
+//! # UltraHDR support
+//! zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }
+//! ```
 //!
 //! ## Capabilities
 //!
@@ -138,12 +178,59 @@ pub mod heuristics;
 
 /// JPEG decoder - public API.
 ///
-/// Contains: `Decoder`, `DecodedImage`, `Error`, `Result`, etc.
+/// Contains: `Decoder`, `DecodeResult`, `Error`, `Result`, etc.
 ///
 /// **Note:** The decoder is in prerelease and the API will have breaking changes.
-/// Enable with the `decoder` feature flag.
+/// Enable with the `decoder` feature flag:
+///
+/// ```toml
+/// [dependencies]
+/// zenjpeg = { version = "0.6", features = ["decoder"] }
+/// ```
 #[cfg(feature = "decoder")]
 pub mod decoder;
+
+/// Decoder module is behind a feature flag.
+///
+/// Enable the decoder with:
+/// ```toml
+/// [dependencies]
+/// zenjpeg = { version = "0.6", features = ["decoder"] }
+/// ```
+///
+/// See the [decoder module documentation](decoder/index.html) for usage examples.
+#[cfg(not(feature = "decoder"))]
+pub mod decoder {
+    /// The decoder module requires the `decoder` feature flag.
+    ///
+    /// # How to enable
+    ///
+    /// Add to your `Cargo.toml`:
+    /// ```toml
+    /// [dependencies]
+    /// zenjpeg = { version = "0.6", features = ["decoder"] }
+    /// ```
+    ///
+    /// # What you'll get
+    ///
+    /// - `Decoder` - Main decoder configuration and execution
+    /// - `DecodeResult` - Unified decode output (u8 or f32)
+    /// - `ScanlineReader` - Streaming row-by-row decoding
+    /// - `UltraHdrReader` - HDR gain map decoding
+    /// - `JpegInfo` - Header metadata extraction
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decoder::Decoder;
+    /// use enough::Unstoppable;
+    ///
+    /// let result = Decoder::new().decode(&jpeg_data, Unstoppable)?;
+    /// let pixels = result.pixels_u8().expect("u8 output");
+    /// ```
+    #[doc(hidden)]
+    pub struct DecoderRequiresFeatureFlag;
+}
 
 /// UltraHDR support - HDR gain map encoding and decoding.
 ///

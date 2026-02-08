@@ -7,6 +7,13 @@
 
 A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
+> **Important:** The decoder requires the `decoder` feature flag:
+> ```toml
+> [dependencies]
+> zenjpeg = { version = "0.6", features = ["decoder"] }
+> ```
+> See [Feature Flags](#feature-flags) for details.
+
 > **Note:** This crate was previously published as `jpegli-rs`. If migrating, update your imports from `use jpegli::` to `use zenjpeg::`.
 
 ## Heritage and Divergence
@@ -905,26 +912,42 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 
 ## Feature Flags
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `decoder` | No | Enable decoder API (prerelease, API will change) |
-| `ultrahdr` | No | UltraHDR HDR gain map encoding/decoding (requires `decoder`) |
-| `archmage-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster on x86_64) |
-| `cms-lcms2` | Yes | Color management via lcms2 |
-| `cms-moxcms` | No | Pure Rust color management |
-| `test-utils` | Yes | Testing utilities |
+| Feature | Default | Description | When to Use |
+|---------|---------|-------------|-------------|
+| `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
+| `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
+| `archmage-simd` | ✅ Yes | Safe SIMD via archmage (~10-20% faster) | Keep enabled for best performance |
+| `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, wide-gamut images |
+| `cms-moxcms` | ❌ No | Pure Rust color management | `no_std` or avoid C dependencies |
+| `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
+| `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |
+| `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |
+| `yuv` | ✅ Yes | SharpYUV chroma downsampling | Keep enabled for quality |
 
-By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe, portable `wide` crate. The `archmage-simd` feature (enabled by default) adds token-based SIMD intrinsics via archmage for ~10-20% speedup on x86_64.
+By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe `wide` crate, with `archmage-simd` (default) adding token-based intrinsics for ~10-20% speedup.
+
+### Common Configurations
 
 ```toml
+# Decode + encode (most common)
 [dependencies]
-zenjpeg = "0.5"
+zenjpeg = { version = "0.6", features = ["decoder"] }
 
-# With UltraHDR support:
-zenjpeg = { version = "0.5", features = ["ultrahdr"] }
+# Encode only (default)
+[dependencies]
+zenjpeg = "0.6"
 
-# Minimal (no CMS, no archmage SIMD):
-zenjpeg = { version = "0.5", default-features = false }
+# High-performance server
+[dependencies]
+zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
+
+# Embedded / no_std
+[dependencies]
+zenjpeg = { version = "0.6", default-features = false, features = ["cms-moxcms"] }
+
+# UltraHDR support
+[dependencies]
+zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }
 ```
 
 ## Encoder Status
