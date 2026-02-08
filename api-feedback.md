@@ -64,3 +64,63 @@ let jpeg_data = encoder.finish()?;
 - Quality parameter being 0-100 (native JPEG scale) is intuitive
 - `ChromaSubsampling` enum is clear and self-documenting
 - `encode_from_bytes()` method makes pixel ownership straightforward
+
+---
+
+## Round 2: Limits/Stop/Config Wiring (2026-02-07)
+
+**Context:** Wiring up Limits enforcement, Stop forwarding, and codec config passthrough in all zencodecs adapters.
+
+### 6. Probe requires full decode
+
+**Issue:** `read_info()` returns `JpegInfo` but doesn't extract ICC/EXIF/XMP. The adapter has to do a full `decode()` just for `probe()` (metadata-only inspection).
+
+**Fix:** `read_info()` should parse APP markers and expose ICC/EXIF/XMP, or there should be a `read_info_with_extras()` that does.
+
+### 7. Limits are public fields, not builder methods
+
+**Issue:** `DecodeConfig` uses builder methods for everything (`output_format()`, `chroma_upsampling()`, `fancy_upsampling()`, etc.) but `max_pixels` and `max_memory` are bare `pub` fields:
+```rust
+dc.max_pixels = max_px;
+dc.max_memory = max_mem as usize;
+```
+Every other setting uses `self` consuming builders. Inconsistent.
+
+**Fix:** Add `with_max_pixels()` and `with_max_memory()` builder methods to match the rest of the API.
+
+### 8. `max_memory` is `usize`, not `u64`
+
+**Issue:** zenwebp, zengif, and zencodecs all use `u64` for memory limits. zenjpeg uses `usize`. Requires a cast in the adapter (`max_mem as usize`). On 32-bit targets this silently truncates.
+
+**Fix:** Change to `u64` for consistency across the ecosystem.
+
+### 9. Encoder metadata methods require owned `Vec<u8>`
+
+**Issue:** `EncoderConfig::icc_profile()`, `xmp()` take owned `Vec<u8>`. The adapter has borrowed `&[u8]` from `ImageMetadata` and must clone:
+```rust
+config = config.icc_profile(icc.to_vec());
+config = config.xmp(xmp.to_vec());
+```
+`EncodeRequest` has `_owned` variants, but `EncoderConfig` doesn't have borrowed variants.
+
+**Fix:** Accept `impl Into<Cow<'_, [u8]>>` or add `icc_profile_ref(&[u8])` methods, similar to how `EncodeRequest` has both borrowed and owned variants.
+
+### 10. `Decoder` vs `DecodeConfig` naming ambiguity
+
+**Issue:** The main decode type is `DecodeConfig` but it has methods like `decode()`, `scanline_reader()`, `ultrahdr_reader()` — it *is* the decoder. The old name `Decoder` exists as a type alias. Both are in scope causing confusion.
+
+**Fix:** Pick one name. If it's the config+decoder combined, `Decoder` is more natural (users call `.decode()` on it). If splitting config from execution, make them separate types.
+
+### 11. `decode_f32()` is redundant
+
+**Issue:** `decode_f32()` is identical to `decode()` with `.output_target(OutputTarget::SrgbF32)`. It's extra API surface with no additional capability.
+
+**Suggestion:** Deprecate `decode_f32()` in favor of the `OutputTarget` approach.
+
+## What Worked Well (Round 2)
+
+- `DecodedExtras` API for segment preservation is excellent — `segments()`, `mpf()`, `secondary_images()`, `gainmap()`, `to_encoder_segments()` is a clean roundtrip story
+- `GainMapHandling` enum gives fine-grained control over gain map processing cost
+- `PreserveConfig` letting callers choose what to preserve is good
+- The `EncodeRequest` → `RgbEncoder` → `push_packed()` → `finish()` streaming encode pipeline is clean
+- `EncoderSegments::add_gainmap()` makes gain map roundtrip trivial
