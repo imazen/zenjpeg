@@ -184,14 +184,15 @@ impl<'a> EncodeRequest<'a> {
     /// Encode a complete image from `rgb` crate pixel types in one call.
     ///
     /// Uses the request's stop token (if set) for cooperative cancellation.
+    /// Metadata (EXIF, ICC, XMP) from the request is included in the output.
     pub fn encode<P: Pixel>(
         self,
         pixels: &[P],
         width: u32,
         height: u32,
     ) -> Result<alloc::vec::Vec<u8>> {
-        let (config, stop) = self.split();
-        let mut enc = config.encode_from_rgb::<P>(width, height)?;
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let mut enc = self.encode_from_rgb::<P>(width, height)?;
         enc.push_packed(pixels, stop)?;
         enc.finish()
     }
@@ -199,6 +200,7 @@ impl<'a> EncodeRequest<'a> {
     /// Encode a complete image into a caller-provided buffer.
     ///
     /// Uses the request's stop token (if set) for cooperative cancellation.
+    /// Metadata (EXIF, ICC, XMP) from the request is included in the output.
     pub fn encode_into<P: Pixel>(
         self,
         pixels: &[P],
@@ -206,8 +208,8 @@ impl<'a> EncodeRequest<'a> {
         height: u32,
         output: &mut alloc::vec::Vec<u8>,
     ) -> Result<()> {
-        let (config, stop) = self.split();
-        let mut enc = config.encode_from_rgb::<P>(width, height)?;
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let mut enc = self.encode_from_rgb::<P>(width, height)?;
         enc.push_packed(pixels, stop)?;
         enc.finish_into(output)
     }
@@ -215,6 +217,7 @@ impl<'a> EncodeRequest<'a> {
     /// Encode a complete image from raw byte data in one call.
     ///
     /// Uses the request's stop token (if set) for cooperative cancellation.
+    /// Metadata (EXIF, ICC, XMP) from the request is included in the output.
     pub fn encode_bytes(
         self,
         data: &[u8],
@@ -222,8 +225,8 @@ impl<'a> EncodeRequest<'a> {
         height: u32,
         layout: PixelLayout,
     ) -> Result<alloc::vec::Vec<u8>> {
-        let (config, stop) = self.split();
-        let mut enc = config.encode_from_bytes(width, height, layout)?;
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let mut enc = self.encode_from_bytes(width, height, layout)?;
         enc.push_packed(data, stop)?;
         enc.finish()
     }
@@ -231,6 +234,7 @@ impl<'a> EncodeRequest<'a> {
     /// Encode a complete image from raw byte data into a caller-provided buffer.
     ///
     /// Uses the request's stop token (if set) for cooperative cancellation.
+    /// Metadata (EXIF, ICC, XMP) from the request is included in the output.
     pub fn encode_bytes_into(
         self,
         data: &[u8],
@@ -239,30 +243,13 @@ impl<'a> EncodeRequest<'a> {
         layout: PixelLayout,
         output: &mut alloc::vec::Vec<u8>,
     ) -> Result<()> {
-        let (config, stop) = self.split();
-        let mut enc = config.encode_from_bytes(width, height, layout)?;
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let mut enc = self.encode_from_bytes(width, height, layout)?;
         enc.push_packed(data, stop)?;
         enc.finish_into(output)
     }
 
     // === Internal ===
-
-    /// Split request into config and stop token.
-    fn split(self) -> (EncoderConfig, &'a dyn Stop) {
-        // Copy stop token out before moving self (Option<&dyn Stop> is Copy)
-        let stop = self.stop;
-        let (config, _segments) = self.into_config();
-        (config, stop.unwrap_or(&enough::Unstoppable))
-    }
-
-    /// Clone config (metadata now stored in encoders, not config).
-    fn into_config(self) -> (EncoderConfig, Option<EncoderSegments>) {
-        let config = self.config.clone();
-        let segments = self.segments;
-        // limits stored for future use (not yet wired to streaming encoder)
-        let _ = self.limits;
-        (config, segments)
-    }
 
     /// Extract metadata for encoder construction.
     fn extract_metadata(self) -> (EncoderConfig, Option<alloc::vec::Vec<u8>>, Option<Exif>, Option<alloc::vec::Vec<u8>>, Option<EncoderSegments>) {
