@@ -99,7 +99,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
-    let attr = dssim::Dssim::new();
+    let attr = dssim_core::Dssim::new();
     let orig_rgba: Vec<rgb::RGBA8> = orig
         .chunks(3)
         .map(|c| rgb::RGBA8::new(c[0], c[1], c[2], 255))
@@ -111,7 +111,8 @@ fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f6
     let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
     let dec_img = attr.create_image_rgba(&dec_rgba, width, height).unwrap();
     let (dssim, _) = attr.compare(&orig_img, dec_img);
-    dssim.into()
+    let val: f64 = dssim.into();
+    val
 }
 
 fn find_frymire() -> Option<PathBuf> {

@@ -110,7 +110,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
-    use dssim::Dssim;
+    use dssim_core::Dssim;
 
     let attr = Dssim::new();
 
@@ -129,5 +129,6 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
-    dssim.into()
+    let val: f64 = dssim.into();
+    val
 }

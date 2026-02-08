@@ -120,7 +120,7 @@ fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use dssim::Dssim;
+    use dssim_core::Dssim;
     use rgb::RGBA;
 
     let attr = Dssim::new();

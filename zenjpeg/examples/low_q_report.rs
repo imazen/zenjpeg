@@ -4,7 +4,7 @@
 use enough::Unstoppable;
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
-use dssim::Dssim;
+use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;
 use std::io::Write;
@@ -23,7 +23,8 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
     let orig = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
     let comp = attr.create_image_rgba(&dist_rgba, width, height).unwrap();
     let (dssim, _) = attr.compare(&orig, comp);
-    dssim.into()
+    let val: f64 = dssim.into();
+    val
 }
 
 fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {

@@ -107,7 +107,7 @@ pub mod detection_thresholds {
 ///
 /// # Example
 /// ```
-/// use zenjpeg::encode::trellis::{detect_image_type, ImageType};
+/// use zenjpeg::encode::trellis::hybrid::{detect_image_type, ImageType};
 ///
 /// // Typical photo statistics
 /// assert_eq!(detect_image_type(0.068, 0.039), ImageType::Photo);
@@ -167,7 +167,7 @@ pub fn detect_image_type(aq_mean: f32, aq_std: f32) -> ImageType {
 ///
 /// # Example
 /// ```
-/// use zenjpeg::encode::trellis::adaptive_config;
+/// use zenjpeg::encode::trellis::hybrid::adaptive_config;
 ///
 /// // Low-texture photo: aggressive compression
 /// let config = adaptive_config(0.10, 0.05);
