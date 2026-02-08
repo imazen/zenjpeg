@@ -209,7 +209,7 @@ impl DecodeConfig {
     /// Default is 512 MB. Set to `usize::MAX` for unlimited.
     /// This prevents memory exhaustion attacks from malicious images.
     #[must_use]
-    pub fn max_memory(mut self, bytes: usize) -> Self {
+    pub fn max_memory(mut self, bytes: u64) -> Self {
         self.max_memory = bytes;
         self
     }
@@ -224,7 +224,7 @@ impl DecodeConfig {
             self.max_pixels = pixels;
         }
         if let Some(memory) = limits.max_memory {
-            self.max_memory = memory as usize;
+            self.max_memory = memory;
         }
         self
     }
@@ -931,6 +931,18 @@ impl DecodeConfig {
 
         UltraHdrReader::new(data, config, base_reader, extras, gainmap_range, metadata)
     }
+
+    /// Gets the configured maximum pixels limit.
+    #[must_use]
+    pub fn get_max_pixels(&self) -> u64 {
+        self.max_pixels
+    }
+
+    /// Gets the configured maximum memory limit.
+    #[must_use]
+    pub fn get_max_memory(&self) -> u64 {
+        self.max_memory
+    }
 }
 
 #[cfg(test)]
@@ -1224,5 +1236,56 @@ mod metadata_tests {
         if let Some(ref exif) = info.exif {
             println!("✅ EXIF extracted: {} bytes", exif.len());
         }
+    }
+}
+#[cfg(test)]
+mod limits_tests {
+    use super::*;
+
+    #[test]
+    fn test_limits_builder_methods() {
+        let config = DecodeConfig::new()
+            .max_pixels(50_000_000)
+            .max_memory(256 * 1024 * 1024);
+
+        assert_eq!(config.get_max_pixels(), 50_000_000);
+        assert_eq!(config.get_max_memory(), 256 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_limits_from_struct() {
+        let limits = crate::types::Limits {
+            max_pixels: Some(10_000_000),
+            max_memory: Some(128 * 1024 * 1024),
+            max_output: None,
+        };
+
+        let config = DecodeConfig::new().limits(limits);
+
+        assert_eq!(config.get_max_pixels(), 10_000_000);
+        assert_eq!(config.get_max_memory(), 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_memory_is_u64() {
+        // Verify max_memory is u64 and doesn't require casting
+        let large_limit: u64 = 5_000_000_000; // 5GB, would overflow on 32-bit if usize
+        let config = DecodeConfig::new().max_memory(large_limit);
+        
+        assert_eq!(config.get_max_memory(), large_limit);
+    }
+
+    #[test]
+    fn test_fields_not_directly_accessible() {
+        // This test verifies that fields are private and must use methods
+        let config = DecodeConfig::new();
+        
+        // These should compile (using getters)
+        let _ = config.get_max_pixels();
+        let _ = config.get_max_memory();
+        
+        // Direct field access should NOT compile (would fail if uncommented):
+        // let _ = config.max_pixels;
+        // let _ = config.max_memory;
     }
 }

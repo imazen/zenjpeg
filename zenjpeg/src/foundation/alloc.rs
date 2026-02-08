@@ -39,7 +39,7 @@ pub const MAX_ICC_PROFILE_SIZE: usize = 16 * 1024 * 1024;
 
 /// Default maximum memory for decode operations (512 MB).
 /// This limits total allocations during a single decode operation.
-pub const DEFAULT_MAX_MEMORY: usize = 512 * 1024 * 1024;
+pub const DEFAULT_MAX_MEMORY: u64 = 512 * 1024 * 1024;
 
 /// Tracks cumulative memory allocations during decode operations.
 ///
@@ -66,7 +66,7 @@ impl MemoryTracker {
     /// Creates a new tracker with default limit (512 MB).
     #[must_use]
     pub fn with_default_limit() -> Self {
-        Self::new(DEFAULT_MAX_MEMORY)
+        Self::new(DEFAULT_MAX_MEMORY as usize)
     }
 
     /// Creates an unlimited tracker (for testing or trusted inputs).
