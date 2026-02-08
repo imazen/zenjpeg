@@ -698,6 +698,42 @@ trellis only). CMA-ES scaling modifies quant table generation and is described a
 
 - `serialize.rs::write_frame_header_xyb_ex()` still hardcodes 0x22/0x11 (low priority, always correct for XYB)
 
+### API Improvements (Future)
+
+**Issue #2: Top-level type re-exports for discoverability**
+
+Currently, common types are in private/nested modules causing confusion:
+- `zenjpeg::types::PixelFormat` - Module is private by default
+- `zenjpeg::decoder::PixelFormat` - Counterintuitive location
+- `zenjpeg::encoder::PixelLayout` - Different type, different location
+
+**Proposed:** Re-export commonly used types at crate root for ergonomics:
+
+```rust
+// What users expect to write:
+use zenjpeg::{PixelFormat, PixelLayout, ColorSpace, Limits, Dimensions};
+
+// Instead of current workarounds:
+use zenjpeg::decoder::PixelFormat;  // Why is it in decoder?
+use zenjpeg::encoder::PixelLayout;  // Different module for similar type
+```
+
+**Types to re-export:**
+- `PixelFormat` - Input/output pixel formats (RGB, RGBA, Gray, etc.)
+- `PixelLayout` - Encoder pixel layouts (with transfer functions)
+- `ColorSpace` - JPEG color space (YCbCr, Grayscale, RGB)
+- `Subsampling` - Chroma subsampling modes (4:4:4, 4:2:0, etc.)
+- `Limits` - Resource limits (max_pixels, max_memory, max_output)
+- `Dimensions` - Width/height pair
+- `JpegMode` - Baseline/Progressive
+
+**Rationale:** Follows Rust conventions (tokio, serde, etc.). Makes API discoverable
+via autocomplete. No breaking changes - existing paths still work.
+
+**Status:** Deferred - requires careful consideration of public API surface.
+
+Reference: api-feedback.md issue #2
+
 ### Resource Estimation API (docs/API_DESIGN.md)
 
 For proxy server efficiency: accurate memory and compute cost estimation before encoding.
