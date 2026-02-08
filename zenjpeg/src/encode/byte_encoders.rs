@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 /// This encoder wraps `StreamingEncoder` to provide true streaming encoding
 /// without buffering the entire image in memory.
 pub struct BytesEncoder {
-    /// v2 config (kept for ICC profile injection)
+    /// v2 config (no longer holds metadata)
     config: EncoderConfig,
     /// Pixel layout
     layout: PixelLayout,
@@ -27,6 +27,12 @@ pub struct BytesEncoder {
     height: u32,
     /// Inner streaming encoder (handles actual encoding)
     inner: StreamingEncoder,
+    /// ICC profile (per-image metadata)
+    icc_profile: Option<alloc::vec::Vec<u8>>,
+    /// EXIF data (per-image metadata)
+    exif_data: Option<super::exif::Exif>,
+    /// XMP data (per-image metadata)
+    xmp_data: Option<alloc::vec::Vec<u8>>,
 }
 
 impl BytesEncoder {
@@ -35,6 +41,9 @@ impl BytesEncoder {
         width: u32,
         height: u32,
         layout: PixelLayout,
+        icc_profile: Option<alloc::vec::Vec<u8>>,
+        exif_data: Option<super::exif::Exif>,
+        xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
         // Validate dimensions
         if width == 0 || height == 0 {
@@ -64,6 +73,9 @@ impl BytesEncoder {
             width,
             height,
             inner,
+            icc_profile,
+            exif_data,
+            xmp_data,
         })
     }
 
@@ -302,26 +314,26 @@ impl BytesEncoder {
             // Merge individual metadata into segments if MPF is present
             // (MPF offset calculation needs all data to be accounted for)
             if segments.has_mpf_images() {
-                if let Some(ref xmp_data) = self.config.xmp_data {
+                if let Some(ref xmp_data) = self.xmp_data {
                     if !xmp_data.is_empty() {
                         // Convert raw XMP bytes to string for set_xmp
                         if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
                             segments = segments.set_xmp(xmp_str);
                         }
                     }
-                    self.config.xmp_data = None; // Mark as handled
+                    self.xmp_data = None; // Mark as handled
                 }
-                if let Some(ref exif) = self.config.exif_data {
+                if let Some(ref exif) = self.exif_data {
                     if let Some(exif_bytes) = exif.to_bytes() {
                         segments.set_exif_mut(exif_bytes);
                     }
-                    self.config.exif_data = None; // Mark as handled
+                    self.exif_data = None; // Mark as handled
                 }
-                if let Some(ref icc_data) = self.config.icc_profile {
+                if let Some(ref icc_data) = self.icc_profile {
                     if !icc_data.is_empty() {
                         segments = segments.set_icc(icc_data.clone());
                     }
-                    self.config.icc_profile = None; // Mark as handled
+                    self.icc_profile = None; // Mark as handled
                 }
             }
             inject_encoder_segments_inplace(output, &segments);
@@ -330,17 +342,17 @@ impl BytesEncoder {
         // Fall back to individual metadata fields for backwards compatibility
         // These are applied after EncoderSegments if both are provided
         // (allows override of specific fields while keeping bulk segments)
-        if let Some(ref exif) = self.config.exif_data {
+        if let Some(ref exif) = self.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
                 inject_exif_inplace(output, &exif_bytes);
             }
         }
 
-        if let Some(ref xmp_data) = self.config.xmp_data {
+        if let Some(ref xmp_data) = self.xmp_data {
             inject_xmp_inplace(output, xmp_data);
         }
 
-        if let Some(ref icc_data) = self.config.icc_profile {
+        if let Some(ref icc_data) = self.icc_profile {
             inject_icc_profile_inplace(output, icc_data);
         }
 
@@ -727,8 +739,15 @@ pub struct RgbEncoder<P: Pixel> {
 }
 
 impl<P: Pixel> RgbEncoder<P> {
-    pub(crate) fn new(config: EncoderConfig, width: u32, height: u32) -> Result<Self> {
-        let inner = BytesEncoder::new(config, width, height, P::LAYOUT)?;
+    pub(crate) fn new(
+        config: EncoderConfig,
+        width: u32,
+        height: u32,
+        icc_profile: Option<alloc::vec::Vec<u8>>,
+        exif_data: Option<super::exif::Exif>,
+        xmp_data: Option<alloc::vec::Vec<u8>>,
+    ) -> Result<Self> {
+        let inner = BytesEncoder::new(config, width, height, P::LAYOUT, icc_profile, exif_data, xmp_data)?;
         Ok(Self {
             inner,
             _marker: PhantomData,
@@ -831,7 +850,7 @@ impl<P: Pixel> RgbEncoder<P> {
 /// Data can be pushed in any row count - the encoder buffers partial strips
 /// internally and flushes when a complete strip is accumulated.
 pub struct YCbCrPlanarEncoder {
-    /// v2 config (kept for metadata injection)
+    /// v2 config (no longer holds metadata)
     config: EncoderConfig,
     /// Image width
     width: u32,
@@ -853,10 +872,23 @@ pub struct YCbCrPlanarEncoder {
     buffered_rows: usize,
     /// Inner streaming encoder (handles actual encoding)
     inner: StreamingEncoder,
+    /// ICC profile (per-image metadata)
+    icc_profile: Option<alloc::vec::Vec<u8>>,
+    /// EXIF data (per-image metadata)
+    exif_data: Option<super::exif::Exif>,
+    /// XMP data (per-image metadata)
+    xmp_data: Option<alloc::vec::Vec<u8>>,
 }
 
 impl YCbCrPlanarEncoder {
-    pub(crate) fn new(config: EncoderConfig, width: u32, height: u32) -> Result<Self> {
+    pub(crate) fn new(
+        config: EncoderConfig,
+        width: u32,
+        height: u32,
+        icc_profile: Option<alloc::vec::Vec<u8>>,
+        exif_data: Option<super::exif::Exif>,
+        xmp_data: Option<alloc::vec::Vec<u8>>,
+    ) -> Result<Self> {
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::invalid_dimensions(
@@ -908,6 +940,9 @@ impl YCbCrPlanarEncoder {
             cr_buffer: vec![0.0f32; buffer_size],
             buffered_rows: 0,
             inner,
+            icc_profile,
+            exif_data,
+            xmp_data,
         })
     }
 
@@ -1260,43 +1295,43 @@ impl YCbCrPlanarEncoder {
             // Merge individual metadata into segments if MPF is present
             // (MPF offset calculation needs all data to be accounted for)
             if segments.has_mpf_images() {
-                if let Some(ref xmp_data) = self.config.xmp_data {
+                if let Some(ref xmp_data) = self.xmp_data {
                     if !xmp_data.is_empty() {
                         // Convert raw XMP bytes to string for set_xmp
                         if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
                             segments = segments.set_xmp(xmp_str);
                         }
                     }
-                    self.config.xmp_data = None; // Mark as handled
+                    self.xmp_data = None; // Mark as handled
                 }
-                if let Some(ref exif) = self.config.exif_data {
+                if let Some(ref exif) = self.exif_data {
                     if let Some(exif_bytes) = exif.to_bytes() {
                         segments.set_exif_mut(exif_bytes);
                     }
-                    self.config.exif_data = None; // Mark as handled
+                    self.exif_data = None; // Mark as handled
                 }
-                if let Some(ref icc_data) = self.config.icc_profile {
+                if let Some(ref icc_data) = self.icc_profile {
                     if !icc_data.is_empty() {
                         segments = segments.set_icc(icc_data.clone());
                     }
-                    self.config.icc_profile = None; // Mark as handled
+                    self.icc_profile = None; // Mark as handled
                 }
             }
             inject_encoder_segments_inplace(output, &segments);
         }
 
         // Fall back to individual metadata fields for backwards compatibility
-        if let Some(ref exif) = self.config.exif_data {
+        if let Some(ref exif) = self.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
                 inject_exif_inplace(output, &exif_bytes);
             }
         }
 
-        if let Some(ref xmp_data) = self.config.xmp_data {
+        if let Some(ref xmp_data) = self.xmp_data {
             inject_xmp_inplace(output, xmp_data);
         }
 
-        if let Some(ref icc_data) = self.config.icc_profile {
+        if let Some(ref icc_data) = self.icc_profile {
             inject_icc_profile_inplace(output, icc_data);
         }
 
@@ -1412,9 +1447,10 @@ mod tests {
         // Small fake ICC profile (just for testing structure)
         let fake_icc = vec![0u8; 1000];
 
-        let config =
-            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(fake_icc.clone());
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
+            .request()
+            .icc_profile_owned(fake_icc.clone())
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
 
@@ -1455,8 +1491,10 @@ mod tests {
         // Large ICC profile that requires multiple chunks
         let large_icc = vec![0xABu8; 100_000]; // > 65519 bytes
 
-        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(large_icc);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
+            .request()
+            .icc_profile_owned(large_icc)
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
 
@@ -1511,9 +1549,10 @@ mod tests {
         // Test that we can extract the same ICC profile we injected
         let original_icc: Vec<u8> = (0..=255).cycle().take(3000).collect();
 
-        let config =
-            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(original_icc.clone());
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
+            .request()
+            .icc_profile_owned(original_icc.clone())
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
 
@@ -1916,8 +1955,10 @@ mod tests {
 
         // Create config with ICC profile
         let fake_icc = vec![0xABu8; 1000];
-        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(fake_icc);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
+            .request()
+            .icc_profile_owned(fake_icc)
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
 

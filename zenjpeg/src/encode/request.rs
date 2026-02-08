@@ -152,31 +152,31 @@ impl<'a> EncodeRequest<'a> {
 
     /// Create a streaming encoder from raw byte input with explicit pixel layout.
     ///
-    /// Same as [`EncoderConfig::encode_from_bytes()`] but with request metadata merged.
+    /// Metadata from the request is passed to the encoder.
     pub fn encode_from_bytes(
         self,
         width: u32,
         height: u32,
         layout: PixelLayout,
     ) -> Result<BytesEncoder> {
-        let config = self.into_config();
-        config.encode_from_bytes(width, height, layout)
+        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        BytesEncoder::new(config, width, height, layout, icc, exif, xmp)
     }
 
     /// Create a streaming encoder from `rgb` crate pixel types.
     ///
-    /// Same as [`EncoderConfig::encode_from_rgb()`] but with request metadata merged.
+    /// Metadata from the request is passed to the encoder.
     pub fn encode_from_rgb<P: Pixel>(self, width: u32, height: u32) -> Result<RgbEncoder<P>> {
-        let config = self.into_config();
-        config.encode_from_rgb::<P>(width, height)
+        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        RgbEncoder::new(config, width, height, icc, exif, xmp)
     }
 
     /// Create a streaming encoder from planar YCbCr data.
     ///
-    /// Same as [`EncoderConfig::encode_from_ycbcr_planar()`] but with request metadata merged.
+    /// Metadata from the request is passed to the encoder.
     pub fn encode_from_ycbcr_planar(self, width: u32, height: u32) -> Result<YCbCrPlanarEncoder> {
-        let config = self.into_config();
-        config.encode_from_ycbcr_planar(width, height)
+        let (config, icc, exif, xmp, _segments) = self.extract_metadata();
+        YCbCrPlanarEncoder::new(config, width, height, icc, exif, xmp)
     }
 
     // === One-Shot Convenience ===
@@ -247,31 +247,30 @@ impl<'a> EncodeRequest<'a> {
 
     // === Internal ===
 
-    /// Split request into config (with merged metadata) and stop token.
+    /// Split request into config and stop token.
     fn split(self) -> (EncoderConfig, &'a dyn Stop) {
         // Copy stop token out before moving self (Option<&dyn Stop> is Copy)
         let stop = self.stop;
-        let config = self.into_config();
+        let (config, _segments) = self.into_config();
         (config, stop.unwrap_or(&enough::Unstoppable))
     }
 
-    /// Clone config and merge request metadata into it.
-    fn into_config(self) -> EncoderConfig {
-        let mut config = self.config.clone();
-        if let Some(icc) = self.icc_profile {
-            config.icc_profile = Some(icc.into_owned());
-        }
-        if let Some(exif) = self.exif {
-            config.exif_data = Some(exif);
-        }
-        if let Some(xmp) = self.xmp {
-            config.xmp_data = Some(xmp.into_owned());
-        }
-        if let Some(segments) = self.segments {
-            config.segments = Some(segments);
-        }
+    /// Clone config (metadata now stored in encoders, not config).
+    fn into_config(self) -> (EncoderConfig, Option<EncoderSegments>) {
+        let config = self.config.clone();
+        let segments = self.segments;
         // limits stored for future use (not yet wired to streaming encoder)
         let _ = self.limits;
-        config
+        (config, segments)
+    }
+
+    /// Extract metadata for encoder construction.
+    fn extract_metadata(self) -> (EncoderConfig, Option<alloc::vec::Vec<u8>>, Option<Exif>, Option<alloc::vec::Vec<u8>>, Option<EncoderSegments>) {
+        let config = self.config.clone();
+        let icc = self.icc_profile.map(|c| c.into_owned());
+        let exif = self.exif;
+        let xmp = self.xmp.map(|c| c.into_owned());
+        let segments = self.segments;
+        (config, icc, exif, xmp, segments)
     }
 }
