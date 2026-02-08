@@ -18,9 +18,6 @@
 use archmage::{arcane, NeonToken};
 use core::arch::aarch64::*;
 
-// Re-export NeonToken for callers
-pub use archmage::NeonToken;
-
 // ============================================================================
 // DCT Constants (same as x86 version)
 // ============================================================================
@@ -49,32 +46,33 @@ const SQRT2: f32 = 1.41421356237;
 #[arcane]
 #[inline]
 fn neon_transpose_4x4_inplace_inner(_token: NeonToken, r: &mut [float32x4_t; 4]) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // Phase 1: Interleave pairs
-        // After this, q0/q1 have rows 0&1 interleaved, q2/q3 have rows 2&3 interleaved
-        let q0 = vzip1q_f32(r[0], r[1]); // [r0[0], r1[0], r0[1], r1[1]]
-        let q1 = vzip2q_f32(r[0], r[1]); // [r0[2], r1[2], r0[3], r1[3]]
-        let q2 = vzip1q_f32(r[2], r[3]); // [r2[0], r3[0], r2[1], r3[1]]
-        let q3 = vzip2q_f32(r[2], r[3]); // [r2[2], r3[2], r2[3], r3[3]]
+    // Phase 1: Interleave pairs
+    // After this, q0/q1 have rows 0&1 interleaved, q2/q3 have rows 2&3 interleaved
+    let q0 = vzip1q_f32(r[0], r[1]); // [r0[0], r1[0], r0[1], r1[1]]
+    let q1 = vzip2q_f32(r[0], r[1]); // [r0[2], r1[2], r0[3], r1[3]]
+    let q2 = vzip1q_f32(r[2], r[3]); // [r2[0], r3[0], r2[1], r3[1]]
+    let q3 = vzip2q_f32(r[2], r[3]); // [r2[2], r3[2], r2[3], r3[3]]
 
-        // Phase 2: Interleave 64-bit pairs (f32x2 treated as single 64-bit unit)
-        // This completes the transpose
-        r[0] = vreinterpretq_f32_f64(vzip1q_f64(
-            vreinterpretq_f64_f32(q0),
-            vreinterpretq_f64_f32(q2),
-        )); // Column 0
-        r[1] = vreinterpretq_f32_f64(vzip2q_f64(
-            vreinterpretq_f64_f32(q0),
-            vreinterpretq_f64_f32(q2),
-        )); // Column 1
-        r[2] = vreinterpretq_f32_f64(vzip1q_f64(
-            vreinterpretq_f64_f32(q1),
-            vreinterpretq_f64_f32(q3),
-        )); // Column 2
-        r[3] = vreinterpretq_f32_f64(vzip2q_f64(
-            vreinterpretq_f64_f32(q1),
-            vreinterpretq_f64_f32(q3),
-        )); // Column 3
+    // Phase 2: Interleave 64-bit pairs (f32x2 treated as single 64-bit unit)
+    // This completes the transpose
+    r[0] = vreinterpretq_f32_f64(vzip1q_f64(
+        vreinterpretq_f64_f32(q0),
+        vreinterpretq_f64_f32(q2),
+    )); // Column 0
+    r[1] = vreinterpretq_f32_f64(vzip2q_f64(
+        vreinterpretq_f64_f32(q0),
+        vreinterpretq_f64_f32(q2),
+    )); // Column 1
+    r[2] = vreinterpretq_f32_f64(vzip1q_f64(
+        vreinterpretq_f64_f32(q1),
+        vreinterpretq_f64_f32(q3),
+    )); // Column 2
+    r[3] = vreinterpretq_f32_f64(vzip2q_f64(
+        vreinterpretq_f64_f32(q1),
+        vreinterpretq_f64_f32(q3),
+    )); // Column 3
     }
 }
 
@@ -103,61 +101,62 @@ pub fn neon_transpose_4x4_inplace(token: NeonToken, r: &mut [float32x4_t; 4]) {
 #[arcane]
 #[inline]
 fn neon_transpose_8x8_inplace_inner(token: NeonToken, data: &mut [f32; 64]) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // Load 8 rows as 16 float32x4_t registers (2 per row)
-        let mut r0_lo = vld1q_f32(data.as_ptr());
-        let mut r0_hi = vld1q_f32(data.as_ptr().add(4));
-        let mut r1_lo = vld1q_f32(data.as_ptr().add(8));
-        let mut r1_hi = vld1q_f32(data.as_ptr().add(12));
-        let mut r2_lo = vld1q_f32(data.as_ptr().add(16));
-        let mut r2_hi = vld1q_f32(data.as_ptr().add(20));
-        let mut r3_lo = vld1q_f32(data.as_ptr().add(24));
-        let mut r3_hi = vld1q_f32(data.as_ptr().add(28));
-        let mut r4_lo = vld1q_f32(data.as_ptr().add(32));
-        let mut r4_hi = vld1q_f32(data.as_ptr().add(36));
-        let mut r5_lo = vld1q_f32(data.as_ptr().add(40));
-        let mut r5_hi = vld1q_f32(data.as_ptr().add(44));
-        let mut r6_lo = vld1q_f32(data.as_ptr().add(48));
-        let mut r6_hi = vld1q_f32(data.as_ptr().add(52));
-        let mut r7_lo = vld1q_f32(data.as_ptr().add(56));
-        let mut r7_hi = vld1q_f32(data.as_ptr().add(60));
+    // Load 8 rows as 16 float32x4_t registers (2 per row)
+    let mut r0_lo = vld1q_f32(data.as_ptr());
+    let mut r0_hi = vld1q_f32(data.as_ptr().add(4));
+    let mut r1_lo = vld1q_f32(data.as_ptr().add(8));
+    let mut r1_hi = vld1q_f32(data.as_ptr().add(12));
+    let mut r2_lo = vld1q_f32(data.as_ptr().add(16));
+    let mut r2_hi = vld1q_f32(data.as_ptr().add(20));
+    let mut r3_lo = vld1q_f32(data.as_ptr().add(24));
+    let mut r3_hi = vld1q_f32(data.as_ptr().add(28));
+    let mut r4_lo = vld1q_f32(data.as_ptr().add(32));
+    let mut r4_hi = vld1q_f32(data.as_ptr().add(36));
+    let mut r5_lo = vld1q_f32(data.as_ptr().add(40));
+    let mut r5_hi = vld1q_f32(data.as_ptr().add(44));
+    let mut r6_lo = vld1q_f32(data.as_ptr().add(48));
+    let mut r6_hi = vld1q_f32(data.as_ptr().add(52));
+    let mut r7_lo = vld1q_f32(data.as_ptr().add(56));
+    let mut r7_hi = vld1q_f32(data.as_ptr().add(60));
 
-        // Transpose top-left 4x4
-        let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
-        neon_transpose_4x4_inplace_inner(token, &mut tl);
+    // Transpose top-left 4x4
+    let mut tl = [r0_lo, r1_lo, r2_lo, r3_lo];
+    neon_transpose_4x4_inplace_inner(token, &mut tl);
 
-        // Transpose top-right 4x4
-        let mut tr = [r0_hi, r1_hi, r2_hi, r3_hi];
-        neon_transpose_4x4_inplace_inner(token, &mut tr);
+    // Transpose top-right 4x4
+    let mut tr = [r0_hi, r1_hi, r2_hi, r3_hi];
+    neon_transpose_4x4_inplace_inner(token, &mut tr);
 
-        // Transpose bottom-left 4x4
-        let mut bl = [r4_lo, r5_lo, r6_lo, r7_lo];
-        neon_transpose_4x4_inplace_inner(token, &mut bl);
+    // Transpose bottom-left 4x4
+    let mut bl = [r4_lo, r5_lo, r6_lo, r7_lo];
+    neon_transpose_4x4_inplace_inner(token, &mut bl);
 
-        // Transpose bottom-right 4x4
-        let mut br = [r4_hi, r5_hi, r6_hi, r7_hi];
-        neon_transpose_4x4_inplace_inner(token, &mut br);
+    // Transpose bottom-right 4x4
+    let mut br = [r4_hi, r5_hi, r6_hi, r7_hi];
+    neon_transpose_4x4_inplace_inner(token, &mut br);
 
-        // Store transposed blocks
-        // After transpose, what were rows are now columns:
-        // tl[0] = column 0, lanes 0-3 (from original rows 0-3)
-        // bl[0] = column 0, lanes 4-7 (from original rows 4-7)
-        vst1q_f32(data.as_mut_ptr(), tl[0]);
-        vst1q_f32(data.as_mut_ptr().add(4), bl[0]);
-        vst1q_f32(data.as_mut_ptr().add(8), tl[1]);
-        vst1q_f32(data.as_mut_ptr().add(12), bl[1]);
-        vst1q_f32(data.as_mut_ptr().add(16), tl[2]);
-        vst1q_f32(data.as_mut_ptr().add(20), bl[2]);
-        vst1q_f32(data.as_mut_ptr().add(24), tl[3]);
-        vst1q_f32(data.as_mut_ptr().add(28), bl[3]);
-        vst1q_f32(data.as_mut_ptr().add(32), tr[0]);
-        vst1q_f32(data.as_mut_ptr().add(36), br[0]);
-        vst1q_f32(data.as_mut_ptr().add(40), tr[1]);
-        vst1q_f32(data.as_mut_ptr().add(44), br[1]);
-        vst1q_f32(data.as_mut_ptr().add(48), tr[2]);
-        vst1q_f32(data.as_mut_ptr().add(52), br[2]);
-        vst1q_f32(data.as_mut_ptr().add(56), tr[3]);
-        vst1q_f32(data.as_mut_ptr().add(60), br[3]);
+    // Store transposed blocks
+    // After transpose, what were rows are now columns:
+    // tl[0] = column 0, lanes 0-3 (from original rows 0-3)
+    // bl[0] = column 0, lanes 4-7 (from original rows 4-7)
+    vst1q_f32(data.as_mut_ptr(), tl[0]);
+    vst1q_f32(data.as_mut_ptr().add(4), bl[0]);
+    vst1q_f32(data.as_mut_ptr().add(8), tl[1]);
+    vst1q_f32(data.as_mut_ptr().add(12), bl[1]);
+    vst1q_f32(data.as_mut_ptr().add(16), tl[2]);
+    vst1q_f32(data.as_mut_ptr().add(20), bl[2]);
+    vst1q_f32(data.as_mut_ptr().add(24), tl[3]);
+    vst1q_f32(data.as_mut_ptr().add(28), bl[3]);
+    vst1q_f32(data.as_mut_ptr().add(32), tr[0]);
+    vst1q_f32(data.as_mut_ptr().add(36), br[0]);
+    vst1q_f32(data.as_mut_ptr().add(40), tr[1]);
+    vst1q_f32(data.as_mut_ptr().add(44), br[1]);
+    vst1q_f32(data.as_mut_ptr().add(48), tr[2]);
+    vst1q_f32(data.as_mut_ptr().add(52), br[2]);
+    vst1q_f32(data.as_mut_ptr().add(56), tr[3]);
+    vst1q_f32(data.as_mut_ptr().add(60), br[3]);
     }
 }
 
@@ -177,11 +176,12 @@ pub fn neon_transpose_8x8(token: NeonToken, data: &mut [f32; 64]) {
 #[arcane]
 #[inline]
 fn neon_dct1d_2_inner(_token: NeonToken, m0: &mut float32x4_t, m1: &mut float32x4_t) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        let sum = vaddq_f32(*m0, *m1);
-        let diff = vsubq_f32(*m0, *m1);
-        *m0 = sum;
-        *m1 = diff;
+    let sum = vaddq_f32(*m0, *m1);
+    let diff = vsubq_f32(*m0, *m1);
+    *m0 = sum;
+    *m1 = diff;
     }
 }
 
@@ -191,26 +191,27 @@ fn neon_dct1d_2_inner(_token: NeonToken, m0: &mut float32x4_t, m1: &mut float32x
 #[arcane]
 #[inline]
 fn neon_dct1d_4_inner(token: NeonToken, m: &mut [float32x4_t; 4]) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
-        let sum03 = vaddq_f32(m[0], m[3]);
-        let sum12 = vaddq_f32(m[1], m[2]);
-        let diff12 = vsubq_f32(m[1], m[2]);
-        let diff03 = vsubq_f32(m[0], m[3]);
+    // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
+    let sum03 = vaddq_f32(m[0], m[3]);
+    let sum12 = vaddq_f32(m[1], m[2]);
+    let diff12 = vsubq_f32(m[1], m[2]);
+    let diff03 = vsubq_f32(m[0], m[3]);
 
-        // Second layer: apply 2-point DCT to (sum03, sum12)
-        let mut t0 = sum03;
-        let mut t1 = sum12;
-        neon_dct1d_2_inner(token, &mut t0, &mut t1);
+    // Second layer: apply 2-point DCT to (sum03, sum12)
+    let mut t0 = sum03;
+    let mut t1 = sum12;
+    neon_dct1d_2_inner(token, &mut t0, &mut t1);
 
-        // Apply WC4 coefficients to differences using FMA
-        let wc4_0 = vdupq_n_f32(WC4_0);
-        let wc4_1 = vdupq_n_f32(WC4_1);
+    // Apply WC4 coefficients to differences using FMA
+    let wc4_0 = vdupq_n_f32(WC4_0);
+    let wc4_1 = vdupq_n_f32(WC4_1);
 
-        m[0] = t0;
-        m[1] = vfmaq_f32(vmulq_f32(diff12, wc4_0), diff03, wc4_1); // diff12 * WC4_0 + diff03 * WC4_1
-        m[2] = t1;
-        m[3] = vfmsq_f32(vmulq_f32(diff12, wc4_1), diff03, wc4_0); // diff12 * WC4_1 - diff03 * WC4_0
+    m[0] = t0;
+    m[1] = vfmaq_f32(vmulq_f32(diff12, wc4_0), diff03, wc4_1); // diff12 * WC4_0 + diff03 * WC4_1
+    m[2] = t1;
+    m[3] = vfmsq_f32(vmulq_f32(diff12, wc4_1), diff03, wc4_0); // diff12 * WC4_1 - diff03 * WC4_0
     }
 }
 
@@ -220,47 +221,48 @@ fn neon_dct1d_4_inner(token: NeonToken, m: &mut [float32x4_t; 4]) {
 #[arcane]
 #[inline]
 fn neon_dct1d_8_inner(token: NeonToken, m: &mut [float32x4_t; 8]) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // First layer: butterfly on opposite ends
-        let sum07 = vaddq_f32(m[0], m[7]);
-        let sum16 = vaddq_f32(m[1], m[6]);
-        let sum25 = vaddq_f32(m[2], m[5]);
-        let sum34 = vaddq_f32(m[3], m[4]);
-        let diff07 = vsubq_f32(m[0], m[7]);
-        let diff16 = vsubq_f32(m[1], m[6]);
-        let diff25 = vsubq_f32(m[2], m[5]);
-        let diff34 = vsubq_f32(m[3], m[4]);
+    // First layer: butterfly on opposite ends
+    let sum07 = vaddq_f32(m[0], m[7]);
+    let sum16 = vaddq_f32(m[1], m[6]);
+    let sum25 = vaddq_f32(m[2], m[5]);
+    let sum34 = vaddq_f32(m[3], m[4]);
+    let diff07 = vsubq_f32(m[0], m[7]);
+    let diff16 = vsubq_f32(m[1], m[6]);
+    let diff25 = vsubq_f32(m[2], m[5]);
+    let diff34 = vsubq_f32(m[3], m[4]);
 
-        // Apply 4-point DCT to sums
-        let mut even = [sum07, sum16, sum25, sum34];
-        neon_dct1d_4_inner(token, &mut even);
+    // Apply 4-point DCT to sums
+    let mut even = [sum07, sum16, sum25, sum34];
+    neon_dct1d_4_inner(token, &mut even);
 
-        // Apply WC8 coefficients to differences using FMA
-        let wc8_0 = vdupq_n_f32(WC8_0);
-        let wc8_1 = vdupq_n_f32(WC8_1);
-        let wc8_2 = vdupq_n_f32(WC8_2);
-        let wc8_3 = vdupq_n_f32(WC8_3);
+    // Apply WC8 coefficients to differences using FMA
+    let wc8_0 = vdupq_n_f32(WC8_0);
+    let wc8_1 = vdupq_n_f32(WC8_1);
+    let wc8_2 = vdupq_n_f32(WC8_2);
+    let wc8_3 = vdupq_n_f32(WC8_3);
 
-        // Odd part (complex FMA chains)
-        let t0 = vfmaq_f32(vmulq_f32(diff07, wc8_0), diff34, wc8_1);
-        let t1 = vfmaq_f32(vmulq_f32(diff16, wc8_2), diff25, wc8_3);
-        let t2 = vfmsq_f32(vmulq_f32(diff16, wc8_3), diff25, wc8_2);
-        let t3 = vfmsq_f32(vmulq_f32(diff07, wc8_1), diff34, wc8_0);
+    // Odd part (complex FMA chains)
+    let t0 = vfmaq_f32(vmulq_f32(diff07, wc8_0), diff34, wc8_1);
+    let t1 = vfmaq_f32(vmulq_f32(diff16, wc8_2), diff25, wc8_3);
+    let t2 = vfmsq_f32(vmulq_f32(diff16, wc8_3), diff25, wc8_2);
+    let t3 = vfmsq_f32(vmulq_f32(diff07, wc8_1), diff34, wc8_0);
 
-        let odd0 = vaddq_f32(t0, t1);
-        let odd1 = vsubq_f32(t0, t1);
-        let odd2 = vaddq_f32(t2, t3);
-        let odd3 = vsubq_f32(t2, t3);
+    let odd0 = vaddq_f32(t0, t1);
+    let odd1 = vsubq_f32(t0, t1);
+    let odd2 = vaddq_f32(t2, t3);
+    let odd3 = vsubq_f32(t2, t3);
 
-        // Interleave even and odd results
-        m[0] = even[0];
-        m[1] = odd0;
-        m[2] = even[1];
-        m[3] = odd1;
-        m[4] = even[2];
-        m[5] = odd2;
-        m[6] = even[3];
-        m[7] = odd3;
+    // Interleave even and odd results
+    m[0] = even[0];
+    m[1] = odd0;
+    m[2] = even[1];
+    m[3] = odd1;
+    m[4] = even[2];
+    m[5] = odd2;
+    m[6] = even[3];
+    m[7] = odd3;
     }
 }
 
@@ -282,43 +284,44 @@ fn neon_dct1d_8_inner(token: NeonToken, m: &mut [float32x4_t; 8]) {
 /// For now, this demonstrates the pattern.
 #[arcane]
 pub fn neon_forward_dct_8x8(token: NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // Load all 8 rows as float32x4_t pairs
-        let mut rows_lo: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
-        let mut rows_hi: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
+    // Load all 8 rows as float32x4_t pairs
+    let mut rows_lo: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
+    let mut rows_hi: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
 
-        for i in 0..8 {
-            rows_lo[i] = vld1q_f32(input.as_ptr().add(i * 8));
-            rows_hi[i] = vld1q_f32(input.as_ptr().add(i * 8 + 4));
-        }
+    for i in 0..8 {
+        rows_lo[i] = vld1q_f32(input.as_ptr().add(i * 8));
+        rows_hi[i] = vld1q_f32(input.as_ptr().add(i * 8 + 4));
+    }
 
-        // Apply 1D DCT to each row
-        neon_dct1d_8_inner(token, &mut rows_lo);
-        neon_dct1d_8_inner(token, &mut rows_hi);
+    // Apply 1D DCT to each row
+    neon_dct1d_8_inner(token, &mut rows_lo);
+    neon_dct1d_8_inner(token, &mut rows_hi);
 
-        // Transpose
-        let mut temp = [0.0f32; 64];
-        for i in 0..8 {
-            vst1q_f32(temp.as_mut_ptr().add(i * 8), rows_lo[i]);
-            vst1q_f32(temp.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
-        }
-        neon_transpose_8x8_inplace_inner(token, &mut temp);
+    // Transpose
+    let mut temp = [0.0f32; 64];
+    for i in 0..8 {
+        vst1q_f32(temp.as_mut_ptr().add(i * 8), rows_lo[i]);
+        vst1q_f32(temp.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
+    }
+    neon_transpose_8x8_inplace_inner(token, &mut temp);
 
-        // Reload transposed data
-        for i in 0..8 {
-            rows_lo[i] = vld1q_f32(temp.as_ptr().add(i * 8));
-            rows_hi[i] = vld1q_f32(temp.as_ptr().add(i * 8 + 4));
-        }
+    // Reload transposed data
+    for i in 0..8 {
+        rows_lo[i] = vld1q_f32(temp.as_ptr().add(i * 8));
+        rows_hi[i] = vld1q_f32(temp.as_ptr().add(i * 8 + 4));
+    }
 
-        // Apply 1D DCT to each column (now rows after transpose)
-        neon_dct1d_8_inner(token, &mut rows_lo);
-        neon_dct1d_8_inner(token, &mut rows_hi);
+    // Apply 1D DCT to each column (now rows after transpose)
+    neon_dct1d_8_inner(token, &mut rows_lo);
+    neon_dct1d_8_inner(token, &mut rows_hi);
 
-        // Store result
-        for i in 0..8 {
-            vst1q_f32(output.as_mut_ptr().add(i * 8), rows_lo[i]);
-            vst1q_f32(output.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
-        }
+    // Store result
+    for i in 0..8 {
+        vst1q_f32(output.as_mut_ptr().add(i * 8), rows_lo[i]);
+        vst1q_f32(output.as_mut_ptr().add(i * 8 + 4), rows_hi[i]);
+    }
     }
 }
 
@@ -333,32 +336,30 @@ mod tests {
     #[test]
     fn test_neon_transpose_4x4() {
         if let Some(token) = NeonToken::summon() {
-            unsafe {
-                let input = [
-                    vld1q_f32([0.0, 1.0, 2.0, 3.0].as_ptr()),
-                    vld1q_f32([4.0, 5.0, 6.0, 7.0].as_ptr()),
-                    vld1q_f32([8.0, 9.0, 10.0, 11.0].as_ptr()),
-                    vld1q_f32([12.0, 13.0, 14.0, 15.0].as_ptr()),
-                ];
+            let input = [
+                vld1q_f32([0.0, 1.0, 2.0, 3.0].as_ptr()),
+                vld1q_f32([4.0, 5.0, 6.0, 7.0].as_ptr()),
+                vld1q_f32([8.0, 9.0, 10.0, 11.0].as_ptr()),
+                vld1q_f32([12.0, 13.0, 14.0, 15.0].as_ptr()),
+            ];
 
-                let mut r = input;
-                neon_transpose_4x4_inplace(token, &mut r);
+            let mut r = input;
+            neon_transpose_4x4_inplace(token, &mut r);
 
-                let mut col0 = [0.0f32; 4];
-                let mut col1 = [0.0f32; 4];
-                let mut col2 = [0.0f32; 4];
-                let mut col3 = [0.0f32; 4];
+            let mut col0 = [0.0f32; 4];
+            let mut col1 = [0.0f32; 4];
+            let mut col2 = [0.0f32; 4];
+            let mut col3 = [0.0f32; 4];
 
-                vst1q_f32(col0.as_mut_ptr(), r[0]);
-                vst1q_f32(col1.as_mut_ptr(), r[1]);
-                vst1q_f32(col2.as_mut_ptr(), r[2]);
-                vst1q_f32(col3.as_mut_ptr(), r[3]);
+            vst1q_f32(col0.as_mut_ptr(), r[0]);
+            vst1q_f32(col1.as_mut_ptr(), r[1]);
+            vst1q_f32(col2.as_mut_ptr(), r[2]);
+            vst1q_f32(col3.as_mut_ptr(), r[3]);
 
-                assert_eq!(col0, [0.0, 4.0, 8.0, 12.0]);
-                assert_eq!(col1, [1.0, 5.0, 9.0, 13.0]);
-                assert_eq!(col2, [2.0, 6.0, 10.0, 14.0]);
-                assert_eq!(col3, [3.0, 7.0, 11.0, 15.0]);
-            }
+            assert_eq!(col0, [0.0, 4.0, 8.0, 12.0]);
+            assert_eq!(col1, [1.0, 5.0, 9.0, 13.0]);
+            assert_eq!(col2, [2.0, 6.0, 10.0, 14.0]);
+            assert_eq!(col3, [3.0, 7.0, 11.0, 15.0]);
         }
     }
 
@@ -396,63 +397,58 @@ pub fn neon_idct_int_8x8(
     output: &mut [i16],
     stride: usize,
 ) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // Constants for Loeffler IDCT (13-bit fixed-point)
-        let fix_0_298631336 = vdupq_n_s32(2446);
-        let fix_0_390180644 = vdupq_n_s32(3196);
-        let fix_0_541196100 = vdupq_n_s32(4433);
-        let fix_0_765366865 = vdupq_n_s32(6270);
-        let fix_0_899976223 = vdupq_n_s32(7373);
-        let fix_1_175875602 = vdupq_n_s32(9633);
-        let fix_1_501321110 = vdupq_n_s32(12299);
-        let fix_1_847759065 = vdupq_n_s32(15137);
-        let fix_1_961570560 = vdupq_n_s32(16069);
-        let fix_2_053119869 = vdupq_n_s32(16819);
-        let fix_2_562915447 = vdupq_n_s32(20995);
-        let fix_3_072711026 = vdupq_n_s32(25172);
+    // Constants for Loeffler IDCT (13-bit fixed-point)
+    let fix_0_298631336 = vdupq_n_s32(2446);
+    let fix_0_390180644 = vdupq_n_s32(3196);
+    let fix_0_541196100 = vdupq_n_s32(4433);
+    let fix_0_765366865 = vdupq_n_s32(6270);
+    let fix_0_899976223 = vdupq_n_s32(7373);
+    let fix_1_175875602 = vdupq_n_s32(9633);
+    let fix_1_501321110 = vdupq_n_s32(12299);
+    let fix_1_847759065 = vdupq_n_s32(15137);
+    let fix_1_961570560 = vdupq_n_s32(16069);
+    let fix_2_053119869 = vdupq_n_s32(16819);
+    let fix_2_562915447 = vdupq_n_s32(20995);
+    let fix_3_072711026 = vdupq_n_s32(25172);
 
-        const CONST_BITS: i32 = 13;
-        const PASS1_BITS: i32 = 2;
-        
-        // DC-only fast path
-        let mut all_ac_zero = true;
-        for i in 1..64 {
-            if input[i] \!= 0 {
-                all_ac_zero = false;
-                break;
-            }
+    const CONST_BITS: i32 = 13;
+    const PASS1_BITS: i32 = 2;
+    
+    // DC-only fast path
+    let mut all_ac_zero = true;
+    for i in 1..64 {
+        if input[i] != 0 {
+            all_ac_zero = false;
+            break;
         }
-        
-        if all_ac_zero {
-            let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
-            let dc_vec = vdupq_n_s16(dc);
-            let mut pos = 0;
-            for _ in 0..8 {
-                vst1q_s16(output[pos..].as_mut_ptr(), dc_vec);
-                pos += stride;
-            }
-            return;
+    }
+    
+    if all_ac_zero {
+        let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
+        let dc_vec = vdupq_n_s16(dc);
+        let mut pos = 0;
+        for _ in 0..8 {
+            vst1q_s16(output[pos..].as_mut_ptr(), dc_vec);
+            pos += stride;
         }
+        return;
+    }
 
-        // Full IDCT - load rows
-        let mut rows: [int32x4x2_t; 8] = [int32x4x2_t(vdupq_n_s32(0), vdupq_n_s32(0)); 8];
-        for i in 0..8 {
-            rows[i] = int32x4x2_t(
-                vld1q_s32(input[i * 8..].as_ptr()),
-                vld1q_s32(input[i * 8 + 4..].as_ptr()),
-            );
-        }
-
-        // Pass 1: process columns (simplified - would need full butterfly ops)
-        // For now, use scalar fallback for correctness
-        // TODO: Implement full NEON column pass
-        
-        // Fallback to scalar for now
-        super::super::decode::idct_int::idct_int_libjpeg(
-            &mut input.clone(),
-            output,
-            stride,
+    // Full IDCT - load rows
+    let mut rows: [int32x4x2_t; 8] = [int32x4x2_t(vdupq_n_s32(0), vdupq_n_s32(0)); 8];
+    for i in 0..8 {
+        rows[i] = int32x4x2_t(
+            vld1q_s32(input[i * 8..].as_ptr()),
+            vld1q_s32(input[i * 8 + 4..].as_ptr()),
         );
+    }
+
+    // Pass 1: process columns (simplified - would need full butterfly ops)
+    // TODO: Implement full NEON column pass
+    // TODO: Implement Loeffler IDCT algorithm (see zune-jpeg/src/idct/neon.rs)
+    unimplemented!("NEON integer IDCT not yet implemented");
     }
 }
 
@@ -462,74 +458,19 @@ pub fn neon_idct_int_8x8(
 
 /// Convert YCbCr to RGB using NEON (16 pixels at once).
 ///
-/// Uses vmlal (multiply-accumulate long) for i16→i32 precision,
-/// then saturating pack back to u8.
+/// TODO: Implement using zune-jpeg/src/color_convert/neon64.rs as reference.
+/// Requires vmlal_lane_s16 and proper lane selection patterns.
 #[arcane]
 pub fn neon_ycbcr_to_rgb(
-    token: NeonToken,
-    y: &[i16; 16],
-    cb: &[i16; 16],
-    cr: &[i16; 16],
-    rgb: &mut [u8; 48],
+    _token: NeonToken,
+    _y: &[i16; 16],
+    _cb: &[i16; 16],
+    _cr: &[i16; 16],
+    _rgb: &mut [u8; 48],
 ) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        // Load coefficients
-        let y_coeff = vdupq_n_s16(19595); // 1.402 * 16384 (14-bit)
-        let cr_to_r = vdupq_n_s16(22970); // 1.402 * 16384
-        let cb_to_b = vdupq_n_s16(29032); // 1.772 * 16384
-        let cr_to_g = vdupq_n_s16(-11698); // -0.714 * 16384
-        let cb_to_g = vdupq_n_s16(-5636); // -0.344 * 16384
-        
-        let cb_cr_bias = vdupq_n_s16(128);
-        let rnd = vdupq_n_s32(1 << 13); // Rounding for >>14
-
-        // Process first 8 pixels
-        let y0 = vld1q_s16(y.as_ptr());
-        let mut cb0 = vld1q_s16(cb.as_ptr());
-        let mut cr0 = vld1q_s16(cr.as_ptr());
-
-        // Unbias Cb/Cr
-        cb0 = vsubq_s16(cb0, cb_cr_bias);
-        cr0 = vsubq_s16(cr0, cb_cr_bias);
-
-        // Compute R, G, B with multiply-accumulate
-        let y_scaled_lo = vmlal_lane_s16::<0>(rnd, vget_low_s16(y0), vget_low_s16(y_coeff));
-        let y_scaled_hi = vmlal_high_lane_s16::<0>(rnd, y0, y_coeff);
-
-        let r_lo = vmlal_lane_s16::<0>(y_scaled_lo, vget_low_s16(cr0), vget_low_s16(cr_to_r));
-        let r_hi = vmlal_high_lane_s16::<0>(y_scaled_hi, cr0, cr_to_r);
-
-        let b_lo = vmlal_lane_s16::<0>(y_scaled_lo, vget_low_s16(cb0), vget_low_s16(cb_to_b));
-        let b_hi = vmlal_high_lane_s16::<0>(y_scaled_hi, cb0, cb_to_b);
-
-        let mut g_lo = vmlal_lane_s16::<0>(y_scaled_lo, vget_low_s16(cr0), vget_low_s16(cr_to_g));
-        g_lo = vmlal_lane_s16::<0>(g_lo, vget_low_s16(cb0), vget_low_s16(cb_to_g));
-        let mut g_hi = vmlal_high_lane_s16::<0>(y_scaled_hi, cr0, cr_to_g);
-        g_hi = vmlal_high_lane_s16::<0>(g_hi, cb0, cb_to_g);
-
-        // Shift and saturate i32→u8
-        let r0 = vqshrun_n_s32::<14>(r_lo);
-        let r1 = vqshrun_n_s32::<14>(r_hi);
-        let g0 = vqshrun_n_s32::<14>(g_lo);
-        let g1 = vqshrun_n_s32::<14>(g_hi);
-        let b0 = vqshrun_n_s32::<14>(b_lo);
-        let b1 = vqshrun_n_s32::<14>(b_hi);
-
-        let r_vec = vqmovn_u16(vcombine_u16(r0, r1));
-        let g_vec = vqmovn_u16(vcombine_u16(g0, g1));
-        let b_vec = vqmovn_u16(vcombine_u16(b0, b1));
-
-        // Interleave to RGB
-        let rg = vzip1q_u8(r_vec, g_vec);
-        let br = vzip1q_u8(b_vec, r_vec);
-        // TODO: Full RGB interleaving
-        // For now, store planar
-        vst1q_u8(rgb.as_mut_ptr(), r_vec);
-        vst1q_u8(rgb[16..].as_mut_ptr(), g_vec);
-        vst1q_u8(rgb[32..].as_mut_ptr(), b_vec);
-
-        // Process second 8 pixels
-        // TODO: Similar to above
+    unimplemented!("NEON YCbCr→RGB not yet implemented - see zune-jpeg for reference");
     }
 }
 
@@ -549,35 +490,36 @@ pub fn neon_upsample_h2v1(
     output: &mut [f32],
     out_width: usize,
 ) {
+    // TEMPORARY: unsafe required until archmage supports ARM/WASM #[arcane]
     unsafe {
-        assert_eq\!(out_width, in_width * 2);
-        
-        let v_three = vdupq_n_f32(3.0);
-        let v_quarter = vdupq_n_f32(0.25);
+    assert_eq!(out_width, in_width * 2);
+    
+    let v_three = vdupq_n_f32(3.0);
+    let v_quarter = vdupq_n_f32(0.25);
 
-        // First pixel
-        output[0] = input[0];
-        
-        // Process 4 input pixels at a time → 8 output pixels
-        let chunks = in_width / 4;
-        for i in 0..chunks {
-            let in_ptr = input[i * 4..].as_ptr();
-            let curr = vld1q_f32(in_ptr);
-            let next = vld1q_f32(in_ptr.add(1));
+    // First pixel
+    output[0] = input[0];
+    
+    // Process 4 input pixels at a time → 8 output pixels
+    let chunks = in_width / 4;
+    for i in 0..chunks {
+        let in_ptr = input[i * 4..].as_ptr();
+        let curr = vld1q_f32(in_ptr);
+        let next = vld1q_f32(in_ptr.add(1));
 
-            // even = curr, odd = (3*curr + next) * 0.25
-            let odd = vmulq_f32(vfmaq_f32(next, curr, v_three), v_quarter);
+        // even = curr, odd = (3*curr + next) * 0.25
+        let odd = vmulq_f32(vfmaq_f32(next, curr, v_three), v_quarter);
 
-            // Interleave even and odd
-            let out0 = vzip1q_f32(curr, odd);
-            let out1 = vzip2q_f32(curr, odd);
+        // Interleave even and odd
+        let out0 = vzip1q_f32(curr, odd);
+        let out1 = vzip2q_f32(curr, odd);
 
-            vst1q_f32(output[i * 8..].as_mut_ptr(), out0);
-            vst1q_f32(output[i * 8 + 4..].as_mut_ptr(), out1);
-        }
+        vst1q_f32(output[i * 8..].as_mut_ptr(), out0);
+        vst1q_f32(output[i * 8 + 4..].as_mut_ptr(), out1);
+    }
 
-        // Last pixel
-        output[out_width - 1] = input[in_width - 1];
+    // Last pixel
+    output[out_width - 1] = input[in_width - 1];
     }
 }
 

@@ -1,4 +1,13 @@
-#![forbid(unsafe_code)]
+// TEMPORARY: Allow unsafe for ARM/WASM SIMD until archmage supports these platforms.
+// See: https://github.com/imazen/archmage/blob/main/examples/cross_platform.rs#L114
+// "ARM NEON support requires fixing some missing intrinsics in the generator"
+#![cfg_attr(
+    all(
+        not(any(target_arch = "aarch64", target_arch = "wasm32")),
+        feature = "archmage-simd"
+    ),
+    forbid(unsafe_code)
+)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! # jpegli
