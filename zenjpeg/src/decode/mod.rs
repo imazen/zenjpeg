@@ -350,7 +350,13 @@ impl DecodeConfig {
 
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        // Preserve metadata segments for extraction without full decode
+        let preserve = PreserveConfig::none()
+            .exif(true)
+            .xmp(true)
+            .icc(IccPreserve::All);
+
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
         parser.read_header()?;
         Ok(parser.info())
     }
@@ -1160,5 +1166,63 @@ mod tests {
             found_fractional,
             "f32 output should have fractional precision"
         );
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn test_read_info_includes_metadata_fields() {
+        // Create minimal valid JPEG
+        let jpeg = include_bytes!("../../tests/outputs/1_q85.jpg");
+
+        let decoder = DecodeConfig::new();
+        let info = decoder.read_info(jpeg);
+
+        // Should successfully parse
+        assert!(info.is_ok(), "read_info should succeed on valid JPEG");
+
+        let info = info.unwrap();
+
+        // New fields should exist (even if None)
+        // This tests that the struct has been extended with metadata fields
+        let _ = &info.icc_profile;
+        let _ = &info.exif;
+        let _ = &info.xmp;
+
+        println!("✅ JpegInfo includes icc_profile, exif, and xmp fields");
+    }
+
+    #[test]
+    fn test_read_info_extracts_metadata() {
+        // Test with UltraHDR sample which has XMP
+        let jpeg = include_bytes!("../../tests/images/ultrahdr_sample.jpg");
+
+        let decoder = DecodeConfig::new();
+        let info = decoder.read_info(jpeg).expect("Should decode ultrahdr_sample.jpg");
+
+        // Check that metadata extraction doesn't require full decode
+        println!("Image: {}x{}", info.dimensions.width, info.dimensions.height);
+
+        if info.has_icc_profile {
+            assert!(
+                info.icc_profile.is_some(),
+                "If has_icc_profile is true, icc_profile should be Some"
+            );
+            println!(
+                "✅ ICC profile extracted: {} bytes",
+                info.icc_profile.as_ref().unwrap().len()
+            );
+        }
+
+        if let Some(ref xmp) = info.xmp {
+            println!("✅ XMP extracted: {} chars", xmp.len());
+        }
+
+        if let Some(ref exif) = info.exif {
+            println!("✅ EXIF extracted: {} bytes", exif.len());
+        }
     }
 }

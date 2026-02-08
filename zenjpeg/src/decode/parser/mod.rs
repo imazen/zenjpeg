@@ -684,6 +684,17 @@ impl<'a> JpegParser<'a> {
             ColorSpace::Unknown
         };
 
+        // Extract metadata from extras if available
+        let (icc_profile, exif, xmp) = if let Some(ref extras) = self.extras {
+            (
+                extras.icc_profile().map(|p| p.to_vec()),
+                extras.exif().map(|e| e.to_vec()),
+                extras.xmp().map(|x| x.to_string()),
+            )
+        } else {
+            (self.icc_profile.clone(), None, None)
+        };
+
         JpegInfo {
             dimensions: Dimensions {
                 width: self.width,
@@ -693,8 +704,11 @@ impl<'a> JpegParser<'a> {
             precision: self.precision,
             num_components: self.num_components,
             mode: self.mode,
-            has_icc_profile: self.icc_profile.is_some(),
+            has_icc_profile: icc_profile.is_some(),
             is_xyb,
+            icc_profile,
+            exif,
+            xmp,
         }
     }
 
