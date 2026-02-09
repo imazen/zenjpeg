@@ -463,6 +463,12 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        // Check if we need a transform — if so, use coefficient-based path
+        let effective_transform = self.compute_effective_transform_from_data(data);
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.scanline_reader_with_transform(data, effective_transform);
+        }
+
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
 
@@ -588,6 +594,28 @@ impl DecodeConfig {
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
         ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
+    }
+
+    /// Creates a scanline reader that applies a DCT-domain transform.
+    ///
+    /// Does a full coefficient decode + transform, then creates a reader
+    /// that streams pixels from the transformed coefficients.
+    fn scanline_reader_with_transform<'a>(
+        &self,
+        data: &'a [u8],
+        transform: crate::lossless::LosslessTransform,
+    ) -> Result<ScanlineReader<'a>> {
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        parser.prefer_streaming = false; // Need coefficient storage
+        parser.decode(&Unstoppable)?;
+        parser.apply_dct_transform(transform);
+
+        let coefficients = parser.extract_coefficients()?;
+        ScanlineReader::from_coefficients(
+            coefficients,
+            self.chroma_upsampling,
+            self.output_target,
+        )
     }
 
     /// Compute the effective transform from raw JPEG data.
