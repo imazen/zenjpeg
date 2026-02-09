@@ -251,11 +251,11 @@ impl<'a> JpegParser<'a> {
                                 for h in 0..h_samp {
                                     let block_x = mcu_x * h_samp + h;
                                     let block_y = mcu_y * v_samp + v;
-                                    // Skip blocks beyond the actual component dimensions
-                                    if block_x >= comp_blocks_h || block_y >= comp_blocks_v {
-                                        continue;
-                                    }
-                                    let block_idx = block_y * comp_blocks_h + block_x;
+                                    // Check if block is beyond actual component dimensions.
+                                    // We must still DECODE the entropy data (the encoder wrote
+                                    // full MCU padding blocks), but we don't store the result.
+                                    let in_bounds =
+                                        block_x < comp_blocks_h && block_y < comp_blocks_v;
 
                                     if is_first_scan {
                                         // DC first scan
@@ -265,7 +265,11 @@ impl<'a> JpegParser<'a> {
                                             al,
                                         )? {
                                             ScanRead::Value(dc) => {
-                                                self.coeffs[*comp_idx][block_idx][0] = dc;
+                                                if in_bounds {
+                                                    let block_idx =
+                                                        block_y * comp_blocks_h + block_x;
+                                                    self.coeffs[*comp_idx][block_idx][0] = dc;
+                                                }
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 had_progressive_truncation = true;
@@ -276,7 +280,11 @@ impl<'a> JpegParser<'a> {
                                         // DC refinement scan
                                         match decoder.decode_dc_refine(al)? {
                                             ScanRead::Value(bit) => {
-                                                self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                                if in_bounds {
+                                                    let block_idx =
+                                                        block_y * comp_blocks_h + block_x;
+                                                    self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                                }
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 had_progressive_truncation = true;
