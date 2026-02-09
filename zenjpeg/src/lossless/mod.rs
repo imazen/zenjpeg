@@ -30,5 +30,6 @@ mod tests;
 pub use coeff_transform::{
     transform_coefficients, BlockTransform, EdgeHandling, LosslessTransform, TransformConfig,
 };
+pub(crate) use coeff_transform::remap_block;
 pub use exif::{parse_exif_orientation, set_exif_orientation};
 pub use pipeline::{apply_exif_orientation, transform};

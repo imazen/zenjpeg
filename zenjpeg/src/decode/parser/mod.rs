@@ -14,6 +14,7 @@ mod markers;
 mod output;
 mod progressive;
 mod scan;
+mod transform;
 
 use super::extras::{
     should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
