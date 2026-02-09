@@ -61,24 +61,21 @@ impl<'a> JpegParser<'a> {
         let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
         let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
 
-        // Initialize coefficient storage if not already done
+        // Initialize coefficient storage if not already done.
+        //
+        // CRITICAL: Storage must use MCU-padded block counts (mcu_cols * h_samp),
+        // matching the output path (CompInfo.comp_blocks_h) and baseline decoder.
+        // The interleaved DC scan writes padding blocks at MCU boundaries, and the
+        // output path indexes coefficients using MCU-padded stride. Using smaller
+        // component-based counts (ceil(scaled_w/8)) causes misaligned reads.
         if self.coeffs.is_empty() {
             for i in 0..self.num_components as usize {
                 let h_samp = self.components[i].h_samp_factor as usize;
                 let v_samp = self.components[i].v_samp_factor as usize;
-                // Calculate block counts from image dimensions, NOT MCU grid.
-                // For small images, MCU-based calculation over-counts blocks.
-                // Formula: blocks = ceil(pixels * samp_factor / max_samp_factor / 8)
-                let width = self.width as usize;
-                let height = self.height as usize;
-                let max_h = max_h_samp as usize;
-                let max_v = max_v_samp as usize;
-                // Scaled dimensions for this component
-                let scaled_w = (width * h_samp + max_h - 1) / max_h;
-                let scaled_h = (height * v_samp + max_v - 1) / max_v;
-                let comp_blocks_h = (scaled_w + 7) / 8;
-                let comp_blocks_v = (scaled_h + 7) / 8;
-                let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
+                // MCU-padded block counts: matches baseline decoder and output path
+                let padded_blocks_h = mcu_cols * h_samp;
+                let padded_blocks_v = mcu_rows * v_samp;
+                let num_blocks = checked_size_2d(padded_blocks_h, padded_blocks_v)?;
                 self.coeffs.push(try_alloc_dct_blocks(
                     num_blocks,
                     "allocating DCT coefficients",
@@ -161,11 +158,14 @@ impl<'a> JpegParser<'a> {
             // For interleaved scans, blocks follow MCU order
 
             if scan_components.len() == 1 {
-                // Non-interleaved DC scan: blocks in raster order (like AC scans)
+                // Non-interleaved DC scan: blocks in raster order.
+                // The JPEG spec says non-interleaved scans encode ceil(X_i/8) blocks
+                // per row, but storage uses MCU-padded stride (mcu_cols * h_samp) to
+                // match the output path. Iterate actual block counts, store with
+                // padded stride.
                 let (comp_idx, dc_table, _ac_table) = scan_components[0];
                 let h_samp = self.components[comp_idx].h_samp_factor as usize;
                 let v_samp = self.components[comp_idx].v_samp_factor as usize;
-                // Calculate block counts from image dimensions (not MCU grid)
                 let width = self.width as usize;
                 let height = self.height as usize;
                 let max_h = max_h_samp as usize;
@@ -174,44 +174,56 @@ impl<'a> JpegParser<'a> {
                 let scaled_h = (height * v_samp + max_v - 1) / max_v;
                 let comp_blocks_h = (scaled_w + 7) / 8;
                 let comp_blocks_v = (scaled_h + 7) / 8;
-                let total_blocks = comp_blocks_h * comp_blocks_v;
+                // Storage stride: MCU-padded (matches output path)
+                let padded_blocks_h = mcu_cols * h_samp;
 
-                for block_idx in 0..total_blocks {
-                    // Check for cancellation periodically (every 256 blocks)
-                    if block_idx & 0xFF == 0 && stop.should_stop() {
+                'ni_dc: for block_y in 0..comp_blocks_v {
+                    // Check for cancellation at each block row
+                    if stop.should_stop() {
                         return Err(Error::cancelled());
                     }
 
-                    // Check for restart marker
-                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        decoder.align_to_byte();
-                        decoder.read_restart_marker(next_restart_num)?;
-                        next_restart_num = (next_restart_num + 1) & 7;
-                        decoder.reset_dc();
-                    }
+                    for block_x in 0..comp_blocks_h {
+                        // Check for restart marker
+                        if restart_interval > 0
+                            && mcu_count > 0
+                            && mcu_count % restart_interval == 0
+                        {
+                            decoder.align_to_byte();
+                            decoder.read_restart_marker(next_restart_num)?;
+                            next_restart_num = (next_restart_num + 1) & 7;
+                            decoder.reset_dc();
+                        }
 
-                    if is_first_scan {
-                        match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
-                            ScanRead::Value(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break;
+                        let block_idx = block_y * padded_blocks_h + block_x;
+                        if is_first_scan {
+                            match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
+                                ScanRead::Value(dc) => {
+                                    self.coeffs[comp_idx][block_idx][0] = dc;
+                                }
+                                ScanRead::EndOfScan | ScanRead::Truncated => {
+                                    had_progressive_truncation = true;
+                                    break 'ni_dc;
+                                }
+                            }
+                        } else {
+                            match decoder.decode_dc_refine(al)? {
+                                ScanRead::Value(bit) => {
+                                    self.coeffs[comp_idx][block_idx][0] |= bit;
+                                }
+                                ScanRead::EndOfScan | ScanRead::Truncated => {
+                                    had_progressive_truncation = true;
+                                    break 'ni_dc;
+                                }
                             }
                         }
-                    } else {
-                        match decoder.decode_dc_refine(al)? {
-                            ScanRead::Value(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break;
-                            }
-                        }
-                    }
 
-                    mcu_count += 1;
+                        mcu_count += 1;
+                    }
                 }
             } else {
-                // Interleaved DC scan: blocks in MCU order
+                // Interleaved DC scan: blocks in MCU order.
+                // Storage is MCU-padded, so all blocks (including padding) fit.
                 'dc_scan: for mcu_y in 0..mcu_rows {
                     // Check for cancellation at each MCU row
                     if stop.should_stop() {
@@ -224,52 +236,32 @@ impl<'a> JpegParser<'a> {
                             && mcu_count > 0
                             && mcu_count % restart_interval == 0
                         {
-                            // Align to byte boundary (discard padding bits)
                             decoder.align_to_byte();
-                            // Read and verify restart marker
                             decoder.read_restart_marker(next_restart_num)?;
-                            // Update expected marker number (cycles 0-7)
                             next_restart_num = (next_restart_num + 1) & 7;
-                            // Reset DC predictors
                             decoder.reset_dc();
                         }
 
                         for (comp_idx, dc_table, _ac_table) in scan_components {
                             let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                             let v_samp = self.components[*comp_idx].v_samp_factor as usize;
-                            // Calculate block counts from image dimensions
-                            let width = self.width as usize;
-                            let height = self.height as usize;
-                            let max_h = max_h_samp as usize;
-                            let max_v = max_v_samp as usize;
-                            let scaled_w = (width * h_samp + max_h - 1) / max_h;
-                            let scaled_h = (height * v_samp + max_v - 1) / max_v;
-                            let comp_blocks_h = (scaled_w + 7) / 8;
-                            let comp_blocks_v = (scaled_h + 7) / 8;
+                            let padded_blocks_h = mcu_cols * h_samp;
 
                             for v in 0..v_samp {
                                 for h in 0..h_samp {
                                     let block_x = mcu_x * h_samp + h;
                                     let block_y = mcu_y * v_samp + v;
-                                    // Check if block is beyond actual component dimensions.
-                                    // We must still DECODE the entropy data (the encoder wrote
-                                    // full MCU padding blocks), but we don't store the result.
-                                    let in_bounds =
-                                        block_x < comp_blocks_h && block_y < comp_blocks_v;
+                                    let block_idx =
+                                        block_y * padded_blocks_h + block_x;
 
                                     if is_first_scan {
-                                        // DC first scan
                                         match decoder.decode_dc_first(
                                             *comp_idx,
                                             *dc_table as usize,
                                             al,
                                         )? {
                                             ScanRead::Value(dc) => {
-                                                if in_bounds {
-                                                    let block_idx =
-                                                        block_y * comp_blocks_h + block_x;
-                                                    self.coeffs[*comp_idx][block_idx][0] = dc;
-                                                }
+                                                self.coeffs[*comp_idx][block_idx][0] = dc;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 had_progressive_truncation = true;
@@ -277,14 +269,9 @@ impl<'a> JpegParser<'a> {
                                             }
                                         }
                                     } else {
-                                        // DC refinement scan
                                         match decoder.decode_dc_refine(al)? {
                                             ScanRead::Value(bit) => {
-                                                if in_bounds {
-                                                    let block_idx =
-                                                        block_y * comp_blocks_h + block_x;
-                                                    self.coeffs[*comp_idx][block_idx][0] |= bit;
-                                                }
+                                                self.coeffs[*comp_idx][block_idx][0] |= bit;
                                             }
                                             ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 had_progressive_truncation = true;
@@ -313,9 +300,10 @@ impl<'a> JpegParser<'a> {
             let h_samp = self.components[comp_idx].h_samp_factor as usize;
             let v_samp = self.components[comp_idx].v_samp_factor as usize;
 
-            // For non-interleaved AC scans, blocks are encoded in raster order
-            // NOT in interleaved MCU order.
-            // Calculate block counts from image dimensions (not MCU grid).
+            // Non-interleaved AC scans encode blocks in raster order.
+            // The JPEG spec says ceil(X_i/8) blocks per row, but storage uses
+            // MCU-padded stride to match the output path. Use 2D loop: iterate
+            // actual block counts, store with padded stride.
             let width = self.width as usize;
             let height = self.height as usize;
             let max_h = max_h_samp as usize;
@@ -324,69 +312,71 @@ impl<'a> JpegParser<'a> {
             let scaled_h = (height * v_samp + max_v - 1) / max_v;
             let comp_blocks_h = (scaled_w + 7) / 8;
             let comp_blocks_v = (scaled_h + 7) / 8;
-            let total_blocks = comp_blocks_h * comp_blocks_v;
+            // Storage stride: MCU-padded (matches output path)
+            let padded_blocks_h = mcu_cols * h_samp;
 
             // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
             mcu_count = 0;
             next_restart_num = 0;
 
-            for block_idx in 0..total_blocks {
-                // Check for cancellation periodically (every 256 blocks)
-                if block_idx & 0xFF == 0 && stop.should_stop() {
+            'ac_scan: for block_y in 0..comp_blocks_v {
+                // Check for cancellation at each block row
+                if stop.should_stop() {
                     return Err(Error::cancelled());
                 }
 
-                // Check for restart marker
-                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                    // Align to byte boundary (discard padding bits)
-                    decoder.align_to_byte();
-                    // Read and verify restart marker
-                    decoder.read_restart_marker(next_restart_num)?;
-                    // Update expected marker number (cycles 0-7)
-                    next_restart_num = (next_restart_num + 1) & 7;
-                    // Reset DC predictors and EOB run
-                    decoder.reset_dc();
-                    eob_run = 0;
-                }
+                for block_x in 0..comp_blocks_h {
+                    // Check for restart marker
+                    if restart_interval > 0
+                        && mcu_count > 0
+                        && mcu_count % restart_interval == 0
+                    {
+                        decoder.align_to_byte();
+                        decoder.read_restart_marker(next_restart_num)?;
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        decoder.reset_dc();
+                        eob_run = 0;
+                    }
 
-                if is_first_scan {
-                    // AC first scan
-                    match decoder.decode_ac_first(
-                        &mut self.coeffs[comp_idx][block_idx],
-                        &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                        ac_table as usize,
-                        ss,
-                        se,
-                        al,
-                        &mut eob_run,
-                    )? {
-                        ScanRead::Value(()) => {}
-                        ScanRead::EndOfScan | ScanRead::Truncated => {
-                            // End of scan may be normal (implicit EOB) or truncation
-                            had_progressive_truncation = true;
-                            break;
+                    let block_idx = block_y * padded_blocks_h + block_x;
+                    if is_first_scan {
+                        // AC first scan
+                        match decoder.decode_ac_first(
+                            &mut self.coeffs[comp_idx][block_idx],
+                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
+                            ac_table as usize,
+                            ss,
+                            se,
+                            al,
+                            &mut eob_run,
+                        )? {
+                            ScanRead::Value(()) => {}
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                had_progressive_truncation = true;
+                                break 'ac_scan;
+                            }
+                        }
+                    } else {
+                        // AC refinement scan
+                        match decoder.decode_ac_refine(
+                            &mut self.coeffs[comp_idx][block_idx],
+                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
+                            ac_table as usize,
+                            ss,
+                            se,
+                            al,
+                            &mut eob_run,
+                        )? {
+                            ScanRead::Value(()) => {}
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                had_progressive_truncation = true;
+                                break 'ac_scan;
+                            }
                         }
                     }
-                } else {
-                    // AC refinement scan
-                    match decoder.decode_ac_refine(
-                        &mut self.coeffs[comp_idx][block_idx],
-                        &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                        ac_table as usize,
-                        ss,
-                        se,
-                        al,
-                        &mut eob_run,
-                    )? {
-                        ScanRead::Value(()) => {}
-                        ScanRead::EndOfScan | ScanRead::Truncated => {
-                            had_progressive_truncation = true;
-                            break;
-                        }
-                    }
-                }
 
-                mcu_count += 1;
+                    mcu_count += 1;
+                }
             }
         }
 
