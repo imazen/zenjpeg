@@ -71,11 +71,19 @@ impl<'a> JpegParser<'a> {
                 (dim_bw, dim_bh)
             } else {
                 // Baseline layout (MCU-based) — includes padding blocks
-                debug_assert_eq!(mcu_bw * mcu_bh, actual_len,
+                debug_assert_eq!(
+                    mcu_bw * mcu_bh,
+                    actual_len,
                     "unexpected coefficient count for component {comp_idx}: \
                      expected dim-based {} ({}x{}) or mcu-based {} ({}x{}), got {}",
-                    dim_bw * dim_bh, dim_bw, dim_bh,
-                    mcu_bw * mcu_bh, mcu_bw, mcu_bh, actual_len);
+                    dim_bw * dim_bh,
+                    dim_bw,
+                    dim_bh,
+                    mcu_bw * mcu_bh,
+                    mcu_bw,
+                    mcu_bh,
+                    actual_len
+                );
                 (mcu_bw, mcu_bh)
             };
 

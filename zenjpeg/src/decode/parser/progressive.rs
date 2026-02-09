@@ -251,8 +251,7 @@ impl<'a> JpegParser<'a> {
                                 for h in 0..h_samp {
                                     let block_x = mcu_x * h_samp + h;
                                     let block_y = mcu_y * v_samp + v;
-                                    let block_idx =
-                                        block_y * padded_blocks_h + block_x;
+                                    let block_idx = block_y * padded_blocks_h + block_x;
 
                                     if is_first_scan {
                                         match decoder.decode_dc_first(
@@ -327,10 +326,7 @@ impl<'a> JpegParser<'a> {
 
                 for block_x in 0..comp_blocks_h {
                     // Check for restart marker
-                    if restart_interval > 0
-                        && mcu_count > 0
-                        && mcu_count % restart_interval == 0
-                    {
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
                         decoder.align_to_byte();
                         decoder.read_restart_marker(next_restart_num)?;
                         next_restart_num = (next_restart_num + 1) & 7;
