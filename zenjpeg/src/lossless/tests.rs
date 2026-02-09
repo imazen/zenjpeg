@@ -2565,3 +2565,302 @@ fn test_non_mcu_aligned_420_transform() {
         }
     }
 }
+
+/// Apply a lossless transform to pixels in pixel-space (reference implementation).
+///
+/// Input: RGB8 packed pixels in row-major order for a w×h image.
+/// Returns (new_w, new_h, new_pixels).
+fn pixel_transform(
+    pixels: &[u8],
+    w: usize,
+    h: usize,
+    transform: LosslessTransform,
+) -> (usize, usize, Vec<u8>) {
+    let (out_w, out_h) = if transform.swaps_dimensions() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let mut out = vec![0u8; out_w * out_h * 3];
+    for sy in 0..h {
+        for sx in 0..w {
+            let (dx, dy) = match transform {
+                LosslessTransform::None => (sx, sy),
+                LosslessTransform::FlipHorizontal => (w - 1 - sx, sy),
+                LosslessTransform::FlipVertical => (sx, h - 1 - sy),
+                LosslessTransform::Rotate180 => (w - 1 - sx, h - 1 - sy),
+                LosslessTransform::Transpose => (sy, sx),
+                LosslessTransform::Rotate90 => (h - 1 - sy, sx),
+                LosslessTransform::Rotate270 => (sy, w - 1 - sx),
+                LosslessTransform::Transverse => (h - 1 - sy, w - 1 - sx),
+            };
+            let si = (sy * w + sx) * 3;
+            let di = (dy * out_w + dx) * 3;
+            out[di..di + 3].copy_from_slice(&pixels[si..si + 3]);
+        }
+    }
+    (out_w, out_h, out)
+}
+
+/// Verify border pixels survive lossless transform on a 15x17 non-MCU-aligned image.
+///
+/// Strategy: encode once, decode without transform (reference), decode with each
+/// transform, then compare the transformed decode against a pixel-space transform
+/// of the reference. If the DCT-domain transform is truly lossless, every pixel
+/// should match exactly.
+///
+/// 15x17 is deliberately awkward:
+/// - 4:4:4 MCU=8: 2x3 MCU grid, partial right column (7px) and partial bottom row (1px)
+/// - After dimension-swap: 17x15, 3x2 MCU grid, partial right (1px) and bottom (7px)
+#[test]
+fn test_15x17_border_pixels_lossless() {
+    use crate::decode::DecodeConfig;
+
+    let (w, h) = (15u32, 17u32);
+
+    // Create an image with unique per-pixel values derived from position.
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            pixels[idx] = (x * 17 % 256) as u8;
+            pixels[idx + 1] = (y * 15 % 256) as u8;
+            pixels[idx + 2] = ((x * 7 + y * 11) % 256) as u8;
+        }
+    }
+
+    let jpeg = encode_test_image(w, h, &pixels, None);
+
+    // Decode reference (no transform)
+    let config_none = DecodeConfig::new();
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
+    assert_eq!((ref_w, ref_h), (w, h));
+
+    // Collect all border pixel positions for the original image
+    let border_positions: Vec<(usize, usize)> = {
+        let mut positions = Vec::new();
+        for x in 0..w as usize {
+            positions.push((x, 0)); // top edge
+            positions.push((x, h as usize - 1)); // bottom edge
+        }
+        for y in 1..h as usize - 1 {
+            positions.push((0, y)); // left edge
+            positions.push((w as usize - 1, y)); // right edge
+        }
+        positions
+    };
+
+    for &transform in &LosslessTransform::ALL {
+        let label = format!("{transform:?}");
+
+        // DCT-domain transform
+        let config = DecodeConfig::new().transform(transform);
+        let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
+
+        // Pixel-space transform of the reference
+        let (px_w, px_h, px_pixels) =
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
+
+        assert_eq!(
+            (dct_w, dct_h),
+            (px_w as u32, px_h as u32),
+            "{label}: dimension mismatch"
+        );
+
+        let ow = ref_w as usize;
+        let oh = ref_h as usize;
+        let tw = dct_w as usize;
+
+        let mut max_diff = 0u8;
+        let mut worst_pos = (0, 0);
+        let mut mismatches = 0;
+
+        for &(sx, sy) in &border_positions {
+            // Where does this border pixel end up after transform?
+            let (dx, dy) = match transform {
+                LosslessTransform::None => (sx, sy),
+                LosslessTransform::FlipHorizontal => (ow - 1 - sx, sy),
+                LosslessTransform::FlipVertical => (sx, oh - 1 - sy),
+                LosslessTransform::Rotate180 => (ow - 1 - sx, oh - 1 - sy),
+                LosslessTransform::Transpose => (sy, sx),
+                LosslessTransform::Rotate90 => (oh - 1 - sy, sx),
+                LosslessTransform::Rotate270 => (sy, ow - 1 - sx),
+                LosslessTransform::Transverse => (oh - 1 - sy, ow - 1 - sx),
+            };
+
+            let idx = (dy * tw + dx) * 3;
+
+            for c in 0..3 {
+                let diff = (dct_pixels[idx + c] as i16 - px_pixels[idx + c] as i16)
+                    .unsigned_abs() as u8;
+                if diff > max_diff {
+                    max_diff = diff;
+                    worst_pos = (dx, dy);
+                }
+                if diff > 0 {
+                    mismatches += 1;
+                }
+            }
+        }
+
+        // Dimension-swapping transforms (Transpose, Rot90, Rot270, Transverse)
+        // may have ±2 difference due to integer IDCT intermediate rounding:
+        // the row/column passes execute in swapped order on transposed coefficients,
+        // producing slightly different fixed-point rounding than pixel-space transpose.
+        let tolerance = if transform.swaps_dimensions() { 2 } else { 0 };
+        assert!(
+            max_diff <= tolerance,
+            "{label}: border pixel mismatch! max_diff={max_diff} (tol={tolerance}) at ({},{}) \
+             mismatches={mismatches}/{} channels",
+            worst_pos.0,
+            worst_pos.1,
+            border_positions.len() * 3
+        );
+    }
+}
+
+/// Same as above but also tests the scanline reader path matches buffered.
+#[test]
+fn test_15x17_border_pixels_scanline() {
+    use crate::decode::DecodeConfig;
+
+    let (w, h) = (15u32, 17u32);
+
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            pixels[idx] = (x * 17 % 256) as u8;
+            pixels[idx + 1] = (y * 15 % 256) as u8;
+            pixels[idx + 2] = ((x * 7 + y * 11) % 256) as u8;
+        }
+    }
+
+    let jpeg = encode_test_image(w, h, &pixels, None);
+
+    for &transform in &LosslessTransform::ALL {
+        let label = format!("{transform:?}");
+
+        let config = DecodeConfig::new().transform(transform);
+        let (buf_w, buf_h, buf_pixels) = decode_test(&jpeg, &config);
+        let (scan_w, scan_h, scan_pixels) = scanline_decode_test(&jpeg, &config);
+
+        assert_eq!(
+            (buf_w, buf_h),
+            (scan_w, scan_h),
+            "{label}: scanline dimensions mismatch"
+        );
+
+        // Compare all pixels between buffered and scanline
+        let mut max_diff = 0u8;
+        let mut worst_pos = (0, 0);
+        for y in 0..buf_h as usize {
+            for x in 0..buf_w as usize {
+                let idx = (y * buf_w as usize + x) * 3;
+                for c in 0..3 {
+                    let diff = (buf_pixels[idx + c] as i16 - scan_pixels[idx + c] as i16)
+                        .unsigned_abs() as u8;
+                    if diff > max_diff {
+                        max_diff = diff;
+                        worst_pos = (x, y);
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            max_diff, 0,
+            "{label}: scanline vs buffered mismatch! max_diff={max_diff} at ({},{})",
+            worst_pos.0, worst_pos.1
+        );
+    }
+}
+
+/// Verify ALL pixels match between DCT-domain and pixel-space transform on 15x17.
+#[test]
+fn test_15x17_all_pixels_lossless() {
+    use crate::decode::DecodeConfig;
+
+    let (w, h) = (15u32, 17u32);
+
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            pixels[idx] = ((x * 37 + y * 53) % 200 + 30) as u8;
+            pixels[idx + 1] = ((x * 61 + y * 23) % 180 + 40) as u8;
+            pixels[idx + 2] = ((x * 43 + y * 71) % 160 + 50) as u8;
+        }
+    }
+
+    let jpeg = encode_test_image(w, h, &pixels, None);
+
+    // Decode reference
+    let config_none = DecodeConfig::new();
+    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
+    assert_eq!((ref_w, ref_h), (w, h));
+
+    for &transform in &LosslessTransform::ALL {
+        if transform == LosslessTransform::None {
+            continue;
+        }
+        let label = format!("{transform:?}");
+
+        // DCT-domain transform
+        let config = DecodeConfig::new().transform(transform);
+        let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
+
+        // Pixel-space transform of reference
+        let (px_w, px_h, px_pixels) =
+            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
+
+        assert_eq!(
+            (dct_w as usize, dct_h as usize),
+            (px_w, px_h),
+            "{label}: dimension mismatch"
+        );
+
+        let tw = dct_w as usize;
+        let th = dct_h as usize;
+
+        let mut max_diff = 0u8;
+        let mut worst_pos = (0, 0);
+        let mut total_diff = 0u64;
+        let mut mismatches = 0usize;
+
+        for y in 0..th {
+            for x in 0..tw {
+                let idx = (y * tw + x) * 3;
+                for c in 0..3 {
+                    let diff = (dct_pixels[idx + c] as i16 - px_pixels[idx + c] as i16)
+                        .unsigned_abs() as u8;
+                    if diff > max_diff {
+                        max_diff = diff;
+                        worst_pos = (x, y);
+                    }
+                    if diff > 0 {
+                        mismatches += 1;
+                        total_diff += diff as u64;
+                    }
+                }
+            }
+        }
+
+        // See comment in test_15x17_border_pixels_lossless: dimension-swapping
+        // transforms have ±2 integer IDCT rounding tolerance.
+        let tolerance = if transform.swaps_dimensions() { 2 } else { 0 };
+        assert!(
+            max_diff <= tolerance,
+            "{label}: DCT vs pixel transform mismatch! \
+             max_diff={max_diff} (tol={tolerance}) at ({},{}) mismatches={mismatches}/{} mean_diff={:.2}",
+            worst_pos.0,
+            worst_pos.1,
+            tw * th * 3,
+            if mismatches > 0 {
+                total_diff as f64 / mismatches as f64
+            } else {
+                0.0
+            }
+        );
+    }
+}
