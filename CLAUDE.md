@@ -631,21 +631,14 @@ sensitivity tables, and preset baselines.
    panicked on grayscale (1-component) images because they called `row_planes()` which
    requires cb/cr buffers that are empty for grayscale. Fixed: commit be24fac.
 
-5. **4:2:0 scanline-vs-buffered pixel difference with decode-time transforms (2026-02-08)** -
-   The coefficient-based scanline path (`decode_mcu_row_from_coefficients`) produces pixel
-   diffs up to ~57 at chroma block boundaries for 4:2:0 with transforms (FlipH, etc.).
-   The buffered decode path goes through `to_pixels()` (full output pipeline), while the
-   scanline coefficient path does per-MCU-row IDCT + strip upsampling. The difference may
-   be in how chroma planes are reconstructed from transformed coefficients. 4:4:4 is exact.
-   - Impact: Scanline reader with 4:2:0 + transform gives slightly different pixels than
-     buffered decode. Block centers are correct; differences are at chroma boundaries.
-   - Files: `decode/scanline.rs:527` (`decode_mcu_row_from_coefficients`),
-     `decode/parser/output.rs` (buffered `to_pixels` path)
-   - Reproduce: `cargo test --release -p zenjpeg --features decoder --lib -- test_transform_420`
-   - TODO: Investigate whether the issue is incorrect chroma block addressing after transform,
-     or a fundamental difference in the upsampling approach between the two paths.
-
 ### Fixed Bugs (historical reference)
+
+- **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
+  Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43
+  pixel error for streaming, ~57 for coefficient/transform path). Fix: mirror the existing
+  top-boundary fixup for the bottom edge. Coefficient path peeks ahead by IDCT'ing the first
+  chroma block row of the next MCU. Streaming path pre-decodes the next MCU row and serves
+  corrected chroma through deferred buffers. Boundary max diff now ≤4 (IDCT rounding only).
 
 - **Scanline h2v2 boundary fixup buffer overflow (FIXED 2026-02-09, commit 8f1295f)** -
   `fixup_h2v2_row0()` used hardcoded `[i16; 4096]` stack buffers, panicking on any 4:2:0
