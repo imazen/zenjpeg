@@ -6,7 +6,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::decode::{DecodeConfig, DecodedCoefficients, PreserveConfig};
+use crate::decode::{DecodeConfig, PreserveConfig};
 use crate::entropy::encoder::EntropyEncoder;
 use crate::error::{Error, Result};
 use crate::foundation::consts::{
@@ -14,13 +14,13 @@ use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_DHT, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOI, MARKER_SOS,
 };
 use crate::huffman::encode::{build_code_lengths, lengths_to_bits_values, HuffmanEncodeTable};
-use crate::types::Subsampling;
 use enough::Stop;
 
 use super::coeff_transform::{
-    transform_coefficients, EdgeHandling, LosslessTransform, TransformConfig,
+    transform_coefficients, LosslessTransform, TransformConfig,
     TransformedCoefficients,
 };
+use super::exif::{parse_exif_orientation, set_exif_orientation};
 
 /// Perform a lossless JPEG transform.
 ///
@@ -50,13 +50,9 @@ use super::coeff_transform::{
 pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) -> Result<Vec<u8>> {
     stop.check()?;
 
-    // Step 1: Decode to coefficients + extract metadata for round-tripping
+    // Step 1: Decode to coefficients + extract metadata in a single pass
     let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
-    let mut decode_result = decoder.decode(jpeg_data, &stop)?;
-    let extras = decode_result.take_extras();
-
-    // Also get the coefficients
-    let decoded_coeffs = decoder.decode_coefficients(jpeg_data, &stop)?;
+    let (decoded_coeffs, extras) = decoder.decode_coefficients_with_extras(jpeg_data, &stop)?;
 
     stop.check()?;
 
@@ -423,7 +419,7 @@ fn write_sof(
     output.push((width & 0xFF) as u8);
     output.push(num_components as u8);
 
-    for (i, comp) in components.iter().enumerate() {
+    for comp in components {
         output.push(comp.id);
         output.push((comp.h_samp << 4) | comp.v_samp);
         output.push(comp.quant_table_idx);
@@ -466,4 +462,69 @@ fn write_sos(output: &mut Vec<u8>, num_components: usize) {
     output.push(0x00); // Ss
     output.push(0x3F); // Se (63)
     output.push(0x00); // Ah/Al
+}
+
+/// Apply the EXIF orientation tag as a lossless DCT-domain transform.
+///
+/// Reads the EXIF orientation from the JPEG's metadata, applies the corresponding
+/// lossless transform, and resets the orientation tag to 1 (Normal) in the output.
+///
+/// If the orientation is already 1 (Normal), absent, or unrecognized, the input
+/// is returned unchanged (fast path — no decode/re-encode).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenjpeg::lossless::apply_exif_orientation;
+///
+/// // Rotated camera photo → pixel-correct orientation, zero generation loss
+/// let corrected = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
+/// ```
+pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+    // Step 1: Quick scan for EXIF orientation without full decode
+    let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
+    let (coeffs, extras) = decoder.decode_coefficients_with_extras(jpeg_data, &stop)?;
+
+    // Find EXIF segment and parse orientation
+    let orientation = extras
+        .as_ref()
+        .and_then(|e| e.exif())
+        .and_then(parse_exif_orientation);
+
+    // Fast path: no rotation needed
+    let orientation = match orientation {
+        Some(o) if o != 1 => o,
+        _ => return Ok(jpeg_data.to_vec()),
+    };
+
+    let lossless_transform = match LosslessTransform::from_exif_orientation(orientation) {
+        Some(t) => t,
+        None => return Ok(jpeg_data.to_vec()),
+    };
+
+    // Step 2: Transform coefficients
+    let config = TransformConfig {
+        transform: lossless_transform,
+        ..Default::default()
+    };
+    let transformed = transform_coefficients(&coeffs, &config)
+        .map_err(|e| Error::io_error(alloc::format!("{e}")))?;
+
+    stop.check()?;
+
+    // Step 3: Re-encode, rewriting EXIF orientation to 1
+    // Clone the preserved segments so we can modify the EXIF orientation
+    let mut segments: Vec<crate::decode::PreservedSegment> = extras
+        .map(|e| e.segments().to_vec())
+        .unwrap_or_default();
+
+    // Find and rewrite EXIF orientation to 1 (Normal)
+    for seg in &mut segments {
+        if seg.segment_type == crate::decode::SegmentType::Exif {
+            set_exif_orientation(&mut seg.data, 1);
+        }
+    }
+
+    let output = encode_from_coefficients(&transformed, Some(&segments), &stop)?;
+    Ok(output)
 }
