@@ -302,5 +302,9 @@ pub(crate) mod types;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
+// Lossless JPEG transforms (requires decoder for coefficient access)
+#[cfg(feature = "decoder")]
+pub mod lossless;
+
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
