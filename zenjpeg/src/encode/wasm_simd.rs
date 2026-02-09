@@ -20,7 +20,6 @@ use archmage::{arcane, Wasm128Token};
 use core::arch::wasm32::*;
 use safe_unaligned_simd::wasm32 as safe_simd;
 
-
 // Helper macros for type-constrained SIMD load/store (v128_load<T> is generic)
 macro_rules! load_f32x4 {
     ($slice:expr) => {{
@@ -48,7 +47,6 @@ macro_rules! store_i16x8 {
         safe_simd::v128_store(arr, $val)
     }};
 }
-
 
 macro_rules! store_u8x16 {
     ($slice:expr, $val:expr) => {{
@@ -286,36 +284,36 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
     let mut rows_hi: [v128; 8] = [zero; 8];
 
     for i in 0..8 {
-    rows_lo[i] = load_f32x4!(&input[i * 8..][..4]);
-    rows_hi[i] = load_f32x4!(&input[i * 8 + 4..][..4]);
+        rows_lo[i] = load_f32x4!(&input[i * 8..][..4]);
+        rows_hi[i] = load_f32x4!(&input[i * 8 + 4..][..4]);
 
-    // Apply 1D DCT to each row
-    wasm_dct1d_8_inner(token, &mut rows_lo);
-    wasm_dct1d_8_inner(token, &mut rows_hi);
+        // Apply 1D DCT to each row
+        wasm_dct1d_8_inner(token, &mut rows_lo);
+        wasm_dct1d_8_inner(token, &mut rows_hi);
 
-    // Transpose
-    let mut temp = [0.0f32; 64];
-    for i in 0..8 {
-        store_f32x4!(&mut temp[i * 8..][..4], rows_lo[i]);
-        store_f32x4!(&mut temp[i * 8 + 4..][..4], rows_hi[i]);
-    }
-    wasm_transpose_8x8_inplace_inner(token, &mut temp);
+        // Transpose
+        let mut temp = [0.0f32; 64];
+        for i in 0..8 {
+            store_f32x4!(&mut temp[i * 8..][..4], rows_lo[i]);
+            store_f32x4!(&mut temp[i * 8 + 4..][..4], rows_hi[i]);
+        }
+        wasm_transpose_8x8_inplace_inner(token, &mut temp);
 
-    // Reload transposed data
-    for i in 0..8 {
-        rows_lo[i] = load_f32x4!(&temp[i * 8..][..4]);
-        rows_hi[i] = load_f32x4!(&temp[i * 8 + 4..][..4]);
-    }
+        // Reload transposed data
+        for i in 0..8 {
+            rows_lo[i] = load_f32x4!(&temp[i * 8..][..4]);
+            rows_hi[i] = load_f32x4!(&temp[i * 8 + 4..][..4]);
+        }
 
-    // Apply 1D DCT to each column (now rows after transpose)
-    wasm_dct1d_8_inner(token, &mut rows_lo);
-    wasm_dct1d_8_inner(token, &mut rows_hi);
+        // Apply 1D DCT to each column (now rows after transpose)
+        wasm_dct1d_8_inner(token, &mut rows_lo);
+        wasm_dct1d_8_inner(token, &mut rows_hi);
 
-    // Store result
-    for i in 0..8 {
-        store_f32x4!(&mut output[i * 8..][..4], rows_lo[i]);
-        store_f32x4!(&mut output[i * 8 + 4..][..4], rows_hi[i]);
-    }
+        // Store result
+        for i in 0..8 {
+            store_f32x4!(&mut output[i * 8..][..4], rows_lo[i]);
+            store_f32x4!(&mut output[i * 8 + 4..][..4], rows_hi[i]);
+        }
     }
 }
 
@@ -339,24 +337,24 @@ pub fn wasm_idct_int_8x8(
     // DC-only fast path
     let all_ac_zero = true;
     for i in 1..64 {
-    if input[i] != 0 {
-        break;
-    }
-    
-    if all_ac_zero {
-        let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
-        let dc_vec = i16x8_splat(dc);
-        let mut pos = 0;
-        for _ in 0..8 {
-            store_i16x8!(&mut output[pos..][..4], dc_vec);
-            pos += stride;
+        if input[i] != 0 {
+            break;
         }
-        return;
-    }
 
-    // Full IDCT - not yet implemented
-    // TODO: Implement full WASM SIMD128 IDCT (no vmlal, needs manual widening)
-    unimplemented!("WASM SIMD128 integer IDCT not yet implemented");
+        if all_ac_zero {
+            let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
+            let dc_vec = i16x8_splat(dc);
+            let mut pos = 0;
+            for _ in 0..8 {
+                store_i16x8!(&mut output[pos..][..4], dc_vec);
+                pos += stride;
+            }
+            return;
+        }
+
+        // Full IDCT - not yet implemented
+        // TODO: Implement full WASM SIMD128 IDCT (no vmlal, needs manual widening)
+        unimplemented!("WASM SIMD128 integer IDCT not yet implemented");
     }
 }
 
@@ -381,7 +379,7 @@ pub fn wasm_ycbcr_to_rgb(
     let _cb_to_b = i16x8_splat(29032);
     let _cr_to_g = i16x8_splat(-11698);
     let _cb_to_g = i16x8_splat(-5636);
-    
+
     let cb_cr_bias = i16x8_splat(128);
 
     // Process first 8 pixels
@@ -427,31 +425,30 @@ pub fn wasm_upsample_h2v1(
     out_width: usize,
 ) {
     assert_eq!(out_width, in_width * 2);
-    
+
     let v_three = f32x4_splat(3.0);
     let v_quarter = f32x4_splat(0.25);
 
     // First pixel
     output[0] = input[0];
-    
+
     // Process 4 input pixels at a time → 8 output pixels
     let chunks = in_width / 4;
     for i in 0..chunks {
-    let curr = load_f32x4!(&input[i * 4..][..4]);
-    let next = load_f32x4!(&input[i * 4 + 1..][..4]);
+        let curr = load_f32x4!(&input[i * 4..][..4]);
+        let next = load_f32x4!(&input[i * 4 + 1..][..4]);
 
-    // even = curr, odd = (3*curr + next) * 0.25
-    let odd = f32x4_mul(f32x4_add(f32x4_mul(curr, v_three), next), v_quarter);
+        // even = curr, odd = (3*curr + next) * 0.25
+        let odd = f32x4_mul(f32x4_add(f32x4_mul(curr, v_three), next), v_quarter);
 
-    // Interleave even and odd using shuffle
-    let out0 = i32x4_shuffle::<0, 4, 1, 5>(curr, odd);
-    let out1 = i32x4_shuffle::<2, 6, 3, 7>(curr, odd);
+        // Interleave even and odd using shuffle
+        let out0 = i32x4_shuffle::<0, 4, 1, 5>(curr, odd);
+        let out1 = i32x4_shuffle::<2, 6, 3, 7>(curr, odd);
 
-    store_f32x4!(&mut output[i * 8..][..4], out0);
-    store_f32x4!(&mut output[i * 8 + 4..][..4], out1);
+        store_f32x4!(&mut output[i * 8..][..4], out0);
+        store_f32x4!(&mut output[i * 8 + 4..][..4], out1);
 
-    // Last pixel
-    output[out_width - 1] = input[in_width - 1];
+        // Last pixel
+        output[out_width - 1] = input[in_width - 1];
     }
 }
-

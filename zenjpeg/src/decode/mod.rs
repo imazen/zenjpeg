@@ -355,7 +355,8 @@ impl DecodeConfig {
             .xmp(true)
             .icc(IccPreserve::All);
 
-        let mut parser = JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
+        let mut parser =
+            JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
         parser.read_header()?;
         Ok(parser.info())
     }
@@ -1227,10 +1228,15 @@ mod metadata_tests {
         let jpeg = include_bytes!("../../tests/images/ultrahdr_sample.jpg");
 
         let decoder = Decoder::new();
-        let info = decoder.read_info(jpeg).expect("Should decode ultrahdr_sample.jpg");
+        let info = decoder
+            .read_info(jpeg)
+            .expect("Should decode ultrahdr_sample.jpg");
 
         // Check that metadata extraction doesn't require full decode
-        println!("Image: {}x{}", info.dimensions.width, info.dimensions.height);
+        println!(
+            "Image: {}x{}",
+            info.dimensions.width, info.dimensions.height
+        );
 
         if info.has_icc_profile {
             assert!(
@@ -1285,7 +1291,7 @@ mod limits_tests {
         // Verify max_memory is u64 and doesn't require casting
         let large_limit: u64 = 5_000_000_000; // 5GB, would overflow on 32-bit if usize
         let config = Decoder::new().max_memory(large_limit);
-        
+
         assert_eq!(config.get_max_memory(), large_limit);
     }
 
@@ -1293,11 +1299,11 @@ mod limits_tests {
     fn test_fields_not_directly_accessible() {
         // This test verifies that fields are private and must use methods
         let config = Decoder::new();
-        
+
         // These should compile (using getters)
         let _ = config.get_max_pixels();
         let _ = config.get_max_memory();
-        
+
         // Direct field access should NOT compile (would fail if uncommented):
         // let _ = config.max_pixels;
         // let _ = config.max_memory;

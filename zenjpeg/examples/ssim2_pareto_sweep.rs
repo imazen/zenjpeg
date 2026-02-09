@@ -25,9 +25,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use zenjpeg::encode::search::ExpertConfig;
-use zenjpeg::encode::{
-    ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout,
-};
+use zenjpeg::encode::{ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
     EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, ScanMode,
@@ -37,7 +35,8 @@ use zenjpeg_bench_utils::{
 
 fn corpus_cid22_dir() -> PathBuf {
     let cc = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-    cc.get("CID22/CID22-512/validation").expect("CID22 corpus not available")
+    cc.get("CID22/CID22-512/validation")
+        .expect("CID22 corpus not available")
 }
 
 /// C++ distances spanning the full R-D curve (low quality → near-lossless).

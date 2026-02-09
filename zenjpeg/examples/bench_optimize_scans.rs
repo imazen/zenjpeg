@@ -78,7 +78,8 @@ fn decode_jpeg_zune(jpeg_data: &[u8]) -> Vec<u8> {
 
 fn main() {
     let corpus_dir = std::env::args().nth(1).unwrap_or_else(|| {
-        codec_corpus::Corpus::new().ok()
+        codec_corpus::Corpus::new()
+            .ok()
             .and_then(|c| c.get("clic2025/final-test").ok())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| {

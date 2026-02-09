@@ -659,14 +659,32 @@ mod tests {
         assert_eq!(PixelLayout::from(PixelFormat::Gray), PixelLayout::Gray8Srgb);
 
         // 16-bit → linear light
-        assert_eq!(PixelLayout::from(PixelFormat::Rgb16), PixelLayout::Rgb16Linear);
-        assert_eq!(PixelLayout::from(PixelFormat::Rgba16), PixelLayout::Rgba16Linear);
-        assert_eq!(PixelLayout::from(PixelFormat::Gray16), PixelLayout::Gray16Linear);
+        assert_eq!(
+            PixelLayout::from(PixelFormat::Rgb16),
+            PixelLayout::Rgb16Linear
+        );
+        assert_eq!(
+            PixelLayout::from(PixelFormat::Rgba16),
+            PixelLayout::Rgba16Linear
+        );
+        assert_eq!(
+            PixelLayout::from(PixelFormat::Gray16),
+            PixelLayout::Gray16Linear
+        );
 
         // f32 → linear light
-        assert_eq!(PixelLayout::from(PixelFormat::RgbF32), PixelLayout::RgbF32Linear);
-        assert_eq!(PixelLayout::from(PixelFormat::RgbaF32), PixelLayout::RgbaF32Linear);
-        assert_eq!(PixelLayout::from(PixelFormat::GrayF32), PixelLayout::GrayF32Linear);
+        assert_eq!(
+            PixelLayout::from(PixelFormat::RgbF32),
+            PixelLayout::RgbF32Linear
+        );
+        assert_eq!(
+            PixelLayout::from(PixelFormat::RgbaF32),
+            PixelLayout::RgbaF32Linear
+        );
+        assert_eq!(
+            PixelLayout::from(PixelFormat::GrayF32),
+            PixelLayout::GrayF32Linear
+        );
     }
 
     #[test]
@@ -678,12 +696,24 @@ mod tests {
         assert_eq!(PixelFormat::from(PixelLayout::Rgbx8Srgb), PixelFormat::Rgba); // RGBX maps to RGBA
 
         // Linear 16-bit → 16-bit format
-        assert_eq!(PixelFormat::from(PixelLayout::Rgb16Linear), PixelFormat::Rgb16);
-        assert_eq!(PixelFormat::from(PixelLayout::Rgba16Linear), PixelFormat::Rgba16);
+        assert_eq!(
+            PixelFormat::from(PixelLayout::Rgb16Linear),
+            PixelFormat::Rgb16
+        );
+        assert_eq!(
+            PixelFormat::from(PixelLayout::Rgba16Linear),
+            PixelFormat::Rgba16
+        );
 
         // Linear f32 → f32 format
-        assert_eq!(PixelFormat::from(PixelLayout::RgbF32Linear), PixelFormat::RgbF32);
-        assert_eq!(PixelFormat::from(PixelLayout::RgbaF32Linear), PixelFormat::RgbaF32);
+        assert_eq!(
+            PixelFormat::from(PixelLayout::RgbF32Linear),
+            PixelFormat::RgbF32
+        );
+        assert_eq!(
+            PixelFormat::from(PixelLayout::RgbaF32Linear),
+            PixelFormat::RgbaF32
+        );
     }
 
     #[test]
@@ -700,7 +730,11 @@ mod tests {
         for pf in formats {
             let pl: PixelLayout = pf.into();
             let pf2: PixelFormat = pl.into();
-            assert_eq!(pf, pf2, "Roundtrip failed for {:?} -> {:?} -> {:?}", pf, pl, pf2);
+            assert_eq!(
+                pf, pf2,
+                "Roundtrip failed for {:?} -> {:?} -> {:?}",
+                pf, pl, pf2
+            );
         }
     }
 }

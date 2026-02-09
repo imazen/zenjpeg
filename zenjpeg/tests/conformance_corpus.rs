@@ -56,11 +56,17 @@ fn decode_file_with_strictness(
 fn test_valid_files() {
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpgs(&dir);
 
@@ -106,11 +112,17 @@ fn test_valid_files() {
 fn test_invalid_files() {
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let dir = match corpus.get("jpeg-conformance/invalid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpgs(&dir);
 
@@ -161,11 +173,17 @@ fn test_invalid_files() {
 fn test_nonconformant_files() {
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let dir = match corpus.get("jpeg-conformance/non-conformant") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpgs(&dir);
 
@@ -228,11 +246,17 @@ fn test_cmyk_files() {
 
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let valid_dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let cmyk_files = ["cmyk_logo.jpg", "cymk.jpg"];
@@ -276,15 +300,24 @@ fn test_strictness_modes() {
 
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let valid_dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let nonconf_dir = match corpus.get("jpeg-conformance/non-conformant") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     // Test valid files with all strictness modes

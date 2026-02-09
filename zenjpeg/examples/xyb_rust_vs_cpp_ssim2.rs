@@ -109,7 +109,8 @@ fn compute_channel_diff(img1: &[u8], img2: &[u8]) -> [(f64, f64, f64); 3] {
 }
 
 fn main() {
-    let src_path_string = codec_corpus::Corpus::new().ok()
+    let src_path_string = codec_corpus::Corpus::new()
+        .ok()
         .and_then(|c| c.get("kodak").ok())
         .map(|p| p.join("1.png").to_string_lossy().to_string())
         .expect("codec-corpus unavailable; need kodak/1.png");

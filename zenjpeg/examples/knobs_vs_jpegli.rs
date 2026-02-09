@@ -20,9 +20,9 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::PathBuf;
+use zenjpeg::encode::search::ExpertConfig;
 #[cfg(feature = "optimized-tables")]
 use zenjpeg::encode::OptimizedTables;
-use zenjpeg::encode::search::ExpertConfig;
 use zenjpeg::encode::{
     ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout,
 };

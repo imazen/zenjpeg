@@ -8,7 +8,8 @@ use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
-    let kodak_dir = codec_corpus::Corpus::new().ok()
+    let kodak_dir = codec_corpus::Corpus::new()
+        .ok()
         .and_then(|c| c.get("kodak").ok())
         .expect("codec-corpus unavailable; need kodak images");
     let image_paths: Vec<String> = ["1.png", "5.png", "13.png"]

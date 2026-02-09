@@ -18,7 +18,9 @@ fn find_cjpegli_path() -> Option<PathBuf> {
 fn find_corpus_path() -> Option<PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
     // Try CID22 training first, then kodak
-    corpus.get("CID22/CID22-512/training").ok()
+    corpus
+        .get("CID22/CID22-512/training")
+        .ok()
         .or_else(|| corpus.get("kodak").ok())
 }
 

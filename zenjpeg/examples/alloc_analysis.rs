@@ -25,11 +25,13 @@ fn main() {
     let corpus = codec_corpus::Corpus::new().ok();
 
     // CID22 has 2268x1512 images (like flower.png) - better test case than 768x512 Kodak
-    let cid22_path = corpus.as_ref()
+    let cid22_path = corpus
+        .as_ref()
         .and_then(|c| c.get("cid22").ok())
         .map(|p| p.join("flower.png").to_string_lossy().to_string())
         .unwrap_or_default();
-    let kodak_path = corpus.as_ref()
+    let kodak_path = corpus
+        .as_ref()
         .and_then(|c| c.get("kodak").ok())
         .map(|p| p.join("1.png").to_string_lossy().to_string())
         .unwrap_or_default();

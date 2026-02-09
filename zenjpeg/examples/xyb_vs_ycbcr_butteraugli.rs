@@ -18,7 +18,8 @@ fn main() {
     let image_path = std::env::args()
         .nth(1)
         .or_else(|| {
-            codec_corpus::Corpus::new().ok()
+            codec_corpus::Corpus::new()
+                .ok()
                 .and_then(|c| c.get("kodak").ok())
                 .map(|p| p.join("1.png").to_string_lossy().to_string())
         })

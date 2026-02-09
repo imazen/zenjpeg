@@ -171,7 +171,10 @@ fn test_file_size_parity() {
         }
     };
 
-    let corpus = match codec_corpus::Corpus::new().ok().and_then(|c| c.get("kodak").ok()) {
+    let corpus = match codec_corpus::Corpus::new()
+        .ok()
+        .and_then(|c| c.get("kodak").ok())
+    {
         Some(p) => p,
         None => {
             eprintln!("Kodak corpus not found, skipping test");
@@ -268,7 +271,10 @@ fn test_dssim_parity() {
         }
     };
 
-    let corpus = match codec_corpus::Corpus::new().ok().and_then(|c| c.get("kodak").ok()) {
+    let corpus = match codec_corpus::Corpus::new()
+        .ok()
+        .and_then(|c| c.get("kodak").ok())
+    {
         Some(p) => p,
         None => {
             eprintln!("Kodak corpus not found, skipping test");

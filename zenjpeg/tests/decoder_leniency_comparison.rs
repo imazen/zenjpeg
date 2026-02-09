@@ -118,15 +118,24 @@ fn test_decoder(
 fn compare_decoder_leniency() {
     let corpus = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let valid_dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     // Load all files into memory

@@ -10,15 +10,14 @@ use crate::decode::{DecodeConfig, PreserveConfig};
 use crate::entropy::encoder::EntropyEncoder;
 use crate::error::{Error, Result};
 use crate::foundation::consts::{
-    JPEG_NATURAL_ORDER,
-    DCT_BLOCK_SIZE, MARKER_DHT, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOI, MARKER_SOS,
+    DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_DHT, MARKER_DQT, MARKER_EOI, MARKER_SOF0,
+    MARKER_SOI, MARKER_SOS,
 };
 use crate::huffman::encode::{build_code_lengths, lengths_to_bits_values, HuffmanEncodeTable};
 use enough::Stop;
 
 use super::coeff_transform::{
-    transform_coefficients, LosslessTransform, TransformConfig,
-    TransformedCoefficients,
+    transform_coefficients, LosslessTransform, TransformConfig, TransformedCoefficients,
 };
 use super::exif::{parse_exif_orientation, set_exif_orientation};
 
@@ -167,12 +166,7 @@ fn encode_from_coefficients(
     write_quant_tables(&mut output, &coeffs.quant_tables, num_components);
 
     // SOF0 - Start of Frame (baseline)
-    write_sof(
-        &mut output,
-        coeffs.width,
-        coeffs.height,
-        &coeffs.components,
-    );
+    write_sof(&mut output, coeffs.width, coeffs.height, &coeffs.components);
 
     // DHT - Huffman tables
     write_huffman_table(&mut output, 0x00, &dc_luma_table); // DC luma, table 0
@@ -196,7 +190,9 @@ fn encode_from_coefficients(
 }
 
 /// Build optimized Huffman tables from a set of coefficient blocks.
-fn build_tables_from_blocks(blocks: &[[i16; DCT_BLOCK_SIZE]]) -> Result<(HuffmanEncodeTable, HuffmanEncodeTable)> {
+fn build_tables_from_blocks(
+    blocks: &[[i16; DCT_BLOCK_SIZE]],
+) -> Result<(HuffmanEncodeTable, HuffmanEncodeTable)> {
     let mut dc_freq = [0u64; 256];
     let mut ac_freq = [0u64; 256];
     count_frequencies(blocks, &mut dc_freq, &mut ac_freq);
@@ -213,9 +209,7 @@ fn build_tables_from_blocks(blocks: &[[i16; DCT_BLOCK_SIZE]]) -> Result<(Huffman
 }
 
 /// Convert a `ComponentCoefficients` to a Vec of `[i16; 64]` blocks.
-fn component_to_blocks(
-    comp: &crate::decode::ComponentCoefficients,
-) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+fn component_to_blocks(comp: &crate::decode::ComponentCoefficients) -> Vec<[i16; DCT_BLOCK_SIZE]> {
     let num_blocks = comp.num_blocks();
     let mut blocks = Vec::with_capacity(num_blocks);
     for i in 0..num_blocks {
@@ -378,7 +372,7 @@ fn write_quant_tables(
                 output.push((len >> 8) as u8);
                 output.push((len & 0xFF) as u8);
                 output.push(0x10 | idx as u8); // Pq=1 (16-bit), Tq=idx
-                // Write in JPEG zigzag order (quant_tables are stored in natural order)
+                                               // Write in JPEG zigzag order (quant_tables are stored in natural order)
                 for z in 0..64 {
                     let v = qt[JPEG_NATURAL_ORDER[z] as usize];
                     output.push((v >> 8) as u8);
@@ -389,7 +383,7 @@ fn write_quant_tables(
                 output.push((len >> 8) as u8);
                 output.push((len & 0xFF) as u8);
                 output.push(idx as u8); // Pq=0 (8-bit), Tq=idx
-                // Write in JPEG zigzag order (quant_tables are stored in natural order)
+                                        // Write in JPEG zigzag order (quant_tables are stored in natural order)
                 for z in 0..64 {
                     let v = qt[JPEG_NATURAL_ORDER[z] as usize];
                     output.push(v as u8);
@@ -426,11 +420,7 @@ fn write_sof(
     }
 }
 
-fn write_huffman_table(
-    output: &mut Vec<u8>,
-    table_class_and_id: u8,
-    table: &HuffmanEncodeTable,
-) {
+fn write_huffman_table(output: &mut Vec<u8>, table_class_and_id: u8, table: &HuffmanEncodeTable) {
     let (bits, values) = crate::huffman::encode::lengths_to_bits_values(&table.lengths);
 
     let len = 2 + 1 + 16 + values.len();
@@ -514,9 +504,8 @@ pub fn apply_exif_orientation(jpeg_data: &[u8], stop: impl Stop) -> Result<Vec<u
 
     // Step 3: Re-encode, rewriting EXIF orientation to 1
     // Clone the preserved segments so we can modify the EXIF orientation
-    let mut segments: Vec<crate::decode::PreservedSegment> = extras
-        .map(|e| e.segments().to_vec())
-        .unwrap_or_default();
+    let mut segments: Vec<crate::decode::PreservedSegment> =
+        extras.map(|e| e.segments().to_vec()).unwrap_or_default();
 
     // Find and rewrite EXIF orientation to 1 (Normal)
     for seg in &mut segments {

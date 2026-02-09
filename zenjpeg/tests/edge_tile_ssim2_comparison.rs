@@ -15,7 +15,9 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn find_corpus_path() -> Option<PathBuf> {
     let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get("CID22/CID22-512/training").ok()
+    corpus
+        .get("CID22/CID22-512/training")
+        .ok()
         .or_else(|| corpus.get("kodak").ok())
 }
 

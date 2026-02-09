@@ -318,11 +318,17 @@ fn percentile(values: &[u8], pct: usize) -> u8 {
 fn corpus_decode_accuracy() {
     let c = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let corpus = match c.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpgs(&corpus);
@@ -576,11 +582,17 @@ fn corpus_decode_accuracy() {
 fn corpus_libjpeg_compat_vs_djpeg() {
     let c = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let corpus = match c.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpgs(&corpus);
@@ -722,11 +734,17 @@ fn investigate_rst_diff() {
 
     let c = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let corpus_dir = match c.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let path = corpus_dir.join("rst_1block.jpg");
     if !path.exists() {
@@ -833,11 +851,17 @@ fn investigate_rst_diff() {
 fn border_pixel_accuracy() {
     let c = match corpus() {
         Some(c) => c,
-        None => { eprintln!("Skipping: corpus unavailable"); return; }
+        None => {
+            eprintln!("Skipping: corpus unavailable");
+            return;
+        }
     };
     let corpus = match c.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpgs(&corpus);
