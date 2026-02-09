@@ -405,7 +405,7 @@ fn test_transform_identity() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::None,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -422,7 +422,7 @@ fn test_transform_hflip_block_positions() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::FlipHorizontal,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -440,7 +440,7 @@ fn test_transform_vflip_block_positions() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::FlipVertical,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -456,7 +456,7 @@ fn test_transform_transpose_swaps_dims() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::Transpose,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -475,7 +475,7 @@ fn test_transform_rot90_block_positions() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::Rotate90,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -492,7 +492,7 @@ fn test_transform_rot180_block_positions() {
     let coeffs = make_test_coefficients();
     let config = TransformConfig {
         transform: LosslessTransform::Rotate180,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -528,7 +528,7 @@ fn test_transform_nonsquare_transpose() {
 
     let config = TransformConfig {
         transform: LosslessTransform::Transpose,
-        edge_handling: EdgeHandling::Trim,
+        edge_handling: EdgeHandling::TrimPartialBlocks,
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
@@ -612,7 +612,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::None,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -655,7 +655,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -677,7 +677,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::Rotate180,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -698,7 +698,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -708,7 +708,7 @@ mod pipeline_tests {
             &rot90_1,
             &TransformConfig {
                 transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -718,7 +718,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::Rotate180,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -751,7 +751,7 @@ mod pipeline_tests {
                 &current,
                 &TransformConfig {
                     transform: LosslessTransform::Rotate90,
-                    edge_handling: EdgeHandling::Trim,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
                 },
                 Unstoppable,
             )
@@ -785,7 +785,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::FlipHorizontal,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -795,7 +795,7 @@ mod pipeline_tests {
             &flipped,
             &TransformConfig {
                 transform: LosslessTransform::FlipHorizontal,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -825,7 +825,7 @@ mod pipeline_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -858,7 +858,7 @@ mod pipeline_tests {
                 &jpeg,
                 &TransformConfig {
                     transform: xform,
-                    edge_handling: EdgeHandling::Trim,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
                 },
                 Unstoppable,
             )
@@ -912,7 +912,7 @@ mod coefficient_roundtrip_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::None,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )
@@ -975,7 +975,7 @@ mod coefficient_roundtrip_tests {
             &jpeg,
             &TransformConfig {
                 transform: LosslessTransform::None,
-                edge_handling: EdgeHandling::Trim,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
             },
             Unstoppable,
         )

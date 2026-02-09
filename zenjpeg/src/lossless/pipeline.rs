@@ -43,7 +43,7 @@ use super::exif::{parse_exif_orientation, set_exif_orientation};
 ///
 /// let rotated = transform(&jpeg_data, &TransformConfig {
 ///     transform: LosslessTransform::Rotate90,
-///     edge_handling: EdgeHandling::Trim,
+///     edge_handling: EdgeHandling::TrimPartialBlocks,
 /// }, enough::Unstoppable)?;
 /// ```
 pub fn transform(jpeg_data: &[u8], config: &TransformConfig, stop: impl Stop) -> Result<Vec<u8>> {

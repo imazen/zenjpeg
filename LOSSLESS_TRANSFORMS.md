@@ -1,15 +1,14 @@
-# Lossless JPEG Transforms — Design Exploration
+# Lossless JPEG Transforms
 
 ## Motivation
 
 Two use cases:
 
 1. **End-to-end lossless JPEG rotation/flip**: JPEG in → transform DCT coefficients → JPEG out.
-   No decode to pixels, no re-encode. Zero generation loss. 3-5x faster than decode+rotate+encode.
+   No decode to pixels, no re-encode. Zero generation loss.
 
-2. **Fast EXIF orientation pre-streaming**: When a JPEG has EXIF orientation != 1, apply the
-   rotation/flip in DCT domain before streaming decode begins. This avoids the current problem
-   where Rotate90/Rotate270 require FatStrip (full image buffering) in zenimage's streaming pipeline.
+2. **Decode-time orientation**: Apply EXIF orientation or an explicit transform during decode,
+   in DCT-coefficient space before IDCT. One entropy decode pass, no re-encoding.
 
 ## How It Works
 
@@ -38,6 +37,9 @@ Coefficients are in an 8×8 matrix. "Row i, column j" refers to the DCT frequenc
 | Rotate 270° | Transpose + mirror rows       | Transpose + negate odd columns           |
 | Transverse  | Transpose + mirror both       | Transpose + negate where (i+j) is odd    |
 
+These form the D4 dihedral group. `LosslessTransform::then()` composes transforms via
+a precomputed Cayley table, and `inverse()` returns the group inverse.
+
 ### EXIF Orientation Mapping
 
 | EXIF | Meaning          | DCT Transform |
@@ -54,180 +56,110 @@ Coefficients are in an 8×8 matrix. "Row i, column j" refers to the DCT frequenc
 ### Edge Handling (Non-MCU-Aligned Dimensions)
 
 When image dimensions aren't multiples of the MCU size (8 for 4:4:4, 16 for 4:2:0), partial
-blocks at edges cause issues during transforms that move edges:
+blocks at edges cause issues for transforms that move those edges to a different position:
 
-- **Trim mode**: Discard partial MCU strips. Output is slightly smaller.
-- **Perfect mode**: Refuse if not aligned.
-- **Default**: Leave partial edge blocks untransformed (preserves reversibility).
+- **`TrimPartialBlocks`** (default): Discard partial MCU strips. Output may be up to 15 pixels
+  smaller per affected edge. This matches jpegtran's `trim` behavior.
+- **`RejectPartialBlocks`**: Return `TransformError::NotMcuAligned` if the image isn't aligned.
 
-For EXIF orientation, most cameras produce MCU-aligned images, so this is rarely an issue.
+The decode-time path (`DecodeConfig::transform()`) handles non-aligned images differently:
+it renders the full padded image and crops to the visible region, preserving all pixels.
+This goes through IDCT so it's not lossless on re-encode, but produces correct pixel output.
 
-### Zigzag Order Complication
+Most cameras produce MCU-aligned images, so this is rarely an issue in practice.
 
-zenjpeg stores coefficients in **zigzag scan order**, not row-major 8×8. The transform operations
+### Zigzag Order
+
+zenjpeg stores coefficients in zigzag scan order, not row-major 8×8. The transform operations
 (transpose, negate odd rows/cols) are defined in terms of the 8×8 matrix position (row i, col j).
 
-We need lookup tables that map zigzag positions to their 8×8 (row, col) coordinates.
+`BlockTransform::for_transform()` precomputes a `[(u8, bool); 64]` permutation table mapping
+each zigzag source position to its destination position and sign. This costs one table lookup
+and conditional negate per coefficient.
 
-From `JPEG_NATURAL_ORDER`: zigzag index z → linear index `JPEG_NATURAL_ORDER[z]`,
-where linear index = `row * 8 + col`.
+## API
 
-So for zigzag index z: `row = JPEG_NATURAL_ORDER[z] / 8`, `col = JPEG_NATURAL_ORDER[z] % 8`.
+### End-to-End Pipeline (`zenjpeg::lossless`)
 
-**Optimization**: Pre-compute permutation tables for each transform. A transform maps
-zigzag index z to a new zigzag index z', with optional sign flip. This can be a `[(u8, bool); 64]`
-lookup table — one load + conditional negate per coefficient.
-
-## Implementation in zenjpeg
-
-### What Already Exists
-
-1. **`decode_coefficients()`** — Decodes JPEG to `DecodedCoefficients` with:
-   - `components: Vec<ComponentCoefficients>` — per-component `Vec<i16>` in zigzag order
-   - `quant_tables: Vec<Option<[u16; 64]>>` — quantization tables
-   - Block grid: `blocks_wide`, `blocks_high`, `h_samp`, `v_samp`
-
-2. **Entropy encoder** — `encode_block()` takes `&[i16; 64]` in zigzag order
-
-3. **JPEG serializer** — Writes SOI, DQT, DHT, SOF, SOS, markers
-
-4. **Extras preservation** — `PreserveConfig` + `DecodedExtras` + `EncoderSegments` for
-   round-tripping EXIF, ICC, XMP, IPTC, MPF
-
-### What's Needed
-
-A new module `zenjpeg::lossless` (or `zenjpeg::transform`) that:
-
-1. Takes JPEG bytes + transform type
-2. Parses headers and Huffman-decodes to `[i16; 64]` blocks (no IDCT)
-3. Rearranges blocks on the grid and manipulates coefficients
-4. Re-encodes with optimized Huffman tables
-5. Copies all metadata markers (updating EXIF orientation to 1)
-6. Returns new JPEG bytes
-
-### API Sketch
+Requires the `decoder` feature. Takes JPEG bytes → Huffman decode → transform coefficients →
+Huffman re-encode → JPEG bytes.
 
 ```rust
-/// Lossless JPEG transform operations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LosslessTransform {
-    /// No transform (useful for Huffman re-optimization)
-    None,
-    /// Horizontal flip
-    FlipHorizontal,
-    /// Vertical flip
-    FlipVertical,
-    /// Transpose (swap rows/columns)
-    Transpose,
-    /// Rotate 90° clockwise
-    Rotate90,
-    /// Rotate 180°
-    Rotate180,
-    /// Rotate 270° clockwise (= 90° counter-clockwise)
-    Rotate270,
-    /// Transverse (transpose + rotate 180°)
-    Transverse,
-    /// Apply EXIF orientation, then reset it to 1
-    ApplyExifOrientation,
-}
+use zenjpeg::lossless::{transform, apply_exif_orientation, LosslessTransform, TransformConfig};
 
-/// How to handle images with non-MCU-aligned dimensions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EdgeHandling {
-    /// Trim partial MCU blocks (output may be slightly smaller)
-    Trim,
-    /// Error if dimensions aren't MCU-aligned
-    Perfect,
-    /// Best-effort: transform what's possible
-    BestEffort,
-}
+// Rotate 90° losslessly
+let rotated = transform(&jpeg_data, &TransformConfig {
+    transform: LosslessTransform::Rotate90,
+    ..Default::default()
+}, enough::Unstoppable)?;
 
-/// Configuration for lossless JPEG transforms.
-pub struct TransformConfig {
-    pub transform: LosslessTransform,
-    pub edge_handling: EdgeHandling,
-    /// Whether to optimize Huffman tables (slightly slower, smaller output)
-    pub optimize_huffman: bool,
-    /// Whether to preserve metadata (EXIF, ICC, XMP, etc.)
-    pub preserve_metadata: bool,
-}
-
-/// Perform a lossless JPEG transform.
-pub fn transform(
-    jpeg_data: &[u8],
-    config: &TransformConfig,
-    stop: impl Stop,
-) -> Result<Vec<u8>>;
-
-/// Apply EXIF orientation losslessly (convenience function).
-pub fn apply_exif_orientation(
-    jpeg_data: &[u8],
-    stop: impl Stop,
-) -> Result<Vec<u8>>;
+// Auto-correct EXIF orientation (resets tag to 1)
+let oriented = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
 ```
 
-### For zenimage Integration (EXIF Pre-Streaming)
+All metadata (EXIF, ICC, XMP, IPTC, comments) is preserved. `apply_exif_orientation()`
+also resets the EXIF orientation tag to 1 in the output. The `transform()` function
+does not modify EXIF — the caller handles that.
 
-The second use case — applying EXIF orientation before streaming decode — is trickier because
-we want to avoid buffering the entire decoded image. Options:
+Huffman tables are always re-optimized from coefficient frequencies.
 
-**Option A: Full lossless transform (rewrite JPEG, then stream-decode the result)**
-- Pro: Cleanest. The streaming decoder sees a normal, correctly-oriented JPEG.
-- Con: Requires writing the transformed JPEG to a buffer first. Adds latency.
-- Con: Allocates memory for the full compressed JPEG (but much less than a decoded frame).
+### Decode-Time Transform (`DecodeConfig`)
 
-**Option B: Coefficient-level transform during streaming decode**
-- Intercept coefficients after Huffman decode, transform them, then IDCT.
-- Pro: No extra JPEG write step.
-- Con: Requires modifying the decoder pipeline. Transpose/rotation changes image dimensions
-  and block ordering, so the decoder's strip output would need to account for this.
-- Con: Very invasive change to the decoder.
+Apply a transform during decode without a separate lossless re-encoding step. The transform
+happens in DCT-coefficient space before IDCT, so there's only one entropy decode pass.
 
-**Option C: Keep current approach (pixel-level transform in zenimage)**
-- For flips (H, V, 180°): already streaming-efficient (ThinStrip).
-- For rotations (90°, 270°, transpose): requires FatStrip (full image buffer).
-- Pro: No changes to zenjpeg.
-- Con: 90°/270° rotation can't stream.
+```rust
+use zenjpeg::decoder::Decoder;
+use zenjpeg::lossless::LosslessTransform;
 
-**Recommendation**: Start with **Option A** for the `transform()` API. For zenimage integration,
-use Option A when the overhead is acceptable (compressed JPEG is much smaller than decoded pixels),
-and fall back to Option C for non-JPEG formats.
+// Auto-orient from EXIF
+let result = Decoder::new()
+    .auto_orient(true)
+    .decode(&jpeg_data, enough::Unstoppable)?;
 
-## Performance Expectations
+// Explicit transform
+let result = Decoder::new()
+    .transform(LosslessTransform::Rotate90)
+    .decode(&jpeg_data, enough::Unstoppable)?;
 
-Lossless transform skips:
-- IDCT (~40% of decode time)
-- Forward DCT + quantization (~40% of encode time)
-- Color space conversion (~15% of decode/encode time)
+// Both (EXIF first, then explicit transform)
+let result = Decoder::new()
+    .auto_orient(true)
+    .transform(LosslessTransform::FlipHorizontal)
+    .decode(&jpeg_data, enough::Unstoppable)?;
+```
 
-What it still does:
-- Huffman decode (serial, ~30% of decode time)
-- Block rearrangement + coefficient negation (trivial, memory-bandwidth limited)
-- Huffman re-encode (~30% of encode time)
+Works with both buffered `.decode()` and streaming `.scanline_reader()`.
 
-**Expected: 3-5x faster than decode+rotate+encode.**
+### Low-Level Coefficient Transform
 
-Memory: Must buffer all coefficients. For a 4000×3000 4:2:0 JPEG: ~35 MB of i16 coefficients.
-This is comparable to a decoded pixel buffer but we avoid needing both source and destination buffers.
+For custom pipelines that need direct coefficient access:
 
-## Implementation Plan
+```rust
+use zenjpeg::decoder::Decoder;
+use zenjpeg::lossless::{transform_coefficients, TransformConfig, LosslessTransform};
 
-### Phase 1: Core Transform Logic (this exploration)
-- [ ] Implement coefficient manipulation for all 7 transforms
-- [ ] Handle zigzag ↔ 8×8 mapping with precomputed permutation tables
-- [ ] Unit tests with known coefficient patterns
+let coeffs = Decoder::new().decode_coefficients(&jpeg_data, enough::Unstoppable)?;
+let transformed = transform_coefficients(&coeffs, &TransformConfig {
+    transform: LosslessTransform::Rotate180,
+    ..Default::default()
+})?;
+// transformed.width, transformed.height, transformed.components, transformed.quant_tables
+```
 
-### Phase 2: End-to-End Pipeline
-- [ ] Parse JPEG → extract coefficients + quant tables + metadata
-- [ ] Transform coefficients
-- [ ] Re-encode with copied quant tables, optimized Huffman tables, preserved metadata
-- [ ] Round-trip tests: decode(transform(jpeg)) == decode_and_rotate(jpeg)
+Use `decode_coefficients_with_extras()` when you need both coefficients and metadata
+in a single parse pass.
 
-### Phase 3: Edge Handling
-- [ ] Detect MCU alignment
-- [ ] Implement trim mode
-- [ ] Handle chroma subsampling (4:2:0, 4:2:2) block relationships
+## Known Limitations
 
-### Phase 4: zenimage Integration
-- [ ] Wire into EXIF orientation handling
-- [ ] Benchmark against pixel-level transform
+1. **4:2:0 scanline path with transforms**: The coefficient-based scanline reader produces
+   pixel differences up to ~57 at chroma block boundaries for 4:2:0 subsampled images.
+   4:4:4 is exact. The buffered decode path is correct. See CLAUDE.md known bug #5.
+
+2. **No progressive re-encoding**: The lossless pipeline always writes baseline sequential
+   output, even if the source was progressive. Coefficients are preserved exactly, but
+   the scan structure changes.
+
+3. **Memory**: The end-to-end pipeline buffers all coefficients in memory. For a 4000×3000
+   4:2:0 JPEG, that's ~35 MB of i16 data. The decode-time path has the same requirement
+   (disables streaming internally to store coefficients for the transform).
