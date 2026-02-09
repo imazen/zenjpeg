@@ -325,6 +325,37 @@ impl DecodeConfig {
         self
     }
 
+    /// Enables automatic EXIF orientation correction during decode.
+    ///
+    /// When enabled, the decoder reads the EXIF orientation tag and applies
+    /// the corresponding lossless transform in DCT-coefficient space before
+    /// IDCT. The output pixels will have the correct visual orientation.
+    ///
+    /// If the image has no EXIF data or orientation is 1 (normal), this has
+    /// no effect on the decode path.
+    ///
+    /// Can be combined with [`transform()`](Self::transform) — the EXIF
+    /// correction is applied first, then the explicit transform.
+    #[must_use]
+    pub fn auto_orient(mut self, enable: bool) -> Self {
+        self.auto_orient = enable;
+        self
+    }
+
+    /// Sets an explicit lossless transform to apply during decode.
+    ///
+    /// The transform is applied in DCT-coefficient space before IDCT,
+    /// so there is no quality loss from the transform itself. Only one
+    /// full entropy decode pass is performed.
+    ///
+    /// When combined with [`auto_orient(true)`](Self::auto_orient), the
+    /// EXIF orientation correction is applied first, then this transform.
+    #[must_use]
+    pub fn transform(mut self, transform: crate::lossless::LosslessTransform) -> Self {
+        self.decode_transform = Some(transform);
+        self
+    }
+
     /// Apply optimal Laplacian dequantization biases (Price & Rabbani 2000).
     ///
     /// Convenience method equivalent to

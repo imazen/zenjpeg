@@ -4,6 +4,7 @@
 //! JPEG decoding behavior.
 
 use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
+use crate::lossless::LosslessTransform;
 use crate::types::Dimensions;
 
 use super::extras::{DecodedExtras, PreserveConfig};
@@ -427,6 +428,23 @@ pub struct DecodeConfig {
     /// How to handle recoverable errors (truncation, minor spec violations).
     /// Default is [`Strictness::Balanced`].
     pub strictness: Strictness,
+    /// Whether to automatically correct EXIF orientation during decode.
+    ///
+    /// When enabled, the decoder reads the EXIF orientation tag and applies
+    /// the corresponding transform in DCT-coefficient space before IDCT.
+    /// The output pixels will have correct visual orientation.
+    ///
+    /// Default: `false`.
+    pub(crate) auto_orient: bool,
+    /// Explicit lossless transform to apply during decode.
+    ///
+    /// Applied in DCT-coefficient space before IDCT, so there is no
+    /// quality loss from the transform itself. When combined with
+    /// `auto_orient`, the EXIF correction is applied first, then this
+    /// transform.
+    ///
+    /// Default: `None`.
+    pub(crate) decode_transform: Option<LosslessTransform>,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -442,6 +460,8 @@ impl core::fmt::Debug for DecodeConfig {
             .field("max_memory", &self.max_memory)
             .field("preserve", &self.preserve)
             .field("strictness", &self.strictness)
+            .field("auto_orient", &self.auto_orient)
+            .field("decode_transform", &self.decode_transform)
             .finish()
     }
 }
@@ -460,6 +480,8 @@ impl Default for DecodeConfig {
             max_memory: DEFAULT_MAX_MEMORY,
             preserve: PreserveConfig::default(),
             strictness: Strictness::default(),
+            auto_orient: false,
+            decode_transform: None,
         }
     }
 }
