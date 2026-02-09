@@ -22,6 +22,7 @@
 //! ```
 
 mod coeff_transform;
+mod exif;
 mod pipeline;
 #[cfg(test)]
 mod tests;
@@ -30,4 +31,5 @@ pub use coeff_transform::{
     BlockTransform, EdgeHandling, LosslessTransform, TransformConfig,
     transform_coefficients,
 };
-pub use pipeline::transform;
+pub use exif::{parse_exif_orientation, set_exif_orientation};
+pub use pipeline::{apply_exif_orientation, transform};

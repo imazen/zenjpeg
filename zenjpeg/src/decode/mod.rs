@@ -717,6 +717,29 @@ impl DecodeConfig {
         parser.extract_coefficients()
     }
 
+    /// Decodes a JPEG to coefficients AND preserved metadata in a single parse pass.
+    ///
+    /// This avoids the overhead of decoding twice when you need both coefficients
+    /// and metadata (e.g., for lossless transforms that preserve EXIF/ICC/XMP).
+    pub fn decode_coefficients_with_extras(
+        &self,
+        data: &[u8],
+        stop: impl Stop,
+    ) -> Result<(DecodedCoefficients, Option<DecodedExtras>)> {
+        let mut parser = JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            Some(&self.preserve),
+            self.strictness,
+        )?;
+        parser.prefer_streaming = false;
+        parser.decode(&stop)?;
+
+        let extras = parser.take_extras();
+        let coeffs = parser.extract_coefficients()?;
+        Ok((coeffs, extras))
+    }
+
     /// Decodes a JPEG image to planar YCbCr f32 data.
     ///
     /// This bypasses the YCbCr→RGB color conversion, providing direct access

@@ -897,3 +897,251 @@ mod debug_tests {
         }
     }
 }
+
+mod exif_tests {
+    use crate::lossless::exif::{parse_exif_orientation, set_exif_orientation};
+    use crate::lossless::coeff_transform::LosslessTransform;
+
+    /// Build minimal EXIF APP1 data with an orientation tag.
+    /// Uses little-endian ("II") byte order.
+    fn build_exif_with_orientation_le(orientation: u16) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Exif\0\0 prefix
+        data.extend_from_slice(b"Exif\0\0");
+
+        // TIFF header: little-endian
+        data.extend_from_slice(b"II");
+        data.extend_from_slice(&42u16.to_le_bytes()); // magic
+        data.extend_from_slice(&8u32.to_le_bytes()); // IFD0 offset (right after header)
+
+        // IFD0: 1 entry
+        data.extend_from_slice(&1u16.to_le_bytes());
+
+        // Entry: Orientation (tag 0x0112, type SHORT, count 1, value inline)
+        data.extend_from_slice(&0x0112u16.to_le_bytes()); // tag
+        data.extend_from_slice(&3u16.to_le_bytes());       // type = SHORT
+        data.extend_from_slice(&1u32.to_le_bytes());       // count
+        data.extend_from_slice(&(orientation as u32).to_le_bytes()); // value
+
+        // Next IFD offset = 0
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        data
+    }
+
+    /// Build minimal EXIF APP1 data with an orientation tag.
+    /// Uses big-endian ("MM") byte order.
+    fn build_exif_with_orientation_be(orientation: u16) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Exif\0\0 prefix
+        data.extend_from_slice(b"Exif\0\0");
+
+        // TIFF header: big-endian
+        data.extend_from_slice(b"MM");
+        data.extend_from_slice(&42u16.to_be_bytes());
+        data.extend_from_slice(&8u32.to_be_bytes());
+
+        // IFD0: 1 entry
+        data.extend_from_slice(&1u16.to_be_bytes());
+
+        // Entry: Orientation
+        data.extend_from_slice(&0x0112u16.to_be_bytes());
+        data.extend_from_slice(&3u16.to_be_bytes());
+        data.extend_from_slice(&1u32.to_be_bytes());
+        // For big-endian SHORT, value is in first 2 bytes of the 4-byte field
+        data.extend_from_slice(&(orientation as u16).to_be_bytes());
+        data.extend_from_slice(&[0u8; 2]); // padding
+        // Next IFD offset = 0
+        data.extend_from_slice(&0u32.to_be_bytes());
+
+        data
+    }
+
+    #[test]
+    fn test_parse_exif_orientation_le() {
+        for orient in 1..=8u16 {
+            let data = build_exif_with_orientation_le(orient);
+            assert_eq!(
+                parse_exif_orientation(&data),
+                Some(orient as u8),
+                "failed to parse LE orientation {orient}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_exif_orientation_be() {
+        for orient in 1..=8u16 {
+            let data = build_exif_with_orientation_be(orient);
+            assert_eq!(
+                parse_exif_orientation(&data),
+                Some(orient as u8),
+                "failed to parse BE orientation {orient}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_exif_orientation_no_prefix() {
+        // Missing Exif\0\0 prefix
+        assert_eq!(parse_exif_orientation(b"not exif data"), None);
+    }
+
+    #[test]
+    fn test_parse_exif_orientation_too_short() {
+        assert_eq!(parse_exif_orientation(b"Exif\0\0II"), None);
+    }
+
+    #[test]
+    fn test_parse_exif_orientation_invalid_value() {
+        // Orientation = 0 (invalid)
+        let data = build_exif_with_orientation_le(0);
+        assert_eq!(parse_exif_orientation(&data), None);
+
+        // Orientation = 9 (invalid)
+        let data = build_exif_with_orientation_le(9);
+        assert_eq!(parse_exif_orientation(&data), None);
+    }
+
+    #[test]
+    fn test_set_exif_orientation_le() {
+        let mut data = build_exif_with_orientation_le(6);
+        assert_eq!(parse_exif_orientation(&data), Some(6));
+
+        let modified = set_exif_orientation(&mut data, 1);
+        assert!(modified, "should find and modify orientation tag");
+        assert_eq!(parse_exif_orientation(&data), Some(1));
+    }
+
+    #[test]
+    fn test_set_exif_orientation_be() {
+        let mut data = build_exif_with_orientation_be(8);
+        assert_eq!(parse_exif_orientation(&data), Some(8));
+
+        let modified = set_exif_orientation(&mut data, 1);
+        assert!(modified);
+        assert_eq!(parse_exif_orientation(&data), Some(1));
+    }
+
+    #[test]
+    fn test_set_exif_orientation_no_tag() {
+        // EXIF with no orientation tag — set should return false
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Exif\0\0");
+        data.extend_from_slice(b"II");
+        data.extend_from_slice(&42u16.to_le_bytes());
+        data.extend_from_slice(&8u32.to_le_bytes());
+        // IFD0: 1 entry — but a different tag (Copyright 0x8298)
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&0x8298u16.to_le_bytes()); // tag
+        data.extend_from_slice(&2u16.to_le_bytes());       // type = ASCII
+        data.extend_from_slice(&1u32.to_le_bytes());       // count
+        data.extend_from_slice(&0u32.to_le_bytes());       // value
+        data.extend_from_slice(&0u32.to_le_bytes());       // next IFD
+
+        let modified = set_exif_orientation(&mut data, 1);
+        assert!(!modified, "should not modify when orientation tag absent");
+    }
+
+    #[test]
+    fn test_from_exif_orientation() {
+        // Exhaustive mapping check
+        assert_eq!(LosslessTransform::from_exif_orientation(1), Some(LosslessTransform::None));
+        assert_eq!(LosslessTransform::from_exif_orientation(2), Some(LosslessTransform::FlipHorizontal));
+        assert_eq!(LosslessTransform::from_exif_orientation(3), Some(LosslessTransform::Rotate180));
+        assert_eq!(LosslessTransform::from_exif_orientation(4), Some(LosslessTransform::FlipVertical));
+        assert_eq!(LosslessTransform::from_exif_orientation(5), Some(LosslessTransform::Transpose));
+        assert_eq!(LosslessTransform::from_exif_orientation(6), Some(LosslessTransform::Rotate90));
+        assert_eq!(LosslessTransform::from_exif_orientation(7), Some(LosslessTransform::Transverse));
+        assert_eq!(LosslessTransform::from_exif_orientation(8), Some(LosslessTransform::Rotate270));
+
+        // Invalid values
+        assert_eq!(LosslessTransform::from_exif_orientation(0), None);
+        assert_eq!(LosslessTransform::from_exif_orientation(9), None);
+    }
+
+    #[test]
+    fn test_apply_exif_orientation_no_exif() {
+        // A JPEG without EXIF should be returned unchanged
+        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::lossless::apply_exif_orientation;
+        use enough::Unstoppable;
+
+        let pixels = vec![128u8; 64 * 64 * 3];
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+        let mut enc = config.encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        let result = apply_exif_orientation(&jpeg, Unstoppable).unwrap();
+        assert_eq!(result, jpeg, "no-EXIF JPEG should be returned unchanged");
+    }
+
+    #[test]
+    fn test_apply_exif_orientation_normal() {
+        // Orientation=1 should be fast path (returned unchanged)
+        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Exif, Orientation};
+        use crate::lossless::apply_exif_orientation;
+        use enough::Unstoppable;
+
+        let pixels = vec![128u8; 64 * 64 * 3];
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+        let mut enc = config.request()
+            .exif(Exif::build().orientation(Orientation::Normal))
+            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        let result = apply_exif_orientation(&jpeg, Unstoppable).unwrap();
+        assert_eq!(result, jpeg, "orientation=1 should be returned unchanged");
+    }
+
+    #[test]
+    fn test_apply_exif_orientation_rotate90() {
+        // Create a 64x48 JPEG with orientation=6 (Rotate 90 CW)
+        // After apply_exif_orientation, dimensions should be 48x64 and orientation=1
+        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Exif, Orientation};
+        use crate::decode::{DecodeConfig, PreserveConfig};
+        use crate::lossless::apply_exif_orientation;
+        use enough::Unstoppable;
+
+        let (w, h) = (64u32, 48u32);
+        let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                pixels.push(((x * 255 / w) & 0xFF) as u8);
+                pixels.push(((y * 255 / h) & 0xFF) as u8);
+                pixels.push(128u8);
+            }
+        }
+
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+        let mut enc = config.request()
+            .exif(Exif::build().orientation(Orientation::Rotate90))
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        // Verify the source has orientation=6
+        let decoder = DecodeConfig::new().preserve(PreserveConfig::all());
+        let src_result = decoder.decode(&jpeg, Unstoppable).unwrap();
+        let src_exif = src_result.extras().unwrap().exif().unwrap();
+        assert_eq!(parse_exif_orientation(src_exif), Some(6));
+
+        // Apply orientation
+        let corrected = apply_exif_orientation(&jpeg, Unstoppable).unwrap();
+        assert_ne!(corrected, jpeg, "rotated JPEG should differ from source");
+
+        // Verify output dimensions swapped (rotate90: 64x48 → 48x64)
+        let out_result = decoder.decode(&corrected, Unstoppable).unwrap();
+        assert_eq!(out_result.width(), h, "width should be original height");
+        assert_eq!(out_result.height(), w, "height should be original width");
+
+        // Verify output EXIF orientation is 1
+        let out_exif = out_result.extras().unwrap().exif().unwrap();
+        assert_eq!(parse_exif_orientation(out_exif), Some(1),
+            "output orientation should be reset to 1");
+    }
+}
