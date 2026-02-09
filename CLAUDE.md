@@ -631,6 +631,20 @@ sensitivity tables, and preset baselines.
    panicked on grayscale (1-component) images because they called `row_planes()` which
    requires cb/cr buffers that are empty for grayscale. Fixed: commit be24fac.
 
+5. **4:2:0 scanline-vs-buffered pixel difference with decode-time transforms (2026-02-08)** -
+   The coefficient-based scanline path (`decode_mcu_row_from_coefficients`) produces pixel
+   diffs up to ~57 at chroma block boundaries for 4:2:0 with transforms (FlipH, etc.).
+   The buffered decode path goes through `to_pixels()` (full output pipeline), while the
+   scanline coefficient path does per-MCU-row IDCT + strip upsampling. The difference may
+   be in how chroma planes are reconstructed from transformed coefficients. 4:4:4 is exact.
+   - Impact: Scanline reader with 4:2:0 + transform gives slightly different pixels than
+     buffered decode. Block centers are correct; differences are at chroma boundaries.
+   - Files: `decode/scanline.rs:527` (`decode_mcu_row_from_coefficients`),
+     `decode/parser/output.rs` (buffered `to_pixels` path)
+   - Reproduce: `cargo test --release -p zenjpeg --features decoder --lib -- test_transform_420`
+   - TODO: Investigate whether the issue is incorrect chroma block addressing after transform,
+     or a fundamental difference in the upsampling approach between the two paths.
+
 ### Fixed Bugs (historical reference)
 
 See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, progressive decoder small images, etc.).
