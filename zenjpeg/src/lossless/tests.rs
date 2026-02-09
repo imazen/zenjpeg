@@ -1322,3 +1322,461 @@ mod exif_tests {
         );
     }
 }
+
+// ==========================================================================
+// Transform composition (then/inverse) tests
+// ==========================================================================
+
+#[test]
+fn test_then_identity() {
+    // a.then(None) == a, None.then(a) == a
+    for &t in &LosslessTransform::ALL {
+        assert_eq!(
+            t.then(LosslessTransform::None),
+            t,
+            "{t:?}.then(None) should be {t:?}"
+        );
+        assert_eq!(
+            LosslessTransform::None.then(t),
+            t,
+            "None.then({t:?}) should be {t:?}"
+        );
+    }
+}
+
+#[test]
+fn test_inverse_roundtrip() {
+    // t.then(t.inverse()) == None for all t
+    for &t in &LosslessTransform::ALL {
+        let composed = t.then(t.inverse());
+        assert_eq!(
+            composed,
+            LosslessTransform::None,
+            "{t:?}.then({:?}) should be None, got {composed:?}",
+            t.inverse()
+        );
+    }
+}
+
+#[test]
+fn test_inverse_both_directions() {
+    // t.inverse().then(t) == None for all t
+    for &t in &LosslessTransform::ALL {
+        let composed = t.inverse().then(t);
+        assert_eq!(
+            composed,
+            LosslessTransform::None,
+            "{:?}.then({t:?}) should be None, got {composed:?}",
+            t.inverse()
+        );
+    }
+}
+
+#[test]
+fn test_then_cayley_table_by_block_transform() {
+    // Verify all 64 compositions by applying both transforms sequentially
+    // to a test block and comparing with the composed single transform.
+    let src = make_test_block();
+
+    for &a in &LosslessTransform::ALL {
+        let bt_a = BlockTransform::for_transform(a);
+        for &b in &LosslessTransform::ALL {
+            let bt_b = BlockTransform::for_transform(b);
+
+            // Sequential: apply a then b
+            let after_a = bt_a.apply(&src);
+            let sequential = bt_b.apply(&after_a);
+
+            // Composed: apply a.then(b) in one step
+            let composed = a.then(b);
+            let bt_composed = BlockTransform::for_transform(composed);
+            let single = bt_composed.apply(&src);
+
+            assert_eq!(
+                sequential, single,
+                "{a:?}.then({b:?}) = {composed:?} — block mismatch"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_then_known_compositions() {
+    // Verify specific known compositions
+    use LosslessTransform::*;
+
+    // Rotate90 = Transpose then FlipHorizontal
+    assert_eq!(Transpose.then(FlipHorizontal), Rotate90);
+
+    // Rotate270 = Transpose then FlipVertical
+    assert_eq!(Transpose.then(FlipVertical), Rotate270);
+
+    // Rotate180 = FlipHorizontal then FlipVertical
+    assert_eq!(FlipHorizontal.then(FlipVertical), Rotate180);
+
+    // Rotate90 then Rotate90 = Rotate180
+    assert_eq!(Rotate90.then(Rotate90), Rotate180);
+
+    // Rotate90 then Rotate180 = Rotate270
+    assert_eq!(Rotate90.then(Rotate180), Rotate270);
+
+    // Rotate90 then Rotate270 = None (full rotation)
+    assert_eq!(Rotate90.then(Rotate270), None);
+}
+
+#[test]
+fn test_inverse_values() {
+    use LosslessTransform::*;
+    assert_eq!(None.inverse(), None);
+    assert_eq!(FlipHorizontal.inverse(), FlipHorizontal);
+    assert_eq!(FlipVertical.inverse(), FlipVertical);
+    assert_eq!(Transpose.inverse(), Transpose);
+    assert_eq!(Rotate90.inverse(), Rotate270);
+    assert_eq!(Rotate180.inverse(), Rotate180);
+    assert_eq!(Rotate270.inverse(), Rotate90);
+    assert_eq!(Transverse.inverse(), Transverse);
+}
+
+// ==========================================================================
+// Decode-time transform tests
+// ==========================================================================
+
+#[test]
+fn test_decode_auto_orient() {
+    // Create a 64x48 JPEG with orientation=6 (Rotate 90 CW)
+    // Decode with auto_orient(true) — output should be 48x64
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 48u32);
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.push(((x * 255 / w) & 0xFF) as u8);
+            pixels.push(((y * 255 / h) & 0xFF) as u8);
+            pixels.push(128u8);
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .request()
+        .exif(Exif::build().orientation(Orientation::Rotate90))
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let result = DecodeConfig::new()
+        .auto_orient(true)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    // Orientation=6 means Rotate90 CW, which swaps dimensions
+    assert_eq!(result.width(), h, "width should be original height after auto_orient");
+    assert_eq!(result.height(), w, "height should be original width after auto_orient");
+}
+
+#[test]
+fn test_decode_transform_rotate90() {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 48u32);
+    let pixels = vec![128u8; (w * h * 3) as usize];
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let result = DecodeConfig::new()
+        .transform(LosslessTransform::Rotate90)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    assert_eq!(result.width(), h, "Rotate90 should swap dimensions");
+    assert_eq!(result.height(), w, "Rotate90 should swap dimensions");
+}
+
+#[test]
+fn test_decode_transform_rotate180_preserves_dimensions() {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 48u32);
+    let pixels = vec![128u8; (w * h * 3) as usize];
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let result = DecodeConfig::new()
+        .transform(LosslessTransform::Rotate180)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    assert_eq!(result.width(), w, "Rotate180 should preserve width");
+    assert_eq!(result.height(), h, "Rotate180 should preserve height");
+}
+
+#[test]
+fn test_decode_composed_exif_plus_transform() {
+    // EXIF orientation=6 (Rotate90) + transform(Rotate270) = identity
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 48u32);
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.push(((x * 255 / w) & 0xFF) as u8);
+            pixels.push(((y * 255 / h) & 0xFF) as u8);
+            pixels.push(128u8);
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .request()
+        .exif(Exif::build().orientation(Orientation::Rotate90))
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    // EXIF=Rotate90, then user Rotate270 → identity
+    let composed = DecodeConfig::new()
+        .auto_orient(true)
+        .transform(LosslessTransform::Rotate270)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    // Rotate90.then(Rotate270) = None → dimensions unchanged from original
+    assert_eq!(composed.width(), w, "composed transform should be identity");
+    assert_eq!(composed.height(), h, "composed transform should be identity");
+
+    // Compare with plain decode (no transforms)
+    let plain = DecodeConfig::new()
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    // Both should produce identical pixel data
+    assert_eq!(
+        composed.pixels_u8().unwrap(),
+        plain.pixels_u8().unwrap(),
+        "composed identity transform should produce same pixels as plain decode"
+    );
+}
+
+#[test]
+fn test_decode_auto_orient_noop() {
+    // Orientation=1 should produce same result as no auto_orient
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 64u32);
+    let pixels = vec![128u8; (w * h * 3) as usize];
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .request()
+        .exif(Exif::build().orientation(Orientation::Normal))
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let with_orient = DecodeConfig::new()
+        .auto_orient(true)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    let without_orient = DecodeConfig::new()
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    assert_eq!(with_orient.width(), without_orient.width());
+    assert_eq!(with_orient.height(), without_orient.height());
+    assert_eq!(
+        with_orient.pixels_u8().unwrap(),
+        without_orient.pixels_u8().unwrap(),
+        "orientation=1 + auto_orient should produce identical pixels"
+    );
+}
+
+#[test]
+fn test_decode_no_exif_auto_orient() {
+    // No EXIF at all — auto_orient should be a no-op
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    let (w, h) = (64u32, 64u32);
+    let pixels = vec![128u8; (w * h * 3) as usize];
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let with_orient = DecodeConfig::new()
+        .auto_orient(true)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    let without_orient = DecodeConfig::new()
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    assert_eq!(with_orient.width(), without_orient.width());
+    assert_eq!(with_orient.height(), without_orient.height());
+    assert_eq!(
+        with_orient.pixels_u8().unwrap(),
+        without_orient.pixels_u8().unwrap(),
+        "no EXIF + auto_orient should produce identical pixels"
+    );
+}
+
+#[test]
+fn test_scanline_transform_matches_decode() {
+    // Scanline reader with transform should produce same pixels as decode()
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+    use imgref::ImgRefMut;
+
+    let (w, h) = (64u32, 48u32);
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.push(((x * 255 / w) & 0xFF) as u8);
+            pixels.push(((y * 255 / h) & 0xFF) as u8);
+            pixels.push(128u8);
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let transform = LosslessTransform::Rotate90;
+
+    // Full decode with transform
+    let decode_result = DecodeConfig::new()
+        .transform(transform)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    let out_w = decode_result.width() as usize;
+    let out_h = decode_result.height() as usize;
+
+    // Scanline reader with same transform
+    let mut reader = DecodeConfig::new()
+        .transform(transform)
+        .scanline_reader(&jpeg)
+        .unwrap();
+
+    assert_eq!(reader.width() as usize, out_w);
+    assert_eq!(reader.height() as usize, out_h);
+
+    let mut scanline_pixels = vec![0u8; out_w * out_h * 3];
+    let mut rows_read = 0;
+    while rows_read < out_h {
+        let remaining = out_h - rows_read;
+        let output = ImgRefMut::new(
+            &mut scanline_pixels[rows_read * out_w * 3..],
+            out_w * 3,
+            remaining,
+        );
+        let count = reader.read_rows_rgb8(output).unwrap();
+        assert!(count > 0, "read_rows_rgb8 should make progress");
+        rows_read += count;
+    }
+
+    assert_eq!(
+        scanline_pixels,
+        decode_result.pixels_u8().unwrap(),
+        "scanline reader with transform should produce same pixels as decode()"
+    );
+}
+
+#[test]
+fn test_scanline_auto_orient() {
+    // Scanline reader with auto_orient should produce correctly-oriented output
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
+    use enough::Unstoppable;
+    use imgref::ImgRefMut;
+
+    let (w, h) = (64u32, 48u32);
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.push(((x * 255 / w) & 0xFF) as u8);
+            pixels.push(((y * 255 / h) & 0xFF) as u8);
+            pixels.push(128u8);
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config
+        .request()
+        .exif(Exif::build().orientation(Orientation::Rotate90))
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    let mut reader = DecodeConfig::new()
+        .auto_orient(true)
+        .scanline_reader(&jpeg)
+        .unwrap();
+
+    // Rotate90 swaps dimensions: 64x48 → 48x64
+    assert_eq!(reader.width(), h, "width should be original height");
+    assert_eq!(reader.height(), w, "height should be original width");
+
+    let out_w = reader.width() as usize;
+    let out_h = reader.height() as usize;
+    let mut scanline_pixels = vec![0u8; out_w * out_h * 3];
+    let mut rows_read = 0;
+    while rows_read < out_h {
+        let remaining = out_h - rows_read;
+        let output = ImgRefMut::new(
+            &mut scanline_pixels[rows_read * out_w * 3..],
+            out_w * 3,
+            remaining,
+        );
+        let count = reader.read_rows_rgb8(output).unwrap();
+        assert!(count > 0, "read_rows_rgb8 should make progress");
+        rows_read += count;
+    }
+
+    // Compare with full decode
+    let decode_result = DecodeConfig::new()
+        .auto_orient(true)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
+
+    assert_eq!(
+        scanline_pixels,
+        decode_result.pixels_u8().unwrap(),
+        "scanline auto_orient should match decode auto_orient"
+    );
+}
