@@ -49,6 +49,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 - **SIMD accelerated** - Portable SIMD via `wide` crate
 - **Streaming API** - Memory-efficient row-by-row encoding for large images
 - **Parallel encoding** - Multi-threaded for large images (1024x1024+)
+- **Lossless transforms** - Rotate/flip/transpose in DCT domain with zero generation loss
 - **UltraHDR support** - Encode/decode HDR gain maps (optional `ultrahdr` feature)
 - **Color management** - Optional ICC profile support
 
@@ -470,6 +471,8 @@ println!("{}x{}, {} components", info.width, info.height, info.num_components);
 | `.block_smoothing(bool)` | DCT block edge smoothing | `false` |
 | `.apply_icc(bool)` | Apply embedded ICC profile | `true` |
 | `.dequant_bias(bool)` | Laplacian dequantization biases (see below) | `false` |
+| `.auto_orient(bool)` | Apply EXIF orientation in DCT domain | `false` |
+| `.transform(t)` | Lossless transform during decode (see below) | None |
 | `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
 | `.max_memory(n)` | Memory limit in bytes | 512 MB |
 
@@ -808,6 +811,72 @@ tables.quant.scale_component(c, f)   // Scale entire component
 tables.quant.scale_all(f)            // Scale all coefficients
 ```
 
+## Lossless Transforms
+
+Requires `features = ["decoder"]`. Rotate, flip, and transpose JPEGs by manipulating DCT
+coefficients directly — no decode to pixels, no re-encode, zero generation loss.
+
+### End-to-End Transform
+
+```rust
+use zenjpeg::lossless::{transform, apply_exif_orientation, LosslessTransform, TransformConfig};
+
+// Rotate 90° losslessly
+let rotated = transform(&jpeg_data, &TransformConfig {
+    transform: LosslessTransform::Rotate90,
+    ..Default::default()
+}, enough::Unstoppable)?;
+
+// Auto-correct EXIF orientation (resets tag to 1)
+let oriented = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
+```
+
+All metadata (EXIF, ICC, XMP, IPTC) is preserved in the output. Huffman tables are
+re-optimized from coefficient frequencies.
+
+### Decode-Time Transform
+
+Apply a transform during decode in DCT-coefficient space, before IDCT. One entropy
+decode pass, no re-encoding step.
+
+```rust
+use zenjpeg::decoder::Decoder;
+use zenjpeg::lossless::LosslessTransform;
+
+// Auto-orient from EXIF (most common use case)
+let result = Decoder::new()
+    .auto_orient(true)
+    .decode(&jpeg_data, enough::Unstoppable)?;
+
+// Explicit transform
+let result = Decoder::new()
+    .transform(LosslessTransform::Rotate90)
+    .decode(&jpeg_data, enough::Unstoppable)?;
+```
+
+Works with both buffered `.decode()` and streaming `.scanline_reader()`.
+
+### Available Transforms
+
+All 8 elements of the D4 dihedral group: `None`, `FlipHorizontal`, `FlipVertical`,
+`Transpose`, `Rotate90`, `Rotate180`, `Rotate270`, `Transverse`.
+
+Compose with `t1.then(t2)`, invert with `t.inverse()`, map from EXIF with
+`LosslessTransform::from_exif_orientation(1..=8)`.
+
+### Edge Handling
+
+For images whose dimensions aren't multiples of the MCU size, the end-to-end pipeline
+offers two options via `EdgeHandling`:
+
+- **`TrimPartialBlocks`** (default) — discard partial MCU strips (up to 15px per edge)
+- **`RejectPartialBlocks`** — return an error
+
+The decode-time path handles this automatically by rendering the full padded image
+and cropping to the visible region.
+
+See [LOSSLESS_TRANSFORMS.md](../LOSSLESS_TRANSFORMS.md) for technical details.
+
 ## Overshoot Deringing
 
 **Enabled by default.** This technique was pioneered by [@kornel](https://github.com/kornelski)
@@ -978,6 +1047,8 @@ zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }
 | ICC profile extraction | Working |
 | XYB decoding | Working (with CMS) |
 | f32 output | Working |
+| Lossless transforms | Working |
+| EXIF auto-orient | Working |
 
 ## Future Optimization Opportunities
 

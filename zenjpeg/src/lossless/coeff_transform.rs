@@ -145,9 +145,9 @@ impl LosslessTransform {
 pub enum EdgeHandling {
     /// Trim partial MCU blocks (output may be slightly smaller).
     #[default]
-    Trim,
+    TrimPartialBlocks,
     /// Error if dimensions aren't MCU-aligned.
-    Perfect,
+    RejectPartialBlocks,
 }
 
 /// Configuration for lossless JPEG transforms.
@@ -313,7 +313,7 @@ pub struct TransformedCoefficients {
 ///
 /// # Returns
 /// Transformed coefficients ready for Huffman encoding, or an error if the
-/// image dimensions aren't MCU-aligned and `EdgeHandling::Perfect` was requested.
+/// image dimensions aren't MCU-aligned and `EdgeHandling::RejectPartialBlocks` was requested.
 pub fn transform_coefficients(
     coeffs: &DecodedCoefficients,
     config: &TransformConfig,
@@ -361,7 +361,7 @@ pub fn transform_coefficients(
         LosslessTransform::None => false,
     };
 
-    if needs_trim && config.edge_handling == EdgeHandling::Perfect {
+    if needs_trim && config.edge_handling == EdgeHandling::RejectPartialBlocks {
         return Err(TransformError::NotMcuAligned {
             width: coeffs.width,
             height: coeffs.height,
@@ -537,7 +537,7 @@ fn blocks_height_minus_1(blocks_high: usize) -> usize {
 /// Errors from lossless transform operations.
 #[derive(Clone, Debug)]
 pub enum TransformError {
-    /// Image dimensions are not MCU-aligned and `EdgeHandling::Perfect` was requested.
+    /// Image dimensions are not MCU-aligned and `EdgeHandling::RejectPartialBlocks` was requested.
     NotMcuAligned {
         width: u32,
         height: u32,
@@ -558,7 +558,7 @@ impl core::fmt::Display for TransformError {
                 write!(
                     f,
                     "image dimensions {}×{} are not aligned to MCU size {}×{} \
-                     (use EdgeHandling::Trim or resize to {}×{})",
+                     (use EdgeHandling::TrimPartialBlocks or resize to {}×{})",
                     width,
                     height,
                     mcu_width,
