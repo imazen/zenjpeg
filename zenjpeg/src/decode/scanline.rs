@@ -103,6 +103,10 @@ pub struct ScanlineReader<'a> {
     is_xyb: bool,
     /// True for Adobe RGB JPEGs (APP14 transform=0) - skip YCbCr→RGB conversion
     is_rgb: bool,
+
+    // Coefficient-based mode for decode-time transforms.
+    // When Some, we read from pre-decoded/transformed coefficients instead of entropy decoding.
+    stored_coeffs: Option<super::DecodedCoefficients>,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -166,6 +170,7 @@ impl<'a> ScanlineReader<'a> {
             prev_coeff_counts: [64; 4],
             is_xyb,
             is_rgb,
+            stored_coeffs: None,
         })
     }
 
@@ -207,7 +212,101 @@ impl<'a> ScanlineReader<'a> {
             prev_coeff_counts: [64; 4],
             is_xyb,
             is_rgb: false,
+            stored_coeffs: None,
         }
+    }
+
+    /// Creates a scanline reader from pre-decoded, possibly transformed coefficients.
+    ///
+    /// Used for decode-time orientation correction: coefficients are fully decoded
+    /// and transformed in DCT space, then this reader streams pixels from them
+    /// one MCU row at a time (IDCT + color convert on the fly).
+    ///
+    /// Memory: coefficients (~4MB for 4K) + 1 MCU row of pixels (~50KB).
+    pub(crate) fn from_coefficients(
+        coefficients: super::DecodedCoefficients,
+        chroma_upsampling: super::ChromaUpsampling,
+        output_target: super::OutputTarget,
+    ) -> Result<Self> {
+        let width = coefficients.width;
+        let height = coefficients.height;
+        let num_components = coefficients.components.len() as u8;
+
+        // Extract sampling factors from coefficient data
+        let h_samp = if num_components == 1 {
+            [coefficients.components[0].h_samp, 1, 1]
+        } else {
+            [
+                coefficients.components[0].h_samp,
+                coefficients.components[1].h_samp,
+                coefficients.components[2].h_samp,
+            ]
+        };
+        let v_samp = if num_components == 1 {
+            [coefficients.components[0].v_samp, 1, 1]
+        } else {
+            [
+                coefficients.components[0].v_samp,
+                coefficients.components[1].v_samp,
+                coefficients.components[2].v_samp,
+            ]
+        };
+
+        // Extract quant table indices
+        let quant_indices = if num_components == 1 {
+            [coefficients.components[0].quant_table_idx as usize, 0, 0]
+        } else {
+            [
+                coefficients.components[0].quant_table_idx as usize,
+                coefficients.components[1].quant_table_idx as usize,
+                coefficients.components[2].quant_table_idx as usize,
+            ]
+        };
+
+        // Build quant tables array (up to 4 slots)
+        let mut quant_tables = [None; 4];
+        for (i, qt) in coefficients.quant_tables.iter().enumerate() {
+            if i < 4 {
+                quant_tables[i] = *qt;
+            }
+        }
+
+        let strip = StripProcessor::new(
+            width,
+            num_components,
+            h_samp,
+            v_samp,
+            chroma_upsampling,
+            output_target,
+        )?;
+
+        Ok(Self {
+            data: &[], // No raw data needed
+            width,
+            height,
+            num_components,
+            buffered_rgb: None,
+            strip,
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables,
+            quant_indices,
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb: false,
+            is_rgb: false,
+            stored_coeffs: Some(coefficients),
+        })
     }
 
     /// Returns the image width.
@@ -296,6 +395,11 @@ impl<'a> ScanlineReader<'a> {
     fn decode_mcu_row(&mut self) -> Result<()> {
         if self.mcu_row_decoded {
             return Ok(());
+        }
+
+        // Dispatch to coefficient-based path if we have stored coefficients
+        if self.stored_coeffs.is_some() {
+            return self.decode_mcu_row_from_coefficients();
         }
 
         // Always create decoder from the full scan data slice
@@ -403,6 +507,83 @@ impl<'a> ScanlineReader<'a> {
         // Upsample chroma if needed
         self.strip.upsample_chroma();
 
+        self.mcu_row_decoded = true;
+
+        Ok(())
+    }
+
+    /// Decode an MCU row from pre-stored coefficients (no entropy decoding).
+    ///
+    /// Reads blocks from `self.stored_coeffs`, applies IDCT via the strip
+    /// processor, then upsamples chroma. Used for decode-time transforms.
+    fn decode_mcu_row_from_coefficients(&mut self) -> Result<()> {
+        // Pre-validate quant tables
+        let quant_y = self.quant_tables[self.quant_indices[0]]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Y quantization table"))?;
+        let quant_cb = if self.num_components > 1 {
+            self.quant_tables[self.quant_indices[1]]
+                .as_ref()
+                .ok_or_else(|| Error::internal("missing Cb quantization table"))?
+        } else {
+            quant_y
+        };
+        let quant_cr = if self.num_components > 2 {
+            self.quant_tables[self.quant_indices[2]]
+                .as_ref()
+                .ok_or_else(|| Error::internal("missing Cr quantization table"))?
+        } else {
+            quant_y
+        };
+        let quant_refs: [&[u16; 64]; 4] = [quant_y, quant_cb, quant_cr, quant_y];
+
+        let mcu_cols = self.strip.mcu_cols();
+        let coeffs = self.stored_coeffs.as_ref().unwrap();
+
+        for mcu_x in 0..mcu_cols {
+            for comp_idx in 0..self.num_components as usize {
+                let h_blocks = self.strip.h_samp[comp_idx] as usize;
+                let v_blocks = self.strip.v_samp[comp_idx] as usize;
+                let quant = quant_refs[comp_idx];
+                let blocks_wide = coeffs.components[comp_idx].blocks_wide;
+
+                for v in 0..v_blocks {
+                    for h in 0..h_blocks {
+                        let by = self.current_mcu_row * v_blocks + v;
+                        let bx = mcu_x * h_blocks + h;
+                        let block_idx = by * blocks_wide + bx;
+
+                        let block = coeffs.components[comp_idx].block(block_idx);
+                        self.coeffs_buf.copy_from_slice(block);
+
+                        // Count non-zero coefficients for tiered IDCT
+                        let coeff_count = if block.iter().all(|&c| c == 0) {
+                            0
+                        } else {
+                            // Find the highest non-zero position + 1
+                            block
+                                .iter()
+                                .rposition(|&c| c != 0)
+                                .map(|p| (p + 1) as u8)
+                                .unwrap_or(0)
+                        };
+
+                        self.strip.idct_block(
+                            comp_idx,
+                            mcu_x,
+                            h,
+                            v,
+                            &self.coeffs_buf,
+                            coeff_count,
+                            quant,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Upsample chroma if needed
+        self.strip.upsample_chroma();
         self.mcu_row_decoded = true;
 
         Ok(())
