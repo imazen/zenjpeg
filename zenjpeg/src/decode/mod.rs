@@ -600,15 +600,60 @@ impl DecodeConfig {
     ///
     /// Does a full coefficient decode + transform, then creates a reader
     /// that streams pixels from the transformed coefficients.
+    ///
+    /// For non-MCU-aligned images where the transform moves padding to a visible
+    /// edge, falls back to a buffered decode + crop approach (same as `decode()`).
     fn scanline_reader_with_transform<'a>(
         &self,
         data: &'a [u8],
         transform: crate::lossless::LosslessTransform,
     ) -> Result<ScanlineReader<'a>> {
+        use crate::lossless::LosslessTransform;
+
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.prefer_streaming = false; // Need coefficient storage
         parser.decode(&Unstoppable)?;
+
+        // Check if crop is needed for non-MCU-aligned images
+        let orig_w = parser.width as usize;
+        let orig_h = parser.height as usize;
+        let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
+        let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
+
+        let (crop_x, crop_y) = match transform {
+            LosslessTransform::None => (0, 0),
+            LosslessTransform::FlipHorizontal => (pad_x, 0),
+            LosslessTransform::FlipVertical => (0, pad_y),
+            LosslessTransform::Rotate180 => (pad_x, pad_y),
+            LosslessTransform::Transpose => (0, 0),
+            LosslessTransform::Rotate90 => (pad_y, 0),
+            LosslessTransform::Rotate270 => (0, pad_x),
+            LosslessTransform::Transverse => (pad_y, pad_x),
+        };
+
         parser.apply_dct_transform(transform);
+
+        if crop_x > 0 || crop_y > 0 {
+            // Crop needed: fall back to full buffered decode + crop.
+            // Reuse the decode() path which already handles crop correctly.
+            let result = self.decode(data, Unstoppable)?;
+            let vis_w = result.width();
+            let vis_h = result.height();
+            let num_components = result.format().num_channels() as u8;
+            let is_xyb = false; // XYB is converted to RGB during decode
+            let pixels = result.into_pixels_u8()
+                .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
+
+            return Ok(ScanlineReader::new_buffered(
+                data,
+                vis_w,
+                vis_h,
+                num_components,
+                Subsampling::S444,
+                pixels,
+                is_xyb,
+            ));
+        }
 
         let coefficients = parser.extract_coefficients()?;
         ScanlineReader::from_coefficients(
@@ -682,10 +727,49 @@ impl DecodeConfig {
         }
         parser.decode(&stop)?;
 
-        // Apply DCT transform if needed
-        if effective_transform != crate::lossless::LosslessTransform::None {
-            parser.apply_dct_transform(effective_transform);
-        }
+        // Apply DCT transform if needed.
+        //
+        // For non-MCU-aligned images, padding moves to different edges after
+        // the transform (e.g., FlipH moves right padding to the left).
+        // We compute the crop offset, inflate parser dimensions so to_pixels()
+        // renders the full padded region, then crop the result.
+        let (crop_x, crop_y, visible_w, visible_h) =
+            if effective_transform != crate::lossless::LosslessTransform::None {
+                use crate::lossless::LosslessTransform;
+
+                // Compute padding before transform
+                let orig_w = parser.width as usize;
+                let orig_h = parser.height as usize;
+                let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
+                let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
+
+                parser.apply_dct_transform(effective_transform);
+
+                let vis_w = parser.width;
+                let vis_h = parser.height;
+
+                // Crop offset: where the visible region starts after transform
+                let (cx, cy) = match effective_transform {
+                    LosslessTransform::None => (0, 0),
+                    LosslessTransform::FlipHorizontal => (pad_x, 0),
+                    LosslessTransform::FlipVertical => (0, pad_y),
+                    LosslessTransform::Rotate180 => (pad_x, pad_y),
+                    LosslessTransform::Transpose => (0, 0),
+                    LosslessTransform::Rotate90 => (pad_y, 0),
+                    LosslessTransform::Rotate270 => (0, pad_x),
+                    LosslessTransform::Transverse => (pad_y, pad_x),
+                };
+
+                // Inflate dimensions so to_pixels() renders enough data
+                if cx > 0 || cy > 0 {
+                    parser.width = vis_w + cx as u32;
+                    parser.height = vis_h + cy as u32;
+                }
+
+                (cx, cy, vis_w, vis_h)
+            } else {
+                (0, 0, parser.width, parser.height)
+            };
 
         // Extract gain map before pixel conversion (needs parser state)
         #[cfg(feature = "ultrahdr")]
@@ -706,14 +790,31 @@ impl DecodeConfig {
             let mut pixels =
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
 
+            // Crop to visible region if transform introduced a crop offset
+            if crop_x > 0 || crop_y > 0 {
+                let inflated_w = parser.width as usize;
+                let vis_w = visible_w as usize;
+                let vis_h = visible_h as usize;
+                let channels = output_format.num_channels();
+                let mut cropped = vec![0f32; vis_w * vis_h * channels];
+                for y in 0..vis_h {
+                    let src_off = ((crop_y + y) * inflated_w + crop_x) * channels;
+                    let dst_off = y * vis_w * channels;
+                    let row_elems = vis_w * channels;
+                    cropped[dst_off..dst_off + row_elems]
+                        .copy_from_slice(&pixels[src_off..src_off + row_elems]);
+                }
+                pixels = cropped;
+            }
+
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
             if self.apply_icc && output_format == PixelFormat::Rgb {
                 if let Some(ref icc_profile) = parser.icc_profile {
                     match apply_icc_transform_f32(
                         &pixels,
-                        info.dimensions.width as usize,
-                        info.dimensions.height as usize,
+                        visible_w as usize,
+                        visible_h as usize,
                         icc_profile,
                     ) {
                         Ok(transformed) => pixels = transformed,
@@ -735,8 +836,8 @@ impl DecodeConfig {
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
             DecodeResult::new_f32(
-                info.dimensions.width,
-                info.dimensions.height,
+                visible_w,
+                visible_h,
                 output_format,
                 self.output_target,
                 pixels,
@@ -754,14 +855,31 @@ impl DecodeConfig {
                 &stop,
             )?;
 
+            // Crop to visible region if transform introduced a crop offset
+            if crop_x > 0 || crop_y > 0 {
+                let inflated_w = parser.width as usize;
+                let vis_w = visible_w as usize;
+                let vis_h = visible_h as usize;
+                let bpp = output_format.bytes_per_pixel();
+                let mut cropped = vec![0u8; vis_w * vis_h * bpp];
+                for y in 0..vis_h {
+                    let src_off = ((crop_y + y) * inflated_w + crop_x) * bpp;
+                    let dst_off = y * vis_w * bpp;
+                    let row_bytes = vis_w * bpp;
+                    cropped[dst_off..dst_off + row_bytes]
+                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+                }
+                pixels = cropped;
+            }
+
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
             if self.apply_icc && output_format == PixelFormat::Rgb {
                 if let Some(ref icc_profile) = parser.icc_profile {
                     match apply_icc_transform(
                         &pixels,
-                        info.dimensions.width as usize,
-                        info.dimensions.height as usize,
+                        visible_w as usize,
+                        visible_h as usize,
                         icc_profile,
                     ) {
                         Ok(transformed) => pixels = transformed,
@@ -778,8 +896,8 @@ impl DecodeConfig {
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
             DecodeResult::new_u8(
-                info.dimensions.width,
-                info.dimensions.height,
+                visible_w,
+                visible_h,
                 output_format,
                 self.output_target,
                 pixels,

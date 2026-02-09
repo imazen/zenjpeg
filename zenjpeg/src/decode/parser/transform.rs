@@ -137,7 +137,7 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Update dimensions
+        // Update dimensions and quant tables
         if swaps {
             core::mem::swap(&mut self.width, &mut self.height);
             // Swap sampling factors for each component
@@ -146,6 +146,20 @@ impl<'a> JpegParser<'a> {
                 let v = self.components[i].v_samp_factor;
                 self.components[i].h_samp_factor = v;
                 self.components[i].v_samp_factor = h;
+            }
+            // Transpose quant tables: coefficient at natural position (row, col)
+            // moved to (col, row), so the quant value must follow it.
+            // (For jpegli quant tables, the table is typically symmetric,
+            // making this a no-op. But it's correct for asymmetric tables.)
+            for table in &mut self.quant_tables {
+                if let Some(ref mut qt) = table {
+                    let old = *qt;
+                    for r in 0..8 {
+                        for c in 0..8 {
+                            qt[r * 8 + c] = old[c * 8 + r];
+                        }
+                    }
+                }
             }
         }
     }
