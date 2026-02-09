@@ -483,27 +483,17 @@ impl StripProcessor {
     }
 
     /// Fix h2v2 output row 0 using previous chroma context.
+    ///
+    /// Borrows strip fields directly — `cb_strip`/`cr_strip` (read) and
+    /// `cb_upsampled`/`cr_upsampled` (write) are disjoint fields, so no
+    /// temporary buffer is needed.
     fn fixup_h2v2_row0(&mut self, in_width: usize, out_width: usize, out_stride: usize) {
-        // The current chroma row 0 data
-        let cb_row0: [i16; 4096] = {
-            let mut buf = [0i16; 4096];
-            let w = in_width.min(4096);
-            buf[..w].copy_from_slice(&self.cb_strip[..w]);
-            buf
-        };
-        let cr_row0: [i16; 4096] = {
-            let mut buf = [0i16; 4096];
-            let w = in_width.min(4096);
-            buf[..w].copy_from_slice(&self.cr_strip[..w]);
-            buf
-        };
-
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
                 // Re-compute output row 0 with correct vertical neighbor
                 let cb_out = &mut self.cb_upsampled[..out_width];
                 upsample_row_h2_fancy_bilinear(
-                    &cb_row0[..in_width],
+                    &self.cb_strip[..in_width],
                     &self.prev_cb_row[..in_width],
                     in_width,
                     cb_out,
@@ -511,7 +501,7 @@ impl StripProcessor {
                 );
                 let cr_out = &mut self.cr_upsampled[..out_width];
                 upsample_row_h2_fancy_bilinear(
-                    &cr_row0[..in_width],
+                    &self.cr_strip[..in_width],
                     &self.prev_cr_row[..in_width],
                     in_width,
                     cr_out,
@@ -521,7 +511,7 @@ impl StripProcessor {
             ChromaUpsampling::LibjpegCompat => {
                 let cb_out = &mut self.cb_upsampled[..out_stride];
                 upsample_h2v2_libjpeg_row(
-                    &cb_row0[..in_width],
+                    &self.cb_strip[..in_width],
                     &self.prev_cb_row[..in_width],
                     cb_out,
                     in_width,
@@ -530,7 +520,7 @@ impl StripProcessor {
                 );
                 let cr_out = &mut self.cr_upsampled[..out_stride];
                 upsample_h2v2_libjpeg_row(
-                    &cr_row0[..in_width],
+                    &self.cr_strip[..in_width],
                     &self.prev_cr_row[..in_width],
                     cr_out,
                     in_width,
