@@ -645,16 +645,12 @@ sensitivity tables, and preset baselines.
    - TODO: Investigate whether the issue is incorrect chroma block addressing after transform,
      or a fundamental difference in the upsampling approach between the two paths.
 
-6. **Scanline pipeline panic on dual-SOF files (2026-02-09)** - Files with EXIF thumbnail
-   SOF (320x240) + large main image SOF (9280x6944) cause `pipeline.rs:524` to panic with
-   "range end index 4640 out of range for slice of length 4096" in `fixup_h2v2_row0`.
-   Affects 3/543 files in web-scraped corpus. Buffered decode works fine.
-   - Impact: Scanline reader panics on ~0.6% of web JPEGs with embedded thumbnails
-   - Files: `1ebf7141ff840f98.jpg`, `8bf490cd2945f7dc.jpg`, `f159275de736a5df.jpg`
-   - Workaround: Use buffered decode for these files
-
 ### Fixed Bugs (historical reference)
 
+- **Scanline h2v2 boundary fixup buffer overflow (FIXED 2026-02-09, commit 8f1295f)** -
+  `fixup_h2v2_row0()` used hardcoded `[i16; 4096]` stack buffers, panicking on any 4:2:0
+  image wider than 8192px (chroma width > 4096). Fix: borrow disjoint struct fields directly
+  instead of copying to temp buffers. Closes #1.
 - **Progressive MCU-padded storage (FIXED 2026-02-09, commit 29d6d81)** - Progressive decoder
   allocated coefficients with component-based counts (ceil(scaled_w/8)) but output path reads
   with MCU-padded stride (mcu_cols * h_samp). For 4:2:0 with non-MCU-aligned width, caused

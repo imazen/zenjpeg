@@ -2124,7 +2124,7 @@ checksum = "453f24cf9e21be2148954a438c72fb999da42b1d128105bfd73ce91e1c6c7d33"
 
 [[package]]
 name = "zenjpeg"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "aligned-vec",
  "almost-enough",
