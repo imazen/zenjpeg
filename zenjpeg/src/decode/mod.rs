@@ -633,9 +633,10 @@ impl DecodeConfig {
 
         parser.apply_dct_transform(transform);
 
-        if crop_x > 0 || crop_y > 0 {
-            // Crop needed: fall back to full buffered decode + crop.
-            // Reuse the decode() path which already handles crop correctly.
+        if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() {
+            // Crop needed or dimension-swapping transform (which uses f32 IDCT):
+            // fall back to full buffered decode + crop.
+            // This ensures the scanline path matches the buffered decode() path exactly.
             let result = self.decode(data, Unstoppable)?;
             let vis_w = result.width();
             let vis_h = result.height();
@@ -726,6 +727,11 @@ impl DecodeConfig {
             parser.prefer_streaming = false;
         }
         parser.decode(&stop)?;
+
+        // Propagate force_f32_idct from config (set by tests for fair comparison)
+        if self.force_f32_idct {
+            parser.force_f32_idct = true;
+        }
 
         // Apply DCT transform if needed.
         //

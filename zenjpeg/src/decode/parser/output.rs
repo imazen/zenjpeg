@@ -124,7 +124,7 @@ impl<'a> JpegParser<'a> {
     /// - 4:4:4 subsampling (no chroma downsampling to avoid f32 upsampling)
     /// - RGB-family output format (Rgb, Bgr, Rgba, Bgra, Bgrx)
     fn can_use_fast_i16_path(&self, format: PixelFormat, is_xyb: bool) -> bool {
-        if is_xyb {
+        if is_xyb || self.force_f32_idct {
             return false;
         }
         if !is_rgb_family_u8(format) {
@@ -156,7 +156,7 @@ impl<'a> JpegParser<'a> {
     /// - 3 components (YCbCr)
     /// - Standard subsampling (Y full-res, Cb/Cr subsampled)
     fn can_use_fast_i16_subsampled(&self, format: PixelFormat, is_xyb: bool) -> bool {
-        if is_xyb {
+        if is_xyb || self.force_f32_idct {
             return false;
         }
         if !is_rgb_family_u8(format) {
@@ -983,9 +983,10 @@ impl<'a> JpegParser<'a> {
                         let base_px = bx * DCT_SIZE;
                         let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
 
-                        if is_xyb || dequant_bias {
+                        if is_xyb || dequant_bias || self.force_f32_idct {
                             // f32 IDCT path: XYB needs extended gamut precision,
-                            // dequant_bias needs fractional bias application
+                            // dequant_bias needs fractional bias application,
+                            // dimension-swapping transforms need symmetric IDCT
                             let dequant = if dequant_bias && !is_xyb {
                                 dequantize_block_with_bias(&natural_coeffs, quant, biases)
                             } else {

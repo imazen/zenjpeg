@@ -2631,10 +2631,16 @@ fn test_15x17_border_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Decode reference (no transform)
+    // Decode reference with i16 IDCT (used for non-dimension-swapping transforms)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
+
+    // Decode reference with f32 IDCT (used for dimension-swapping transforms,
+    // since they force f32 IDCT for symmetric rounding)
+    let mut config_f32 = DecodeConfig::new();
+    config_f32.force_f32_idct = true;
+    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     // Collect all border pixel positions for the original image
     let border_positions: Vec<(usize, usize)> = {
@@ -2653,13 +2659,18 @@ fn test_15x17_border_pixels_lossless() {
     for &transform in &LosslessTransform::ALL {
         let label = format!("{transform:?}");
 
-        // DCT-domain transform
+        // DCT-domain transform (uses f32 IDCT for dimension-swapping, i16 otherwise)
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of the reference
+        // Pixel-space transform of the matching reference
+        let ref_pixels = if transform.swaps_dimensions() {
+            &ref_pixels_f32
+        } else {
+            &ref_pixels_i16
+        };
         let (px_w, px_h, px_pixels) =
-            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w, dct_h),
@@ -2703,14 +2714,9 @@ fn test_15x17_border_pixels_lossless() {
             }
         }
 
-        // Dimension-swapping transforms (Transpose, Rot90, Rot270, Transverse)
-        // may have ±2 difference due to integer IDCT intermediate rounding:
-        // the row/column passes execute in swapped order on transposed coefficients,
-        // producing slightly different fixed-point rounding than pixel-space transpose.
-        let tolerance = if transform.swaps_dimensions() { 2 } else { 0 };
-        assert!(
-            max_diff <= tolerance,
-            "{label}: border pixel mismatch! max_diff={max_diff} (tol={tolerance}) at ({},{}) \
+        assert_eq!(
+            max_diff, 0,
+            "{label}: border pixel mismatch! max_diff={max_diff} at ({},{}) \
              mismatches={mismatches}/{} channels",
             worst_pos.0,
             worst_pos.1,
@@ -2795,10 +2801,13 @@ fn test_15x17_all_pixels_lossless() {
 
     let jpeg = encode_test_image(w, h, &pixels, None);
 
-    // Decode reference
+    // Two references: i16 IDCT (default) and f32 IDCT (for dimension-swapping)
     let config_none = DecodeConfig::new();
-    let (ref_w, ref_h, ref_pixels) = decode_test(&jpeg, &config_none);
+    let (ref_w, ref_h, ref_pixels_i16) = decode_test(&jpeg, &config_none);
     assert_eq!((ref_w, ref_h), (w, h));
+    let mut config_f32 = DecodeConfig::new();
+    config_f32.force_f32_idct = true;
+    let (_, _, ref_pixels_f32) = decode_test(&jpeg, &config_f32);
 
     for &transform in &LosslessTransform::ALL {
         if transform == LosslessTransform::None {
@@ -2810,9 +2819,14 @@ fn test_15x17_all_pixels_lossless() {
         let config = DecodeConfig::new().transform(transform);
         let (dct_w, dct_h, dct_pixels) = decode_test(&jpeg, &config);
 
-        // Pixel-space transform of reference
+        // Pixel-space transform of matching reference
+        let ref_pixels = if transform.swaps_dimensions() {
+            &ref_pixels_f32
+        } else {
+            &ref_pixels_i16
+        };
         let (px_w, px_h, px_pixels) =
-            pixel_transform(&ref_pixels, ref_w as usize, ref_h as usize, transform);
+            pixel_transform(ref_pixels, ref_w as usize, ref_h as usize, transform);
 
         assert_eq!(
             (dct_w as usize, dct_h as usize),
@@ -2846,13 +2860,10 @@ fn test_15x17_all_pixels_lossless() {
             }
         }
 
-        // See comment in test_15x17_border_pixels_lossless: dimension-swapping
-        // transforms have ±2 integer IDCT rounding tolerance.
-        let tolerance = if transform.swaps_dimensions() { 2 } else { 0 };
-        assert!(
-            max_diff <= tolerance,
+        assert_eq!(
+            max_diff, 0,
             "{label}: DCT vs pixel transform mismatch! \
-             max_diff={max_diff} (tol={tolerance}) at ({},{}) mismatches={mismatches}/{} mean_diff={:.2}",
+             max_diff={max_diff} at ({},{}) mismatches={mismatches}/{} mean_diff={:.2}",
             worst_pos.0,
             worst_pos.1,
             tw * th * 3,

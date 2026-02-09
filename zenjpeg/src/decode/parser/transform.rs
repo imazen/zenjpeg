@@ -161,6 +161,11 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             }
+
+            // Force f32 IDCT for exact results: integer IDCT row/column passes
+            // produce different intermediate rounding when executed in swapped
+            // order, causing ±1-2 pixel differences. The f32 IDCT is symmetric.
+            self.force_f32_idct = true;
         }
     }
 }
