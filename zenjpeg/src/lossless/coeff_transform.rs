@@ -42,7 +42,7 @@ impl LosslessTransform {
     }
 
     /// All 8 elements of the D4 dihedral group, in enum order.
-    const ALL: [Self; 8] = [
+    pub const ALL: [Self; 8] = [
         Self::None,
         Self::FlipHorizontal,
         Self::FlipVertical,
@@ -130,13 +130,13 @@ impl LosslessTransform {
     const CAYLEY: [[usize; 8]; 8] = [
         //              None  FlipH FlipV Trans Rot90 R180  R270  Trnvs
         /* None      */ [0,    1,    2,    3,    4,    5,    6,    7],
-        /* FlipH     */ [1,    0,    5,    4,    3,    2,    7,    6],
-        /* FlipV     */ [2,    5,    0,    6,    7,    1,    3,    4],
-        /* Transpose */ [3,    6,    4,    0,    2,    7,    5,    1],
-        /* Rotate90  */ [4,    7,    3,    1,    5,    6,    0,    2],
+        /* FlipH     */ [1,    0,    5,    6,    7,    2,    3,    4],
+        /* FlipV     */ [2,    5,    0,    4,    3,    1,    7,    6],
+        /* Transpose */ [3,    4,    6,    0,    1,    7,    2,    5],
+        /* Rotate90  */ [4,    3,    7,    2,    5,    6,    0,    1],
         /* Rotate180 */ [5,    2,    1,    7,    6,    0,    4,    3],
-        /* Rotate270 */ [6,    3,    7,    5,    0,    4,    2,    1],
-        /* Transvrse */ [7,    4,    6,    2,    1,    3,    5,    0],
+        /* Rotate270 */ [6,    7,    3,    1,    0,    4,    5,    2],
+        /* Transvrse */ [7,    6,    4,    5,    2,    3,    1,    0],
     ];
 }
 
