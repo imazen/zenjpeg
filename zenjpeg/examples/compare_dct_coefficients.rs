@@ -100,7 +100,8 @@ fn main() {
     let src_path = if args.len() > 1 {
         args[1].clone()
     } else {
-        codec_corpus::Corpus::new().ok()
+        codec_corpus::Corpus::new()
+            .ok()
             .and_then(|c| c.get("kodak").ok())
             .map(|p| p.join("1.png").to_string_lossy().to_string())
             .expect("Usage: compare_dct_coefficients <image.png> or set up codec-corpus")

@@ -252,7 +252,15 @@ impl<'a> EncodeRequest<'a> {
     // === Internal ===
 
     /// Extract metadata for encoder construction.
-    fn extract_metadata(self) -> (EncoderConfig, Option<alloc::vec::Vec<u8>>, Option<Exif>, Option<alloc::vec::Vec<u8>>, Option<EncoderSegments>) {
+    fn extract_metadata(
+        self,
+    ) -> (
+        EncoderConfig,
+        Option<alloc::vec::Vec<u8>>,
+        Option<Exif>,
+        Option<alloc::vec::Vec<u8>>,
+        Option<EncoderSegments>,
+    ) {
         let config = self.config.clone();
         let icc = self.icc_profile.map(|c| c.into_owned());
         let exif = self.exif;

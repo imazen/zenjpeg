@@ -58,12 +58,18 @@ fn main() {
         "11f2b039b293758398b1a7a8afa64bb2",
     ];
 
-    let clic_dir = corpus.as_ref()
+    let clic_dir = corpus
+        .as_ref()
         .and_then(|c| c.get("clic2025/validation").ok());
 
     for img_hash in clic_images {
-        let path = clic_dir.as_ref()
-            .map(|d| d.join(format!("{}.png", img_hash)).to_string_lossy().to_string())
+        let path = clic_dir
+            .as_ref()
+            .map(|d| {
+                d.join(format!("{}.png", img_hash))
+                    .to_string_lossy()
+                    .to_string()
+            })
             .unwrap_or_default();
         if let Some((pixels, width, height)) = load_png(&path) {
             let short_hash = &img_hash[..8];

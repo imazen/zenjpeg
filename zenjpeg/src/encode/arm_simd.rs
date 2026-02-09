@@ -57,20 +57,20 @@ fn neon_transpose_4x4_inplace_inner(_token: NeonToken, r: &mut [float32x4_t; 4])
     // Phase 2: Interleave 64-bit pairs (f32x2 treated as single 64-bit unit)
     // This completes the transpose
     r[0] = vreinterpretq_f32_f64(vzip1q_f64(
-    vreinterpretq_f64_f32(q0),
-    vreinterpretq_f64_f32(q2),
+        vreinterpretq_f64_f32(q0),
+        vreinterpretq_f64_f32(q2),
     )); // Column 0
     r[1] = vreinterpretq_f32_f64(vzip2q_f64(
-    vreinterpretq_f64_f32(q0),
-    vreinterpretq_f64_f32(q2),
+        vreinterpretq_f64_f32(q0),
+        vreinterpretq_f64_f32(q2),
     )); // Column 1
     r[2] = vreinterpretq_f32_f64(vzip1q_f64(
-    vreinterpretq_f64_f32(q1),
-    vreinterpretq_f64_f32(q3),
+        vreinterpretq_f64_f32(q1),
+        vreinterpretq_f64_f32(q3),
     )); // Column 2
     r[3] = vreinterpretq_f32_f64(vzip2q_f64(
-    vreinterpretq_f64_f32(q1),
-    vreinterpretq_f64_f32(q3),
+        vreinterpretq_f64_f32(q1),
+        vreinterpretq_f64_f32(q3),
     )); // Column 3
 }
 
@@ -275,36 +275,39 @@ pub fn neon_forward_dct_8x8(token: NeonToken, input: &[f32; 64], output: &mut [f
     let mut rows_hi: [float32x4_t; 8] = [vdupq_n_f32(0.0); 8];
 
     for i in 0..8 {
-    rows_lo[i] = safe_simd::vld1q_f32(&input[i * 8..][..4].try_into().unwrap());
-    rows_hi[i] = safe_simd::vld1q_f32(&input[i * 8 + 4..][..4].try_into().unwrap());
+        rows_lo[i] = safe_simd::vld1q_f32(&input[i * 8..][..4].try_into().unwrap());
+        rows_hi[i] = safe_simd::vld1q_f32(&input[i * 8 + 4..][..4].try_into().unwrap());
 
-    // Apply 1D DCT to each row
-    neon_dct1d_8_inner(token, &mut rows_lo);
-    neon_dct1d_8_inner(token, &mut rows_hi);
+        // Apply 1D DCT to each row
+        neon_dct1d_8_inner(token, &mut rows_lo);
+        neon_dct1d_8_inner(token, &mut rows_hi);
 
-    // Transpose
-    let mut temp = [0.0f32; 64];
-    for i in 0..8 {
-        safe_simd::vst1q_f32(&mut temp[i * 8..][..4].try_into().unwrap(), rows_lo[i]);
-        safe_simd::vst1q_f32(&mut temp[i * 8 + 4..][..4].try_into().unwrap(), rows_hi[i]);
-    }
-    neon_transpose_8x8_inplace_inner(token, &mut temp);
+        // Transpose
+        let mut temp = [0.0f32; 64];
+        for i in 0..8 {
+            safe_simd::vst1q_f32(&mut temp[i * 8..][..4].try_into().unwrap(), rows_lo[i]);
+            safe_simd::vst1q_f32(&mut temp[i * 8 + 4..][..4].try_into().unwrap(), rows_hi[i]);
+        }
+        neon_transpose_8x8_inplace_inner(token, &mut temp);
 
-    // Reload transposed data
-    for i in 0..8 {
-        rows_lo[i] = safe_simd::vld1q_f32(&temp[i * 8..][..4].try_into().unwrap());
-        rows_hi[i] = safe_simd::vld1q_f32(&temp[i * 8 + 4..][..4].try_into().unwrap());
-    }
+        // Reload transposed data
+        for i in 0..8 {
+            rows_lo[i] = safe_simd::vld1q_f32(&temp[i * 8..][..4].try_into().unwrap());
+            rows_hi[i] = safe_simd::vld1q_f32(&temp[i * 8 + 4..][..4].try_into().unwrap());
+        }
 
-    // Apply 1D DCT to each column (now rows after transpose)
-    neon_dct1d_8_inner(token, &mut rows_lo);
-    neon_dct1d_8_inner(token, &mut rows_hi);
+        // Apply 1D DCT to each column (now rows after transpose)
+        neon_dct1d_8_inner(token, &mut rows_lo);
+        neon_dct1d_8_inner(token, &mut rows_hi);
 
-    // Store result
-    for i in 0..8 {
-        safe_simd::vst1q_f32(&mut output[i * 8..][..4].try_into().unwrap(), rows_lo[i]);
-        safe_simd::vst1q_f32(&mut output[i * 8 + 4..][..4].try_into().unwrap(), rows_hi[i]);
-    }
+        // Store result
+        for i in 0..8 {
+            safe_simd::vst1q_f32(&mut output[i * 8..][..4].try_into().unwrap(), rows_lo[i]);
+            safe_simd::vst1q_f32(
+                &mut output[i * 8 + 4..][..4].try_into().unwrap(),
+                rows_hi[i],
+            );
+        }
     }
 }
 
@@ -374,12 +377,7 @@ mod tests {
 /// Implements the libjpeg-turbo Loeffler algorithm with NEON intrinsics.
 /// Processes two 4-wide columns in parallel using int32x4_t.
 #[arcane]
-pub fn neon_idct_int_8x8(
-    _token: NeonToken,
-    input: &[i32; 64],
-    output: &mut [i16],
-    stride: usize,
-) {
+pub fn neon_idct_int_8x8(_token: NeonToken, input: &[i32; 64], output: &mut [i16], stride: usize) {
     // Constants for Loeffler IDCT (13-bit fixed-point)
     let _fix_0_298631336 = vdupq_n_s32(2446);
     let _fix_0_390180644 = vdupq_n_s32(3196);
@@ -396,38 +394,38 @@ pub fn neon_idct_int_8x8(
 
     const CONST_BITS: i32 = 13;
     const PASS1_BITS: i32 = 2;
-    
+
     // DC-only fast path
     let all_ac_zero = true;
     for i in 1..64 {
-    if input[i] != 0 {
-        break;
-    }
-    
-    if all_ac_zero {
-        let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
-        let dc_vec = vdupq_n_s16(dc);
-        let mut pos = 0;
-        for _ in 0..8 {
-            safe_simd::vst1q_s16((&mut output[pos..][..8]).try_into().unwrap(), dc_vec);
-            pos += stride;
+        if input[i] != 0 {
+            break;
         }
-        return;
-    }
 
-    // Full IDCT - load rows
-    let mut rows: [int32x4x2_t; 8] = [int32x4x2_t(vdupq_n_s32(0), vdupq_n_s32(0)); 8];
-    for i in 0..8 {
-        rows[i] = int32x4x2_t(
-            safe_simd::vld1q_s32(&input[i * 8..][..4].try_into().unwrap()),
-            safe_simd::vld1q_s32(&input[i * 8 + 4..][..4].try_into().unwrap()),
-        );
-    }
+        if all_ac_zero {
+            let dc = ((input[0] + 4 + 1024) >> 3).clamp(0, 255) as i16;
+            let dc_vec = vdupq_n_s16(dc);
+            let mut pos = 0;
+            for _ in 0..8 {
+                safe_simd::vst1q_s16((&mut output[pos..][..8]).try_into().unwrap(), dc_vec);
+                pos += stride;
+            }
+            return;
+        }
 
-    // Pass 1: process columns (simplified - would need full butterfly ops)
-    // TODO: Implement full NEON column pass
-    // TODO: Implement Loeffler IDCT algorithm (see zune-jpeg/src/idct/neon.rs)
-    unimplemented!("NEON integer IDCT not yet implemented");
+        // Full IDCT - load rows
+        let mut rows: [int32x4x2_t; 8] = [int32x4x2_t(vdupq_n_s32(0), vdupq_n_s32(0)); 8];
+        for i in 0..8 {
+            rows[i] = int32x4x2_t(
+                safe_simd::vld1q_s32(&input[i * 8..][..4].try_into().unwrap()),
+                safe_simd::vld1q_s32(&input[i * 8 + 4..][..4].try_into().unwrap()),
+            );
+        }
+
+        // Pass 1: process columns (simplified - would need full butterfly ops)
+        // TODO: Implement full NEON column pass
+        // TODO: Implement Loeffler IDCT algorithm (see zune-jpeg/src/idct/neon.rs)
+        unimplemented!("NEON integer IDCT not yet implemented");
     }
 }
 
@@ -467,31 +465,30 @@ pub fn neon_upsample_h2v1(
     out_width: usize,
 ) {
     assert_eq!(out_width, in_width * 2);
-    
+
     let v_three = vdupq_n_f32(3.0);
     let v_quarter = vdupq_n_f32(0.25);
 
     // First pixel
     output[0] = input[0];
-    
+
     // Process 4 input pixels at a time → 8 output pixels
     let chunks = in_width / 4;
     for i in 0..chunks {
-    let curr = safe_simd::vld1q_f32(&input[i * 4..][..4].try_into().unwrap());
-    let next = safe_simd::vld1q_f32(&input[i * 4 + 1..][..4].try_into().unwrap());
+        let curr = safe_simd::vld1q_f32(&input[i * 4..][..4].try_into().unwrap());
+        let next = safe_simd::vld1q_f32(&input[i * 4 + 1..][..4].try_into().unwrap());
 
-    // even = curr, odd = (3*curr + next) * 0.25
-    let odd = vmulq_f32(vfmaq_f32(next, curr, v_three), v_quarter);
+        // even = curr, odd = (3*curr + next) * 0.25
+        let odd = vmulq_f32(vfmaq_f32(next, curr, v_three), v_quarter);
 
-    // Interleave even and odd
-    let out0 = vzip1q_f32(curr, odd);
-    let out1 = vzip2q_f32(curr, odd);
+        // Interleave even and odd
+        let out0 = vzip1q_f32(curr, odd);
+        let out1 = vzip2q_f32(curr, odd);
 
-    safe_simd::vst1q_f32(&mut output[i * 8..][..4].try_into().unwrap(), out0);
-    safe_simd::vst1q_f32(&mut output[i * 8 + 4..][..4].try_into().unwrap(), out1);
+        safe_simd::vst1q_f32(&mut output[i * 8..][..4].try_into().unwrap(), out0);
+        safe_simd::vst1q_f32(&mut output[i * 8 + 4..][..4].try_into().unwrap(), out1);
 
-    // Last pixel
-    output[out_width - 1] = input[in_width - 1];
+        // Last pixel
+        output[out_width - 1] = input[in_width - 1];
     }
 }
-

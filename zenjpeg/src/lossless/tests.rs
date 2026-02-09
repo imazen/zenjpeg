@@ -39,7 +39,10 @@ fn test_identity_transform() {
     let block = make_test_block();
     let bt = BlockTransform::for_transform(LosslessTransform::None);
     let result = bt.apply(&block);
-    assert_eq!(block, result, "identity transform should not change coefficients");
+    assert_eq!(
+        block, result,
+        "identity transform should not change coefficients"
+    );
 }
 
 #[test]
@@ -53,12 +56,16 @@ fn test_flip_horizontal_negates_odd_cols() {
             let src_val = read_at(&block, row, col);
             let dst_val = read_at(&result, row, col);
             if col % 2 == 1 {
-                assert_eq!(dst_val, -src_val,
+                assert_eq!(
+                    dst_val, -src_val,
                     "H-flip should negate at ({row},{col}): expected {}, got {dst_val}",
-                    -src_val);
+                    -src_val
+                );
             } else {
-                assert_eq!(dst_val, src_val,
-                    "H-flip should preserve at ({row},{col}): expected {src_val}, got {dst_val}");
+                assert_eq!(
+                    dst_val, src_val,
+                    "H-flip should preserve at ({row},{col}): expected {src_val}, got {dst_val}"
+                );
             }
         }
     }
@@ -75,11 +82,9 @@ fn test_flip_vertical_negates_odd_rows() {
             let src_val = read_at(&block, row, col);
             let dst_val = read_at(&result, row, col);
             if row % 2 == 1 {
-                assert_eq!(dst_val, -src_val,
-                    "V-flip should negate at ({row},{col})");
+                assert_eq!(dst_val, -src_val, "V-flip should negate at ({row},{col})");
             } else {
-                assert_eq!(dst_val, src_val,
-                    "V-flip should preserve at ({row},{col})");
+                assert_eq!(dst_val, src_val, "V-flip should preserve at ({row},{col})");
             }
         }
     }
@@ -115,8 +120,10 @@ fn test_rotate90_is_transpose_plus_hflip() {
     let intermediate = bt_transpose.apply(&block);
     let result_composed = bt_hflip.apply(&intermediate);
 
-    assert_eq!(result_rot90, result_composed,
-        "Rotate90 should equal Transpose + FlipHorizontal");
+    assert_eq!(
+        result_rot90, result_composed,
+        "Rotate90 should equal Transpose + FlipHorizontal"
+    );
 }
 
 #[test]
@@ -131,8 +138,10 @@ fn test_rotate180_is_hflip_plus_vflip() {
     let intermediate = bt_hflip.apply(&block);
     let result_composed = bt_vflip.apply(&intermediate);
 
-    assert_eq!(result_rot180, result_composed,
-        "Rotate180 should equal FlipHorizontal + FlipVertical");
+    assert_eq!(
+        result_rot180, result_composed,
+        "Rotate180 should equal FlipHorizontal + FlipVertical"
+    );
 }
 
 #[test]
@@ -147,8 +156,10 @@ fn test_rotate270_is_transpose_plus_vflip() {
     let intermediate = bt_transpose.apply(&block);
     let result_composed = bt_vflip.apply(&intermediate);
 
-    assert_eq!(result_rot270, result_composed,
-        "Rotate270 should equal Transpose + FlipVertical");
+    assert_eq!(
+        result_rot270, result_composed,
+        "Rotate270 should equal Transpose + FlipVertical"
+    );
 }
 
 #[test]
@@ -163,8 +174,10 @@ fn test_transverse_is_transpose_plus_rot180() {
     let intermediate = bt_transpose.apply(&block);
     let result_composed = bt_rot180.apply(&intermediate);
 
-    assert_eq!(result_transverse, result_composed,
-        "Transverse should equal Transpose + Rotate180");
+    assert_eq!(
+        result_transverse, result_composed,
+        "Transverse should equal Transpose + Rotate180"
+    );
 }
 
 #[test]
@@ -187,8 +200,12 @@ fn test_dc_coefficient_never_negated() {
         let bt = BlockTransform::for_transform(transform);
         let result = bt.apply(&block);
         // DC is always at (0,0) → zigzag 0, and should never be negated
-        assert_eq!(read_at(&result, 0, 0), 1000,
-            "DC should not be negated by {:?}", transform);
+        assert_eq!(
+            read_at(&result, 0, 0),
+            1000,
+            "DC should not be negated by {:?}",
+            transform
+        );
     }
 }
 
@@ -283,45 +300,66 @@ fn test_block_remap_identity() {
 #[test]
 fn test_block_remap_hflip() {
     // In a 10-wide grid, block at x=2 should go to x=7
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::FlipHorizontal), (7, 3));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::FlipHorizontal),
+        (7, 3)
+    );
 }
 
 #[test]
 fn test_block_remap_vflip() {
     // In an 8-high grid, block at y=3 should go to y=4
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::FlipVertical), (2, 4));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::FlipVertical),
+        (2, 4)
+    );
 }
 
 #[test]
 fn test_block_remap_transpose() {
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::Transpose), (3, 2));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::Transpose),
+        (3, 2)
+    );
 }
 
 #[test]
 fn test_block_remap_rot90() {
     // Rotate90: (bx, by) → (bh-1-by, bx)
     // (2, 3) in 10×8 → (8-1-3, 2) = (4, 2) in 8×10 grid
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::Rotate90), (4, 2));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::Rotate90),
+        (4, 2)
+    );
 }
 
 #[test]
 fn test_block_remap_rot180() {
     // (2, 3) in 10×8 → (7, 4)
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::Rotate180), (7, 4));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::Rotate180),
+        (7, 4)
+    );
 }
 
 #[test]
 fn test_block_remap_rot270() {
     // Rotate270: (bx, by) → (by, bw-1-bx)
     // (2, 3) → (3, 10-1-2) = (3, 7) in 8×10 grid
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::Rotate270), (3, 7));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::Rotate270),
+        (3, 7)
+    );
 }
 
 #[test]
 fn test_block_remap_transverse() {
     // Transverse: (bx, by) → (bh-1-by, bw-1-bx)
     // (2, 3) → (8-1-3, 10-1-2) = (4, 7) in 8×10 grid
-    assert_eq!(remap_block(2, 3, 10, 8, LosslessTransform::Transverse), (4, 7));
+    assert_eq!(
+        remap_block(2, 3, 10, 8, LosslessTransform::Transverse),
+        (4, 7)
+    );
 }
 
 // ===== Full coefficient transform tests =====
@@ -335,10 +373,10 @@ fn make_test_coefficients() -> DecodedCoefficients {
 
     // Set DC values to identify each block
     // Block (0,0) DC=10, Block (1,0) DC=20, Block (0,1) DC=30, Block (1,1) DC=40
-    coeffs[0 * 64] = 10;  // block 0 = (bx=0, by=0)
-    coeffs[1 * 64] = 20;  // block 1 = (bx=1, by=0)
-    coeffs[2 * 64] = 30;  // block 2 = (bx=0, by=1)
-    coeffs[3 * 64] = 40;  // block 3 = (bx=1, by=1)
+    coeffs[0 * 64] = 10; // block 0 = (bx=0, by=0)
+    coeffs[1 * 64] = 20; // block 1 = (bx=1, by=0)
+    coeffs[2 * 64] = 30; // block 2 = (bx=0, by=1)
+    coeffs[3 * 64] = 40; // block 3 = (bx=1, by=1)
 
     DecodedCoefficients {
         width: 16,
@@ -422,7 +460,7 @@ fn test_transform_transpose_swaps_dims() {
     };
     let result = transform_coefficients(&coeffs, &config).unwrap();
 
-    assert_eq!(result.width, 16);  // square, so same
+    assert_eq!(result.width, 16); // square, so same
     assert_eq!(result.height, 16);
 
     // (0,0)→(0,0), (1,0)→(0,1), (0,1)→(1,0), (1,1)→(1,1)
@@ -517,33 +555,35 @@ fn test_transform_nonsquare_transpose() {
 // ===== End-to-end pipeline tests =====
 
 mod pipeline_tests {
-    use crate::lossless::{transform, LosslessTransform, TransformConfig, EdgeHandling};
     use crate::decode::DecodeConfig;
+    use crate::lossless::{transform, EdgeHandling, LosslessTransform, TransformConfig};
     use enough::Unstoppable;
 
     /// Create a test JPEG from a known pixel pattern using zenjpeg encoder.
     fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
         let mut pixels = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
             for x in 0..width {
                 // Create a pattern that's visually distinct when rotated
-                pixels.push(((x * 255 / width) & 0xFF) as u8);  // R: gradient L→R
+                pixels.push(((x * 255 / width) & 0xFF) as u8); // R: gradient L→R
                 pixels.push(((y * 255 / height) & 0xFF) as u8); // G: gradient T→B
-                pixels.push(128u8);                               // B: constant
+                pixels.push(128u8); // B: constant
             }
         }
 
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
 
     /// Create a test JPEG with 4:2:0 subsampling.
     fn create_test_jpeg_420(width: u32, height: u32) -> Vec<u8> {
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
         let mut pixels = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
@@ -555,7 +595,9 @@ mod pipeline_tests {
         }
 
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
@@ -566,10 +608,15 @@ mod pipeline_tests {
         // the same pixels (modulo Huffman table differences)
         let jpeg = create_test_jpeg(64, 64);
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::None,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::None,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         // Result should be a valid JPEG
         assert!(result.len() > 100, "output too small");
@@ -594,17 +641,25 @@ mod pipeline_tests {
             let diff = (*a as i16 - *b as i16).unsigned_abs() as u8;
             max_diff = max_diff.max(diff);
         }
-        assert_eq!(max_diff, 0, "identity transform should produce identical pixels");
+        assert_eq!(
+            max_diff, 0,
+            "identity transform should produce identical pixels"
+        );
     }
 
     #[test]
     fn test_rotate90_dimensions() {
         let jpeg = create_test_jpeg(64, 48);
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::Rotate90,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let decoder = DecodeConfig::new();
         let decoded = decoder.decode(&result, Unstoppable).unwrap();
@@ -618,10 +673,15 @@ mod pipeline_tests {
     fn test_rotate180_same_dimensions() {
         let jpeg = create_test_jpeg(64, 48);
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::Rotate180,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate180,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let decoder = DecodeConfig::new();
         let decoded = decoder.decode(&result, Unstoppable).unwrap();
@@ -634,20 +694,35 @@ mod pipeline_tests {
     fn test_double_rotate90_equals_rotate180() {
         let jpeg = create_test_jpeg(64, 64);
 
-        let rot90_1 = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::Rotate90,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let rot90_1 = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
-        let rot90_2 = transform(&rot90_1, &TransformConfig {
-            transform: LosslessTransform::Rotate90,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let rot90_2 = transform(
+            &rot90_1,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
-        let rot180 = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::Rotate180,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let rot180 = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate180,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         // Both should decode to the same pixels
         let decoder = DecodeConfig::new();
@@ -672,10 +747,15 @@ mod pipeline_tests {
 
         let mut current = jpeg.clone();
         for _ in 0..4 {
-            current = transform(&current, &TransformConfig {
-                transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::Trim,
-            }, Unstoppable).unwrap();
+            current = transform(
+                &current,
+                &TransformConfig {
+                    transform: LosslessTransform::Rotate90,
+                    edge_handling: EdgeHandling::Trim,
+                },
+                Unstoppable,
+            )
+            .unwrap();
         }
 
         // After 4 rotations, should be back to original pixels
@@ -701,15 +781,25 @@ mod pipeline_tests {
     fn test_hflip_roundtrip() {
         let jpeg = create_test_jpeg(64, 48);
 
-        let flipped = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::FlipHorizontal,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let flipped = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::FlipHorizontal,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
-        let double_flipped = transform(&flipped, &TransformConfig {
-            transform: LosslessTransform::FlipHorizontal,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let double_flipped = transform(
+            &flipped,
+            &TransformConfig {
+                transform: LosslessTransform::FlipHorizontal,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let decoder = DecodeConfig::new();
         let orig = decoder.decode(&jpeg, Unstoppable).unwrap();
@@ -731,10 +821,15 @@ mod pipeline_tests {
         // Test with 4:2:0 subsampling (MCU size 16×16)
         let jpeg = create_test_jpeg_420(64, 48);
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::Rotate90,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let decoder = DecodeConfig::new();
         let decoded = decoder.decode(&result, Unstoppable).unwrap();
@@ -759,28 +854,36 @@ mod pipeline_tests {
             LosslessTransform::Rotate270,
             LosslessTransform::Transverse,
         ] {
-            let result = transform(&jpeg, &TransformConfig {
-                transform: xform,
-                edge_handling: EdgeHandling::Trim,
-            }, Unstoppable).unwrap();
+            let result = transform(
+                &jpeg,
+                &TransformConfig {
+                    transform: xform,
+                    edge_handling: EdgeHandling::Trim,
+                },
+                Unstoppable,
+            )
+            .unwrap();
 
             // Should be a valid JPEG
             let decoded = decoder.decode(&result, Unstoppable);
-            assert!(decoded.is_ok(),
+            assert!(
+                decoded.is_ok(),
                 "transform {:?} should produce valid JPEG, got error: {:?}",
-                xform, decoded.err());
+                xform,
+                decoded.err()
+            );
         }
     }
 }
 
 mod coefficient_roundtrip_tests {
-    use crate::lossless::{transform, LosslessTransform, TransformConfig, EdgeHandling};
     use crate::decode::DecodeConfig;
+    use crate::lossless::{transform, EdgeHandling, LosslessTransform, TransformConfig};
     use enough::Unstoppable;
 
     /// Create a test JPEG
     fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
         let mut pixels = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
             for x in 0..width {
@@ -790,7 +893,9 @@ mod coefficient_roundtrip_tests {
             }
         }
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
@@ -803,17 +908,33 @@ mod coefficient_roundtrip_tests {
 
         let orig_coeffs = decoder.decode_coefficients(&jpeg, Unstoppable).unwrap();
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::None,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::None,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let new_coeffs = decoder.decode_coefficients(&result, Unstoppable).unwrap();
 
         // Compare coefficient by coefficient
-        for (comp_idx, (c1, c2)) in orig_coeffs.components.iter().zip(&new_coeffs.components).enumerate() {
-            assert_eq!(c1.blocks_wide, c2.blocks_wide, "blocks_wide mismatch comp {comp_idx}");
-            assert_eq!(c1.blocks_high, c2.blocks_high, "blocks_high mismatch comp {comp_idx}");
+        for (comp_idx, (c1, c2)) in orig_coeffs
+            .components
+            .iter()
+            .zip(&new_coeffs.components)
+            .enumerate()
+        {
+            assert_eq!(
+                c1.blocks_wide, c2.blocks_wide,
+                "blocks_wide mismatch comp {comp_idx}"
+            );
+            assert_eq!(
+                c1.blocks_high, c2.blocks_high,
+                "blocks_high mismatch comp {comp_idx}"
+            );
             assert_eq!(c1.h_samp, c2.h_samp, "h_samp mismatch comp {comp_idx}");
             assert_eq!(c1.v_samp, c2.v_samp, "v_samp mismatch comp {comp_idx}");
 
@@ -832,9 +953,14 @@ mod coefficient_roundtrip_tests {
                 }
             }
             if diffs > 0 {
-                eprintln!("Component {comp_idx}: {diffs} differing coefficients, max_diff={max_diff}");
+                eprintln!(
+                    "Component {comp_idx}: {diffs} differing coefficients, max_diff={max_diff}"
+                );
             }
-            assert_eq!(diffs, 0, "Component {comp_idx}: coefficients should be identical after identity transform");
+            assert_eq!(
+                diffs, 0,
+                "Component {comp_idx}: coefficients should be identical after identity transform"
+            );
         }
     }
 
@@ -845,15 +971,25 @@ mod coefficient_roundtrip_tests {
 
         let orig_coeffs = decoder.decode_coefficients(&jpeg, Unstoppable).unwrap();
 
-        let result = transform(&jpeg, &TransformConfig {
-            transform: LosslessTransform::None,
-            edge_handling: EdgeHandling::Trim,
-        }, Unstoppable).unwrap();
+        let result = transform(
+            &jpeg,
+            &TransformConfig {
+                transform: LosslessTransform::None,
+                edge_handling: EdgeHandling::Trim,
+            },
+            Unstoppable,
+        )
+        .unwrap();
 
         let new_coeffs = decoder.decode_coefficients(&result, Unstoppable).unwrap();
 
         // Quant tables should be preserved
-        for (idx, (qt1, qt2)) in orig_coeffs.quant_tables.iter().zip(&new_coeffs.quant_tables).enumerate() {
+        for (idx, (qt1, qt2)) in orig_coeffs
+            .quant_tables
+            .iter()
+            .zip(&new_coeffs.quant_tables)
+            .enumerate()
+        {
             match (qt1, qt2) {
                 (Some(t1), Some(t2)) => {
                     assert_eq!(t1, t2, "quant table {idx} should be preserved");
@@ -871,10 +1007,12 @@ mod debug_tests {
     use enough::Unstoppable;
 
     fn create_test_jpeg_444(width: u32, height: u32) -> Vec<u8> {
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
         let pixels = vec![128u8; (width * height * 3) as usize];
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
@@ -887,20 +1025,26 @@ mod debug_tests {
 
         eprintln!("Number of quant table slots: {}", coeffs.quant_tables.len());
         for (i, qt) in coeffs.quant_tables.iter().enumerate() {
-            eprintln!("  Table {}: {}", i, if qt.is_some() { "present" } else { "absent" });
+            eprintln!(
+                "  Table {}: {}",
+                i,
+                if qt.is_some() { "present" } else { "absent" }
+            );
         }
 
         eprintln!("Number of components: {}", coeffs.components.len());
         for (i, comp) in coeffs.components.iter().enumerate() {
-            eprintln!("  Component {}: id={}, h_samp={}, v_samp={}, blocks={}x{}",
-                i, comp.id, comp.h_samp, comp.v_samp, comp.blocks_wide, comp.blocks_high);
+            eprintln!(
+                "  Component {}: id={}, h_samp={}, v_samp={}, blocks={}x{}",
+                i, comp.id, comp.h_samp, comp.v_samp, comp.blocks_wide, comp.blocks_high
+            );
         }
     }
 }
 
 mod exif_tests {
-    use crate::lossless::exif::{parse_exif_orientation, set_exif_orientation};
     use crate::lossless::coeff_transform::LosslessTransform;
+    use crate::lossless::exif::{parse_exif_orientation, set_exif_orientation};
 
     /// Build minimal EXIF APP1 data with an orientation tag.
     /// Uses little-endian ("II") byte order.
@@ -920,8 +1064,8 @@ mod exif_tests {
 
         // Entry: Orientation (tag 0x0112, type SHORT, count 1, value inline)
         data.extend_from_slice(&0x0112u16.to_le_bytes()); // tag
-        data.extend_from_slice(&3u16.to_le_bytes());       // type = SHORT
-        data.extend_from_slice(&1u32.to_le_bytes());       // count
+        data.extend_from_slice(&3u16.to_le_bytes()); // type = SHORT
+        data.extend_from_slice(&1u32.to_le_bytes()); // count
         data.extend_from_slice(&(orientation as u32).to_le_bytes()); // value
 
         // Next IFD offset = 0
@@ -953,7 +1097,7 @@ mod exif_tests {
         // For big-endian SHORT, value is in first 2 bytes of the 4-byte field
         data.extend_from_slice(&(orientation as u16).to_be_bytes());
         data.extend_from_slice(&[0u8; 2]); // padding
-        // Next IFD offset = 0
+                                           // Next IFD offset = 0
         data.extend_from_slice(&0u32.to_be_bytes());
 
         data
@@ -1036,10 +1180,10 @@ mod exif_tests {
         // IFD0: 1 entry — but a different tag (Copyright 0x8298)
         data.extend_from_slice(&1u16.to_le_bytes());
         data.extend_from_slice(&0x8298u16.to_le_bytes()); // tag
-        data.extend_from_slice(&2u16.to_le_bytes());       // type = ASCII
-        data.extend_from_slice(&1u32.to_le_bytes());       // count
-        data.extend_from_slice(&0u32.to_le_bytes());       // value
-        data.extend_from_slice(&0u32.to_le_bytes());       // next IFD
+        data.extend_from_slice(&2u16.to_le_bytes()); // type = ASCII
+        data.extend_from_slice(&1u32.to_le_bytes()); // count
+        data.extend_from_slice(&0u32.to_le_bytes()); // value
+        data.extend_from_slice(&0u32.to_le_bytes()); // next IFD
 
         let modified = set_exif_orientation(&mut data, 1);
         assert!(!modified, "should not modify when orientation tag absent");
@@ -1048,14 +1192,38 @@ mod exif_tests {
     #[test]
     fn test_from_exif_orientation() {
         // Exhaustive mapping check
-        assert_eq!(LosslessTransform::from_exif_orientation(1), Some(LosslessTransform::None));
-        assert_eq!(LosslessTransform::from_exif_orientation(2), Some(LosslessTransform::FlipHorizontal));
-        assert_eq!(LosslessTransform::from_exif_orientation(3), Some(LosslessTransform::Rotate180));
-        assert_eq!(LosslessTransform::from_exif_orientation(4), Some(LosslessTransform::FlipVertical));
-        assert_eq!(LosslessTransform::from_exif_orientation(5), Some(LosslessTransform::Transpose));
-        assert_eq!(LosslessTransform::from_exif_orientation(6), Some(LosslessTransform::Rotate90));
-        assert_eq!(LosslessTransform::from_exif_orientation(7), Some(LosslessTransform::Transverse));
-        assert_eq!(LosslessTransform::from_exif_orientation(8), Some(LosslessTransform::Rotate270));
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(1),
+            Some(LosslessTransform::None)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(2),
+            Some(LosslessTransform::FlipHorizontal)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(3),
+            Some(LosslessTransform::Rotate180)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(4),
+            Some(LosslessTransform::FlipVertical)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(5),
+            Some(LosslessTransform::Transpose)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(6),
+            Some(LosslessTransform::Rotate90)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(7),
+            Some(LosslessTransform::Transverse)
+        );
+        assert_eq!(
+            LosslessTransform::from_exif_orientation(8),
+            Some(LosslessTransform::Rotate270)
+        );
 
         // Invalid values
         assert_eq!(LosslessTransform::from_exif_orientation(0), None);
@@ -1065,13 +1233,15 @@ mod exif_tests {
     #[test]
     fn test_apply_exif_orientation_no_exif() {
         // A JPEG without EXIF should be returned unchanged
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
         use crate::lossless::apply_exif_orientation;
         use enough::Unstoppable;
 
         let pixels = vec![128u8; 64 * 64 * 3];
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
 
@@ -1082,15 +1252,17 @@ mod exif_tests {
     #[test]
     fn test_apply_exif_orientation_normal() {
         // Orientation=1 should be fast path (returned unchanged)
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Exif, Orientation};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
         use crate::lossless::apply_exif_orientation;
         use enough::Unstoppable;
 
         let pixels = vec![128u8; 64 * 64 * 3];
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.request()
+        let mut enc = config
+            .request()
             .exif(Exif::build().orientation(Orientation::Normal))
-            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).unwrap();
+            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
 
@@ -1102,8 +1274,8 @@ mod exif_tests {
     fn test_apply_exif_orientation_rotate90() {
         // Create a 64x48 JPEG with orientation=6 (Rotate 90 CW)
         // After apply_exif_orientation, dimensions should be 48x64 and orientation=1
-        use crate::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Exif, Orientation};
         use crate::decode::{DecodeConfig, PreserveConfig};
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
         use crate::lossless::apply_exif_orientation;
         use enough::Unstoppable;
 
@@ -1118,9 +1290,11 @@ mod exif_tests {
         }
 
         let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
-        let mut enc = config.request()
+        let mut enc = config
+            .request()
             .exif(Exif::build().orientation(Orientation::Rotate90))
-            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(&pixels, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
 
@@ -1141,7 +1315,10 @@ mod exif_tests {
 
         // Verify output EXIF orientation is 1
         let out_exif = out_result.extras().unwrap().exif().unwrap();
-        assert_eq!(parse_exif_orientation(out_exif), Some(1),
-            "output orientation should be reset to 1");
+        assert_eq!(
+            parse_exif_orientation(out_exif),
+            Some(1),
+            "output orientation should be reset to 1"
+        );
     }
 }

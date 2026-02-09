@@ -145,7 +145,9 @@ mod comparison {
     #[ignore]
     fn compare_decoder_quality() {
         let corpus = corpus().expect("codec-corpus not found");
-        let cid22 = corpus.get("CID22/CID22-512/validation").expect("CID22 corpus not found");
+        let cid22 = corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22 corpus not found");
         assert!(cid22.is_dir(), "CID22 validation dir not found");
 
         let mut images: Vec<PathBuf> = std::fs::read_dir(&cid22)
@@ -269,7 +271,9 @@ mod comparison {
     #[ignore]
     fn compare_decoder_quality_frymire() {
         let corpus = corpus().expect("codec-corpus not found");
-        let frymire_dir = corpus.get("imageflow/test_inputs").expect("imageflow corpus not found");
+        let frymire_dir = corpus
+            .get("imageflow/test_inputs")
+            .expect("imageflow corpus not found");
         let frymire = frymire_dir.join("frymire.png");
         assert!(frymire.exists(), "frymire.png not found at {:?}", frymire);
 
@@ -343,7 +347,9 @@ mod comparison {
     #[ignore]
     fn compare_decoder_pairwise() {
         let corpus = corpus().expect("codec-corpus not found");
-        let cid22 = corpus.get("CID22/CID22-512/validation").expect("CID22 corpus not found");
+        let cid22 = corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22 corpus not found");
         assert!(cid22.is_dir(), "CID22 validation dir not found");
 
         let mut images: Vec<PathBuf> = std::fs::read_dir(&cid22)

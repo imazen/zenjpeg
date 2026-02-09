@@ -291,7 +291,10 @@ fn test_combination(
     }
 
     // Decode to f32
-    if let Ok(decoded_f32) = decoder.output_target(OutputTarget::SrgbF32).decode(&jpeg, Unstoppable) {
+    if let Ok(decoded_f32) = decoder
+        .output_target(OutputTarget::SrgbF32)
+        .decode(&jpeg, Unstoppable)
+    {
         let f32_pixels = decoded_f32.pixels_f32().unwrap();
         // f32 at 8-bit precision (for comparison with u8)
         let unique_8bit = if is_gray {

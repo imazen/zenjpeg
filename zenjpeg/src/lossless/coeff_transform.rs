@@ -40,6 +40,104 @@ impl LosslessTransform {
             Self::Transpose | Self::Rotate90 | Self::Rotate270 | Self::Transverse
         )
     }
+
+    /// All 8 elements of the D4 dihedral group, in enum order.
+    const ALL: [Self; 8] = [
+        Self::None,
+        Self::FlipHorizontal,
+        Self::FlipVertical,
+        Self::Transpose,
+        Self::Rotate90,
+        Self::Rotate180,
+        Self::Rotate270,
+        Self::Transverse,
+    ];
+
+    /// Map each variant to a dense index for table lookup.
+    #[inline]
+    const fn to_index(self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::FlipHorizontal => 1,
+            Self::FlipVertical => 2,
+            Self::Transpose => 3,
+            Self::Rotate90 => 4,
+            Self::Rotate180 => 5,
+            Self::Rotate270 => 6,
+            Self::Transverse => 7,
+        }
+    }
+
+    /// Compose two transforms: apply `self` first, then `other`.
+    ///
+    /// This follows D4 group multiplication. The result is the single transform
+    /// equivalent to applying both in sequence.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::lossless::LosslessTransform;
+    ///
+    /// let combined = LosslessTransform::Rotate90.then(LosslessTransform::FlipHorizontal);
+    /// // Rotate90 then FlipH = Transpose
+    /// ```
+    #[must_use]
+    pub fn then(self, other: Self) -> Self {
+        // D4 Cayley table: CAYLEY[a][b] = a.then(b)
+        // Derived from geometric composition of transforms on (x, y) coordinates.
+        //
+        // Each transform maps a point (x, y) in [0, W) × [0, H) as follows:
+        //   None:           (x, y)
+        //   FlipHorizontal: (W-1-x, y)
+        //   FlipVertical:   (x, H-1-y)
+        //   Transpose:      (y, x)           [swaps dimensions]
+        //   Rotate90:       (H-1-y, x)       [swaps dimensions]
+        //   Rotate180:      (W-1-x, H-1-y)
+        //   Rotate270:      (y, W-1-x)       [swaps dimensions]
+        //   Transverse:     (H-1-y, W-1-x)   [swaps dimensions]
+        //
+        // For "a then b", we compute b(a(x, y)) accounting for dimension swaps.
+        Self::ALL[Self::CAYLEY[self.to_index()][other.to_index()]]
+    }
+
+    /// Returns the inverse of this transform.
+    ///
+    /// `t.then(t.inverse()) == LosslessTransform::None` for all `t`.
+    #[must_use]
+    pub fn inverse(self) -> Self {
+        // All reflections (FlipH, FlipV, Transpose, Transverse) are self-inverse.
+        // Rotations pair up: 90 ↔ 270, 180 ↔ 180.
+        match self {
+            Self::None => Self::None,
+            Self::FlipHorizontal => Self::FlipHorizontal,
+            Self::FlipVertical => Self::FlipVertical,
+            Self::Transpose => Self::Transpose,
+            Self::Rotate90 => Self::Rotate270,
+            Self::Rotate180 => Self::Rotate180,
+            Self::Rotate270 => Self::Rotate90,
+            Self::Transverse => Self::Transverse,
+        }
+    }
+
+    /// D4 Cayley table. `CAYLEY[a][b]` gives the index of `a.then(b)`.
+    ///
+    /// Row = first transform applied, Column = second transform applied.
+    /// Indices map to `ALL` array: 0=None, 1=FlipH, 2=FlipV, 3=Transpose,
+    /// 4=Rot90, 5=Rot180, 6=Rot270, 7=Transverse.
+    ///
+    /// Derived by composing the (x, y) coordinate mappings of each pair.
+    #[rustfmt::skip]
+    const CAYLEY: [[usize; 8]; 8] = [
+        //              None  FlipH FlipV Trans Rot90 R180  R270  Trnvs
+        /* None      */ [0,    1,    2,    3,    4,    5,    6,    7],
+        /* FlipH     */ [1,    0,    5,    4,    3,    2,    7,    6],
+        /* FlipV     */ [2,    5,    0,    6,    7,    1,    3,    4],
+        /* Transpose */ [3,    6,    4,    0,    2,    7,    5,    1],
+        /* Rotate90  */ [4,    7,    3,    1,    5,    6,    0,    2],
+        /* Rotate180 */ [5,    2,    1,    7,    6,    0,    4,    3],
+        /* Rotate270 */ [6,    3,    7,    5,    0,    4,    2,    1],
+        /* Transvrse */ [7,    4,    6,    2,    1,    3,    5,    0],
+    ];
 }
 
 /// How to handle images with non-MCU-aligned dimensions.
@@ -322,11 +420,8 @@ pub fn transform_coefficients(
         for src_by in 0..src_bh {
             for src_bx in 0..src_bw {
                 // Calculate destination block position
-                let (dst_bx, dst_by) = remap_block(
-                    src_bx, src_by,
-                    src_bw, src_bh,
-                    config.transform,
-                );
+                let (dst_bx, dst_by) =
+                    remap_block(src_bx, src_by, src_bw, src_bh, config.transform);
 
                 // Get source block
                 let src_idx = src_by * src_bw + src_bx;
@@ -384,13 +479,9 @@ pub(crate) fn remap_block(
     match transform {
         LosslessTransform::None => (src_bx, src_by),
 
-        LosslessTransform::FlipHorizontal => {
-            (blocks_wide - 1 - src_bx, src_by)
-        }
+        LosslessTransform::FlipHorizontal => (blocks_wide - 1 - src_bx, src_by),
 
-        LosslessTransform::FlipVertical => {
-            (src_bx, blocks_high - 1 - src_by)
-        }
+        LosslessTransform::FlipVertical => (src_bx, blocks_high - 1 - src_by),
 
         LosslessTransform::Transpose => {
             // (bx, by) → (by, bx); grid becomes (blocks_high, blocks_wide)
@@ -405,9 +496,7 @@ pub(crate) fn remap_block(
             (blocks_height_minus_1(blocks_high) - src_by, src_bx)
         }
 
-        LosslessTransform::Rotate180 => {
-            (blocks_wide - 1 - src_bx, blocks_high - 1 - src_by)
-        }
+        LosslessTransform::Rotate180 => (blocks_wide - 1 - src_bx, blocks_high - 1 - src_by),
 
         LosslessTransform::Rotate270 => {
             // Transpose + V-flip

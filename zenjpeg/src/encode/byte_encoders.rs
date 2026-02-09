@@ -747,7 +747,15 @@ impl<P: Pixel> RgbEncoder<P> {
         exif_data: Option<super::exif::Exif>,
         xmp_data: Option<alloc::vec::Vec<u8>>,
     ) -> Result<Self> {
-        let inner = BytesEncoder::new(config, width, height, P::LAYOUT, icc_profile, exif_data, xmp_data)?;
+        let inner = BytesEncoder::new(
+            config,
+            width,
+            height,
+            P::LAYOUT,
+            icc_profile,
+            exif_data,
+            xmp_data,
+        )?;
         Ok(Self {
             inner,
             _marker: PhantomData,

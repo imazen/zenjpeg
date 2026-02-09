@@ -164,11 +164,7 @@ fn main() -> Result<()> {
         let dir = match cc.get(corpus.rel_path) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!(
-                    "WARNING: Corpus '{}' not available: {}",
-                    corpus.name,
-                    e
-                );
+                eprintln!("WARNING: Corpus '{}' not available: {}", corpus.name, e);
                 continue;
             }
         };

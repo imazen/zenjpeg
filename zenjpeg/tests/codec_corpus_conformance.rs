@@ -75,7 +75,10 @@ fn test_fuzz_corpus_no_panic() {
 
     let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpeg_files(&fuzz_dir);
@@ -121,7 +124,10 @@ fn test_fuzz_corpus_sample() {
 
     let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpeg_files(&fuzz_dir);
 
@@ -172,7 +178,10 @@ fn test_zune_progressive() {
 
     let test_dir = match corpus.get("zune/test-images/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -215,7 +224,10 @@ fn test_zune_sampling_factors() {
 
     let test_dir = match corpus.get("zune/test-images/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -268,7 +280,10 @@ fn test_zune_edge_cases() {
 
     let test_dir = match corpus.get("zune/test-images/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -327,7 +342,10 @@ fn test_image_rs_progressive() {
 
     let test_dir = match corpus.get("image-rs/test-images/jpg/progressive") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -366,7 +384,10 @@ fn test_image_rs_general() {
 
     let test_dir = match corpus.get("image-rs/test-images/jpg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -418,7 +439,10 @@ fn test_mozjpeg_images() {
 
     let test_dir = match corpus.get("mozjpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -492,7 +516,10 @@ fn test_fuzz_corpus_vs_reference() {
 
     let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpeg_files(&fuzz_dir);
 
@@ -591,7 +618,10 @@ fn test_jpeg_conformance_valid() {
 
     let valid_dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpeg_files(&valid_dir);
@@ -678,7 +708,10 @@ fn test_jpeg_conformance_invalid() {
 
     let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpeg_files(&invalid_dir);
@@ -757,7 +790,10 @@ fn test_jpeg_conformance_non_conformant() {
 
     let non_conformant_dir = match corpus.get("jpeg-conformance/non-conformant") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let decoder = Decoder::new();
@@ -842,7 +878,10 @@ fn test_jpeg_conformance_vs_reference() {
 
     let valid_dir = match corpus.get("jpeg-conformance/valid") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
 
     let files = collect_jpeg_files(&valid_dir);
@@ -916,7 +955,10 @@ fn test_full_fuzz_corpus() {
 
     let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
         Ok(p) => p,
-        Err(e) => { eprintln!("Skipping: {e}"); return; }
+        Err(e) => {
+            eprintln!("Skipping: {e}");
+            return;
+        }
     };
     let files = collect_jpeg_files(&fuzz_dir);
 
