@@ -392,6 +392,30 @@ impl<'a> ScanlineReader<'a> {
     }
 
     /// Decodes the current MCU row into strip buffers.
+    /// Resolve per-component quantization tables.
+    ///
+    /// Returns owned copies in an array of 4 (Y, Cb, Cr, and a spare copy of Y).
+    /// Components beyond `num_components` fall back to the Y table.
+    /// Copies are returned to avoid holding a `&self` borrow that would conflict
+    /// with mutable access to `self.strip` and `self.coeffs_buf` in the MCU loop.
+    fn resolve_quant_tables(&self) -> Result<[[u16; 64]; 4]> {
+        let quant_y = self.quant_tables[self.quant_indices[0]]
+            .ok_or_else(|| Error::internal("missing Y quantization table"))?;
+        let quant_cb = if self.num_components > 1 {
+            self.quant_tables[self.quant_indices[1]]
+                .ok_or_else(|| Error::internal("missing Cb quantization table"))?
+        } else {
+            quant_y
+        };
+        let quant_cr = if self.num_components > 2 {
+            self.quant_tables[self.quant_indices[2]]
+                .ok_or_else(|| Error::internal("missing Cr quantization table"))?
+        } else {
+            quant_y
+        };
+        Ok([quant_y, quant_cb, quant_cr, quant_y])
+    }
+
     fn decode_mcu_row(&mut self) -> Result<()> {
         if self.mcu_row_decoded {
             return Ok(());
@@ -423,25 +447,7 @@ impl<'a> ScanlineReader<'a> {
             decoder.restore_state(*state);
         }
 
-        // Pre-validate quant tables outside the hot loop (error allocation happens ONCE, not per-block)
-        let quant_y = self.quant_tables[self.quant_indices[0]]
-            .as_ref()
-            .ok_or_else(|| Error::internal("missing Y quantization table"))?;
-        let quant_cb = if self.num_components > 1 {
-            self.quant_tables[self.quant_indices[1]]
-                .as_ref()
-                .ok_or_else(|| Error::internal("missing Cb quantization table"))?
-        } else {
-            quant_y
-        };
-        let quant_cr = if self.num_components > 2 {
-            self.quant_tables[self.quant_indices[2]]
-                .as_ref()
-                .ok_or_else(|| Error::internal("missing Cr quantization table"))?
-        } else {
-            quant_y
-        };
-        let quant_refs: [&[u16; 64]; 4] = [quant_y, quant_cb, quant_cr, quant_y];
+        let quant_refs = self.resolve_quant_tables()?;
 
         let mcu_cols = self.strip.mcu_cols();
 
@@ -465,7 +471,7 @@ impl<'a> ScanlineReader<'a> {
                 let v_blocks = self.strip.v_samp[comp_idx] as usize;
 
                 let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-                let quant = quant_refs[comp_idx];
+                let quant = &quant_refs[comp_idx];
 
                 for v in 0..v_blocks {
                     for h in 0..h_blocks {
@@ -517,25 +523,7 @@ impl<'a> ScanlineReader<'a> {
     /// Reads blocks from `self.stored_coeffs`, applies IDCT via the strip
     /// processor, then upsamples chroma. Used for decode-time transforms.
     fn decode_mcu_row_from_coefficients(&mut self) -> Result<()> {
-        // Pre-validate quant tables
-        let quant_y = self.quant_tables[self.quant_indices[0]]
-            .as_ref()
-            .ok_or_else(|| Error::internal("missing Y quantization table"))?;
-        let quant_cb = if self.num_components > 1 {
-            self.quant_tables[self.quant_indices[1]]
-                .as_ref()
-                .ok_or_else(|| Error::internal("missing Cb quantization table"))?
-        } else {
-            quant_y
-        };
-        let quant_cr = if self.num_components > 2 {
-            self.quant_tables[self.quant_indices[2]]
-                .as_ref()
-                .ok_or_else(|| Error::internal("missing Cr quantization table"))?
-        } else {
-            quant_y
-        };
-        let quant_refs: [&[u16; 64]; 4] = [quant_y, quant_cb, quant_cr, quant_y];
+        let quant_refs = self.resolve_quant_tables()?;
 
         let mcu_cols = self.strip.mcu_cols();
         let coeffs = self.stored_coeffs.as_ref().unwrap();
@@ -544,7 +532,7 @@ impl<'a> ScanlineReader<'a> {
             for comp_idx in 0..self.num_components as usize {
                 let h_blocks = self.strip.h_samp[comp_idx] as usize;
                 let v_blocks = self.strip.v_samp[comp_idx] as usize;
-                let quant = quant_refs[comp_idx];
+                let quant = &quant_refs[comp_idx];
                 let blocks_wide = coeffs.components[comp_idx].blocks_wide;
 
                 for v in 0..v_blocks {
