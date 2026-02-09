@@ -590,23 +590,74 @@ impl DecodeConfig {
         ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
     }
 
+    /// Compute the effective transform from raw JPEG data.
+    ///
+    /// Scans raw bytes for EXIF orientation (lightweight, no full parse),
+    /// composes with any user-specified transform.
+    /// Returns `LosslessTransform::None` if no transform is needed.
+    fn compute_effective_transform_from_data(
+        &self,
+        data: &[u8],
+    ) -> crate::lossless::LosslessTransform {
+        use crate::lossless::LosslessTransform;
+
+        let exif_transform = if self.auto_orient {
+            find_exif_orientation(data)
+                .and_then(LosslessTransform::from_exif_orientation)
+                .unwrap_or(LosslessTransform::None)
+        } else {
+            LosslessTransform::None
+        };
+
+        let user_transform = self.decode_transform.unwrap_or(LosslessTransform::None);
+
+        if exif_transform == LosslessTransform::None {
+            user_transform
+        } else if user_transform == LosslessTransform::None {
+            exif_transform
+        } else {
+            exif_transform.then(user_transform)
+        }
+    }
+
     /// Decodes a JPEG image.
     ///
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        let preserve = if self.auto_orient {
+            // Ensure EXIF is preserved for orientation reading
+            let mut p = self.preserve.clone();
+            p.exif = true;
+            p
+        } else {
+            self.preserve.clone()
+        };
+
+        // Pre-compute effective transform from raw data before full parse.
+        // This avoids disabling streaming for the common case of orientation=1.
+        let effective_transform = self.compute_effective_transform_from_data(data);
+
         let mut parser = JpegParser::with_strictness(
             data,
             self.max_pixels,
-            Some(&self.preserve),
+            Some(&preserve),
             self.strictness,
         )?;
-        // f32 precise paths need coefficients stored (not streaming)
-        if self.output_target.is_precise() {
+
+        // f32 precise paths or actual transform need coefficients stored (not streaming)
+        if self.output_target.is_precise()
+            || effective_transform != crate::lossless::LosslessTransform::None
+        {
             parser.prefer_streaming = false;
         }
         parser.decode(&stop)?;
+
+        // Apply DCT transform if needed
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            parser.apply_dct_transform(effective_transform);
+        }
 
         // Extract gain map before pixel conversion (needs parser state)
         #[cfg(feature = "ultrahdr")]
@@ -984,6 +1035,65 @@ impl DecodeConfig {
     pub fn get_max_memory(&self) -> u64 {
         self.max_memory
     }
+}
+
+/// Scan raw JPEG data for EXIF orientation tag without full parsing.
+///
+/// Looks for APP1 segments containing EXIF data and reads the orientation tag.
+/// Returns `Some(1..=8)` if found, `None` otherwise.
+fn find_exif_orientation(data: &[u8]) -> Option<u8> {
+    const EXIF_PREFIX: &[u8] = b"Exif\0\0";
+
+    if data.len() < 4 {
+        return None;
+    }
+
+    let mut pos = 2; // Skip SOI
+    while pos + 4 < data.len() {
+        if data[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        let marker = data[pos + 1];
+
+        // Stop at SOS or EOI — no more metadata after scan data starts
+        if marker == 0xDA || marker == 0xD9 {
+            break;
+        }
+
+        // Skip markers without length
+        if marker == 0xFF || marker == 0x00 || (0xD0..=0xD7).contains(&marker) {
+            pos += 2;
+            continue;
+        }
+
+        // Read segment length
+        if pos + 4 > data.len() {
+            break;
+        }
+        let length = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+        if length < 2 {
+            break;
+        }
+        let seg_start = pos + 4;
+        let seg_end = pos + 2 + length;
+        if seg_end > data.len() {
+            break;
+        }
+
+        // APP1 (0xE1) with EXIF prefix
+        if marker == 0xE1 && seg_end - seg_start >= EXIF_PREFIX.len() {
+            let seg_data = &data[seg_start..seg_end];
+            if seg_data.starts_with(EXIF_PREFIX) {
+                if let Some(orientation) = crate::lossless::parse_exif_orientation(seg_data) {
+                    return Some(orientation);
+                }
+            }
+        }
+
+        pos = seg_end;
+    }
+    None
 }
 
 #[cfg(test)]
