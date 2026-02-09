@@ -645,9 +645,24 @@ sensitivity tables, and preset baselines.
    - TODO: Investigate whether the issue is incorrect chroma block addressing after transform,
      or a fundamental difference in the upsampling approach between the two paths.
 
+6. **Scanline pipeline panic on dual-SOF files (2026-02-09)** - Files with EXIF thumbnail
+   SOF (320x240) + large main image SOF (9280x6944) cause `pipeline.rs:524` to panic with
+   "range end index 4640 out of range for slice of length 4096" in `fixup_h2v2_row0`.
+   Affects 3/543 files in web-scraped corpus. Buffered decode works fine.
+   - Impact: Scanline reader panics on ~0.6% of web JPEGs with embedded thumbnails
+   - Files: `1ebf7141ff840f98.jpg`, `8bf490cd2945f7dc.jpg`, `f159275de736a5df.jpg`
+   - Workaround: Use buffered decode for these files
+
 ### Fixed Bugs (historical reference)
 
-See `docs/TUNING_HISTORY.md` for full details on all fixed bugs (XYB corruption, AQ channel/v_samp fixes, hybrid trellis double-lambda, default config issues, hot loop overhead, progressive decoder small images, etc.).
+- **Progressive MCU-padded storage (FIXED 2026-02-09, commit 29d6d81)** - Progressive decoder
+  allocated coefficients with component-based counts (ceil(scaled_w/8)) but output path reads
+  with MCU-padded stride (mcu_cols * h_samp). For 4:2:0 with non-MCU-aligned width, caused
+  1-block-per-row shift accumulating to max_diff=255. Affected ~20/543 web corpus files.
+- **Progressive interleaved DC scan padding (FIXED 2026-02-09, commit 759a4a7)** - Skipping
+  entropy data for out-of-bounds MCU padding blocks desynchronized Huffman decoder. Caused
+  "invalid Huffman code" parse errors on 80/543 progressive 4:2:0 files.
+- See `docs/TUNING_HISTORY.md` for older fixed bugs.
 
 ## Planned Features / TODO
 
