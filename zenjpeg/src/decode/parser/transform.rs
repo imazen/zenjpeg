@@ -33,17 +33,51 @@ impl<'a> JpegParser<'a> {
             max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
             max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
         }
-        let mcu_width = max_h_samp as usize * 8;
-        let mcu_height = max_v_samp as usize * 8;
-        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
-        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let max_h = max_h_samp as usize;
+        let max_v = max_v_samp as usize;
 
         // Transform each component's coefficient data
         for comp_idx in 0..num_comps {
             let h_samp = self.components[comp_idx].h_samp_factor as usize;
             let v_samp = self.components[comp_idx].v_samp_factor as usize;
-            let src_bw = mcu_cols * h_samp;
-            let src_bh = mcu_rows * v_samp;
+
+            // Determine the actual block grid dimensions from the coefficient storage.
+            //
+            // Progressive and baseline decoders use different allocation formulas:
+            // - Progressive: dimension-based (ceil(scaled_dim / 8), may be smaller)
+            // - Baseline: MCU-based (mcu_count * samp_factor, may include padding)
+            //
+            // We detect which was used by checking the actual coefficient vec length
+            // against both formulas, since the stride determines 2D block indexing.
+            let actual_len = self.coeffs[comp_idx].len();
+
+            let scaled_w = (width * h_samp + max_h - 1) / max_h;
+            let scaled_h = (height * v_samp + max_v - 1) / max_v;
+            let dim_bw = (scaled_w + 7) / 8;
+            let dim_bh = (scaled_h + 7) / 8;
+
+            let mcu_width = max_h * 8;
+            let mcu_height = max_v * 8;
+            let mcu_cols = (width + mcu_width - 1) / mcu_width;
+            let mcu_rows = (height + mcu_height - 1) / mcu_height;
+            let mcu_bw = mcu_cols * h_samp;
+            let mcu_bh = mcu_rows * v_samp;
+
+            let (src_bw, src_bh) = if dim_bw * dim_bh == actual_len {
+                // Progressive layout (dimension-based)
+                (dim_bw, dim_bh)
+            } else {
+                // Baseline layout (MCU-based) — includes padding blocks
+                debug_assert_eq!(mcu_bw * mcu_bh, actual_len,
+                    "unexpected coefficient count for component {comp_idx}: \
+                     expected dim-based {} ({}x{}) or mcu-based {} ({}x{}), got {}",
+                    dim_bw * dim_bh, dim_bw, dim_bh,
+                    mcu_bw * mcu_bh, mcu_bw, mcu_bh, actual_len);
+                (mcu_bw, mcu_bh)
+            };
 
             let (dst_bw, dst_bh) = if swaps {
                 (src_bh, src_bw)
