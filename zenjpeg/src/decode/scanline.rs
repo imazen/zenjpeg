@@ -107,6 +107,11 @@ pub struct ScanlineReader<'a> {
     // Coefficient-based mode for decode-time transforms.
     // When Some, we read from pre-decoded/transformed coefficients instead of entropy decoding.
     stored_coeffs: Option<super::DecodedCoefficients>,
+
+    // Streaming bottom-boundary fixup state.
+    // When the streaming decoder pre-decodes the next MCU row to provide
+    // bottom chroma context, this flag indicates the next MCU is already decoded.
+    next_mcu_preloaded: bool,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -171,6 +176,7 @@ impl<'a> ScanlineReader<'a> {
             is_xyb,
             is_rgb,
             stored_coeffs: None,
+            next_mcu_preloaded: false,
         })
     }
 
@@ -213,6 +219,7 @@ impl<'a> ScanlineReader<'a> {
             is_xyb,
             is_rgb: false,
             stored_coeffs: None,
+            next_mcu_preloaded: false,
         }
     }
 
@@ -306,6 +313,7 @@ impl<'a> ScanlineReader<'a> {
             is_xyb: false,
             is_rgb: false,
             stored_coeffs: Some(coefficients),
+            next_mcu_preloaded: false,
         })
     }
 
@@ -570,6 +578,11 @@ impl<'a> ScanlineReader<'a> {
             }
         }
 
+        // Peek ahead: IDCT first chroma block row of next MCU for bottom context
+        if self.strip.needs_vertical_upsample() && !self.is_last_mcu_row() {
+            self.peek_next_chroma_row(&quant_refs);
+        }
+
         // Upsample chroma if needed
         self.strip.upsample_chroma();
         self.mcu_row_decoded = true;
@@ -577,11 +590,247 @@ impl<'a> ScanlineReader<'a> {
         Ok(())
     }
 
+    /// IDCT the first chroma block row of the next MCU row from stored coefficients.
+    ///
+    /// Writes the results into `strip.next_cb_row` / `strip.next_cr_row` for
+    /// bottom boundary fixup during upsampling.
+    fn peek_next_chroma_row(&mut self, quant_refs: &[[u16; 64]; 4]) {
+        let mcu_cols = self.strip.mcu_cols();
+        let coeffs = self.stored_coeffs.as_ref().unwrap();
+        let next_mcu_row = self.current_mcu_row + 1;
+
+        for comp_idx in 1..self.num_components as usize {
+            let v_blocks = self.strip.v_samp[comp_idx] as usize;
+            let h_blocks = self.strip.h_samp[comp_idx] as usize;
+            let blocks_wide = coeffs.components[comp_idx].blocks_wide;
+            let by = next_mcu_row * v_blocks; // first block row of next MCU
+            let quant = &quant_refs[comp_idx];
+
+            let next_row = if comp_idx == 1 {
+                &mut self.strip.next_cb_row
+            } else {
+                &mut self.strip.next_cr_row
+            };
+
+            for mcu_x in 0..mcu_cols {
+                for h in 0..h_blocks {
+                    let bx = mcu_x * h_blocks + h;
+                    let block_idx = by * blocks_wide + bx;
+                    let block = coeffs.components[comp_idx].block(block_idx);
+
+                    let coeff_count = if block.iter().all(|&c| c == 0) {
+                        0
+                    } else {
+                        block
+                            .iter()
+                            .rposition(|&c| c != 0)
+                            .map(|p| (p + 1) as u8)
+                            .unwrap_or(0)
+                    };
+
+                    let x_offset = mcu_x * h_blocks * 8 + h * 8;
+
+                    if coeff_count <= 1 {
+                        // DC-only: all pixels same value
+                        let dc = block[0] as i32 * quant[0] as i32;
+                        let val = ((dc + 1024) >> 11).clamp(0, 255) as i16;
+                        for px in 0..8 {
+                            if x_offset + px < next_row.len() {
+                                next_row[x_offset + px] = val;
+                            }
+                        }
+                    } else {
+                        // Full IDCT into temp, copy row 0
+                        let mut temp_coeffs = [0i16; 64];
+                        temp_coeffs.copy_from_slice(block);
+                        let mut dequant_buf = [0i32; 64];
+                        crate::quant::dequantize_unzigzag_i32_into_partial(
+                            &temp_coeffs,
+                            quant,
+                            &mut dequant_buf,
+                            coeff_count,
+                        );
+                        let mut temp_pixels = [0i16; 64];
+                        super::idct_int::idct_int_tiered(
+                            &mut dequant_buf,
+                            &mut temp_pixels,
+                            8,
+                            coeff_count,
+                        );
+                        for px in 0..8 {
+                            if x_offset + px < next_row.len() {
+                                next_row[x_offset + px] = temp_pixels[px];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.strip.has_next_context = true;
+    }
+
+    /// Returns true if this is the last MCU row of the image.
+    fn is_last_mcu_row(&self) -> bool {
+        let mcu_height = self.strip.mcu_height;
+        let total_mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+        self.current_mcu_row + 1 >= total_mcu_rows
+    }
+
+    /// Ensure the current row is ready to read.
+    ///
+    /// Decodes the current MCU row if needed, then for the streaming path
+    /// (non-coefficient), pre-decodes the next MCU row when about to read
+    /// the last row of the current MCU, providing correct bottom chroma context.
+    fn ensure_row_ready(&mut self) -> Result<()> {
+        self.decode_mcu_row()?;
+
+        // Streaming bottom fixup: when about to read the last row, decode the
+        // next MCU row first to get correct bottom chroma interpolation.
+        if self.row_in_mcu == self.strip.mcu_height - 1
+            && self.strip.needs_vertical_upsample()
+            && !self.strip.has_deferred_bottom
+            && !self.is_last_mcu_row()
+            && self.stored_coeffs.is_none()
+        {
+            self.prepare_streaming_bottom()?;
+        }
+
+        Ok(())
+    }
+
+    /// Pre-decode the next MCU row for streaming bottom-boundary fixup.
+    ///
+    /// 1. Save current last Y row into deferred buffer
+    /// 2. Decode next MCU row (entropy + IDCT)
+    /// 3. Compute corrected bottom chroma using prev_cb_row + cb_strip[0]
+    /// 4. Upsample the next MCU (so it's ready when we advance)
+    /// 5. Mark next MCU as preloaded
+    fn prepare_streaming_bottom(&mut self) -> Result<()> {
+        // 1. Save the Y row for the last output row of the current MCU
+        self.strip.save_deferred_y_row();
+
+        // 2. Compute corrected bottom chroma BEFORE the next decode overwrites prev_cb_row.
+        // At this point:
+        //   prev_cb_row = last chroma row of current MCU (from save_last_chroma_row)
+        //   We need to decode the next MCU to get cb_strip[0] as the neighbor.
+
+        // Decode next MCU row's entropy data + IDCT into strip buffers
+        self.current_mcu_row += 1;
+        self.mcu_row_decoded = false;
+
+        // Save/restore state so we can call decode_mcu_row_streaming
+        self.decode_mcu_row_streaming()?;
+
+        // 3. Now cb_strip[0] has the first chroma row of the next MCU.
+        //    prev_cb_row still has the last chroma row of the previous MCU.
+        //    Compute the corrected bottom chroma.
+        self.strip.compute_deferred_bottom();
+
+        // 4. Upsample the next MCU row (top boundary fixup uses prev_cb_row)
+        self.strip.upsample_chroma();
+
+        // 5. Mark state
+        self.current_mcu_row -= 1; // Restore to current MCU row
+        self.next_mcu_preloaded = true;
+        self.mcu_row_decoded = true; // Current MCU is still decoded
+
+        Ok(())
+    }
+
+    /// Decode entropy data + IDCT for the current MCU row (streaming only).
+    ///
+    /// This is the entropy decode + IDCT portion of `decode_mcu_row` without
+    /// the upsample step. Used by `prepare_streaming_bottom` to decode the
+    /// next MCU row separately from upsampling.
+    fn decode_mcu_row_streaming(&mut self) -> Result<()> {
+        let scan_data = &self.data[self.scan_data_start..];
+        let mut decoder = EntropyDecoder::new(scan_data);
+
+        for comp_idx in 0..self.num_components as usize {
+            let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+            if let Some(ref table) = self.dc_tables[dc_idx] {
+                decoder.set_dc_table(dc_idx, table);
+            }
+            if let Some(ref table) = self.ac_tables[ac_idx] {
+                decoder.set_ac_table(ac_idx, table);
+            }
+        }
+
+        if let Some(ref state) = self.decoder_state {
+            decoder.restore_state(*state);
+        }
+
+        let quant_refs = self.resolve_quant_tables()?;
+        let mcu_cols = self.strip.mcu_cols();
+
+        for mcu_x in 0..mcu_cols {
+            if self.restart_interval > 0
+                && self.mcu_count > 0
+                && self.mcu_count % self.restart_interval as u32 == 0
+            {
+                decoder.align_to_byte();
+                decoder.read_restart_marker(self.next_restart_num)?;
+                self.next_restart_num = (self.next_restart_num + 1) & 7;
+                decoder.reset_dc();
+                self.prev_coeff_counts = [64; 4];
+            }
+
+            for comp_idx in 0..self.num_components as usize {
+                let h_blocks = self.strip.h_samp[comp_idx] as usize;
+                let v_blocks = self.strip.v_samp[comp_idx] as usize;
+                let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+                let quant = &quant_refs[comp_idx];
+
+                for v in 0..v_blocks {
+                    for h in 0..h_blocks {
+                        let coeff_count = match decoder.decode_block_into(
+                            &mut self.coeffs_buf,
+                            self.prev_coeff_counts[comp_idx],
+                            comp_idx,
+                            dc_idx,
+                            ac_idx,
+                        )? {
+                            ScanRead::Value(c) => c,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                self.prev_coeff_counts[comp_idx] = 64;
+                                continue;
+                            }
+                        };
+                        self.prev_coeff_counts[comp_idx] =
+                            self.prev_coeff_counts[comp_idx].max(coeff_count);
+
+                        self.strip.idct_block(
+                            comp_idx,
+                            mcu_x,
+                            h,
+                            v,
+                            &self.coeffs_buf,
+                            coeff_count,
+                            quant,
+                        );
+                    }
+                }
+            }
+
+            self.mcu_count += 1;
+        }
+
+        self.decoder_state = Some(decoder.save_state());
+        Ok(())
+    }
+
     /// Advances to the next MCU row.
     fn advance_mcu_row(&mut self) {
         self.current_mcu_row += 1;
         self.row_in_mcu = 0;
-        self.mcu_row_decoded = false;
+        self.strip.has_deferred_bottom = false;
+        if self.next_mcu_preloaded {
+            self.mcu_row_decoded = true;
+            self.next_mcu_preloaded = false;
+        } else {
+            self.mcu_row_decoded = false;
+        }
     }
 
     /// Read rows into an RGB8 buffer.
@@ -618,7 +867,7 @@ impl<'a> ScanlineReader<'a> {
         let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -698,7 +947,7 @@ impl<'a> ScanlineReader<'a> {
         let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -824,7 +1073,7 @@ impl<'a> ScanlineReader<'a> {
         let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -921,7 +1170,7 @@ impl<'a> ScanlineReader<'a> {
         let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -1048,7 +1297,7 @@ impl<'a> ScanlineReader<'a> {
         let is_grayscale = self.num_components == 1;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_offset = rows_written * stride;
@@ -1137,7 +1386,7 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -1221,7 +1470,7 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -1306,7 +1555,7 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
-            self.decode_mcu_row()?;
+            self.ensure_row_ready()?;
 
             let cols = width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -2395,6 +2644,94 @@ mod tests {
             mean > 50.0 && mean < 200.0,
             "Grayscale mean should be reasonable: {}",
             mean
+        );
+    }
+
+    /// Test that scanline 4:2:0 bottom-boundary chroma is corrected.
+    ///
+    /// Encodes a high-contrast image as 4:2:0, decodes via both buffered and
+    /// scanline paths, and verifies that the scanline output at MCU boundaries
+    /// (rows 15, 31, etc.) closely matches the buffered decoder.
+    #[test]
+    fn test_scanline_420_bottom_boundary_fixup() {
+        use crate::decode::Decoder;
+        use crate::encode::v2::ChromaSubsampling;
+
+        // Use a 64x64 image (4x4 MCUs at 16x16 each for 4:2:0)
+        // with high-contrast content to make chroma boundary errors visible
+        let width = 64u32;
+        let height = 64u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                // High-contrast color pattern - alternating colored stripes
+                if (y / 8) % 2 == 0 {
+                    pixels[idx] = 255; // Red
+                    pixels[idx + 1] = 0;
+                    pixels[idx + 2] = 0;
+                } else {
+                    pixels[idx] = 0;
+                    pixels[idx + 1] = 0;
+                    pixels[idx + 2] = 255; // Blue
+                }
+            }
+        }
+
+        let jpeg = encode_rgb_subsampled(width, height, &pixels, 90.0, ChromaSubsampling::Quarter);
+
+        // Decode via buffered path (reference - has correct boundary handling)
+        let decoder = Decoder::new();
+        let decoded = decoder
+            .decode(&jpeg, enough::Unstoppable)
+            .expect("decode failed");
+        let reference = decoded.pixels_u8().unwrap();
+
+        // Decode via scanline path
+        let mut reader = decoder
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        let mut scanline_pixels = vec![0u8; (width * height * 3) as usize];
+        let stride = (width * 3) as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output =
+                imgref::ImgRefMut::new(&mut scanline_pixels[buf_start..], stride, remaining);
+            let rows = reader.read_rows_rgb8(output).expect("read failed");
+            total_rows += rows;
+        }
+
+        // Check max diff at MCU boundary rows (rows 15, 31, 47 for 4:2:0)
+        let mcu_height = 16usize;
+        let mut boundary_max_diff = 0i32;
+        let mut interior_max_diff = 0i32;
+
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                for c in 0..3 {
+                    let idx = (y * width as usize + x) * 3 + c;
+                    let diff = (scanline_pixels[idx] as i32 - reference[idx] as i32).abs();
+                    let is_boundary = y % mcu_height == mcu_height - 1;
+                    if is_boundary {
+                        boundary_max_diff = boundary_max_diff.max(diff);
+                    } else {
+                        interior_max_diff = interior_max_diff.max(diff);
+                    }
+                }
+            }
+        }
+
+        // After the fix, boundary rows should have similar error to interior rows.
+        // Previously boundary_max_diff could be ~43, now should be <=4 (IDCT rounding).
+        assert!(
+            boundary_max_diff <= 4,
+            "Bottom boundary max diff {} too high (interior max diff: {}). \
+             Bottom boundary fixup may not be working.",
+            boundary_max_diff,
+            interior_max_diff
         );
     }
 }

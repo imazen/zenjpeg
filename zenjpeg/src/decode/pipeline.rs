@@ -76,6 +76,21 @@ pub(super) struct StripProcessor {
     prev_cr_row: Vec<i16>,
     has_prev_context: bool,
 
+    // Next-MCU context for bottom boundary fixup.
+    // Stores the first chroma row from the next MCU row's strip so that
+    // the bottom boundary of the current strip uses correct vertical interpolation.
+    pub next_cb_row: Vec<i16>,
+    pub next_cr_row: Vec<i16>,
+    pub has_next_context: bool,
+
+    // Deferred bottom row for streaming path.
+    // When the streaming decoder pre-decodes the next MCU row to get bottom
+    // context, the corrected last-row chroma is stored here.
+    deferred_y_row: Vec<i16>,
+    deferred_cb_row: Vec<i16>,
+    deferred_cr_row: Vec<i16>,
+    pub has_deferred_bottom: bool,
+
     // Reusable IDCT working buffers
     pub dequant_buf: [i32; DCT_BLOCK_SIZE],
 
@@ -109,6 +124,13 @@ impl StripProcessor {
             prev_cb_row: Vec::new(),
             prev_cr_row: Vec::new(),
             has_prev_context: false,
+            next_cb_row: Vec::new(),
+            next_cr_row: Vec::new(),
+            has_next_context: false,
+            deferred_y_row: Vec::new(),
+            deferred_cb_row: Vec::new(),
+            deferred_cr_row: Vec::new(),
+            has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling: ChromaUpsampling::default(),
             output_target: OutputTarget::default(),
@@ -190,15 +212,30 @@ impl StripProcessor {
             (Vec::new(), Vec::new())
         };
 
-        // Previous chroma row context for cross-strip vertical interpolation
-        let (prev_cb_row, prev_cr_row) = if !is_grayscale && needs_vertical_upsample {
-            (
-                try_alloc_maybeuninit(chroma_strip_stride, "prev Cb context row")?,
-                try_alloc_maybeuninit(chroma_strip_stride, "prev Cr context row")?,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        // Previous/next chroma row context for cross-strip vertical interpolation
+        let (prev_cb_row, prev_cr_row, next_cb_row, next_cr_row) =
+            if !is_grayscale && needs_vertical_upsample {
+                (
+                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cb context row")?,
+                    try_alloc_maybeuninit(chroma_strip_stride, "prev Cr context row")?,
+                    try_alloc_maybeuninit(chroma_strip_stride, "next Cb context row")?,
+                    try_alloc_maybeuninit(chroma_strip_stride, "next Cr context row")?,
+                )
+            } else {
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            };
+
+        // Deferred bottom row buffers for streaming bottom-boundary fixup
+        let (deferred_y_row, deferred_cb_row, deferred_cr_row) =
+            if !is_grayscale && needs_vertical_upsample {
+                (
+                    try_alloc_maybeuninit(strip_stride, "deferred Y row")?,
+                    try_alloc_maybeuninit(strip_stride, "deferred Cb row")?,
+                    try_alloc_maybeuninit(strip_stride, "deferred Cr row")?,
+                )
+            } else {
+                (Vec::new(), Vec::new(), Vec::new())
+            };
 
         Ok(Self {
             y_strip,
@@ -220,6 +257,13 @@ impl StripProcessor {
             prev_cb_row,
             prev_cr_row,
             has_prev_context: false,
+            next_cb_row,
+            next_cr_row,
+            has_next_context: false,
+            deferred_y_row,
+            deferred_cb_row,
+            deferred_cr_row,
+            has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
             output_target,
@@ -302,6 +346,12 @@ impl StripProcessor {
         }
     }
 
+    /// Whether this subsampling mode needs vertical chroma upsampling.
+    #[inline]
+    pub fn needs_vertical_upsample(&self) -> bool {
+        matches!(self.subsampling, Subsampling::S420 | Subsampling::S440)
+    }
+
     /// Upsample chroma buffers to full resolution.
     ///
     /// Call this after all blocks in the MCU row have been IDCT'd.
@@ -309,18 +359,31 @@ impl StripProcessor {
     /// cross-strip boundary correction using the previous strip's last
     /// chroma row, then saves the current strip's last row for next time.
     pub fn upsample_chroma(&mut self) {
+        self.upsample_chroma_core();
+        match self.subsampling {
+            Subsampling::S420 | Subsampling::S440 => self.save_last_chroma_row(),
+            _ => {}
+        }
+        self.has_next_context = false;
+    }
+
+    /// Core upsampling: upsample + apply top and bottom boundary fixups.
+    ///
+    /// Does NOT save last chroma row — caller controls that separately
+    /// so the streaming path can defer it.
+    fn upsample_chroma_core(&mut self) {
         match self.subsampling {
             Subsampling::S444 => {} // No upsampling needed
             Subsampling::S422 => self.upsample_h2v1(),
             Subsampling::S420 => {
                 self.upsample_h2v2();
                 self.fixup_vertical_boundary();
-                self.save_last_chroma_row();
+                self.fixup_bottom_boundary();
             }
             Subsampling::S440 => {
                 self.upsample_h1v2();
                 self.fixup_vertical_boundary();
-                self.save_last_chroma_row();
+                self.fixup_bottom_boundary();
             }
         }
     }
@@ -329,8 +392,19 @@ impl StripProcessor {
     ///
     /// Returns (y_row, cb_row, cr_row) slices of `cols` pixels each.
     /// For subsampled images, cb/cr come from the upsampled buffers.
+    /// When a deferred bottom row is available for the last row of an MCU,
+    /// returns the corrected chroma from the deferred buffers instead.
     #[inline(always)]
     pub fn row_planes(&self, row_in_mcu: usize, cols: usize) -> (&[i16], &[i16], &[i16]) {
+        // Deferred bottom row: return corrected Y/Cb/Cr for last MCU row
+        if self.has_deferred_bottom && row_in_mcu == self.mcu_height - 1 {
+            return (
+                &self.deferred_y_row[..cols],
+                &self.deferred_cb_row[..cols],
+                &self.deferred_cr_row[..cols],
+            );
+        }
+
         let offset = row_in_mcu * self.strip_stride;
         let y = &self.y_strip[offset..offset + cols];
         let (cb, cr) = if self.subsampling == Subsampling::S444 {
@@ -442,6 +516,253 @@ impl StripProcessor {
             out_stride,
             out_height,
         );
+    }
+
+    /// Fix the last output row(s) of the upsampled buffers using next strip context.
+    ///
+    /// Mirrors `fixup_vertical_boundary()` for the bottom edge. The normal
+    /// upsampling duplicates the last chroma row as its own vertical neighbor
+    /// (edge clamping). When we have the first chroma row from the next MCU
+    /// row's strip, we use it as the correct neighbor.
+    fn fixup_bottom_boundary(&mut self) {
+        if !self.has_next_context {
+            return;
+        }
+
+        let in_width = self.chroma_strip_width;
+        let out_width = self.strip_width;
+        let out_stride = self.strip_stride;
+
+        match self.subsampling {
+            Subsampling::S420 => {
+                self.fixup_h2v2_last_row(in_width, out_width, out_stride);
+            }
+            Subsampling::S440 => {
+                self.fixup_h1v2_last_row(in_width, out_width, out_stride);
+            }
+            _ => {}
+        }
+    }
+
+    /// Fix h2v2 last output row using next chroma context.
+    fn fixup_h2v2_last_row(&mut self, in_width: usize, out_width: usize, out_stride: usize) {
+        let last_out_offset = (self.mcu_height - 1) * out_stride;
+        let last_chroma_offset = (self.chroma_strip_height - 1) * self.chroma_strip_stride;
+
+        match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => {
+                // Re-compute last output row with correct vertical neighbor
+                let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_width];
+                upsample_row_h2_fancy_bilinear(
+                    &self.cb_strip[last_chroma_offset..last_chroma_offset + in_width],
+                    &self.next_cb_row[..in_width],
+                    in_width,
+                    cb_out,
+                    false, // is_top_half = false → bottom half
+                );
+                let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_width];
+                upsample_row_h2_fancy_bilinear(
+                    &self.cr_strip[last_chroma_offset..last_chroma_offset + in_width],
+                    &self.next_cr_row[..in_width],
+                    in_width,
+                    cr_out,
+                    false,
+                );
+            }
+            ChromaUpsampling::LibjpegCompat => {
+                let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_stride];
+                upsample_h2v2_libjpeg_row(
+                    &self.cb_strip[last_chroma_offset..last_chroma_offset + in_width],
+                    &self.next_cb_row[..in_width],
+                    cb_out,
+                    in_width,
+                    out_width,
+                    false, // is_upper = false → lower half
+                );
+                let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_stride];
+                upsample_h2v2_libjpeg_row(
+                    &self.cr_strip[last_chroma_offset..last_chroma_offset + in_width],
+                    &self.next_cr_row[..in_width],
+                    cr_out,
+                    in_width,
+                    out_width,
+                    false,
+                );
+            }
+            ChromaUpsampling::NearestNeighbor => {
+                // No interpolation, no fixup needed
+            }
+        }
+    }
+
+    /// Fix h1v2 last output row using next chroma context.
+    fn fixup_h1v2_last_row(&mut self, in_width: usize, out_width: usize, _out_stride: usize) {
+        let w = in_width.min(out_width);
+        let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
+        let last_chroma_offset = (self.chroma_strip_height - 1) * self.chroma_strip_stride;
+
+        match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => {
+                // h1v2 fancy: (3 * curr + neighbor + 2) >> 2
+                for x in 0..w {
+                    let curr_cb = self.cb_strip[last_chroma_offset + x] as i32;
+                    let next_cb = self.next_cb_row[x] as i32;
+                    self.cb_upsampled[last_out_offset + x] =
+                        ((3 * curr_cb + next_cb + 2) >> 2) as i16;
+
+                    let curr_cr = self.cr_strip[last_chroma_offset + x] as i32;
+                    let next_cr = self.next_cr_row[x] as i32;
+                    self.cr_upsampled[last_out_offset + x] =
+                        ((3 * curr_cr + next_cr + 2) >> 2) as i16;
+                }
+            }
+            ChromaUpsampling::LibjpegCompat => {
+                // h1v2 libjpeg: (near * 3 + far + bias) >> 2, bias=2 for lower
+                for x in 0..w {
+                    let near_cb = self.cb_strip[last_chroma_offset + x] as i32;
+                    let far_cb = self.next_cb_row[x] as i32;
+                    self.cb_upsampled[last_out_offset + x] =
+                        ((near_cb * 3 + far_cb + 2) >> 2) as i16;
+
+                    let near_cr = self.cr_strip[last_chroma_offset + x] as i32;
+                    let far_cr = self.next_cr_row[x] as i32;
+                    self.cr_upsampled[last_out_offset + x] =
+                        ((near_cr * 3 + far_cr + 2) >> 2) as i16;
+                }
+            }
+            ChromaUpsampling::NearestNeighbor => {
+                // No interpolation, no fixup needed
+            }
+        }
+    }
+
+    /// Compute deferred bottom row chroma for the streaming path.
+    ///
+    /// Called after the next MCU row's strip has been IDCT'd into cb_strip/cr_strip.
+    /// Uses `prev_cb_row` (still holding the previous MCU's last chroma row)
+    /// and `cb_strip[0]` (first chroma row of the just-decoded next MCU) to
+    /// recompute the bottom output row with correct interpolation.
+    ///
+    /// Results are stored in `deferred_cb_row`/`deferred_cr_row`.
+    pub fn compute_deferred_bottom(&mut self) {
+        let in_width = self.chroma_strip_width;
+        let out_width = self.strip_width;
+
+        match self.subsampling {
+            Subsampling::S420 => {
+                self.compute_deferred_h2v2(in_width, out_width);
+            }
+            Subsampling::S440 => {
+                self.compute_deferred_h1v2(in_width, out_width);
+            }
+            _ => {}
+        }
+
+        self.has_deferred_bottom = true;
+    }
+
+    /// Compute deferred h2v2 bottom row.
+    fn compute_deferred_h2v2(&mut self, in_width: usize, out_width: usize) {
+        match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => {
+                // prev_cb_row = last chroma row of previous MCU (the one we're fixing)
+                // cb_strip[0..] = first chroma row of next MCU (just decoded)
+                let cb_out = &mut self.deferred_cb_row[..out_width];
+                upsample_row_h2_fancy_bilinear(
+                    &self.prev_cb_row[..in_width],
+                    &self.cb_strip[..in_width],
+                    in_width,
+                    cb_out,
+                    false, // bottom half
+                );
+                let cr_out = &mut self.deferred_cr_row[..out_width];
+                upsample_row_h2_fancy_bilinear(
+                    &self.prev_cr_row[..in_width],
+                    &self.cr_strip[..in_width],
+                    in_width,
+                    cr_out,
+                    false,
+                );
+            }
+            ChromaUpsampling::LibjpegCompat => {
+                let cb_out = &mut self.deferred_cb_row[..out_width];
+                upsample_h2v2_libjpeg_row(
+                    &self.prev_cb_row[..in_width],
+                    &self.cb_strip[..in_width],
+                    cb_out,
+                    in_width,
+                    out_width,
+                    false, // lower
+                );
+                let cr_out = &mut self.deferred_cr_row[..out_width];
+                upsample_h2v2_libjpeg_row(
+                    &self.prev_cr_row[..in_width],
+                    &self.cr_strip[..in_width],
+                    cr_out,
+                    in_width,
+                    out_width,
+                    false,
+                );
+            }
+            ChromaUpsampling::NearestNeighbor => {
+                // No interpolation needed, just copy from upsampled
+                let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
+                self.deferred_cb_row[..out_width].copy_from_slice(
+                    &self.cb_upsampled[last_out_offset..last_out_offset + out_width],
+                );
+                self.deferred_cr_row[..out_width].copy_from_slice(
+                    &self.cr_upsampled[last_out_offset..last_out_offset + out_width],
+                );
+            }
+        }
+    }
+
+    /// Compute deferred h1v2 bottom row.
+    fn compute_deferred_h1v2(&mut self, in_width: usize, out_width: usize) {
+        let w = in_width.min(out_width);
+
+        match self.chroma_upsampling {
+            ChromaUpsampling::Triangle => {
+                for x in 0..w {
+                    let curr_cb = self.prev_cb_row[x] as i32;
+                    let next_cb = self.cb_strip[x] as i32;
+                    self.deferred_cb_row[x] = ((3 * curr_cb + next_cb + 2) >> 2) as i16;
+
+                    let curr_cr = self.prev_cr_row[x] as i32;
+                    let next_cr = self.cr_strip[x] as i32;
+                    self.deferred_cr_row[x] = ((3 * curr_cr + next_cr + 2) >> 2) as i16;
+                }
+            }
+            ChromaUpsampling::LibjpegCompat => {
+                for x in 0..w {
+                    let near_cb = self.prev_cb_row[x] as i32;
+                    let far_cb = self.cb_strip[x] as i32;
+                    self.deferred_cb_row[x] = ((near_cb * 3 + far_cb + 2) >> 2) as i16;
+
+                    let near_cr = self.prev_cr_row[x] as i32;
+                    let far_cr = self.cr_strip[x] as i32;
+                    self.deferred_cr_row[x] = ((near_cr * 3 + far_cr + 2) >> 2) as i16;
+                }
+            }
+            ChromaUpsampling::NearestNeighbor => {
+                let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
+                self.deferred_cb_row[..out_width].copy_from_slice(
+                    &self.cb_upsampled[last_out_offset..last_out_offset + out_width],
+                );
+                self.deferred_cr_row[..out_width].copy_from_slice(
+                    &self.cr_upsampled[last_out_offset..last_out_offset + out_width],
+                );
+            }
+        }
+    }
+
+    /// Save the Y data for the last MCU row into the deferred buffer.
+    ///
+    /// Called by the streaming path before overwriting y_strip with the next MCU.
+    pub fn save_deferred_y_row(&mut self) {
+        let last_y_offset = (self.mcu_height - 1) * self.strip_stride;
+        let w = self.strip_width;
+        self.deferred_y_row[..w].copy_from_slice(&self.y_strip[last_y_offset..last_y_offset + w]);
     }
 
     /// Save the last chroma row from the current strip for cross-boundary context.
