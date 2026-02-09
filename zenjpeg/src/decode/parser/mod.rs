@@ -132,6 +132,9 @@ pub(super) struct JpegParser<'a> {
     /// Strictness level for error handling
     pub(super) strictness: Strictness,
 
+    /// Force f32 IDCT path (set by dimension-swapping transforms for exact results).
+    pub(super) force_f32_idct: bool,
+
     /// Warnings collected during decode (Balanced/Lenient only).
     /// In Strict mode, warnings become errors instead of being collected.
     pub(super) warnings: Vec<DecodeWarning>,
@@ -205,6 +208,7 @@ impl<'a> JpegParser<'a> {
             warnings: Vec::new(),
             arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
             arith_ac_kx: [5; 4],        // Default Kx=5
+            force_f32_idct: false,
         })
     }
 

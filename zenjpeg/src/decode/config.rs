@@ -445,6 +445,9 @@ pub struct DecodeConfig {
     ///
     /// Default: `None`.
     pub(crate) decode_transform: Option<LosslessTransform>,
+    /// Force f32 IDCT for symmetric rounding (used internally by dimension-swapping
+    /// transforms, also available for testing).
+    pub(crate) force_f32_idct: bool,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -482,6 +485,7 @@ impl Default for DecodeConfig {
             strictness: Strictness::default(),
             auto_orient: false,
             decode_transform: None,
+            force_f32_idct: false,
         }
     }
 }
