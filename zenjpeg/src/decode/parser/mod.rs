@@ -828,6 +828,7 @@ impl<'a> JpegParser<'a> {
                 blocks_high,
                 h_samp: h_samp as u8,
                 v_samp: v_samp as u8,
+                quant_table_idx: self.components[i].quant_table_idx,
             });
         }
 
