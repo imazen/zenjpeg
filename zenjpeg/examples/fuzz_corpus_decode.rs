@@ -11,8 +11,8 @@ use std::panic;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use zenjpeg::decode::{ChromaUpsampling, DecodeConfig, OutputTarget};
 use imgref::ImgRefMut;
+use zenjpeg::decode::{ChromaUpsampling, DecodeConfig, OutputTarget};
 
 /// Decode modes to test
 #[derive(Debug, Clone, Copy)]
@@ -80,7 +80,10 @@ fn decode_buffered(
     Ok((pixels, w, h))
 }
 
-fn decode_scanline(data: &[u8], upsampling: ChromaUpsampling) -> Result<(Vec<u8>, u32, u32), String> {
+fn decode_scanline(
+    data: &[u8],
+    upsampling: ChromaUpsampling,
+) -> Result<(Vec<u8>, u32, u32), String> {
     let config = DecodeConfig::new().chroma_upsampling(upsampling);
 
     let mut reader = config.scanline_reader(data).map_err(|e| format!("{e}"))?;
@@ -204,7 +207,11 @@ fn main() {
         .collect();
     files.sort();
 
-    println!("Found {} JPEG files in {}", files.len(), input_dir.display());
+    println!(
+        "Found {} JPEG files in {}",
+        files.len(),
+        input_dir.display()
+    );
     println!("Failures will be copied to {}", fail_dir.display());
     println!(
         "Modes: {}",
@@ -273,9 +280,11 @@ fn main() {
         for (mi, mode) in Mode::ALL.iter().enumerate() {
             let data_ref = &data;
             let result = panic::catch_unwind(panic::AssertUnwindSafe(|| match mode {
-                Mode::BufferedInt => {
-                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::LibjpegCompat)
-                }
+                Mode::BufferedInt => decode_buffered(
+                    data_ref,
+                    OutputTarget::Srgb8,
+                    ChromaUpsampling::LibjpegCompat,
+                ),
                 Mode::BufferedF32 => decode_buffered(
                     data_ref,
                     OutputTarget::SrgbF32Precise,
@@ -285,9 +294,7 @@ fn main() {
                     decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Triangle)
                 }
                 Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::LibjpegCompat),
-                Mode::ScanlineFast => {
-                    decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor)
-                }
+                Mode::ScanlineFast => decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor),
             }));
 
             let result = match result {

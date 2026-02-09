@@ -1474,8 +1474,16 @@ fn test_decode_auto_orient() {
         .unwrap();
 
     // Orientation=6 means Rotate90 CW, which swaps dimensions
-    assert_eq!(result.width(), h, "width should be original height after auto_orient");
-    assert_eq!(result.height(), w, "height should be original width after auto_orient");
+    assert_eq!(
+        result.width(),
+        h,
+        "width should be original height after auto_orient"
+    );
+    assert_eq!(
+        result.height(),
+        w,
+        "height should be original width after auto_orient"
+    );
 }
 
 #[test]
@@ -1563,12 +1571,14 @@ fn test_decode_composed_exif_plus_transform() {
 
     // Rotate90.then(Rotate270) = None → dimensions unchanged from original
     assert_eq!(composed.width(), w, "composed transform should be identity");
-    assert_eq!(composed.height(), h, "composed transform should be identity");
+    assert_eq!(
+        composed.height(),
+        h,
+        "composed transform should be identity"
+    );
 
     // Compare with plain decode (no transforms)
-    let plain = DecodeConfig::new()
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    let plain = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
 
     // Both should produce identical pixel data
     assert_eq!(
@@ -1602,9 +1612,7 @@ fn test_decode_auto_orient_noop() {
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
-    let without_orient = DecodeConfig::new()
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
 
     assert_eq!(with_orient.width(), without_orient.width());
     assert_eq!(with_orient.height(), without_orient.height());
@@ -1637,9 +1645,7 @@ fn test_decode_no_exif_auto_orient() {
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
-    let without_orient = DecodeConfig::new()
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
 
     assert_eq!(with_orient.width(), without_orient.width());
     assert_eq!(with_orient.height(), without_orient.height());
@@ -1901,10 +1907,10 @@ fn make_quadrant_image() -> (u32, u32, Vec<u8>) {
         for x in 0..w {
             let idx = ((y * w + x) * 3) as usize;
             let (r, g, b) = match (x >= 8, y >= 8) {
-                (false, false) => (220, 30, 30),   // top-left: RED
-                (true, false) => (30, 220, 30),    // top-right: GREEN
-                (false, true) => (30, 30, 220),    // bottom-left: BLUE
-                (true, true) => (220, 220, 30),    // bottom-right: YELLOW
+                (false, false) => (220, 30, 30), // top-left: RED
+                (true, false) => (30, 220, 30),  // top-right: GREEN
+                (false, true) => (30, 30, 220),  // bottom-left: BLUE
+                (true, true) => (220, 220, 30),  // bottom-right: YELLOW
             };
             pixels[idx] = r;
             pixels[idx + 1] = g;
@@ -1979,15 +1985,79 @@ fn test_all_transforms_pixel_positions() {
     let jpeg = encode_test_image(w, h, &pixels, None);
 
     // (transform, expected_w, expected_h, TL, TR, BL, BR)
-    let cases: &[(LosslessTransform, u32, u32, (u8, u8, u8), (u8, u8, u8), (u8, u8, u8), (u8, u8, u8))] = &[
-        (LosslessTransform::None,           16, 16, RED,    GREEN,  BLUE,   YELLOW),
-        (LosslessTransform::FlipHorizontal, 16, 16, GREEN,  RED,    YELLOW, BLUE),
-        (LosslessTransform::FlipVertical,   16, 16, BLUE,   YELLOW, RED,    GREEN),
-        (LosslessTransform::Rotate180,      16, 16, YELLOW, BLUE,   GREEN,  RED),
-        (LosslessTransform::Transpose,      16, 16, RED,    BLUE,   GREEN,  YELLOW),
-        (LosslessTransform::Rotate90,       16, 16, BLUE,   RED,    YELLOW, GREEN),
-        (LosslessTransform::Rotate270,      16, 16, GREEN,  YELLOW, RED,    BLUE),
-        (LosslessTransform::Transverse,     16, 16, YELLOW, GREEN,  BLUE,   RED),
+    let cases: &[(
+        LosslessTransform,
+        u32,
+        u32,
+        (u8, u8, u8),
+        (u8, u8, u8),
+        (u8, u8, u8),
+        (u8, u8, u8),
+    )] = &[
+        (LosslessTransform::None, 16, 16, RED, GREEN, BLUE, YELLOW),
+        (
+            LosslessTransform::FlipHorizontal,
+            16,
+            16,
+            GREEN,
+            RED,
+            YELLOW,
+            BLUE,
+        ),
+        (
+            LosslessTransform::FlipVertical,
+            16,
+            16,
+            BLUE,
+            YELLOW,
+            RED,
+            GREEN,
+        ),
+        (
+            LosslessTransform::Rotate180,
+            16,
+            16,
+            YELLOW,
+            BLUE,
+            GREEN,
+            RED,
+        ),
+        (
+            LosslessTransform::Transpose,
+            16,
+            16,
+            RED,
+            BLUE,
+            GREEN,
+            YELLOW,
+        ),
+        (
+            LosslessTransform::Rotate90,
+            16,
+            16,
+            BLUE,
+            RED,
+            YELLOW,
+            GREEN,
+        ),
+        (
+            LosslessTransform::Rotate270,
+            16,
+            16,
+            GREEN,
+            YELLOW,
+            RED,
+            BLUE,
+        ),
+        (
+            LosslessTransform::Transverse,
+            16,
+            16,
+            YELLOW,
+            GREEN,
+            BLUE,
+            RED,
+        ),
     ];
 
     for &(transform, exp_w, exp_h, tl, tr, bl, br) in cases {
@@ -2018,7 +2088,15 @@ fn test_dimension_swap_pixel_positions() {
     let (out_w, out_h, out_pixels) = decode_test(&jpeg, &config);
     assert_eq!((out_w, out_h), (8, 16), "Transpose should swap 16x8 → 8x16");
     assert_block_near(&out_pixels, out_w as usize, 0, 0, RED, TOL, "Transpose-TL");
-    assert_block_near(&out_pixels, out_w as usize, 0, 1, GREEN, TOL, "Transpose-BL");
+    assert_block_near(
+        &out_pixels,
+        out_w as usize,
+        0,
+        1,
+        GREEN,
+        TOL,
+        "Transpose-BL",
+    );
 
     // Rotate90: (0,0)=RED (1,0)=GREEN → 8x16 with (0,0)=RED (0,1)=GREEN... wait
     // Rotate90 maps (x,y) → (H-1-y, x): so pixel at (0,0) goes to (7,0), pixel at (8,0) goes to (7,8)
@@ -2056,23 +2134,29 @@ fn test_auto_orient_all_orientations() {
     // Orientation N means "the stored pixels need transform N to look correct."
     // So the stored image is the INVERSE of what the photographer intended.
     // auto_orient applies the forward transform to undo the camera rotation.
-    let cases: &[(Orientation, (u8,u8,u8), (u8,u8,u8), (u8,u8,u8), (u8,u8,u8))] = &[
+    let cases: &[(
+        Orientation,
+        (u8, u8, u8),
+        (u8, u8, u8),
+        (u8, u8, u8),
+        (u8, u8, u8),
+    )] = &[
         // orientation=1 (Normal): no change
-        (Orientation::Normal,         RED,    GREEN,  BLUE,   YELLOW),
+        (Orientation::Normal, RED, GREEN, BLUE, YELLOW),
         // orientation=2 (FlipH): apply FlipH
-        (Orientation::FlipHorizontal, GREEN,  RED,    YELLOW, BLUE),
+        (Orientation::FlipHorizontal, GREEN, RED, YELLOW, BLUE),
         // orientation=3 (Rotate180): apply Rotate180
-        (Orientation::Rotate180,      YELLOW, BLUE,   GREEN,  RED),
+        (Orientation::Rotate180, YELLOW, BLUE, GREEN, RED),
         // orientation=4 (FlipV): apply FlipV
-        (Orientation::FlipVertical,   BLUE,   YELLOW, RED,    GREEN),
+        (Orientation::FlipVertical, BLUE, YELLOW, RED, GREEN),
         // orientation=5 (Transpose): apply Transpose → dims stay 16x16
-        (Orientation::Transpose,      RED,    BLUE,   GREEN,  YELLOW),
+        (Orientation::Transpose, RED, BLUE, GREEN, YELLOW),
         // orientation=6 (Rotate90): apply Rotate90 → dims stay 16x16
-        (Orientation::Rotate90,       BLUE,   RED,    YELLOW, GREEN),
+        (Orientation::Rotate90, BLUE, RED, YELLOW, GREEN),
         // orientation=7 (Transverse): apply Transverse → dims stay 16x16
-        (Orientation::Transverse,     YELLOW, GREEN,  BLUE,   RED),
+        (Orientation::Transverse, YELLOW, GREEN, BLUE, RED),
         // orientation=8 (Rotate270): apply Rotate270 → dims stay 16x16
-        (Orientation::Rotate270,      GREEN,  YELLOW, RED,    BLUE),
+        (Orientation::Rotate270, GREEN, YELLOW, RED, BLUE),
     ];
 
     for &(orient, tl, tr, bl, br) in cases {
@@ -2167,10 +2251,10 @@ fn test_transform_420_subsampling() {
         for x in 0..w {
             let idx = ((y * w + x) * 3) as usize;
             let (r, g, b) = match (x >= 16, y >= 16) {
-                (false, false) => (220, 30, 30),   // RED
-                (true, false) => (30, 220, 30),    // GREEN
-                (false, true) => (30, 30, 220),    // BLUE
-                (true, true) => (220, 220, 30),    // YELLOW
+                (false, false) => (220, 30, 30), // RED
+                (true, false) => (30, 220, 30),  // GREEN
+                (false, true) => (30, 30, 220),  // BLUE
+                (true, true) => (220, 220, 30),  // YELLOW
             };
             pixels[idx] = r;
             pixels[idx + 1] = g;
@@ -2198,7 +2282,11 @@ fn test_transform_420_subsampling() {
             (sw, sh),
             "{transform:?} 4:2:0: dimension mismatch"
         );
-        assert_eq!((dw, dh), (32, 32), "{transform:?} 4:2:0: square stays square");
+        assert_eq!(
+            (dw, dh),
+            (32, 32),
+            "{transform:?} 4:2:0: square stays square"
+        );
 
         // TODO: Investigate 4:2:0 scanline-vs-buffered pixel difference with transforms.
         // The coefficient-based scanline path produces pixel diffs up to ~57 at
@@ -2215,10 +2303,42 @@ fn test_transform_420_subsampling() {
 
         // Check block positions for identity
         if transform == LosslessTransform::None {
-            assert_block_near(&decode_pixels, dw as usize, 0, 0, RED, tol_420, "420-None-TL");
-            assert_block_near(&decode_pixels, dw as usize, 2, 0, GREEN, tol_420, "420-None-TR");
-            assert_block_near(&decode_pixels, dw as usize, 0, 2, BLUE, tol_420, "420-None-BL");
-            assert_block_near(&decode_pixels, dw as usize, 2, 2, YELLOW, tol_420, "420-None-BR");
+            assert_block_near(
+                &decode_pixels,
+                dw as usize,
+                0,
+                0,
+                RED,
+                tol_420,
+                "420-None-TL",
+            );
+            assert_block_near(
+                &decode_pixels,
+                dw as usize,
+                2,
+                0,
+                GREEN,
+                tol_420,
+                "420-None-TR",
+            );
+            assert_block_near(
+                &decode_pixels,
+                dw as usize,
+                0,
+                2,
+                BLUE,
+                tol_420,
+                "420-None-BL",
+            );
+            assert_block_near(
+                &decode_pixels,
+                dw as usize,
+                2,
+                2,
+                YELLOW,
+                tol_420,
+                "420-None-BR",
+            );
         }
     }
 }
@@ -2303,14 +2423,20 @@ fn test_no_transform_unchanged() {
     let (tw, th, transform_pixels) = decode_test(&jpeg, &config);
 
     assert_eq!((bw, bh), (tw, th));
-    assert_eq!(baseline_pixels, transform_pixels, "None transform should be identical to no transform");
+    assert_eq!(
+        baseline_pixels, transform_pixels,
+        "None transform should be identical to no transform"
+    );
 
     // auto_orient with no EXIF should also produce identical output
     let config = DecodeConfig::new().auto_orient(true);
     let (aw, ah, orient_pixels) = decode_test(&jpeg, &config);
 
     assert_eq!((bw, bh), (aw, ah));
-    assert_eq!(baseline_pixels, orient_pixels, "auto_orient with no EXIF should be identical");
+    assert_eq!(
+        baseline_pixels, orient_pixels,
+        "auto_orient with no EXIF should be identical"
+    );
 }
 
 /// Verify composed transform: EXIF orientation + explicit user transform.
@@ -2378,10 +2504,10 @@ fn test_non_mcu_aligned_all_transforms() {
         for x in 0..w {
             let idx = ((y * w + x) * 3) as usize;
             let (r, g, b) = match (x >= 6, y >= 10) {
-                (false, false) => (220, 30, 30),   // RED
-                (true, false) => (30, 220, 30),    // GREEN
-                (false, true) => (30, 30, 220),    // BLUE
-                (true, true) => (220, 220, 30),    // YELLOW
+                (false, false) => (220, 30, 30), // RED
+                (true, false) => (30, 220, 30),  // GREEN
+                (false, true) => (30, 30, 220),  // BLUE
+                (true, true) => (220, 220, 30),  // YELLOW
             };
             pixels[idx] = r;
             pixels[idx + 1] = g;
@@ -2504,7 +2630,10 @@ fn test_non_mcu_aligned_auto_orient() {
     // Scanline should match
     let (sw, sh, scanline_pixels) = scanline_decode_test(&jpeg, &config);
     assert_eq!((out_w, out_h), (sw, sh));
-    assert_eq!(out_pixels, scanline_pixels, "non-aligned auto_orient: scanline differs");
+    assert_eq!(
+        out_pixels, scanline_pixels,
+        "non-aligned auto_orient: scanline differs"
+    );
 }
 
 /// Verify non-MCU-aligned with 4:2:0 subsampling and transforms.
@@ -2702,8 +2831,8 @@ fn test_15x17_border_pixels_lossless() {
             let idx = (dy * tw + dx) * 3;
 
             for c in 0..3 {
-                let diff = (dct_pixels[idx + c] as i16 - px_pixels[idx + c] as i16)
-                    .unsigned_abs() as u8;
+                let diff =
+                    (dct_pixels[idx + c] as i16 - px_pixels[idx + c] as i16).unsigned_abs() as u8;
                 if diff > max_diff {
                     max_diff = diff;
                     worst_pos = (dx, dy);
@@ -2715,7 +2844,8 @@ fn test_15x17_border_pixels_lossless() {
         }
 
         assert_eq!(
-            max_diff, 0,
+            max_diff,
+            0,
             "{label}: border pixel mismatch! max_diff={max_diff} at ({},{}) \
              mismatches={mismatches}/{} channels",
             worst_pos.0,
@@ -2861,7 +2991,8 @@ fn test_15x17_all_pixels_lossless() {
         }
 
         assert_eq!(
-            max_diff, 0,
+            max_diff,
+            0,
             "{label}: DCT vs pixel transform mismatch! \
              max_diff={max_diff} at ({},{}) mismatches={mismatches}/{} mean_diff={:.2}",
             worst_pos.0,

@@ -642,7 +642,8 @@ impl DecodeConfig {
             let vis_h = result.height();
             let num_components = result.format().num_channels() as u8;
             let is_xyb = false; // XYB is converted to RGB during decode
-            let pixels = result.into_pixels_u8()
+            let pixels = result
+                .into_pixels_u8()
                 .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
 
             return Ok(ScanlineReader::new_buffered(
@@ -657,11 +658,7 @@ impl DecodeConfig {
         }
 
         let coefficients = parser.extract_coefficients()?;
-        ScanlineReader::from_coefficients(
-            coefficients,
-            self.chroma_upsampling,
-            self.output_target,
-        )
+        ScanlineReader::from_coefficients(coefficients, self.chroma_upsampling, self.output_target)
     }
 
     /// Compute the effective transform from raw JPEG data.
@@ -713,12 +710,8 @@ impl DecodeConfig {
         // This avoids disabling streaming for the common case of orientation=1.
         let effective_transform = self.compute_effective_transform_from_data(data);
 
-        let mut parser = JpegParser::with_strictness(
-            data,
-            self.max_pixels,
-            Some(&preserve),
-            self.strictness,
-        )?;
+        let mut parser =
+            JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
 
         // f32 precise paths or actual transform need coefficients stored (not streaming)
         if self.output_target.is_precise()
