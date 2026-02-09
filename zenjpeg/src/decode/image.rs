@@ -374,6 +374,8 @@ pub struct ComponentCoefficients {
     pub h_samp: u8,
     /// Vertical sampling factor
     pub v_samp: u8,
+    /// Quantization table index (which quant table this component uses)
+    pub quant_table_idx: u8,
 }
 
 impl ComponentCoefficients {

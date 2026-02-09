@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use zenjpeg::lossless::{transform, TransformConfig, LosslessTransform};
+//! use zenjpeg::lossless::{transform, LosslessTransform, TransformConfig, EdgeHandling};
 //!
 //! let rotated = transform(&jpeg_data, &TransformConfig {
 //!     transform: LosslessTransform::Rotate90,
@@ -22,10 +22,12 @@
 //! ```
 
 mod coeff_transform;
+mod pipeline;
 #[cfg(test)]
 mod tests;
 
 pub use coeff_transform::{
-    BlockTransform, LosslessTransform, TransformConfig, EdgeHandling,
+    BlockTransform, EdgeHandling, LosslessTransform, TransformConfig,
     transform_coefficients,
 };
+pub use pipeline::transform;

@@ -358,6 +358,7 @@ pub fn transform_coefficients(
             blocks_high: dst_bh,
             h_samp: dst_h_samp,
             v_samp: dst_v_samp,
+            quant_table_idx: comp.quant_table_idx,
         });
     }
 
