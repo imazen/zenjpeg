@@ -82,6 +82,7 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.3", features = ["std"] }
 almost-enough = { version = "0.3", features = ["std"] }
+zencodec-types = { path = "../zencodec-types" }
 
 # Published crates
 butteraugli = "0.4"
