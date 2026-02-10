@@ -682,8 +682,10 @@ impl From<enough::StopReason> for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
+
+// The blanket impl `impl<E: core::error::Error + Send + Sync> From<E> for Box<dyn Error + Send + Sync>`
+// handles this automatically now that Error implements core::error::Error.
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {

@@ -308,3 +308,7 @@ pub mod lossless;
 
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
+
+// zencodec-types trait implementations
+mod zencodec;
+pub use zencodec::{JpegDecodeJob, JpegDecoding, JpegEncodeJob, JpegEncoding};

@@ -2123,6 +2123,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "453f24cf9e21be2148954a438c72fb999da42b1d128105bfd73ce91e1c6c7d33"
 
 [[package]]
+name = "zencodec-types"
+version = "0.1.0"
+dependencies = [
+ "enough",
+ "imgref",
+ "rgb",
+]
+
+[[package]]
 name = "zenjpeg"
 version = "0.6.1"
 dependencies = [
@@ -2174,6 +2183,7 @@ dependencies = [
  "whereat",
  "wide 1.1.1",
  "yuv",
+ "zencodec-types",
  "zenjpeg-bench-utils",
  "zune-core",
  "zune-jpeg",
