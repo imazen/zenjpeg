@@ -2549,4 +2549,188 @@ mod tests {
         let out_dir = "/mnt/v/output/zenjpeg/klt-eval/";
         std::fs::create_dir_all(out_dir).ok();
     }
+
+    /// Corpus-level KLT evaluation across 41 CID22-512 images.
+    ///
+    /// Measures per-image KLT benefit: file size delta, zero count delta,
+    /// coefficient magnitude delta, and energy concentration.
+    /// Outputs CSV to /mnt/v/output/zenjpeg/klt-eval/corpus_results.csv
+    #[test]
+    #[ignore] // Requires CID22 corpus at ~/work/codec-corpus
+    fn test_klt_corpus_evaluation() {
+        use crate::color::klt::{self, CovarianceAccumulator};
+        use crate::decode::Decoder;
+
+        let corpus_dir = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
+        let out_dir = "/mnt/v/output/zenjpeg/klt-eval";
+        std::fs::create_dir_all(out_dir).ok();
+
+        let mut images: Vec<_> = std::fs::read_dir(corpus_dir)
+            .expect("open corpus dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+            .collect();
+        images.sort_by_key(|e| e.file_name());
+
+        assert!(!images.is_empty(), "no images found in {}", corpus_dir);
+
+        let jpeg_decoder = Decoder::new();
+
+        // CSV header
+        let mut csv = String::from(
+            "image,width,height,energy_conc,eigenval_ratio,beneficial,\
+             klt_bytes_q85,ycbcr_bytes_q85,delta_pct_q85,\
+             klt_zeros_q85,ycbcr_zeros_q85,\
+             klt_abssum_q85,ycbcr_abssum_q85,\
+             klt_bytes_q95,ycbcr_bytes_q95,delta_pct_q95\n"
+        );
+
+        let mut total_klt_85 = 0u64;
+        let mut total_ycbcr_85 = 0u64;
+        let mut total_klt_95 = 0u64;
+        let mut total_ycbcr_95 = 0u64;
+        let mut beneficial_count = 0;
+        let mut klt_wins_85 = 0;
+        let mut klt_wins_95 = 0;
+
+        eprintln!("\n=== KLT Corpus Evaluation ({} images) ===\n", images.len());
+        eprintln!("{:<15} {:>6} {:>6} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7}",
+            "Image", "EnConc", "EigR", "KLT_85", "YCbCr85", "Δ%_85", "KLT_95", "YCbCr95", "Δ%_95");
+        eprintln!("{}", "-".repeat(95));
+
+        for entry in &images {
+            let path = entry.path();
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+
+            // Load PNG
+            let png_data = std::fs::read(&path).expect("read png");
+            let decoder_png = png::Decoder::new(std::io::Cursor::new(&png_data));
+            let mut reader = decoder_png.read_info().expect("png info");
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).expect("png frame");
+            let width = info.width as usize;
+            let height = info.height as usize;
+            let bpp = info.color_type.samples();
+            let rgb_data = &buf[..width * height * bpp];
+
+            let pf = if bpp == 4 {
+                crate::types::PixelFormat::Rgba
+            } else {
+                crate::types::PixelFormat::Rgb
+            };
+
+            // Compute KLT
+            let mut acc = CovarianceAccumulator::new();
+            acc.accumulate_rgb_u8(rgb_data, width, bpp);
+            let cov = acc.covariance().expect("covariance");
+            let mean = acc.mean().expect("mean");
+            let klt_result = klt::compute_klt(cov, mean);
+            let beneficial = klt::klt_is_beneficial(&klt_result);
+            if beneficial { beneficial_count += 1; }
+
+            let eigenval_ratio = klt_result.eigenvalues[0] / klt_result.eigenvalues[2].max(0.001);
+
+            let mut row_data = Vec::new();
+
+            for (quality, label) in [(85.0, "q85"), (95.0, "q95")] {
+                let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+                let klt_jpeg = StreamingEncoder::new(width as u32, height as u32)
+                    .klt_matrix(klt_result.forward)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb_data)
+                    .unwrap();
+
+                let ycbcr_jpeg = StreamingEncoder::new(width as u32, height as u32)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb_data)
+                    .unwrap();
+
+                let delta = (klt_jpeg.len() as f64 / ycbcr_jpeg.len() as f64 - 1.0) * 100.0;
+
+                // Coefficient analysis for q85 only
+                let (klt_zeros, klt_abssum, ycbcr_zeros, ycbcr_abssum) = if label == "q85" {
+                    let klt_coeffs = jpeg_decoder
+                        .decode_coefficients(&klt_jpeg, enough::Unstoppable)
+                        .expect("decode KLT coefficients");
+                    let ycbcr_coeffs = jpeg_decoder
+                        .decode_coefficients(&ycbcr_jpeg, enough::Unstoppable)
+                        .expect("decode YCbCr coefficients");
+
+                    let (kz, ka) = coeff_stats(&klt_coeffs.components);
+                    let (yz, ya) = coeff_stats(&ycbcr_coeffs.components);
+                    (kz, ka, yz, ya)
+                } else {
+                    (0, 0, 0, 0)
+                };
+
+                row_data.push((klt_jpeg.len(), ycbcr_jpeg.len(), delta, klt_zeros, klt_abssum, ycbcr_zeros, ycbcr_abssum));
+
+                match label {
+                    "q85" => {
+                        total_klt_85 += klt_jpeg.len() as u64;
+                        total_ycbcr_85 += ycbcr_jpeg.len() as u64;
+                        if klt_jpeg.len() < ycbcr_jpeg.len() { klt_wins_85 += 1; }
+                    }
+                    "q95" => {
+                        total_klt_95 += klt_jpeg.len() as u64;
+                        total_ycbcr_95 += ycbcr_jpeg.len() as u64;
+                        if klt_jpeg.len() < ycbcr_jpeg.len() { klt_wins_95 += 1; }
+                    }
+                    _ => {}
+                }
+            }
+
+            let d85 = &row_data[0];
+            let d95 = &row_data[1];
+
+            eprintln!("{:<15} {:>5.3} {:>6.0} {:>8} {:>8} {:>+6.2}% {:>8} {:>8} {:>+6.2}%",
+                &name[..name.len().min(15)],
+                klt_result.energy_concentration, eigenval_ratio,
+                d85.0, d85.1, d85.2,
+                d95.0, d95.1, d95.2);
+
+            csv.push_str(&format!(
+                "{},{},{},{:.4},{:.1},{},{},{},{:.3},{},{},{},{},{},{},{:.3}\n",
+                name, width, height,
+                klt_result.energy_concentration, eigenval_ratio, beneficial,
+                d85.0, d85.1, d85.2,
+                d85.3, d85.5, // klt_zeros, ycbcr_zeros
+                d85.4, d85.6, // klt_abssum, ycbcr_abssum
+                d95.0, d95.1, d95.2,
+            ));
+        }
+
+        eprintln!("{}", "-".repeat(95));
+        eprintln!("TOTALS: q85: KLT={} YCbCr={} Δ={:+.2}%  q95: KLT={} YCbCr={} Δ={:+.2}%",
+            total_klt_85, total_ycbcr_85,
+            (total_klt_85 as f64 / total_ycbcr_85 as f64 - 1.0) * 100.0,
+            total_klt_95, total_ycbcr_95,
+            (total_klt_95 as f64 / total_ycbcr_95 as f64 - 1.0) * 100.0);
+        eprintln!("KLT beneficial: {}/{}", beneficial_count, images.len());
+        eprintln!("KLT wins: q85={}/{}, q95={}/{}", klt_wins_85, images.len(), klt_wins_95, images.len());
+
+        let csv_path = format!("{}/corpus_results.csv", out_dir);
+        std::fs::write(&csv_path, &csv).expect("write CSV");
+        eprintln!("\nCSV written to {}", csv_path);
+    }
+
+    fn coeff_stats(components: &[crate::decode::ComponentCoefficients]) -> (u64, u64) {
+        let mut zeros = 0u64;
+        let mut abs_sum = 0u64;
+        for comp in components {
+            for block_idx in 0..comp.num_blocks() {
+                let block = comp.block(block_idx);
+                for &c in block {
+                    if c == 0 { zeros += 1; }
+                    abs_sum += c.unsigned_abs() as u64;
+                }
+            }
+        }
+        (zeros, abs_sum)
+    }
 }
