@@ -2385,4 +2385,168 @@ mod tests {
         assert_eq!(jpeg[sof_pos + 14], 0x11, "G component should have 1x1 sampling");
         assert_eq!(jpeg[sof_pos + 17], 0x11, "B component should have 1x1 sampling");
     }
+
+    /// Compare DCT coefficient distributions between KLT and YCbCr encoding.
+    ///
+    /// This is the core evaluation tool for the CCTX feature. It measures:
+    /// - Zero coefficient counts (more zeros = better entropy coding)
+    /// - Sum of absolute coefficients (lower = fewer bits needed)
+    /// - Per-component energy distribution
+    /// - File size comparison at matched quality
+    #[test]
+    fn test_klt_coefficient_evaluation() {
+        use crate::color::klt::CovarianceAccumulator;
+        use crate::decode::Decoder;
+
+        // Load test image
+        let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/1.png");
+        let png_data = std::fs::read(png_path).expect("read test png");
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
+        let mut reader = decoder.read_info().expect("png decode info");
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).expect("png decode frame");
+        let width = info.width as usize;
+        let height = info.height as usize;
+        let bpp = info.color_type.samples();
+        let rgb_data = &buf[..width * height * bpp];
+        let pixels = width * height;
+
+        // Compute KLT
+        let mut acc = CovarianceAccumulator::new();
+        acc.accumulate_rgb_u8(rgb_data, width, bpp);
+        let cov = acc.covariance().expect("covariance");
+        let mean = acc.mean().expect("mean");
+        let klt = crate::color::klt::compute_klt(cov, mean);
+
+        let pf = if bpp == 4 {
+            crate::types::PixelFormat::Rgba
+        } else {
+            crate::types::PixelFormat::Rgb
+        };
+
+        let jpeg_decoder = Decoder::new();
+
+        eprintln!("\n=== KLT vs YCbCr DCT Coefficient Evaluation ===");
+        eprintln!("Image: {}x{} ({} pixels)", width, height, pixels);
+        eprintln!("KLT energy concentration: {:.4}", klt.energy_concentration);
+        eprintln!("KLT eigenvalues: [{:.1}, {:.1}, {:.1}]",
+            klt.eigenvalues[0], klt.eigenvalues[1], klt.eigenvalues[2]);
+        eprintln!("KLT beneficial: {}", crate::color::klt::klt_is_beneficial(&klt));
+        eprintln!();
+
+        for (quality, subsampling, label) in [
+            (75.0, Subsampling::S444, "q75_444"),
+            (85.0, Subsampling::S444, "q85_444"),
+            (90.0, Subsampling::S444, "q90_444"),
+            (95.0, Subsampling::S444, "q95_444"),
+            (85.0, Subsampling::S420, "q85_420"),
+        ] {
+            let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+            // Encode KLT
+            let klt_jpeg = StreamingEncoder::new(width as u32, height as u32)
+                .klt_matrix(klt.forward)
+                .subsampling(subsampling)
+                .quality(q)
+                .pixel_format(pf)
+                .encode(rgb_data)
+                .unwrap();
+
+            // Encode YCbCr
+            let ycbcr_jpeg = StreamingEncoder::new(width as u32, height as u32)
+                .subsampling(subsampling)
+                .quality(q)
+                .pixel_format(pf)
+                .encode(rgb_data)
+                .unwrap();
+
+            // Decode coefficients
+            let klt_coeffs = jpeg_decoder
+                .decode_coefficients(&klt_jpeg, enough::Unstoppable)
+                .expect("decode KLT coefficients");
+            let ycbcr_coeffs = jpeg_decoder
+                .decode_coefficients(&ycbcr_jpeg, enough::Unstoppable)
+                .expect("decode YCbCr coefficients");
+
+            eprintln!("--- {} ---", label);
+            eprintln!("File size: KLT={} bytes, YCbCr={} bytes, delta={:+.2}%",
+                klt_jpeg.len(), ycbcr_jpeg.len(),
+                (klt_jpeg.len() as f64 / ycbcr_jpeg.len() as f64 - 1.0) * 100.0);
+            eprintln!("BPP: KLT={:.3}, YCbCr={:.3}",
+                klt_jpeg.len() as f64 * 8.0 / pixels as f64,
+                ycbcr_jpeg.len() as f64 * 8.0 / pixels as f64);
+
+            // Per-component coefficient analysis
+            let comp_names_klt = ["C0(principal)", "C1", "C2"];
+            let comp_names_ycbcr = ["Y", "Cb", "Cr"];
+
+            for (label_set, coeffs, names) in [
+                ("KLT", &klt_coeffs, &comp_names_klt[..]),
+                ("YCbCr", &ycbcr_coeffs, &comp_names_ycbcr[..]),
+            ] {
+                eprintln!("  {} components:", label_set);
+                let mut total_zeros = 0u64;
+                let mut total_coeffs = 0u64;
+                let mut total_abs_sum = 0u64;
+
+                for (i, comp) in coeffs.components.iter().enumerate() {
+                    let num_blocks = comp.num_blocks();
+                    let n_coeffs = num_blocks * 64;
+                    let mut zeros = 0u64;
+                    let mut abs_sum = 0u64;
+                    let mut dc_abs_sum = 0u64;
+                    let mut ac_abs_sum = 0u64;
+
+                    for block_idx in 0..num_blocks {
+                        let block = comp.block(block_idx);
+                        dc_abs_sum += block[0].unsigned_abs() as u64;
+                        for &coeff in &block[1..] {
+                            ac_abs_sum += coeff.unsigned_abs() as u64;
+                            if coeff == 0 {
+                                zeros += 1;
+                            }
+                        }
+                        if block[0] == 0 {
+                            zeros += 1;
+                        }
+                        abs_sum += block.iter().map(|c| c.unsigned_abs() as u64).sum::<u64>();
+                    }
+
+                    total_zeros += zeros;
+                    total_coeffs += n_coeffs as u64;
+                    total_abs_sum += abs_sum;
+
+                    let name = names.get(i).unwrap_or(&"?");
+                    eprintln!(
+                        "    {}: {} blocks, zeros={}/{} ({:.1}%), |DC|_sum={}, |AC|_sum={}, |all|_sum={}",
+                        name, num_blocks, zeros, n_coeffs,
+                        100.0 * zeros as f64 / n_coeffs as f64,
+                        dc_abs_sum, ac_abs_sum, abs_sum
+                    );
+                }
+                eprintln!(
+                    "    TOTAL: zeros={}/{} ({:.1}%), |coeff|_sum={}",
+                    total_zeros, total_coeffs,
+                    100.0 * total_zeros as f64 / total_coeffs as f64,
+                    total_abs_sum
+                );
+            }
+
+            // Quant table comparison
+            eprintln!("  Quant tables:");
+            for (label_q, coeffs) in [("KLT", &klt_coeffs), ("YCbCr", &ycbcr_coeffs)] {
+                for (i, qt) in coeffs.quant_tables.iter().enumerate() {
+                    if let Some(table) = qt {
+                        eprintln!("    {} table {}: DC={}, AC[1]={}, AC[63]={}",
+                            label_q, i, table[0], table[1], table[63]);
+                    }
+                }
+            }
+            eprintln!();
+        }
+
+        // Write output files for visual inspection
+        let out_dir = "/mnt/v/output/zenjpeg/klt-eval/";
+        std::fs::create_dir_all(out_dir).ok();
+    }
 }
