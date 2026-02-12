@@ -3341,11 +3341,10 @@ mod tests {
         }
     }
 
-    /// Compare KLT with eigenvalue-scaled quant tables vs YCbCr baseline.
+    /// Compare KLT with Y+Cr quant tables vs YCbCr baseline via BD-Rate.
     ///
-    /// This test measures the effect of using KLT-adapted quantization tables
-    /// that scale based on eigenvalue ratios rather than using YCbCr-tuned
-    /// luma/chroma matrices.
+    /// Measures the coding efficiency of eigenvalue-adapted KLT quant tables
+    /// (Y matrix for PC0, Cr matrix for PC1/PC2) against both old KLT and YCbCr.
     #[test]
     #[ignore]
     fn test_klt_eigen_quant_quality() {
@@ -3353,70 +3352,115 @@ mod tests {
         use codec_eval::metrics::butteraugli::calculate_butteraugli;
         use codec_eval::metrics::ssimulacra2::calculate_ssimulacra2;
 
+        // Glassa's 5 representative CID22 images (one per cluster)
         let corpus_dir = std::path::Path::new(
-            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation");
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/training");
+        let selected = [
+            "pexels-photo-951408.png",
+            "53435.png",
+            "1963557.png",
+            "160577.png",
+            "2866385.png",
+        ];
+
         if !corpus_dir.exists() {
             eprintln!("Corpus not found at {}", corpus_dir.display());
             return;
         }
 
-        let output_dir = std::path::Path::new("/mnt/v/output/zenjpeg/klt-eigen-quant");
-        std::fs::create_dir_all(output_dir).unwrap();
-
-        let mut images: Vec<_> = std::fs::read_dir(corpus_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        let images: Vec<std::path::PathBuf> = selected.iter()
+            .map(|name| corpus_dir.join(name))
+            .filter(|p| p.exists())
             .collect();
-        images.sort_by_key(|e| e.file_name());
 
-        eprintln!("\n{:<10} {:>3} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
-            "Image", "Q", "KLT_eq", "KLT_old", "YCbCr", "Δ%eq",
-            "SS2_eq", "SS2_old", "SS2_ycc", "BA_eq");
-        eprintln!("{}", "-".repeat(110));
+        if images.is_empty() {
+            eprintln!("No selected images found");
+            return;
+        }
 
-        // Track summary stats per quality
-        for quality in [75.0, 85.0, 95.0] {
-            let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
-            let mut size_eq = Vec::new();
-            let mut size_old = Vec::new();
-            let mut size_ycc = Vec::new();
-            let mut ss2_eq = Vec::new();
-            let mut ss2_old = Vec::new();
-            let mut ss2_ycc = Vec::new();
-            let mut ba_eq = Vec::new();
-            let mut ba_old = Vec::new();
-            let mut ba_ycc = Vec::new();
+        // Dense quality levels for accurate BD-rate interpolation
+        let qualities = [30.0f32, 40.0, 50.0, 60.0, 70.0, 75.0, 80.0, 85.0, 90.0, 95.0];
 
-            for entry in &images {
-                let path = entry.path();
-                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        // Per-image RD curves for BD-rate
+        let mut all_eq_rd_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_old_rd_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycc_rd_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_eq_rd_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_old_rd_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycc_rd_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
 
-                let png_data = std::fs::read(&path).expect("read png");
-                let decoder_png = png::Decoder::new(std::io::Cursor::new(&png_data));
-                let mut reader = decoder_png.read_info().expect("png info");
-                let mut buf = vec![0u8; reader.output_buffer_size()];
-                let info = reader.next_frame(&mut buf).expect("png frame");
-                let w = info.width as usize;
-                let h = info.height as usize;
-                let bpp = info.color_type.samples();
-                let rgb = &buf[..w * h * bpp];
+        eprintln!("\n=== KLT Y+Cr Quant BD-Rate Evaluation ===\n");
+        eprintln!("{:<10} {:>3} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8}",
+            "Image", "Q", "EQ_sz", "Old_sz", "YCb_sz", "EQ_Δ%",
+            "EQ_ba", "Old_ba", "YCb_ba");
+        eprintln!("{}", "-".repeat(95));
 
-                let pf = if bpp == 4 {
-                    crate::types::PixelFormat::Rgba
-                } else {
-                    crate::types::PixelFormat::Rgb
-                };
+        for path in &images {
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
 
-                // Compute KLT
-                let mut acc = CovarianceAccumulator::new();
-                acc.accumulate_rgb_u8(rgb, w, bpp);
-                let cov = acc.covariance().expect("covariance");
-                let mean = acc.mean().expect("mean");
-                let klt = klt::compute_klt(cov, mean);
+            let png_data = std::fs::read(path).expect("read png");
+            let decoder_png = png::Decoder::new(std::io::Cursor::new(&png_data));
+            let mut reader = decoder_png.read_info().expect("png info");
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).expect("png frame");
+            let w = info.width as usize;
+            let h = info.height as usize;
+            let bpp = info.color_type.samples();
+            let rgb = &buf[..w * h * bpp];
 
-                // Encode: KLT with eigenvalue-scaled quant tables
-                let klt_eq_jpeg = StreamingEncoder::new(w as u32, h as u32)
+            let pf = if bpp == 4 {
+                crate::types::PixelFormat::Rgba
+            } else {
+                crate::types::PixelFormat::Rgb
+            };
+
+            let ref_rgb: Vec<u8> = if bpp == 4 {
+                rgb.chunks(4).flat_map(|c| &c[..3]).copied().collect()
+            } else {
+                rgb.to_vec()
+            };
+
+            // Compute KLT
+            let mut acc = CovarianceAccumulator::new();
+            acc.accumulate_rgb_u8(rgb, w, bpp);
+            let cov = acc.covariance().expect("covariance");
+            let mean = acc.mean().expect("mean");
+            let klt = klt::compute_klt(cov, mean);
+
+            let encode_params = klt::KltEncodeParams::from_forward_with_center(
+                klt.forward, klt.mean);
+            let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+            let inverse = klt.inverse;
+            let npixels = (w * h) as f64;
+
+            let decode_klt = |jpeg: &[u8]| -> Vec<u8> {
+                let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg));
+                let raw = dec.decode().expect("jpeg decode");
+                let mut out = vec![0u8; raw.len()];
+                for i in (0..raw.len()).step_by(3) {
+                    let c0 = raw[i] as f32 * inv_scale[0] + inv_offset[0];
+                    let c1 = raw[i + 1] as f32 * inv_scale[1] + inv_offset[1];
+                    let c2 = raw[i + 2] as f32 * inv_scale[2] + inv_offset[2];
+                    let [r, g, b] = inverse.transform([c0, c1, c2]);
+                    out[i] = r.round().clamp(0.0, 255.0) as u8;
+                    out[i + 1] = g.round().clamp(0.0, 255.0) as u8;
+                    out[i + 2] = b.round().clamp(0.0, 255.0) as u8;
+                }
+                out
+            };
+
+            let mut img_eq_rd_ba = Vec::new();
+            let mut img_old_rd_ba = Vec::new();
+            let mut img_ycc_rd_ba = Vec::new();
+            let mut img_eq_rd_ss2 = Vec::new();
+            let mut img_old_rd_ss2 = Vec::new();
+            let mut img_ycc_rd_ss2 = Vec::new();
+
+            for &quality in &qualities {
+                let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+                // KLT with Y+Cr quant tables
+                let eq_jpeg = StreamingEncoder::new(w as u32, h as u32)
                     .klt_matrix(klt.forward, klt.mean)
                     .klt_eigenvalues(klt.eigenvalues)
                     .subsampling(Subsampling::S444)
@@ -3425,8 +3469,8 @@ mod tests {
                     .encode(rgb)
                     .unwrap();
 
-                // Encode: KLT with old YCbCr quant tables (no eigenvalues)
-                let klt_old_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                // KLT with old YCbCr quant tables
+                let old_jpeg = StreamingEncoder::new(w as u32, h as u32)
                     .klt_matrix(klt.forward, klt.mean)
                     .subsampling(Subsampling::S444)
                     .quality(q)
@@ -3434,106 +3478,111 @@ mod tests {
                     .encode(rgb)
                     .unwrap();
 
-                // Encode: YCbCr baseline
-                let ycbcr_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                // YCbCr baseline
+                let ycc_jpeg = StreamingEncoder::new(w as u32, h as u32)
                     .subsampling(Subsampling::S444)
                     .quality(q)
                     .pixel_format(pf)
                     .encode(rgb)
                     .unwrap();
 
-                // Decode KLT images: raw channels → inverse KLT → sRGB
-                let encode_params = klt::KltEncodeParams::from_forward_with_center(
-                    klt.forward, klt.mean);
-                let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
-                let inverse = klt.inverse;
-
-                let decode_klt = |jpeg: &[u8]| -> Vec<u8> {
-                    let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg));
-                    let raw = dec.decode().expect("jpeg decode");
-                    // Apply inverse KLT: undo scale/offset then matrix multiply
-                    let mut out = vec![0u8; raw.len()];
-                    for i in (0..raw.len()).step_by(3) {
-                        let c0 = raw[i] as f32 * inv_scale[0] + inv_offset[0];
-                        let c1 = raw[i + 1] as f32 * inv_scale[1] + inv_offset[1];
-                        let c2 = raw[i + 2] as f32 * inv_scale[2] + inv_offset[2];
-                        let [r, g, b] = inverse.transform([c0, c1, c2]);
-                        out[i] = r.round().clamp(0.0, 255.0) as u8;
-                        out[i + 1] = g.round().clamp(0.0, 255.0) as u8;
-                        out[i + 2] = b.round().clamp(0.0, 255.0) as u8;
-                    }
-                    out
-                };
-                let eq_rgb = decode_klt(&klt_eq_jpeg);
-                let old_rgb = decode_klt(&klt_old_jpeg);
-
-                // Decode YCbCr (jpeg-decoder handles YCbCr→RGB)
+                // Decode
+                let eq_rgb = decode_klt(&eq_jpeg);
+                let old_rgb = decode_klt(&old_jpeg);
                 let ycc_rgb = {
                     let mut dec = jpeg_decoder::Decoder::new(
-                        std::io::Cursor::new(&ycbcr_jpeg));
+                        std::io::Cursor::new(&ycc_jpeg));
                     dec.decode().expect("jpeg decode")
                 };
 
-                // Extract reference RGB (strip alpha if needed)
-                let ref_rgb: Vec<u8> = if bpp == 4 {
-                    rgb.chunks(4).flat_map(|c| &c[..3]).copied().collect()
-                } else {
-                    rgb.to_vec()
-                };
+                // Metrics
+                let eq_ba = calculate_butteraugli(&ref_rgb, &eq_rgb, w, h).unwrap_or(f64::NAN);
+                let old_ba = calculate_butteraugli(&ref_rgb, &old_rgb, w, h).unwrap_or(f64::NAN);
+                let ycc_ba = calculate_butteraugli(&ref_rgb, &ycc_rgb, w, h).unwrap_or(f64::NAN);
+                let eq_ss2 = calculate_ssimulacra2(&ref_rgb, &eq_rgb, w, h).unwrap_or(f64::NAN);
+                let old_ss2 = calculate_ssimulacra2(&ref_rgb, &old_rgb, w, h).unwrap_or(f64::NAN);
+                let ycc_ss2 = calculate_ssimulacra2(&ref_rgb, &ycc_rgb, w, h).unwrap_or(f64::NAN);
 
-                // Compute SSIMULACRA2
-                let ss2_eq_v = calculate_ssimulacra2(&ref_rgb, &eq_rgb, w, h).unwrap();
-                let ss2_old_v = calculate_ssimulacra2(&ref_rgb, &old_rgb, w, h).unwrap();
-                let ss2_ycc_v = calculate_ssimulacra2(&ref_rgb, &ycc_rgb, w, h).unwrap();
+                let eq_bpp = eq_jpeg.len() as f64 * 8.0 / npixels;
+                let old_bpp = old_jpeg.len() as f64 * 8.0 / npixels;
+                let ycc_bpp = ycc_jpeg.len() as f64 * 8.0 / npixels;
 
-                // Compute Butteraugli
-                let ba_eq_v = calculate_butteraugli(&ref_rgb, &eq_rgb, w, h).unwrap();
-                let ba_old_v = calculate_butteraugli(&ref_rgb, &old_rgb, w, h).unwrap();
-                let ba_ycc_v = calculate_butteraugli(&ref_rgb, &ycc_rgb, w, h).unwrap();
+                let delta = (eq_jpeg.len() as f64 / ycc_jpeg.len() as f64 - 1.0) * 100.0;
 
-                let delta_eq = (klt_eq_jpeg.len() as f64 / ycbcr_jpeg.len() as f64 - 1.0) * 100.0;
+                eprintln!("{:<10} {:>3.0} {:>8} {:>8} {:>8} {:>+6.1}% {:>8.3} {:>8.3} {:>8.3}",
+                    name, quality, eq_jpeg.len(), old_jpeg.len(), ycc_jpeg.len(),
+                    delta, eq_ba, old_ba, ycc_ba);
 
-                eprintln!("{:<10} {:>3} {:>8} {:>8} {:>8} {:>+6.1}% {:>8.2} {:>8.2} {:>8.2} {:>8.3}",
-                    name, quality as u32,
-                    klt_eq_jpeg.len(), klt_old_jpeg.len(), ycbcr_jpeg.len(),
-                    delta_eq, ss2_eq_v, ss2_old_v, ss2_ycc_v, ba_eq_v);
-
-                size_eq.push(klt_eq_jpeg.len() as f64);
-                size_old.push(klt_old_jpeg.len() as f64);
-                size_ycc.push(ycbcr_jpeg.len() as f64);
-                ss2_eq.push(ss2_eq_v);
-                ss2_old.push(ss2_old_v);
-                ss2_ycc.push(ss2_ycc_v);
-                ba_eq.push(ba_eq_v);
-                ba_old.push(ba_old_v);
-                ba_ycc.push(ba_ycc_v);
+                // Collect RD points (bpp, metric)
+                // For BA: lower is better, so we negate for BD-rate (which expects higher=better)
+                img_eq_rd_ba.push((eq_bpp, -eq_ba));
+                img_old_rd_ba.push((old_bpp, -old_ba));
+                img_ycc_rd_ba.push((ycc_bpp, -ycc_ba));
+                img_eq_rd_ss2.push((eq_bpp, eq_ss2));
+                img_old_rd_ss2.push((old_bpp, old_ss2));
+                img_ycc_rd_ss2.push((ycc_bpp, ycc_ss2));
             }
 
-            let n = images.len() as f64;
-            let avg_delta = size_eq.iter().zip(size_ycc.iter())
-                .map(|(e, y)| (e / y - 1.0) * 100.0)
-                .sum::<f64>() / n;
-            let avg_old_delta = size_old.iter().zip(size_ycc.iter())
-                .map(|(e, y)| (e / y - 1.0) * 100.0)
-                .sum::<f64>() / n;
+            all_eq_rd_ba.push(img_eq_rd_ba);
+            all_old_rd_ba.push(img_old_rd_ba);
+            all_ycc_rd_ba.push(img_ycc_rd_ba);
+            all_eq_rd_ss2.push(img_eq_rd_ss2);
+            all_old_rd_ss2.push(img_old_rd_ss2);
+            all_ycc_rd_ss2.push(img_ycc_rd_ss2);
+        }
 
-            let eq_better_ss2 = ss2_eq.iter().zip(ss2_ycc.iter()).filter(|(e, y)| e > y).count();
-            let eq_better_ba = ba_eq.iter().zip(ba_ycc.iter()).filter(|(e, y)| e < y).count();
+        // Compute per-image BD-rates
+        let mut bd_eq_ba = Vec::new();
+        let mut bd_old_ba = Vec::new();
+        let mut bd_eq_ss2 = Vec::new();
+        let mut bd_old_ss2 = Vec::new();
 
-            eprintln!("\n=== Q{} Summary ({} images) ===", quality as u32, images.len());
-            eprintln!("Size: eigen-quant Δ={:+.2}%, old-KLT Δ={:+.2}%",
-                avg_delta, avg_old_delta);
-            eprintln!("SSIM2: eigen-quant={:.2}, old-KLT={:.2}, YCbCr={:.2} (eq wins {}/{})",
-                ss2_eq.iter().sum::<f64>() / n,
-                ss2_old.iter().sum::<f64>() / n,
-                ss2_ycc.iter().sum::<f64>() / n,
-                eq_better_ss2, images.len());
-            eprintln!("BA: eigen-quant={:.3}, old-KLT={:.3}, YCbCr={:.3} (eq wins {}/{})",
-                ba_eq.iter().sum::<f64>() / n,
-                ba_old.iter().sum::<f64>() / n,
-                ba_ycc.iter().sum::<f64>() / n,
-                eq_better_ba, images.len());
-            eprintln!();
+        eprintln!("\n=== Per-Image BD-Rate (vs YCbCr) ===");
+        eprintln!("{:<12} {:>10} {:>10} {:>10} {:>10}",
+            "Image", "EQ_BA_BD%", "Old_BA_BD%", "EQ_SS2_BD%", "Old_SS2_BD%");
+        eprintln!("{}", "-".repeat(60));
+
+        for (i, path) in images.iter().enumerate() {
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            let eq_ba = codec_eval::stats::bd_rate(&all_ycc_rd_ba[i], &all_eq_rd_ba[i]);
+            let old_ba = codec_eval::stats::bd_rate(&all_ycc_rd_ba[i], &all_old_rd_ba[i]);
+            let eq_ss2 = codec_eval::stats::bd_rate(&all_ycc_rd_ss2[i], &all_eq_rd_ss2[i]);
+            let old_ss2 = codec_eval::stats::bd_rate(&all_ycc_rd_ss2[i], &all_old_rd_ss2[i]);
+
+            if let Some(v) = eq_ba { bd_eq_ba.push(v); }
+            if let Some(v) = old_ba { bd_old_ba.push(v); }
+            if let Some(v) = eq_ss2 { bd_eq_ss2.push(v); }
+            if let Some(v) = old_ss2 { bd_old_ss2.push(v); }
+
+            eprintln!("{:<12} {:>+9.1}% {:>+9.1}% {:>+9.1}% {:>+9.1}%",
+                name,
+                eq_ba.unwrap_or(f64::NAN), old_ba.unwrap_or(f64::NAN),
+                eq_ss2.unwrap_or(f64::NAN), old_ss2.unwrap_or(f64::NAN));
+        }
+
+        let median = |v: &mut Vec<f64>| -> f64 {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() / 2]
+        };
+        let avg = |v: &[f64]| -> f64 { v.iter().sum::<f64>() / v.len() as f64 };
+
+        eprintln!("\n=== BD-Rate Summary (vs YCbCr, negative=better) ===");
+        eprintln!("                  {:>12} {:>12}", "Y+Cr (new)", "Old KLT");
+        if !bd_eq_ba.is_empty() {
+            let avg_eq = avg(&bd_eq_ba);
+            let avg_old = avg(&bd_old_ba);
+            let med_eq = median(&mut bd_eq_ba);
+            let med_old = median(&mut bd_old_ba);
+            eprintln!("BA BD-Rate:  avg={:>+6.1}% / {:>+6.1}%, median={:>+6.1}% / {:>+6.1}%",
+                avg_eq, avg_old, med_eq, med_old);
+        }
+        if !bd_eq_ss2.is_empty() {
+            let avg_eq = avg(&bd_eq_ss2);
+            let avg_old = avg(&bd_old_ss2);
+            let med_eq = median(&mut bd_eq_ss2);
+            let med_old = median(&mut bd_old_ss2);
+            eprintln!("SS2 BD-Rate: avg={:>+6.1}% / {:>+6.1}%, median={:>+6.1}% / {:>+6.1}%",
+                avg_eq, avg_old, med_eq, med_old);
         }
     }
 }
