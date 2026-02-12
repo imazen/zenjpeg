@@ -3585,4 +3585,279 @@ mod tests {
                 avg_eq, avg_old, med_eq, med_old);
         }
     }
+
+    /// End-to-end codec comparison: KLT vs YCbCr with full pipeline optimization.
+    ///
+    /// Tests whether KLT + trellis quantization + all-Y quant tables can match
+    /// or beat YCbCr + trellis at the same perceptual quality.
+    ///
+    /// Approach:
+    /// - Both codecs use hybrid trellis (AQ + trellis quantization)
+    /// - Both use optimized Huffman coding
+    /// - KLT all-Y variant uses Y (finest) quant matrix for ALL 3 components
+    /// - KLT Y+Cr variant uses Y for PC0, Cr for PC1/PC2
+    /// - BD-rate computed from dense RD curves using butteraugli + ssimulacra2
+    #[test]
+    #[ignore]
+    fn test_klt_end_to_end_trellis() {
+        use crate::color::klt::{self, CovarianceAccumulator};
+        use crate::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
+        use crate::foundation::consts::BASE_QUANT_MATRIX_YCBCR;
+        use codec_eval::metrics::butteraugli::calculate_butteraugli;
+        use codec_eval::metrics::ssimulacra2::calculate_ssimulacra2;
+
+        // Glassa's 5 representative CID22 images
+        let corpus_dir = std::path::Path::new(
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/training");
+        let selected = [
+            "pexels-photo-951408.png",
+            "53435.png",
+            "1963557.png",
+            "160577.png",
+            "2866385.png",
+        ];
+
+        if !corpus_dir.exists() {
+            eprintln!("Corpus not found at {}", corpus_dir.display());
+            return;
+        }
+
+        let images: Vec<std::path::PathBuf> = selected.iter()
+            .map(|name| corpus_dir.join(name))
+            .filter(|p| p.exists())
+            .collect();
+
+        if images.is_empty() {
+            eprintln!("No selected images found");
+            return;
+        }
+
+        // Quality levels for RD curves
+        let qualities = [30.0f32, 40.0, 50.0, 60.0, 70.0, 75.0, 80.0, 85.0, 90.0, 95.0];
+
+        // Per-image RD curves: (bpp, metric)
+        // ycc_t = YCbCr + trellis, allY_t = KLT all-Y + trellis, ycr_t = KLT Y+Cr + trellis
+        let mut all_ycc_t_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_allY_t_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycr_t_ba: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycc_t_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_allY_t_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycr_t_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+
+        eprintln!("\n=== KLT End-to-End with Trellis ===\n");
+        eprintln!("{:<10} {:>3} {:>8} {:>8} {:>8} {:>7} {:>7} {:>8} {:>8} {:>8}",
+            "Image", "Q", "YCb+T", "AllY+T", "YCr+T", "AY_Δ%", "YCr_Δ%",
+            "YCb_ba", "AllY_ba", "YCr_ba");
+        eprintln!("{}", "-".repeat(105));
+
+        for path in &images {
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+
+            let png_data = std::fs::read(path).expect("read png");
+            let decoder_png = png::Decoder::new(std::io::Cursor::new(&png_data));
+            let mut reader = decoder_png.read_info().expect("png info");
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).expect("png frame");
+            let w = info.width as usize;
+            let h = info.height as usize;
+            let bpp = info.color_type.samples();
+            let rgb = &buf[..w * h * bpp];
+
+            let pf = if bpp == 4 {
+                crate::types::PixelFormat::Rgba
+            } else {
+                crate::types::PixelFormat::Rgb
+            };
+
+            let ref_rgb: Vec<u8> = if bpp == 4 {
+                rgb.chunks(4).flat_map(|c| &c[..3]).copied().collect()
+            } else {
+                rgb.to_vec()
+            };
+
+            // Compute KLT
+            let mut acc = CovarianceAccumulator::new();
+            acc.accumulate_rgb_u8(rgb, w, bpp);
+            let cov = acc.covariance().expect("covariance");
+            let mean = acc.mean().expect("mean");
+            let klt = klt::compute_klt(cov, mean);
+
+            let encode_params = klt::KltEncodeParams::from_forward_with_center(
+                klt.forward, klt.mean);
+            let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+            let inverse = klt.inverse;
+            let npixels = (w * h) as f64;
+
+            let decode_klt = |jpeg: &[u8]| -> Vec<u8> {
+                let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg));
+                let raw = dec.decode().expect("jpeg decode");
+                let mut out = vec![0u8; raw.len()];
+                for i in (0..raw.len()).step_by(3) {
+                    let c0 = raw[i] as f32 * inv_scale[0] + inv_offset[0];
+                    let c1 = raw[i + 1] as f32 * inv_scale[1] + inv_offset[1];
+                    let c2 = raw[i + 2] as f32 * inv_scale[2] + inv_offset[2];
+                    let [r, g, b] = inverse.transform([c0, c1, c2]);
+                    out[i] = r.round().clamp(0.0, 255.0) as u8;
+                    out[i + 1] = g.round().clamp(0.0, 255.0) as u8;
+                    out[i + 2] = b.round().clamp(0.0, 255.0) as u8;
+                }
+                out
+            };
+
+            // Build all-Y EncodingTables (Y base matrix for all 3 components)
+            let y_base: [f32; 64] = std::array::from_fn(|i| BASE_QUANT_MATRIX_YCBCR[i]);
+            let all_y_tables = Box::new(EncodingTables {
+                quant: PerComponent::new(y_base, y_base, y_base),
+                // Use Y zero-bias for all (most conservative)
+                zero_bias_mul: {
+                    use crate::quant::ZERO_BIAS_MUL_YCBCR_LQ;
+                    let y_zb: [f32; 64] = std::array::from_fn(|i| ZERO_BIAS_MUL_YCBCR_LQ[i]);
+                    PerComponent::new(y_zb, y_zb, y_zb)
+                },
+                zero_bias_offset_dc: {
+                    use crate::quant::ZERO_BIAS_OFFSET_YCBCR_DC;
+                    [ZERO_BIAS_OFFSET_YCBCR_DC[0]; 3]
+                },
+                zero_bias_offset_ac: {
+                    use crate::quant::ZERO_BIAS_OFFSET_YCBCR_AC;
+                    [ZERO_BIAS_OFFSET_YCBCR_AC[0]; 3]
+                },
+                scaling: ScalingParams::default_ycbcr(),
+            });
+
+            let mut img_ycc_t_ba = Vec::new();
+            let mut img_allY_t_ba = Vec::new();
+            let mut img_ycr_t_ba = Vec::new();
+            let mut img_ycc_t_ss2 = Vec::new();
+            let mut img_allY_t_ss2 = Vec::new();
+            let mut img_ycr_t_ss2 = Vec::new();
+
+            for &quality in &qualities {
+                let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+                // 1. YCbCr + trellis baseline
+                let ycc_t_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .hybrid_trellis(true)
+                    .encode(rgb)
+                    .unwrap();
+
+                // 2. KLT + all-Y quant + trellis (via encoding_tables)
+                let allY_t_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt.forward, klt.mean)
+                    .encoding_tables(all_y_tables.clone())
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .hybrid_trellis(true)
+                    .encode(rgb)
+                    .unwrap();
+
+                // 3. KLT + Y+Cr quant + trellis (via eigenvalue path)
+                let ycr_t_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt.forward, klt.mean)
+                    .klt_eigenvalues(klt.eigenvalues)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .hybrid_trellis(true)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Decode
+                let ycc_t_rgb = {
+                    let mut dec = jpeg_decoder::Decoder::new(
+                        std::io::Cursor::new(&ycc_t_jpeg));
+                    dec.decode().expect("jpeg decode")
+                };
+                let allY_t_rgb = decode_klt(&allY_t_jpeg);
+                let ycr_t_rgb = decode_klt(&ycr_t_jpeg);
+
+                // Metrics
+                let ycc_t_ba = calculate_butteraugli(&ref_rgb, &ycc_t_rgb, w, h).unwrap_or(f64::NAN);
+                let allY_t_ba = calculate_butteraugli(&ref_rgb, &allY_t_rgb, w, h).unwrap_or(f64::NAN);
+                let ycr_t_ba = calculate_butteraugli(&ref_rgb, &ycr_t_rgb, w, h).unwrap_or(f64::NAN);
+                let ycc_t_ss2 = calculate_ssimulacra2(&ref_rgb, &ycc_t_rgb, w, h).unwrap_or(f64::NAN);
+                let allY_t_ss2 = calculate_ssimulacra2(&ref_rgb, &allY_t_rgb, w, h).unwrap_or(f64::NAN);
+                let ycr_t_ss2 = calculate_ssimulacra2(&ref_rgb, &ycr_t_rgb, w, h).unwrap_or(f64::NAN);
+
+                let ycc_t_bpp = ycc_t_jpeg.len() as f64 * 8.0 / npixels;
+                let allY_t_bpp = allY_t_jpeg.len() as f64 * 8.0 / npixels;
+                let ycr_t_bpp = ycr_t_jpeg.len() as f64 * 8.0 / npixels;
+
+                let allY_delta = (allY_t_jpeg.len() as f64 / ycc_t_jpeg.len() as f64 - 1.0) * 100.0;
+                let ycr_delta = (ycr_t_jpeg.len() as f64 / ycc_t_jpeg.len() as f64 - 1.0) * 100.0;
+
+                eprintln!("{:<10} {:>3.0} {:>8} {:>8} {:>8} {:>+6.1}% {:>+6.1}% {:>8.3} {:>8.3} {:>8.3}",
+                    name, quality, ycc_t_jpeg.len(), allY_t_jpeg.len(),
+                    ycr_t_jpeg.len(), allY_delta, ycr_delta,
+                    ycc_t_ba, allY_t_ba, ycr_t_ba);
+
+                // Collect RD points (bpp, metric)
+                img_ycc_t_ba.push((ycc_t_bpp, -ycc_t_ba));
+                img_allY_t_ba.push((allY_t_bpp, -allY_t_ba));
+                img_ycr_t_ba.push((ycr_t_bpp, -ycr_t_ba));
+                img_ycc_t_ss2.push((ycc_t_bpp, ycc_t_ss2));
+                img_allY_t_ss2.push((allY_t_bpp, allY_t_ss2));
+                img_ycr_t_ss2.push((ycr_t_bpp, ycr_t_ss2));
+            }
+
+            all_ycc_t_ba.push(img_ycc_t_ba);
+            all_allY_t_ba.push(img_allY_t_ba);
+            all_ycr_t_ba.push(img_ycr_t_ba);
+            all_ycc_t_ss2.push(img_ycc_t_ss2);
+            all_allY_t_ss2.push(img_allY_t_ss2);
+            all_ycr_t_ss2.push(img_ycr_t_ss2);
+        }
+
+        // Compute per-image BD-rates
+        let mut bd_allY_ba = Vec::new();
+        let mut bd_ycr_ba = Vec::new();
+        let mut bd_allY_ss2 = Vec::new();
+        let mut bd_ycr_ss2 = Vec::new();
+
+        eprintln!("\n=== Per-Image BD-Rate vs YCbCr+Trellis ===");
+        eprintln!("{:<12} {:>12} {:>12} {:>12} {:>12}",
+            "Image", "AllY+T BA%", "YCr+T BA%", "AllY+T SS2%", "YCr+T SS2%");
+        eprintln!("{}", "-".repeat(65));
+
+        for (i, path) in images.iter().enumerate() {
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            let ay_ba = codec_eval::stats::bd_rate(&all_ycc_t_ba[i], &all_allY_t_ba[i]);
+            let ycr_ba = codec_eval::stats::bd_rate(&all_ycc_t_ba[i], &all_ycr_t_ba[i]);
+            let ay_ss2 = codec_eval::stats::bd_rate(&all_ycc_t_ss2[i], &all_allY_t_ss2[i]);
+            let ycr_ss2 = codec_eval::stats::bd_rate(&all_ycc_t_ss2[i], &all_ycr_t_ss2[i]);
+
+            if let Some(v) = ay_ba { bd_allY_ba.push(v); }
+            if let Some(v) = ycr_ba { bd_ycr_ba.push(v); }
+            if let Some(v) = ay_ss2 { bd_allY_ss2.push(v); }
+            if let Some(v) = ycr_ss2 { bd_ycr_ss2.push(v); }
+
+            eprintln!("{:<12} {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}%",
+                name,
+                ay_ba.unwrap_or(f64::NAN), ycr_ba.unwrap_or(f64::NAN),
+                ay_ss2.unwrap_or(f64::NAN), ycr_ss2.unwrap_or(f64::NAN));
+        }
+
+        let median = |v: &mut Vec<f64>| -> f64 {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() / 2]
+        };
+        let avg = |v: &[f64]| -> f64 { v.iter().sum::<f64>() / v.len() as f64 };
+
+        eprintln!("\n=== BD-Rate Summary vs YCbCr+Trellis (negative=better) ===");
+        eprintln!("                  {:>14} {:>14}", "KLT AllY+T", "KLT YCr+T");
+        if !bd_allY_ba.is_empty() {
+            eprintln!("BA BD-Rate:  avg={:>+6.1}%, med={:>+6.1}% / avg={:>+6.1}%, med={:>+6.1}%",
+                avg(&bd_allY_ba), median(&mut bd_allY_ba),
+                avg(&bd_ycr_ba), median(&mut bd_ycr_ba));
+        }
+        if !bd_allY_ss2.is_empty() {
+            eprintln!("SS2 BD-Rate: avg={:>+6.1}%, med={:>+6.1}% / avg={:>+6.1}%, med={:>+6.1}%",
+                avg(&bd_allY_ss2), median(&mut bd_allY_ss2),
+                avg(&bd_ycr_ss2), median(&mut bd_ycr_ss2));
+        }
+    }
 }
