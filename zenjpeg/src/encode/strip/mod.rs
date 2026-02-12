@@ -443,6 +443,10 @@ pub struct StripProcessor {
     // === Reusable AQ strengths buffer ===
     /// Buffer for AQ strengths from process_y_strip_into (avoids per-strip allocation)
     aq_strengths_buffer: Vec<f32>,
+    
+    /// KLT decorrelation matrix (if KLT color mode is active).
+    /// When Some, the strip processor applies this matrix instead of RGB→YCbCr.
+    pub(super) klt_matrix: Option<crate::color::klt::Mat3>,
 }
 
 impl StripProcessor {
@@ -643,6 +647,7 @@ impl StripProcessor {
             // Reusable AQ strengths buffer (one iMCU row worth of blocks)
             // Size: blocks_per_row * v_samp_factor (max 2 for 4:2:0)
             aq_strengths_buffer: vec![0.0f32; pending_y_capacity],
+            klt_matrix: None,
         })
     }
 
@@ -690,6 +695,11 @@ impl StripProcessor {
     /// This technique was pioneered by @kornel in mozjpeg.
     pub fn set_deringing(&mut self, enable: bool) {
         self.deringing = enable;
+    }
+    
+    /// Sets the KLT decorrelation matrix for custom color transform mode.
+    pub fn set_klt_matrix(&mut self, matrix: crate::color::klt::Mat3) {
+        self.klt_matrix = Some(matrix);
     }
 
     /// Sets trellis quantization configuration.
@@ -759,6 +769,12 @@ impl StripProcessor {
         if self.layout.use_xyb {
             self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
             return Ok(true); // XYB handles B downsampling internally
+        }
+        // KLT mode: apply custom decorrelation matrix
+        if let Some(ref klt) = self.klt_matrix {
+            let klt = *klt; // Copy to avoid borrow conflict
+            self.convert_strip_to_klt(rgb_strip, actual_strip_height, &klt)?;
+            return Ok(false); // Chroma not yet downsampled
         }
 
         // YCbCr mode: choose optimal path based on subsampling

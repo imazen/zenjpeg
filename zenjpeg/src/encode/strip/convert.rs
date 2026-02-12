@@ -1097,3 +1097,88 @@ impl StripProcessor {
         Ok(())
     }
 }
+
+    /// Converts RGB strip data to KLT-decorrelated channels.
+    ///
+    /// Applies the forward KLT matrix to each RGB pixel:
+    ///   [c0, c1, c2] = matrix * [R, G, B]
+    ///
+    /// Channel 0 (highest variance, luminance-like) goes to y_strip.
+    /// Channels 1-2 (lower variance, chroma-like) go to cb_strip/cr_strip.
+    ///
+    /// All output values are shifted to [0, 255] range by adding 128 to
+    /// center the zero-mean decorrelated channels for JPEG encoding.
+    pub(super) fn convert_strip_to_klt(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_height: usize,
+        klt_matrix: &crate::color::klt::Mat3,
+    ) -> Result<()> {
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+
+        match self.pixel_format {
+            PixelFormat::Rgb | PixelFormat::Rgba => {}
+            PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => {}
+            PixelFormat::Gray | PixelFormat::Gray16 | PixelFormat::GrayF32 | PixelFormat::Cmyk => {
+                return Err(crate::error::Error::unsupported_feature(
+                    "KLT mode only supports RGB/RGBA/BGR/BGRA pixel formats",
+                ));
+            }
+            _ => {
+                return Err(crate::error::Error::unsupported_feature(
+                    "KLT mode: unsupported pixel format",
+                ));
+            }
+        }
+
+        let is_bgr = matches!(
+            self.pixel_format,
+            PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx
+        );
+
+        for row in 0..strip_height {
+            let y_row_start = row * padded_width;
+            let cbcr_row_start = row * width;
+
+            for x in 0..width {
+                let src_idx = (row * width + x) * bpp;
+
+                let (r, g, b) = if is_bgr {
+                    (
+                        rgb_strip[src_idx + 2] as f32,
+                        rgb_strip[src_idx + 1] as f32,
+                        rgb_strip[src_idx] as f32,
+                    )
+                } else {
+                    (
+                        rgb_strip[src_idx] as f32,
+                        rgb_strip[src_idx + 1] as f32,
+                        rgb_strip[src_idx + 2] as f32,
+                    )
+                };
+
+                // Apply KLT matrix
+                let [c0, c1, c2] = klt_matrix.transform([r, g, b]);
+
+                // Store: c0 in Y strip (padded), c1/c2 in Cb/Cr strips (packed)
+                // Level shift to [0, 255] range (the decorrelated channels are
+                // centered around the transform of the mean, so we keep them
+                // as-is — the mean energy goes into the DC coefficient during DCT).
+                self.y_strip[y_row_start + x] = c0;
+                self.cb_strip[cbcr_row_start + x] = c1;
+                self.cr_strip[cbcr_row_start + x] = c2;
+            }
+
+            // Edge-pad Y row
+            if width < padded_width {
+                let edge_val = self.y_strip[y_row_start + width - 1];
+                for px in width..padded_width {
+                    self.y_strip[y_row_start + px] = edge_val;
+                }
+            }
+        }
+
+        Ok(())
+    }
