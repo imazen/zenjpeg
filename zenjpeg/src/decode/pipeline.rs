@@ -528,37 +528,24 @@ impl StripProcessor {
 
         // Full 8×8 IDCT into temporary stack buffer
         let mut temp = [0i16; 64];
-        dequantize_unzigzag_i32_into_partial(
-            coeffs,
-            quant,
-            dequant_buf,
-            coeff_count,
-        );
+        dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
 
         if unclamped {
             match chroma_upsampling {
                 ChromaUpsampling::LibjpegCompat => {
-                    idct_int_tiered_libjpeg_unclamped(
-                        dequant_buf, &mut temp, 8, coeff_count,
-                    );
+                    idct_int_tiered_libjpeg_unclamped(dequant_buf, &mut temp, 8, coeff_count);
                 }
                 _ => {
-                    idct_int_tiered_unclamped(
-                        dequant_buf, &mut temp, 8, coeff_count,
-                    );
+                    idct_int_tiered_unclamped(dequant_buf, &mut temp, 8, coeff_count);
                 }
             }
         } else {
             match chroma_upsampling {
                 ChromaUpsampling::LibjpegCompat => {
-                    idct_int_tiered_libjpeg(
-                        dequant_buf, &mut temp, 8, coeff_count,
-                    );
+                    idct_int_tiered_libjpeg(dequant_buf, &mut temp, 8, coeff_count);
                 }
                 _ => {
-                    idct_int_tiered(
-                        dequant_buf, &mut temp, 8, coeff_count,
-                    );
+                    idct_int_tiered(dequant_buf, &mut temp, 8, coeff_count);
                 }
             }
         }

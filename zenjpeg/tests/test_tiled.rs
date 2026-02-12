@@ -4,7 +4,9 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn encode_jpeg(pixels: &[u8], w: u32, h: u32, quality: f32, sub: ChromaSubsampling) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, sub);
-    let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
     enc.push_packed(pixels, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
@@ -49,7 +51,8 @@ fn shrink_tiled_uniform_blocks() {
     // Half-scale decode
     let half = Decoder::new()
         .shrink(ShrinkHint::ExactScale(DctScale::Half))
-        .decode(&jpeg, Unstoppable).unwrap();
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
     let hp = half.pixels_u8().unwrap();
     let hw = half.width() as usize;
     let hh = half.height() as usize;
@@ -64,7 +67,12 @@ fn shrink_tiled_uniform_blocks() {
     for b in 0..num_blocks {
         let x = b * bs;
         let i = x * 3;
-        eprintln!("  block {b} (x={x}): R={} G={} B={}", hp[i], hp[i+1], hp[i+2]);
+        eprintln!(
+            "  block {b} (x={x}): R={} G={} B={}",
+            hp[i],
+            hp[i + 1],
+            hp[i + 2]
+        );
     }
 
     // Compare all blocks against block 0 — they should all be identical
@@ -93,9 +101,14 @@ fn shrink_tiled_uniform_blocks() {
 
     eprintln!("Max diff between blocks: {max_diff}");
     if let Some((b, row, col, c, v0, v1, diff)) = first_bad_block {
-        eprintln!("First bad: block {b} ({row},{col}) c={c}: block0={v0} block{b}={v1} diff={diff}");
+        eprintln!(
+            "First bad: block {b} ({row},{col}) c={c}: block0={v0} block{b}={v1} diff={diff}"
+        );
     }
 
     // With tiled input and uniform blocks, max diff should be very small (just JPEG compression noise)
-    assert!(max_diff <= 5, "Tiled blocks should produce identical output, got max_diff={max_diff}");
+    assert!(
+        max_diff <= 5,
+        "Tiled blocks should produce identical output, got max_diff={max_diff}"
+    );
 }

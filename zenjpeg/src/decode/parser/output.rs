@@ -1336,7 +1336,11 @@ impl<'a> JpegParser<'a> {
 
         // Build comp infos (at full block dimensions for iteration)
         let comp_infos = self.build_comp_infos(
-            mcu_cols, mcu_rows, max_h_samp as usize, max_v_samp as usize, num_components,
+            mcu_cols,
+            mcu_rows,
+            max_h_samp as usize,
+            max_v_samp as usize,
+            num_components,
         )?;
 
         // Allocate component planes at SCALED dimensions
@@ -1414,7 +1418,8 @@ impl<'a> JpegParser<'a> {
                                 let mut sum = 0.0f32;
                                 for dy in 0..factor {
                                     for dx in 0..factor {
-                                        sum += pixels_8x8[(oy * factor + dy) * 8 + (ox * factor + dx)];
+                                        sum +=
+                                            pixels_8x8[(oy * factor + dy) * 8 + (ox * factor + dx)];
                                     }
                                 }
                                 comp_plane[py * plane_w + px] = sum * inv_factor_sq;
@@ -1430,8 +1435,10 @@ impl<'a> JpegParser<'a> {
         let scaled_h = dct_scale.scaled_dimension(self.height) as usize;
 
         // Build scaled CompInfos for upsampling
-        let scaled_comp_infos: Vec<CompInfo> = comp_infos.iter().enumerate().map(|(i, info)| {
-            CompInfo {
+        let scaled_comp_infos: Vec<CompInfo> = comp_infos
+            .iter()
+            .enumerate()
+            .map(|(i, info)| CompInfo {
                 quant_idx: info.quant_idx,
                 h_samp: info.h_samp,
                 v_samp: info.v_samp,
@@ -1440,8 +1447,8 @@ impl<'a> JpegParser<'a> {
                 comp_width: scaled_widths[i],
                 comp_height: scaled_heights[i],
                 is_full_res: info.is_full_res,
-            }
-        }).collect();
+            })
+            .collect();
 
         // Upsample scaled planes
         let planes_f32 = self.upsample_planes_f32_scaled(
@@ -1474,7 +1481,10 @@ impl<'a> JpegParser<'a> {
 
                 if is_xyb {
                     crate::color::xyb::xyb_planes_to_rgb_f32_simd(
-                        &planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb,
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
                     );
                 } else if self.is_rgb_jpeg() {
                     for i in 0..output_size {
@@ -1484,7 +1494,10 @@ impl<'a> JpegParser<'a> {
                     }
                 } else {
                     ycbcr_planes_f32_to_rgb_f32(
-                        &planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb,
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
                     );
                 }
                 Ok(rgb)

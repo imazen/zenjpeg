@@ -4,7 +4,9 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn encode_jpeg(pixels: &[u8], w: u32, h: u32, quality: f32, sub: ChromaSubsampling) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, sub);
-    let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
     enc.push_packed(pixels, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
@@ -18,7 +20,9 @@ fn scanline_full_vs_standard() {
     let mut pixels = vec![0u8; (w * h * 3) as usize];
     let mut rng = 42u64;
     let mut next = || -> u8 {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng >> 33) as u8
     };
     for y in 0..h {
@@ -26,8 +30,14 @@ fn scanline_full_vs_standard() {
             let idx = ((y * w + x) * 3) as usize;
             let bx = (x / 8) as u8;
             pixels[idx] = bx.wrapping_mul(37).wrapping_add(next() / 32);
-            pixels[idx + 1] = bx.wrapping_mul(53).wrapping_add(50).wrapping_add(next() / 32);
-            pixels[idx + 2] = bx.wrapping_mul(19).wrapping_add(100).wrapping_add(next() / 32);
+            pixels[idx + 1] = bx
+                .wrapping_mul(53)
+                .wrapping_add(50)
+                .wrapping_add(next() / 32);
+            pixels[idx + 2] = bx
+                .wrapping_mul(19)
+                .wrapping_add(100)
+                .wrapping_add(next() / 32);
         }
     }
 
@@ -41,15 +51,22 @@ fn scanline_full_vs_standard() {
     // Scanline decode at full scale (via shrink hint with Full)
     let mut reader = Decoder::new()
         .shrink(ShrinkHint::ExactScale(DctScale::Full))
-        .scanline_reader(&jpeg).unwrap();
+        .scanline_reader(&jpeg)
+        .unwrap();
     let hw = reader.width() as usize;
     let hh = reader.height() as usize;
     let mut scanline_pixels = vec![0u8; hw * hh * 3];
     let mut rows_read = 0;
     while rows_read < hh {
-        let out = imgref::ImgRefMut::new(&mut scanline_pixels[rows_read * hw * 3..], hw * 3, hh - rows_read);
+        let out = imgref::ImgRefMut::new(
+            &mut scanline_pixels[rows_read * hw * 3..],
+            hw * 3,
+            hh - rows_read,
+        );
         let count = reader.read_rows_rgb8(out).unwrap();
-        if count == 0 { break; }
+        if count == 0 {
+            break;
+        }
         rows_read += count;
     }
     eprintln!("Scanline Full: {}x{}", hw, hh);
@@ -74,7 +91,8 @@ fn scanline_full_vs_standard() {
     // Now half scale
     let half = Decoder::new()
         .shrink(ShrinkHint::ExactScale(DctScale::Half))
-        .decode(&jpeg, Unstoppable).unwrap();
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
     let hp = half.pixels_u8().unwrap();
     let halfw = half.width() as usize;
     let halfh = half.height() as usize;
@@ -103,7 +121,9 @@ fn scanline_full_vs_standard() {
                 if diff > max_diff_half {
                     max_diff_half = diff;
                     if diff > 10 {
-                        eprintln!("  HALF DIFF at ({x},{y}) c={c}: shrink={sv} avg={avg} diff={diff}");
+                        eprintln!(
+                            "  HALF DIFF at ({x},{y}) c={c}: shrink={sv} avg={avg} diff={diff}"
+                        );
                     }
                 }
             }

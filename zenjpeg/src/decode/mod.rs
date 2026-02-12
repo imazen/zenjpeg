@@ -876,8 +876,12 @@ impl DecodeConfig {
         use crate::types::Dimensions;
 
         let preserve = self.preserve.clone();
-        let mut parser =
-            parser::JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
+        let mut parser = parser::JpegParser::with_strictness(
+            data,
+            self.max_pixels,
+            Some(&preserve),
+            self.strictness,
+        )?;
         parser.prefer_streaming = false; // Need coefficients
         parser.decode(&enough::Unstoppable)?;
 

@@ -172,9 +172,8 @@ mod quality {
     }
 
     fn ssim2(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
-        let to_px = |d: &[u8]| -> Vec<[u8; 3]> {
-            d.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
-        };
+        let to_px =
+            |d: &[u8]| -> Vec<[u8; 3]> { d.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect() };
         let a_img = ImgVec::new(to_px(a), width, height);
         let b_img = ImgVec::new(to_px(b), width, height);
         compute_ssimulacra2(a_img.as_ref(), b_img.as_ref()).unwrap_or(0.0)
@@ -199,7 +198,9 @@ mod quality {
         let jpeg = encode_jpeg(source_rgb, source_w, source_h, quality, subsampling);
 
         // Full decode (reference)
-        let full = Decoder::new().decode(&jpeg, Unstoppable).expect("full decode");
+        let full = Decoder::new()
+            .decode(&jpeg, Unstoppable)
+            .expect("full decode");
         let full_pixels = full.pixels_u8().unwrap();
         let full_w = full.width() as usize;
         let full_h = full.height() as usize;
@@ -225,8 +226,7 @@ mod quality {
             let shrink_h = shrink.height() as usize;
 
             // 2) Full decode → area-average resize (gamma-encoded, naive)
-            let (resized, res_w, res_h) =
-                area_downsample_rgb(full_pixels, full_w, full_h, factor);
+            let (resized, res_w, res_h) = area_downsample_rgb(full_pixels, full_w, full_h, factor);
 
             // 3) Source → linear area-average resize (best reference)
             let (linear_ref, lr_w, lr_h) = linear_area_downsample_rgb(
@@ -286,9 +286,8 @@ mod quality {
     #[test]
     #[ignore]
     fn shrink_vs_resize_quality() {
-        let corpus = corpus().expect(
-            "codec-corpus not found — install codec-corpus crate or set CODEC_CORPUS_PATH",
-        );
+        let corpus = corpus()
+            .expect("codec-corpus not found — install codec-corpus crate or set CODEC_CORPUS_PATH");
         let cid22 = corpus
             .get("CID22/CID22-512/validation")
             .expect("CID22 corpus not found");
@@ -341,13 +340,16 @@ mod quality {
 
                 for r in &results {
                     let delta = r.shrink_ssim2 - r.resize_ssim2;
-                    let scale_name = format!("1/{}", match r.scale {
-                        DctScale::Eighth => 8,
-                        DctScale::Quarter => 4,
-                        DctScale::Half => 2,
-                        DctScale::Full => 1,
-                        _ => unreachable!(),
-                    });
+                    let scale_name = format!(
+                        "1/{}",
+                        match r.scale {
+                            DctScale::Eighth => 8,
+                            DctScale::Quarter => 4,
+                            DctScale::Half => 2,
+                            DctScale::Full => 1,
+                            _ => unreachable!(),
+                        }
+                    );
 
                     println!(
                         "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
@@ -400,7 +402,9 @@ mod quality {
         // Simple LCG for deterministic "random" noise
         let mut rng = 12345u64;
         let mut next = || -> u8 {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) as u8
         };
         for y in 0..h {
@@ -409,9 +413,15 @@ mod quality {
                 // Patches of color with added noise
                 let patch_x = (x / 32) as u8;
                 let patch_y = (y / 32) as u8;
-                let base_r = patch_x.wrapping_mul(37).wrapping_add(patch_y.wrapping_mul(71));
-                let base_g = patch_x.wrapping_mul(53).wrapping_add(patch_y.wrapping_mul(29));
-                let base_b = patch_x.wrapping_mul(19).wrapping_add(patch_y.wrapping_mul(97));
+                let base_r = patch_x
+                    .wrapping_mul(37)
+                    .wrapping_add(patch_y.wrapping_mul(71));
+                let base_g = patch_x
+                    .wrapping_mul(53)
+                    .wrapping_add(patch_y.wrapping_mul(29));
+                let base_b = patch_x
+                    .wrapping_mul(19)
+                    .wrapping_add(patch_y.wrapping_mul(97));
                 let noise = next() / 8; // small noise
                 pixels[idx] = base_r.wrapping_add(noise);
                 pixels[idx + 1] = base_g.wrapping_add(noise);
@@ -476,14 +486,18 @@ mod quality {
             let resize_score = ssim2(&resize_c, &ref_c, cmp_w, cmp_h);
 
             // Debug: pixel value comparison
-            let mean_shrink: f64 = shrink_c.iter().map(|&v| v as f64).sum::<f64>() / shrink_c.len() as f64;
-            let mean_resize: f64 = resize_c.iter().map(|&v| v as f64).sum::<f64>() / resize_c.len() as f64;
+            let mean_shrink: f64 =
+                shrink_c.iter().map(|&v| v as f64).sum::<f64>() / shrink_c.len() as f64;
+            let mean_resize: f64 =
+                resize_c.iter().map(|&v| v as f64).sum::<f64>() / resize_c.len() as f64;
             let mean_ref: f64 = ref_c.iter().map(|&v| v as f64).sum::<f64>() / ref_c.len() as f64;
-            let max_sr = shrink_c.iter().zip(resize_c.iter())
+            let max_sr = shrink_c
+                .iter()
+                .zip(resize_c.iter())
                 .map(|(&a, &b)| (a as i32 - b as i32).abs())
-                .max().unwrap_or(0);
-            eprintln!(
-                "  {scale}: shrink {sw}x{sh}, ref {rw}x{rh}, cmp {cmp_w}x{cmp_h}");
+                .max()
+                .unwrap_or(0);
+            eprintln!("  {scale}: shrink {sw}x{sh}, ref {rw}x{rh}, cmp {cmp_w}x{cmp_h}");
             eprintln!(
                 "    mean_px: shrink={mean_shrink:.1}, resize={mean_resize:.1}, ref={mean_ref:.1}, max_shrink_vs_resize={max_sr}");
             eprintln!(
@@ -518,7 +532,9 @@ mod quality {
         let mut pixels = vec![0u8; (w * h * 3) as usize];
         let mut rng = 12345u64;
         let mut next = || -> u8 {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) as u8
         };
         for y in 0..h {
@@ -526,9 +542,15 @@ mod quality {
                 let idx = ((y * w + x) * 3) as usize;
                 let patch_x = (x / 32) as u8;
                 let patch_y = (y / 32) as u8;
-                let base_r = patch_x.wrapping_mul(37).wrapping_add(patch_y.wrapping_mul(71));
-                let base_g = patch_x.wrapping_mul(53).wrapping_add(patch_y.wrapping_mul(29));
-                let base_b = patch_x.wrapping_mul(19).wrapping_add(patch_y.wrapping_mul(97));
+                let base_r = patch_x
+                    .wrapping_mul(37)
+                    .wrapping_add(patch_y.wrapping_mul(71));
+                let base_g = patch_x
+                    .wrapping_mul(53)
+                    .wrapping_add(patch_y.wrapping_mul(29));
+                let base_b = patch_x
+                    .wrapping_mul(19)
+                    .wrapping_add(patch_y.wrapping_mul(97));
                 let noise = next() / 8;
                 pixels[idx] = base_r.wrapping_add(noise);
                 pixels[idx + 1] = base_g.wrapping_add(noise);
@@ -578,9 +600,8 @@ mod quality {
 
             // Reference: area downsample of full decode (gamma-encoded, matches Best path)
             let (resized, rw, rh) = area_downsample_rgb(full_px, fw, fh, factor);
-            let (ref_linear, rlw, rlh) = linear_area_downsample_rgb(
-                &pixels, w as usize, h as usize, factor,
-            );
+            let (ref_linear, rlw, rlh) =
+                linear_area_downsample_rgb(&pixels, w as usize, h as usize, factor);
 
             let cmp_w = sw.min(rw).min(rlw);
             let cmp_h = sh.min(rh).min(rlh);
@@ -631,7 +652,9 @@ mod quality {
         let mut pixels = vec![0u8; (w * h * 3) as usize];
         let mut rng = 99999u64;
         let mut next = || -> u8 {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) as u8
         };
         for p in pixels.iter_mut() {
@@ -766,12 +789,13 @@ mod quality {
                 let best_px = best.pixels_u8().unwrap();
 
                 // Reference
-                let (ref_linear, rlw, rlh) = linear_area_downsample_rgb(
-                    &rgb, w as usize, h as usize, factor,
-                );
+                let (ref_linear, rlw, rlh) =
+                    linear_area_downsample_rgb(&rgb, w as usize, h as usize, factor);
                 let cmp_w = sw.min(rlw);
                 let cmp_h = sh.min(rlh);
-                if cmp_w < 8 || cmp_h < 8 { continue; }
+                if cmp_w < 8 || cmp_h < 8 {
+                    continue;
+                }
 
                 let crop = |src: &[u8], src_w: usize, tw: usize, th: usize| -> Vec<u8> {
                     let mut out = Vec::with_capacity(tw * th * 3);
@@ -793,7 +817,11 @@ mod quality {
 
                 println!(
                     "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
-                    format!("{name} ({sw}x{sh})"), scale_name, fast_s, best_s, improve,
+                    format!("{name} ({sw}x{sh})"),
+                    scale_name,
+                    fast_s,
+                    best_s,
+                    improve,
                 );
 
                 let e = totals.entry(scale_name).or_insert((0.0, 0.0, 0));
@@ -812,7 +840,11 @@ mod quality {
             let bm = bs / n as f64;
             println!(
                 "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
-                format!("MEAN (n={n})"), k, fm, bm, bm - fm,
+                format!("MEAN (n={n})"),
+                k,
+                fm,
+                bm,
+                bm - fm,
             );
         }
     }
