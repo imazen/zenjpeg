@@ -207,7 +207,7 @@ impl StripProcessor {
                     );
                 }
             }
-            PixelFormat::Bgr | PixelFormat::Bgra => {
+            PixelFormat::Bgr => {
                 let bpp = self.pixel_format.bytes_per_pixel();
                 // Use reuse version with pre-allocated buffers when yuv feature is enabled
                 #[cfg(feature = "yuv")]
@@ -296,8 +296,8 @@ impl StripProcessor {
                     }
                 }
             }
-            PixelFormat::Bgrx => {
-                // BGRX: fast path - 4 bytes per pixel, padding ignored
+            PixelFormat::Bgra | PixelFormat::Bgrx => {
+                // BGRA/BGRX: fast path - 4 bytes per pixel, alpha/padding ignored
                 crate::encode_simd::bgr_to_ycbcr_strided_inplace(
                     rgb_strip,
                     &mut self.y_strip[..y_size],
@@ -306,7 +306,7 @@ impl StripProcessor {
                     width,
                     strip_height,
                     padded_width,
-                    4, // BGRX is 4 bytes per pixel
+                    4, // BGRA/BGRX is 4 bytes per pixel
                 );
             }
             // 16-bit and float formats: linear RGB input
