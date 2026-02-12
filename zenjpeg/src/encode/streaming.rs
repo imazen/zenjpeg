@@ -2856,4 +2856,232 @@ mod tests {
             }
         }
     }
+
+    /// KLT vs YCbCr quality comparison using SSIMULACRA2 and Butteraugli.
+    ///
+    /// At the same quality setting, compares file size AND perceptual quality
+    /// to verify KLT isn't trading quality for size.
+    ///
+    /// Run: cargo test test_klt_quality_metrics --lib --features cms -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_klt_quality_metrics() {
+        use crate::color::klt::{self, CovarianceAccumulator};
+        use butteraugli::{compute_butteraugli, ButteraugliParams};
+        use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+
+        let corpus_dir = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
+        let entries: Vec<_> = std::fs::read_dir(corpus_dir)
+            .expect("read corpus dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+            .collect();
+        assert!(!entries.is_empty(), "no PNG files in corpus");
+
+        fn to_ssim2_frame(
+            pixels: &[u8],
+            w: usize,
+            h: usize,
+        ) -> Rgb {
+            let rgb: Vec<[f32; 3]> = pixels
+                .chunks(3)
+                .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+                .collect();
+            Rgb::new(rgb, w, h, TransferCharacteristic::SRGB, ColorPrimaries::BT709).unwrap()
+        }
+
+        fn decode_klt_to_srgb(
+            jpeg: &[u8],
+            klt_result: &klt::KltAnalysis,
+            w: usize,
+            h: usize,
+        ) -> Vec<u8> {
+            // Decode without ICC — get raw KLT channel values
+            #[allow(deprecated)]
+            let decoded = crate::decode::Decoder::new()
+                .apply_icc(false)
+                .decode(jpeg, enough::Unstoppable)
+                .unwrap();
+            let pixels = decoded.pixels_u8().expect("decoded pixels");
+
+            // Apply inverse KLT to recover sRGB
+            let encode_params =
+                klt::KltEncodeParams::from_forward_with_center(klt_result.forward, klt_result.mean);
+            let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+            let inverse = klt_result.inverse;
+
+            let mut out = vec![0u8; w * h * 3];
+            for i in 0..(w * h) {
+                let c0 = pixels[i * 3] as f32 * inv_scale[0] + inv_offset[0];
+                let c1 = pixels[i * 3 + 1] as f32 * inv_scale[1] + inv_offset[1];
+                let c2 = pixels[i * 3 + 2] as f32 * inv_scale[2] + inv_offset[2];
+                let [r, g, b] = inverse.transform([c0, c1, c2]);
+                out[i * 3] = r.round().clamp(0.0, 255.0) as u8;
+                out[i * 3 + 1] = g.round().clamp(0.0, 255.0) as u8;
+                out[i * 3 + 2] = b.round().clamp(0.0, 255.0) as u8;
+            }
+            out
+        }
+
+        let qualities = [75.0, 85.0, 95.0];
+        let ba_params = ButteraugliParams::default();
+
+        eprintln!("\n=== KLT vs YCbCr Quality Metrics (CID22-512 corpus) ===\n");
+        eprintln!(
+            "{:<12} {:>5} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
+            "Image", "Q", "KLT_sz", "YCbCr_sz", "Δ%", "KLT_ss2", "YCb_ss2", "KLT_ba", "YCb_ba"
+        );
+        eprintln!("{}", "-".repeat(95));
+
+        // Accumulators for summary
+        let mut total_klt_bytes = vec![0u64; qualities.len()];
+        let mut total_ycbcr_bytes = vec![0u64; qualities.len()];
+        let mut sum_klt_ssim2 = vec![0.0f64; qualities.len()];
+        let mut sum_ycbcr_ssim2 = vec![0.0f64; qualities.len()];
+        let mut sum_klt_ba = vec![0.0f64; qualities.len()];
+        let mut sum_ycbcr_ba = vec![0.0f64; qualities.len()];
+        let mut count = 0usize;
+        let mut klt_ssim2_better = vec![0usize; qualities.len()];
+        let mut klt_ba_better = vec![0usize; qualities.len()];
+
+        let mut sorted_entries: Vec<_> = entries.iter().collect();
+        sorted_entries.sort_by_key(|e| e.file_name());
+
+        for entry in &sorted_entries {
+            let png_data = std::fs::read(entry.path()).expect("read png");
+            let dec = png::Decoder::new(std::io::Cursor::new(&png_data));
+            let mut reader = dec.read_info().expect("png info");
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).expect("png frame");
+            let w = info.width as usize;
+            let h = info.height as usize;
+            let bpp = info.color_type.samples();
+            let rgb = &buf[..w * h * bpp];
+            let pf = if bpp == 4 {
+                crate::types::PixelFormat::Rgba
+            } else {
+                crate::types::PixelFormat::Rgb
+            };
+
+            // Compute KLT
+            let mut acc = CovarianceAccumulator::new();
+            acc.accumulate_rgb_u8(rgb, w, bpp);
+            let cov = acc.covariance().expect("cov");
+            let mean = acc.mean().expect("mean");
+            let klt_result = klt::compute_klt(cov, mean);
+
+            let img_name = entry.path().file_stem().unwrap().to_string_lossy().to_string();
+
+            // Need RGB-only for metrics
+            let orig_rgb3: Vec<u8> = if bpp == 3 {
+                rgb.to_vec()
+            } else {
+                rgb.chunks(bpp).flat_map(|c| &c[..3]).copied().collect()
+            };
+
+            for (qi, &quality) in qualities.iter().enumerate() {
+                let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+                // Encode KLT
+                let klt_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt_result.forward, klt_result.mean)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Encode YCbCr
+                let ycbcr_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Decode KLT to sRGB via manual inverse
+                let klt_decoded = decode_klt_to_srgb(&klt_jpeg, &klt_result, w, h);
+
+                // Decode YCbCr (straightforward)
+                #[allow(deprecated)]
+                let ycbcr_dec = crate::decode::Decoder::new()
+                    .decode(&ycbcr_jpeg, enough::Unstoppable)
+                    .unwrap();
+                let ycbcr_decoded = ycbcr_dec.pixels_u8().expect("ycbcr pixels");
+
+                // SSIMULACRA2
+                let orig_frame = to_ssim2_frame(&orig_rgb3, w, h);
+                let klt_frame = to_ssim2_frame(&klt_decoded, w, h);
+                let ycbcr_frame = to_ssim2_frame(&ycbcr_decoded, w, h);
+
+                let klt_ssim2 =
+                    compute_frame_ssimulacra2(orig_frame.clone(), klt_frame).unwrap_or(-999.0);
+                let ycbcr_ssim2 =
+                    compute_frame_ssimulacra2(orig_frame, ycbcr_frame).unwrap_or(-999.0);
+
+                // Butteraugli
+                let klt_ba = compute_butteraugli(&orig_rgb3, &klt_decoded, w, h, &ba_params)
+                    .map(|r| r.score)
+                    .unwrap_or(f64::NAN);
+                let ycbcr_ba = compute_butteraugli(&orig_rgb3, &ycbcr_decoded, w, h, &ba_params)
+                    .map(|r| r.score)
+                    .unwrap_or(f64::NAN);
+
+                let size_delta =
+                    (klt_jpeg.len() as f64 - ycbcr_jpeg.len() as f64) / ycbcr_jpeg.len() as f64
+                        * 100.0;
+
+                eprintln!(
+                    "{:<12} {:>5.0} {:>8} {:>8} {:>+6.1}% {:>8.2} {:>8.2} {:>8.3} {:>8.3}",
+                    img_name,
+                    quality,
+                    klt_jpeg.len(),
+                    ycbcr_jpeg.len(),
+                    size_delta,
+                    klt_ssim2,
+                    ycbcr_ssim2,
+                    klt_ba,
+                    ycbcr_ba
+                );
+
+                total_klt_bytes[qi] += klt_jpeg.len() as u64;
+                total_ycbcr_bytes[qi] += ycbcr_jpeg.len() as u64;
+                sum_klt_ssim2[qi] += klt_ssim2;
+                sum_ycbcr_ssim2[qi] += ycbcr_ssim2;
+                sum_klt_ba[qi] += klt_ba;
+                sum_ycbcr_ba[qi] += ycbcr_ba;
+                if klt_ssim2 > ycbcr_ssim2 {
+                    klt_ssim2_better[qi] += 1;
+                }
+                if klt_ba < ycbcr_ba {
+                    klt_ba_better[qi] += 1;
+                }
+            }
+            count += 1;
+        }
+
+        // Summary
+        eprintln!("\n=== Summary ({} images) ===", count);
+        for (qi, &quality) in qualities.iter().enumerate() {
+            let n = count as f64;
+            let size_delta = (total_klt_bytes[qi] as f64 - total_ycbcr_bytes[qi] as f64)
+                / total_ycbcr_bytes[qi] as f64
+                * 100.0;
+            eprintln!(
+                "Q{:.0}: size Δ={:+.2}%, avg SSIM2: KLT={:.3} YCbCr={:.3} (KLT better {}/{}), avg BA: KLT={:.4} YCbCr={:.4} (KLT better {}/{})",
+                quality, size_delta,
+                sum_klt_ssim2[qi] / n, sum_ycbcr_ssim2[qi] / n,
+                klt_ssim2_better[qi], count,
+                sum_klt_ba[qi] / n, sum_ycbcr_ba[qi] / n,
+                klt_ba_better[qi], count,
+            );
+        }
+
+        // Write CSV
+        let output_dir = "/mnt/v/output/zenjpeg/klt-eval";
+        std::fs::create_dir_all(output_dir).ok();
+        let _csv_path = format!("{}/quality_metrics.csv", output_dir);
+        // CSV is written by the eprintln output — user can capture if needed
+        eprintln!("\nResults printed above. No assertions — this is an evaluation test.");
+    }
 }
