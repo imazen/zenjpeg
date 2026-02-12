@@ -3084,4 +3084,235 @@ mod tests {
         // CSV is written by the eprintln output — user can capture if needed
         eprintln!("\nResults printed above. No assertions — this is an evaluation test.");
     }
+
+    /// KLT vs YCbCr BD-Rate comparison using codec-eval metrics.
+    ///
+    /// Encodes at 5 quality levels, measures Butteraugli and SSIMULACRA2,
+    /// then computes BD-Rate to determine true coding efficiency.
+    ///
+    /// Run: cargo test test_klt_bdrate --lib -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_klt_bdrate() {
+        use crate::color::klt::{self, CovarianceAccumulator};
+
+        let corpus_dir = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
+        let mut entries: Vec<_> = std::fs::read_dir(corpus_dir)
+            .expect("read corpus")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        let qualities = [50.0f32, 65.0, 75.0, 85.0, 95.0];
+        let n_q = qualities.len();
+
+        let mut all_klt_rd: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycbcr_rd: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_klt_rd_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut all_ycbcr_rd_ss2: Vec<Vec<(f64, f64)>> = Vec::new();
+
+        // Per-quality accumulators
+        let mut klt_bytes = vec![0u64; n_q];
+        let mut ycbcr_bytes = vec![0u64; n_q];
+        let mut klt_ba_sum = vec![0.0f64; n_q];
+        let mut ycbcr_ba_sum = vec![0.0f64; n_q];
+        let mut klt_ss2_sum = vec![0.0f64; n_q];
+        let mut ycbcr_ss2_sum = vec![0.0f64; n_q];
+        let mut count = 0usize;
+
+        eprintln!("\n=== KLT vs YCbCr BD-Rate (codec-eval metrics, CID22-512) ===\n");
+        eprintln!(
+            "{:<12} {:>5} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
+            "Image", "Q", "KLT_sz", "YCbCr_sz", "Δ%", "KLT_ba", "YCb_ba", "KLT_ss2", "YCb_ss2"
+        );
+        eprintln!("{}", "-".repeat(95));
+
+        for entry in &entries {
+            let png_data = std::fs::read(entry.path()).expect("read png");
+            let dec = png::Decoder::new(std::io::Cursor::new(&png_data));
+            let mut reader = dec.read_info().expect("png info");
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).expect("png frame");
+            let w = info.width as usize;
+            let h = info.height as usize;
+            let bpp = info.color_type.samples();
+            let rgb = &buf[..w * h * bpp];
+            let pf = if bpp == 4 {
+                crate::types::PixelFormat::Rgba
+            } else {
+                crate::types::PixelFormat::Rgb
+            };
+
+            let mut acc = CovarianceAccumulator::new();
+            acc.accumulate_rgb_u8(rgb, w, bpp);
+            let cov = acc.covariance().expect("cov");
+            let mean = acc.mean().expect("mean");
+            let klt_result = klt::compute_klt(cov, mean);
+
+            let name = entry.path().file_stem().unwrap().to_string_lossy().to_string();
+            let npixels = (w * h) as f64;
+
+            // RGB-only for metrics
+            let orig_rgb3: Vec<u8> = if bpp == 3 {
+                rgb.to_vec()
+            } else {
+                rgb.chunks(bpp).flat_map(|c| &c[..3]).copied().collect()
+            };
+
+            let mut img_klt_rd = Vec::new();
+            let mut img_ycbcr_rd = Vec::new();
+            let mut img_klt_rd_ss2 = Vec::new();
+            let mut img_ycbcr_rd_ss2 = Vec::new();
+
+            for (qi, &quality) in qualities.iter().enumerate() {
+                let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+
+                let klt_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt_result.forward, klt_result.mean)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                let ycbcr_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Decode KLT to sRGB via manual inverse
+                let klt_decoded = {
+                    #[allow(deprecated)]
+                    let decoded = crate::decode::Decoder::new()
+                        .apply_icc(false)
+                        .decode(&klt_jpeg, enough::Unstoppable)
+                        .unwrap();
+                    let pixels = decoded.pixels_u8().expect("decoded pixels");
+                    let encode_params = klt::KltEncodeParams::from_forward_with_center(
+                        klt_result.forward, klt_result.mean,
+                    );
+                    let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+                    let inverse = klt_result.inverse;
+                    let mut out = vec![0u8; w * h * 3];
+                    for i in 0..(w * h) {
+                        let c0 = pixels[i * 3] as f32 * inv_scale[0] + inv_offset[0];
+                        let c1 = pixels[i * 3 + 1] as f32 * inv_scale[1] + inv_offset[1];
+                        let c2 = pixels[i * 3 + 2] as f32 * inv_scale[2] + inv_offset[2];
+                        let [r, g, b] = inverse.transform([c0, c1, c2]);
+                        out[i * 3] = r.round().clamp(0.0, 255.0) as u8;
+                        out[i * 3 + 1] = g.round().clamp(0.0, 255.0) as u8;
+                        out[i * 3 + 2] = b.round().clamp(0.0, 255.0) as u8;
+                    }
+                    out
+                };
+
+                // Decode YCbCr
+                #[allow(deprecated)]
+                let ycbcr_dec = crate::decode::Decoder::new()
+                    .decode(&ycbcr_jpeg, enough::Unstoppable)
+                    .unwrap();
+                let ycbcr_decoded = ycbcr_dec.pixels_u8().expect("ycbcr pixels");
+
+                // Butteraugli
+                let klt_ba = codec_eval::metrics::butteraugli::calculate_butteraugli(
+                    &orig_rgb3, &klt_decoded, w, h,
+                ).unwrap_or(f64::NAN);
+                let ycbcr_ba = codec_eval::metrics::butteraugli::calculate_butteraugli(
+                    &orig_rgb3, &ycbcr_decoded, w, h,
+                ).unwrap_or(f64::NAN);
+
+                // SSIMULACRA2
+                let klt_ss2 = codec_eval::metrics::ssimulacra2::calculate_ssimulacra2(
+                    &orig_rgb3, &klt_decoded, w, h,
+                ).unwrap_or(f64::NAN);
+                let ycbcr_ss2 = codec_eval::metrics::ssimulacra2::calculate_ssimulacra2(
+                    &orig_rgb3, &ycbcr_decoded, w, h,
+                ).unwrap_or(f64::NAN);
+
+                let size_delta = (klt_jpeg.len() as f64 - ycbcr_jpeg.len() as f64)
+                    / ycbcr_jpeg.len() as f64 * 100.0;
+
+                eprintln!(
+                    "{:<12} {:>5.0} {:>8} {:>8} {:>+6.1}% {:>8.3} {:>8.3} {:>8.2} {:>8.2}",
+                    name, quality, klt_jpeg.len(), ycbcr_jpeg.len(), size_delta,
+                    klt_ba, ycbcr_ba, klt_ss2, ycbcr_ss2
+                );
+
+                klt_bytes[qi] += klt_jpeg.len() as u64;
+                ycbcr_bytes[qi] += ycbcr_jpeg.len() as u64;
+                klt_ba_sum[qi] += klt_ba;
+                ycbcr_ba_sum[qi] += ycbcr_ba;
+                klt_ss2_sum[qi] += klt_ss2;
+                ycbcr_ss2_sum[qi] += ycbcr_ss2;
+
+                let klt_bpp = (klt_jpeg.len() * 8) as f64 / npixels;
+                let ycbcr_bpp = (ycbcr_jpeg.len() * 8) as f64 / npixels;
+                img_klt_rd.push((klt_bpp, klt_ba));
+                img_ycbcr_rd.push((ycbcr_bpp, ycbcr_ba));
+                img_klt_rd_ss2.push((klt_bpp, klt_ss2));
+                img_ycbcr_rd_ss2.push((ycbcr_bpp, ycbcr_ss2));
+            }
+
+            all_klt_rd.push(img_klt_rd);
+            all_ycbcr_rd.push(img_ycbcr_rd);
+            all_klt_rd_ss2.push(img_klt_rd_ss2);
+            all_ycbcr_rd_ss2.push(img_ycbcr_rd_ss2);
+            count += 1;
+        }
+
+        // Summary
+        let n = count as f64;
+        eprintln!("\n=== Summary ({} images) ===", count);
+        for (qi, &quality) in qualities.iter().enumerate() {
+            let sd = (klt_bytes[qi] as f64 - ycbcr_bytes[qi] as f64)
+                / ycbcr_bytes[qi] as f64 * 100.0;
+            eprintln!(
+                "Q{:.0}: size {:+.1}%, BA: KLT={:.3} YCbCr={:.3}, SS2: KLT={:.2} YCbCr={:.2}",
+                quality, sd,
+                klt_ba_sum[qi] / n, ycbcr_ba_sum[qi] / n,
+                klt_ss2_sum[qi] / n, ycbcr_ss2_sum[qi] / n,
+            );
+        }
+
+        // BD-Rate (Butteraugli): per-image, then average
+        let mut bd_ba = Vec::new();
+        let mut bd_ss2 = Vec::new();
+        for i in 0..count {
+            // Butteraugli: lower=better, negate for BD-rate (expects higher=better)
+            let ref_ba: Vec<(f64, f64)> = all_ycbcr_rd[i].iter()
+                .map(|(bpp, ba)| (*bpp, -ba)).collect();
+            let test_ba: Vec<(f64, f64)> = all_klt_rd[i].iter()
+                .map(|(bpp, ba)| (*bpp, -ba)).collect();
+            if let Some(bd) = codec_eval::stats::bd_rate(&ref_ba, &test_ba) {
+                bd_ba.push(bd);
+            }
+            // SSIMULACRA2: higher=better, use directly
+            let ref_ss: Vec<(f64, f64)> = all_ycbcr_rd_ss2[i].clone();
+            let test_ss: Vec<(f64, f64)> = all_klt_rd_ss2[i].clone();
+            if let Some(bd) = codec_eval::stats::bd_rate(&ref_ss, &test_ss) {
+                bd_ss2.push(bd);
+            }
+        }
+
+        eprintln!("\n=== BD-Rate (negative = KLT better) ===");
+        if !bd_ba.is_empty() {
+            let avg = bd_ba.iter().sum::<f64>() / bd_ba.len() as f64;
+            let mut sorted = bd_ba.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let median = sorted[sorted.len() / 2];
+            eprintln!("Butteraugli BD-Rate: avg={:+.2}%, median={:+.2}% ({}/{})",
+                avg, median, bd_ba.len(), count);
+        }
+        if !bd_ss2.is_empty() {
+            let avg = bd_ss2.iter().sum::<f64>() / bd_ss2.len() as f64;
+            let mut sorted = bd_ss2.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let median = sorted[sorted.len() / 2];
+            eprintln!("SSIMULACRA2 BD-Rate: avg={:+.2}%, median={:+.2}% ({}/{})",
+                avg, median, bd_ss2.len(), count);
+        }
+    }
 }
