@@ -1060,25 +1060,41 @@ mod tests {
 
         // Want at least 500x375 → 1/8 works (500x375)
         assert_eq!(
-            ShrinkHint::FitWithin { width: 500, height: 375 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 500,
+                height: 375
+            }
+            .resolve(src),
             DctScale::Eighth,
         );
 
         // Want at least 501x376 → 1/8 gives 500x375, too small → 1/4 gives 1000x750
         assert_eq!(
-            ShrinkHint::FitWithin { width: 501, height: 376 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 501,
+                height: 376
+            }
+            .resolve(src),
             DctScale::Quarter,
         );
 
         // Want at least 1001x751 → 1/4 gives 1000x750, too small → 1/2 gives 2000x1500
         assert_eq!(
-            ShrinkHint::FitWithin { width: 1001, height: 751 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 1001,
+                height: 751
+            }
+            .resolve(src),
             DctScale::Half,
         );
 
         // Want at least 2001x1501 → 1/2 gives 2000x1500, too small → full
         assert_eq!(
-            ShrinkHint::FitWithin { width: 2001, height: 1501 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 2001,
+                height: 1501
+            }
+            .resolve(src),
             DctScale::Full,
         );
     }
@@ -1099,13 +1115,21 @@ mod tests {
 
         // Want 100x100 → 1/8 gives (100, 750) → both >= 100 ✓
         assert_eq!(
-            ShrinkHint::FitWithin { width: 100, height: 100 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 100,
+                height: 100
+            }
+            .resolve(src),
             DctScale::Eighth,
         );
 
         // Want 100x751 → 1/8 gives (100, 750) → height too small → 1/4 gives (200, 1500)
         assert_eq!(
-            ShrinkHint::FitWithin { width: 100, height: 751 }.resolve(src),
+            ShrinkHint::FitWithin {
+                width: 100,
+                height: 751
+            }
+            .resolve(src),
             DctScale::Quarter,
         );
     }

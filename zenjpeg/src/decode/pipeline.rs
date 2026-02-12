@@ -197,7 +197,11 @@ impl StripProcessor {
         let y_strip_size = strip_stride * mcu_height;
 
         // Chroma strip: at native (potentially subsampled) scaled resolution
-        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * block_size };
+        let chroma_strip_width = if is_grayscale {
+            0
+        } else {
+            mcu_cols * block_size
+        };
         let chroma_strip_stride = if is_grayscale {
             0
         } else {
@@ -365,12 +369,7 @@ impl StripProcessor {
                             );
                         }
                         (false, _) => {
-                            idct_int_tiered(
-                                &mut self.dequant_buf,
-                                strip,
-                                stride,
-                                coeff_count,
-                            );
+                            idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
                         }
                         (true, ChromaUpsampling::LibjpegCompat) => {
                             idct_int_tiered_libjpeg_unclamped(
