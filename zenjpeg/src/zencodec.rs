@@ -13,7 +13,7 @@ use imgref::{ImgRef, ImgVec};
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob, ImageFormat,
-    ImageInfo, ImageMetadata, PixelData, Stop,
+    ImageInfo, ImageMetadata, PixelData, ResourceLimits, Stop,
 };
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -25,7 +25,7 @@ use crate::error::Error;
 
 /// JPEG encoder configuration implementing [`Encoding`].
 ///
-/// Wraps [`EncoderConfig`] with limit fields for the trait interface.
+/// Wraps [`EncoderConfig`] with resource limits for the trait interface.
 /// Defaults to YCbCr 4:2:0 at quality 85.
 ///
 /// # Examples
@@ -41,9 +41,7 @@ use crate::error::Error;
 #[derive(Clone, Debug)]
 pub struct JpegEncoding {
     inner: EncoderConfig,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
-    limit_output: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl JpegEncoding {
@@ -52,9 +50,7 @@ impl JpegEncoding {
     pub fn new() -> Self {
         Self {
             inner: EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -63,9 +59,7 @@ impl JpegEncoding {
     pub fn ycbcr(quality: f32, subsampling: ChromaSubsampling) -> Self {
         Self {
             inner: EncoderConfig::ycbcr(quality, subsampling),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -74,10 +68,15 @@ impl JpegEncoding {
     pub fn grayscale(quality: f32) -> Self {
         Self {
             inner: EncoderConfig::grayscale(quality),
-            limit_pixels: None,
-            limit_memory: None,
-            limit_output: None,
+            limits: ResourceLimits::none(),
         }
+    }
+
+    /// Set encoding quality (0-100).
+    #[must_use]
+    pub fn with_quality(mut self, quality: f32) -> Self {
+        self.inner = self.inner.quality(Quality::ApproxJpegli(quality));
+        self
     }
 
     /// Enable progressive JPEG encoding.
@@ -126,40 +125,8 @@ impl Encoding for JpegEncoding {
     type Error = Error;
     type Job<'a> = JpegEncodeJob<'a>;
 
-    fn with_quality(mut self, quality: f32) -> Self {
-        self.inner = self.inner.quality(Quality::ApproxJpegli(quality));
-        self
-    }
-
-    fn with_effort(self, _effort: u32) -> Self {
-        // JPEG doesn't have a separate effort parameter.
-        // Progressive mode is the main speed/quality tradeoff but it's
-        // controlled via with_progressive().
-        self
-    }
-
-    fn with_lossless(self, _lossless: bool) -> Self {
-        // JPEG is inherently lossy; ignore.
-        self
-    }
-
-    fn with_alpha_quality(self, _quality: f32) -> Self {
-        // JPEG doesn't support alpha; ignore.
-        self
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
-        self
-    }
-
-    fn with_limit_output(mut self, bytes: u64) -> Self {
-        self.limit_output = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -170,8 +137,7 @@ impl Encoding for JpegEncoding {
             icc: None,
             exif: None,
             xmp: None,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: ResourceLimits::none(),
         }
     }
 }
@@ -188,11 +154,31 @@ pub struct JpegEncodeJob<'a> {
     icc: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> JpegEncodeJob<'a> {
+    /// Set ICC color profile for this encode operation.
+    #[must_use]
+    pub fn with_icc(mut self, icc: &'a [u8]) -> Self {
+        self.icc = Some(icc);
+        self
+    }
+
+    /// Set EXIF metadata for this encode operation.
+    #[must_use]
+    pub fn with_exif(mut self, exif: &'a [u8]) -> Self {
+        self.exif = Some(exif);
+        self
+    }
+
+    /// Set XMP metadata for this encode operation.
+    #[must_use]
+    pub fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
+        self.xmp = Some(xmp);
+        self
+    }
+
     /// Encode using the native request API. Common path for all pixel types.
     fn do_encode(self, pixels: &[Rgb<u8>], w: u32, h: u32) -> Result<EncodeOutput, Error> {
         let mut req = self.config.inner.request();
@@ -236,28 +222,8 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn with_icc(mut self, icc: &'a [u8]) -> Self {
-        self.icc = Some(icc);
-        self
-    }
-
-    fn with_exif(mut self, exif: &'a [u8]) -> Self {
-        self.exif = Some(exif);
-        self
-    }
-
-    fn with_xmp(mut self, xmp: &'a [u8]) -> Self {
-        self.xmp = Some(xmp);
-        self
-    }
-
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -305,24 +271,18 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use zencodec_types::Decoding;
+/// use zencodec_types::{Decoding, ResourceLimits};
 /// use zenjpeg::JpegDecoding;
 ///
-/// let dec = JpegDecoding::new()
-///     .with_limit_pixels(100_000_000);
+/// let limits = ResourceLimits::none().with_max_pixels(100_000_000);
+/// let dec = JpegDecoding::new().with_limits(&limits);
 /// let output = dec.decode(&jpeg_bytes)?;
 /// ```
 #[derive(Clone, Debug)]
 pub struct JpegDecoding {
     #[cfg(feature = "decoder")]
     inner: crate::decode::DecodeConfig,
-    limit_file_size: Option<u64>,
-    // When the decoder feature is disabled, we still need fields for limits
-    // so that Decoding trait methods work (they just won't decode).
-    #[cfg(not(feature = "decoder"))]
-    max_pixels: Option<u64>,
-    #[cfg(not(feature = "decoder"))]
-    max_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl JpegDecoding {
@@ -332,11 +292,7 @@ impl JpegDecoding {
         Self {
             #[cfg(feature = "decoder")]
             inner: crate::decode::DecodeConfig::new(),
-            limit_file_size: None,
-            #[cfg(not(feature = "decoder"))]
-            max_pixels: None,
-            #[cfg(not(feature = "decoder"))]
-            max_memory: None,
+            limits: ResourceLimits::none(),
         }
     }
 }
@@ -351,47 +307,21 @@ impl Decoding for JpegDecoding {
     type Error = Error;
     type Job<'a> = JpegDecodeJob<'a>;
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
         #[cfg(feature = "decoder")]
         {
-            self.inner = self.inner.max_pixels(max);
+            if let Some(max) = limits.max_pixels {
+                self.inner = self.inner.max_pixels(max);
+            }
+            if let Some(bytes) = limits.max_memory_bytes {
+                self.inner = self.inner.max_memory(bytes);
+            }
+            // Use dimension limits as pixel limit approximation
+            if let (Some(w), Some(h)) = (limits.max_width, limits.max_height) {
+                self.inner = self.inner.max_pixels(w as u64 * h as u64);
+            }
         }
-        #[cfg(not(feature = "decoder"))]
-        {
-            self.max_pixels = Some(max);
-        }
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        #[cfg(feature = "decoder")]
-        {
-            self.inner = self.inner.max_memory(bytes);
-        }
-        #[cfg(not(feature = "decoder"))]
-        {
-            self.max_memory = Some(bytes);
-        }
-        self
-    }
-
-    fn with_limit_dimensions(mut self, _width: u32, _height: u32) -> Self {
-        // zenjpeg's decoder doesn't have per-dimension limits, only max_pixels.
-        // Use max_pixels = width * height as an approximation.
-        let max = _width as u64 * _height as u64;
-        #[cfg(feature = "decoder")]
-        {
-            self.inner = self.inner.max_pixels(max);
-        }
-        #[cfg(not(feature = "decoder"))]
-        {
-            self.max_pixels = Some(max);
-        }
-        self
-    }
-
-    fn with_limit_file_size(mut self, bytes: u64) -> Self {
-        self.limit_file_size = Some(bytes);
+        self.limits = limits.clone();
         self
     }
 
@@ -399,8 +329,7 @@ impl Decoding for JpegDecoding {
         JpegDecodeJob {
             config: self,
             stop: None,
-            limit_pixels: None,
-            limit_memory: None,
+            limits: ResourceLimits::none(),
         }
     }
 
@@ -427,8 +356,7 @@ impl Decoding for JpegDecoding {
 pub struct JpegDecodeJob<'a> {
     config: &'a JpegDecoding,
     stop: Option<&'a dyn Stop>,
-    limit_pixels: Option<u64>,
-    limit_memory: Option<u64>,
+    limits: ResourceLimits,
 }
 
 impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
@@ -439,13 +367,8 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
-    fn with_limit_pixels(mut self, max: u64) -> Self {
-        self.limit_pixels = Some(max);
-        self
-    }
-
-    fn with_limit_memory(mut self, bytes: u64) -> Self {
-        self.limit_memory = Some(bytes);
+    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+        self.limits = limits.clone();
         self
     }
 
@@ -457,10 +380,10 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
             // Build decoder config with overrides
             let mut cfg = self.config.inner.clone();
 
-            if let Some(max) = self.limit_pixels {
+            if let Some(max) = self.limits.max_pixels {
                 cfg = cfg.max_pixels(max);
             }
-            if let Some(bytes) = self.limit_memory {
+            if let Some(bytes) = self.limits.max_memory_bytes {
                 cfg = cfg.max_memory(bytes);
             }
 
