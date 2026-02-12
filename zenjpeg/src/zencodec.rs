@@ -12,8 +12,8 @@ use alloc::vec::Vec;
 use imgref::{ImgRef, ImgRefMut, ImgVec};
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
-    DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob, ImageFormat,
-    ImageInfo, ImageMetadata, PixelData, ResourceLimits, Stop,
+    CodecCapabilities, DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob,
+    ImageFormat, ImageInfo, ImageMetadata, PixelData, ResourceLimits, Stop,
 };
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -125,8 +125,18 @@ impl Encoding for JpegEncoding {
     type Error = Error;
     type Job<'a> = JpegEncodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn capabilities() -> &'static CodecCapabilities {
+        static CAPS: CodecCapabilities = CodecCapabilities::new()
+            .with_encode_icc(true)
+            .with_encode_exif(true)
+            .with_encode_xmp(true)
+            .with_encode_cancel(true)
+            .with_native_gray(true);
+        &CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -222,8 +232,8 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -307,7 +317,18 @@ impl Decoding for JpegDecoding {
     type Error = Error;
     type Job<'a> = JpegDecodeJob<'a>;
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
+    fn capabilities() -> &'static CodecCapabilities {
+        static CAPS: CodecCapabilities = CodecCapabilities::new()
+            .with_decode_icc(true)
+            .with_decode_exif(true)
+            .with_decode_xmp(true)
+            .with_decode_cancel(true)
+            .with_native_gray(true)
+            .with_cheap_probe(true);
+        &CAPS
+    }
+
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
         #[cfg(feature = "decoder")]
         {
             if let Some(max) = limits.max_pixels {
@@ -316,12 +337,11 @@ impl Decoding for JpegDecoding {
             if let Some(bytes) = limits.max_memory_bytes {
                 self.inner = self.inner.max_memory(bytes);
             }
-            // Use dimension limits as pixel limit approximation
             if let (Some(w), Some(h)) = (limits.max_width, limits.max_height) {
                 self.inner = self.inner.max_pixels(w as u64 * h as u64);
             }
         }
-        self.limits = limits.clone();
+        self.limits = limits;
         self
     }
 
@@ -333,7 +353,7 @@ impl Decoding for JpegDecoding {
         }
     }
 
-    fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
+    fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
         #[cfg(feature = "decoder")]
         {
             let info = self.inner.read_info(data)?;
@@ -419,8 +439,8 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
-    fn with_limits(mut self, limits: &ResourceLimits) -> Self {
-        self.limits = limits.clone();
+    fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -734,7 +754,7 @@ mod tests {
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = JpegDecoding::new();
-        let info = dec.probe(encoded.bytes()).unwrap();
+        let info = dec.probe_header(encoded.bytes()).unwrap();
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
         assert_eq!(info.format, ImageFormat::Jpeg);
