@@ -390,6 +390,27 @@ pub struct JpegDecodeJob<'a> {
     limits: ResourceLimits,
 }
 
+impl<'a> JpegDecodeJob<'a> {
+    /// Build a DecodeConfig with limit overrides applied.
+    #[cfg(feature = "decoder")]
+    fn build_config(&self) -> crate::decode::DecodeConfig {
+        let mut cfg = self.config.inner.clone();
+        if let Some(max) = self.limits.max_pixels {
+            cfg = cfg.max_pixels(max);
+        }
+        if let Some(bytes) = self.limits.max_memory_bytes {
+            cfg = cfg.max_memory(bytes);
+        }
+        cfg
+    }
+
+    /// Build ImageInfo from a probe, applying any dimension transforms.
+    #[cfg(feature = "decoder")]
+    fn build_info(&self, data: &[u8]) -> Result<ImageInfo, Error> {
+        self.config.decode_info(data)
+    }
+}
+
 impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
 
@@ -468,6 +489,108 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
         #[cfg(not(feature = "decoder"))]
         {
             let _ = data;
+            Err(Error::unsupported_feature("decoder feature required"))
+        }
+    }
+
+    fn decode_into_rgb8(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Rgb<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        #[cfg(feature = "decoder")]
+        {
+            let cfg = self.build_config();
+            let info = self.build_info(data)?;
+            let mut reader = cfg.scanline_reader(data)?;
+            let width = reader.width() as usize;
+
+            let mut rows_read = 0;
+            for row in dst.rows_mut() {
+                if reader.is_finished() {
+                    break;
+                }
+                let n = row.len().min(width);
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut row[..n]);
+                let out = ImgRefMut::new(bytes, n * 3, 1);
+                let count = reader.read_rows_rgb8(out)?;
+                if count == 0 {
+                    break;
+                }
+                rows_read += count;
+            }
+            let _ = rows_read;
+            Ok(info)
+        }
+        #[cfg(not(feature = "decoder"))]
+        {
+            let _ = (data, dst);
+            Err(Error::unsupported_feature("decoder feature required"))
+        }
+    }
+
+    fn decode_into_rgba8(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Rgba<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        #[cfg(feature = "decoder")]
+        {
+            let cfg = self.build_config();
+            let info = self.build_info(data)?;
+            let mut reader = cfg.scanline_reader(data)?;
+            let width = reader.width() as usize;
+
+            for row in dst.rows_mut() {
+                if reader.is_finished() {
+                    break;
+                }
+                let n = row.len().min(width);
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut row[..n]);
+                let out = ImgRefMut::new(bytes, n * 4, 1);
+                let count = reader.read_rows_rgba8(out)?;
+                if count == 0 {
+                    break;
+                }
+            }
+            Ok(info)
+        }
+        #[cfg(not(feature = "decoder"))]
+        {
+            let _ = (data, dst);
+            Err(Error::unsupported_feature("decoder feature required"))
+        }
+    }
+
+    fn decode_into_gray8(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Gray<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        #[cfg(feature = "decoder")]
+        {
+            let cfg = self.build_config();
+            let info = self.build_info(data)?;
+            let mut reader = cfg.scanline_reader(data)?;
+            let width = reader.width() as usize;
+
+            for row in dst.rows_mut() {
+                if reader.is_finished() {
+                    break;
+                }
+                let n = row.len().min(width);
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut row[..n]);
+                let out = ImgRefMut::new(bytes, n, 1);
+                let count = reader.read_rows_gray8(out)?;
+                if count == 0 {
+                    break;
+                }
+            }
+            Ok(info)
+        }
+        #[cfg(not(feature = "decoder"))]
+        {
+            let _ = (data, dst);
             Err(Error::unsupported_feature("decoder feature required"))
         }
     }
