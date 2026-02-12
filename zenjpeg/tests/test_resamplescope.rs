@@ -55,13 +55,18 @@ fn encode_jpeg(pixels: &[u8], w: u32, h: u32, quality: f32) -> Vec<u8> {
 }
 
 /// Compute source width that produces exactly `target` at given DctScale.
-/// DctScale::scaled_dimension(W) = (W * numerator + 7) / 8
+/// For most scales: `scaled_dimension(W) = (W * numerator + 7) / 8`
+/// For Sixteenth: `scaled_dimension(W) = (W + 15) / 16`
 fn source_dim_for_target(target: usize, scale: DctScale) -> u32 {
-    let num = scale.numerator() as usize;
-    // (W * num + 7) / 8 = target
-    // W * num = target * 8 - 7 (approximately, need to search)
-    // Start from the approximate value and adjust
-    let approx = (target * 8 + num - 1) / num;
+    // Compute approximate inverse
+    let approx = if scale == DctScale::Sixteenth {
+        // (W + 15) / 16 = target → W ≈ target * 16
+        target * 16
+    } else {
+        let num = scale.numerator() as usize;
+        // (W * num + 7) / 8 = target → W ≈ target * 8 / num
+        (target * 8 + num - 1) / num
+    };
     // Search nearby for exact match
     for w in (approx.saturating_sub(2))..=(approx + 2) {
         if scale.scaled_dimension(w as u32) == target as u32 {
@@ -214,6 +219,20 @@ fn resamplescope_shrink_eighth() {
     std::fs::create_dir_all(OUTPUT_DIR).unwrap();
     save_scope_png(&graph, &format!("{OUTPUT_DIR}/eighth_scale.png"));
     eprintln!("\nScope graph: {OUTPUT_DIR}/eighth_scale.png");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn resamplescope_shrink_sixteenth() {
+    let curve = analyze_scale(DctScale::Sixteenth, 99.0);
+
+    let scores = resamplescope::score::score_against_all(&curve);
+    let best_filter = scores.first().map(|s| s.filter);
+    let graph = resamplescope::graph::render(Some(&curve), None, best_filter);
+
+    std::fs::create_dir_all(OUTPUT_DIR).unwrap();
+    save_scope_png(&graph, &format!("{OUTPUT_DIR}/sixteenth_scale.png"));
+    eprintln!("\nScope graph: {OUTPUT_DIR}/sixteenth_scale.png");
 }
 
 /// Compare JPEG shrink at multiple quality levels to see how JPEG

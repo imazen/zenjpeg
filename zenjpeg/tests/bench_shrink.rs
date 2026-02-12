@@ -104,7 +104,7 @@ fn bench_shrink_100mp() {
     eprintln!("=== {w}x{h} 4:2:0 Q95 ===\n");
 
     // Show output dimensions for each scale
-    for scale in [DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+    for scale in [DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
         let sw = scale.scaled_dimension(w);
         let sh = scale.scaled_dimension(h);
         eprintln!("  {scale}: output {sw}x{sh}");
@@ -180,6 +180,26 @@ fn bench_shrink_100mp() {
             .unwrap();
     });
 
+    let fast_sixteenth = bench_config("Shrink Fast 1/16 (640x640)", &jpeg, iters, |data| {
+        let _ = Decoder::new()
+            .max_pixels(0)
+            .output_format(PixelFormat::Rgb)
+            .shrink(ShrinkHint::ExactScale(DctScale::Sixteenth))
+            .shrink_quality(ShrinkQuality::Fast)
+            .decode(data, Unstoppable)
+            .unwrap();
+    });
+
+    let best_sixteenth = bench_config("Shrink Best 1/16 (640x640)", &jpeg, iters, |data| {
+        let _ = Decoder::new()
+            .max_pixels(0)
+            .output_format(PixelFormat::Rgb)
+            .shrink(ShrinkHint::ExactScale(DctScale::Sixteenth))
+            .shrink_quality(ShrinkQuality::Best)
+            .decode(data, Unstoppable)
+            .unwrap();
+    });
+
     // Full decode + resize
     let full_resize_eighth = bench_config("Full + resize 1/8 (1280x1280)", &jpeg, iters, |data| {
         let r = Decoder::new()
@@ -199,15 +219,10 @@ fn bench_shrink_100mp() {
         w as f64 * h as f64 / 1e6,
         w as f64 * h as f64 * 3.0 / 1e6
     );
-    for scale in [DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+    for scale in [DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
         let sw = scale.scaled_dimension(w);
         let sh = scale.scaled_dimension(h);
-        let name = match scale {
-            DctScale::Half => "1/2",
-            DctScale::Quarter => "1/4",
-            DctScale::Eighth => "1/8",
-            _ => "?",
-        };
+        let name = format!("{scale}");
         eprintln!(
             "  {name:8} {sw}x{sh} = {:.1} MP, {:.1} MB RGB",
             sw as f64 * sh as f64 / 1e6,
@@ -226,6 +241,8 @@ fn bench_shrink_100mp() {
         ("Shrink Best 1/4 (2560x2560)", best_quarter),
         ("Shrink Fast 1/8 (1280x1280)", fast_eighth),
         ("Shrink Best 1/8 (1280x1280)", best_eighth),
+        ("Shrink Fast 1/16 (640x640)", fast_sixteenth),
+        ("Shrink Best 1/16 (640x640)", best_sixteenth),
         ("Full + resize 1/8 (1280x1280)", full_resize_eighth),
     ];
     for (label, time) in &rows {

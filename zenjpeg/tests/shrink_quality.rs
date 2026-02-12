@@ -207,8 +207,9 @@ mod quality {
 
         let mut results = Vec::new();
 
-        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
             let factor = match scale {
+                DctScale::Sixteenth => 16,
                 DctScale::Eighth => 8,
                 DctScale::Quarter => 4,
                 DctScale::Half => 2,
@@ -340,16 +341,7 @@ mod quality {
 
                 for r in &results {
                     let delta = r.shrink_ssim2 - r.resize_ssim2;
-                    let scale_name = format!(
-                        "1/{}",
-                        match r.scale {
-                            DctScale::Eighth => 8,
-                            DctScale::Quarter => 4,
-                            DctScale::Half => 2,
-                            DctScale::Full => 1,
-                            _ => unreachable!(),
-                        }
-                    );
+                    let scale_name = format!("{}", r.scale);
 
                     println!(
                         "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
@@ -437,8 +429,9 @@ mod quality {
         let fw = full.width() as usize;
         let fh = full.height() as usize;
 
-        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
             let factor = match scale {
+                DctScale::Sixteenth => 16,
                 DctScale::Eighth => 8,
                 DctScale::Quarter => 4,
                 DctScale::Half => 2,
@@ -566,8 +559,9 @@ mod quality {
         let fw = full.width() as usize;
         let fh = full.height() as usize;
 
-        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
             let factor = match scale {
+                DctScale::Sixteenth => 16,
                 DctScale::Eighth => 8,
                 DctScale::Quarter => 4,
                 DctScale::Half => 2,
@@ -764,11 +758,13 @@ mod quality {
 
             let jpeg = encode_jpeg(&rgb, w, h, 95.0, ChromaSubsampling::None);
 
-            for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+            for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth, DctScale::Sixteenth] {
                 let factor = match scale {
+                    DctScale::Sixteenth => 16,
                     DctScale::Eighth => 8,
                     DctScale::Quarter => 4,
                     DctScale::Half => 2,
+                    DctScale::Full => 1,
                     _ => unreachable!(),
                 };
 
