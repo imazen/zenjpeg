@@ -49,7 +49,8 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+    DctScale, DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+    ShrinkHint, ShrinkQuality,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -376,6 +377,68 @@ impl DecodeConfig {
             self.output_target = OutputTarget::Srgb8;
         }
         self
+    }
+
+    /// Set shrink-on-load hint.
+    ///
+    /// Output dimensions will be approximately the target, rounded up to
+    /// the nearest supported DCT scale. The decoder picks the smallest
+    /// scale that meets the minimum output dimensions.
+    ///
+    /// This is much faster than full decode + post-process downscale:
+    /// fewer IDCT operations, fewer pixels through color conversion,
+    /// smaller buffers.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decoder::{Decoder, ShrinkHint, DctScale};
+    ///
+    /// // Thumbnail: at least 200x200
+    /// let result = Decoder::new()
+    ///     .shrink(ShrinkHint::FitWithin { width: 200, height: 200 })
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    ///
+    /// // Exact 1/2 scale
+    /// let result = Decoder::new()
+    ///     .shrink(ShrinkHint::ExactScale(DctScale::Half))
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    /// ```
+    #[must_use]
+    pub fn shrink(mut self, hint: ShrinkHint) -> Self {
+        self.shrink_hint = Some(hint);
+        self
+    }
+
+    /// Set shrink quality tier.
+    ///
+    /// `Fast` uses reduced NxN IDCT per block (may show block boundary artifacts).
+    /// `Best` uses full 8x8 IDCT + cross-block spatial downscale (no artifacts).
+    ///
+    /// Default: `Fast` for `Srgb8`, `Best` for `Precise` output targets.
+    #[must_use]
+    pub fn shrink_quality(mut self, quality: ShrinkQuality) -> Self {
+        self.shrink_quality = Some(quality);
+        self
+    }
+
+    /// Resolve the effective shrink quality for the current configuration.
+    pub(crate) fn effective_shrink_quality(&self) -> ShrinkQuality {
+        self.shrink_quality.unwrap_or_else(|| {
+            if self.output_target.is_precise() {
+                ShrinkQuality::Best
+            } else {
+                ShrinkQuality::Fast
+            }
+        })
+    }
+
+    /// Resolve shrink hint to a DctScale for the given source dimensions.
+    pub(crate) fn resolve_dct_scale(&self, source: Dimensions) -> DctScale {
+        match self.shrink_hint {
+            Some(hint) => hint.resolve(source),
+            None => DctScale::Full,
+        }
     }
 
     /// Reads JPEG info without decoding.

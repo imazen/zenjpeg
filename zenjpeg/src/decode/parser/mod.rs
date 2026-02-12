@@ -700,11 +700,13 @@ impl<'a> JpegParser<'a> {
             (self.icc_profile.clone(), None, None)
         };
 
+        let dims = Dimensions {
+            width: self.width,
+            height: self.height,
+        };
         JpegInfo {
-            dimensions: Dimensions {
-                width: self.width,
-                height: self.height,
-            },
+            available_scales: JpegInfo::compute_available_scales(dims),
+            dimensions: dims,
             color_space,
             precision: self.precision,
             num_components: self.num_components,
