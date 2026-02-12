@@ -592,6 +592,7 @@ impl DecodeConfig {
                     self.chroma_upsampling,
                     self.output_target,
                     dct_scale,
+                    self.effective_shrink_quality(),
                 );
             }
 
@@ -679,6 +680,7 @@ impl DecodeConfig {
             self.chroma_upsampling,
             self.output_target,
             dct_scale,
+            self.effective_shrink_quality(),
         )
     }
 
@@ -751,6 +753,7 @@ impl DecodeConfig {
             self.chroma_upsampling,
             self.output_target,
             dct_scale,
+            self.effective_shrink_quality(),
         )
     }
 

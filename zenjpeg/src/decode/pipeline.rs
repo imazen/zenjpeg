@@ -7,7 +7,7 @@
 //!
 //! Both the scanline decoder and buffered decoder share this code path.
 
-use super::config::{ChromaUpsampling, DctScale, OutputTarget};
+use super::config::{ChromaUpsampling, DctScale, OutputTarget, ShrinkQuality};
 use super::idct_int::{
     idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
@@ -103,6 +103,8 @@ pub(super) struct StripProcessor {
     pub output_target: OutputTarget,
     /// DCT scale for shrink-on-load (Full = default, no scaling).
     pub dct_scale: DctScale,
+    /// Quality tier for shrink-on-load. Best = full IDCT + area average.
+    pub shrink_quality: ShrinkQuality,
     /// Output pixels per block edge (1, 2, 4, or 8). Cached from dct_scale.
     pub block_size: usize,
 }
@@ -143,6 +145,7 @@ impl StripProcessor {
             chroma_upsampling: ChromaUpsampling::default(),
             output_target: OutputTarget::default(),
             dct_scale: DctScale::Full,
+            shrink_quality: ShrinkQuality::Fast,
             block_size: 8,
         }
     }
@@ -156,6 +159,7 @@ impl StripProcessor {
         chroma_upsampling: ChromaUpsampling,
         output_target: OutputTarget,
         dct_scale: DctScale,
+        shrink_quality: ShrinkQuality,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -290,6 +294,7 @@ impl StripProcessor {
             chroma_upsampling,
             output_target,
             dct_scale,
+            shrink_quality,
             block_size,
         })
     }
@@ -340,6 +345,25 @@ impl StripProcessor {
         };
 
         let unclamped = self.output_target.needs_unclamped_idct();
+
+        // ShrinkQuality::Best uses full 8×8 IDCT + area average for all reduced scales.
+        // This produces much higher quality than reduced IDCT because it uses all 64
+        // DCT coefficients. For aligned 2:1/4:1/8:1 ratios, the averaging regions
+        // are fully contained within each 8×8 block, so per-block processing gives
+        // identical results to full-image area average.
+        if self.shrink_quality == ShrinkQuality::Best && self.dct_scale != DctScale::Full {
+            return Self::idct_block_best_quality(
+                &mut self.dequant_buf,
+                self.chroma_upsampling,
+                self.block_size,
+                strip,
+                stride,
+                coeffs,
+                coeff_count,
+                quant,
+                unclamped,
+            );
+        }
 
         // Dispatch based on DCT scale
         match self.dct_scale {
@@ -458,6 +482,101 @@ impl StripProcessor {
                         idct_scaled_4x4(&self.dequant_buf, strip, stride);
                     }
                 }
+            }
+        }
+    }
+
+    /// Full 8×8 IDCT + area average for ShrinkQuality::Best.
+    ///
+    /// Produces scaled output (4×4, 2×2, or 1×1) by first doing a full-resolution
+    /// IDCT into a temporary buffer, then area-averaging to the target block size.
+    /// Uses all 64 DCT coefficients, giving much better quality than reduced IDCT.
+    ///
+    /// Takes `dequant_buf` by separate reference to avoid borrowing all of `self`
+    /// (since the caller already borrows strip buffers from `self`).
+    #[inline(always)]
+    fn idct_block_best_quality(
+        dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
+        chroma_upsampling: ChromaUpsampling,
+        block_size: usize,
+        strip: &mut [i16],
+        stride: usize,
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        coeff_count: u8,
+        quant: &[u16; DCT_BLOCK_SIZE],
+        unclamped: bool,
+    ) {
+        let bs = block_size;
+
+        if coeff_count <= 1 {
+            // DC-only: area average of a uniform block is the same value.
+            // This is identical for both reduced IDCT and full IDCT + average.
+            let dc = coeffs[0] as i32 * quant[0] as i32;
+            let val = if unclamped {
+                (dc.wrapping_add(4).wrapping_add(1024)).wrapping_shr(3) as i16
+            } else {
+                (dc.wrapping_add(4).wrapping_add(1024))
+                    .wrapping_shr(3)
+                    .clamp(0, 255) as i16
+            };
+            for row in 0..bs {
+                let r = &mut strip[row * stride..];
+                r[..bs].fill(val);
+            }
+            return;
+        }
+
+        // Full 8×8 IDCT into temporary stack buffer
+        let mut temp = [0i16; 64];
+        dequantize_unzigzag_i32_into_partial(
+            coeffs,
+            quant,
+            dequant_buf,
+            coeff_count,
+        );
+
+        if unclamped {
+            match chroma_upsampling {
+                ChromaUpsampling::LibjpegCompat => {
+                    idct_int_tiered_libjpeg_unclamped(
+                        dequant_buf, &mut temp, 8, coeff_count,
+                    );
+                }
+                _ => {
+                    idct_int_tiered_unclamped(
+                        dequant_buf, &mut temp, 8, coeff_count,
+                    );
+                }
+            }
+        } else {
+            match chroma_upsampling {
+                ChromaUpsampling::LibjpegCompat => {
+                    idct_int_tiered_libjpeg(
+                        dequant_buf, &mut temp, 8, coeff_count,
+                    );
+                }
+                _ => {
+                    idct_int_tiered(
+                        dequant_buf, &mut temp, 8, coeff_count,
+                    );
+                }
+            }
+        }
+
+        // Area average from 8×8 to bs×bs
+        let factor = 8 / bs; // 2 for half, 4 for quarter, 8 for eighth
+        let factor_sq = (factor * factor) as i32;
+        let round = factor_sq / 2;
+
+        for oy in 0..bs {
+            for ox in 0..bs {
+                let mut sum = 0i32;
+                for dy in 0..factor {
+                    for dx in 0..factor {
+                        sum += temp[(oy * factor + dy) * 8 + (ox * factor + dx)] as i32;
+                    }
+                }
+                strip[oy * stride + ox] = ((sum + round) / factor_sq) as i16;
             }
         }
     }

@@ -505,4 +505,241 @@ mod quality {
             // No assertion here — this test is informational.
         }
     }
+
+    /// Compare ShrinkQuality::Fast vs ShrinkQuality::Best.
+    /// Best should match (or nearly match) the "resize of full decode" reference.
+    #[test]
+    fn shrink_quality_best_vs_fast() {
+        use zenjpeg::decoder::ShrinkQuality;
+
+        // Create a 256x256 noise+patches image
+        let w = 256u32;
+        let h = 256u32;
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        let mut rng = 12345u64;
+        let mut next = || -> u8 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) as u8
+        };
+        for y in 0..h {
+            for x in 0..w {
+                let idx = ((y * w + x) * 3) as usize;
+                let patch_x = (x / 32) as u8;
+                let patch_y = (y / 32) as u8;
+                let base_r = patch_x.wrapping_mul(37).wrapping_add(patch_y.wrapping_mul(71));
+                let base_g = patch_x.wrapping_mul(53).wrapping_add(patch_y.wrapping_mul(29));
+                let base_b = patch_x.wrapping_mul(19).wrapping_add(patch_y.wrapping_mul(97));
+                let noise = next() / 8;
+                pixels[idx] = base_r.wrapping_add(noise);
+                pixels[idx + 1] = base_g.wrapping_add(noise);
+                pixels[idx + 2] = base_b.wrapping_add(noise);
+            }
+        }
+
+        let jpeg = encode_jpeg(&pixels, w, h, 90.0, ChromaSubsampling::None);
+
+        // Full decode (reference)
+        let full = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let full_px = full.pixels_u8().unwrap();
+        let fw = full.width() as usize;
+        let fh = full.height() as usize;
+
+        for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+            let factor = match scale {
+                DctScale::Eighth => 8,
+                DctScale::Quarter => 4,
+                DctScale::Half => 2,
+                DctScale::Full => 1,
+                _ => unreachable!(),
+            };
+
+            // Fast (reduced IDCT)
+            let fast = Decoder::new()
+                .shrink(ShrinkHint::ExactScale(scale))
+                .shrink_quality(ShrinkQuality::Fast)
+                .decode(&jpeg, Unstoppable)
+                .unwrap();
+            let fast_px = fast.pixels_u8().unwrap();
+            let sw = fast.width() as usize;
+            let sh = fast.height() as usize;
+
+            // Best (full IDCT + area average)
+            let best = Decoder::new()
+                .shrink(ShrinkHint::ExactScale(scale))
+                .shrink_quality(ShrinkQuality::Best)
+                .decode(&jpeg, Unstoppable)
+                .unwrap();
+            let best_px = best.pixels_u8().unwrap();
+            let bw = best.width() as usize;
+            let bh = best.height() as usize;
+
+            assert_eq!(sw, bw, "Width mismatch");
+            assert_eq!(sh, bh, "Height mismatch");
+
+            // Reference: area downsample of full decode (gamma-encoded, matches Best path)
+            let (resized, rw, rh) = area_downsample_rgb(full_px, fw, fh, factor);
+            let (ref_linear, rlw, rlh) = linear_area_downsample_rgb(
+                &pixels, w as usize, h as usize, factor,
+            );
+
+            let cmp_w = sw.min(rw).min(rlw);
+            let cmp_h = sh.min(rh).min(rlh);
+            if cmp_w < 8 || cmp_h < 8 {
+                continue;
+            }
+
+            let crop = |src: &[u8], src_w: usize, tw: usize, th: usize| -> Vec<u8> {
+                let mut out = Vec::with_capacity(tw * th * 3);
+                for y in 0..th {
+                    let start = y * src_w * 3;
+                    out.extend_from_slice(&src[start..start + tw * 3]);
+                }
+                out
+            };
+
+            let fast_c = crop(fast_px, sw, cmp_w, cmp_h);
+            let best_c = crop(best_px, bw, cmp_w, cmp_h);
+            let ref_c = crop(&ref_linear, rlw, cmp_w, cmp_h);
+
+            let fast_score = ssim2(&fast_c, &ref_c, cmp_w, cmp_h);
+            let best_score = ssim2(&best_c, &ref_c, cmp_w, cmp_h);
+
+            eprintln!(
+                "  {scale}: fast={fast_score:.2}, best={best_score:.2}, improvement={:.2}",
+                best_score - fast_score,
+            );
+
+            // Best mode should always be better than or equal to Fast mode.
+            // Note: Best averages per-component in YCbCr space before color conversion,
+            // while the reference averages in RGB space after color conversion. These
+            // differ because YCbCr→RGB is a non-trivial linear combination. The SSIM2
+            // score is the right metric — not pixel-exact match with RGB area average.
+            assert!(
+                best_score >= fast_score - 1.0,
+                "{scale}: Best ({best_score:.2}) should be >= Fast ({fast_score:.2})"
+            );
+        }
+    }
+
+    /// Corpus-based comparison of Fast vs Best quality modes.
+    #[test]
+    #[ignore]
+    fn shrink_fast_vs_best_corpus() {
+        use zenjpeg::decoder::ShrinkQuality;
+
+        let corpus = corpus().expect("codec-corpus not found");
+        let cid22 = corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22 corpus not found");
+
+        let mut images: Vec<PathBuf> = std::fs::read_dir(&cid22)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "png"))
+            .collect();
+        images.sort();
+        let images = &images[..images.len().min(10)];
+
+        println!("\n=== Fast vs Best Shrink Quality (SSIM2 vs linear-resized source) ===\n");
+        println!(
+            "{:<20} {:>6} {:>10} {:>10} {:>10}",
+            "Image", "Scale", "Fast", "Best", "Improve"
+        );
+        println!("{:-<66}", "");
+
+        let mut totals: std::collections::HashMap<String, (f64, f64, usize)> =
+            std::collections::HashMap::new();
+
+        for img_path in images {
+            let (rgb, w, h) = match load_png_rgb(img_path) {
+                Some(v) => v,
+                None => continue,
+            };
+            let name: String = img_path
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .chars()
+                .take(18)
+                .collect();
+
+            let jpeg = encode_jpeg(&rgb, w, h, 95.0, ChromaSubsampling::None);
+
+            for &scale in &[DctScale::Half, DctScale::Quarter, DctScale::Eighth] {
+                let factor = match scale {
+                    DctScale::Eighth => 8,
+                    DctScale::Quarter => 4,
+                    DctScale::Half => 2,
+                    _ => unreachable!(),
+                };
+
+                let fast = Decoder::new()
+                    .shrink(ShrinkHint::ExactScale(scale))
+                    .shrink_quality(ShrinkQuality::Fast)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let fast_px = fast.pixels_u8().unwrap();
+                let sw = fast.width() as usize;
+                let sh = fast.height() as usize;
+
+                let best = Decoder::new()
+                    .shrink(ShrinkHint::ExactScale(scale))
+                    .shrink_quality(ShrinkQuality::Best)
+                    .decode(&jpeg, Unstoppable)
+                    .unwrap();
+                let best_px = best.pixels_u8().unwrap();
+
+                // Reference
+                let (ref_linear, rlw, rlh) = linear_area_downsample_rgb(
+                    &rgb, w as usize, h as usize, factor,
+                );
+                let cmp_w = sw.min(rlw);
+                let cmp_h = sh.min(rlh);
+                if cmp_w < 8 || cmp_h < 8 { continue; }
+
+                let crop = |src: &[u8], src_w: usize, tw: usize, th: usize| -> Vec<u8> {
+                    let mut out = Vec::with_capacity(tw * th * 3);
+                    for y in 0..th {
+                        let start = y * src_w * 3;
+                        out.extend_from_slice(&src[start..start + tw * 3]);
+                    }
+                    out
+                };
+                let ref_c = crop(&ref_linear, rlw, cmp_w, cmp_h);
+                let fast_c = crop(fast_px, sw, cmp_w, cmp_h);
+                let best_c = crop(best_px, sw, cmp_w, cmp_h);
+
+                let fast_s = ssim2(&fast_c, &ref_c, cmp_w, cmp_h);
+                let best_s = ssim2(&best_c, &ref_c, cmp_w, cmp_h);
+
+                let scale_name = format!("1/{factor}");
+                let improve = best_s - fast_s;
+
+                println!(
+                    "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
+                    format!("{name} ({sw}x{sh})"), scale_name, fast_s, best_s, improve,
+                );
+
+                let e = totals.entry(scale_name).or_insert((0.0, 0.0, 0));
+                e.0 += fast_s;
+                e.1 += best_s;
+                e.2 += 1;
+            }
+        }
+
+        println!("{:-<66}", "");
+        let mut keys: Vec<_> = totals.keys().cloned().collect();
+        keys.sort();
+        for k in &keys {
+            let (fs, bs, n) = totals[k];
+            let fm = fs / n as f64;
+            let bm = bs / n as f64;
+            println!(
+                "{:<20} {:>6} {:>10.2} {:>10.2} {:>+10.2}",
+                format!("MEAN (n={n})"), k, fm, bm, bm - fm,
+            );
+        }
+    }
 }
