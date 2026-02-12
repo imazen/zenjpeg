@@ -27,6 +27,7 @@
 pub mod idct;
 #[doc(hidden)]
 pub mod idct_int;
+pub(crate) mod idct_scaled;
 
 mod config;
 mod extras;
