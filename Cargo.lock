@@ -1408,7 +1408,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
-name = "resamplescope"
+name = "resamplescope-rs"
 version = "0.1.0"
 dependencies = [
  "imgref",
@@ -2175,7 +2175,7 @@ dependencies = [
  "png",
  "proptest",
  "rayon",
- "resamplescope",
+ "resamplescope-rs",
  "rgb",
  "safe_unaligned_simd",
  "serde",
