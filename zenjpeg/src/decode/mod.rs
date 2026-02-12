@@ -655,9 +655,18 @@ impl DecodeConfig {
             ));
         }
 
+        // Resolve DCT scale from shrink hint
+        let source_dims = crate::types::Dimensions::new(parser.width, parser.height);
+        let dct_scale = self.resolve_dct_scale(source_dims);
+
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
-        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
+        ScanlineReader::from_scan_data(
+            scan_data,
+            self.chroma_upsampling,
+            self.output_target,
+            dct_scale,
+        )
     }
 
     /// Creates a scanline reader that applies a DCT-domain transform.
@@ -722,7 +731,14 @@ impl DecodeConfig {
         }
 
         let coefficients = parser.extract_coefficients()?;
-        ScanlineReader::from_coefficients(coefficients, self.chroma_upsampling, self.output_target)
+        let source_dims = crate::types::Dimensions::new(coefficients.width, coefficients.height);
+        let dct_scale = self.resolve_dct_scale(source_dims);
+        ScanlineReader::from_coefficients(
+            coefficients,
+            self.chroma_upsampling,
+            self.output_target,
+            dct_scale,
+        )
     }
 
     /// Compute the effective transform from raw JPEG data.
