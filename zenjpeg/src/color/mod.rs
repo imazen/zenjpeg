@@ -7,6 +7,7 @@
 //! - CMYK support
 
 pub mod icc;
+pub mod klt;
 pub mod xyb;
 pub mod ycbcr;
 
