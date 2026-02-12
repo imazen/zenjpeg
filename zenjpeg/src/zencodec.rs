@@ -342,7 +342,9 @@ impl Decoding for JpegDecoding {
         #[cfg(not(feature = "decoder"))]
         {
             let _ = data;
-            Err(Error::unsupported_feature("decoder feature required for probing"))
+            Err(Error::unsupported_feature(
+                "decoder feature required for probing",
+            ))
         }
     }
 }
@@ -489,7 +491,14 @@ mod tests {
     #[test]
     fn encoding_default_roundtrip() {
         let enc = JpegEncoding::new().with_quality(80.0);
-        let pixels = vec![Rgb { r: 128, g: 64, b: 32 }; 64];
+        let pixels = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            64
+        ];
         let img = Img::new(pixels, 8, 8);
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
         assert!(!output.bytes().is_empty());
@@ -505,11 +514,7 @@ mod tests {
         let img = Img::new(pixels, 4, 4);
 
         let icc = b"fake icc profile data";
-        let output = enc
-            .job()
-            .with_icc(icc)
-            .encode_rgb8(img.as_ref())
-            .unwrap();
+        let output = enc.job().with_icc(icc).encode_rgb8(img.as_ref()).unwrap();
         assert!(!output.bytes().is_empty());
     }
 
@@ -547,7 +552,14 @@ mod tests {
 
         // Encode
         let enc = JpegEncoding::new().with_quality(95.0);
-        let pixels = vec![Rgb { r: 200, g: 100, b: 50 }; 64];
+        let pixels = vec![
+            Rgb {
+                r: 200,
+                g: 100,
+                b: 50
+            };
+            64
+        ];
         let img = Img::new(pixels, 8, 8);
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
