@@ -759,7 +759,7 @@ impl DecodeConfig {
     /// Scans raw bytes for EXIF orientation (lightweight, no full parse),
     /// composes with any user-specified transform.
     /// Returns `LosslessTransform::None` if no transform is needed.
-    fn compute_effective_transform_from_data(
+    pub(crate) fn compute_effective_transform_from_data(
         &self,
         data: &[u8],
     ) -> crate::lossless::LosslessTransform {
@@ -801,11 +801,8 @@ impl DecodeConfig {
             let mut rows_read = 0;
             while rows_read < height {
                 let remaining = height - rows_read;
-                let out = imgref::ImgRefMut::new(
-                    &mut pixels[rows_read * width..],
-                    width,
-                    remaining,
-                );
+                let out =
+                    imgref::ImgRefMut::new(&mut pixels[rows_read * width..], width, remaining);
                 let count = reader.read_rows_gray8(out)?;
                 if count == 0 {
                     break;

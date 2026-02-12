@@ -221,10 +221,10 @@ pub fn idct_scaled_4x4(dequant: &[i32; 64], out: &mut [i16], stride: usize) {
 
     // Column pass: 4-point IDCT on each of 4 columns
     for col in 0..4 {
-        let c0 = dequant[col];       // row 0
-        let c1 = dequant[8 + col];   // row 1
-        let c2 = dequant[16 + col];  // row 2
-        let c3 = dequant[24 + col];  // row 3
+        let c0 = dequant[col]; // row 0
+        let c1 = dequant[8 + col]; // row 1
+        let c2 = dequant[16 + col]; // row 2
+        let c3 = dequant[24 + col]; // row 3
 
         // Even part: butterfly on c0, c2
         let even_sum = wa(c0, c2) << 12;
@@ -237,9 +237,9 @@ pub fn idct_scaled_4x4(dequant: &[i32; 64], out: &mut [i16], stride: usize) {
         let odd1 = ws(wm(z1, COS_PI_8), wm(z2, COS_3PI_8));
 
         // Combine
-        tmp[col]      = wa(even_sum, odd0) >> 10;
-        tmp[4 + col]  = wa(even_diff, odd1) >> 10;
-        tmp[8 + col]  = ws(even_diff, odd1) >> 10;
+        tmp[col] = wa(even_sum, odd0) >> 10;
+        tmp[4 + col] = wa(even_diff, odd1) >> 10;
+        tmp[8 + col] = ws(even_diff, odd1) >> 10;
         tmp[12 + col] = ws(even_sum, odd0) >> 10;
     }
 
@@ -289,9 +289,9 @@ pub fn idct_scaled_4x4_unclamped(dequant: &[i32; 64], out: &mut [i16], stride: u
         let odd0 = wa(wm(z1, COS_3PI_8), wm(z2, COS_PI_8));
         let odd1 = ws(wm(z1, COS_PI_8), wm(z2, COS_3PI_8));
 
-        tmp[col]      = wa(even_sum, odd0) >> 10;
-        tmp[4 + col]  = wa(even_diff, odd1) >> 10;
-        tmp[8 + col]  = ws(even_diff, odd1) >> 10;
+        tmp[col] = wa(even_sum, odd0) >> 10;
+        tmp[4 + col] = wa(even_diff, odd1) >> 10;
+        tmp[8 + col] = ws(even_diff, odd1) >> 10;
         tmp[12 + col] = ws(even_sum, odd0) >> 10;
     }
 
@@ -330,12 +330,11 @@ mod tests {
     use crate::decode::idct_int::{idct_int_dc_only, idct_int_tiered};
 
     /// Helper: do full 8x8 IDCT then downsample to NxN by area averaging.
-    fn full_idct_then_downsample(
-        dequant: &mut [i32; 64],
-        scale: usize,
-    ) -> Vec<i16> {
+    fn full_idct_then_downsample(dequant: &mut [i32; 64], scale: usize) -> Vec<i16> {
         let mut full = [0i16; 64];
-        let coeff_count = dequant.iter().rposition(|&x| x != 0)
+        let coeff_count = dequant
+            .iter()
+            .rposition(|&x| x != 0)
             .map(|p| (p + 1) as u8)
             .unwrap_or(0);
 
@@ -445,11 +444,14 @@ mod tests {
     fn scaled_2x2_with_ac_reasonable() {
         // Block with some AC content: reduced output should be close to
         // full IDCT + 4x4 area average (not exact due to different math).
-        let mut block = make_test_block(800, &[
-            (1, 50),   // freq(0,1)
-            (8, -30),  // freq(1,0)
-            (9, 20),   // freq(1,1)
-        ]);
+        let mut block = make_test_block(
+            800,
+            &[
+                (1, 50),  // freq(0,1)
+                (8, -30), // freq(1,0)
+                (9, 20),  // freq(1,1)
+            ],
+        );
 
         let mut out_scaled = [0i16; 4];
         idct_scaled_2x2(&block, &mut out_scaled, 2);
@@ -471,22 +473,26 @@ mod tests {
             assert!(
                 diff <= 5,
                 "2x2 pixel {i}: scaled={} ref={} diff={diff}",
-                out_scaled[i], reference[i],
+                out_scaled[i],
+                reference[i],
             );
         }
     }
 
     #[test]
     fn scaled_4x4_with_ac_reasonable() {
-        let mut block = make_test_block(700, &[
-            (1, 40),    // freq(0,1)
-            (2, -20),   // freq(0,2)
-            (8, 30),    // freq(1,0)
-            (9, -15),   // freq(1,1)
-            (16, -25),  // freq(2,0)
-            (17, 10),   // freq(2,1)
-            (24, 5),    // freq(3,0)
-        ]);
+        let mut block = make_test_block(
+            700,
+            &[
+                (1, 40),   // freq(0,1)
+                (2, -20),  // freq(0,2)
+                (8, 30),   // freq(1,0)
+                (9, -15),  // freq(1,1)
+                (16, -25), // freq(2,0)
+                (17, 10),  // freq(2,1)
+                (24, 5),   // freq(3,0)
+            ],
+        );
 
         let mut out_scaled = [0i16; 16];
         idct_scaled_4x4(&block, &mut out_scaled, 4);
@@ -508,7 +514,8 @@ mod tests {
             assert!(
                 diff <= 5,
                 "4x4 pixel {i}: scaled={} ref={} diff={diff}",
-                out_scaled[i], reference[i],
+                out_scaled[i],
+                reference[i],
             );
         }
     }

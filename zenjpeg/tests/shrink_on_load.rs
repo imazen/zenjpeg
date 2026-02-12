@@ -4,8 +4,8 @@
 
 use enough::Unstoppable;
 use zenjpeg::decoder::{DctScale, Decoder, ShrinkHint};
-use zenjpeg::encode::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
+use zenjpeg::encode::EncoderConfig;
 
 // ============================================================================
 // Test helpers
@@ -98,14 +98,18 @@ fn shrink_dimensions_exact_444() {
         let expected_h = scale.scaled_dimension(256);
 
         assert_eq!(
-            result.width(), expected_w,
+            result.width(),
+            expected_w,
             "width mismatch at {}: expected {expected_w}, got {}",
-            scale, result.width(),
+            scale,
+            result.width(),
         );
         assert_eq!(
-            result.height(), expected_h,
+            result.height(),
+            expected_h,
             "height mismatch at {}: expected {expected_h}, got {}",
-            scale, result.height(),
+            scale,
+            result.height(),
         );
     }
 }
@@ -259,7 +263,11 @@ fn shrink_half_produces_valid_pixels() {
     let expected_w = DctScale::Half.scaled_dimension(128) as usize;
     let expected_h = DctScale::Half.scaled_dimension(128) as usize;
 
-    assert_eq!(px.len(), expected_w * expected_h * 3, "buffer size mismatch");
+    assert_eq!(
+        px.len(),
+        expected_w * expected_h * 3,
+        "buffer size mismatch"
+    );
 
     // All pixels should be valid (not zero-filled artifacts)
     // In a gradient image, most pixels should be non-zero
@@ -406,11 +414,8 @@ fn scanline_reader_shrink_read_all_rows() {
 
     while rows_read < height {
         let remaining = height - rows_read;
-        let out = imgref::ImgRefMut::new(
-            &mut output[rows_read * width * 3..],
-            width * 3,
-            remaining,
-        );
+        let out =
+            imgref::ImgRefMut::new(&mut output[rows_read * width * 3..], width * 3, remaining);
         let count = reader.read_rows_rgb8(out).unwrap();
         if count == 0 {
             break;

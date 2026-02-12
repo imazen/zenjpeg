@@ -9,7 +9,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use imgref::{ImgRef, ImgVec};
+use imgref::{ImgRef, ImgRefMut, ImgVec};
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob, ImageFormat,
@@ -344,6 +344,35 @@ impl Decoding for JpegDecoding {
             let _ = data;
             Err(Error::unsupported_feature(
                 "decoder feature required for probing",
+            ))
+        }
+    }
+
+    fn decode_info(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
+        #[cfg(feature = "decoder")]
+        {
+            let info = self.inner.read_info(data)?;
+            let mut img_info = to_image_info(&info);
+
+            // Apply DctScale shrink-on-load
+            let scale = self.inner.resolve_dct_scale(info.dimensions);
+            let scaled = scale.scaled_dimensions(info.dimensions);
+            img_info.width = scaled.width;
+            img_info.height = scaled.height;
+
+            // Apply auto_orient / decode_transform dimension swap
+            let transform = self.inner.compute_effective_transform_from_data(data);
+            if transform.swaps_dimensions() {
+                core::mem::swap(&mut img_info.width, &mut img_info.height);
+            }
+
+            Ok(img_info)
+        }
+        #[cfg(not(feature = "decoder"))]
+        {
+            let _ = data;
+            Err(Error::unsupported_feature(
+                "decoder feature required for decode_info",
             ))
         }
     }
