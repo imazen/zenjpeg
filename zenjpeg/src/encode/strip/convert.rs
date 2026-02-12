@@ -1099,19 +1099,18 @@ impl StripProcessor {
 
     /// Converts RGB strip data to KLT-decorrelated channels.
     ///
-    /// Applies the forward KLT matrix to each RGB pixel:
-    ///   [c0, c1, c2] = matrix * [R, G, B]
+    /// Applies the forward KLT matrix to each RGB pixel and normalizes
+    /// to \[0, 255\] range using precomputed per-channel scale and offset:
+    ///   raw = matrix * \[R, G, B\]
+    ///   stored_i = raw_i * scale_i + offset_i
     ///
     /// Channel 0 (highest variance, luminance-like) goes to y_strip.
     /// Channels 1-2 (lower variance, chroma-like) go to cb_strip/cr_strip.
-    ///
-    /// All output values are shifted to [0, 255] range by adding 128 to
-    /// center the zero-mean decorrelated channels for JPEG encoding.
     pub(super) fn convert_strip_to_klt(
         &mut self,
         rgb_strip: &[u8],
         strip_height: usize,
-        klt_matrix: &crate::color::klt::Mat3,
+        params: &crate::color::klt::KltEncodeParams,
     ) -> Result<()> {
         let width = self.layout.width;
         let padded_width = self.layout.padded_width;
@@ -1137,6 +1136,10 @@ impl StripProcessor {
             PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx
         );
 
+        let matrix = &params.forward;
+        let scale = &params.scale;
+        let offset = &params.offset;
+
         for row in 0..strip_height {
             let y_row_start = row * padded_width;
             let cbcr_row_start = row * width;
@@ -1158,16 +1161,12 @@ impl StripProcessor {
                     )
                 };
 
-                // Apply KLT matrix
-                let [c0, c1, c2] = klt_matrix.transform([r, g, b]);
+                // Apply KLT matrix and normalize to [0, 255]
+                let [c0, c1, c2] = matrix.transform([r, g, b]);
 
-                // Store: c0 in Y strip (padded), c1/c2 in Cb/Cr strips (packed)
-                // Level shift to [0, 255] range (the decorrelated channels are
-                // centered around the transform of the mean, so we keep them
-                // as-is — the mean energy goes into the DC coefficient during DCT).
-                self.y_strip[y_row_start + x] = c0;
-                self.cb_strip[cbcr_row_start + x] = c1;
-                self.cr_strip[cbcr_row_start + x] = c2;
+                self.y_strip[y_row_start + x] = c0 * scale[0] + offset[0];
+                self.cb_strip[cbcr_row_start + x] = c1 * scale[1] + offset[1];
+                self.cr_strip[cbcr_row_start + x] = c2 * scale[2] + offset[2];
             }
 
             // Edge-pad Y row

@@ -115,6 +115,86 @@ impl Mat3 {
         a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6])
             + a[2] * (a[3] * a[7] - a[4] * a[6])
     }
+
+    /// Computes the output range for each row when applied to [0, max_input]^3 inputs.
+    ///
+    /// Returns (min, max) per row. For rows with all-positive coefficients,
+    /// min=0.0. For rows with mixed signs, min<0.
+    pub fn channel_ranges(&self, max_input: f32) -> [(f32, f32); 3] {
+        let mut ranges = [(0.0f32, 0.0f32); 3];
+        for i in 0..3 {
+            let row = self.row(i);
+            let mut min_val = 0.0f32;
+            let mut max_val = 0.0f32;
+            for &c in &row {
+                if c > 0.0 {
+                    max_val += c * max_input;
+                } else {
+                    min_val += c * max_input;
+                }
+            }
+            ranges[i] = (min_val, max_val);
+        }
+        ranges
+    }
+}
+
+/// Precomputed parameters for encoding KLT channels in \[0, 255\] range.
+///
+/// When applying the KLT forward matrix to 8-bit RGB \[0, 255\], the output
+/// channels may exceed the \[0, 255\] range. These parameters provide per-channel
+/// scale and offset to normalize the output.
+///
+/// stored_i = raw_i * scale\[i\] + offset\[i\]
+#[derive(Clone, Debug)]
+pub struct KltEncodeParams {
+    /// Forward KLT matrix.
+    pub forward: Mat3,
+    /// Per-channel multiplier to apply after matrix transform.
+    pub scale: [f32; 3],
+    /// Per-channel additive offset to apply after scale.
+    pub offset: [f32; 3],
+}
+
+impl KltEncodeParams {
+    /// Computes encoding parameters from a KLT forward matrix.
+    ///
+    /// Scales each output channel to fit exactly in \[0, 255\] for \[0, 255\]
+    /// RGB input.
+    pub fn from_forward(forward: Mat3) -> Self {
+        let ranges = forward.channel_ranges(255.0);
+        let mut scale = [0.0f32; 3];
+        let mut offset = [0.0f32; 3];
+        for i in 0..3 {
+            let (min_val, max_val) = ranges[i];
+            let range = max_val - min_val;
+            if range > 0.0 {
+                scale[i] = 255.0 / range;
+                offset[i] = -min_val * scale[i];
+            } else {
+                // Degenerate: all values collapse to the same point
+                scale[i] = 1.0;
+                offset[i] = 128.0;
+            }
+        }
+        Self {
+            forward,
+            scale,
+            offset,
+        }
+    }
+
+    /// Returns per-channel (inverse_scale, inverse_offset) for decoding:
+    ///   raw_i = (stored_i - offset_i) / scale_i
+    pub fn inverse_scale_offset(&self) -> ([f32; 3], [f32; 3]) {
+        let mut inv_scale = [0.0f32; 3];
+        let mut inv_offset = [0.0f32; 3];
+        for i in 0..3 {
+            inv_scale[i] = 1.0 / self.scale[i];
+            inv_offset[i] = -self.offset[i] / self.scale[i];
+        }
+        (inv_scale, inv_offset)
+    }
 }
 
 /// Statistics accumulator for computing the covariance matrix of RGB pixels.

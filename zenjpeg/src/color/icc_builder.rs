@@ -64,28 +64,47 @@ fn write_u16(buf: &mut Vec<u8>, val: u16) {
 
 /// Build an ICC v2 matrix profile for a KLT decorrelation transform.
 ///
-/// The profile encodes `D_inverse * M_srgb_to_xyz_d50` as its matrix columns,
-/// where `D` is the forward decorrelation matrix (RGB → decorrelated).
+/// The profile encodes a composite matrix that maps from the stored (scaled)
+/// KLT channels back through the inverse KLT and sRGB-to-XYZ transforms.
 ///
-/// When the ICC engine processes the decoded "RGB" values (which are actually
-/// decorrelated channels), it:
-/// 1. Linearizes via sRGB TRC curves
-/// 2. Multiplies by the matrix columns → gets XYZ
-/// 3. Converts XYZ to display space
+/// The stored channels are normalized to \[0, 255\] via per-channel scale+offset.
+/// The ICC matrix incorporates the inverse scaling (1/scale_i per column) so that
+/// the matrix columns represent the correct XYZ mapping.
 ///
-/// Step 2 effectively computes `XYZ = M_srgb_to_xyz * D_inverse * channels`,
-/// which is `M_srgb_to_xyz * original_RGB` — correct colors.
+/// Note: ICC v2 matrix profiles cannot represent per-channel additive offsets.
+/// The chroma offset (from negative KLT matrix entries) is absorbed into the
+/// matrix as a best-effort approximation. This causes a small color cast for
+/// the darkest pixels but is perceptually acceptable for most content.
 ///
 /// # Arguments
-/// * `d_inverse` - The inverse of the forward decorrelation matrix
+/// * `params` - KLT encoding parameters (forward matrix + scale/offset)
 /// * `description` - UTF-8 profile description (short, e.g. "KLT")
 ///
 /// # Returns
 /// Complete ICC v2 profile as bytes, typically ~500 bytes.
-pub fn build_klt_icc_profile(d_inverse: &Mat3, description: &str) -> Vec<u8> {
-    // Compute the composite matrix: D_inverse * sRGB_to_XYZ_D50
-    // Each column of the ICC matrix represents where one input channel maps in XYZ.
-    let composite = d_inverse.mul(&SRGB_TO_XYZ_D50);
+pub fn build_klt_icc_profile(params: &crate::color::klt::KltEncodeParams, description: &str) -> Vec<u8> {
+    // The decode path is:
+    //   raw_i = (stored_i - offset_i) / scale_i
+    //   RGB = M_inverse * raw
+    //   XYZ = M_srgb_to_xyz * sRGB_degamma(RGB)
+    //
+    // ICC does: XYZ = ICC_matrix * sRGB_degamma(stored/255)
+    //
+    // We construct ICC_matrix = M_inverse * diag(255/scale) * M_srgb_to_xyz
+    // which handles the scaling but NOT the offset (ICC v2 limitation).
+    let d_inverse = params.forward.transpose(); // Orthogonal: inverse = transpose
+
+    // Build the inverse-scaled matrix: each column j is scaled by (255 / scale_j)
+    // This converts from the [0,1] ICC-normalized stored values back to the raw
+    // KLT range before applying M_inverse.
+    let inv_scale_diag = Mat3::from_rows([
+        [255.0 / params.scale[0], 0.0, 0.0],
+        [0.0, 255.0 / params.scale[1], 0.0],
+        [0.0, 0.0, 255.0 / params.scale[2]],
+    ]);
+
+    // Composite: D_inverse * inv_scale_diag * M_srgb_to_xyz_D50
+    let composite = d_inverse.mul(&inv_scale_diag).mul(&SRGB_TO_XYZ_D50);
 
     // Profile structure:
     // 1. Header (128 bytes)
@@ -352,8 +371,8 @@ mod tests {
     #[test]
     fn test_identity_profile_is_srgb_like() {
         // Identity decorrelation → profile should be ~sRGB
-        let identity = Mat3::IDENTITY;
-        let profile = build_klt_icc_profile(&identity, "Test");
+        let params = crate::color::klt::KltEncodeParams::from_forward(Mat3::IDENTITY);
+        let profile = build_klt_icc_profile(&params, "Test");
 
         // Profile should be valid (starts with correct size)
         let size = u32::from_be_bytes([profile[0], profile[1], profile[2], profile[3]]);
@@ -369,14 +388,15 @@ mod tests {
 
     #[test]
     fn test_custom_matrix_profile() {
-        // A non-trivial decorrelation matrix
-        let d_inv = Mat3::from_rows([
+        // A non-trivial forward decorrelation matrix
+        let forward = Mat3::from_rows([
             [0.6, 0.3, 0.1],
             [-0.2, 0.8, 0.4],
             [0.1, -0.5, 0.9],
         ]);
+        let params = crate::color::klt::KltEncodeParams::from_forward(forward);
 
-        let profile = build_klt_icc_profile(&d_inv, "KLT Custom");
+        let profile = build_klt_icc_profile(&params, "KLT Custom");
 
         // Should be valid size
         let size = u32::from_be_bytes([profile[0], profile[1], profile[2], profile[3]]);
@@ -393,8 +413,8 @@ mod tests {
 
     #[test]
     fn test_profile_tag_alignment() {
-        let identity = Mat3::IDENTITY;
-        let profile = build_klt_icc_profile(&identity, "Align Test");
+        let params = crate::color::klt::KltEncodeParams::from_forward(Mat3::IDENTITY);
+        let profile = build_klt_icc_profile(&params, "Align Test");
 
         // Read tag table and verify all offsets are 4-byte aligned
         let tag_count =

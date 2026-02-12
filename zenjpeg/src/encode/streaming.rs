@@ -1339,14 +1339,14 @@ impl StreamingEncoder {
     )> {
         let is_color = true; // KLT always produces 3 components
 
-        // Build the KLT ICC profile from the inverse decorrelation matrix
+        // Build the KLT ICC profile with per-channel scaling
         let klt_matrix = config
             .klt_matrix
             .as_ref()
             .expect("KLT path requires klt_matrix");
-        let d_inverse = klt_matrix.transpose(); // Forward is orthogonal, so inverse = transpose
+        let encode_params = crate::color::klt::KltEncodeParams::from_forward(*klt_matrix);
         let icc_profile =
-            crate::color::icc_builder::build_klt_icc_profile(&d_inverse, "zenjpeg KLT");
+            crate::color::icc_builder::build_klt_icc_profile(&encode_params, "zenjpeg KLT");
 
         // Write headers: SOI, APP14 Adobe (transform=0), ICC profile, quant tables, SOF, DHT, SOS
         config.write_header(output)?;
@@ -2202,6 +2202,153 @@ mod tests {
         assert_eq!(jpeg[sof_pos + 10], b'R', "First component should be 'R'");
         assert_eq!(jpeg[sof_pos + 13], b'G', "Second component should be 'G'");
         assert_eq!(jpeg[sof_pos + 16], b'B', "Third component should be 'B'");
+    }
+
+    /// Test KLT roundtrip: encode with KLT, decode, apply inverse matrix, compare.
+    #[test]
+    #[cfg(feature = "decoder")]
+    fn test_klt_roundtrip_with_inverse() {
+        use crate::color::klt::CovarianceAccumulator;
+
+        let width = 64;
+        let height = 64;
+        let data = make_test_image(width, height);
+
+        // Compute KLT
+        let mut acc = CovarianceAccumulator::new();
+        acc.accumulate_rgb_u8(&data, width, 3);
+        let cov = acc.covariance().expect("covariance");
+        let mean = acc.mean().expect("mean");
+        let klt = crate::color::klt::compute_klt(cov, mean);
+
+        // Encode with KLT (high quality to minimize lossy error)
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .klt_matrix(klt.forward)
+            .subsampling(Subsampling::S444)
+            .quality(crate::encode::encoder_types::Quality::ApproxJpegli(98.0))
+            .encode(&data)
+            .unwrap();
+
+        assert_valid_jpeg(&jpeg, "KLT roundtrip");
+
+        // Decode — returns raw decorrelated channels as "RGB"
+        #[allow(deprecated)]
+        let decoded = crate::decode::Decoder::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+        assert_eq!(decoded.width, width as u32);
+        assert_eq!(decoded.height, height as u32);
+        let decoded_pixels = decoded.pixels_u8().expect("decoded pixels");
+
+        // Apply inverse KLT (with unscaling) to recover original RGB
+        let inverse = klt.inverse;
+        let encode_params = crate::color::klt::KltEncodeParams::from_forward(klt.forward);
+        let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+        let mut max_error = 0u8;
+        let mut total_error = 0u64;
+        for i in 0..(width * height) {
+            // Undo the per-channel scale+offset to get raw KLT values
+            let c0 = decoded_pixels[i * 3] as f32 * inv_scale[0] + inv_offset[0];
+            let c1 = decoded_pixels[i * 3 + 1] as f32 * inv_scale[1] + inv_offset[1];
+            let c2 = decoded_pixels[i * 3 + 2] as f32 * inv_scale[2] + inv_offset[2];
+
+            let [r, g, b] = inverse.transform([c0, c1, c2]);
+
+            let orig_r = data[i * 3];
+            let orig_g = data[i * 3 + 1];
+            let orig_b = data[i * 3 + 2];
+
+            let err_r = (r.round().clamp(0.0, 255.0) as u8).abs_diff(orig_r);
+            let err_g = (g.round().clamp(0.0, 255.0) as u8).abs_diff(orig_g);
+            let err_b = (b.round().clamp(0.0, 255.0) as u8).abs_diff(orig_b);
+
+            max_error = max_error.max(err_r).max(err_g).max(err_b);
+            total_error += err_r as u64 + err_g as u64 + err_b as u64;
+        }
+
+        let avg_error = total_error as f64 / (width * height * 3) as f64;
+        // At q98 with 4:4:4, roundtrip error should be very low
+        assert!(
+            max_error < 10,
+            "KLT roundtrip max error too high: {max_error}"
+        );
+        assert!(
+            avg_error < 2.0,
+            "KLT roundtrip avg error too high: {avg_error:.2}"
+        );
+    }
+
+    /// Write KLT-encoded JPEG to disk for visual inspection with ICC-aware tools.
+    #[test]
+    fn test_klt_write_to_disk() {
+        use crate::color::klt::CovarianceAccumulator;
+
+        // Load test image
+        let png_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/images/1.png"
+        );
+        let png_data = std::fs::read(png_path).expect("read test png");
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
+        let mut reader = decoder.read_info().expect("png decode info");
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).expect("png decode frame");
+        let width = info.width as usize;
+        let height = info.height as usize;
+        let bpp = info.color_type.samples();
+        let rgb_data = &buf[..width * height * bpp];
+
+        // Compute KLT
+        let mut acc = CovarianceAccumulator::new();
+        acc.accumulate_rgb_u8(rgb_data, width, bpp);
+        let cov = acc.covariance().expect("covariance");
+        let mean = acc.mean().expect("mean");
+        let klt = crate::color::klt::compute_klt(cov, mean);
+
+        // Encode with KLT at various qualities
+        for (quality, subsampling, label) in [
+            (85.0, Subsampling::S444, "q85_444"),
+            (85.0, Subsampling::S420, "q85_420"),
+            (95.0, Subsampling::S444, "q95_444"),
+        ] {
+            let jpeg = StreamingEncoder::new(width as u32, height as u32)
+                .klt_matrix(klt.forward)
+                .subsampling(subsampling)
+                .quality(crate::encode::encoder_types::Quality::ApproxJpegli(quality))
+                .pixel_format(if bpp == 4 {
+                    crate::types::PixelFormat::Rgba
+                } else {
+                    crate::types::PixelFormat::Rgb
+                })
+                .encode(rgb_data)
+                .unwrap();
+
+            let out_path = format!("/mnt/v/output/zenjpeg/klt-test/klt_{label}.jpg");
+            std::fs::write(&out_path, &jpeg).expect("write KLT jpeg");
+
+            // Also encode standard YCbCr for comparison
+            let ycbcr_jpeg = StreamingEncoder::new(width as u32, height as u32)
+                .subsampling(subsampling)
+                .quality(crate::encode::encoder_types::Quality::ApproxJpegli(quality))
+                .pixel_format(if bpp == 4 {
+                    crate::types::PixelFormat::Rgba
+                } else {
+                    crate::types::PixelFormat::Rgb
+                })
+                .encode(rgb_data)
+                .unwrap();
+
+            let ycbcr_path = format!("/mnt/v/output/zenjpeg/klt-test/ycbcr_{label}.jpg");
+            std::fs::write(&ycbcr_path, &ycbcr_jpeg).expect("write YCbCr jpeg");
+
+            eprintln!("{label}: KLT={} bytes, YCbCr={} bytes, ratio={:.3}",
+                jpeg.len(), ycbcr_jpeg.len(),
+                jpeg.len() as f64 / ycbcr_jpeg.len() as f64);
+        }
+
+        eprintln!("KLT energy concentration: {:.4}", klt.energy_concentration);
+        eprintln!("KLT eigenvalues: {:?}", klt.eigenvalues);
+        eprintln!("KLT beneficial: {}", crate::color::klt::klt_is_beneficial(&klt));
     }
 
     /// Test KLT encoding with 4:2:0 subsampling.
