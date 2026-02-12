@@ -56,8 +56,8 @@ pub struct ComputedConfig {
     pub subsampling: Subsampling,
     /// Use XYB color space (uses legacy encoder path)
     pub use_xyb: bool,
-    /// KLT decorrelation matrix for custom color transform mode.
-    pub klt_matrix: Option<crate::color::klt::Mat3>,
+    /// KLT decorrelation matrix and RGB mean for custom color transform mode.
+    pub klt_matrix: Option<(crate::color::klt::Mat3, [f32; 3])>,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)

@@ -698,11 +698,12 @@ impl StripProcessor {
         self.deringing = enable;
     }
     
-    /// Sets the KLT decorrelation matrix for custom color transform mode.
+    /// Sets the KLT decorrelation matrix and image RGB mean.
     ///
-    /// Computes per-channel scaling parameters to normalize KLT output to [0, 255].
-    pub fn set_klt_matrix(&mut self, matrix: crate::color::klt::Mat3) {
-        self.klt_params = Some(crate::color::klt::KltEncodeParams::from_forward(matrix));
+    /// Centers output channels at 128 (JPEG level-shift midpoint) using the
+    /// actual image mean, producing near-zero DC for average blocks.
+    pub fn set_klt_matrix(&mut self, matrix: crate::color::klt::Mat3, mean_rgb: [f32; 3]) {
+        self.klt_params = Some(crate::color::klt::KltEncodeParams::from_forward_with_center(matrix, mean_rgb));
     }
 
     /// Sets trellis quantization configuration.

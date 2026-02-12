@@ -159,18 +159,40 @@ pub struct KltEncodeParams {
 impl KltEncodeParams {
     /// Computes encoding parameters from a KLT forward matrix.
     ///
-    /// Scales each output channel to fit exactly in \[0, 255\] for \[0, 255\]
-    /// RGB input.
+    /// Centers the output at 128 (JPEG's level-shift midpoint) for optimal
+    /// DC coefficient coding. The center of the input range \[0, 255\]^3
+    /// maps to 128 in each output channel, with scale chosen to keep all
+    /// possible outputs within \[0, 255\].
+    ///
+    /// This centering is critical: JPEG subtracts 128 before DCT, so
+    /// channels centered at 128 produce near-zero DC coefficients for
+    /// "average" blocks, matching YCbCr's natural behavior.
     pub fn from_forward(forward: Mat3) -> Self {
+        Self::from_forward_with_center(forward, [127.5, 127.5, 127.5])
+    }
+
+    /// Computes encoding parameters centering the given RGB value at 128.
+    ///
+    /// Use this with the actual image mean for best results — pixels near
+    /// the mean will produce near-zero DC coefficients after JPEG level shift.
+    pub fn from_forward_with_center(forward: Mat3, center_rgb: [f32; 3]) -> Self {
         let ranges = forward.channel_ranges(255.0);
+        let center_output = forward.transform(center_rgb);
         let mut scale = [0.0f32; 3];
         let mut offset = [0.0f32; 3];
         for i in 0..3 {
             let (min_val, max_val) = ranges[i];
-            let range = max_val - min_val;
-            if range > 0.0 {
-                scale[i] = 255.0 / range;
-                offset[i] = -min_val * scale[i];
+            let center = center_output[i];
+            let below = center - min_val; // distance from min to center
+            let above = max_val - center; // distance from center to max
+
+            if below > 0.0 || above > 0.0 {
+                // Scale so center maps to 128, bounded by [0, 255]
+                scale[i] = f32::min(
+                    if below > 1e-6 { 128.0 / below } else { f32::MAX },
+                    if above > 1e-6 { 127.0 / above } else { f32::MAX },
+                );
+                offset[i] = 128.0 - center * scale[i];
             } else {
                 // Degenerate: all values collapse to the same point
                 scale[i] = 1.0;

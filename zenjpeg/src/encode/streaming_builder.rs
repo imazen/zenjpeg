@@ -34,10 +34,11 @@ pub(crate) struct StreamingEncoderBuilder {
     /// `None` means use perceptual defaults based on color mode and quality.
     pub(crate) encoding_tables: Option<Box<EncodingTables>>,
     pub(crate) use_xyb: bool,
-    /// KLT decorrelation matrix for custom color transform mode.
+    /// KLT decorrelation matrix and RGB mean for custom color transform mode.
     /// When set, applies this matrix instead of RGB→YCbCr and uses
     /// RGB headers with an ICC matrix profile for correct decoding.
-    pub(crate) klt_matrix: Option<crate::color::klt::Mat3>,
+    /// The mean is used to center output channels at 128 (JPEG level-shift).
+    pub(crate) klt_matrix: Option<(crate::color::klt::Mat3, [f32; 3])>,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -269,9 +270,12 @@ impl StreamingEncoderBuilder {
         self
     }
     
-    /// Sets the KLT decorrelation matrix for custom color transform mode.
-    pub(crate) fn klt_matrix(mut self, matrix: crate::color::klt::Mat3) -> Self {
-        self.klt_matrix = Some(matrix);
+    /// Sets the KLT decorrelation matrix and image RGB mean.
+    ///
+    /// The mean is used to center output channels at 128 (JPEG's level-shift
+    /// midpoint), which produces near-zero DC coefficients for average blocks.
+    pub(crate) fn klt_matrix(mut self, matrix: crate::color::klt::Mat3, mean_rgb: [f32; 3]) -> Self {
+        self.klt_matrix = Some((matrix, mean_rgb));
         self
     }
 
