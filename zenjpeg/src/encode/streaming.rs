@@ -174,8 +174,32 @@ impl StreamingEncoder {
                 let quant = tables.generate_quant_tables(distance, is_420);
                 let zero_bias = tables.generate_zero_bias_all();
                 (quant, zero_bias)
+            } else if let Some(eigenvalues) = builder.klt_eigenvalues {
+                // Branch 3a: KLT eigenvalue-adaptive quantization tables
+                //
+                // Uses the Y (finest) base matrix for all components, scaled by
+                // sqrt(λ₀/λᵢ) so minor components get proportionally coarser
+                // quantization matching their lower information content.
+                let quant = (
+                    quant::generate_klt_quant_table(distance, 0, eigenvalues, is_420, allow_16bit),
+                    quant::generate_klt_quant_table(distance, 1, eigenvalues, is_420, allow_16bit),
+                    quant::generate_klt_quant_table(distance, 2, eigenvalues, is_420, allow_16bit),
+                );
+
+                // Use YCbCr zero bias with component 0 for all — KLT components
+                // don't have luma/chroma semantics, but the Y zero-bias is the
+                // most conservative (least aggressive zeroing).
+                let effective_distance =
+                    quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2);
+                let zero_bias = (
+                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                );
+
+                (quant, zero_bias)
             } else {
-                // Branch 3: Jpegli perceptual defaults (original path)
+                // Branch 3b: Jpegli perceptual defaults (original path)
                 //
                 // When separate_chroma_tables is false (2-table mode, jpeg_set_quality),
                 // use the Cr base matrix for both Cb and Cr tables. This matches C++
@@ -291,6 +315,7 @@ impl StreamingEncoder {
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
             klt_matrix: builder.klt_matrix,
+            klt_eigenvalues: builder.klt_eigenvalues,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             #[cfg(feature = "trellis")]
@@ -3313,6 +3338,182 @@ mod tests {
             let median = sorted[sorted.len() / 2];
             eprintln!("SSIMULACRA2 BD-Rate: avg={:+.2}%, median={:+.2}% ({}/{})",
                 avg, median, bd_ss2.len(), count);
+        }
+    }
+
+    /// Compare KLT with eigenvalue-scaled quant tables vs YCbCr baseline.
+    ///
+    /// This test measures the effect of using KLT-adapted quantization tables
+    /// that scale based on eigenvalue ratios rather than using YCbCr-tuned
+    /// luma/chroma matrices.
+    #[test]
+    #[ignore]
+    fn test_klt_eigen_quant_quality() {
+        use crate::color::klt::{self, CovarianceAccumulator};
+        use codec_eval::metrics::butteraugli::calculate_butteraugli;
+        use codec_eval::metrics::ssimulacra2::calculate_ssimulacra2;
+
+        let corpus_dir = std::path::Path::new("/mnt/v/corpus/cid22/512");
+        if !corpus_dir.exists() {
+            eprintln!("Corpus not found at {}", corpus_dir.display());
+            return;
+        }
+
+        let output_dir = std::path::Path::new("/mnt/v/output/zenjpeg/klt-eigen-quant");
+        std::fs::create_dir_all(output_dir).unwrap();
+
+        let mut images: Vec<_> = std::fs::read_dir(corpus_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+            .collect();
+        images.sort_by_key(|e| e.file_name());
+
+        let jpeg_decoder = crate::decode::JpegDecoder::new();
+
+        eprintln!("\n{:<10} {:>3} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
+            "Image", "Q", "KLT_eq", "KLT_old", "YCbCr", "Δ%eq",
+            "SS2_eq", "SS2_old", "SS2_ycc", "BA_eq");
+        eprintln!("{}", "-".repeat(110));
+
+        // Track summary stats per quality
+        for quality in [75.0, 85.0, 95.0] {
+            let q = crate::encode::encoder_types::Quality::ApproxJpegli(quality);
+            let mut size_eq = Vec::new();
+            let mut size_old = Vec::new();
+            let mut size_ycc = Vec::new();
+            let mut ss2_eq = Vec::new();
+            let mut ss2_old = Vec::new();
+            let mut ss2_ycc = Vec::new();
+            let mut ba_eq = Vec::new();
+            let mut ba_old = Vec::new();
+            let mut ba_ycc = Vec::new();
+
+            for entry in &images {
+                let path = entry.path();
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+
+                let png_data = std::fs::read(&path).expect("read png");
+                let decoder_png = png::Decoder::new(std::io::Cursor::new(&png_data));
+                let mut reader = decoder_png.read_info().expect("png info");
+                let mut buf = vec![0u8; reader.output_buffer_size()];
+                let info = reader.next_frame(&mut buf).expect("png frame");
+                let w = info.width as usize;
+                let h = info.height as usize;
+                let bpp = info.color_type.samples();
+                let rgb = &buf[..w * h * bpp];
+
+                let pf = if bpp == 4 {
+                    crate::types::PixelFormat::Rgba
+                } else {
+                    crate::types::PixelFormat::Rgb
+                };
+
+                // Compute KLT
+                let mut acc = CovarianceAccumulator::new();
+                acc.accumulate_rgb_u8(rgb, w, bpp);
+                let cov = acc.covariance().expect("covariance");
+                let mean = acc.mean().expect("mean");
+                let klt = klt::compute_klt(cov, mean);
+
+                // Encode: KLT with eigenvalue-scaled quant tables
+                let klt_eq_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt.forward, klt.mean)
+                    .klt_eigenvalues(klt.eigenvalues)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Encode: KLT with old YCbCr quant tables (no eigenvalues)
+                let klt_old_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .klt_matrix(klt.forward, klt.mean)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Encode: YCbCr baseline
+                let ycbcr_jpeg = StreamingEncoder::new(w as u32, h as u32)
+                    .subsampling(Subsampling::S444)
+                    .quality(q)
+                    .pixel_format(pf)
+                    .encode(rgb)
+                    .unwrap();
+
+                // Decode all to RGB for metrics
+                let decode = |jpeg: &[u8]| -> Vec<u8> {
+                    let mut dec = jpeg_decoder.clone();
+                    dec.apply_icc(false);
+                    let img = dec.decode(jpeg, enough::Unstoppable).unwrap();
+                    img.data
+                };
+                let eq_rgb = decode(&klt_eq_jpeg);
+                let old_rgb = decode(&klt_old_jpeg);
+                let ycc_rgb = decode(&ycbcr_jpeg);
+
+                // Extract reference RGB (strip alpha if needed)
+                let ref_rgb: Vec<u8> = if bpp == 4 {
+                    rgb.chunks(4).flat_map(|c| &c[..3]).copied().collect()
+                } else {
+                    rgb.to_vec()
+                };
+
+                // Compute SSIMULACRA2
+                let ss2_eq_v = calculate_ssimulacra2(&ref_rgb, &eq_rgb, w, h).unwrap();
+                let ss2_old_v = calculate_ssimulacra2(&ref_rgb, &old_rgb, w, h).unwrap();
+                let ss2_ycc_v = calculate_ssimulacra2(&ref_rgb, &ycc_rgb, w, h).unwrap();
+
+                // Compute Butteraugli
+                let ba_eq_v = calculate_butteraugli(&ref_rgb, &eq_rgb, w, h).unwrap();
+                let ba_old_v = calculate_butteraugli(&ref_rgb, &old_rgb, w, h).unwrap();
+                let ba_ycc_v = calculate_butteraugli(&ref_rgb, &ycc_rgb, w, h).unwrap();
+
+                let delta_eq = (klt_eq_jpeg.len() as f64 / ycbcr_jpeg.len() as f64 - 1.0) * 100.0;
+
+                eprintln!("{:<10} {:>3} {:>8} {:>8} {:>8} {:>+6.1}% {:>8.2} {:>8.2} {:>8.2} {:>8.3}",
+                    name, quality as u32,
+                    klt_eq_jpeg.len(), klt_old_jpeg.len(), ycbcr_jpeg.len(),
+                    delta_eq, ss2_eq_v, ss2_old_v, ss2_ycc_v, ba_eq_v);
+
+                size_eq.push(klt_eq_jpeg.len() as f64);
+                size_old.push(klt_old_jpeg.len() as f64);
+                size_ycc.push(ycbcr_jpeg.len() as f64);
+                ss2_eq.push(ss2_eq_v);
+                ss2_old.push(ss2_old_v);
+                ss2_ycc.push(ss2_ycc_v);
+                ba_eq.push(ba_eq_v);
+                ba_old.push(ba_old_v);
+                ba_ycc.push(ba_ycc_v);
+            }
+
+            let n = images.len() as f64;
+            let avg_delta = size_eq.iter().zip(size_ycc.iter())
+                .map(|(e, y)| (e / y - 1.0) * 100.0)
+                .sum::<f64>() / n;
+            let avg_old_delta = size_old.iter().zip(size_ycc.iter())
+                .map(|(e, y)| (e / y - 1.0) * 100.0)
+                .sum::<f64>() / n;
+
+            let eq_better_ss2 = ss2_eq.iter().zip(ss2_ycc.iter()).filter(|(e, y)| e > y).count();
+            let eq_better_ba = ba_eq.iter().zip(ba_ycc.iter()).filter(|(e, y)| e < y).count();
+
+            eprintln!("\n=== Q{} Summary ({} images) ===", quality as u32, images.len());
+            eprintln!("Size: eigen-quant Δ={:+.2}%, old-KLT Δ={:+.2}%",
+                avg_delta, avg_old_delta);
+            eprintln!("SSIM2: eigen-quant={:.2}, old-KLT={:.2}, YCbCr={:.2} (eq wins {}/{})",
+                ss2_eq.iter().sum::<f64>() / n,
+                ss2_old.iter().sum::<f64>() / n,
+                ss2_ycc.iter().sum::<f64>() / n,
+                eq_better_ss2, images.len());
+            eprintln!("BA: eigen-quant={:.3}, old-KLT={:.3}, YCbCr={:.3} (eq wins {}/{})",
+                ba_eq.iter().sum::<f64>() / n,
+                ba_old.iter().sum::<f64>() / n,
+                ba_ycc.iter().sum::<f64>() / n,
+                eq_better_ba, images.len());
+            eprintln!();
         }
     }
 }

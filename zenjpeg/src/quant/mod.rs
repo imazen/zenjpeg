@@ -577,6 +577,57 @@ fn generate_standard_quant_table(
     create_quant_table(values, allow_16bit)
 }
 
+/// Generates a quantization table for KLT-decorrelated channels.
+///
+/// KLT principal components are NOT Y/Cb/Cr — the eigenvalues tell us how much
+/// variance each component captures. The Y base matrix (the finest) is used for
+/// all components, then scaled based on eigenvalue ratios:
+///
+/// - Component 0 (highest eigenvalue): uses Y matrix at 1x scale
+/// - Components 1, 2: scaled coarser by sqrt(λ₀/λᵢ), reflecting lower importance
+///
+/// The sqrt is used because quantization step size relates to amplitude (std dev),
+/// not variance directly. A channel with 1/4 the variance has 1/2 the amplitude,
+/// so it can tolerate 2x coarser quantization while maintaining similar SNR.
+pub(crate) fn generate_klt_quant_table(
+    distance: f32,
+    component: usize,
+    eigenvalues: [f32; 3],
+    is_420: bool,
+    allow_16bit: bool,
+) -> QuantTable {
+    let _ = is_420; // KLT always uses 4:4:4
+
+    let mut values = [0u16; DCT_BLOCK_SIZE];
+
+    // Always use the Y (luminance) base matrix — it has the finest quantization
+    // and KLT components don't have a luma/chroma distinction.
+    let base = &BASE_QUANT_MATRIX_YCBCR[0..DCT_BLOCK_SIZE];
+    let global_scale = GLOBAL_SCALE_YCBCR;
+
+    // Compute eigenvalue-based scaling for this component.
+    // Component 0 gets scale 1.0, others get coarser quantization
+    // proportional to sqrt(λ₀/λᵢ).
+    let c = component.min(2);
+    let eigen_scale = if c == 0 || eigenvalues[c] <= 0.0 {
+        1.0f32
+    } else {
+        // sqrt(λ₀/λᵢ): amplitude-based scaling
+        (eigenvalues[0] / eigenvalues[c]).sqrt()
+    };
+
+    // Clamp the eigen scale to avoid absurdly coarse tables for near-zero eigenvalues
+    let eigen_scale = eigen_scale.min(8.0);
+
+    for (i, &base_val) in base.iter().enumerate() {
+        let scale = distance_to_scale(distance, i) * global_scale * eigen_scale;
+        let q = (base_val * scale).round();
+        values[i] = q as u16;
+    }
+
+    create_quant_table(values, allow_16bit)
+}
+
 /// Generates a standard JPEG quantization table scaled by quality factor.
 ///
 /// # Arguments

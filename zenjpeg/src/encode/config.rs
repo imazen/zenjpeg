@@ -58,6 +58,8 @@ pub struct ComputedConfig {
     pub use_xyb: bool,
     /// KLT decorrelation matrix and RGB mean for custom color transform mode.
     pub klt_matrix: Option<(crate::color::klt::Mat3, [f32; 3])>,
+    /// KLT eigenvalues for adaptive quantization table scaling.
+    pub klt_eigenvalues: Option<[f32; 3]>,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)
@@ -163,6 +165,7 @@ impl Default for ComputedConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             klt_matrix: None,
+            klt_eigenvalues: None,
             restart_interval: 0,
             #[cfg(feature = "parallel")]
             parallel: false,

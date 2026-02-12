@@ -39,6 +39,10 @@ pub(crate) struct StreamingEncoderBuilder {
     /// RGB headers with an ICC matrix profile for correct decoding.
     /// The mean is used to center output channels at 128 (JPEG level-shift).
     pub(crate) klt_matrix: Option<(crate::color::klt::Mat3, [f32; 3])>,
+    /// KLT eigenvalues for adaptive quantization table generation.
+    /// When present alongside klt_matrix, quantization tables are scaled
+    /// based on the variance captured by each principal component.
+    pub(crate) klt_eigenvalues: Option<[f32; 3]>,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -81,6 +85,7 @@ impl StreamingEncoderBuilder {
             encoding_tables: None,
             use_xyb: false,
             klt_matrix: None,
+            klt_eigenvalues: None,
             deringing: true,
             aq_enabled: true,
             allow_16bit_quant_tables: false,
@@ -276,6 +281,16 @@ impl StreamingEncoderBuilder {
     /// midpoint), which produces near-zero DC coefficients for average blocks.
     pub(crate) fn klt_matrix(mut self, matrix: crate::color::klt::Mat3, mean_rgb: [f32; 3]) -> Self {
         self.klt_matrix = Some((matrix, mean_rgb));
+        self
+    }
+
+    /// Sets the KLT eigenvalues for adaptive quantization table generation.
+    ///
+    /// When set alongside `klt_matrix`, the quantization tables are scaled
+    /// based on the variance captured by each principal component, rather than
+    /// using the YCbCr-tuned base matrices.
+    pub(crate) fn klt_eigenvalues(mut self, eigenvalues: [f32; 3]) -> Self {
+        self.klt_eigenvalues = Some(eigenvalues);
         self
     }
 
