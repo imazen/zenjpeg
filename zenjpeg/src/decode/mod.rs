@@ -771,12 +771,94 @@ impl DecodeConfig {
         }
     }
 
+    /// Decode with shrink-on-load via the scanline reader.
+    ///
+    /// Uses the scanline path (which already handles DctScale) to produce
+    /// reduced-resolution output without duplicating reduced IDCT into the
+    /// buffered coefficient path.
+    fn decode_with_shrink(&self, data: &[u8]) -> Result<DecodeResult> {
+        let mut reader = self.scanline_reader(data)?;
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let format = self.output_format.unwrap_or(crate::types::PixelFormat::Rgb);
+
+        if reader.is_grayscale() {
+            // Grayscale shrink decode
+            let mut pixels = vec![0u8; width * height];
+            let mut rows_read = 0;
+            while rows_read < height {
+                let remaining = height - rows_read;
+                let out = imgref::ImgRefMut::new(
+                    &mut pixels[rows_read * width..],
+                    width,
+                    remaining,
+                );
+                let count = reader.read_rows_gray8(out)?;
+                if count == 0 {
+                    break;
+                }
+                rows_read += count;
+            }
+            let warnings = Vec::new();
+            Ok(DecodeResult::new_u8(
+                width as u32,
+                height as u32,
+                crate::types::PixelFormat::Gray,
+                self.output_target,
+                pixels,
+                None,
+                warnings,
+            ))
+        } else {
+            // Color shrink decode
+            let bpp = format.bytes_per_pixel();
+            let row_bytes = width * bpp;
+            let mut pixels = vec![0u8; row_bytes * height];
+            let mut rows_read = 0;
+            while rows_read < height {
+                let remaining = height - rows_read;
+                let out = imgref::ImgRefMut::new(
+                    &mut pixels[rows_read * row_bytes..],
+                    width * bpp,
+                    remaining,
+                );
+                let count = match format {
+                    crate::types::PixelFormat::Bgr => reader.read_rows_bgr8(out)?,
+                    crate::types::PixelFormat::Rgba => reader.read_rows_rgba8(out)?,
+                    crate::types::PixelFormat::Bgra => reader.read_rows_bgra8(out)?,
+                    crate::types::PixelFormat::Bgrx => reader.read_rows_bgrx8(out)?,
+                    _ => reader.read_rows_rgb8(out)?,
+                };
+                if count == 0 {
+                    break;
+                }
+                rows_read += count;
+            }
+            let warnings = Vec::new();
+            Ok(DecodeResult::new_u8(
+                width as u32,
+                height as u32,
+                format,
+                self.output_target,
+                pixels,
+                None,
+                warnings,
+            ))
+        }
+    }
+
     /// Decodes a JPEG image.
     ///
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        // Shrink-on-load fast path: use scanline reader for reduced-resolution decode.
+        // This avoids duplicating reduced IDCT integration into the buffered path.
+        if self.shrink_hint.is_some() {
+            return self.decode_with_shrink(data);
+        }
+
         let preserve = if self.auto_orient {
             // Ensure EXIF is preserved for orientation reading
             let mut p = self.preserve.clone();
