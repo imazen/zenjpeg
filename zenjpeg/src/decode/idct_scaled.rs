@@ -54,6 +54,7 @@ fn clamp_u8(a: i32) -> i16 {
 ///
 /// Math: `pixel = (DC + 4) / 8 + 128`, clamped to [0, 255].
 #[inline]
+#[allow(dead_code)]
 pub fn idct_scaled_1x1(dequant: &[i32; 64], out: &mut [i16], _stride: usize) {
     let dc = dequant[0];
     out[0] = wa(wa(dc, 4), 1024).wrapping_shr(3).clamp(0, 255) as i16;
@@ -61,6 +62,7 @@ pub fn idct_scaled_1x1(dequant: &[i32; 64], out: &mut [i16], _stride: usize) {
 
 /// 1x1 reduced IDCT without clamping (for f32 output targets).
 #[inline]
+#[allow(dead_code)]
 pub fn idct_scaled_1x1_unclamped(dequant: &[i32; 64], out: &mut [i16], _stride: usize) {
     let dc = dequant[0];
     out[0] = wa(wa(dc, 4), 1024).wrapping_shr(3) as i16;

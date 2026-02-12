@@ -424,6 +424,7 @@ impl DecodeConfig {
     }
 
     /// Resolve the effective shrink quality for the current configuration.
+    #[allow(dead_code)]
     pub(crate) fn effective_shrink_quality(&self) -> ShrinkQuality {
         self.shrink_quality.unwrap_or_else(|| {
             if self.output_target.is_precise() {
@@ -579,11 +580,23 @@ impl DecodeConfig {
             let height = parser.height;
             let num_components = parser.num_components;
 
-            // Compute subsampling from sampling factors
-            let subsampling = compute_subsampling(&parser.components, num_components);
-
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.decode(&Unstoppable)?;
+
+            // If shrink is requested, use coefficient path for reduced IDCT
+            let dct_scale = self.resolve_dct_scale(Dimensions::new(width, height));
+            if dct_scale != DctScale::Full && !is_cmyk {
+                let coefficients = parser.extract_coefficients()?;
+                return ScanlineReader::from_coefficients(
+                    coefficients,
+                    self.chroma_upsampling,
+                    self.output_target,
+                    dct_scale,
+                );
+            }
+
+            // Compute subsampling from sampling factors
+            let subsampling = compute_subsampling(&parser.components, num_components);
 
             // Convert to pixels (RGB for color, grayscale for 1-component)
             let output_format = if is_grayscale {

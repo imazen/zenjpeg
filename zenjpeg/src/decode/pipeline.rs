@@ -13,9 +13,8 @@ use super::idct_int::{
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
 };
 use super::idct_scaled::{
-    idct_scaled_1x1, idct_scaled_1x1_from_dc, idct_scaled_1x1_from_dc_unclamped,
-    idct_scaled_1x1_unclamped, idct_scaled_2x2, idct_scaled_2x2_unclamped, idct_scaled_4x4,
-    idct_scaled_4x4_unclamped,
+    idct_scaled_1x1_from_dc, idct_scaled_1x1_from_dc_unclamped, idct_scaled_2x2,
+    idct_scaled_2x2_unclamped, idct_scaled_4x4, idct_scaled_4x4_unclamped,
 };
 use super::upsample::{
     upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
