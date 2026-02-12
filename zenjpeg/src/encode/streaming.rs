@@ -257,6 +257,11 @@ impl StreamingEncoder {
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
 
+        // Set KLT decorrelation matrix if configured
+        if let Some(matrix) = builder.klt_matrix {
+            processor.set_klt_matrix(matrix);
+        }
+
         // Enable trellis quantization if configured
         #[cfg(feature = "trellis")]
         {
@@ -285,6 +290,7 @@ impl StreamingEncoder {
             chroma_downsampling: builder.chroma_downsampling,
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
+            klt_matrix: builder.klt_matrix,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             #[cfg(feature = "trellis")]
@@ -307,7 +313,8 @@ impl StreamingEncoder {
         // - Not XYB (different header/table structure)
         let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
             && builder.mode != JpegMode::Progressive
-            && !builder.use_xyb;
+            && !builder.use_xyb
+            && builder.klt_matrix.is_none();
 
         let streaming = if enable_streaming {
             // Get tables: custom if provided, otherwise standard JPEG tables
@@ -1172,7 +1179,17 @@ impl StreamingEncoder {
             .try_reserve(width * height / 4)
             .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
 
-        let (scan_data, frequencies) = if config.use_xyb {
+        let (scan_data, frequencies) = if config.klt_matrix.is_some() {
+            Self::encode_sequential_klt(
+                config,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                &strip_output,
+                output,
+                collect_frequencies,
+            )?
+        } else if config.use_xyb {
             Self::encode_sequential_xyb(
                 config,
                 y_quant,
@@ -1298,6 +1315,118 @@ impl StreamingEncoder {
                 &strip_output.cr_blocks,
                 &tables.dc_luma,
                 &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
+        }
+    }
+
+    /// Encodes sequential JPEG in KLT custom color transform mode.
+    ///
+    /// Writes RGB-style headers (APP14 Adobe transform=0, KLT ICC profile, RGB
+    /// component IDs) but uses the standard YCbCr entropy coding path since the
+    /// KLT output channels have similar luma/chroma statistical properties.
+    fn encode_sequential_klt(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+        collect_frequencies: bool,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
+        let is_color = true; // KLT always produces 3 components
+
+        // Build the KLT ICC profile from the inverse decorrelation matrix
+        let klt_matrix = config
+            .klt_matrix
+            .as_ref()
+            .expect("KLT path requires klt_matrix");
+        let d_inverse = klt_matrix.transpose(); // Forward is orthogonal, so inverse = transpose
+        let icc_profile =
+            crate::color::icc_builder::build_klt_icc_profile(&d_inverse, "zenjpeg KLT");
+
+        // Write headers: SOI, APP14 Adobe (transform=0), ICC profile, quant tables, SOF, DHT, SOS
+        config.write_header(output)?;
+        config.write_app14_adobe(output, 0)?;
+        config.write_icc_profile(output, &icc_profile)?;
+        config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
+
+        let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        config.write_frame_header_klt_ex(output, is_extended)?;
+
+        // Huffman tables and entropy coding reuse the YCbCr path
+        if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            let (tables, frequencies) = if collect_frequencies {
+                let (t, f) = config.build_optimized_tables_with_counts(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+                (t, Some(f))
+            } else {
+                let t = config.build_optimized_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+                (t, None)
+            };
+
+            config.write_huffman_tables_optimized(output, &tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_klt(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(&tables),
+            )?;
+            Ok((scan_data, frequencies))
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            config.write_huffman_tables_optimized(output, tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_klt(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(tables),
+            )?;
+            Ok((scan_data, None))
+        } else {
+            let tables = crate::huffman::builtin_tables::select_tables(
+                &config.quality,
+                false,
+                config.subsampling,
+            );
+            config.write_huffman_tables_optimized(output, &tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_klt(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(&tables),
             )?;
             Ok((scan_data, None))
         }

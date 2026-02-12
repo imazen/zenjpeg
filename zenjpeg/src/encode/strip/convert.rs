@@ -1096,7 +1096,6 @@ impl StripProcessor {
 
         Ok(())
     }
-}
 
     /// Converts RGB strip data to KLT-decorrelated channels.
     ///
@@ -1182,3 +1181,4 @@ impl StripProcessor {
 
         Ok(())
     }
+}

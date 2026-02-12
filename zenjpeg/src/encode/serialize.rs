@@ -353,6 +353,96 @@ impl ComputedConfig {
         self.write_frame_header_xyb_ex(output, false)
     }
 
+    /// Writes the frame header for KLT custom color transform mode.
+    ///
+    /// Uses 'R','G','B' component IDs (so decoders don't assume YCbCr) with
+    /// configurable subsampling. Component 0 ('R') carries the luma-like KLT
+    /// principal component and gets the Y sampling factor; components 1,2
+    /// ('G','B') are chroma-like and get 1x1 sampling.
+    pub(crate) fn write_frame_header_klt_ex(
+        &self,
+        output: &mut Vec<u8>,
+        is_extended: bool,
+    ) -> Result<()> {
+        let marker = if self.mode == JpegMode::Progressive {
+            MARKER_SOF2
+        } else if is_extended {
+            MARKER_SOF1
+        } else {
+            MARKER_SOF0
+        };
+
+        output.push(0xFF);
+        output.push(marker);
+
+        let length = 8u16 + 3 * 3; // 3 components
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        let header_width = self.original_width.unwrap_or(self.width);
+        let header_height = self.original_height.unwrap_or(self.height);
+
+        output.push(8); // Sample precision
+        output.push((header_height >> 8) as u8);
+        output.push(header_height as u8);
+        output.push((header_width >> 8) as u8);
+        output.push(header_width as u8);
+        output.push(3);
+
+        // Component 0 ('R'): luma-like, gets subsampling factor
+        let (h_samp, v_samp) = match self.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
+        output.push(b'R');
+        output.push((h_samp << 4) | v_samp);
+        output.push(0); // Quant table 0
+
+        // Component 1 ('G'): chroma-like
+        output.push(b'G');
+        output.push(0x11); // 1x1 sampling
+        output.push(1); // Quant table 1
+
+        // Component 2 ('B'): chroma-like
+        output.push(b'B');
+        output.push(0x11); // 1x1 sampling
+        output.push(if self.separate_chroma_tables { 2 } else { 1 });
+
+        Ok(())
+    }
+
+    /// Writes the scan header for KLT custom color transform mode.
+    ///
+    /// Uses 'R','G','B' component IDs with standard luma/chroma Huffman table
+    /// assignment (component 0 uses table pair 0, components 1-2 use table pair 1).
+    pub(crate) fn write_scan_header_klt(&self, output: &mut Vec<u8>) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOS);
+
+        let length = 6u16 + 3 * 2; // 3 components
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(3);
+
+        output.push(b'R'); // Component 0: DC table 0, AC table 0
+        output.push(0x00);
+
+        output.push(b'G'); // Component 1: DC table 1, AC table 1
+        output.push(0x11);
+
+        output.push(b'B'); // Component 2: DC table 1, AC table 1
+        output.push(0x11);
+
+        output.push(0x00); // Ss
+        output.push(0x3F); // Se
+        output.push(0x00); // Ah/Al
+
+        Ok(())
+    }
+
     /// Writes standard Huffman tables in a single DHT segment.
     pub(crate) fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
         use crate::huffman::{
