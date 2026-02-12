@@ -122,6 +122,7 @@ impl<'a> ScanlineReader<'a> {
         scan: super::parser::ParsedScanData<'a>,
         chroma_upsampling: super::ChromaUpsampling,
         output_target: super::OutputTarget,
+        dct_scale: super::DctScale,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
             data,
@@ -148,12 +149,17 @@ impl<'a> ScanlineReader<'a> {
             v_samp,
             chroma_upsampling,
             output_target,
+            dct_scale,
         )?;
+
+        // Compute scaled dimensions based on DCT scale
+        let scaled_width = dct_scale.scaled_dimension(width);
+        let scaled_height = dct_scale.scaled_dimension(height);
 
         Ok(Self {
             data,
-            width,
-            height,
+            width: scaled_width,
+            height: scaled_height,
             num_components,
             buffered_rgb: None,
             strip,
@@ -234,6 +240,7 @@ impl<'a> ScanlineReader<'a> {
         coefficients: super::DecodedCoefficients,
         chroma_upsampling: super::ChromaUpsampling,
         output_target: super::OutputTarget,
+        dct_scale: super::DctScale,
     ) -> Result<Self> {
         let width = coefficients.width;
         let height = coefficients.height;
@@ -285,12 +292,16 @@ impl<'a> ScanlineReader<'a> {
             v_samp,
             chroma_upsampling,
             output_target,
+            dct_scale,
         )?;
+
+        let scaled_width = dct_scale.scaled_dimension(width);
+        let scaled_height = dct_scale.scaled_dimension(height);
 
         Ok(Self {
             data: &[], // No raw data needed
-            width,
-            height,
+            width: scaled_width,
+            height: scaled_height,
             num_components,
             buffered_rgb: None,
             strip,
