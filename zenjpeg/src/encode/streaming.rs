@@ -2146,4 +2146,96 @@ mod tests {
         assert_eq!(jpeg[jpeg.len() - 2], 0xFF, "{label}: missing EOI");
         assert_eq!(jpeg[jpeg.len() - 1], 0xD9, "{label}: missing EOI");
     }
+
+    /// Test KLT encoding produces valid JPEG with expected markers.
+    #[test]
+    fn test_klt_encoding_produces_valid_jpeg() {
+        use crate::color::klt::CovarianceAccumulator;
+
+        let width = 64;
+        let height = 64;
+        let data = make_test_image(width, height);
+
+        // Compute KLT from image statistics
+        let mut acc = CovarianceAccumulator::new();
+        acc.accumulate_rgb_u8(&data, width, 3);
+        let cov = acc.covariance().expect("covariance from test image");
+        let mean = acc.mean().expect("mean from test image");
+        let klt = crate::color::klt::compute_klt(cov, mean);
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .klt_matrix(klt.forward)
+            .subsampling(Subsampling::S444)
+            .encode(&data)
+            .unwrap();
+
+        assert_valid_jpeg(&jpeg, "KLT 444");
+
+        // Verify APP14 Adobe marker is present (transform=0)
+        let app14_sig = b"Adobe";
+        let app14_pos = jpeg
+            .windows(5)
+            .position(|w| w == app14_sig)
+            .expect("APP14 Adobe marker not found");
+        // Transform byte is 11 bytes after the 'A' of "Adobe"
+        assert_eq!(
+            jpeg[app14_pos + 11],
+            0,
+            "APP14 transform should be 0 (RGB)"
+        );
+
+        // Verify ICC profile is present
+        let icc_sig = b"ICC_PROFILE\0";
+        assert!(
+            jpeg.windows(12).any(|w| w == icc_sig),
+            "ICC_PROFILE marker not found"
+        );
+
+        // Verify 'R','G','B' component IDs in SOF marker
+        // SOF0 = 0xC0, SOF1 = 0xC1
+        let sof_pos = jpeg
+            .windows(2)
+            .position(|w| w[0] == 0xFF && (w[1] == 0xC0 || w[1] == 0xC1))
+            .expect("SOF marker not found");
+        // SOF structure: marker(2) + length(2) + precision(1) + height(2) + width(2) + ncomp(1) + comp_data
+        // First component ID is at offset 10 from the marker start
+        assert_eq!(jpeg[sof_pos + 10], b'R', "First component should be 'R'");
+        assert_eq!(jpeg[sof_pos + 13], b'G', "Second component should be 'G'");
+        assert_eq!(jpeg[sof_pos + 16], b'B', "Third component should be 'B'");
+    }
+
+    /// Test KLT encoding with 4:2:0 subsampling.
+    #[test]
+    fn test_klt_encoding_420() {
+        use crate::color::klt::CovarianceAccumulator;
+
+        let width = 64;
+        let height = 64;
+        let data = make_test_image(width, height);
+
+        let mut acc = CovarianceAccumulator::new();
+        acc.accumulate_rgb_u8(&data, width, 3);
+        let cov = acc.covariance().expect("covariance from test image");
+        let mean = acc.mean().expect("mean from test image");
+        let klt = crate::color::klt::compute_klt(cov, mean);
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .klt_matrix(klt.forward)
+            .subsampling(Subsampling::S420)
+            .encode(&data)
+            .unwrap();
+
+        assert_valid_jpeg(&jpeg, "KLT 420");
+
+        // Find SOF and check first component has 2x2 sampling
+        let sof_pos = jpeg
+            .windows(2)
+            .position(|w| w[0] == 0xFF && (w[1] == 0xC0 || w[1] == 0xC1))
+            .expect("SOF marker not found");
+        // Component 0 ('R') sampling factor should be 0x22 (2x2) for 4:2:0
+        assert_eq!(jpeg[sof_pos + 11], 0x22, "R component should have 2x2 sampling for 4:2:0");
+        // Components 1,2 ('G','B') should have 0x11 (1x1)
+        assert_eq!(jpeg[sof_pos + 14], 0x11, "G component should have 1x1 sampling");
+        assert_eq!(jpeg[sof_pos + 17], 0x11, "B component should have 1x1 sampling");
+    }
 }
