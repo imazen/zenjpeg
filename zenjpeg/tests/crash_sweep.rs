@@ -481,3 +481,54 @@ fn sweep_corpus_zune_fuzz() {
             .collect::<Vec<_>>()
     );
 }
+
+/// Sweep codec-corpus crash-repro files (large files from upstream bug reports) — MUST NOT panic.
+#[test]
+#[ignore]
+fn sweep_corpus_crash_repro() {
+    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let dir = corpus
+        .get("jpeg-conformance/crash-repro")
+        .expect("failed to get jpeg-conformance/crash-repro");
+
+    let mut files = Vec::new();
+    collect_files(&dir, &mut files);
+    // Filter to image files only (skip README.md etc)
+    files.retain(|p| {
+        p.extension().is_some_and(|e| {
+            let e = e.to_string_lossy().to_lowercase();
+            e == "jpg" || e == "jpeg" || e == "bin" || e == "jpf"
+        })
+    });
+    files.sort();
+
+    let mut panics = Vec::new();
+    let mut ok_count = 0usize;
+    let mut error_count = 0usize;
+
+    for path in &files {
+        match test_file(path) {
+            TestResult::Ok => ok_count += 1,
+            TestResult::Error(_) => error_count += 1,
+            TestResult::Panic(msg) => panics.push((path.clone(), msg)),
+            TestResult::NotJpeg => {}
+        }
+    }
+
+    eprintln!(
+        "\njpeg-conformance/crash-repro: {} ok, {} errors, {} panics (of {} files)",
+        ok_count,
+        error_count,
+        panics.len(),
+        files.len()
+    );
+
+    assert!(
+        panics.is_empty(),
+        "crash-repro files caused panics: {:?}",
+        panics
+            .iter()
+            .map(|(p, m)| format!("{}: {}", p.file_name().unwrap().to_string_lossy(), m))
+            .collect::<Vec<_>>()
+    );
+}
