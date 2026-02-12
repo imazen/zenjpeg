@@ -1295,6 +1295,282 @@ impl<'a> JpegParser<'a> {
         }
     }
 
+    /// f32 IDCT + area-average shrink decode.
+    ///
+    /// Like `to_pixels_f32()` but produces scaled output at `DctScale` resolution.
+    /// Full 8×8 f32 IDCT (with Laplacian dequant biases) → area average to
+    /// `block_size × block_size` per block. Component planes are allocated at
+    /// scaled dimensions, upsampling operates on scaled planes.
+    pub(in crate::decode) fn to_pixels_f32_shrink(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        dct_scale: super::super::DctScale,
+        _stop: &impl Stop,
+    ) -> Result<(Vec<f32>, u32, u32)> {
+        if self.coeffs.is_empty() {
+            return Err(Error::internal("no decoded data"));
+        }
+
+        let bs = dct_scale.block_output_size();
+        let factor = 8 / bs;
+        let factor_sq = (factor * factor) as f32;
+        let inv_factor_sq = 1.0 / factor_sq;
+
+        let num_components = self.num_components as usize;
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..num_components {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Build comp infos (at full block dimensions for iteration)
+        let comp_infos = self.build_comp_infos(
+            mcu_cols, mcu_rows, max_h_samp as usize, max_v_samp as usize, num_components,
+        )?;
+
+        // Allocate component planes at SCALED dimensions
+        let mut comp_planes_f32 = Vec::with_capacity(num_components);
+        let mut scaled_widths = Vec::with_capacity(num_components);
+        let mut scaled_heights = Vec::with_capacity(num_components);
+        for info in &comp_infos {
+            let sw = info.comp_blocks_h * bs;
+            let sh = info.comp_blocks_v * bs;
+            let size = checked_size_2d(sw, sh)?;
+            comp_planes_f32.push(vec![0.0f32; size]);
+            scaled_widths.push(sw);
+            scaled_heights.push(sh);
+        }
+
+        let mut bias_stats = DequantBiasStats::new(num_components);
+        let mut component_biases = vec![[0.0f32; DCT_BLOCK_SIZE]; num_components];
+
+        // Process MCU row by MCU row
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..num_components {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
+                if info.is_full_res && imcu_row % 4 == 3 {
+                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                }
+
+                let biases = &component_biases[comp_idx];
+                let comp_plane = &mut comp_planes_f32[comp_idx];
+                let plane_w = scaled_widths[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        // Full f32 IDCT with dequant biases
+                        let dequant = if is_xyb {
+                            dequantize_block(&natural_coeffs, quant)
+                        } else {
+                            dequantize_block_with_bias(&natural_coeffs, quant, biases)
+                        };
+                        let pixels_8x8 = inverse_dct_8x8(&dequant);
+
+                        // Area average from 8×8 to bs×bs and write to scaled plane
+                        let base_px = bx * bs;
+                        let base_py = by * bs;
+                        for oy in 0..bs {
+                            let py = base_py + oy;
+                            if py >= scaled_heights[comp_idx] {
+                                break;
+                            }
+                            for ox in 0..bs {
+                                let px = base_px + ox;
+                                if px >= plane_w {
+                                    break;
+                                }
+                                let mut sum = 0.0f32;
+                                for dy in 0..factor {
+                                    for dx in 0..factor {
+                                        sum += pixels_8x8[(oy * factor + dy) * 8 + (ox * factor + dx)];
+                                    }
+                                }
+                                comp_plane[py * plane_w + px] = sum * inv_factor_sq;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Compute scaled output dimensions
+        let scaled_w = dct_scale.scaled_dimension(self.width) as usize;
+        let scaled_h = dct_scale.scaled_dimension(self.height) as usize;
+
+        // Build scaled CompInfos for upsampling
+        let scaled_comp_infos: Vec<CompInfo> = comp_infos.iter().enumerate().map(|(i, info)| {
+            CompInfo {
+                quant_idx: info.quant_idx,
+                h_samp: info.h_samp,
+                v_samp: info.v_samp,
+                comp_blocks_h: info.comp_blocks_h,
+                comp_blocks_v: info.comp_blocks_v,
+                comp_width: scaled_widths[i],
+                comp_height: scaled_heights[i],
+                is_full_res: info.is_full_res,
+            }
+        }).collect();
+
+        // Upsample scaled planes
+        let planes_f32 = self.upsample_planes_f32_scaled(
+            &comp_planes_f32,
+            &scaled_comp_infos,
+            max_h_samp,
+            max_v_samp,
+            chroma_upsampling,
+            scaled_w,
+            scaled_h,
+        )?;
+
+        let output_size = checked_size_2d(scaled_w, scaled_h)?;
+
+        let result = match (self.num_components, format) {
+            (1, PixelFormat::Gray) => {
+                let mut output = vec![0.0f32; output_size];
+                gray_f32_to_gray_f32(&planes_f32[0], &mut output);
+                Ok(output)
+            }
+            (1, PixelFormat::Rgb) => {
+                let rgb_size = checked_size_2d(output_size, 3)?;
+                let mut rgb = vec![0.0f32; rgb_size];
+                gray_f32_to_rgb_f32(&planes_f32[0], &mut rgb);
+                Ok(rgb)
+            }
+            (3, PixelFormat::Rgb) => {
+                let rgb_size = checked_size_2d(output_size, 3)?;
+                let mut rgb = vec![0.0f32; rgb_size];
+
+                if is_xyb {
+                    crate::color::xyb::xyb_planes_to_rgb_f32_simd(
+                        &planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb,
+                    );
+                } else if self.is_rgb_jpeg() {
+                    for i in 0..output_size {
+                        rgb[i * 3] = (planes_f32[0][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0) / 255.0;
+                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0) / 255.0;
+                    }
+                } else {
+                    ycbcr_planes_f32_to_rgb_f32(
+                        &planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb,
+                    );
+                }
+                Ok(rgb)
+            }
+            _ => Err(Error::unsupported_feature("unsupported color conversion")),
+        }?;
+
+        Ok((result, scaled_w as u32, scaled_h as u32))
+    }
+
+    /// Upsample component f32 planes at scaled dimensions.
+    ///
+    /// Like `upsample_planes_f32` but takes explicit output dimensions instead
+    /// of using `self.width`/`self.height`.
+    fn upsample_planes_f32_scaled(
+        &self,
+        comp_planes_f32: &[Vec<f32>],
+        comp_infos: &[CompInfo],
+        max_h_samp: u8,
+        max_v_samp: u8,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        output_w: usize,
+        output_h: usize,
+    ) -> Result<Vec<Vec<f32>>> {
+        let output_size = checked_size_2d(output_w, output_h)?;
+        let mut planes_f32 = Vec::with_capacity(comp_infos.len());
+
+        for (comp_idx, info) in comp_infos.iter().enumerate() {
+            let comp_plane = &comp_planes_f32[comp_idx];
+
+            let plane = if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                let scale_x = max_h_samp as usize / info.h_samp;
+                let scale_y = max_v_samp as usize / info.v_samp;
+
+                match chroma_upsampling {
+                    super::super::ChromaUpsampling::Triangle => upsample_fancy(
+                        comp_plane,
+                        info.comp_width,
+                        info.comp_height,
+                        output_w,
+                        output_h,
+                        scale_x,
+                        scale_y,
+                    ),
+                    super::super::ChromaUpsampling::LibjpegCompat => upsample_libjpeg_f32(
+                        comp_plane,
+                        info.comp_width,
+                        info.comp_height,
+                        output_w,
+                        output_h,
+                        scale_x,
+                        scale_y,
+                    ),
+                    super::super::ChromaUpsampling::NearestNeighbor => {
+                        let mut upsampled = vec![0.0f32; output_size];
+                        upsample_nearest_f32(
+                            comp_plane,
+                            info.comp_width,
+                            info.comp_height,
+                            &mut upsampled,
+                            output_w,
+                            output_h,
+                            scale_x,
+                            scale_y,
+                        );
+                        upsampled
+                    }
+                }
+            } else {
+                // Full-res component: clip to output dimensions
+                let mut plane = vec![0.0f32; output_size];
+                for y in 0..output_h.min(info.comp_height) {
+                    let src_row = &comp_plane[y * info.comp_width..];
+                    let dst_row = &mut plane[y * output_w..];
+                    let copy_w = output_w.min(info.comp_width);
+                    dst_row[..copy_w].copy_from_slice(&src_row[..copy_w]);
+                }
+                plane
+            };
+
+            planes_f32.push(plane);
+        }
+
+        Ok(planes_f32)
+    }
+
     /// Convert decoded coefficients to YCbCr f32 planes.
     ///
     /// Returns (Y, Cb, Cr) planes, each width×height in size.

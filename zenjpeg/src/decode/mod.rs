@@ -792,7 +792,15 @@ impl DecodeConfig {
     /// Uses the scanline path (which already handles DctScale) to produce
     /// reduced-resolution output without duplicating reduced IDCT into the
     /// buffered coefficient path.
+    ///
+    /// For f32/Precise output targets, uses the buffered f32 path with
+    /// area-average shrink to preserve dequant bias precision.
     fn decode_with_shrink(&self, data: &[u8]) -> Result<DecodeResult> {
+        // f32 output targets use the buffered coefficient path for precision
+        if self.output_target.is_f32() {
+            return self.decode_with_shrink_f32(data);
+        }
+
         let mut reader = self.scanline_reader(data)?;
         let width = reader.width() as usize;
         let height = reader.height() as usize;
@@ -858,6 +866,50 @@ impl DecodeConfig {
                 warnings,
             ))
         }
+    }
+
+    /// f32 shrink decode via buffered coefficient path.
+    ///
+    /// Uses full 8×8 f32 IDCT with Laplacian dequant biases, then area-averages
+    /// to the target DctScale. Preserves f32 precision throughout.
+    fn decode_with_shrink_f32(&self, data: &[u8]) -> Result<DecodeResult> {
+        use crate::types::Dimensions;
+
+        let preserve = self.preserve.clone();
+        let mut parser =
+            parser::JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
+        parser.prefer_streaming = false; // Need coefficients
+        parser.decode(&enough::Unstoppable)?;
+
+        let source_dims = Dimensions::new(parser.width, parser.height);
+        let dct_scale = self.resolve_dct_scale(source_dims);
+        let info = parser.info();
+        let output_format = self.output_format.unwrap_or(crate::types::PixelFormat::Rgb);
+
+        let (mut pixels, scaled_w, scaled_h) = parser.to_pixels_f32_shrink(
+            output_format,
+            info.is_xyb,
+            self.chroma_upsampling,
+            dct_scale,
+            &enough::Unstoppable,
+        )?;
+
+        // Apply sRGB→linear transfer if requested
+        if self.output_target.is_linear() {
+            crate::color::icc::srgb_to_linear_inplace(&mut pixels);
+        }
+
+        let extras = parser.take_extras();
+        let warnings = parser.take_warnings();
+        Ok(DecodeResult::new_f32(
+            scaled_w,
+            scaled_h,
+            output_format,
+            self.output_target,
+            pixels,
+            extras,
+            warnings,
+        ))
     }
 
     /// Decodes a JPEG image.

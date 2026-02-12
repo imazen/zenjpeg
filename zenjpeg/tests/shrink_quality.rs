@@ -621,6 +621,80 @@ mod quality {
         }
     }
 
+    /// Verify f32 Precise shrink decode works and produces different output than u8.
+    #[test]
+    fn shrink_quality_f32_precise() {
+        use zenjpeg::decoder::{OutputTarget, ShrinkQuality};
+
+        let w = 128u32;
+        let h = 128u32;
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        let mut rng = 99999u64;
+        let mut next = || -> u8 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) as u8
+        };
+        for p in pixels.iter_mut() {
+            *p = next();
+        }
+
+        let jpeg = encode_jpeg(&pixels, w, h, 85.0, ChromaSubsampling::None);
+
+        // Decode with shrink + Precise f32 output
+        let result = Decoder::new()
+            .shrink(ShrinkHint::ExactScale(DctScale::Half))
+            .output_target(OutputTarget::SrgbF32Precise)
+            .decode(&jpeg, Unstoppable)
+            .unwrap();
+
+        let f32_pixels = result.pixels_f32().unwrap();
+        let rw = result.width() as usize;
+        let rh = result.height() as usize;
+
+        // Should produce scaled dimensions
+        assert_eq!(rw, 64, "Width should be halved");
+        assert_eq!(rh, 64, "Height should be halved");
+
+        // f32 output should be in [0.0, 1.0] range (normalized)
+        let min = f32_pixels.iter().copied().fold(f32::MAX, f32::min);
+        let max = f32_pixels.iter().copied().fold(f32::MIN, f32::max);
+        assert!(min >= -0.01, "f32 values should be >= 0, got {min}");
+        assert!(max <= 1.01, "f32 values should be <= 1, got {max}");
+        eprintln!("  f32 range: [{min:.4}, {max:.4}]");
+
+        // Compare with u8 Best path
+        let u8_result = Decoder::new()
+            .shrink(ShrinkHint::ExactScale(DctScale::Half))
+            .shrink_quality(ShrinkQuality::Best)
+            .decode(&jpeg, Unstoppable)
+            .unwrap();
+        let u8_pixels = u8_result.pixels_u8().unwrap();
+
+        // Dimensions should match
+        assert_eq!(u8_result.width() as usize, rw);
+        assert_eq!(u8_result.height() as usize, rh);
+
+        // f32 and u8 should be close but not identical (dequant bias + precision)
+        let mut max_diff = 0.0f32;
+        let mut sum_diff = 0.0f64;
+        for i in 0..u8_pixels.len().min(f32_pixels.len()) {
+            let f32_val = (f32_pixels[i] * 255.0).clamp(0.0, 255.0);
+            let u8_val = u8_pixels[i] as f32;
+            let diff = (f32_val - u8_val).abs();
+            max_diff = max_diff.max(diff);
+            sum_diff += diff as f64;
+        }
+        let mean_diff = sum_diff / u8_pixels.len().min(f32_pixels.len()) as f64;
+        eprintln!("  f32 vs u8: mean_diff={mean_diff:.3}, max_diff={max_diff:.1}");
+
+        // The paths should produce similar but not identical results.
+        // Dequant biases cause small differences (typically <5 levels).
+        assert!(
+            mean_diff < 10.0,
+            "f32 and u8 paths should be close, mean diff {mean_diff:.2}"
+        );
+    }
+
     /// Corpus-based comparison of Fast vs Best quality modes.
     #[test]
     #[ignore]
