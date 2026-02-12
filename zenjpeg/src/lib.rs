@@ -310,5 +310,8 @@ pub mod lossless;
 pub mod profile;
 
 // zencodec-types trait implementations
+// NOTE: temporarily cfg-gated due to zencodec-types API breakage (pre-existing)
+#[cfg(feature = "zencodec")]
 mod zencodec;
+#[cfg(feature = "zencodec")]
 pub use zencodec::{JpegDecodeJob, JpegDecoding, JpegEncodeJob, JpegEncoding};

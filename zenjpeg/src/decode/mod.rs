@@ -122,6 +122,91 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
     }
 }
 
+// ============================================================================
+// Box filter helpers for DctScale::Sixteenth post-processing
+// ============================================================================
+
+/// 2×2 box filter for u8 pixel buffers.
+///
+/// Averages non-overlapping 2×2 pixel blocks, halving each dimension.
+/// Handles odd dimensions by averaging the last row/column as-is (1-pixel-wide strip).
+///
+/// `bpp` is bytes per pixel (1 for gray, 3 for RGB, 4 for RGBA).
+/// Returns `(filtered_pixels, output_width, output_height)`.
+fn box_filter_2x2_u8(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    bpp: usize,
+) -> (Vec<u8>, usize, usize) {
+    let out_w = (width + 1) / 2;
+    let out_h = (height + 1) / 2;
+    let row_bytes = width * bpp;
+    let out_row_bytes = out_w * bpp;
+    let mut out = vec![0u8; out_row_bytes * out_h];
+
+    for oy in 0..out_h {
+        let y0 = oy * 2;
+        let y1 = (y0 + 1).min(height - 1);
+        let row0 = &pixels[y0 * row_bytes..y0 * row_bytes + row_bytes];
+        let row1 = &pixels[y1 * row_bytes..y1 * row_bytes + row_bytes];
+        let out_row = &mut out[oy * out_row_bytes..oy * out_row_bytes + out_row_bytes];
+
+        for ox in 0..out_w {
+            let x0 = ox * 2;
+            let x1 = (x0 + 1).min(width - 1);
+            for c in 0..bpp {
+                let a = row0[x0 * bpp + c] as u16;
+                let b = row0[x1 * bpp + c] as u16;
+                let d = row1[x0 * bpp + c] as u16;
+                let e = row1[x1 * bpp + c] as u16;
+                out_row[ox * bpp + c] = ((a + b + d + e + 2) / 4) as u8;
+            }
+        }
+    }
+
+    (out, out_w, out_h)
+}
+
+/// 2×2 box filter for f32 pixel buffers.
+///
+/// Same as [`box_filter_2x2_u8`] but operates on f32 values.
+/// Returns `(filtered_pixels, output_width, output_height)`.
+fn box_filter_2x2_f32(
+    pixels: &[f32],
+    width: usize,
+    height: usize,
+    channels: usize,
+) -> (Vec<f32>, usize, usize) {
+    let out_w = (width + 1) / 2;
+    let out_h = (height + 1) / 2;
+    let row_elems = width * channels;
+    let out_row_elems = out_w * channels;
+    let mut out = vec![0.0f32; out_row_elems * out_h];
+
+    for oy in 0..out_h {
+        let y0 = oy * 2;
+        let y1 = (y0 + 1).min(height - 1);
+        let row0 = &pixels[y0 * row_elems..y0 * row_elems + row_elems];
+        let row1 = &pixels[y1 * row_elems..y1 * row_elems + row_elems];
+        let out_row = &mut out[oy * out_row_elems..oy * out_row_elems + out_row_elems];
+
+        for ox in 0..out_w {
+            let x0 = ox * 2;
+            let x1 = (x0 + 1).min(width - 1);
+            for c in 0..channels {
+                let a = row0[x0 * channels + c];
+                let b = row0[x1 * channels + c];
+                let d = row1[x0 * channels + c];
+                let e = row1[x1 * channels + c];
+                out_row[ox * channels + c] = (a + b + d + e) * 0.25;
+            }
+        }
+    }
+
+    (out, out_w, out_h)
+}
+
 // Re-export config types (defined in config.rs, public API preserved)
 pub use config::{ChromaUpsampling, DecodeWarning, JpegInfo, Strictness};
 
@@ -587,11 +672,12 @@ impl DecodeConfig {
             let dct_scale = self.resolve_dct_scale(Dimensions::new(width, height));
             if dct_scale != DctScale::Full && !is_cmyk {
                 let coefficients = parser.extract_coefficients()?;
+                // Use internal_scale() so the pipeline sees Eighth instead of Sixteenth
                 return ScanlineReader::from_coefficients(
                     coefficients,
                     self.chroma_upsampling,
                     self.output_target,
-                    dct_scale,
+                    dct_scale.internal_scale(),
                     self.effective_shrink_quality(),
                 );
             }
@@ -674,12 +760,13 @@ impl DecodeConfig {
         let dct_scale = self.resolve_dct_scale(source_dims);
 
         // Extract scan data and construct scanline reader
+        // Use internal_scale() so the pipeline sees Eighth instead of Sixteenth
         let scan_data = parser.into_scan_data(is_grayscale)?;
         ScanlineReader::from_scan_data(
             scan_data,
             self.chroma_upsampling,
             self.output_target,
-            dct_scale,
+            dct_scale.internal_scale(),
             self.effective_shrink_quality(),
         )
     }
@@ -752,7 +839,7 @@ impl DecodeConfig {
             coefficients,
             self.chroma_upsampling,
             self.output_target,
-            dct_scale,
+            dct_scale.internal_scale(),
             self.effective_shrink_quality(),
         )
     }
@@ -801,6 +888,15 @@ impl DecodeConfig {
             return self.decode_with_shrink_f32(data);
         }
 
+        // Resolve the user's requested scale and the internal IDCT scale.
+        // For Sixteenth, the scanline reader decodes at 1/8 (Eighth),
+        // and we apply a 2x2 box filter afterward to reach 1/16.
+        let source_dims = {
+            let info = self.read_info(data)?;
+            info.dimensions
+        };
+        let dct_scale = self.resolve_dct_scale(source_dims);
+
         let mut reader = self.scanline_reader(data)?;
         let width = reader.width() as usize;
         let height = reader.height() as usize;
@@ -821,6 +917,21 @@ impl DecodeConfig {
                 rows_read += count;
             }
             let warnings = Vec::new();
+
+            // Apply 2x2 post-filter for Sixteenth scale
+            if dct_scale.needs_post_filter() {
+                let (filtered, fw, fh) = box_filter_2x2_u8(&pixels, width, height, 1);
+                return Ok(DecodeResult::new_u8(
+                    fw as u32,
+                    fh as u32,
+                    crate::types::PixelFormat::Gray,
+                    self.output_target,
+                    filtered,
+                    None,
+                    warnings,
+                ));
+            }
+
             Ok(DecodeResult::new_u8(
                 width as u32,
                 height as u32,
@@ -856,6 +967,21 @@ impl DecodeConfig {
                 rows_read += count;
             }
             let warnings = Vec::new();
+
+            // Apply 2x2 post-filter for Sixteenth scale
+            if dct_scale.needs_post_filter() {
+                let (filtered, fw, fh) = box_filter_2x2_u8(&pixels, width, height, bpp);
+                return Ok(DecodeResult::new_u8(
+                    fw as u32,
+                    fh as u32,
+                    format,
+                    self.output_target,
+                    filtered,
+                    None,
+                    warnings,
+                ));
+            }
+
             Ok(DecodeResult::new_u8(
                 width as u32,
                 height as u32,
@@ -890,11 +1016,12 @@ impl DecodeConfig {
         let info = parser.info();
         let output_format = self.output_format.unwrap_or(crate::types::PixelFormat::Rgb);
 
+        // Use internal_scale() for the f32 shrink path (Sixteenth → Eighth)
         let (mut pixels, scaled_w, scaled_h) = parser.to_pixels_f32_shrink(
             output_format,
             info.is_xyb,
             self.chroma_upsampling,
-            dct_scale,
+            dct_scale.internal_scale(),
             &enough::Unstoppable,
         )?;
 
@@ -903,14 +1030,24 @@ impl DecodeConfig {
             crate::color::icc::srgb_to_linear_inplace(&mut pixels);
         }
 
+        // Apply 2x2 post-filter for Sixteenth scale
+        let (final_pixels, final_w, final_h) = if dct_scale.needs_post_filter() {
+            let channels = output_format.num_channels();
+            let (filtered, fw, fh) =
+                box_filter_2x2_f32(&pixels, scaled_w as usize, scaled_h as usize, channels);
+            (filtered, fw as u32, fh as u32)
+        } else {
+            (pixels, scaled_w, scaled_h)
+        };
+
         let extras = parser.take_extras();
         let warnings = parser.take_warnings();
         Ok(DecodeResult::new_f32(
-            scaled_w,
-            scaled_h,
+            final_w,
+            final_h,
             output_format,
             self.output_target,
-            pixels,
+            final_pixels,
             extras,
             warnings,
         ))

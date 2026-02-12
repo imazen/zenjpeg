@@ -514,24 +514,29 @@ fn jpeg_info_available_scales() {
 
     let info = Decoder::new().read_info(&jpeg).unwrap();
 
-    assert_eq!(info.available_scales.len(), 4);
+    assert_eq!(info.available_scales.len(), 5);
 
     let (scale, dims) = info.available_scales[0];
+    assert_eq!(scale, DctScale::Sixteenth);
+    assert_eq!(dims.width, 40); // (640+15)/16 = 40
+    assert_eq!(dims.height, 30); // (480+15)/16 = 30
+
+    let (scale, dims) = info.available_scales[1];
     assert_eq!(scale, DctScale::Eighth);
     assert_eq!(dims.width, 80);
     assert_eq!(dims.height, 60);
 
-    let (scale, dims) = info.available_scales[1];
+    let (scale, dims) = info.available_scales[2];
     assert_eq!(scale, DctScale::Quarter);
     assert_eq!(dims.width, 160);
     assert_eq!(dims.height, 120);
 
-    let (scale, dims) = info.available_scales[2];
+    let (scale, dims) = info.available_scales[3];
     assert_eq!(scale, DctScale::Half);
     assert_eq!(dims.width, 320);
     assert_eq!(dims.height, 240);
 
-    let (scale, dims) = info.available_scales[3];
+    let (scale, dims) = info.available_scales[4];
     assert_eq!(scale, DctScale::Full);
     assert_eq!(dims.width, 640);
     assert_eq!(dims.height, 480);

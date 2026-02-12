@@ -414,8 +414,10 @@ impl StripProcessor {
                     }
                 }
             }
-            DctScale::Eighth => {
+            DctScale::Sixteenth | DctScale::Eighth => {
                 // 1x1: DC-only, single pixel per block
+                // Sixteenth should never reach here (callers pass internal_scale()),
+                // but handle it identically to Eighth for safety.
                 let dc = coeffs[0] as i32 * quant[0] as i32;
                 if unclamped {
                     idct_scaled_1x1_from_dc_unclamped(dc, strip, stride);

@@ -272,6 +272,12 @@ impl core::fmt::Display for DecodeWarning {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum DctScale {
+    /// 1/16 scale: 1 pixel per 2×2 blocks (16×16 source pixels).
+    ///
+    /// Internally decodes at 1/8 (DC-only), then applies a 2×2 box filter
+    /// to halve each dimension. Ideal for very large images where even 1/8
+    /// produces too many pixels (e.g., 100MP → 640×640 instead of 1280×1280).
+    Sixteenth,
     /// 1x1 output per block (DC only). 1/8 scale.
     Eighth,
     /// 2x2 output per block. 1/4 scale.
@@ -285,18 +291,25 @@ pub enum DctScale {
 
 impl DctScale {
     /// Scale numerator (1, 2, 4, or 8).
+    ///
+    /// For `Sixteenth`, returns 1 (same as `Eighth`) since the internal IDCT
+    /// operates at 1/8 scale. Use [`scaled_dimension()`](Self::scaled_dimension)
+    /// for the actual output size which accounts for the post-filter.
     #[inline]
     #[must_use]
     pub const fn numerator(self) -> u32 {
         match self {
-            Self::Eighth => 1,
+            Self::Sixteenth | Self::Eighth => 1,
             Self::Quarter => 2,
             Self::Half => 4,
             Self::Full => 8,
         }
     }
 
-    /// Output pixels per block edge (1, 2, 4, or 8).
+    /// Output pixels per block edge for the internal IDCT (1, 2, 4, or 8).
+    ///
+    /// For `Sixteenth`, returns 1 (same as `Eighth`) since the IDCT operates
+    /// at 1/8 scale. The 2×2 post-filter is applied separately.
     #[inline]
     #[must_use]
     pub const fn block_output_size(self) -> usize {
@@ -305,11 +318,15 @@ impl DctScale {
 
     /// Compute scaled dimension from original using ceiling division.
     ///
-    /// Formula: `(original * numerator + 7) / 8`
+    /// Formula: `(original * numerator + 7) / 8`, except for `Sixteenth`
+    /// which uses `(original + 15) / 16` (one pixel per 2×2 blocks).
     #[inline]
     #[must_use]
     pub const fn scaled_dimension(self, original: u32) -> u32 {
-        (original as u64 * self.numerator() as u64 + 7) as u32 / 8
+        match self {
+            Self::Sixteenth => (original as u64 + 15) as u32 / 16,
+            _ => (original as u64 * self.numerator() as u64 + 7) as u32 / 8,
+        }
     }
 
     /// Compute scaled dimensions from original dimensions.
@@ -322,8 +339,29 @@ impl DctScale {
         )
     }
 
+    /// The internal DCT scale used for IDCT processing.
+    ///
+    /// For `Sixteenth`, returns `Eighth` (the IDCT runs at 1/8, then a 2×2
+    /// box filter halves the result). All other scales return themselves.
+    #[inline]
+    #[must_use]
+    pub const fn internal_scale(self) -> DctScale {
+        match self {
+            Self::Sixteenth => Self::Eighth,
+            other => other,
+        }
+    }
+
+    /// Returns `true` if this scale requires a post-filter after IDCT.
+    #[inline]
+    #[must_use]
+    pub const fn needs_post_filter(self) -> bool {
+        matches!(self, Self::Sixteenth)
+    }
+
     /// All supported scales in order from smallest to largest output.
-    pub const ALL: [DctScale; 4] = [
+    pub const ALL: [DctScale; 5] = [
+        DctScale::Sixteenth,
         DctScale::Eighth,
         DctScale::Quarter,
         DctScale::Half,
@@ -334,6 +372,7 @@ impl DctScale {
 impl core::fmt::Display for DctScale {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Sixteenth => write!(f, "1/16"),
             Self::Eighth => write!(f, "1/8"),
             Self::Quarter => write!(f, "1/4"),
             Self::Half => write!(f, "1/2"),
@@ -974,15 +1013,22 @@ pub struct JpegInfo {
     /// Computed from SOF dimensions. Allows callers to inspect what
     /// DCT scale factors produce what output sizes before committing
     /// to decode.
-    pub available_scales: [(DctScale, Dimensions); 4],
+    pub available_scales: [(DctScale, Dimensions); 5],
 }
 
 impl JpegInfo {
     /// Compute `available_scales` from source dimensions.
-    pub(crate) fn compute_available_scales(dims: Dimensions) -> [(DctScale, Dimensions); 4] {
+    pub(crate) fn compute_available_scales(dims: Dimensions) -> [(DctScale, Dimensions); 5] {
         [
+            (
+                DctScale::Sixteenth,
+                DctScale::Sixteenth.scaled_dimensions(dims),
+            ),
             (DctScale::Eighth, DctScale::Eighth.scaled_dimensions(dims)),
-            (DctScale::Quarter, DctScale::Quarter.scaled_dimensions(dims)),
+            (
+                DctScale::Quarter,
+                DctScale::Quarter.scaled_dimensions(dims),
+            ),
             (DctScale::Half, DctScale::Half.scaled_dimensions(dims)),
             (DctScale::Full, DctScale::Full.scaled_dimensions(dims)),
         ]
@@ -995,6 +1041,7 @@ mod tests {
 
     #[test]
     fn dct_scale_numerator() {
+        assert_eq!(DctScale::Sixteenth.numerator(), 1);
         assert_eq!(DctScale::Eighth.numerator(), 1);
         assert_eq!(DctScale::Quarter.numerator(), 2);
         assert_eq!(DctScale::Half.numerator(), 4);
@@ -1003,10 +1050,29 @@ mod tests {
 
     #[test]
     fn dct_scale_block_output_size() {
+        assert_eq!(DctScale::Sixteenth.block_output_size(), 1);
         assert_eq!(DctScale::Eighth.block_output_size(), 1);
         assert_eq!(DctScale::Quarter.block_output_size(), 2);
         assert_eq!(DctScale::Half.block_output_size(), 4);
         assert_eq!(DctScale::Full.block_output_size(), 8);
+    }
+
+    #[test]
+    fn dct_scale_internal_scale() {
+        assert_eq!(DctScale::Sixteenth.internal_scale(), DctScale::Eighth);
+        assert_eq!(DctScale::Eighth.internal_scale(), DctScale::Eighth);
+        assert_eq!(DctScale::Quarter.internal_scale(), DctScale::Quarter);
+        assert_eq!(DctScale::Half.internal_scale(), DctScale::Half);
+        assert_eq!(DctScale::Full.internal_scale(), DctScale::Full);
+    }
+
+    #[test]
+    fn dct_scale_needs_post_filter() {
+        assert!(DctScale::Sixteenth.needs_post_filter());
+        assert!(!DctScale::Eighth.needs_post_filter());
+        assert!(!DctScale::Quarter.needs_post_filter());
+        assert!(!DctScale::Half.needs_post_filter());
+        assert!(!DctScale::Full.needs_post_filter());
     }
 
     #[test]
@@ -1016,11 +1082,13 @@ mod tests {
         assert_eq!(DctScale::Half.scaled_dimension(4000), 2000);
         assert_eq!(DctScale::Quarter.scaled_dimension(4000), 1000);
         assert_eq!(DctScale::Eighth.scaled_dimension(4000), 500);
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(4000), 250);
 
         assert_eq!(DctScale::Full.scaled_dimension(3000), 3000);
         assert_eq!(DctScale::Half.scaled_dimension(3000), 1500);
         assert_eq!(DctScale::Quarter.scaled_dimension(3000), 750);
         assert_eq!(DctScale::Eighth.scaled_dimension(3000), 375);
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(3000), 188); // (3000+15)/16 = 3015/16 = 188
     }
 
     #[test]
@@ -1032,11 +1100,13 @@ mod tests {
         assert_eq!(DctScale::Half.scaled_dimension(1118), 559);
         assert_eq!(DctScale::Quarter.scaled_dimension(1118), 280); // (1118*2+7)/8 = 2243/8 = 280
         assert_eq!(DctScale::Eighth.scaled_dimension(1118), 140); // (1118*1+7)/8 = 1125/8 = 140
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(1118), 70); // (1118+15)/16 = 1133/16 = 70
 
         assert_eq!(DctScale::Full.scaled_dimension(1105), 1105);
         assert_eq!(DctScale::Half.scaled_dimension(1105), 553); // (1105*4+7)/8 = 4427/8 = 553
         assert_eq!(DctScale::Quarter.scaled_dimension(1105), 277); // (1105*2+7)/8 = 2217/8 = 277
         assert_eq!(DctScale::Eighth.scaled_dimension(1105), 139); // (1105*1+7)/8 = 1112/8 = 139
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(1105), 70); // (1105+15)/16 = 1120/16 = 70
     }
 
     #[test]
@@ -1046,17 +1116,46 @@ mod tests {
         assert_eq!(DctScale::Half.scaled_dimension(1), 1); // (1*4+7)/8 = 11/8 = 1
         assert_eq!(DctScale::Quarter.scaled_dimension(1), 1); // (1*2+7)/8 = 9/8 = 1
         assert_eq!(DctScale::Eighth.scaled_dimension(1), 1); // (1*1+7)/8 = 8/8 = 1
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(1), 1); // (1+15)/16 = 16/16 = 1
 
         // 8x8 (single block)
         assert_eq!(DctScale::Full.scaled_dimension(8), 8);
         assert_eq!(DctScale::Half.scaled_dimension(8), 4);
         assert_eq!(DctScale::Quarter.scaled_dimension(8), 2);
         assert_eq!(DctScale::Eighth.scaled_dimension(8), 1);
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(8), 1); // (8+15)/16 = 23/16 = 1
+
+        // 16x16 (2x2 blocks, Sixteenth produces exactly 1 pixel)
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(16), 1); // (16+15)/16 = 31/16 = 1
+
+        // 10240x10240 (100MP target use case)
+        assert_eq!(DctScale::Eighth.scaled_dimension(10240), 1280);
+        assert_eq!(DctScale::Sixteenth.scaled_dimension(10240), 640);
     }
 
     #[test]
     fn shrink_hint_fit_within() {
         let src = Dimensions::new(4000, 3000);
+
+        // Want at most 250x188 → 1/16 gives (250, 188), fits
+        assert_eq!(
+            ShrinkHint::FitWithin {
+                width: 250,
+                height: 188
+            }
+            .resolve(src),
+            DctScale::Sixteenth,
+        );
+
+        // Want at least 251x189 → 1/16 gives (250, 188), too small → 1/8 gives (500, 375)
+        assert_eq!(
+            ShrinkHint::FitWithin {
+                width: 251,
+                height: 189
+            }
+            .resolve(src),
+            DctScale::Eighth,
+        );
 
         // Want at least 500x375 → 1/8 works (500x375)
         assert_eq!(
@@ -1139,9 +1238,10 @@ mod tests {
         let dims = Dimensions::new(4000, 3000);
         let scales = JpegInfo::compute_available_scales(dims);
 
-        assert_eq!(scales[0], (DctScale::Eighth, Dimensions::new(500, 375)));
-        assert_eq!(scales[1], (DctScale::Quarter, Dimensions::new(1000, 750)));
-        assert_eq!(scales[2], (DctScale::Half, Dimensions::new(2000, 1500)));
-        assert_eq!(scales[3], (DctScale::Full, Dimensions::new(4000, 3000)));
+        assert_eq!(scales[0], (DctScale::Sixteenth, Dimensions::new(250, 188)));
+        assert_eq!(scales[1], (DctScale::Eighth, Dimensions::new(500, 375)));
+        assert_eq!(scales[2], (DctScale::Quarter, Dimensions::new(1000, 750)));
+        assert_eq!(scales[3], (DctScale::Half, Dimensions::new(2000, 1500)));
+        assert_eq!(scales[4], (DctScale::Full, Dimensions::new(4000, 3000)));
     }
 }
