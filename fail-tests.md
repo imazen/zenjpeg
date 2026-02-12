@@ -4,13 +4,47 @@ Systematic import of crash/panic/malformed-input test cases from upstream JPEG d
 
 ## Status
 
-| Source | Issues Scraped | Reproducers Found | Tests Added | Panics Found |
-|--------|---------------|-------------------|-------------|--------------|
+| Source | Issues Scraped | Reproducers Found | In-Repo Tests | Panics Found |
+|--------|---------------|-------------------|---------------|--------------|
 | zune-jpeg (etemesi254/zune-image) | 356 (all) | 85 (36 phase 1 + 49 extra) | 56 (36 include_bytes + 20 sweep) | **0** |
 | jpeg-decoder (image-rs/jpeg-decoder) | 285 (all) | 59 (32 + 27 jd_257) | 17 sweep (small) | **0** |
 | libjpeg-turbo (libjpeg-turbo/libjpeg-turbo) | 866 (all) | 41 (38 JPEG + BMP/PPM/GIF) | 33 sweep (small) | **0** |
+| codec-corpus jpeg-conformance | — | — | 176 (40 valid + 116 invalid + 20 non-conformant) | **0** |
+| codec-corpus zune fuzz | — | — | 1,836 fuzz corpus | **0** |
 
-**Total: 183 JPEG files tested, 0 panics. zenjpeg handles all malformed input gracefully.**
+**Total: 2,062 JPEG files tested, 0 panics. zenjpeg handles all malformed input gracefully.**
+
+## Three-tier classification
+
+Each test file is classified by expected decoder behavior:
+
+| Classification | Count | Assertion |
+|---|---|---|
+| **should_decode** | 13 in-repo + 40 corpus valid | MUST decode successfully, MUST NOT panic |
+| **may_decode** | 3 in-repo + 20 corpus non-conformant | MAY accept or reject, MUST NOT panic |
+| **must_reject** | 54 in-repo + 116 corpus invalid + 1,836 fuzz | MUST NOT panic (error expected) |
+
+### should_decode files (valid JPEGs)
+
+These triggered C-specific bugs (segfaults, UB, heap corruption) or output-correctness
+bugs in upstream decoders — the JPEG data itself is valid:
+
+- `jd_219_no_app14.jpg` — valid JPEG without optional APP14 marker
+- `jd_228_ff00_marker.jpeg` — valid JPEG with FF00 byte stuffing
+- `zj_040_decode_diff_1.jpg` — decode produced wrong pixels in zune-jpeg
+- `zj_134_luma_decode_bad.jpg` — luma channel decoded incorrectly
+- `zj_249_discolored_ycbcr.jpg` — YCbCr→RGB color shift
+- `zj_303_app14_adobe.jpg` — Adobe APP14 marker handling
+- `ljt_441_segv_jcopy_sample_rows.jpg` — C segfault in row copy
+- `ljt_470_ub_null_ptr_skip.jpg` — C null pointer UB
+- `ljt_574_heap_corruption.jpg` — C heap buffer overwrite
+- `ljt_758_segv_adjust_quant_src.jpg` — C segfault in quant adjustment
+
+### may_decode files (non-conformant edge cases)
+
+- `jd_040_16bit_quant.jpg` — 16-bit quantization tables (non-standard but common)
+- `jd_132_subtract_overflow.bin` — arithmetic edge case in coefficient decode
+- `zj_172_upsample_assert.jpg` — unusual sampling factors
 
 ## Phase 1: zune-jpeg core (complete)
 
@@ -53,6 +87,21 @@ algorithmic complexity DoS, infinite loops, logic errors.
 
 33 small JPEG files (<30KB) in repo at `tests/crash_repro/libjpeg_turbo/`.
 5 large files staged for codec-corpus import.
+
+## Phase 3: Codec-corpus integration (complete)
+
+### jpeg-conformance (176 files)
+
+Tests run with `cargo test -- --ignored`:
+
+- `valid/` — 40 files, all decode successfully (MUST decode)
+- `invalid/` — 116 files, 97 rejected + 17 accepted (lenient), 0 panics (MUST NOT panic)
+- `non-conformant/` — 20 files, 6 accepted + 14 rejected, 0 panics (MUST NOT panic)
+
+### zune fuzz corpus (1,836 files)
+
+All 1,836 files from `zune/fuzz-corpus/jpeg/` tested, 0 panics.
+16 decoded ok, 1,818 returned errors, 2 not JPEG.
 
 ## Large files for codec-corpus
 
