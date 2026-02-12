@@ -3353,7 +3353,8 @@ mod tests {
         use codec_eval::metrics::butteraugli::calculate_butteraugli;
         use codec_eval::metrics::ssimulacra2::calculate_ssimulacra2;
 
-        let corpus_dir = std::path::Path::new("/mnt/v/corpus/cid22/512");
+        let corpus_dir = std::path::Path::new(
+            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation");
         if !corpus_dir.exists() {
             eprintln!("Corpus not found at {}", corpus_dir.display());
             return;
@@ -3368,8 +3369,6 @@ mod tests {
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
             .collect();
         images.sort_by_key(|e| e.file_name());
-
-        let jpeg_decoder = crate::decode::JpegDecoder::new();
 
         eprintln!("\n{:<10} {:>3} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>8} {:>8}",
             "Image", "Q", "KLT_eq", "KLT_old", "YCbCr", "Δ%eq",
@@ -3443,16 +3442,37 @@ mod tests {
                     .encode(rgb)
                     .unwrap();
 
-                // Decode all to RGB for metrics
-                let decode = |jpeg: &[u8]| -> Vec<u8> {
-                    let mut dec = jpeg_decoder.clone();
-                    dec.apply_icc(false);
-                    let img = dec.decode(jpeg, enough::Unstoppable).unwrap();
-                    img.data
+                // Decode KLT images: raw channels → inverse KLT → sRGB
+                let encode_params = klt::KltEncodeParams::from_forward_with_center(
+                    klt.forward, klt.mean);
+                let (inv_scale, inv_offset) = encode_params.inverse_scale_offset();
+                let inverse = klt.inverse;
+
+                let decode_klt = |jpeg: &[u8]| -> Vec<u8> {
+                    let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg));
+                    let raw = dec.decode().expect("jpeg decode");
+                    // Apply inverse KLT: undo scale/offset then matrix multiply
+                    let mut out = vec![0u8; raw.len()];
+                    for i in (0..raw.len()).step_by(3) {
+                        let c0 = raw[i] as f32 * inv_scale[0] + inv_offset[0];
+                        let c1 = raw[i + 1] as f32 * inv_scale[1] + inv_offset[1];
+                        let c2 = raw[i + 2] as f32 * inv_scale[2] + inv_offset[2];
+                        let [r, g, b] = inverse.transform([c0, c1, c2]);
+                        out[i] = r.round().clamp(0.0, 255.0) as u8;
+                        out[i + 1] = g.round().clamp(0.0, 255.0) as u8;
+                        out[i + 2] = b.round().clamp(0.0, 255.0) as u8;
+                    }
+                    out
                 };
-                let eq_rgb = decode(&klt_eq_jpeg);
-                let old_rgb = decode(&klt_old_jpeg);
-                let ycc_rgb = decode(&ycbcr_jpeg);
+                let eq_rgb = decode_klt(&klt_eq_jpeg);
+                let old_rgb = decode_klt(&klt_old_jpeg);
+
+                // Decode YCbCr (jpeg-decoder handles YCbCr→RGB)
+                let ycc_rgb = {
+                    let mut dec = jpeg_decoder::Decoder::new(
+                        std::io::Cursor::new(&ycbcr_jpeg));
+                    dec.decode().expect("jpeg decode")
+                };
 
                 // Extract reference RGB (strip alpha if needed)
                 let ref_rgb: Vec<u8> = if bpp == 4 {
