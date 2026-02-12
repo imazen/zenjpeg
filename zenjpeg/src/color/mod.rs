@@ -8,6 +8,7 @@
 
 pub mod icc;
 pub mod klt;
+pub mod icc_builder;
 pub mod xyb;
 pub mod ycbcr;
 
