@@ -83,11 +83,7 @@ fn save_scope_png(img: &ImgVec<rgb::RGB8>, path: &str) {
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().unwrap();
-    let data: Vec<u8> = img
-        .buf()
-        .iter()
-        .flat_map(|p| [p.r, p.g, p.b])
-        .collect();
+    let data: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     writer.write_image_data(&data).unwrap();
 }
 
@@ -134,8 +130,14 @@ fn analyze_scale(scale: DctScale, quality: f32) -> resamplescope::analyze::Filte
     let hh = result.height() as usize;
     eprintln!("Decoded output: {hw}×{hh}");
 
-    assert_eq!(hw, DOT_DST_WIDTH, "Width mismatch: expected {DOT_DST_WIDTH}, got {hw}");
-    assert_eq!(hh, DOT_DST_HEIGHT, "Height mismatch: expected {DOT_DST_HEIGHT}, got {hh}");
+    assert_eq!(
+        hw, DOT_DST_WIDTH,
+        "Width mismatch: expected {DOT_DST_WIDTH}, got {hw}"
+    );
+    assert_eq!(
+        hh, DOT_DST_HEIGHT,
+        "Height mismatch: expected {DOT_DST_HEIGHT}, got {hh}"
+    );
 
     // Extract R channel as grayscale
     let gray: Vec<u8> = (0..hw * hh).map(|i| pixels[i * 3]).collect();
@@ -171,10 +173,7 @@ fn resamplescope_shrink_half() {
     let graph = resamplescope::graph::render(Some(&curve), None, best_filter);
 
     std::fs::create_dir_all(OUTPUT_DIR).unwrap();
-    save_scope_png(
-        &graph,
-        &format!("{OUTPUT_DIR}/half_scale.png"),
-    );
+    save_scope_png(&graph, &format!("{OUTPUT_DIR}/half_scale.png"));
     eprintln!("\nScope graph: {OUTPUT_DIR}/half_scale.png");
 
     // Also render with common reference filters for comparison
@@ -185,10 +184,7 @@ fn resamplescope_shrink_half() {
     ] {
         let graph = resamplescope::graph::render(Some(&curve), None, Some(filter));
         let name = filter.name().to_lowercase().replace('-', "_");
-        save_scope_png(
-            &graph,
-            &format!("{OUTPUT_DIR}/half_vs_{name}.png"),
-        );
+        save_scope_png(&graph, &format!("{OUTPUT_DIR}/half_vs_{name}.png"));
     }
 }
 
@@ -202,10 +198,7 @@ fn resamplescope_shrink_quarter() {
     let graph = resamplescope::graph::render(Some(&curve), None, best_filter);
 
     std::fs::create_dir_all(OUTPUT_DIR).unwrap();
-    save_scope_png(
-        &graph,
-        &format!("{OUTPUT_DIR}/quarter_scale.png"),
-    );
+    save_scope_png(&graph, &format!("{OUTPUT_DIR}/quarter_scale.png"));
     eprintln!("\nScope graph: {OUTPUT_DIR}/quarter_scale.png");
 }
 
@@ -219,10 +212,7 @@ fn resamplescope_shrink_eighth() {
     let graph = resamplescope::graph::render(Some(&curve), None, best_filter);
 
     std::fs::create_dir_all(OUTPUT_DIR).unwrap();
-    save_scope_png(
-        &graph,
-        &format!("{OUTPUT_DIR}/eighth_scale.png"),
-    );
+    save_scope_png(&graph, &format!("{OUTPUT_DIR}/eighth_scale.png"));
     eprintln!("\nScope graph: {OUTPUT_DIR}/eighth_scale.png");
 }
 

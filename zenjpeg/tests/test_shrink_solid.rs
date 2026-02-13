@@ -4,7 +4,9 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn encode_jpeg(pixels: &[u8], w: u32, h: u32, quality: f32, sub: ChromaSubsampling) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, sub);
-    let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
     enc.push_packed(pixels, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
@@ -17,18 +19,19 @@ fn shrink_256x256_solid() {
     // Solid red
     for i in (0..pixels.len()).step_by(3) {
         pixels[i] = 200;
-        pixels[i+1] = 50;
-        pixels[i+2] = 50;
+        pixels[i + 1] = 50;
+        pixels[i + 2] = 50;
     }
     let jpeg = encode_jpeg(&pixels, w, h, 90.0, ChromaSubsampling::None);
     let half = Decoder::new()
         .shrink(ShrinkHint::ExactScale(DctScale::Half))
-        .decode(&jpeg, Unstoppable).unwrap();
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
     let hp = half.pixels_u8().unwrap();
     let hw = half.width() as usize;
     let hh = half.height() as usize;
     eprintln!("Solid half: {}x{}", hw, hh);
-    
+
     // All pixels should be very close to (200, 50, 50)
     let mut max_diff = 0i32;
     let mut bad = None;
@@ -61,7 +64,9 @@ fn shrink_256x256_multirow_check() {
     let mut pixels = vec![0u8; (w * h * 3) as usize];
     let mut rng = 12345u64;
     let mut next = || -> u8 {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng >> 33) as u8
     };
     for y in 0..h {
@@ -69,46 +74,55 @@ fn shrink_256x256_multirow_check() {
             let idx = ((y * w + x) * 3) as usize;
             let patch_x = (x / 32) as u8;
             let patch_y = (y / 32) as u8;
-            pixels[idx] = patch_x.wrapping_mul(37).wrapping_add(patch_y.wrapping_mul(71));
-            pixels[idx + 1] = patch_x.wrapping_mul(53).wrapping_add(patch_y.wrapping_mul(29));
-            pixels[idx + 2] = patch_x.wrapping_mul(19).wrapping_add(patch_y.wrapping_mul(97));
+            pixels[idx] = patch_x
+                .wrapping_mul(37)
+                .wrapping_add(patch_y.wrapping_mul(71));
+            pixels[idx + 1] = patch_x
+                .wrapping_mul(53)
+                .wrapping_add(patch_y.wrapping_mul(29));
+            pixels[idx + 2] = patch_x
+                .wrapping_mul(19)
+                .wrapping_add(patch_y.wrapping_mul(97));
             let noise = next() / 8;
             pixels[idx] = pixels[idx].wrapping_add(noise);
             pixels[idx + 1] = pixels[idx + 1].wrapping_add(noise);
             pixels[idx + 2] = pixels[idx + 2].wrapping_add(noise);
         }
     }
-    
+
     let jpeg = encode_jpeg(&pixels, w, h, 90.0, ChromaSubsampling::None);
-    
+
     // Full decode
     let full = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
     let fp = full.pixels_u8().unwrap();
     let fw = full.width() as usize;
     let fh = full.height() as usize;
-    
+
     // Half decode
     let half = Decoder::new()
         .shrink(ShrinkHint::ExactScale(DctScale::Half))
-        .decode(&jpeg, Unstoppable).unwrap();
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
     let hp = half.pixels_u8().unwrap();
     let hw = half.width() as usize;
     let hh = half.height() as usize;
-    
+
     eprintln!("Full: {}x{}, Half: {}x{}", fw, fh, hw, hh);
-    
+
     // Check each MCU row strip (4 rows at half scale)
     let mcu_height = 4;
     let num_mcu_rows = (hh + mcu_height - 1) / mcu_height;
-    
+
     for mcu_row in 0..num_mcu_rows {
         let mut max_diff = 0i32;
         let mut worst = None;
-        
+
         for row_in_strip in 0..mcu_height {
             let y = mcu_row * mcu_height + row_in_strip;
-            if y >= hh { break; }
-            
+            if y >= hh {
+                break;
+            }
+
             for x in 0..hw {
                 for c in 0..3 {
                     // Area average of 2x2 from full
@@ -134,7 +148,7 @@ fn shrink_256x256_multirow_check() {
                 }
             }
         }
-        
+
         if max_diff > 10 {
             let (x, y, c, sv, avg) = worst.unwrap();
             eprintln!("  MCU row {mcu_row}: max_diff={max_diff} worst=({x},{y}) c={c} shrink={sv} avg={avg}");

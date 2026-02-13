@@ -277,7 +277,11 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
         let (buf, w, h) = img.to_contiguous_buf();
         let rgb: Vec<Rgb<u8>> = buf
             .iter()
-            .map(|p| Rgb { r: p.r, g: p.g, b: p.b })
+            .map(|p| Rgb {
+                r: p.r,
+                g: p.g,
+                b: p.b,
+            })
             .collect();
         self.do_encode(&rgb, w as u32, h as u32)
     }
@@ -287,7 +291,11 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
         let (buf, w, h) = img.to_contiguous_buf();
         let rgb: Vec<Rgb<u8>> = buf
             .iter()
-            .map(|p| Rgb { r: p.r, g: p.g, b: p.b })
+            .map(|p| Rgb {
+                r: p.r,
+                g: p.g,
+                b: p.b,
+            })
             .collect();
         self.do_encode(&rgb, w as u32, h as u32)
     }
@@ -688,7 +696,12 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
         let src = output.into_rgba8();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = BGRA { b: s.b, g: s.g, r: s.r, a: s.a };
+                *d = BGRA {
+                    b: s.b,
+                    g: s.g,
+                    r: s.r,
+                    a: s.a,
+                };
             }
         }
         Ok(info)
@@ -704,7 +717,12 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
         let src = output.into_rgb8();
         for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
             for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
-                *d = BGRA { b: s.b, g: s.g, r: s.r, a: 255 };
+                *d = BGRA {
+                    b: s.b,
+                    g: s.g,
+                    r: s.r,
+                    a: 255,
+                };
             }
         }
         Ok(info)

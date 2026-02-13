@@ -37,8 +37,10 @@ fn shrink_grayscale_quality() {
             for x in 0..w {
                 let bx = (x / 8) as u8;
                 let by = (y / 8) as u8;
-                pixels[(y * w + x) as usize] =
-                    bx.wrapping_mul(37).wrapping_add(by.wrapping_mul(71)).wrapping_add(next() / 32);
+                pixels[(y * w + x) as usize] = bx
+                    .wrapping_mul(37)
+                    .wrapping_add(by.wrapping_mul(71))
+                    .wrapping_add(next() / 32);
             }
         }
 
@@ -90,7 +92,10 @@ fn shrink_grayscale_quality() {
         let bad_str = first_bad
             .map(|(x, y, sv, avg)| format!(", first_bad=({x},{y}) sv={sv} avg={avg}"))
             .unwrap_or_default();
-        eprintln!("  gray w={w} ({} MCUs) → {hw}x{hh}: max_diff={max_diff}{bad_str}", w / 8);
+        eprintln!(
+            "  gray w={w} ({} MCUs) → {hw}x{hh}: max_diff={max_diff}{bad_str}",
+            w / 8
+        );
     }
 }
 
@@ -112,8 +117,14 @@ fn shrink_rgb_strip_diagnosis() {
             let idx = ((y * w + x) * 3) as usize;
             let bx = (x / 8) as u8;
             pixels[idx] = bx.wrapping_mul(37).wrapping_add(next() / 32);
-            pixels[idx + 1] = bx.wrapping_mul(53).wrapping_add(50).wrapping_add(next() / 32);
-            pixels[idx + 2] = bx.wrapping_mul(19).wrapping_add(100).wrapping_add(next() / 32);
+            pixels[idx + 1] = bx
+                .wrapping_mul(53)
+                .wrapping_add(50)
+                .wrapping_add(next() / 32);
+            pixels[idx + 2] = bx
+                .wrapping_mul(19)
+                .wrapping_add(100)
+                .wrapping_add(next() / 32);
         }
     }
 
@@ -154,7 +165,9 @@ fn shrink_rgb_strip_diagnosis() {
         let i = x * 3;
         eprintln!(
             "  block {block} (x={x}): ({},{},{})",
-            hp[i], hp[i + 1], hp[i + 2]
+            hp[i],
+            hp[i + 1],
+            hp[i + 2]
         );
     }
 
