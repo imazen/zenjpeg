@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
@@ -112,6 +113,13 @@ pub struct ScanlineReader<'a> {
     // When the streaming decoder pre-decodes the next MCU row to provide
     // bottom chroma context, this flag indicates the next MCU is already decoded.
     next_mcu_preloaded: bool,
+
+    // Crop-on-decode state.
+    // When Some, only IDCT/upsample MCU rows overlapping the crop region.
+    // Entropy decoding still runs for all rows (DC predictor chain).
+    crop: Option<ResolvedCrop>,
+    // Whether skip_to_crop_start() has been called.
+    crop_skip_done: bool,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -177,6 +185,8 @@ impl<'a> ScanlineReader<'a> {
             is_rgb,
             stored_coeffs: None,
             next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
         })
     }
 
@@ -220,6 +230,8 @@ impl<'a> ScanlineReader<'a> {
             is_rgb: false,
             stored_coeffs: None,
             next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
         }
     }
 
@@ -314,27 +326,36 @@ impl<'a> ScanlineReader<'a> {
             is_rgb: false,
             stored_coeffs: Some(coefficients),
             next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
         })
     }
 
-    /// Returns the image width.
+    /// Sets the crop region for this reader.
+    ///
+    /// Must be called before reading any rows.
+    pub(crate) fn set_crop(&mut self, crop: ResolvedCrop) {
+        self.crop = Some(crop);
+    }
+
+    /// Returns the output width (crop width if set, otherwise image width).
     #[inline]
     pub fn width(&self) -> u32 {
-        self.width
+        self.crop.map_or(self.width, |c| c.width)
     }
 
-    /// Returns the image height.
+    /// Returns the output height (crop height if set, otherwise image height).
     #[inline]
     pub fn height(&self) -> u32 {
-        self.height
+        self.crop.map_or(self.height, |c| c.height)
     }
 
-    /// Returns image info.
+    /// Returns image info (reflects crop dimensions if set).
     pub fn info(&self) -> ScanlineInfo {
         ScanlineInfo {
             dimensions: Dimensions {
-                width: self.width,
-                height: self.height,
+                width: self.width(),
+                height: self.height(),
             },
             color_space: if self.num_components == 1 {
                 ColorSpace::Grayscale
@@ -352,7 +373,7 @@ impl<'a> ScanlineReader<'a> {
         self.strip.subsampling
     }
 
-    /// Returns the current row position (0 to height-1).
+    /// Returns the current row position within the crop (0 to crop_height-1).
     #[inline]
     pub fn current_row(&self) -> usize {
         self.current_row
@@ -361,7 +382,7 @@ impl<'a> ScanlineReader<'a> {
     /// Returns true if all rows have been read.
     #[inline]
     pub fn is_finished(&self) -> bool {
-        self.current_row >= self.height as usize
+        self.current_row >= self.height() as usize
     }
 
     /// Returns true if this is a grayscale (single-component) image.
@@ -397,6 +418,155 @@ impl<'a> ScanlineReader<'a> {
         let (range, _metadata) = parser.extract_gainmap_early(self.data).ok()?;
         let (start, end) = range?;
         Some(&self.data[start..end])
+    }
+
+    /// Entropy-decode MCU rows before the crop region without IDCT.
+    ///
+    /// Runs the Huffman decoder for all MCU rows before `crop.mcu_row_start`,
+    /// maintaining the DC predictor chain, but skips IDCT and upsampling.
+    fn skip_to_crop_start(&mut self) -> Result<()> {
+        let crop = match self.crop {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+
+        if self.crop_skip_done || self.current_mcu_row >= crop.mcu_row_start {
+            self.crop_skip_done = true;
+            return Ok(());
+        }
+
+        // For v-subsampled images (4:2:0, 4:4:0), the first crop MCU row needs
+        // chroma context from the previous MCU row's last chroma line. Without it,
+        // fixup_vertical_boundary() can't correct row 0's bilinear interpolation.
+        let needs_prev_context = self.strip.needs_vertical_upsample() && crop.mcu_row_start > 0;
+
+        // For buffered mode, just advance current_row — no entropy to skip
+        if self.buffered_rgb.is_some() {
+            self.crop_skip_done = true;
+            return Ok(());
+        }
+
+        // For coefficient mode: coefficients are already stored, just advance.
+        // But for v-subsampled, IDCT+upsample the previous MCU row for chroma context.
+        if self.stored_coeffs.is_some() {
+            if needs_prev_context {
+                self.current_mcu_row = crop.mcu_row_start - 1;
+                self.mcu_row_decoded = false;
+                self.decode_mcu_row()?;
+            }
+            self.current_mcu_row = crop.mcu_row_start;
+            self.mcu_row_decoded = false;
+            self.crop_skip_done = true;
+            return Ok(());
+        }
+
+        // Streaming mode: entropy-decode-only (no IDCT) until near the crop.
+        // For v-subsampled, stop one row early so we can IDCT+upsample it for context.
+        let skip_target = if needs_prev_context {
+            crop.mcu_row_start - 1
+        } else {
+            crop.mcu_row_start
+        };
+
+        let scan_data = &self.data[self.scan_data_start..];
+        let mut decoder = EntropyDecoder::new(scan_data);
+
+        // Set up Huffman tables
+        for comp_idx in 0..self.num_components as usize {
+            let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+            if let Some(ref table) = self.dc_tables[dc_idx] {
+                decoder.set_dc_table(dc_idx, table);
+            }
+            if let Some(ref table) = self.ac_tables[ac_idx] {
+                decoder.set_ac_table(ac_idx, table);
+            }
+        }
+
+        // Restore state if we have one
+        if let Some(ref state) = self.decoder_state {
+            decoder.restore_state(*state);
+        }
+
+        let mcu_cols = self.strip.mcu_cols();
+
+        while self.current_mcu_row < skip_target {
+            // Decode one MCU row (entropy only, no IDCT)
+            for _mcu_x in 0..mcu_cols {
+                // Check for restart marker
+                if self.restart_interval > 0
+                    && self.mcu_count > 0
+                    && self.mcu_count % self.restart_interval as u32 == 0
+                {
+                    decoder.align_to_byte();
+                    decoder.read_restart_marker(self.next_restart_num)?;
+                    self.next_restart_num = (self.next_restart_num + 1) & 7;
+                    decoder.reset_dc();
+                    self.prev_coeff_counts = [64; 4];
+                }
+
+                for comp_idx in 0..self.num_components as usize {
+                    let h_blocks = self.strip.h_samp[comp_idx] as usize;
+                    let v_blocks = self.strip.v_samp[comp_idx] as usize;
+                    let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
+
+                    for _v in 0..v_blocks {
+                        for _h in 0..h_blocks {
+                            // Decode block but skip IDCT — just maintain DC chain
+                            match decoder.decode_block_into(
+                                &mut self.coeffs_buf,
+                                self.prev_coeff_counts[comp_idx],
+                                comp_idx,
+                                dc_idx,
+                                ac_idx,
+                            )? {
+                                ScanRead::Value(c) => {
+                                    self.prev_coeff_counts[comp_idx] =
+                                        self.prev_coeff_counts[comp_idx].max(c);
+                                }
+                                ScanRead::EndOfScan | ScanRead::Truncated => {
+                                    self.prev_coeff_counts[comp_idx] = 64;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.mcu_count += 1;
+            }
+
+            self.current_mcu_row += 1;
+        }
+
+        self.decoder_state = Some(decoder.save_state());
+        self.mcu_row_decoded = false;
+
+        // For v-subsampled, decode the last pre-crop MCU row with full IDCT + upsample.
+        // This populates prev_cb_row/prev_cr_row so fixup_vertical_boundary() can
+        // correct row 0 of the first crop MCU row.
+        if needs_prev_context {
+            self.decode_mcu_row()?;
+            self.current_mcu_row += 1;
+            self.mcu_row_decoded = false;
+        }
+
+        self.crop_skip_done = true;
+
+        Ok(())
+    }
+
+    /// Returns true if the given MCU row index is within the crop region.
+    #[inline]
+    fn mcu_row_in_crop(&self, mcu_row: usize) -> bool {
+        match self.crop {
+            Some(c) => {
+                // Include one extra MCU row before crop start so the chroma
+                // boundary fixup (h2v2 row0) has correct data from the
+                // previous MCU row's last chroma line.
+                let effective_start = c.mcu_row_start.saturating_sub(1);
+                mcu_row >= effective_start && mcu_row < c.mcu_row_end
+            }
+            None => true,
+        }
     }
 
     /// Decodes the current MCU row into strip buffers.
@@ -474,6 +644,8 @@ impl<'a> ScanlineReader<'a> {
             }
 
             // Decode each component's blocks
+            let do_idct = self.mcu_row_in_crop(self.current_mcu_row);
+
             for comp_idx in 0..self.num_components as usize {
                 let h_blocks = self.strip.h_samp[comp_idx] as usize;
                 let v_blocks = self.strip.v_samp[comp_idx] as usize;
@@ -499,15 +671,17 @@ impl<'a> ScanlineReader<'a> {
                         self.prev_coeff_counts[comp_idx] =
                             self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        self.strip.idct_block(
-                            comp_idx,
-                            mcu_x,
-                            h,
-                            v,
-                            &self.coeffs_buf,
-                            coeff_count,
-                            quant,
-                        );
+                        if do_idct {
+                            self.strip.idct_block(
+                                comp_idx,
+                                mcu_x,
+                                h,
+                                v,
+                                &self.coeffs_buf,
+                                coeff_count,
+                                quant,
+                            );
+                        }
                     }
                 }
             }
@@ -518,8 +692,10 @@ impl<'a> ScanlineReader<'a> {
         // Save full state for next MCU row (includes bit buffer position)
         self.decoder_state = Some(decoder.save_state());
 
-        // Upsample chroma if needed
-        self.strip.upsample_chroma();
+        // Upsample chroma only if this MCU row is in the crop
+        if self.mcu_row_in_crop(self.current_mcu_row) {
+            self.strip.upsample_chroma();
+        }
 
         self.mcu_row_decoded = true;
 
@@ -531,6 +707,12 @@ impl<'a> ScanlineReader<'a> {
     /// Reads blocks from `self.stored_coeffs`, applies IDCT via the strip
     /// processor, then upsamples chroma. Used for decode-time transforms.
     fn decode_mcu_row_from_coefficients(&mut self) -> Result<()> {
+        // Skip IDCT entirely if this MCU row is outside the crop
+        if !self.mcu_row_in_crop(self.current_mcu_row) {
+            self.mcu_row_decoded = true;
+            return Ok(());
+        }
+
         let quant_refs = self.resolve_quant_tables()?;
 
         let mcu_cols = self.strip.mcu_cols();
@@ -675,6 +857,19 @@ impl<'a> ScanlineReader<'a> {
         let mcu_height = self.strip.mcu_height;
         let total_mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
         self.current_mcu_row + 1 >= total_mcu_rows
+    }
+
+    /// Initialize crop state: skip MCU rows before the crop, set row_in_mcu.
+    ///
+    /// Must be called before the first `ensure_row_ready()`.
+    fn ensure_crop_initialized(&mut self) -> Result<()> {
+        if self.crop.is_some() && !self.crop_skip_done {
+            self.skip_to_crop_start()?;
+            // Set row_in_mcu to the first crop row within the first crop MCU row
+            let crop = self.crop.unwrap();
+            self.row_in_mcu = crop.y as usize - crop.mcu_row_start * self.strip.mcu_height;
+        }
+        Ok(())
     }
 
     /// Ensure the current row is ready to read.
@@ -839,21 +1034,40 @@ impl<'a> ScanlineReader<'a> {
     /// if end of image is reached).
     pub fn read_rows_rgb8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width * 3 {
+        if output.width() < out_width * 3 {
             return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
         // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
-            let row_bytes = width * 3;
+            let img_width = self.width as usize;
+            let bpp = if self.num_components == 1 { 1 } else { 3 };
+            let src_row_bytes = img_width * bpp;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
-            while rows_written < max_rows && self.current_row < self.height as usize {
-                let src_offset = self.current_row * row_bytes;
+            while rows_written < max_rows && self.current_row < out_height {
+                let image_row = crop_y + self.current_row;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
-                out_row[..row_bytes].copy_from_slice(&buffer[src_offset..src_offset + row_bytes]);
+
+                if bpp == 3 {
+                    let src_start = image_row * src_row_bytes + crop_x * 3;
+                    out_row[..out_width * 3]
+                        .copy_from_slice(&buffer[src_start..src_start + out_width * 3]);
+                } else {
+                    // Grayscale buffer → expand to RGB
+                    let src_start = image_row * src_row_bytes + crop_x;
+                    for px in 0..out_width {
+                        let v = buffer[src_start + px];
+                        out_row[px * 3] = v;
+                        out_row[px * 3 + 1] = v;
+                        out_row[px * 3 + 2] = v;
+                    }
+                }
 
                 rows_written += 1;
                 self.current_row += 1;
@@ -863,33 +1077,41 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
+        // Full image width for strip access
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let strip_cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             if is_grayscale {
-                let y = self.strip.y_row(self.row_in_mcu, cols);
-                for px in 0..cols {
-                    let v = y[px].clamp(0, 255) as u8;
+                let y = self.strip.y_row(self.row_in_mcu, strip_cols);
+                for px in 0..out_width {
+                    let v = y[crop_x + px].clamp(0, 255) as u8;
                     out_row[px * 3] = v;
                     out_row[px * 3 + 1] = v;
                     out_row[px * 3 + 2] = v;
                 }
             } else if self.is_rgb {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
-                for px in 0..cols {
-                    out_row[px * 3] = y[px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 1] = cb[px].clamp(0, 255) as u8;
-                    out_row[px * 3 + 2] = cr[px].clamp(0, 255) as u8;
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
+                for px in 0..out_width {
+                    out_row[px * 3] = y[crop_x + px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 1] = cb[crop_x + px].clamp(0, 255) as u8;
+                    out_row[px * 3 + 2] = cr[crop_x + px].clamp(0, 255) as u8;
                 }
             } else {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
-                ycbcr_planes_i16_to_rgb_u8(y, cb, cr, out_row);
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
+                ycbcr_planes_i16_to_rgb_u8(
+                    &y[crop_x..crop_x + out_width],
+                    &cb[crop_x..crop_x + out_width],
+                    &cr[crop_x..crop_x + out_width],
+                    out_row,
+                );
             }
 
             rows_written += 1;
@@ -916,22 +1138,26 @@ impl<'a> ScanlineReader<'a> {
     /// Returns the number of rows actually written.
     pub fn read_rows_bgr8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width * 3 {
+        if output.width() < out_width * 3 {
             return Err(Error::internal("output buffer too narrow for BGR8"));
         }
 
         // Buffered mode: serve from pre-decoded RGB buffer with R/B swap
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
-            let row_bytes = width * 3;
+            let img_width = self.width as usize;
+            let src_row_bytes = img_width * 3;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
-            while rows_written < max_rows && self.current_row < self.height as usize {
-                let src_offset = self.current_row * row_bytes;
+            while rows_written < max_rows && self.current_row < out_height {
+                let image_row = crop_y + self.current_row;
+                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
-                // Copy with R/B swap
-                for x in 0..width {
+                for x in 0..out_width {
                     out_row[x * 3] = buffer[src_offset + x * 3 + 2]; // B
                     out_row[x * 3 + 1] = buffer[src_offset + x * 3 + 1]; // G
                     out_row[x * 3 + 2] = buffer[src_offset + x * 3]; // R
@@ -943,39 +1169,39 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly, fused YCbCr→BGR
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let strip_cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             if is_grayscale {
-                // Grayscale: R==G==B, so BGR order is just v,v,v
-                let y = self.strip.y_row(self.row_in_mcu, cols);
-                for px in 0..cols {
-                    let v = y[px].clamp(0, 255) as u8;
+                let y = self.strip.y_row(self.row_in_mcu, strip_cols);
+                for px in 0..out_width {
+                    let v = y[crop_x + px].clamp(0, 255) as u8;
                     out_row[px * 3] = v;
                     out_row[px * 3 + 1] = v;
                     out_row[px * 3 + 2] = v;
                 }
             } else if self.is_rgb {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
-                for px in 0..cols {
-                    out_row[px * 3] = cr[px].clamp(0, 255) as u8; // B
-                    out_row[px * 3 + 1] = cb[px].clamp(0, 255) as u8; // G
-                    out_row[px * 3 + 2] = y[px].clamp(0, 255) as u8; // R
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
+                for px in 0..out_width {
+                    out_row[px * 3] = cr[crop_x + px].clamp(0, 255) as u8; // B
+                    out_row[px * 3 + 1] = cb[crop_x + px].clamp(0, 255) as u8; // G
+                    out_row[px * 3 + 2] = y[crop_x + px].clamp(0, 255) as u8; // R
                 }
             } else {
-                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, cols);
-                // Fused YCbCr→BGR: compute RGB then write as B,G,R
-                for px in 0..cols {
+                let (y, cb, cr) = self.strip.row_planes(self.row_in_mcu, strip_cols);
+                for px in 0..out_width {
                     let (r, g, b) = ycbcr_to_rgb(
-                        y[px].clamp(0, 255) as u8,
-                        cb[px].clamp(0, 255) as u8,
-                        cr[px].clamp(0, 255) as u8,
+                        y[crop_x + px].clamp(0, 255) as u8,
+                        cb[crop_x + px].clamp(0, 255) as u8,
+                        cr[crop_x + px].clamp(0, 255) as u8,
                     );
                     out_row[px * 3] = b;
                     out_row[px * 3 + 1] = g;
@@ -1030,30 +1256,35 @@ impl<'a> ScanlineReader<'a> {
         swap_rb: bool,
     ) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width * 4 {
+        if output.width() < out_width * 4 {
             return Err(Error::internal("output buffer too narrow for 4bpp"));
         }
 
         // Buffered mode: serve from pre-decoded RGB buffer
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
-            let src_row_bytes = width * 3;
+            let img_width = self.width as usize;
+            let src_row_bytes = img_width * 3;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
-            while rows_written < max_rows && self.current_row < self.height as usize {
-                let src_offset = self.current_row * src_row_bytes;
+            while rows_written < max_rows && self.current_row < out_height {
+                let image_row = crop_y + self.current_row;
+                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
 
                 if swap_rb {
-                    for x in 0..width {
+                    for x in 0..out_width {
                         out_row[x * 4] = buffer[src_offset + x * 3 + 2]; // B
                         out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1]; // G
                         out_row[x * 4 + 2] = buffer[src_offset + x * 3]; // R
                         out_row[x * 4 + 3] = 255;
                     }
                 } else {
-                    for x in 0..width {
+                    for x in 0..out_width {
                         out_row[x * 4] = buffer[src_offset + x * 3];
                         out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
                         out_row[x * 4 + 2] = buffer[src_offset + x * 3 + 2];
@@ -1069,39 +1300,42 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: fused decode → 4bpp output
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let strip_cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             if is_grayscale {
-                let y_row = self.strip.y_row(self.row_in_mcu, cols);
-                for x in 0..cols {
-                    let v = y_row[x].clamp(0, 255) as u8;
+                let y_row = self.strip.y_row(self.row_in_mcu, strip_cols);
+                for x in 0..out_width {
+                    let v = y_row[crop_x + x].clamp(0, 255) as u8;
                     out_row[x * 4] = v;
                     out_row[x * 4 + 1] = v;
                     out_row[x * 4 + 2] = v;
                     out_row[x * 4 + 3] = 255;
                 }
             } else {
-                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
+                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, strip_cols);
 
-                for x in 0..cols {
+                for x in 0..out_width {
+                    let sx = crop_x + x;
                     let (r, g, b) = if self.is_rgb {
                         (
-                            y_row[x].clamp(0, 255) as u8,
-                            cb_row[x].clamp(0, 255) as u8,
-                            cr_row[x].clamp(0, 255) as u8,
+                            y_row[sx].clamp(0, 255) as u8,
+                            cb_row[sx].clamp(0, 255) as u8,
+                            cr_row[sx].clamp(0, 255) as u8,
                         )
                     } else {
                         ycbcr_to_rgb(
-                            y_row[x].clamp(0, 255) as u8,
-                            cb_row[x].clamp(0, 255) as u8,
-                            cr_row[x].clamp(0, 255) as u8,
+                            y_row[sx].clamp(0, 255) as u8,
+                            cb_row[sx].clamp(0, 255) as u8,
+                            cr_row[sx].clamp(0, 255) as u8,
                         )
                     };
                     if swap_rb {
@@ -1135,23 +1369,27 @@ impl<'a> ScanlineReader<'a> {
     /// Returns the number of rows actually written.
     pub fn read_rows_rgba_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width * 4 {
+        if output.width() < out_width * 4 {
             return Err(Error::internal("output buffer too narrow for RGBA f32"));
         }
 
         // Buffered mode: serve from pre-decoded RGB buffer, convert to linear f32
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
-            let src_row_bytes = width * 3;
+            let img_width = self.width as usize;
+            let src_row_bytes = img_width * 3;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
-            while rows_written < max_rows && self.current_row < self.height as usize {
-                let src_offset = self.current_row * src_row_bytes;
+            while rows_written < max_rows && self.current_row < out_height {
+                let image_row = crop_y + self.current_row;
+                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                // Convert RGB8 to linear RGBA f32
-                for x in 0..width {
+                for x in 0..out_width {
                     out_row[x * 4] = srgb_to_linear(buffer[src_offset + x * 3]);
                     out_row[x * 4 + 1] = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
                     out_row[x * 4 + 2] = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
@@ -1166,19 +1404,21 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let strip_cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             if is_grayscale {
-                let y_row = self.strip.y_row(self.row_in_mcu, cols);
-                for x in 0..cols {
-                    let v = y_row[x].clamp(0, 255) as f32 / 255.0;
+                let y_row = self.strip.y_row(self.row_in_mcu, strip_cols);
+                for x in 0..out_width {
+                    let v = y_row[crop_x + x].clamp(0, 255) as f32 / 255.0;
                     let linear = srgb_to_linear_f32(v);
                     out_row[x * 4] = linear;
                     out_row[x * 4 + 1] = linear;
@@ -1186,20 +1426,22 @@ impl<'a> ScanlineReader<'a> {
                     out_row[x * 4 + 3] = 1.0;
                 }
             } else {
-                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, cols);
+                let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, strip_cols);
 
-                for x in 0..cols {
+                for x in 0..out_width {
+                    let sx = crop_x + x;
                     let (r, g, b) = if self.is_rgb {
-                        // RGB JPEG: planes are already R, G, B in [0, 255]
                         (
-                            y_row[x] as f32 / 255.0,
-                            cb_row[x] as f32 / 255.0,
-                            cr_row[x] as f32 / 255.0,
+                            y_row[sx] as f32 / 255.0,
+                            cb_row[sx] as f32 / 255.0,
+                            cr_row[sx] as f32 / 255.0,
                         )
                     } else {
-                        // YCbCr: convert in f32 domain, normalize to [0, 1]
-                        let (rf, gf, bf) =
-                            ycbcr_to_rgb_f32(y_row[x] as f32, cb_row[x] as f32, cr_row[x] as f32);
+                        let (rf, gf, bf) = ycbcr_to_rgb_f32(
+                            y_row[sx] as f32,
+                            cb_row[sx] as f32,
+                            cr_row[sx] as f32,
+                        );
                         (rf / 255.0, gf / 255.0, bf / 255.0)
                     };
 
@@ -1238,23 +1480,28 @@ impl<'a> ScanlineReader<'a> {
         stride: usize,
         max_rows: usize,
     ) -> Result<usize> {
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if stride < width {
+        if stride < out_width {
             return Err(Error::internal("stride too small for image width"));
         }
 
         // Buffered mode: convert RGB back to YCbCr
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
+            let img_width = self.width as usize;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
             if self.num_components == 1 {
                 // Grayscale: Y only, Cb/Cr are zero
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * width;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_offset = image_row * img_width + crop_x;
                     let out_offset = rows_written * stride;
 
-                    for x in 0..width {
+                    for x in 0..out_width {
                         y_plane[out_offset + x] = buffer[src_offset + x] as f32 / 255.0;
                         cb_plane[out_offset + x] = 0.0;
                         cr_plane[out_offset + x] = 0.0;
@@ -1265,15 +1512,16 @@ impl<'a> ScanlineReader<'a> {
                 }
             } else {
                 // Color: convert RGB to YCbCr using BT.601
-                let src_row_bytes = width * 3;
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * src_row_bytes;
+                let src_row_bytes = img_width * 3;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_start = image_row * src_row_bytes + crop_x * 3;
                     let out_offset = rows_written * stride;
 
-                    for x in 0..width {
-                        let r = buffer[src_offset + x * 3] as f32;
-                        let g = buffer[src_offset + x * 3 + 1] as f32;
-                        let b = buffer[src_offset + x * 3 + 2] as f32;
+                    for x in 0..out_width {
+                        let r = buffer[src_start + x * 3] as f32;
+                        let g = buffer[src_start + x * 3 + 1] as f32;
+                        let b = buffer[src_start + x * 3 + 2] as f32;
 
                         // BT.601 RGB to YCbCr (normalized output)
                         // Y  =  0.299*R + 0.587*G + 0.114*B
@@ -1293,28 +1541,30 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let cols = full_width.min(self.strip.strip_width);
             let out_offset = rows_written * stride;
 
             if is_grayscale {
                 let y_slice = self.strip.y_row(self.row_in_mcu, cols);
-                for x in 0..cols {
-                    y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
+                for x in 0..out_width {
+                    y_plane[out_offset + x] = y_slice[crop_x + x] as f32 / 255.0;
                     cb_plane[out_offset + x] = 0.0;
                     cr_plane[out_offset + x] = 0.0;
                 }
             } else {
                 let (y_slice, cb_slice, cr_slice) = self.strip.row_planes(self.row_in_mcu, cols);
-                for x in 0..cols {
-                    y_plane[out_offset + x] = y_slice[x] as f32 / 255.0;
-                    cb_plane[out_offset + x] = (cb_slice[x] as f32 - 128.0) / 255.0;
-                    cr_plane[out_offset + x] = (cr_slice[x] as f32 - 128.0) / 255.0;
+                for x in 0..out_width {
+                    y_plane[out_offset + x] = y_slice[crop_x + x] as f32 / 255.0;
+                    cb_plane[out_offset + x] = (cb_slice[crop_x + x] as f32 - 128.0) / 255.0;
+                    cr_plane[out_offset + x] = (cr_slice[crop_x + x] as f32 - 128.0) / 255.0;
                 }
             }
 
@@ -1339,37 +1589,44 @@ impl<'a> ScanlineReader<'a> {
     /// if end of image is reached).
     pub fn read_rows_gray8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width {
+        if output.width() < out_width {
             return Err(Error::internal("output buffer too narrow for grayscale"));
         }
 
         // Buffered mode: serve from pre-decoded buffer
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
+            let img_width = self.width as usize;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * width;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_offset = image_row * img_width + crop_x;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
-                    out_row[..width].copy_from_slice(&buffer[src_offset..src_offset + width]);
+                    out_row[..out_width]
+                        .copy_from_slice(&buffer[src_offset..src_offset + out_width]);
 
                     rows_written += 1;
                     self.current_row += 1;
                 }
             } else {
                 // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
-                let src_row_bytes = width * 3;
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * src_row_bytes;
+                let src_row_bytes = img_width * 3;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_start = image_row * src_row_bytes + crop_x * 3;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                    for x in 0..width {
-                        let r = buffer[src_offset + x * 3] as u32;
-                        let g = buffer[src_offset + x * 3 + 1] as u32;
-                        let b = buffer[src_offset + x * 3 + 2] as u32;
+                    for x in 0..out_width {
+                        let r = buffer[src_start + x * 3] as u32;
+                        let g = buffer[src_start + x * 3 + 1] as u32;
+                        let b = buffer[src_start + x * 3 + 2] as u32;
                         // BT.601: Y = 0.299*R + 0.587*G + 0.114*B (scaled by 1000)
                         out_row[x] = ((299 * r + 587 * g + 114 * b) / 1000) as u8;
                     }
@@ -1383,18 +1640,20 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             let y_slice = self.strip.y_row(self.row_in_mcu, cols);
 
-            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
-                *out = y.clamp(0, 255) as u8;
+            for x in 0..out_width {
+                out_row[x] = y_slice[crop_x + x].clamp(0, 255) as u8;
             }
 
             rows_written += 1;
@@ -1418,9 +1677,11 @@ impl<'a> ScanlineReader<'a> {
     /// Returns the number of rows actually written.
     pub fn read_rows_gray_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width {
+        if output.width() < out_width {
             return Err(Error::internal(
                 "output buffer too narrow for grayscale f32",
             ));
@@ -1429,14 +1690,17 @@ impl<'a> ScanlineReader<'a> {
         // Buffered mode: serve from pre-decoded buffer
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
+            let img_width = self.width as usize;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * width;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_offset = image_row * img_width + crop_x;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                    for x in 0..width {
+                    for x in 0..out_width {
                         out_row[x] = buffer[src_offset + x] as f32 / 255.0;
                     }
 
@@ -1445,15 +1709,16 @@ impl<'a> ScanlineReader<'a> {
                 }
             } else {
                 // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
-                let src_row_bytes = width * 3;
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * src_row_bytes;
+                let src_row_bytes = img_width * 3;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_start = image_row * src_row_bytes + crop_x * 3;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                    for x in 0..width {
-                        let r = buffer[src_offset + x * 3] as f32;
-                        let g = buffer[src_offset + x * 3 + 1] as f32;
-                        let b = buffer[src_offset + x * 3 + 2] as f32;
+                    for x in 0..out_width {
+                        let r = buffer[src_start + x * 3] as f32;
+                        let g = buffer[src_start + x * 3 + 1] as f32;
+                        let b = buffer[src_start + x * 3 + 2] as f32;
                         // BT.601: Y = 0.299*R + 0.587*G + 0.114*B
                         out_row[x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
                     }
@@ -1467,19 +1732,21 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             let y_slice = self.strip.y_row(self.row_in_mcu, cols);
 
-            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
+            for x in 0..out_width {
                 // i16 values already level-shifted to [0, 255] by integer IDCT
-                *out = y as f32 / 255.0;
+                out_row[x] = y_slice[crop_x + x] as f32 / 255.0;
             }
 
             rows_written += 1;
@@ -1502,9 +1769,11 @@ impl<'a> ScanlineReader<'a> {
     /// Returns the number of rows actually written.
     pub fn read_rows_gray_linear_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
         let max_rows = output.height();
-        let width = self.width as usize;
+        let out_width = self.width() as usize;
+        let crop_x = self.crop.map_or(0, |c| c.x as usize);
+        let out_height = self.height() as usize;
 
-        if output.width() < width {
+        if output.width() < out_width {
             return Err(Error::internal(
                 "output buffer too narrow for linear grayscale f32",
             ));
@@ -1513,14 +1782,17 @@ impl<'a> ScanlineReader<'a> {
         // Buffered mode: serve from pre-decoded buffer with linearization
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
+            let img_width = self.width as usize;
+            let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * width;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_offset = image_row * img_width + crop_x;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                    for x in 0..width {
+                    for x in 0..out_width {
                         out_row[x] = srgb_to_linear(buffer[src_offset + x]);
                     }
 
@@ -1529,16 +1801,17 @@ impl<'a> ScanlineReader<'a> {
                 }
             } else {
                 // Color buffer (RGB8): convert to linear grayscale
-                let src_row_bytes = width * 3;
-                while rows_written < max_rows && self.current_row < self.height as usize {
-                    let src_offset = self.current_row * src_row_bytes;
+                let src_row_bytes = img_width * 3;
+                while rows_written < max_rows && self.current_row < out_height {
+                    let image_row = crop_y + self.current_row;
+                    let src_start = image_row * src_row_bytes + crop_x * 3;
                     let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                    for x in 0..width {
+                    for x in 0..out_width {
                         // Linearize each channel first, then compute luminance
-                        let r = srgb_to_linear(buffer[src_offset + x * 3]);
-                        let g = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
-                        let b = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
+                        let r = srgb_to_linear(buffer[src_start + x * 3]);
+                        let g = srgb_to_linear(buffer[src_start + x * 3 + 1]);
+                        let b = srgb_to_linear(buffer[src_start + x * 3 + 2]);
                         // BT.601 in linear space
                         out_row[x] = 0.299 * r + 0.587 * g + 0.114 * b;
                     }
@@ -1552,20 +1825,22 @@ impl<'a> ScanlineReader<'a> {
         }
 
         // Streaming mode: decode on-the-fly
+        self.ensure_crop_initialized()?;
         let mut rows_written = 0;
+        let full_width = self.width as usize;
 
-        while rows_written < max_rows && self.current_row < self.height as usize {
+        while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
-            let cols = width.min(self.strip.strip_width);
+            let cols = full_width.min(self.strip.strip_width);
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
             let y_slice = self.strip.y_row(self.row_in_mcu, cols);
 
-            for (out, &y) in out_row[..cols].iter_mut().zip(y_slice) {
+            for x in 0..out_width {
                 // i16 values already level-shifted to [0, 255] by integer IDCT;
                 // normalize to [0, 1] then apply sRGB→linear in f32 domain
-                *out = srgb_to_linear_f32(y as f32 / 255.0);
+                out_row[x] = srgb_to_linear_f32(y_slice[crop_x + x] as f32 / 255.0);
             }
 
             rows_written += 1;
@@ -2732,6 +3007,508 @@ mod tests {
              Bottom boundary fixup may not be working.",
             boundary_max_diff,
             interior_max_diff
+        );
+    }
+
+    // ========================================================================
+    // Crop tests
+    // ========================================================================
+
+    /// Full scanline decode, then extract crop region from pixel buffer.
+    /// Uses scanline reader (not decode()) so IDCT/upsampling matches the crop path.
+    fn full_scanline_and_crop(jpeg: &[u8], cx: u32, cy: u32, cw: u32, ch: u32) -> Vec<u8> {
+        use crate::decode::DecodeConfig;
+        let mut reader = DecodeConfig::new().scanline_reader(jpeg).unwrap();
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let mut full = vec![0u8; width * height * 3];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = height - rows_read;
+            let output =
+                imgref::ImgRefMut::new(&mut full[rows_read * width * 3..], width * 3, remaining);
+            rows_read += reader.read_rows_rgb8(output).unwrap();
+        }
+        let bpp = 3;
+        let mut cropped = vec![0u8; cw as usize * ch as usize * bpp];
+        for y in 0..ch as usize {
+            let src_off = ((cy as usize + y) * width + cx as usize) * bpp;
+            let dst_off = y * cw as usize * bpp;
+            let row_bytes = cw as usize * bpp;
+            cropped[dst_off..dst_off + row_bytes]
+                .copy_from_slice(&full[src_off..src_off + row_bytes]);
+        }
+        cropped
+    }
+
+    /// Full decode (buffered), then extract crop region from pixel buffer.
+    fn full_decode_and_crop(jpeg: &[u8], cx: u32, cy: u32, cw: u32, ch: u32) -> Vec<u8> {
+        use crate::decode::DecodeConfig;
+        let result = DecodeConfig::new()
+            .decode(jpeg, enough::Unstoppable)
+            .unwrap();
+        let width = result.width() as usize;
+        let pixels = result.pixels_u8().unwrap();
+        let bpp = 3; // RGB
+        let mut cropped = vec![0u8; cw as usize * ch as usize * bpp];
+        for y in 0..ch as usize {
+            let src_off = ((cy as usize + y) * width + cx as usize) * bpp;
+            let dst_off = y * cw as usize * bpp;
+            let row_bytes = cw as usize * bpp;
+            cropped[dst_off..dst_off + row_bytes]
+                .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+        }
+        cropped
+    }
+
+    #[test]
+    fn test_crop_pixel_scanline_444() {
+        // Encode a 64x64 image with 4:4:4 (streaming path)
+        let width = 64u32;
+        let height = 64u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = (x * 4) as u8;
+                pixels[idx + 1] = (y * 4) as u8;
+                pixels[idx + 2] = 128;
+            }
+        }
+        let jpeg = encode_rgb(width, height, &pixels, 95.0);
+
+        // Crop: 20x20 starting at (10, 10)
+        let (cx, cy, cw, ch) = (10u32, 10u32, 20u32, 20u32);
+
+        // Full decode + manual crop (reference)
+        let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
+
+        // Scanline crop decode
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        assert_eq!(reader.width(), cw);
+        assert_eq!(reader.height(), ch);
+
+        let out_w = cw as usize;
+        let out_h = ch as usize;
+        let mut out = vec![0u8; out_w * out_h * 3];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = out_h - rows_read;
+            let output =
+                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+            let n = reader.read_rows_rgb8(output).unwrap();
+            rows_read += n;
+        }
+
+        assert_eq!(rows_read, out_h);
+        assert_eq!(
+            out, reference,
+            "Cropped scanline output differs from reference"
+        );
+    }
+
+    #[test]
+    fn test_crop_pixel_scanline_420() {
+        // Encode a 64x64 image with 4:2:0 (streaming subsampled path)
+        let width = 64u32;
+        let height = 64u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = (x * 4) as u8;
+                pixels[idx + 1] = (y * 4) as u8;
+                pixels[idx + 2] = 128;
+            }
+        }
+        let jpeg = encode_rgb_subsampled(
+            width,
+            height,
+            &pixels,
+            95.0,
+            crate::encode::v2::ChromaSubsampling::Quarter,
+        );
+
+        let (cx, cy, cw, ch) = (8u32, 16u32, 32u32, 24u32);
+        // Use scanline reference (not decode()) so IDCT/upsampling matches
+        let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        assert_eq!(reader.width(), cw);
+        assert_eq!(reader.height(), ch);
+
+        let out_w = cw as usize;
+        let out_h = ch as usize;
+        let mut out = vec![0u8; out_w * out_h * 3];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = out_h - rows_read;
+            let output =
+                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+            let n = reader.read_rows_rgb8(output).unwrap();
+            rows_read += n;
+        }
+
+        assert_eq!(rows_read, out_h);
+        assert_eq!(
+            out, reference,
+            "4:2:0 cropped output differs from reference"
+        );
+    }
+
+    #[test]
+    fn test_crop_percent() {
+        // Encode 100x100 image
+        let width = 100u32;
+        let height = 100u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = x as u8;
+                pixels[idx + 1] = y as u8;
+                pixels[idx + 2] = 64;
+            }
+        }
+        let jpeg = encode_rgb(width, height, &pixels, 95.0);
+
+        // Center 50% crop → (25, 25, 50, 50) in pixels
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        let result = DecodeConfig::new()
+            .crop(CropRegion::percent(0.25, 0.25, 0.5, 0.5))
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+
+        assert_eq!(result.width(), 50);
+        assert_eq!(result.height(), 50);
+
+        // Compare with manual crop
+        let reference = full_decode_and_crop(&jpeg, 25, 25, 50, 50);
+        assert_eq!(result.pixels_u8().unwrap(), &reference[..]);
+    }
+
+    #[test]
+    fn test_crop_full_image_is_noop() {
+        // Full-image crop should produce identical output to no crop
+        let width = 48u32;
+        let height = 48u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for i in 0..pixels.len() {
+            pixels[i] = (i * 7) as u8;
+        }
+        let jpeg = encode_rgb(width, height, &pixels, 90.0);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        let full = DecodeConfig::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+        let cropped = DecodeConfig::new()
+            .crop(CropRegion::pixels(0, 0, width, height))
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+
+        assert_eq!(full.width(), cropped.width());
+        assert_eq!(full.height(), cropped.height());
+        assert_eq!(full.pixels_u8().unwrap(), cropped.pixels_u8().unwrap());
+    }
+
+    #[test]
+    fn test_crop_streaming_dimensions() {
+        // Verify width(), height(), current_row(), is_finished() reflect crop
+        let width = 64u32;
+        let height = 64u32;
+        let pixels = vec![128u8; (width * height * 3) as usize];
+        let jpeg = encode_rgb(width, height, &pixels, 90.0);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(10, 20, 30, 15))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        assert_eq!(reader.width(), 30);
+        assert_eq!(reader.height(), 15);
+        assert_eq!(reader.current_row(), 0);
+        assert!(!reader.is_finished());
+
+        // Read all rows
+        let out_w = 30usize;
+        let mut out = vec![0u8; out_w * 15 * 3];
+        let output = imgref::ImgRefMut::new(&mut out, out_w * 3, 15);
+        let n = reader.read_rows_rgb8(output).unwrap();
+        assert_eq!(n, 15);
+        assert!(reader.is_finished());
+        assert_eq!(reader.current_row(), 15);
+    }
+
+    #[test]
+    fn test_crop_buffered_progressive() {
+        // Progressive JPEGs use buffered mode — verify crop works there too
+        let width = 64u32;
+        let height = 64u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = (x * 4) as u8;
+                pixels[idx + 1] = (y * 4) as u8;
+                pixels[idx + 2] = 100;
+            }
+        }
+        // Encode as progressive
+        use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, enough::Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        let (cx, cy, cw, ch) = (8u32, 8u32, 32u32, 32u32);
+        let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        // Test decode() path
+        let result = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+
+        assert_eq!(result.width(), cw);
+        assert_eq!(result.height(), ch);
+        assert_eq!(result.pixels_u8().unwrap(), &reference[..]);
+
+        // Test scanline_reader path (also buffered for progressive)
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        assert_eq!(reader.width(), cw);
+        assert_eq!(reader.height(), ch);
+
+        let out_w = cw as usize;
+        let out_h = ch as usize;
+        let mut out = vec![0u8; out_w * out_h * 3];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = out_h - rows_read;
+            let output =
+                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+            rows_read += reader.read_rows_rgb8(output).unwrap();
+        }
+        assert_eq!(out, reference);
+    }
+
+    #[test]
+    fn test_crop_grayscale() {
+        // Encode grayscale image
+        let width = 48u32;
+        let height = 48u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                pixels[(y * width + x) as usize] = ((x + y) * 3) as u8;
+            }
+        }
+        let jpeg = encode_grayscale(width, height, &pixels, 95.0);
+
+        let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        // Full decode + manual gray crop
+        let full = DecodeConfig::new()
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+        let full_pix = full.pixels_u8().unwrap();
+        let full_w = full.width() as usize;
+        let bpp = full.format().bytes_per_pixel();
+        let mut reference = vec![0u8; cw as usize * ch as usize * bpp];
+        for y in 0..ch as usize {
+            let src_off = ((cy as usize + y) * full_w + cx as usize) * bpp;
+            let dst_off = y * cw as usize * bpp;
+            let row_bytes = cw as usize * bpp;
+            reference[dst_off..dst_off + row_bytes]
+                .copy_from_slice(&full_pix[src_off..src_off + row_bytes]);
+        }
+
+        // Crop decode
+        let cropped = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .decode(&jpeg, enough::Unstoppable)
+            .unwrap();
+
+        assert_eq!(cropped.width(), cw);
+        assert_eq!(cropped.height(), ch);
+        assert_eq!(cropped.pixels_u8().unwrap(), &reference[..]);
+    }
+
+    #[test]
+    fn test_crop_gray8_scanline() {
+        // Test read_rows_gray8 with crop
+        let width = 48u32;
+        let height = 48u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                pixels[(y * width + x) as usize] = ((x + y) * 3) as u8;
+            }
+        }
+        let jpeg = encode_grayscale(width, height, &pixels, 95.0);
+
+        let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        // Reference: full scanline decode, manually crop gray
+        let mut full_reader = DecodeConfig::new().scanline_reader(&jpeg).unwrap();
+        let fw = full_reader.width() as usize;
+        let fh = full_reader.height() as usize;
+        let mut full_gray = vec![0u8; fw * fh];
+        let mut rows_read = 0;
+        while !full_reader.is_finished() {
+            let remaining = fh - rows_read;
+            let output = imgref::ImgRefMut::new(&mut full_gray[rows_read * fw..], fw, remaining);
+            rows_read += full_reader.read_rows_gray8(output).unwrap();
+        }
+        // Manually crop
+        let mut ref_gray = vec![0u8; cw as usize * ch as usize];
+        for y in 0..ch as usize {
+            let src_off = (cy as usize + y) * fw + cx as usize;
+            let dst_off = y * cw as usize;
+            ref_gray[dst_off..dst_off + cw as usize]
+                .copy_from_slice(&full_gray[src_off..src_off + cw as usize]);
+        }
+
+        // Crop scanline decode
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        let out_w = cw as usize;
+        let out_h = ch as usize;
+        let mut out = vec![0u8; out_w * out_h];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = out_h - rows_read;
+            let output = imgref::ImgRefMut::new(&mut out[rows_read * out_w..], out_w, remaining);
+            rows_read += reader.read_rows_gray8(output).unwrap();
+        }
+
+        assert_eq!(
+            out, ref_gray,
+            "Cropped gray8 scanline differs from reference"
+        );
+    }
+
+    #[test]
+    fn test_crop_validation_errors() {
+        let jpeg = encode_rgb(64, 64, &vec![128u8; 64 * 64 * 3], 90.0);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        // Crop exceeds image bounds
+        let err = DecodeConfig::new()
+            .crop(CropRegion::pixels(50, 50, 20, 20))
+            .decode(&jpeg, enough::Unstoppable);
+        assert!(err.is_err(), "Crop exceeding bounds should fail");
+
+        // Zero width crop
+        let err = DecodeConfig::new()
+            .crop(CropRegion::pixels(0, 0, 0, 10))
+            .decode(&jpeg, enough::Unstoppable);
+        assert!(err.is_err(), "Zero width crop should fail");
+
+        // Zero height crop
+        let err = DecodeConfig::new()
+            .crop(CropRegion::pixels(0, 0, 10, 0))
+            .decode(&jpeg, enough::Unstoppable);
+        assert!(err.is_err(), "Zero height crop should fail");
+
+        // Percent out of range
+        let err = DecodeConfig::new()
+            .crop(CropRegion::percent(0.0, 0.0, 1.5, 1.0))
+            .decode(&jpeg, enough::Unstoppable);
+        assert!(err.is_err(), "Percent > 1.0 should fail");
+    }
+
+    #[test]
+    fn test_crop_non_mcu_boundary() {
+        // Test crop at non-MCU-aligned boundaries with 4:2:0
+        // MCU size for 4:2:0 is 16x16
+        let width = 96u32;
+        let height = 96u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = x as u8;
+                pixels[idx + 1] = y as u8;
+                pixels[idx + 2] = ((x + y) / 2) as u8;
+            }
+        }
+        let jpeg = encode_rgb_subsampled(
+            width,
+            height,
+            &pixels,
+            95.0,
+            crate::encode::v2::ChromaSubsampling::Quarter,
+        );
+
+        // Non-MCU-aligned crop: (5, 7, 37, 29)
+        let (cx, cy, cw, ch) = (5u32, 7u32, 37u32, 29u32);
+        // Use scanline reference so IDCT/upsampling matches
+        let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
+
+        use crate::decode::config::CropRegion;
+        use crate::decode::DecodeConfig;
+
+        let mut reader = DecodeConfig::new()
+            .crop(CropRegion::pixels(cx, cy, cw, ch))
+            .scanline_reader(&jpeg)
+            .unwrap();
+
+        assert_eq!(reader.width(), cw);
+        assert_eq!(reader.height(), ch);
+
+        let out_w = cw as usize;
+        let out_h = ch as usize;
+        let mut out = vec![0u8; out_w * out_h * 3];
+        let mut rows_read = 0;
+        while !reader.is_finished() {
+            let remaining = out_h - rows_read;
+            let output =
+                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+            rows_read += reader.read_rows_rgb8(output).unwrap();
+        }
+        assert_eq!(
+            out, reference,
+            "Non-MCU-aligned crop differs from reference"
         );
     }
 }
