@@ -334,12 +334,10 @@ impl ComputedConfig {
         // Use parallel encoding when explicitly enabled
         #[cfg(feature = "parallel")]
         if self.parallel {
-            // Auto-set restart interval if not specified
-            let restart_interval = if self.restart_interval > 0 {
-                self.restart_interval
-            } else {
-                64 // Default restart interval for parallel encoding
-            };
+            // Use the already-resolved restart interval from config.
+            // This MUST match what count_block_frequencies used, so both
+            // the Huffman tables and the encoding agree on DC prediction resets.
+            let restart_interval = self.restart_interval;
             use super::parallel::{
                 parallel_entropy_encode_444, parallel_entropy_encode_subsampled,
                 ParallelEntropyConfig,

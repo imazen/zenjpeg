@@ -274,7 +274,8 @@ impl StreamingEncoder {
         let row_buffer = vec![0u8; bytes_per_row * strip_height];
 
         // Create config for final JPEG output
-        let config = ComputedConfig {
+        #[allow(unused_mut)] // mut needed for parallel feature
+        let mut config = ComputedConfig {
             width: builder.width,
             height: builder.height,
             pixel_format: builder.pixel_format,
@@ -300,6 +301,14 @@ impl StreamingEncoder {
             separate_chroma_tables: builder.separate_chroma_tables,
             scan_strategy: builder.scan_strategy,
         };
+
+        // Auto-select row-aligned restart interval for parallel encoding.
+        // This must be resolved before frequency counting so Huffman tables
+        // account for DC prediction resets at restart boundaries.
+        #[cfg(feature = "parallel")]
+        if config.parallel && config.restart_interval == 0 {
+            config.restart_interval = config.compute_parallel_restart_interval();
+        }
 
         // Determine if we can use streaming-through encoding:
         // - Need known Huffman tables (Custom or Fixed)

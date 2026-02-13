@@ -352,3 +352,64 @@ fn restart_marker_mcu_intervals() {
     eprintln!("\nNote: Positive = restart markers increase file size.");
     eprintln!("The cost includes: RST marker bytes (2 each) + DRI header (6) + DC prediction reset + byte alignment padding.");
 }
+
+/// Test the smart row-aligned restart interval computation.
+#[test]
+fn test_smart_restart_interval() {
+    // We can't directly access ComputedConfig::compute_parallel_restart_interval
+    // from an integration test, but we can verify the behavior by encoding
+    // with parallel=true and checking the DRI in the output.
+    //
+    // For now, just verify that the row-aligned approach is cheaper than DRI=64.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let test_image = format!(
+        "{home}/work/codec-eval/codec-corpus/CID22/CID22-512/validation/1044329.png"
+    );
+    let path = std::path::Path::new(&test_image);
+    if !path.exists() {
+        eprintln!("Test image not found, skipping");
+        return;
+    }
+
+    let (pixels, width, height) = load_png(path).expect("load");
+    let mcu_cols = ((width + 7) / 8) as u16;
+
+    // Encode with various strategies
+    let base_size = encode_with_restart(&pixels, width, height, 85, 0, true).unwrap();
+
+    // DRI=64 (old default)
+    let dri64_size = encode_with_restart(&pixels, width, height, 85, 64, true).unwrap();
+
+    // DRI=1 MCU row (row-aligned)
+    let dri_1row = encode_with_restart(&pixels, width, height, 85, mcu_cols, true).unwrap();
+
+    // DRI=4 MCU rows (row-aligned)
+    let dri_4row = encode_with_restart(&pixels, width, height, 85, mcu_cols * 4, true).unwrap();
+
+    // DRI=8 MCU rows (row-aligned)
+    let dri_8row = encode_with_restart(&pixels, width, height, 85, mcu_cols * 8, true).unwrap();
+
+    eprintln!("\n=== Smart Restart Interval Test (512x512 Q85) ===");
+    eprintln!("  No restart:     {} bytes", base_size);
+    eprintln!("  DRI=64 MCUs:    {} bytes (+{:.3}%)", dri64_size,
+        (dri64_size as f64 - base_size as f64) / base_size as f64 * 100.0);
+    eprintln!("  DRI=1 row ({mcu_cols} MCUs): {} bytes (+{:.3}%)", dri_1row,
+        (dri_1row as f64 - base_size as f64) / base_size as f64 * 100.0);
+    eprintln!("  DRI=4 rows ({} MCUs): {} bytes (+{:.3}%)", mcu_cols * 4, dri_4row,
+        (dri_4row as f64 - base_size as f64) / base_size as f64 * 100.0);
+    eprintln!("  DRI=8 rows ({} MCUs): {} bytes (+{:.3}%)", mcu_cols * 8, dri_8row,
+        (dri_8row as f64 - base_size as f64) / base_size as f64 * 100.0);
+
+    // Row-aligned 4-row should be cheaper than DRI=64
+    assert!(
+        dri_4row <= dri64_size,
+        "Row-aligned DRI (4 rows = {} MCUs) should be <= DRI=64: {} vs {}",
+        mcu_cols * 4, dri_4row, dri64_size
+    );
+
+    // 8-row should be cheaper than 4-row
+    assert!(
+        dri_8row <= dri_4row,
+        "DRI 8-row should be <= DRI 4-row: {} vs {}", dri_8row, dri_4row
+    );
+}
