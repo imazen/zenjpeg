@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use zenjpeg::encode::dc_analysis::analyze_dc_prediction;
 use zenjpeg::encode::spatial_huffman::analyze_spatial_huffman;
 
 // ---- Minimal JPEG encoder for getting quantized blocks ----
@@ -364,6 +365,166 @@ fn spatial_huffman_ceiling() {
     eprintln!("\nPositive = spatial tables would save bits (theoretical ceiling)");
     eprintln!("Negative = DHT overhead exceeds any per-band Huffman gains");
     eprintln!("This is the THEORETICAL CEILING — actual implementation would achieve less");
+}
+
+/// Measure DC prediction reset savings from adaptive restart markers.
+///
+/// This analyzes what's actually achievable in standard JPEG:
+/// restart markers reset DC prediction to 0. We measure whether any fixed
+/// restart interval (in MCU rows) saves bits on DC encoding.
+#[test]
+#[ignore]
+fn dc_prediction_analysis() {
+    let images = find_corpus_images();
+    if images.is_empty() {
+        eprintln!("No corpus images found");
+        return;
+    }
+
+    let quality = 85u32;
+
+    eprintln!("\n=== DC Prediction Reset Analysis (Q{quality}, 4:4:4) ===");
+    eprintln!("Measures bit savings from restart markers resetting DC prediction to 0\n");
+
+    eprintln!(
+        "{:<8} {:<30} {:>5}x{:<5} {:>4} {:>10} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} | {:>9} {:>3}",
+        "Corpus", "Image", "W", "H", "Rows",
+        "NoDRI", "DRI=1r", "DRI=2r", "DRI=4r", "DRI=8r", "DRI=16r", "DRI=32r",
+        "Optimal", "#RST"
+    );
+    eprintln!("{}", "-".repeat(160));
+
+    // Per-corpus accumulators
+    let mut corpus_stats: std::collections::HashMap<&str, CorpusDcStats> =
+        std::collections::HashMap::new();
+    let mut global = CorpusDcStats::default();
+
+    for (path, corpus) in &images {
+        let Some((pixels, width, height)) = load_png(path) else {
+            continue;
+        };
+        if width < 64 || height < 64 {
+            continue;
+        }
+
+        let (y_blocks, cb_blocks, cr_blocks) =
+            extract_blocks(&pixels, width as usize, height as usize, quality);
+
+        let mcu_cols = (width as usize + 7) / 8;
+        let mcu_rows = (height as usize + 7) / 8;
+
+        let result = analyze_dc_prediction(
+            &y_blocks, &cb_blocks, &cr_blocks,
+            mcu_cols, mcu_rows, true,
+        );
+
+        let filename = path.file_stem().unwrap_or_default().to_string_lossy();
+        let name = if filename.len() > 28 {
+            format!("{}...", &filename[..25])
+        } else {
+            filename.to_string()
+        };
+
+        // Format fixed interval costs
+        let no_rst = result.no_restart_cost;
+        let fixed_strs: Vec<String> = result.fixed_restart_costs.iter().map(|&(interval, cost)| {
+            let saving_pct = (no_rst as f64 - cost as f64) / no_rst as f64 * 100.0;
+            format!("{:>+8.3}%", saving_pct)
+        }).collect();
+
+        let opt_saving_pct = (no_rst as f64 - result.optimal_restart_cost as f64) / no_rst as f64 * 100.0;
+
+        // Pad fixed_strs to 6 entries
+        let mut fs = fixed_strs;
+        while fs.len() < 6 {
+            fs.push("      N/A".to_string());
+        }
+
+        eprintln!(
+            "{:<8} {:<30} {:>5}x{:<5} {:>4} {:>10} {} {} {} {} {} {} | {:>+8.3}% {:>3}",
+            corpus, name, width, height, mcu_rows,
+            no_rst, fs[0], fs[1], fs[2], fs[3], fs[4], fs[5],
+            opt_saving_pct, result.optimal_restart_rows.len()
+        );
+
+        // Accumulate stats
+        let entry = corpus_stats.entry(corpus).or_default();
+        entry.add(&result);
+        global.add(&result);
+    }
+
+    eprintln!("{}", "-".repeat(160));
+
+    // Per-corpus summary
+    eprintln!("\n=== Per-Corpus Summary ===");
+    let intervals = [1, 2, 4, 8, 16, 32];
+    for (corpus, stats) in &corpus_stats {
+        eprintln!("\n  {corpus} ({} images):", stats.image_count);
+        eprintln!("    No restarts:    {} DC bits total", stats.no_restart_total);
+        for (i, &interval) in intervals.iter().enumerate() {
+            if stats.fixed_totals[i] > 0 {
+                let pct = (stats.no_restart_total as f64 - stats.fixed_totals[i] as f64)
+                    / stats.no_restart_total as f64 * 100.0;
+                eprintln!(
+                    "    DRI={:>2} MCU rows: {} bits ({:>+.4}%)",
+                    interval, stats.fixed_totals[i], pct
+                );
+            }
+        }
+        let opt_pct = (stats.no_restart_total as f64 - stats.optimal_total as f64)
+            / stats.no_restart_total as f64 * 100.0;
+        eprintln!(
+            "    Optimal (greedy): {} bits ({:>+.4}%), {} total restarts",
+            stats.optimal_total, opt_pct, stats.total_restarts
+        );
+    }
+
+    // Overall
+    eprintln!("\n=== Overall Summary ({} images, Q{quality}) ===", global.image_count);
+    eprintln!("  No restarts:    {} DC bits total", global.no_restart_total);
+    for (i, &interval) in intervals.iter().enumerate() {
+        if global.fixed_totals[i] > 0 {
+            let pct = (global.no_restart_total as f64 - global.fixed_totals[i] as f64)
+                / global.no_restart_total as f64 * 100.0;
+            eprintln!(
+                "  DRI={:>2} MCU rows: {} bits ({:>+.4}%)",
+                interval, global.fixed_totals[i], pct
+            );
+        }
+    }
+    let opt_pct = (global.no_restart_total as f64 - global.optimal_total as f64)
+        / global.no_restart_total as f64 * 100.0;
+    eprintln!(
+        "  Optimal (greedy): {} bits ({:>+.4}%), {} total restarts across {} images",
+        global.optimal_total, opt_pct, global.total_restarts, global.image_count
+    );
+
+    eprintln!("\nNote: These are DC-only bits. Total JPEG also includes AC coefficients.");
+    eprintln!("DC is typically ~5-15% of total file size, so a 1% DC saving = ~0.05-0.15% total.");
+    eprintln!("Positive % = restart markers save bits. Negative = overhead exceeds savings.");
+}
+
+#[derive(Default)]
+struct CorpusDcStats {
+    image_count: usize,
+    no_restart_total: u64,
+    fixed_totals: [u64; 6], // indices 0-5 for intervals 1,2,4,8,16,32
+    optimal_total: u64,
+    total_restarts: usize,
+}
+
+impl CorpusDcStats {
+    fn add(&mut self, result: &zenjpeg::encode::dc_analysis::DcAnalysisResult) {
+        self.image_count += 1;
+        self.no_restart_total += result.no_restart_cost;
+        for (i, &(_interval, cost)) in result.fixed_restart_costs.iter().enumerate() {
+            if i < 6 {
+                self.fixed_totals[i] += cost;
+            }
+        }
+        self.optimal_total += result.optimal_restart_cost;
+        self.total_restarts += result.optimal_restart_rows.len();
+    }
 }
 
 /// Also measure: what if we just used the best single band size, per-image?

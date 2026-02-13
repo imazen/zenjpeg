@@ -44,6 +44,10 @@ pub(crate) mod scan_optimize;
 pub mod scan_script;
 mod serialize;
 #[cfg(feature = "test-utils")]
+pub mod dc_analysis;
+#[cfg(not(feature = "test-utils"))]
+pub(crate) mod dc_analysis;
+#[cfg(feature = "test-utils")]
 pub mod spatial_huffman;
 #[cfg(not(feature = "test-utils"))]
 pub(crate) mod spatial_huffman;
