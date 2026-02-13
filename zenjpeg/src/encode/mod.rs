@@ -43,6 +43,10 @@ pub(crate) mod scan_optimize;
 #[doc(hidden)]
 pub mod scan_script;
 mod serialize;
+#[cfg(feature = "test-utils")]
+pub mod spatial_huffman;
+#[cfg(not(feature = "test-utils"))]
+pub(crate) mod spatial_huffman;
 
 #[doc(hidden)]
 pub mod config;
