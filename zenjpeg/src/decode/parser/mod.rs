@@ -705,7 +705,6 @@ impl<'a> JpegParser<'a> {
             height: self.height,
         };
         JpegInfo {
-            available_scales: JpegInfo::compute_available_scales(dims),
             dimensions: dims,
             color_space,
             precision: self.precision,

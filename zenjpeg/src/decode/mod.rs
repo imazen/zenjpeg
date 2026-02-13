@@ -27,7 +27,6 @@
 pub mod idct;
 #[doc(hidden)]
 pub mod idct_int;
-pub(crate) mod idct_scaled;
 
 mod config;
 mod extras;
@@ -50,8 +49,7 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    DctScale, DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
-    ShrinkHint, ShrinkQuality,
+    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -380,69 +378,6 @@ impl DecodeConfig {
         self
     }
 
-    /// Set shrink-on-load hint.
-    ///
-    /// Output dimensions will be approximately the target, rounded up to
-    /// the nearest supported DCT scale. The decoder picks the smallest
-    /// scale that meets the minimum output dimensions.
-    ///
-    /// This is much faster than full decode + post-process downscale:
-    /// fewer IDCT operations, fewer pixels through color conversion,
-    /// smaller buffers.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::decoder::{Decoder, ShrinkHint, DctScale};
-    ///
-    /// // Thumbnail: at least 200x200
-    /// let result = Decoder::new()
-    ///     .shrink(ShrinkHint::FitWithin { width: 200, height: 200 })
-    ///     .decode(&jpeg_data, enough::Unstoppable)?;
-    ///
-    /// // Exact 1/2 scale
-    /// let result = Decoder::new()
-    ///     .shrink(ShrinkHint::ExactScale(DctScale::Half))
-    ///     .decode(&jpeg_data, enough::Unstoppable)?;
-    /// ```
-    #[must_use]
-    pub fn shrink(mut self, hint: ShrinkHint) -> Self {
-        self.shrink_hint = Some(hint);
-        self
-    }
-
-    /// Set shrink quality tier.
-    ///
-    /// `Fast` uses reduced NxN IDCT per block (may show block boundary artifacts).
-    /// `Best` uses full 8x8 IDCT + cross-block spatial downscale (no artifacts).
-    ///
-    /// Default: `Fast` for `Srgb8`, `Best` for `Precise` output targets.
-    #[must_use]
-    pub fn shrink_quality(mut self, quality: ShrinkQuality) -> Self {
-        self.shrink_quality = Some(quality);
-        self
-    }
-
-    /// Resolve the effective shrink quality for the current configuration.
-    #[allow(dead_code)]
-    pub(crate) fn effective_shrink_quality(&self) -> ShrinkQuality {
-        self.shrink_quality.unwrap_or_else(|| {
-            if self.output_target.is_precise() {
-                ShrinkQuality::Best
-            } else {
-                ShrinkQuality::Fast
-            }
-        })
-    }
-
-    /// Resolve shrink hint to a DctScale for the given source dimensions.
-    pub(crate) fn resolve_dct_scale(&self, source: Dimensions) -> DctScale {
-        match self.shrink_hint {
-            Some(hint) => hint.resolve(source),
-            None => DctScale::Full,
-        }
-    }
-
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         // Preserve metadata segments for extraction without full decode
@@ -583,18 +518,6 @@ impl DecodeConfig {
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.decode(&Unstoppable)?;
 
-            // If shrink is requested, use coefficient path for reduced IDCT
-            let dct_scale = self.resolve_dct_scale(Dimensions::new(width, height));
-            if dct_scale != DctScale::Full && !is_cmyk {
-                let coefficients = parser.extract_coefficients()?;
-                return ScanlineReader::from_coefficients(
-                    coefficients,
-                    self.chroma_upsampling,
-                    self.output_target,
-                    dct_scale,
-                );
-            }
-
             // Compute subsampling from sampling factors
             let subsampling = compute_subsampling(&parser.components, num_components);
 
@@ -668,18 +591,9 @@ impl DecodeConfig {
             ));
         }
 
-        // Resolve DCT scale from shrink hint
-        let source_dims = crate::types::Dimensions::new(parser.width, parser.height);
-        let dct_scale = self.resolve_dct_scale(source_dims);
-
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
-        ScanlineReader::from_scan_data(
-            scan_data,
-            self.chroma_upsampling,
-            self.output_target,
-            dct_scale,
-        )
+        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
     }
 
     /// Creates a scanline reader that applies a DCT-domain transform.
@@ -744,14 +658,7 @@ impl DecodeConfig {
         }
 
         let coefficients = parser.extract_coefficients()?;
-        let source_dims = crate::types::Dimensions::new(coefficients.width, coefficients.height);
-        let dct_scale = self.resolve_dct_scale(source_dims);
-        ScanlineReader::from_coefficients(
-            coefficients,
-            self.chroma_upsampling,
-            self.output_target,
-            dct_scale,
-        )
+        ScanlineReader::from_coefficients(coefficients, self.chroma_upsampling, self.output_target)
     }
 
     /// Compute the effective transform from raw JPEG data.
@@ -784,91 +691,12 @@ impl DecodeConfig {
         }
     }
 
-    /// Decode with shrink-on-load via the scanline reader.
-    ///
-    /// Uses the scanline path (which already handles DctScale) to produce
-    /// reduced-resolution output without duplicating reduced IDCT into the
-    /// buffered coefficient path.
-    fn decode_with_shrink(&self, data: &[u8]) -> Result<DecodeResult> {
-        let mut reader = self.scanline_reader(data)?;
-        let width = reader.width() as usize;
-        let height = reader.height() as usize;
-        let format = self.output_format.unwrap_or(crate::types::PixelFormat::Rgb);
-
-        if reader.is_grayscale() {
-            // Grayscale shrink decode
-            let mut pixels = vec![0u8; width * height];
-            let mut rows_read = 0;
-            while rows_read < height {
-                let remaining = height - rows_read;
-                let out =
-                    imgref::ImgRefMut::new(&mut pixels[rows_read * width..], width, remaining);
-                let count = reader.read_rows_gray8(out)?;
-                if count == 0 {
-                    break;
-                }
-                rows_read += count;
-            }
-            let warnings = Vec::new();
-            Ok(DecodeResult::new_u8(
-                width as u32,
-                height as u32,
-                crate::types::PixelFormat::Gray,
-                self.output_target,
-                pixels,
-                None,
-                warnings,
-            ))
-        } else {
-            // Color shrink decode
-            let bpp = format.bytes_per_pixel();
-            let row_bytes = width * bpp;
-            let mut pixels = vec![0u8; row_bytes * height];
-            let mut rows_read = 0;
-            while rows_read < height {
-                let remaining = height - rows_read;
-                let out = imgref::ImgRefMut::new(
-                    &mut pixels[rows_read * row_bytes..],
-                    width * bpp,
-                    remaining,
-                );
-                let count = match format {
-                    crate::types::PixelFormat::Bgr => reader.read_rows_bgr8(out)?,
-                    crate::types::PixelFormat::Rgba => reader.read_rows_rgba8(out)?,
-                    crate::types::PixelFormat::Bgra => reader.read_rows_bgra8(out)?,
-                    crate::types::PixelFormat::Bgrx => reader.read_rows_bgrx8(out)?,
-                    _ => reader.read_rows_rgb8(out)?,
-                };
-                if count == 0 {
-                    break;
-                }
-                rows_read += count;
-            }
-            let warnings = Vec::new();
-            Ok(DecodeResult::new_u8(
-                width as u32,
-                height as u32,
-                format,
-                self.output_target,
-                pixels,
-                None,
-                warnings,
-            ))
-        }
-    }
-
     /// Decodes a JPEG image.
     ///
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
-        // Shrink-on-load fast path: use scanline reader for reduced-resolution decode.
-        // This avoids duplicating reduced IDCT integration into the buffered path.
-        if self.shrink_hint.is_some() {
-            return self.decode_with_shrink(data);
-        }
-
         let preserve = if self.auto_orient {
             // Ensure EXIF is preserved for orientation reading
             let mut p = self.preserve.clone();

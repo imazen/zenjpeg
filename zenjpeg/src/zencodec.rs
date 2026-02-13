@@ -445,12 +445,6 @@ impl Decoding for JpegDecoding {
             let info = self.inner.read_info(data)?;
             let mut img_info = to_image_info(&info);
 
-            // Apply DctScale shrink-on-load
-            let scale = self.inner.resolve_dct_scale(info.dimensions);
-            let scaled = scale.scaled_dimensions(info.dimensions);
-            img_info.width = scaled.width;
-            img_info.height = scaled.height;
-
             // Apply auto_orient / decode_transform dimension swap
             let transform = self.inner.compute_effective_transform_from_data(data);
             if transform.swaps_dimensions() {
