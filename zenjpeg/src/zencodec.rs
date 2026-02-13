@@ -10,6 +10,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use imgref::{ImgRef, ImgRefMut, ImgVec};
+use rgb::alt::BGRA;
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     CodecCapabilities, DecodeOutput, Decoding, DecodingJob, EncodeOutput, Encoding, EncodingJob,
@@ -265,6 +266,68 @@ impl<'a> EncodingJob<'a> for JpegEncodeJob<'a> {
             .iter()
             .map(|p: &Gray<u8>| {
                 let v = p.value();
+                Rgb { r: v, g: v, b: v }
+            })
+            .collect();
+        self.do_encode(&rgb, w as u32, h as u32)
+    }
+
+    fn encode_bgra8(self, img: ImgRef<'_, BGRA<u8>>) -> Result<EncodeOutput, Self::Error> {
+        // JPEG doesn't support alpha — swizzle BGRA → RGB
+        let (buf, w, h) = img.to_contiguous_buf();
+        let rgb: Vec<Rgb<u8>> = buf
+            .iter()
+            .map(|p| Rgb { r: p.r, g: p.g, b: p.b })
+            .collect();
+        self.do_encode(&rgb, w as u32, h as u32)
+    }
+
+    fn encode_bgrx8(self, img: ImgRef<'_, BGRA<u8>>) -> Result<EncodeOutput, Self::Error> {
+        // Swizzle BGRA → RGB (drop padding byte)
+        let (buf, w, h) = img.to_contiguous_buf();
+        let rgb: Vec<Rgb<u8>> = buf
+            .iter()
+            .map(|p| Rgb { r: p.r, g: p.g, b: p.b })
+            .collect();
+        self.do_encode(&rgb, w as u32, h as u32)
+    }
+
+    fn encode_rgb_f32(self, img: ImgRef<'_, Rgb<f32>>) -> Result<EncodeOutput, Self::Error> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, w, h) = img.to_contiguous_buf();
+        let rgb: Vec<Rgb<u8>> = buf
+            .iter()
+            .map(|p| Rgb {
+                r: linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
+                g: linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
+                b: linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
+            })
+            .collect();
+        self.do_encode(&rgb, w as u32, h as u32)
+    }
+
+    fn encode_rgba_f32(self, img: ImgRef<'_, Rgba<f32>>) -> Result<EncodeOutput, Self::Error> {
+        // JPEG doesn't support alpha — convert linear→sRGB, drop alpha
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, w, h) = img.to_contiguous_buf();
+        let rgb: Vec<Rgb<u8>> = buf
+            .iter()
+            .map(|p| Rgb {
+                r: linear_to_srgb_u8(p.r.clamp(0.0, 1.0)),
+                g: linear_to_srgb_u8(p.g.clamp(0.0, 1.0)),
+                b: linear_to_srgb_u8(p.b.clamp(0.0, 1.0)),
+            })
+            .collect();
+        self.do_encode(&rgb, w as u32, h as u32)
+    }
+
+    fn encode_gray_f32(self, img: ImgRef<'_, Gray<f32>>) -> Result<EncodeOutput, Self::Error> {
+        use linear_srgb::default::linear_to_srgb_u8;
+        let (buf, w, h) = img.to_contiguous_buf();
+        let rgb: Vec<Rgb<u8>> = buf
+            .iter()
+            .map(|g| {
+                let v = linear_to_srgb_u8(g.value().clamp(0.0, 1.0));
                 Rgb { r: v, g: v, b: v }
             })
             .collect();
@@ -614,6 +677,101 @@ impl<'a> DecodingJob<'a> for JpegDecodeJob<'a> {
             Err(Error::unsupported_feature("decoder feature required"))
         }
     }
+
+    fn decode_into_bgra8(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, BGRA<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgba8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = BGRA { b: s.b, g: s.g, r: s.r, a: s.a };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_bgrx8(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, BGRA<u8>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = BGRA { b: s.b, g: s.g, r: s.r, a: 255 };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_rgb_f32(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Rgb<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = Rgb {
+                    r: srgb_u8_to_linear(s.r),
+                    g: srgb_u8_to_linear(s.g),
+                    b: srgb_u8_to_linear(s.b),
+                };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_rgba_f32(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Rgba<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgba8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                *d = Rgba {
+                    r: srgb_u8_to_linear(s.r),
+                    g: srgb_u8_to_linear(s.g),
+                    b: srgb_u8_to_linear(s.b),
+                    a: s.a as f32 / 255.0,
+                };
+            }
+        }
+        Ok(info)
+    }
+
+    fn decode_into_gray_f32(
+        self,
+        data: &[u8],
+        mut dst: ImgRefMut<'_, Gray<f32>>,
+    ) -> Result<ImageInfo, Self::Error> {
+        use linear_srgb::default::srgb_u8_to_linear;
+        let output = self.decode(data)?;
+        let info = output.info().clone();
+        let src = output.into_rgb8();
+        for (src_row, dst_row) in src.as_ref().rows().zip(dst.rows_mut()) {
+            for (s, d) in src_row.iter().zip(dst_row.iter_mut()) {
+                let r = srgb_u8_to_linear(s.r);
+                let g = srgb_u8_to_linear(s.g);
+                let b = srgb_u8_to_linear(s.b);
+                *d = Gray::new(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            }
+        }
+        Ok(info)
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -758,5 +916,53 @@ mod tests {
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
         assert_eq!(info.format, ImageFormat::Jpeg);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn f32_roundtrip_all_simd_tiers() {
+        use archmage::testing::{for_each_token_permutation, CompileTimePolicy};
+        use zencodec_types::Decoding;
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
+            // Encode linear f32 → JPEG → decode back to f32
+            let pixels: Vec<Rgb<f32>> = (0..16 * 16)
+                .map(|i| {
+                    let t = i as f32 / 255.0;
+                    Rgb {
+                        r: t,
+                        g: (t * 0.7),
+                        b: (t * 0.3),
+                    }
+                })
+                .collect();
+            let img = ImgVec::new(pixels, 16, 16);
+
+            let enc = JpegEncoding::new().with_quality(100.0);
+            let output = enc.encode_rgb_f32(img.as_ref()).unwrap();
+            assert!(!output.bytes().is_empty());
+
+            let dec = JpegDecoding::new();
+            let dst = vec![
+                Rgb {
+                    r: 0.0f32,
+                    g: 0.0,
+                    b: 0.0,
+                };
+                16 * 16
+            ];
+            let mut dst_img = ImgVec::new(dst, 16, 16);
+            let _info = dec
+                .decode_into_rgb_f32(output.bytes(), dst_img.as_mut())
+                .unwrap();
+
+            // Verify values are in valid range
+            for p in dst_img.buf().iter() {
+                assert!(p.r >= 0.0 && p.r <= 1.0, "r out of range: {}", p.r);
+                assert!(p.g >= 0.0 && p.g <= 1.0, "g out of range: {}", p.g);
+                assert!(p.b >= 0.0 && p.b <= 1.0, "b out of range: {}", p.b);
+            }
+        });
+        assert!(report.permutations_run >= 1);
     }
 }
