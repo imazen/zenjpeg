@@ -49,7 +49,8 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult, OutputTarget,
+    CropRegion, DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult,
+    OutputTarget,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -378,6 +379,33 @@ impl DecodeConfig {
         self
     }
 
+    /// Sets a crop region for decode.
+    ///
+    /// Only the specified sub-region of the image will be output.
+    /// Entropy decoding still runs for all MCUs (required by the DC predictor
+    /// chain), but IDCT and color conversion are skipped for MCU rows outside
+    /// the crop, providing significant speedup for small crops of large images.
+    ///
+    /// The crop is applied in output space (after `auto_orient` / `transform`).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, CropRegion};
+    ///
+    /// // Crop a 200x200 region starting at (100, 100)
+    /// let result = Decoder::new()
+    ///     .crop(CropRegion::pixels(100, 100, 200, 200))
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    ///
+    /// assert_eq!(result.width(), 200);
+    /// assert_eq!(result.height(), 200);
+    /// ```
+    #[must_use]
+    pub fn crop(mut self, region: config::CropRegion) -> Self {
+        self.crop_region = Some(region);
+        self
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         // Preserve metadata segments for extraction without full decode
@@ -499,6 +527,14 @@ impl DecodeConfig {
         let is_cmyk = parser.num_components == 4;
         let is_xyb = parser.info().is_xyb;
 
+        // Compute MCU height for crop resolution
+        let max_v_samp = parser.components[..parser.num_components as usize]
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        let mcu_height = max_v_samp * 8;
+
         // Use buffered mode for:
         // - Progressive JPEGs (format requires all scans before final coefficients)
         // - Arithmetic-coded JPEGs (streaming entropy decoder is Huffman-only for now)
@@ -535,7 +571,7 @@ impl DecodeConfig {
                 &Unstoppable,
             )?;
 
-            return Ok(ScanlineReader::new_buffered(
+            let mut reader = ScanlineReader::new_buffered(
                 data,
                 width,
                 height,
@@ -543,7 +579,9 @@ impl DecodeConfig {
                 subsampling,
                 pixels,
                 is_xyb,
-            ));
+            );
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            return Ok(reader);
         }
 
         // Baseline: use streaming mode
@@ -553,17 +591,12 @@ impl DecodeConfig {
             .map(|c| c.h_samp_factor)
             .max()
             .unwrap_or(1);
-        let max_v = parser.components[..parser.num_components as usize]
-            .iter()
-            .map(|c| c.v_samp_factor)
-            .max()
-            .unwrap_or(1);
 
-        if max_h > 2 || max_v > 2 {
+        if max_h > 2 || max_v_samp > 2 {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;
-            let subsampling = subsampling_from_max(max_h, max_v, is_grayscale);
+            let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
 
             parser.decode(&Unstoppable)?;
 
@@ -580,7 +613,7 @@ impl DecodeConfig {
                 &Unstoppable,
             )?;
 
-            return Ok(ScanlineReader::new_buffered(
+            let mut reader = ScanlineReader::new_buffered(
                 data,
                 width,
                 height,
@@ -588,12 +621,19 @@ impl DecodeConfig {
                 subsampling,
                 pixels,
                 is_xyb,
-            ));
+            );
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            return Ok(reader);
         }
 
         // Extract scan data and construct scanline reader
         let scan_data = parser.into_scan_data(is_grayscale)?;
-        ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)
+        let width = scan_data.width;
+        let height = scan_data.height;
+        let mut reader =
+            ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)?;
+        self.apply_crop(&mut reader, width, height, mcu_height)?;
+        Ok(reader)
     }
 
     /// Creates a scanline reader that applies a DCT-domain transform.
@@ -613,6 +653,14 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.prefer_streaming = false; // Need coefficient storage
         parser.decode(&Unstoppable)?;
+
+        // Compute MCU height for crop resolution
+        let max_v_samp = parser.components[..parser.num_components as usize]
+            .iter()
+            .map(|c| c.v_samp_factor as usize)
+            .max()
+            .unwrap_or(1);
+        let mcu_height = max_v_samp * 8;
 
         // Check if crop is needed for non-MCU-aligned images
         let orig_w = parser.width as usize;
@@ -637,7 +685,10 @@ impl DecodeConfig {
             // Crop needed or dimension-swapping transform (which uses f32 IDCT):
             // fall back to full buffered decode + crop.
             // This ensures the scanline path matches the buffered decode() path exactly.
-            let result = self.decode(data, Unstoppable)?;
+            // Use a config without crop_region for decode — we apply crop on the reader.
+            let mut config_no_crop = self.clone();
+            config_no_crop.crop_region = None;
+            let result = config_no_crop.decode(data, Unstoppable)?;
             let vis_w = result.width();
             let vis_h = result.height();
             let num_components = result.format().num_channels() as u8;
@@ -646,7 +697,7 @@ impl DecodeConfig {
                 .into_pixels_u8()
                 .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
 
-            return Ok(ScanlineReader::new_buffered(
+            let mut reader = ScanlineReader::new_buffered(
                 data,
                 vis_w,
                 vis_h,
@@ -654,11 +705,37 @@ impl DecodeConfig {
                 Subsampling::S444,
                 pixels,
                 is_xyb,
-            ));
+            );
+            // Crop is in output space (post-transform), resolve against visible dims
+            self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+            return Ok(reader);
         }
 
         let coefficients = parser.extract_coefficients()?;
-        ScanlineReader::from_coefficients(coefficients, self.chroma_upsampling, self.output_target)
+        let width = parser.width;
+        let height = parser.height;
+        let mut reader = ScanlineReader::from_coefficients(
+            coefficients,
+            self.chroma_upsampling,
+            self.output_target,
+        )?;
+        self.apply_crop(&mut reader, width, height, mcu_height)?;
+        Ok(reader)
+    }
+
+    /// Resolves and applies the user's crop region to a scanline reader.
+    fn apply_crop(
+        &self,
+        reader: &mut ScanlineReader<'_>,
+        img_w: u32,
+        img_h: u32,
+        mcu_height: usize,
+    ) -> Result<()> {
+        if let Some(crop_region) = self.crop_region {
+            let resolved = crop_region.resolve(img_w, img_h, mcu_height)?;
+            reader.set_crop(resolved);
+        }
+        Ok(())
     }
 
     /// Compute the effective transform from raw JPEG data.
@@ -832,11 +909,34 @@ impl DecodeConfig {
                 crate::color::icc::srgb_to_linear_inplace(&mut pixels);
             }
 
+            // Apply user crop region (pixel-level crop of decoded buffer)
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                let cw = resolved.width as usize;
+                let ch = resolved.height as usize;
+                let cx = resolved.x as usize;
+                let cy = resolved.y as usize;
+                let src_w = visible_w as usize;
+                let channels = output_format.num_channels();
+                let mut cropped = vec![0f32; cw * ch * channels];
+                for y in 0..ch {
+                    let src_off = ((cy + y) * src_w + cx) * channels;
+                    let dst_off = y * cw * channels;
+                    let row_elems = cw * channels;
+                    cropped[dst_off..dst_off + row_elems]
+                        .copy_from_slice(&pixels[src_off..src_off + row_elems]);
+                }
+                pixels = cropped;
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
             DecodeResult::new_f32(
-                visible_w,
-                visible_h,
+                out_w,
+                out_h,
                 output_format,
                 self.output_target,
                 pixels,
@@ -892,11 +992,34 @@ impl DecodeConfig {
                 }
             }
 
+            // Apply user crop region (pixel-level crop of decoded buffer)
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                let cw = resolved.width as usize;
+                let ch = resolved.height as usize;
+                let cx = resolved.x as usize;
+                let cy = resolved.y as usize;
+                let src_w = visible_w as usize;
+                let bpp = output_format.bytes_per_pixel();
+                let mut cropped = vec![0u8; cw * ch * bpp];
+                for y in 0..ch {
+                    let src_off = ((cy + y) * src_w + cx) * bpp;
+                    let dst_off = y * cw * bpp;
+                    let row_bytes = cw * bpp;
+                    cropped[dst_off..dst_off + row_bytes]
+                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+                }
+                pixels = cropped;
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
             let extras = parser.take_extras();
             let warnings = parser.take_warnings();
             DecodeResult::new_u8(
-                visible_w,
-                visible_h,
+                out_w,
+                out_h,
                 output_format,
                 self.output_target,
                 pixels,

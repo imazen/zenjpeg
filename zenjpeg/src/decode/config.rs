@@ -377,6 +377,163 @@ pub struct GainMapResult {
 }
 
 // ============================================================================
+// CropRegion — crop-on-decode
+// ============================================================================
+
+/// A region to crop during decoding.
+///
+/// When set on [`DecodeConfig`], the decoder will skip IDCT/upsampling for
+/// MCU rows outside the crop region, significantly reducing decode cost for
+/// small crops of large images.
+///
+/// Entropy decoding still runs for the full image (the DC predictor chain
+/// requires it), but IDCT — the heavier operation — is skipped for rows
+/// outside the crop.
+///
+/// Coordinates are in output space (after any `auto_orient` or `transform`).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenjpeg::decode::{Decoder, CropRegion};
+///
+/// // Crop a 100x100 region starting at (50, 50)
+/// let result = Decoder::new()
+///     .crop(CropRegion::pixels(50, 50, 100, 100))
+///     .decode(&jpeg_data, enough::Unstoppable)?;
+/// assert_eq!(result.width(), 100);
+/// assert_eq!(result.height(), 100);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CropRegion {
+    /// Crop specified in pixel coordinates.
+    Pixels {
+        /// X offset of the crop region (left edge).
+        x: u32,
+        /// Y offset of the crop region (top edge).
+        y: u32,
+        /// Width of the crop region.
+        width: u32,
+        /// Height of the crop region.
+        height: u32,
+    },
+    /// Crop specified as fractions of image dimensions (0.0–1.0).
+    Percent {
+        /// X offset as a fraction of image width.
+        x: f32,
+        /// Y offset as a fraction of image height.
+        y: f32,
+        /// Width as a fraction of image width.
+        width: f32,
+        /// Height as a fraction of image height.
+        height: f32,
+    },
+}
+
+impl CropRegion {
+    /// Create a pixel-coordinate crop region.
+    #[must_use]
+    pub fn pixels(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self::Pixels {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Create a percentage-based crop region (values in 0.0–1.0).
+    #[must_use]
+    pub fn percent(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self::Percent {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Resolve to absolute pixel coordinates given image dimensions.
+    pub(crate) fn resolve(
+        self,
+        img_w: u32,
+        img_h: u32,
+        mcu_height: usize,
+    ) -> crate::error::Result<ResolvedCrop> {
+        let (x, y, w, h) = match self {
+            CropRegion::Pixels {
+                x,
+                y,
+                width,
+                height,
+            } => (x, y, width, height),
+            CropRegion::Percent {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if !(0.0..=1.0).contains(&x)
+                    || !(0.0..=1.0).contains(&y)
+                    || !(0.0..=1.0).contains(&width)
+                    || !(0.0..=1.0).contains(&height)
+                {
+                    return Err(crate::error::Error::invalid_jpeg_data(
+                        "crop percentages must be in 0.0..=1.0",
+                    ));
+                }
+                let px = (x * img_w as f32).round() as u32;
+                let py = (y * img_h as f32).round() as u32;
+                let pw = (width * img_w as f32).round() as u32;
+                let ph = (height * img_h as f32).round() as u32;
+                (px, py, pw, ph)
+            }
+        };
+
+        if w == 0 || h == 0 {
+            return Err(crate::error::Error::invalid_jpeg_data(
+                "crop region must have non-zero width and height",
+            ));
+        }
+        if x.saturating_add(w) > img_w || y.saturating_add(h) > img_h {
+            return Err(crate::error::Error::invalid_jpeg_data(
+                "crop region extends beyond image bounds",
+            ));
+        }
+
+        let crop_end_y = (y + h) as usize;
+        let mcu_row_start = y as usize / mcu_height;
+        let mcu_row_end = (crop_end_y + mcu_height - 1) / mcu_height;
+
+        Ok(ResolvedCrop {
+            x,
+            y,
+            width: w,
+            height: h,
+            mcu_row_start,
+            mcu_row_end,
+        })
+    }
+}
+
+/// Resolved crop region with precomputed MCU row range.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ResolvedCrop {
+    /// X offset in pixels.
+    pub x: u32,
+    /// Y offset in pixels.
+    pub y: u32,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// First MCU row overlapping the crop (inclusive).
+    pub mcu_row_start: usize,
+    /// First MCU row past the crop (exclusive).
+    pub mcu_row_end: usize,
+}
+
+// ============================================================================
 // Decoder — replaces the old Decoder struct
 // ============================================================================
 
@@ -448,6 +605,8 @@ pub struct DecodeConfig {
     /// Force f32 IDCT for symmetric rounding (used internally by dimension-swapping
     /// transforms, also available for testing).
     pub(crate) force_f32_idct: bool,
+    /// Crop region to decode (skip IDCT for MCU rows outside the crop).
+    pub(crate) crop_region: Option<CropRegion>,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -465,6 +624,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("strictness", &self.strictness)
             .field("auto_orient", &self.auto_orient)
             .field("decode_transform", &self.decode_transform)
+            .field("crop_region", &self.crop_region)
             .finish()
     }
 }
@@ -486,6 +646,7 @@ impl Default for DecodeConfig {
             auto_orient: false,
             decode_transform: None,
             force_f32_idct: false,
+            crop_region: None,
         }
     }
 }
@@ -794,4 +955,32 @@ pub struct JpegInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_crop_basic() {
+        let crop = CropRegion::pixels(10, 20, 100, 50);
+        let resolved = crop.resolve(640, 480, 16).unwrap();
+        assert_eq!(resolved.x, 10);
+        assert_eq!(resolved.y, 20);
+        assert_eq!(resolved.width, 100);
+        assert_eq!(resolved.height, 50);
+        assert_eq!(resolved.mcu_row_start, 1); // 20 / 16
+        assert_eq!(resolved.mcu_row_end, 5); // ceil(70 / 16)
+    }
+
+    #[test]
+    fn resolve_crop_percent() {
+        let crop = CropRegion::percent(0.25, 0.25, 0.5, 0.5);
+        let resolved = crop.resolve(640, 480, 16).unwrap();
+        assert_eq!(resolved.x, 160);
+        assert_eq!(resolved.y, 120);
+        assert_eq!(resolved.width, 320);
+        assert_eq!(resolved.height, 240);
+    }
+
+    #[test]
+    fn resolve_crop_out_of_bounds() {
+        let crop = CropRegion::pixels(600, 0, 100, 100);
+        assert!(crop.resolve(640, 480, 16).is_err());
+    }
 }
