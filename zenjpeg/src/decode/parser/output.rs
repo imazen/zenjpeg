@@ -14,6 +14,10 @@
 //! - `to_pixels_f32`: f32 output normalized to [0.0, 1.0]
 //! - `to_ycbcr_planes_f32`: Raw YCbCr planes for custom processing
 
+#[cfg(feature = "parallel")]
+#[path = "output_parallel.rs"]
+mod output_parallel;
+
 use super::super::idct::inverse_dct_8x8;
 use super::super::idct_int::{
     idct_int_auto, idct_int_dc_only, idct_int_libjpeg, idct_int_tiered, idct_int_tiered_libjpeg,
@@ -913,6 +917,20 @@ impl<'a> JpegParser<'a> {
 
         if self.coeffs.is_empty() {
             return Err(Error::internal("no decoded data"));
+        }
+
+        // Try parallel fast integer paths first (fall through to sequential if image too small)
+        #[cfg(feature = "parallel")]
+        if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
+            if let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)? {
+                return reformat_rgb_output(rgb, format, width, height);
+            }
+        }
+        #[cfg(feature = "parallel")]
+        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
+            if let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)? {
+                return reformat_rgb_output(rgb, format, width, height);
+            }
         }
 
         // Try fast integer path for non-XYB 4:4:4 images
