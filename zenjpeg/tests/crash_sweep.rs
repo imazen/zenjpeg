@@ -24,25 +24,25 @@ use zenjpeg::decode::Decoder;
 /// output-correctness bugs — the JPEG data itself is valid.
 const SHOULD_DECODE: &[&str] = &[
     // jpeg-decoder: valid JPEGs that hit C-specific or logic bugs
-    "jd_219_no_app14.jpg",       // #219: valid JPEG without optional APP14
-    "jd_228_ff00_marker.jpeg",   // #228: valid JPEG with FF00 byte stuffing
+    "jd_219_no_app14.jpg",     // #219: valid JPEG without optional APP14
+    "jd_228_ff00_marker.jpeg", // #228: valid JPEG with FF00 byte stuffing
     // zune-jpeg: valid JPEGs that exposed output-correctness bugs
-    "zj_040_decode_diff_1.jpg",  // #40: decode produced wrong pixels
-    "zj_134_luma_decode_bad.jpg", // #134: luma channel decoded incorrectly
+    "zj_040_decode_diff_1.jpg",    // #40: decode produced wrong pixels
+    "zj_134_luma_decode_bad.jpg",  // #134: luma channel decoded incorrectly
     "zj_249_discolored_ycbcr.jpg", // #249: YCbCr→RGB color shift
-    "zj_303_app14_adobe.jpg",    // #303: Adobe APP14 marker handling
+    "zj_303_app14_adobe.jpg",      // #303: Adobe APP14 marker handling
     // libjpeg-turbo: valid JPEGs that hit C memory-safety bugs
     "ljt_441_segv_jcopy_sample_rows.jpg", // #441: segfault in row copy
-    "ljt_470_ub_null_ptr_skip.jpg", // #470: null pointer UB in C
-    "ljt_574_heap_corruption.jpg", // #574: heap buffer overwrite
-    "ljt_758_segv_adjust_quant_src.jpg", // #758: segfault in quant adjust
+    "ljt_470_ub_null_ptr_skip.jpg",       // #470: null pointer UB in C
+    "ljt_574_heap_corruption.jpg",        // #574: heap buffer overwrite
+    "ljt_758_segv_adjust_quant_src.jpg",  // #758: segfault in quant adjust
 ];
 
 /// Files that are non-conformant or edge-case — decoder MAY accept or reject.
 /// No assertion on success/failure, only on no-panic.
 const MAY_DECODE: &[&str] = &[
     // jpeg-decoder: spec edge cases
-    "jd_040_16bit_quant.jpg",    // #40: 16-bit quantization tables (non-standard)
+    "jd_040_16bit_quant.jpg", // #40: 16-bit quantization tables (non-standard)
     "jd_132_subtract_overflow.bin", // #132: arithmetic edge case in coefficient decode
     // zune-jpeg: edge cases in upsampling
     "zj_172_upsample_assert.jpg", // #172: unusual sampling factors, currently decodes ok
@@ -422,7 +422,9 @@ fn sweep_corpus_jpeg_nonconformant() {
 
     eprintln!(
         "\njpeg-conformance/non-conformant: {} accepted, {} rejected, {} panics",
-        ok_count, error_count, panics.len()
+        ok_count,
+        error_count,
+        panics.len()
     );
 
     assert!(
