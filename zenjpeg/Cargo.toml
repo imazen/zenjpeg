@@ -79,7 +79,7 @@ jpeg-decoder = "0.3.2"
 zune-jpeg.workspace = true
 zune-core = "0.5.1"
 codec-corpus = "1"
-resamplescope = { package = "resamplescope-rs", path = "/home/lilith/research/resamplescope" }
+
 
 # WASM testing dependencies (browser + Node.js)
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

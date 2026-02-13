@@ -7,14 +7,10 @@
 //!
 //! Both the scanline decoder and buffered decoder share this code path.
 
-use super::config::{ChromaUpsampling, DctScale, OutputTarget};
+use super::config::{ChromaUpsampling, OutputTarget};
 use super::idct_int::{
     idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
-};
-use super::idct_scaled::{
-    idct_scaled_1x1_from_dc, idct_scaled_1x1_from_dc_unclamped, idct_scaled_2x2,
-    idct_scaled_2x2_unclamped, idct_scaled_4x4, idct_scaled_4x4_unclamped,
 };
 use super::upsample::{
     upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
@@ -101,10 +97,6 @@ pub(super) struct StripProcessor {
     // Config
     pub chroma_upsampling: ChromaUpsampling,
     pub output_target: OutputTarget,
-    /// DCT scale for shrink-on-load (Full = default, no scaling).
-    pub dct_scale: DctScale,
-    /// Output pixels per block edge (1, 2, 4, or 8). Cached from dct_scale.
-    pub block_size: usize,
 }
 
 impl StripProcessor {
@@ -142,8 +134,6 @@ impl StripProcessor {
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling: ChromaUpsampling::default(),
             output_target: OutputTarget::default(),
-            dct_scale: DctScale::Full,
-            block_size: 8,
         }
     }
 
@@ -155,7 +145,6 @@ impl StripProcessor {
         v_samp: [u8; 3],
         chroma_upsampling: ChromaUpsampling,
         output_target: OutputTarget,
-        dct_scale: DctScale,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
@@ -180,34 +169,23 @@ impl StripProcessor {
             }
         };
 
-        let block_size = dct_scale.block_output_size();
-
-        // MCU column count is based on original dimensions and sampling,
-        // independent of DCT scale (we produce fewer pixels per MCU, not fewer MCUs).
-        let orig_mcu_width = max_h_samp as usize * 8;
-        let mcu_cols = (width as usize + orig_mcu_width - 1) / orig_mcu_width;
-
-        // Scaled MCU dimensions: each block produces block_size pixels instead of 8
-        let mcu_width = max_h_samp as usize * block_size;
-        let mcu_height = max_v_samp as usize * block_size;
+        let mcu_width = max_h_samp as usize * 8;
+        let mcu_cols = (width as usize + mcu_width - 1) / mcu_width;
+        let mcu_height = max_v_samp as usize * 8;
 
         // Y strip: scaled resolution with SIMD-aligned stride
         let strip_width = mcu_cols * mcu_width;
         let strip_stride = align_up(strip_width, STRIP_ALIGNMENT);
         let y_strip_size = strip_stride * mcu_height;
 
-        // Chroma strip: at native (potentially subsampled) scaled resolution
-        let chroma_strip_width = if is_grayscale {
-            0
-        } else {
-            mcu_cols * block_size
-        };
+        // Chroma strip: at native (potentially subsampled) resolution
+        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * 8 };
         let chroma_strip_stride = if is_grayscale {
             0
         } else {
             align_up(chroma_strip_width, STRIP_ALIGNMENT)
         };
-        let chroma_strip_height = if is_grayscale { 0 } else { block_size };
+        let chroma_strip_height = if is_grayscale { 0 } else { 8 };
         let chroma_strip_size = chroma_strip_stride * chroma_strip_height;
 
         // Allocate strip buffers
@@ -289,16 +267,14 @@ impl StripProcessor {
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
             output_target,
-            dct_scale,
-            block_size,
         })
     }
 
     /// The number of MCU columns.
     #[inline]
     pub fn mcu_cols(&self) -> usize {
-        // strip_width = mcu_cols * mcu_width, mcu_width = max_h_samp * block_size
-        self.strip_width / (self.max_h_samp as usize * self.block_size)
+        // strip_width = mcu_cols * mcu_width, mcu_width = max_h_samp * 8
+        self.strip_width / (self.max_h_samp as usize * 8)
     }
 
     /// Perform IDCT on a single block and write to the appropriate strip buffer.
@@ -320,143 +296,51 @@ impl StripProcessor {
         coeff_count: u8,
         quant: &[u16; DCT_BLOCK_SIZE],
     ) {
-        let bs = self.block_size;
-
-        // Calculate destination in strip buffer (using block_size instead of 8)
+        // Calculate destination in strip buffer
         let (strip, stride) = match comp_idx {
             0 => {
-                let x_offset = mcu_x * self.max_h_samp as usize * bs + h * bs;
-                let y_offset = v * bs * self.strip_stride;
+                let x_offset = mcu_x * self.max_h_samp as usize * 8 + h * 8;
+                let y_offset = v * 8 * self.strip_stride;
                 (&mut self.y_strip[y_offset + x_offset..], self.strip_stride)
             }
             1 => {
-                let x_offset = mcu_x * bs;
+                let x_offset = mcu_x * 8;
                 (&mut self.cb_strip[x_offset..], self.chroma_strip_stride)
             }
             _ => {
-                let x_offset = mcu_x * bs;
+                let x_offset = mcu_x * 8;
                 (&mut self.cr_strip[x_offset..], self.chroma_strip_stride)
             }
         };
 
         let unclamped = self.output_target.needs_unclamped_idct();
 
-        // Dispatch based on DCT scale
-        match self.dct_scale {
-            DctScale::Full => {
-                // Standard full 8x8 IDCT path (unchanged)
-                if coeff_count <= 1 {
-                    let dc = coeffs[0] as i32 * quant[0] as i32;
-                    if unclamped {
-                        idct_int_dc_only_unclamped(dc, strip, stride);
-                    } else {
-                        idct_int_dc_only(dc, strip, stride);
-                    }
-                } else {
-                    dequantize_unzigzag_i32_into_partial(
-                        coeffs,
-                        quant,
+        if coeff_count <= 1 {
+            let dc = coeffs[0] as i32 * quant[0] as i32;
+            if unclamped {
+                idct_int_dc_only_unclamped(dc, strip, stride);
+            } else {
+                idct_int_dc_only(dc, strip, stride);
+            }
+        } else {
+            dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
+            match (unclamped, self.chroma_upsampling) {
+                (false, ChromaUpsampling::LibjpegCompat) => {
+                    idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
+                }
+                (false, _) => {
+                    idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                }
+                (true, ChromaUpsampling::LibjpegCompat) => {
+                    idct_int_tiered_libjpeg_unclamped(
                         &mut self.dequant_buf,
+                        strip,
+                        stride,
                         coeff_count,
                     );
-                    match (unclamped, self.chroma_upsampling) {
-                        (false, ChromaUpsampling::LibjpegCompat) => {
-                            idct_int_tiered_libjpeg(
-                                &mut self.dequant_buf,
-                                strip,
-                                stride,
-                                coeff_count,
-                            );
-                        }
-                        (false, _) => {
-                            idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
-                        }
-                        (true, ChromaUpsampling::LibjpegCompat) => {
-                            idct_int_tiered_libjpeg_unclamped(
-                                &mut self.dequant_buf,
-                                strip,
-                                stride,
-                                coeff_count,
-                            );
-                        }
-                        (true, _) => {
-                            idct_int_tiered_unclamped(
-                                &mut self.dequant_buf,
-                                strip,
-                                stride,
-                                coeff_count,
-                            );
-                        }
-                    }
                 }
-            }
-            DctScale::Eighth => {
-                // 1x1: DC-only, single pixel per block
-                let dc = coeffs[0] as i32 * quant[0] as i32;
-                if unclamped {
-                    idct_scaled_1x1_from_dc_unclamped(dc, strip, stride);
-                } else {
-                    idct_scaled_1x1_from_dc(dc, strip, stride);
-                }
-            }
-            DctScale::Quarter => {
-                // 2x2: uses top-left 2x2 coefficients
-                if coeff_count <= 1 {
-                    // DC-only: all 4 pixels the same, use 1x1 math replicated
-                    let dc = coeffs[0] as i32 * quant[0] as i32;
-                    let val = if unclamped {
-                        (dc.wrapping_add(4).wrapping_add(1024)).wrapping_shr(3) as i16
-                    } else {
-                        (dc.wrapping_add(4).wrapping_add(1024))
-                            .wrapping_shr(3)
-                            .clamp(0, 255) as i16
-                    };
-                    strip[0] = val;
-                    strip[1] = val;
-                    strip[stride] = val;
-                    strip[stride + 1] = val;
-                } else {
-                    dequantize_unzigzag_i32_into_partial(
-                        coeffs,
-                        quant,
-                        &mut self.dequant_buf,
-                        coeff_count,
-                    );
-                    if unclamped {
-                        idct_scaled_2x2_unclamped(&self.dequant_buf, strip, stride);
-                    } else {
-                        idct_scaled_2x2(&self.dequant_buf, strip, stride);
-                    }
-                }
-            }
-            DctScale::Half => {
-                // 4x4: uses top-left 4x4 coefficients
-                if coeff_count <= 1 {
-                    // DC-only: all 16 pixels the same
-                    let dc = coeffs[0] as i32 * quant[0] as i32;
-                    let val = if unclamped {
-                        (dc.wrapping_add(4).wrapping_add(1024)).wrapping_shr(3) as i16
-                    } else {
-                        (dc.wrapping_add(4).wrapping_add(1024))
-                            .wrapping_shr(3)
-                            .clamp(0, 255) as i16
-                    };
-                    for row in 0..4 {
-                        let r = &mut strip[row * stride..];
-                        r[..4].fill(val);
-                    }
-                } else {
-                    dequantize_unzigzag_i32_into_partial(
-                        coeffs,
-                        quant,
-                        &mut self.dequant_buf,
-                        coeff_count,
-                    );
-                    if unclamped {
-                        idct_scaled_4x4_unclamped(&self.dequant_buf, strip, stride);
-                    } else {
-                        idct_scaled_4x4(&self.dequant_buf, strip, stride);
-                    }
+                (true, _) => {
+                    idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
             }
         }
