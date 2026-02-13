@@ -3,6 +3,11 @@
 //! Parallelizes IDCT + color conversion across MCU rows using rayon.
 //! Behind `#[cfg(feature = "parallel")]`.
 //!
+//! Each thread processes a contiguous batch of MCU rows with reused strip
+//! buffers, matching the sequential path's allocation pattern. No full-image
+//! chroma plane allocations — the 4:2:0 path uses double-buffered extended
+//! strips per thread, identical to the sequential approach.
+//!
 //! ## Paths
 //!
 //! - `to_pixels_fast_i16_parallel`: 4:4:4 non-XYB images
@@ -29,9 +34,6 @@ use crate::decode::parser::JpegParser;
 const MIN_MCU_ROWS_PARALLEL: usize = 8;
 
 /// Minimum pixel count (width × height) to justify parallel output.
-/// Below this, the overhead of thread-local allocations and rayon scheduling
-/// exceeds the parallelism benefit. Empirically determined: 2K (4.2M px) is
-/// slower with parallel output, 4K (8.8M px) breaks even.
 const MIN_PIXELS_PARALLEL: usize = 8_000_000;
 
 /// IDCT one block into a strip buffer at the given offset.
@@ -98,12 +100,71 @@ fn idct_comp_mcu_row(
     }
 }
 
+/// IDCT chroma blocks for one MCU row into extended buffer rows 1..c_strip_height+1.
+/// Then replicate the last valid row to fill any padding (partial MCU at image bottom).
+fn idct_chroma_into_ext(
+    ext: &mut [i16],
+    coeffs: &[[i16; DCT_BLOCK_SIZE]],
+    coeff_counts: &[u8],
+    info: &CompInfo,
+    quant: &[u16; DCT_BLOCK_SIZE],
+    imcu_row: usize,
+    c_strip_width: usize,
+    c_strip_height: usize,
+    chroma_height_total: usize,
+    idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+) {
+    let data_offset = c_strip_width; // skip context row 0
+
+    for iy in 0..info.v_samp {
+        let by = imcu_row * info.v_samp + iy;
+        if by >= info.comp_blocks_v {
+            continue;
+        }
+        let strip_row = iy * DCT_SIZE;
+
+        for bx in 0..info.comp_blocks_h {
+            let block_idx = by * info.comp_blocks_h + bx;
+            if block_idx >= coeffs.len() {
+                continue;
+            }
+            let base_px = bx * DCT_SIZE;
+            let dst_offset = data_offset + strip_row * c_strip_width + base_px;
+
+            idct_block_into(
+                &coeffs[block_idx],
+                coeff_counts[block_idx],
+                quant,
+                ext,
+                dst_offset,
+                c_strip_width,
+                idct_fn,
+            );
+        }
+    }
+
+    // Replicate last valid chroma row to fill padding rows
+    let c_row_start = imcu_row * c_strip_height;
+    let c_valid = chroma_height_total
+        .saturating_sub(c_row_start)
+        .min(c_strip_height);
+    if c_valid > 0 && c_valid < c_strip_height {
+        let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
+        for pad_row in c_valid..c_strip_height {
+            let pad_start = data_offset + pad_row * c_strip_width;
+            ext.copy_within(last_valid_start..last_valid_start + c_strip_width, pad_start);
+        }
+    }
+}
+
 /// Parallel output methods for JpegParser.
 impl<'a> JpegParser<'a> {
-    /// Parallel 4:4:4 decode: IDCT + color convert, split by MCU row.
+    /// Parallel 4:4:4 decode: IDCT + color convert, batched by thread.
     ///
-    /// Returns `None` if the image is too small for parallelism to help,
-    /// falling through to the sequential path.
+    /// Each thread processes a contiguous range of MCU rows with reused strip
+    /// buffers (3 allocs per thread, not per MCU row).
+    ///
+    /// Returns `None` if the image is too small for parallelism to help.
     pub(super) fn to_pixels_fast_i16_parallel(
         &self,
         chroma_upsampling: ChromaUpsampling,
@@ -126,8 +187,8 @@ impl<'a> JpegParser<'a> {
 
         let strip_height = mcu_height;
         let strip_width = comp_infos[0].comp_width;
+        let strip_size = strip_width * strip_height;
 
-        // Pre-fetch quant tables
         let quant_tables: [&[u16; DCT_BLOCK_SIZE]; 3] = [
             self.quant_tables[comp_infos[0].quant_idx]
                 .as_ref()
@@ -152,59 +213,70 @@ impl<'a> JpegParser<'a> {
             _ => idct_int_tiered,
         };
 
-        // Extract references to coefficient data (Sync-safe) before parallel section.
-        // JpegParser contains OnceCell (not Sync), so we can't capture &self in rayon closures.
+        // Extract Sync-safe references before parallel section
         let coeffs = &self.coeffs;
         let coeff_counts = &self.coeff_counts;
 
-        rgb.par_chunks_mut(mcu_row_rgb_bytes)
+        // Batch MCU rows into ~num_threads chunks so each thread allocates once
+        let num_threads = rayon::current_num_threads();
+        let batch_size = (mcu_rows + num_threads - 1) / num_threads;
+        let batch_rgb_bytes = batch_size * mcu_row_rgb_bytes;
+
+        rgb.par_chunks_mut(batch_rgb_bytes)
             .enumerate()
-            .for_each(|(imcu_row, rgb_chunk)| {
-                // Thread-local strip buffers
-                let strip_size = strip_width * strip_height;
+            .for_each(|(batch_idx, rgb_batch)| {
+                // Allocate strip buffers ONCE per thread — reused across MCU rows
                 let mut y_strip = vec![0i16; strip_size];
                 let mut cb_strip = vec![0i16; strip_size];
                 let mut cr_strip = vec![0i16; strip_size];
 
-                // IDCT all blocks in this MCU row for all 3 components
-                let strips: [&mut Vec<i16>; 3] = [&mut y_strip, &mut cb_strip, &mut cr_strip];
-                for (comp_idx, strip) in strips.into_iter().enumerate() {
-                    idct_comp_mcu_row(
-                        &coeffs[comp_idx],
-                        &coeff_counts[comp_idx],
-                        &comp_infos[comp_idx],
-                        quant_tables[comp_idx],
-                        imcu_row,
-                        strip,
-                        strip_width,
-                        idct_fn,
-                    );
-                }
+                let start_row = batch_idx * batch_size;
+                let end_row = (start_row + batch_size).min(mcu_rows);
 
-                // Color convert this MCU row
-                let y_start = imcu_row * mcu_height;
-                let rows_this_mcu = mcu_height.min(height.saturating_sub(y_start));
-                let cols_this_mcu = width.min(strip_width);
-
-                for row in 0..rows_this_mcu {
-                    let strip_offset = row * strip_width;
-                    let rgb_offset = row * rgb_row_stride;
-
-                    if is_rgb {
-                        for px in 0..cols_this_mcu {
-                            let i = strip_offset + px;
-                            let o = rgb_offset + px * 3;
-                            rgb_chunk[o] = y_strip[i].clamp(0, 255) as u8;
-                            rgb_chunk[o + 1] = cb_strip[i].clamp(0, 255) as u8;
-                            rgb_chunk[o + 2] = cr_strip[i].clamp(0, 255) as u8;
-                        }
-                    } else {
-                        ycbcr_planes_i16_to_rgb_u8(
-                            &y_strip[strip_offset..strip_offset + cols_this_mcu],
-                            &cb_strip[strip_offset..strip_offset + cols_this_mcu],
-                            &cr_strip[strip_offset..strip_offset + cols_this_mcu],
-                            &mut rgb_chunk[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                for imcu_row in start_row..end_row {
+                    // IDCT all blocks in this MCU row for all 3 components
+                    for (comp_idx, strip) in [&mut y_strip, &mut cb_strip, &mut cr_strip]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        idct_comp_mcu_row(
+                            &coeffs[comp_idx],
+                            &coeff_counts[comp_idx],
+                            &comp_infos[comp_idx],
+                            quant_tables[comp_idx],
+                            imcu_row,
+                            strip,
+                            strip_width,
+                            idct_fn,
                         );
+                    }
+
+                    // Color convert this MCU row
+                    let y_start = imcu_row * mcu_height;
+                    let rows_this_mcu = mcu_height.min(height.saturating_sub(y_start));
+                    let cols_this_mcu = width.min(strip_width);
+                    let local_offset = (imcu_row - start_row) * mcu_row_rgb_bytes;
+
+                    for row in 0..rows_this_mcu {
+                        let strip_offset = row * strip_width;
+                        let rgb_offset = local_offset + row * rgb_row_stride;
+
+                        if is_rgb {
+                            for px in 0..cols_this_mcu {
+                                let i = strip_offset + px;
+                                let o = rgb_offset + px * 3;
+                                rgb_batch[o] = y_strip[i].clamp(0, 255) as u8;
+                                rgb_batch[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                                rgb_batch[o + 2] = cr_strip[i].clamp(0, 255) as u8;
+                            }
+                        } else {
+                            ycbcr_planes_i16_to_rgb_u8(
+                                &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                                &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                                &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                                &mut rgb_batch[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                            );
+                        }
                     }
                 }
             });
@@ -212,10 +284,11 @@ impl<'a> JpegParser<'a> {
         Ok(Some(rgb))
     }
 
-    /// Parallel 4:2:0/4:2:2/4:4:0 decode: two-phase approach.
+    /// Parallel 4:2:0/4:2:2/4:4:0 decode: batched by thread.
     ///
-    /// Phase 1: Pre-IDCT all chroma into full plane buffers (parallel over block-rows).
-    /// Phase 2: Parallel MCU rows for Y IDCT + upsample + color convert.
+    /// Each thread processes a contiguous range of MCU rows using double-buffered
+    /// extended chroma strips, identical to the sequential approach. No full-image
+    /// chroma plane allocation — each thread uses ~200KB of strip buffers.
     ///
     /// Returns `None` if the image is too small for parallelism to help.
     pub(super) fn to_pixels_fast_i16_subsampled_parallel(
@@ -251,11 +324,11 @@ impl<'a> JpegParser<'a> {
 
         let y_strip_height = y_v * 8;
         let y_strip_width = comp_infos[0].comp_width;
+        let y_strip_size = y_strip_width * y_strip_height;
 
         let c_strip_height = c_v * 8;
         let c_strip_width = comp_infos[1].comp_width;
 
-        // Pre-fetch quant tables
         let quant_y = self.quant_tables[comp_infos[0].quant_idx]
             .as_ref()
             .ok_or_else(|| Error::internal("missing Y quant table"))?;
@@ -309,80 +382,6 @@ impl<'a> JpegParser<'a> {
             upsample_h2v2_i16_nearest // placeholder for fused path
         };
 
-        // ===================================================================
-        // Phase 1: Pre-IDCT all chroma into full plane buffers (parallel)
-        //
-        // This trades memory (~32MB for 8K 4:2:0) for parallelizability.
-        // The sequential path uses ~200KB of double-buffered strips.
-        // ===================================================================
-        let chroma_height = comp_infos[1].comp_height;
-        let cb_plane_size = checked_size_2d(c_strip_width, chroma_height)?;
-        let cr_plane_size = cb_plane_size;
-
-        let mut cb_plane: Vec<i16> = try_alloc_maybeuninit(cb_plane_size, "Cb plane")?;
-        let mut cr_plane: Vec<i16> = try_alloc_maybeuninit(cr_plane_size, "Cr plane")?;
-
-        let chroma_block_rows = comp_infos[1].comp_blocks_v;
-        let chroma_blocks_h = comp_infos[1].comp_blocks_h;
-
-        // Extract coefficient references (Sync-safe) before parallel section
-        let coeffs = &self.coeffs;
-        let coeff_counts = &self.coeff_counts;
-
-        // IDCT Cb plane — parallel over block rows
-        cb_plane
-            .par_chunks_mut(DCT_SIZE * c_strip_width)
-            .enumerate()
-            .take(chroma_block_rows)
-            .for_each(|(by, row_chunk)| {
-                for bx in 0..chroma_blocks_h {
-                    let block_idx = by * chroma_blocks_h + bx;
-                    if block_idx >= coeffs[1].len() {
-                        continue;
-                    }
-                    let base_px = bx * DCT_SIZE;
-                    idct_block_into(
-                        &coeffs[1][block_idx],
-                        coeff_counts[1][block_idx],
-                        quant_cb,
-                        row_chunk,
-                        base_px,
-                        c_strip_width,
-                        idct_fn,
-                    );
-                }
-            });
-
-        // IDCT Cr plane — parallel over block rows
-        cr_plane
-            .par_chunks_mut(DCT_SIZE * c_strip_width)
-            .enumerate()
-            .take(chroma_block_rows)
-            .for_each(|(by, row_chunk)| {
-                for bx in 0..chroma_blocks_h {
-                    let block_idx = by * chroma_blocks_h + bx;
-                    if block_idx >= coeffs[2].len() {
-                        continue;
-                    }
-                    let base_px = bx * DCT_SIZE;
-                    idct_block_into(
-                        &coeffs[2][block_idx],
-                        coeff_counts[2][block_idx],
-                        quant_cr,
-                        row_chunk,
-                        base_px,
-                        c_strip_width,
-                        idct_fn,
-                    );
-                }
-            });
-
-        // ===================================================================
-        // Phase 2: Parallel MCU rows — Y IDCT + upsample + color convert
-        //
-        // Each thread reads from the shared chroma planes (immutable after phase 1)
-        // and writes to a disjoint region of the RGB output buffer.
-        // ===================================================================
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
@@ -391,166 +390,275 @@ impl<'a> JpegParser<'a> {
 
         let chroma_height_total = (height + v_ratio - 1) / v_ratio;
 
-        // Borrow chroma planes as shared slices for the parallel section
-        let cb_plane = &cb_plane[..];
-        let cr_plane = &cr_plane[..];
+        // Extract Sync-safe references before parallel section
+        let coeffs = &self.coeffs;
+        let coeff_counts = &self.coeff_counts;
         let info_y = &comp_infos[0];
+        let info_cb = &comp_infos[1];
+        let info_cr = &comp_infos[2];
 
-        rgb.par_chunks_mut(mcu_row_rgb_bytes)
+        // Batch MCU rows into ~num_threads chunks
+        let num_threads = rayon::current_num_threads();
+        let batch_size = (mcu_rows + num_threads - 1) / num_threads;
+        let batch_rgb_bytes = batch_size * mcu_row_rgb_bytes;
+
+        rgb.par_chunks_mut(batch_rgb_bytes)
             .enumerate()
-            .for_each(|(imcu_row, rgb_chunk)| {
-                // Thread-local Y strip buffer
-                let y_strip_size = y_strip_width * y_strip_height;
-                let mut y_strip = vec![0i16; y_strip_size];
+            .for_each(|(batch_idx, rgb_batch)| {
+                let start_row = batch_idx * batch_size;
+                let end_row = (start_row + batch_size).min(mcu_rows);
+                let batch_mcu_rows = end_row - start_row;
 
-                // IDCT Y blocks for this MCU row
-                idct_comp_mcu_row(
-                    &coeffs[0],
-                    &coeff_counts[0],
-                    info_y,
-                    quant_y,
-                    imcu_row,
-                    &mut y_strip,
-                    y_strip_width,
+                // Allocate per-thread buffers ONCE — reused across MCU rows
+                let ext_height = c_strip_height + 2;
+                let ext_size = ext_height * c_strip_width;
+
+                let mut y_strip = vec![0i16; y_strip_size];
+                let mut ext_cb_a = vec![0i16; ext_size];
+                let mut ext_cb_b = vec![0i16; ext_size];
+                let mut ext_cr_a = vec![0i16; ext_size];
+                let mut ext_cr_b = vec![0i16; ext_size];
+
+                let (mut cb_up, mut cr_up) = if needs_full_upsample {
+                    let upsample_out_height = ext_height * v_ratio;
+                    let upsample_out_size = upsample_out_height * y_strip_width;
+                    (vec![0i16; upsample_out_size], vec![0i16; upsample_out_size])
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+
+                // IDCT first chroma strip into ext_a
+                idct_chroma_into_ext(
+                    &mut ext_cb_a,
+                    &coeffs[1],
+                    &coeff_counts[1],
+                    info_cb,
+                    quant_cb,
+                    start_row,
+                    c_strip_width,
+                    c_strip_height,
+                    chroma_height_total,
+                    idct_fn,
+                );
+                idct_chroma_into_ext(
+                    &mut ext_cr_a,
+                    &coeffs[2],
+                    &coeff_counts[2],
+                    info_cr,
+                    quant_cr,
+                    start_row,
+                    c_strip_width,
+                    c_strip_height,
+                    chroma_height_total,
                     idct_fn,
                 );
 
-                let y_rows_this_mcu =
-                    y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
-
-                if !needs_full_upsample {
-                    // NearestNeighbor 4:2:0: fused box-filter path
-                    let c_cols = (y_cols_this_image + 1) / 2;
-                    let c_plane_row_start = imcu_row * c_strip_height;
-
-                    for row in 0..y_rows_this_mcu {
-                        let y_offset = row * y_strip_width;
-                        let c_row =
-                            (c_plane_row_start + row / 2).min(chroma_height_total.saturating_sub(1));
-                        let c_offset = c_row * c_strip_width;
-                        let rgb_offset = row * rgb_row_stride;
-
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
-                            &y_strip[y_offset..y_offset + y_cols_this_image],
-                            &cb_plane[c_offset..c_offset + c_cols],
-                            &cr_plane[c_offset..c_offset + c_cols],
-                            &mut rgb_chunk[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                            y_cols_this_image,
-                        );
-                    }
+                // Set above context for first strip in this batch.
+                // Do this BEFORE populating ext_b so we can use ext_b as scratch.
+                if start_row == 0 {
+                    // First MCU row: edge replication
+                    ext_cb_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+                    ext_cr_a.copy_within(c_strip_width..2 * c_strip_width, 0);
                 } else {
-                    // Build extended chroma buffer with ±1 row context for the upsampler
-                    let ext_height = c_strip_height + 2;
-                    let ext_size = ext_height * c_strip_width;
+                    // IDCT the MCU row before our range into ext_b (scratch),
+                    // copy its last data row into ext_a's above-context row.
+                    idct_chroma_into_ext(
+                        &mut ext_cb_b,
+                        &coeffs[1],
+                        &coeff_counts[1],
+                        info_cb,
+                        quant_cb,
+                        start_row - 1,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                    );
+                    idct_chroma_into_ext(
+                        &mut ext_cr_b,
+                        &coeffs[2],
+                        &coeff_counts[2],
+                        info_cr,
+                        quant_cr,
+                        start_row - 1,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                    );
+                    let last_data = c_strip_height * c_strip_width;
+                    ext_cb_a[..c_strip_width]
+                        .copy_from_slice(&ext_cb_b[last_data..last_data + c_strip_width]);
+                    ext_cr_a[..c_strip_width]
+                        .copy_from_slice(&ext_cr_b[last_data..last_data + c_strip_width]);
+                }
 
-                    let mut ext_cb = vec![0i16; ext_size];
-                    let mut ext_cr = vec![0i16; ext_size];
+                // IDCT second chroma strip into ext_b (if batch has >1 row)
+                if batch_mcu_rows > 1 && start_row + 1 < mcu_rows {
+                    idct_chroma_into_ext(
+                        &mut ext_cb_b,
+                        &coeffs[1],
+                        &coeff_counts[1],
+                        info_cb,
+                        quant_cb,
+                        start_row + 1,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                    );
+                    idct_chroma_into_ext(
+                        &mut ext_cr_b,
+                        &coeffs[2],
+                        &coeff_counts[2],
+                        info_cr,
+                        quant_cr,
+                        start_row + 1,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                    );
+                }
 
-                    let c_row_start = imcu_row * c_strip_height;
-                    let c_valid = chroma_height_total
-                        .saturating_sub(c_row_start)
-                        .min(c_strip_height);
+                // Process each MCU row in this batch
+                for imcu_row in start_row..end_row {
+                    let local_idx = imcu_row - start_row;
 
-                    // Copy data rows (rows 1..c_strip_height+1 in ext buffer)
-                    for iy in 0..c_valid {
-                        let src_row = c_row_start + iy;
-                        if src_row < chroma_height_total {
-                            let src_start = src_row * c_strip_width;
-                            let src_end = src_start + c_strip_width;
-                            let dst_start = (iy + 1) * c_strip_width;
-                            ext_cb[dst_start..dst_start + c_strip_width]
-                                .copy_from_slice(&cb_plane[src_start..src_end]);
-                            ext_cr[dst_start..dst_start + c_strip_width]
-                                .copy_from_slice(&cr_plane[src_start..src_end]);
-                        }
-                    }
-
-                    // Replicate last valid row to fill padding
-                    if c_valid > 0 && c_valid < c_strip_height {
-                        let last_valid_start = c_valid * c_strip_width;
-                        for pad_row in c_valid..c_strip_height {
-                            let pad_start = (pad_row + 1) * c_strip_width;
-                            ext_cb.copy_within(
-                                last_valid_start..last_valid_start + c_strip_width,
-                                pad_start,
-                            );
-                            ext_cr.copy_within(
-                                last_valid_start..last_valid_start + c_strip_width,
-                                pad_start,
-                            );
-                        }
-                    }
-
-                    // Above context row (row 0)
-                    if c_row_start > 0 {
-                        let src_row = c_row_start - 1;
-                        let src_start = src_row * c_strip_width;
-                        ext_cb[..c_strip_width]
-                            .copy_from_slice(&cb_plane[src_start..src_start + c_strip_width]);
-                        ext_cr[..c_strip_width]
-                            .copy_from_slice(&cr_plane[src_start..src_start + c_strip_width]);
-                    } else {
-                        ext_cb.copy_within(c_strip_width..2 * c_strip_width, 0);
-                        ext_cr.copy_within(c_strip_width..2 * c_strip_width, 0);
-                    }
-
-                    // Below context row (row c_strip_height+1)
+                    // Set below context for current strip (ext_a)
+                    let last_data_row_start = c_strip_height * c_strip_width;
                     let below_ctx_start = (c_strip_height + 1) * c_strip_width;
-                    let next_row = c_row_start + c_strip_height;
-                    if next_row < chroma_height_total {
-                        let src_start = next_row * c_strip_width;
-                        ext_cb[below_ctx_start..below_ctx_start + c_strip_width]
-                            .copy_from_slice(&cb_plane[src_start..src_start + c_strip_width]);
-                        ext_cr[below_ctx_start..below_ctx_start + c_strip_width]
-                            .copy_from_slice(&cr_plane[src_start..src_start + c_strip_width]);
+                    if imcu_row < mcu_rows - 1 {
+                        // Below context = first data row of next strip (ext_b row 1)
+                        let src_start = c_strip_width;
+                        ext_cb_a[below_ctx_start..below_ctx_start + c_strip_width]
+                            .copy_from_slice(&ext_cb_b[src_start..src_start + c_strip_width]);
+                        ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
+                            .copy_from_slice(&ext_cr_b[src_start..src_start + c_strip_width]);
                     } else {
-                        let last_data_start = c_strip_height * c_strip_width;
-                        ext_cb.copy_within(
-                            last_data_start..last_data_start + c_strip_width,
+                        // Last MCU row: edge replication
+                        ext_cb_a.copy_within(
+                            last_data_row_start..last_data_row_start + c_strip_width,
                             below_ctx_start,
                         );
-                        ext_cr.copy_within(
-                            last_data_start..last_data_start + c_strip_width,
+                        ext_cr_a.copy_within(
+                            last_data_row_start..last_data_row_start + c_strip_width,
                             below_ctx_start,
                         );
                     }
 
-                    // Upsample extended strip
-                    let upsample_out_height = ext_height * v_ratio;
-                    let upsample_out_size = upsample_out_height * y_strip_width;
-                    let mut cb_up = vec![0i16; upsample_out_size];
-                    let mut cr_up = vec![0i16; upsample_out_size];
-
-                    upsample_fn(
-                        &ext_cb,
-                        c_strip_width,
-                        ext_height,
-                        &mut cb_up,
+                    // IDCT Y blocks for this MCU row
+                    idct_comp_mcu_row(
+                        &coeffs[0],
+                        &coeff_counts[0],
+                        info_y,
+                        quant_y,
+                        imcu_row,
+                        &mut y_strip,
                         y_strip_width,
-                        upsample_out_height,
-                    );
-                    upsample_fn(
-                        &ext_cr,
-                        c_strip_width,
-                        ext_height,
-                        &mut cr_up,
-                        y_strip_width,
-                        upsample_out_height,
+                        idct_fn,
                     );
 
-                    // Color convert: use upsampled rows starting at offset v_ratio
-                    for row in 0..y_rows_this_mcu {
-                        let strip_offset = row * y_strip_width;
-                        let up_row = v_ratio + row;
-                        let chroma_offset = up_row * y_strip_width;
-                        let rgb_offset = row * rgb_row_stride;
+                    let y_rows_this_mcu =
+                        y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
+                    let local_rgb_offset = local_idx * mcu_row_rgb_bytes;
 
-                        ycbcr_planes_i16_to_rgb_u8(
-                            &y_strip[strip_offset..strip_offset + y_cols_this_image],
-                            &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
-                            &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
-                            &mut rgb_chunk[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                    if !needs_full_upsample {
+                        // NearestNeighbor 4:2:0: fused box-filter path
+                        let c_rows_this_mcu = c_strip_height.min(
+                            (height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio,
                         );
+                        let c_cols = (y_cols_this_image + 1) / 2;
+
+                        for row in 0..y_rows_this_mcu {
+                            let y_offset = row * y_strip_width;
+                            let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
+                            let c_offset = (1 + c_row) * c_strip_width;
+                            let rgb_offset = local_rgb_offset + row * rgb_row_stride;
+
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_offset..y_offset + y_cols_this_image],
+                                &ext_cb_a[c_offset..c_offset + c_cols],
+                                &ext_cr_a[c_offset..c_offset + c_cols],
+                                &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                                y_cols_this_image,
+                            );
+                        }
+                    } else {
+                        // Upsample extended strip → reusable upsample buffers
+                        let upsample_out_height = ext_height * v_ratio;
+                        upsample_fn(
+                            &ext_cb_a,
+                            c_strip_width,
+                            ext_height,
+                            &mut cb_up,
+                            y_strip_width,
+                            upsample_out_height,
+                        );
+                        upsample_fn(
+                            &ext_cr_a,
+                            c_strip_width,
+                            ext_height,
+                            &mut cr_up,
+                            y_strip_width,
+                            upsample_out_height,
+                        );
+
+                        for row in 0..y_rows_this_mcu {
+                            let strip_offset = row * y_strip_width;
+                            let up_row = v_ratio + row;
+                            let chroma_offset = up_row * y_strip_width;
+                            let rgb_offset = local_rgb_offset + row * rgb_row_stride;
+
+                            ycbcr_planes_i16_to_rgb_u8(
+                                &y_strip[strip_offset..strip_offset + y_cols_this_image],
+                                &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
+                                &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
+                                &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                            );
+                        }
+                    }
+
+                    // Swap buffers for next MCU row
+                    if imcu_row + 1 < end_row {
+                        // ext_b's above context = last data row of ext_a
+                        ext_cb_b[..c_strip_width].copy_from_slice(
+                            &ext_cb_a[last_data_row_start..last_data_row_start + c_strip_width],
+                        );
+                        ext_cr_b[..c_strip_width].copy_from_slice(
+                            &ext_cr_a[last_data_row_start..last_data_row_start + c_strip_width],
+                        );
+
+                        core::mem::swap(&mut ext_cb_a, &mut ext_cb_b);
+                        core::mem::swap(&mut ext_cr_a, &mut ext_cr_b);
+
+                        // IDCT the strip after next into the now-free ext_b
+                        if imcu_row + 2 < end_row {
+                            idct_chroma_into_ext(
+                                &mut ext_cb_b,
+                                &coeffs[1],
+                                &coeff_counts[1],
+                                info_cb,
+                                quant_cb,
+                                imcu_row + 2,
+                                c_strip_width,
+                                c_strip_height,
+                                chroma_height_total,
+                                idct_fn,
+                            );
+                            idct_chroma_into_ext(
+                                &mut ext_cr_b,
+                                &coeffs[2],
+                                &coeff_counts[2],
+                                info_cr,
+                                quant_cr,
+                                imcu_row + 2,
+                                c_strip_width,
+                                c_strip_height,
+                                chroma_height_total,
+                                idct_fn,
+                            );
+                        }
                     }
                 }
             });
