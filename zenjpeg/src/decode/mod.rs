@@ -31,8 +31,11 @@ pub mod idct_int;
 mod config;
 mod extras;
 mod image;
+#[cfg(feature = "parallel")]
+mod parallel;
 mod parser;
 mod pipeline;
+pub(crate) mod rst_scan;
 mod scanline;
 mod upsample;
 
