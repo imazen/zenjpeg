@@ -6,7 +6,7 @@
 use wide::f32x8;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, SimdToken};
+use archmage::{arcane, rite, SimdToken};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
@@ -342,8 +342,7 @@ fn upsample_h2v2_i16_fancy_strided_avx2(
 
 /// Vertical upsampling helper (AVX2) - processes one row
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn upsample_vertical_row_strided_avx2(
     _token: archmage::X64V3Token,
     curr_row: &[i16],
@@ -392,8 +391,7 @@ fn upsample_vertical_row_strided_avx2(
 
 /// Horizontal upsampling helper (AVX2) - expands one row to 2x width
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
-#[inline(always)]
+#[rite]
 fn upsample_horizontal_row_strided_avx2(
     _token: archmage::X64V3Token,
     input: &[i16],

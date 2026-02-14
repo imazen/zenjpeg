@@ -534,7 +534,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 ))]
 mod avx2 {
     use super::*;
-    use archmage::arcane;
+    use archmage::{arcane, rite};
 
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
@@ -548,8 +548,7 @@ mod avx2 {
     }
 
     /// Clamp i16 values to [0, 255] range.
-    #[inline]
-    #[arcane]
+    #[rite]
     fn clamp_avx(_token: archmage::X64V3Token, reg: __m256i) -> __m256i {
         let min_s = _mm256_set1_epi16(0);
         let max_s = _mm256_set1_epi16(255);
@@ -558,7 +557,7 @@ mod avx2 {
     }
 
     /// In-register 8x8 transpose for i32 values.
-    #[arcane]
+    #[rite]
     fn transpose_8x8_i32(
         _token: archmage::X64V3Token,
         v0: &mut __m256i,
