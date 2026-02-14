@@ -3006,3 +3006,442 @@ fn test_15x17_all_pixels_lossless() {
         );
     }
 }
+
+// ===== Restructure tests =====
+
+mod restructure_tests {
+    use crate::decode::DecodeConfig;
+    use crate::lossless::{
+        restructure, EdgeHandling, LosslessTransform, OutputMode, RestartInterval,
+        RestructureConfig, TransformConfig,
+    };
+    use enough::Unstoppable;
+
+    /// Create a test JPEG (4:4:4).
+    fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+        let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                pixels.push(((x * 255 / width) & 0xFF) as u8);
+                pixels.push(((y * 255 / height) & 0xFF) as u8);
+                pixels.push(128u8);
+            }
+        }
+
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Create a test JPEG with 4:2:0.
+    fn create_test_jpeg_420(width: u32, height: u32) -> Vec<u8> {
+        use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+        let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                pixels.push(((x * 255 / width) & 0xFF) as u8);
+                pixels.push(((y * 255 / height) & 0xFF) as u8);
+                pixels.push(128u8);
+            }
+        }
+
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Create a grayscale test JPEG.
+    fn create_test_jpeg_gray(width: u32, height: u32) -> Vec<u8> {
+        use crate::encoder::{EncoderConfig, PixelLayout};
+
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                pixels.push(((x * 255 / width + y * 64 / height) & 0xFF) as u8);
+            }
+        }
+
+        let config = EncoderConfig::grayscale(90);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Compare coefficients between two JPEGs.
+    /// Returns (total_diffs, max_diff).
+    fn compare_coefficients(a: &[u8], b: &[u8]) -> (usize, i16) {
+        let decoder = DecodeConfig::new();
+        let ca = decoder.decode_coefficients(a, Unstoppable).unwrap();
+        let cb = decoder.decode_coefficients(b, Unstoppable).unwrap();
+
+        assert_eq!(
+            ca.components.len(),
+            cb.components.len(),
+            "component count mismatch"
+        );
+
+        let mut total_diffs = 0;
+        let mut max_diff = 0i16;
+
+        for (c1, c2) in ca.components.iter().zip(&cb.components) {
+            assert_eq!(c1.blocks_wide, c2.blocks_wide, "blocks_wide mismatch");
+            assert_eq!(c1.blocks_high, c2.blocks_high, "blocks_high mismatch");
+
+            let num_blocks = c1.num_blocks().min(c2.num_blocks());
+            for block_idx in 0..num_blocks {
+                let b1 = c1.block(block_idx);
+                let b2 = c2.block(block_idx);
+                for i in 0..64 {
+                    let d = (b1[i] as i32 - b2[i] as i32).abs() as i16;
+                    if d != 0 {
+                        total_diffs += 1;
+                        max_diff = max_diff.max(d);
+                    }
+                }
+            }
+        }
+
+        (total_diffs, max_diff)
+    }
+
+    /// Check if a JPEG contains a SOF2 (progressive) marker.
+    fn is_progressive_jpeg(data: &[u8]) -> bool {
+        for i in 0..data.len().saturating_sub(1) {
+            if data[i] == 0xFF && data[i + 1] == 0xC2 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a JPEG contains a DRI marker.
+    fn has_dri_marker(data: &[u8]) -> bool {
+        for i in 0..data.len().saturating_sub(1) {
+            if data[i] == 0xFF && data[i + 1] == 0xDD {
+                return true;
+            }
+        }
+        false
+    }
+
+    // ===== Sequential roundtrip tests =====
+
+    #[test]
+    fn test_restructure_sequential_identity() {
+        let jpeg = create_test_jpeg(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::None,
+            transform: None,
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(!is_progressive_jpeg(&result));
+        assert!(!has_dri_marker(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "identity restructure should preserve all coefficients (max_diff={max_diff})"
+        );
+    }
+
+    // ===== Restart marker tests =====
+
+    #[test]
+    fn test_restructure_sequential_with_restart_mcus() {
+        let jpeg = create_test_jpeg(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::EveryMcus(10),
+            transform: None,
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(!is_progressive_jpeg(&result));
+        assert!(has_dri_marker(&result), "output should contain DRI marker");
+
+        // Coefficients must be identical
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "restart markers should not affect coefficients (max_diff={max_diff})"
+        );
+
+        // Verify it decodes correctly
+        let decoder = DecodeConfig::new();
+        let decoded = decoder.decode(&result, Unstoppable).unwrap();
+        assert_eq!(decoded.width(), 64);
+        assert_eq!(decoded.height(), 64);
+    }
+
+    #[test]
+    fn test_restructure_sequential_with_restart_mcu_rows() {
+        let jpeg = create_test_jpeg(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::EveryMcuRows(1),
+            transform: None,
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(has_dri_marker(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "MCU row restart should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    // ===== Progressive tests =====
+
+    #[test]
+    fn test_restructure_progressive_roundtrip() {
+        let jpeg = create_test_jpeg(64, 64);
+
+        // Convert to progressive
+        let prog_config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            restart_interval: RestartInterval::None,
+            transform: None,
+        };
+        let progressive = restructure(&jpeg, &prog_config, Unstoppable).unwrap();
+        assert!(
+            is_progressive_jpeg(&progressive),
+            "output should be progressive"
+        );
+
+        // Coefficients must survive sequential->progressive
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &progressive);
+        assert_eq!(
+            diffs, 0,
+            "progressive roundtrip should preserve all coefficients (max_diff={max_diff})"
+        );
+    }
+
+    #[test]
+    fn test_restructure_progressive_to_sequential() {
+        let jpeg = create_test_jpeg(64, 64);
+
+        // First convert to progressive
+        let prog_config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            ..Default::default()
+        };
+        let progressive = restructure(&jpeg, &prog_config, Unstoppable).unwrap();
+        assert!(is_progressive_jpeg(&progressive));
+
+        // Then back to sequential
+        let seq_config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            ..Default::default()
+        };
+        let sequential = restructure(&progressive, &seq_config, Unstoppable).unwrap();
+        assert!(!is_progressive_jpeg(&sequential));
+
+        // Coefficients must survive the round-trip
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &sequential);
+        assert_eq!(
+            diffs, 0,
+            "progressive->sequential roundtrip should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    #[test]
+    fn test_restructure_progressive_ignores_restart() {
+        // Progressive restart markers are not yet supported (token replay
+        // infrastructure doesn't handle them). Verify that passing a restart
+        // interval still produces a valid progressive JPEG without DRI.
+        let jpeg = create_test_jpeg(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            restart_interval: RestartInterval::EveryMcus(8),
+            transform: None,
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(is_progressive_jpeg(&result));
+        // DRI is intentionally not written for progressive (not yet supported)
+        assert!(!has_dri_marker(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "progressive should preserve coefficients (max_diff={max_diff})"
+        );
+
+        // Verify it decodes
+        let decoder = DecodeConfig::new();
+        let decoded = decoder.decode(&result, Unstoppable).unwrap();
+        assert_eq!(decoded.width(), 64);
+    }
+
+    // ===== Combined transform + restructure =====
+
+    #[test]
+    fn test_restructure_with_rotation() {
+        let jpeg = create_test_jpeg(64, 48);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            restart_interval: RestartInterval::None,
+            transform: Some(TransformConfig {
+                transform: LosslessTransform::Rotate90,
+                edge_handling: EdgeHandling::TrimPartialBlocks,
+            }),
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(is_progressive_jpeg(&result));
+
+        // Verify dimensions swapped
+        let decoder = DecodeConfig::new();
+        let decoded = decoder.decode(&result, Unstoppable).unwrap();
+        assert_eq!(decoded.width(), 48);
+        assert_eq!(decoded.height(), 64);
+    }
+
+    // ===== Metadata preservation =====
+
+    #[test]
+    fn test_restructure_preserves_metadata() {
+        let jpeg = create_test_jpeg(64, 64);
+
+        // Parse metadata from original
+        let decoder = DecodeConfig::new().preserve(crate::decode::PreserveConfig::all());
+        let (_, orig_extras) = decoder
+            .decode_coefficients_with_extras(&jpeg, Unstoppable)
+            .unwrap();
+
+        // Restructure to progressive
+        let config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        // Parse metadata from result
+        let (_, result_extras) = decoder
+            .decode_coefficients_with_extras(&result, Unstoppable)
+            .unwrap();
+
+        // Check metadata segment count matches
+        let orig_segments = orig_extras
+            .as_ref()
+            .map(|e| e.segments().len())
+            .unwrap_or(0);
+        let result_segments = result_extras
+            .as_ref()
+            .map(|e| e.segments().len())
+            .unwrap_or(0);
+        assert_eq!(
+            orig_segments, result_segments,
+            "metadata segment count should be preserved"
+        );
+    }
+
+    // ===== Subsampling variants =====
+
+    #[test]
+    fn test_restructure_420_sequential() {
+        let jpeg = create_test_jpeg_420(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::EveryMcus(4),
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "4:2:0 sequential restructure should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    #[test]
+    fn test_restructure_420_progressive() {
+        let jpeg = create_test_jpeg_420(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            restart_interval: RestartInterval::None,
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(is_progressive_jpeg(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "4:2:0 progressive restructure should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    #[test]
+    fn test_restructure_grayscale_sequential() {
+        let jpeg = create_test_jpeg_gray(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::EveryMcus(8),
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "grayscale sequential restructure should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    #[test]
+    fn test_restructure_grayscale_progressive() {
+        let jpeg = create_test_jpeg_gray(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Progressive,
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(is_progressive_jpeg(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "grayscale progressive restructure should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+
+    // ===== MCU row restart interval computation =====
+
+    #[test]
+    fn test_restructure_mcu_row_restart_420() {
+        let jpeg = create_test_jpeg_420(64, 64);
+        let config = RestructureConfig {
+            output_mode: OutputMode::Sequential,
+            restart_interval: RestartInterval::EveryMcuRows(1),
+            ..Default::default()
+        };
+        let result = restructure(&jpeg, &config, Unstoppable).unwrap();
+
+        assert!(has_dri_marker(&result));
+
+        let (diffs, max_diff) = compare_coefficients(&jpeg, &result);
+        assert_eq!(
+            diffs, 0,
+            "4:2:0 MCU row restart should preserve coefficients (max_diff={max_diff})"
+        );
+    }
+}

@@ -24,6 +24,7 @@
 mod coeff_transform;
 mod exif;
 mod pipeline;
+mod restructure;
 #[cfg(test)]
 mod tests;
 
@@ -33,3 +34,4 @@ pub use coeff_transform::{
 };
 pub use exif::{parse_exif_orientation, set_exif_orientation};
 pub use pipeline::{apply_exif_orientation, transform};
+pub use restructure::{restructure, OutputMode, RestartInterval, RestructureConfig};
