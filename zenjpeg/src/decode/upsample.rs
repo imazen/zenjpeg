@@ -785,32 +785,38 @@ fn upsample_h2v2_i16_fancy_avx2_with_scratch(
         let out_row = &mut output[out_y * out_width..][..out_width];
 
         // Pass 1: Vertical interpolation (3*curr + neighbor + 2) >> 2
-        let chunks = in_width / 16;
-        for i in 0..chunks {
-            let offset = i * 16;
-            let v_curr = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&curr_row[offset..offset + 16]).unwrap(),
+        // Use chunks_exact so the compiler can prove slice length == 16,
+        // eliminating runtime bounds checks on try_into().
+        let curr_chunks = curr_row.chunks_exact(16);
+        let remainder_len = curr_chunks.remainder().len();
+        for ((curr_chunk, neighbor_chunk), scratch_chunk) in curr_chunks
+            .zip(v_neighbor_row.chunks_exact(16))
+            .zip(scratch.chunks_exact_mut(16))
+        {
+            let v_c = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(curr_chunk).unwrap(),
             );
-            let v_neighbor = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&v_neighbor_row[offset..offset + 16]).unwrap(),
+            let v_n = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(neighbor_chunk).unwrap(),
             );
 
             let v_result = _mm256_srai_epi16(
                 _mm256_add_epi16(
-                    _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_neighbor),
+                    _mm256_add_epi16(_mm256_mullo_epi16(v_c, v_three), v_n),
                     v_two,
                 ),
                 2,
             );
 
             safe_simd::_mm256_storeu_si256(
-                <&mut [i16; 16]>::try_from(&mut scratch[offset..offset + 16]).unwrap(),
+                <&mut [i16; 16]>::try_from(scratch_chunk).unwrap(),
                 v_result,
             );
         }
 
         // Scalar remainder for vertical pass
-        for x in (chunks * 16)..in_width {
+        let simd_done = in_width - remainder_len;
+        for x in simd_done..in_width {
             let c = curr_row[x] as i32;
             let n = v_neighbor_row[x] as i32;
             scratch[x] = ((3 * c + n + 2) >> 2) as i16;
@@ -827,53 +833,56 @@ fn upsample_h2v2_i16_fancy_avx2_with_scratch(
             out_row[1] = ((3 * curr + next + 2) >> 2) as i16;
         }
 
-        // Interior: SIMD processing
+        // Interior: SIMD processing of horizontal pass
+        // Use chunks_exact_mut on the output buffer so the compiler can prove
+        // the 16-element store slices are valid, eliminating bounds checks.
+        // Input loads overlap (prev/curr/next) and are always in-bounds because
+        // h_chunks = (in_width - 2) / 16 guarantees max_index = h_chunks*16 + 1 < in_width.
         let h_chunks = (in_width.saturating_sub(2)) / 16;
+        let h_simd_end_out = 2 + h_chunks * 32;
 
-        for chunk in 0..h_chunks {
-            let in_offset = chunk * 16 + 1;
-            let out_offset = 2 + chunk * 32;
+        if h_chunks > 0 && h_simd_end_out <= out_width {
+            let out_chunks = out_row[2..h_simd_end_out].chunks_exact_mut(32);
+            for (chunk_idx, out_chunk) in out_chunks.enumerate() {
+                let in_offset = chunk_idx * 16 + 1;
 
-            if out_offset + 32 > out_width {
-                break;
+                let v_prev = safe_simd::_mm256_loadu_si256(
+                    <&[i16; 16]>::try_from(&scratch[in_offset - 1..in_offset + 15]).unwrap(),
+                );
+                let v_curr = safe_simd::_mm256_loadu_si256(
+                    <&[i16; 16]>::try_from(&scratch[in_offset..in_offset + 16]).unwrap(),
+                );
+                let v_next = safe_simd::_mm256_loadu_si256(
+                    <&[i16; 16]>::try_from(&scratch[in_offset + 1..in_offset + 17]).unwrap(),
+                );
+
+                // 3*curr + 2
+                let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
+
+                // Even outputs: (3*curr + prev + 2) >> 2
+                let v_even = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_prev), 2);
+
+                // Odd outputs: (3*curr + next + 2) >> 2
+                let v_odd = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_next), 2);
+
+                // Interleave even and odd
+                let v_lo = _mm256_unpacklo_epi16(v_even, v_odd);
+                let v_hi = _mm256_unpackhi_epi16(v_even, v_odd);
+
+                // Fix lane order
+                let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20);
+                let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
+
+                let (out_lo, out_hi) = out_chunk.split_at_mut(16);
+                safe_simd::_mm256_storeu_si256(
+                    <&mut [i16; 16]>::try_from(out_lo).unwrap(),
+                    v_out0,
+                );
+                safe_simd::_mm256_storeu_si256(
+                    <&mut [i16; 16]>::try_from(out_hi).unwrap(),
+                    v_out1,
+                );
             }
-
-            let v_prev = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&scratch[in_offset - 1..in_offset + 15]).unwrap(),
-            );
-            let v_curr = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&scratch[in_offset..in_offset + 16]).unwrap(),
-            );
-            let v_next = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&scratch[in_offset + 1..in_offset + 17]).unwrap(),
-            );
-
-            // 3*curr + 2
-            let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
-
-            // Even outputs: (3*curr + prev + 2) >> 2
-            let v_even = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_prev), 2);
-
-            // Odd outputs: (3*curr + next + 2) >> 2
-            let v_odd = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_next), 2);
-
-            // Interleave even and odd
-            let v_lo = _mm256_unpacklo_epi16(v_even, v_odd);
-            let v_hi = _mm256_unpackhi_epi16(v_even, v_odd);
-
-            // Fix lane order
-            let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20);
-            let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
-
-            safe_simd::_mm256_storeu_si256(
-                <&mut [i16; 16]>::try_from(&mut out_row[out_offset..out_offset + 16]).unwrap(),
-                v_out0,
-            );
-            safe_simd::_mm256_storeu_si256(
-                <&mut [i16; 16]>::try_from(&mut out_row[out_offset + 16..out_offset + 32])
-                    .unwrap(),
-                v_out1,
-            );
         }
 
         // Scalar remainder for horizontal pass
