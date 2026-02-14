@@ -94,7 +94,11 @@ fn main() {
     );
 
     // Save JPEG if --save <path> is passed
-    if let Some(save_path) = std::env::args().nth(2).filter(|s| s == "--save").and_then(|_| std::env::args().nth(3)) {
+    if let Some(save_path) = std::env::args()
+        .nth(2)
+        .filter(|s| s == "--save")
+        .and_then(|_| std::env::args().nth(3))
+    {
         std::fs::write(&save_path, &jpeg).expect("failed to write JPEG");
         eprintln!("Saved to {save_path}");
     }
