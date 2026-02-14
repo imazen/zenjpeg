@@ -199,10 +199,11 @@ impl ComputedConfig {
         // but parallelism suffers)
         let rows_per_interval = max_rows_per_interval.clamp(1, 16);
 
-        let interval = rows_per_interval * mcu_cols;
+        // Reduce rows if needed to stay within u16 while keeping row-alignment
+        let max_rows_for_u16 = (u16::MAX as u32) / mcu_cols.max(1);
+        let rows_per_interval = rows_per_interval.min(max_rows_for_u16);
 
-        // Clamp to u16 range
-        interval.min(u16::MAX as u32) as u16
+        (rows_per_interval * mcu_cols) as u16
     }
 }
 

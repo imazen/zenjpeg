@@ -565,7 +565,9 @@ impl EncoderConfig {
         };
         let mcu_w = h_samp * 8;
         let mcu_cols = ((image_width + mcu_w - 1) / mcu_w) as u16;
-        self.restart_interval = rows.saturating_mul(mcu_cols);
+        // Reduce rows if needed to stay within u16 while keeping row-alignment
+        let max_rows = u16::MAX / mcu_cols.max(1);
+        self.restart_interval = rows.min(max_rows) * mcu_cols;
         self
     }
 
