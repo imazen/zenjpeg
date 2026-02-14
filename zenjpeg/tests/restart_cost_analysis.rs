@@ -413,3 +413,48 @@ fn test_smart_restart_interval() {
         "DRI 8-row should be <= DRI 4-row: {} vs {}", dri_8row, dri_4row
     );
 }
+
+/// Generate test JPEGs for decode benchmarking with mozjpeg
+#[test]
+#[ignore]
+fn generate_decode_bench_jpgs() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let out_dir = "/mnt/v/output/restart-bench";
+    std::fs::create_dir_all(out_dir).unwrap();
+
+    let images: &[(&str, &str)] = &[
+        ("clic", &format!("{home}/work/codec-eval/codec-corpus/clic2025/final-test/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png")),
+        ("imac", &format!("{home}/work/codec-eval/codec-corpus/gb82-sc/imac_dark.png")),
+    ];
+
+    for &(name, path) in images {
+        let path = std::path::Path::new(path);
+        let Some((pixels, width, height)) = load_png(path) else {
+            eprintln!("  Skip {name}: can't load");
+            continue;
+        };
+        let mcu_cols = ((width + 7) / 8) as u16;
+
+        for &(label, dri) in &[
+            ("nodri", 0u16),
+            ("1row", mcu_cols),
+            ("4row", mcu_cols * 4),
+            ("8row", mcu_cols * 8),
+            ("dri64", 64),
+            ("dri256", 256),
+        ] {
+            let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
+                .progressive(false)
+                .restart_interval(dri);
+
+            match config.encode_bytes(&pixels, width, height, PixelLayout::Rgb8Srgb) {
+                Ok(jpeg) => {
+                    let out_path = format!("{out_dir}/{name}_{label}.jpg");
+                    std::fs::write(&out_path, &jpeg).unwrap();
+                    eprintln!("  {out_path}: {} bytes (DRI={})", Vec::len(&jpeg), dri);
+                }
+                Err(e) => eprintln!("  {name}_{label}: error {e}"),
+            }
+        }
+    }
+}
