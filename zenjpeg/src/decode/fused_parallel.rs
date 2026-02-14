@@ -27,7 +27,7 @@ use crate::quant::dequantize_unzigzag_i32_into_partial;
 
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::parallel::should_use_parallel;
-use super::rst_scan::{compute_segments, RstMarkerPos};
+use super::rst_scan::compute_segments;
 use super::{ChromaUpsampling, DecodeWarning, Strictness};
 
 use super::parser::JpegParser;
@@ -66,37 +66,6 @@ struct SegmentWarnings {
     had_invalid_huffman: bool,
     truncation_mcu: Option<u32>,
     had_padding_error: bool,
-}
-
-/// Compute grouped segment byte ranges from RST markers.
-///
-/// When `group_stride == 1`, identical to `compute_segments()` (every marker is a boundary).
-/// When `group_stride > 1`, picks every Nth marker as a segment boundary, producing
-/// fewer, larger segments for better thread utilization.
-pub(super) fn compute_segments_grouped(
-    markers: &[RstMarkerPos],
-    scan_data_len: usize,
-    group_stride: usize,
-) -> (Vec<usize>, Vec<usize>) {
-    if group_stride <= 1 || markers.is_empty() {
-        return compute_segments(markers, scan_data_len);
-    }
-
-    // Pick markers at indices [group_stride-1, 2*group_stride-1, ...]
-    let selected: Vec<RstMarkerPos> = markers
-        .iter()
-        .copied()
-        .enumerate()
-        .filter_map(|(i, m)| {
-            if (i + 1) % group_stride == 0 {
-                Some(m)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    compute_segments(&selected, scan_data_len)
 }
 
 impl<'a> JpegParser<'a> {
@@ -154,11 +123,10 @@ impl<'a> JpegParser<'a> {
             return Ok(false);
         }
 
-        // Adaptive grouping
-        let num_threads = rayon::current_num_threads();
-        let group_stride = (rst_result.markers.len() / (2 * num_threads)).max(1);
+        // One segment per restart interval (no grouping — rayon handles work distribution)
+        let group_stride = 1;
         let (seg_starts, seg_ends) =
-            compute_segments_grouped(&rst_result.markers, rst_result.entropy_end, group_stride);
+            compute_segments(&rst_result.markers, rst_result.entropy_end);
         let num_segments = seg_starts.len();
 
         // Need enough segments after grouping
@@ -442,7 +410,7 @@ impl<'a> JpegParser<'a> {
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
-                let mut prev_coeff_counts: [u8; 4] = [64; 4];
+                let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
 
                 // Thread-local strip buffers for one MCU row height
@@ -511,7 +479,7 @@ impl<'a> JpegParser<'a> {
                     for (sc_idx, (comp_idx, dc_table, ac_table)) in scan_comps.iter().enumerate() {
                         let count = match decoder.decode_block_into(
                             &mut coeffs_buf,
-                            prev_coeff_counts[*comp_idx],
+                            prev_coeff_count,
                             *comp_idx,
                             *dc_table as usize,
                             *ac_table as usize,
@@ -522,12 +490,11 @@ impl<'a> JpegParser<'a> {
                                     truncation_mcu = Some(mcu_idx as u32);
                                 }
                                 coeffs_buf = [0i16; 64];
-                                prev_coeff_counts[*comp_idx] = 64;
                                 1
                             }
                             Err(e) => return Err(e),
                         };
-                        prev_coeff_counts[*comp_idx] = count;
+                        prev_coeff_count = count;
 
                         // Dequantize + IDCT directly into strip
                         let strip = match sc_idx {
@@ -692,7 +659,7 @@ impl<'a> JpegParser<'a> {
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
-                let mut prev_coeff_counts: [u8; 4] = [64; 4];
+                let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
                 let had_padding_error = false;
 
@@ -760,7 +727,7 @@ impl<'a> JpegParser<'a> {
                             for h in 0..h_samp {
                                 let count = match decoder.decode_block_into(
                                     &mut coeffs_buf,
-                                    prev_coeff_counts[*comp_idx],
+                                    prev_coeff_count,
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
@@ -771,12 +738,11 @@ impl<'a> JpegParser<'a> {
                                             truncation_mcu = Some(mcu_idx as u32);
                                         }
                                         coeffs_buf = [0i16; 64];
-                                        prev_coeff_counts[*comp_idx] = 64;
                                         1
                                     }
                                     Err(e) => return Err(e),
                                 };
-                                prev_coeff_counts[*comp_idx] = count;
+                                prev_coeff_count = count;
 
                                 let block_px = mcu_col * h_samp * 8 + h * 8;
                                 let block_py = v * 8;
@@ -939,7 +905,7 @@ impl<'a> JpegParser<'a> {
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
-                let mut prev_coeff_counts: [u8; 4] = [64; 4];
+                let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
                 let had_padding_error = false;
 
@@ -965,7 +931,7 @@ impl<'a> JpegParser<'a> {
                             for h in 0..h_samp {
                                 let count = match decoder.decode_block_into(
                                     &mut coeffs_buf,
-                                    prev_coeff_counts[*comp_idx],
+                                    prev_coeff_count,
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
@@ -976,12 +942,11 @@ impl<'a> JpegParser<'a> {
                                             truncation_mcu = Some(mcu_idx as u32);
                                         }
                                         coeffs_buf = [0i16; 64];
-                                        prev_coeff_counts[*comp_idx] = 64;
                                         1
                                     }
                                     Err(e) => return Err(e),
                                 };
-                                prev_coeff_counts[*comp_idx] = count;
+                                prev_coeff_count = count;
 
                                 // Compute position within the segment slice
                                 let block_x = mcu_col * h_samp * 8 + h * 8;
