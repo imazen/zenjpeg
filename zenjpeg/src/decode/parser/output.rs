@@ -362,7 +362,8 @@ impl<'a> JpegParser<'a> {
         use crate::decode::upsample::{
             upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
             upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-            upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+            upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
+            upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
         // Select IDCT function based on compatibility mode
@@ -577,6 +578,17 @@ impl<'a> JpegParser<'a> {
         ext_cb_a.copy_within(c_strip_width..2 * c_strip_width, 0);
         ext_cr_a.copy_within(c_strip_width..2 * c_strip_width, 0);
 
+        // Pre-allocate scratch buffer for upsample — reused across all MCU rows
+        // to avoid re-zeroing [0i16; 4096] on every upsample call (saves ~3M instr/decode).
+        // Only used for h2v2 triangle-filter path; the scratch is written by the vertical
+        // pass before the horizontal pass reads it, so it doesn't need re-zeroing.
+        let use_scratch_upsample = needs_full_upsample
+            && h_ratio == 2
+            && v_ratio == 2
+            && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+            && c_strip_width <= 4096;
+        let mut upsample_scratch = [0i16; 4096];
+
         for imcu_row in 0..mcu_rows {
             // Set below context for current strip (ext_a)
             let last_data_row_start = c_strip_height * c_strip_width; // row c_strip_height in ext
@@ -666,22 +678,45 @@ impl<'a> JpegParser<'a> {
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
-                upsample_fn(
-                    &ext_cb_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cb_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
-                upsample_fn(
-                    &ext_cr_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cr_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
+                if use_scratch_upsample {
+                    // Fast path: reuse scratch buffer to avoid per-call [0i16; 4096] zeroing
+                    upsample_h2v2_i16_fancy_reuse_scratch(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                        &mut upsample_scratch,
+                    );
+                    upsample_h2v2_i16_fancy_reuse_scratch(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                        &mut upsample_scratch,
+                    );
+                } else {
+                    // Generic upsample path (other methods or very wide images)
+                    upsample_fn(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    upsample_fn(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                }
 
                 // Use upsampled rows starting at offset v_ratio (skip context rows)
                 for row in 0..y_rows_this_mcu {
