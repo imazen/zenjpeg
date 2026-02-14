@@ -304,12 +304,6 @@ impl StreamingEncoder {
         #[allow(unused_mut)]
         let mut config = config;
 
-        // Progressive scans don't insert restart markers — clear DRI to
-        // avoid writing a DRI header that the decoder would misinterpret.
-        if config.mode == JpegMode::Progressive {
-            config.restart_interval = 0;
-        }
-
         // Enforce MCU row alignment for any nonzero restart interval.
         // Non-row-aligned restarts break the fused chroma upsample + color
         // conversion decode path, which processes complete MCU rows.

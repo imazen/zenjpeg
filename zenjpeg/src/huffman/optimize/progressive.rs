@@ -466,6 +466,7 @@ impl ProgressiveTokenBuffer {
         component_indices: &[usize],
         al: u8,
         ah: u8,
+        restart_interval: u16,
     ) {
         // Start the scan - DC uses context = component index
         // For interleaved scans, we'll emit tokens for each component
@@ -474,22 +475,35 @@ impl ProgressiveTokenBuffer {
 
         if ah == 0 {
             // First DC scan: encode DC coefficients shifted by al
-            self.tokenize_dc_first(blocks, component_indices, al);
+            self.tokenize_dc_first(blocks, component_indices, al, restart_interval);
         } else {
             // DC refinement: just emit one bit per block
-            self.tokenize_dc_refine(blocks, component_indices, al);
+            self.tokenize_dc_refine(blocks, component_indices, al, restart_interval);
         }
 
         self.end_scan();
     }
 
     /// Tokenizes DC first scan (ah == 0).
-    fn tokenize_dc_first(&mut self, blocks: &[&[[i16; 64]]], component_indices: &[usize], al: u8) {
+    fn tokenize_dc_first(
+        &mut self,
+        blocks: &[&[[i16; 64]]],
+        component_indices: &[usize],
+        al: u8,
+        restart_interval: u16,
+    ) {
         // Get the number of blocks (all components should have same count for interleaved)
         let num_blocks = blocks.first().map(|b| b.len()).unwrap_or(0);
+        let ri = restart_interval as usize;
 
         // Iterate using zip to ensure matched lengths without bounds checks
         for block_idx in 0..num_blocks {
+            // Insert restart boundary: reset DC prediction, mark position.
+            // block_idx counts MCUs (1 block per component per MCU).
+            if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
+                self.mark_restart();
+            }
+
             for (&comp_idx, &comp_blocks) in component_indices.iter().zip(blocks.iter()) {
                 // Use get() for block access - gracefully handles mismatched block counts
                 if let Some(block) = comp_blocks.get(block_idx) {
@@ -508,11 +522,23 @@ impl ProgressiveTokenBuffer {
     }
 
     /// Tokenizes DC refinement scan (ah > 0).
-    fn tokenize_dc_refine(&mut self, blocks: &[&[[i16; 64]]], component_indices: &[usize], al: u8) {
+    fn tokenize_dc_refine(
+        &mut self,
+        blocks: &[&[[i16; 64]]],
+        component_indices: &[usize],
+        al: u8,
+        restart_interval: u16,
+    ) {
         let num_blocks = blocks.first().map(|b| b.len()).unwrap_or(0);
+        let ri = restart_interval as usize;
 
         // Iterate using zip to ensure matched lengths without bounds checks
         for block_idx in 0..num_blocks {
+            // Insert restart boundary.
+            if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
+                self.mark_restart();
+            }
+
             for (&comp_idx, &comp_blocks) in component_indices.iter().zip(blocks.iter()) {
                 // Use get() for block access - gracefully handles mismatched block counts
                 if let Some(block) = comp_blocks.get(block_idx) {
@@ -551,6 +577,7 @@ impl ProgressiveTokenBuffer {
         ss: u8,
         se: u8,
         al: u8,
+        restart_interval: u16,
     ) {
         // Validate spectral selection bounds (1-63 for AC, ss <= se)
         // This assertion helps the compiler eliminate bounds checks below.
@@ -564,13 +591,24 @@ impl ProgressiveTokenBuffer {
         self.start_scan(context, ss, se, 0, al);
 
         let mut eob_run: u16 = 0;
+        let ri = restart_interval as usize;
 
         // Convert ss/se to usize once, with bounds the compiler can prove
         let ss_idx = ss as usize;
         let se_idx = se as usize;
         let coef_count = se_idx - ss_idx + 1;
 
-        for block in blocks {
+        for (block_idx, block) in blocks.iter().enumerate() {
+            // Restart boundary: flush pending EOB run, mark position.
+            // Each block is one MCU in a non-interleaved scan.
+            if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
+                if eob_run > 0 {
+                    self.emit_eob_run(context, eob_run);
+                    eob_run = 0;
+                }
+                self.mark_restart();
+            }
+
             // Extract the coefficient slice once per block.
             // Since we validated 1 <= ss <= se <= 63, this is guaranteed in-bounds.
             // The compiler can now eliminate bounds checks in the inner loops.
@@ -702,6 +740,7 @@ impl ProgressiveTokenBuffer {
         se: u8,
         ah: u8,
         al: u8,
+        restart_interval: u16,
     ) -> Result<()> {
         use crate::error::Error;
 
@@ -717,6 +756,7 @@ impl ProgressiveTokenBuffer {
         self.start_scan_for_refinement(context, ss, se, ah, al, blocks.len())?;
 
         let mut eob_run: u16 = 0;
+        let ri = restart_interval as usize;
 
         // Pre-allocate pending_refbits - max 256 before flush
         let mut pending_refbits: Vec<u8> = Vec::new();
@@ -733,7 +773,16 @@ impl ProgressiveTokenBuffer {
         let ss_idx = ss as usize;
         let se_idx = se as usize;
 
-        for block in blocks {
+        for (block_idx, block) in blocks.iter().enumerate() {
+            // Restart boundary: flush pending EOB run + refbits, mark position.
+            if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
+                if eob_run > 0 || !pending_refbits.is_empty() {
+                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    pending_refbits.clear();
+                    eob_run = 0;
+                }
+                self.mark_restart();
+            }
             // Extract the coefficient slice once per block.
             // Since we validated ss <= se <= 63 above, this is guaranteed in-bounds.
             // The compiler can now eliminate bounds checks in the inner loop.
@@ -1092,7 +1141,7 @@ mod tests {
         ];
 
         let block_refs: &[[i16; 64]] = &blocks;
-        buf.tokenize_dc_scan(&[block_refs], &[0], 0, 0);
+        buf.tokenize_dc_scan(&[block_refs], &[0], 0, 0, 0);
 
         // Should have 3 tokens
         assert_eq!(buf.len(), 3);
@@ -1157,7 +1206,7 @@ mod tests {
         ];
 
         let blocks: &[&[[i16; 64]]] = &[&y_blocks, &cb_blocks, &cr_blocks];
-        buf.tokenize_dc_scan(blocks, &[0, 1, 2], 0, 0);
+        buf.tokenize_dc_scan(blocks, &[0, 1, 2], 0, 0, 0);
 
         // Should have 6 tokens (2 blocks × 3 components)
         assert_eq!(buf.len(), 6);
@@ -1190,7 +1239,7 @@ mod tests {
         ];
 
         let block_refs: &[[i16; 64]] = &blocks;
-        buf.tokenize_dc_scan(&[block_refs], &[0], 1, 0); // al = 1
+        buf.tokenize_dc_scan(&[block_refs], &[0], 1, 0, 0); // al = 1
 
         // First token: diff = 50 - 0 = 50, category = 6
         assert_eq!(buf.tokens[0].symbol, 6);
@@ -1210,7 +1259,7 @@ mod tests {
                        // Positions 2, 3, 4 are zeros (run of 3)
 
         let blocks = [block];
-        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0, 0);
 
         // Should have tokens for:
         // - Coef at position 1 (run=0, value=10)
@@ -1234,7 +1283,7 @@ mod tests {
 
         // Create multiple empty blocks
         let blocks: Vec<[i16; 64]> = vec![[0i16; 64]; 5];
-        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0, 0);
 
         // Should have one EOB run token for 5 blocks
         assert!(!buf.is_empty());
@@ -1256,7 +1305,7 @@ mod tests {
         block[20] = 7; // Position 20, with 19 zeros before (positions 1-19)
 
         let blocks = [block];
-        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0, 0);
 
         // Should have:
         // - ZRL (16 zeros)
