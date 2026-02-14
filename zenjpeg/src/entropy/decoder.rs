@@ -274,6 +274,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Safely gets an AC table reference, handling out-of-bounds indices.
     /// Returns with 'tables lifetime to avoid borrowing self.
+    #[inline(always)]
     fn get_ac_table(&self, idx: usize) -> Result<&'tables HuffmanDecodeTable> {
         self.ac_tables
             .get(idx)
@@ -1197,6 +1198,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Decodes AC coefficients for progressive first scan (ah=0).
     /// Writes coefficients to the provided slice in range [ss, se].
     /// Returns the EOB run remaining after this block.
+    #[inline(always)]
     pub fn decode_ac_first(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
@@ -1207,13 +1209,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         al: u8,
         eob_run: &mut u16,
     ) -> ScanResult<()> {
-        let ac_table = self.get_ac_table(ac_table_idx)?;
-
-        // If we have a pending EOB run, decrement and skip this block
+        // EOB fast path FIRST — before table lookup (most common path).
+        // Avoids get_ac_table's Result overhead for blocks in EOB runs.
         if *eob_run > 0 {
             *eob_run -= 1;
             return Ok(ScanRead::Value(()));
         }
+
+        let ac_table = self.get_ac_table(ac_table_idx)?;
 
         let mut k = ss as usize;
         while k <= se as usize {
@@ -1280,6 +1283,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Hot path optimization: refinement bit reads use `read_bit_refine()` which
     /// avoids ScanRead enum wrapping, bit_buffer sync, and fill checks per bit.
     /// Returns 0 on exhaustion (safe: means "don't modify coefficient").
+    ///
+    /// The inner scan uses bitmap-accelerated iteration: instead of checking
+    /// every position from k to se (O(se-k)), it jumps between nonzero positions
+    /// via `trailing_zeros()` (O(nonzero_count)). For sparse blocks this reduces
+    /// iterations from ~61 to ~3-10.
+    #[inline(always)]
     pub fn decode_ac_refine(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
@@ -1290,14 +1299,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         al: u8,
         eob_run: &mut u16,
     ) -> ScanResult<()> {
-        let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
 
-        // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return.
-        // This is the most common path in progressive JPEGs — tight loop, no Huffman decodes.
+        // EOB fast path FIRST — before table lookup (most common path).
+        // Avoids get_ac_table's Result overhead for blocks in EOB runs.
         if *eob_run > 0 {
             // Use bitmap to iterate only nonzero positions (skip zeros via trailing_zeros).
-            // Mask to the spectral selection range [ss, se].
             let range_mask = range_bitmap(ss, se);
             let mut nz = *bitmap & range_mask;
             while nz != 0 {
@@ -1316,8 +1323,18 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             return Ok(ScanRead::Value(()));
         }
 
+        // Table lookup only needed for non-EOB blocks (Huffman decode path).
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+
+        let se_usize = se as usize;
         let mut k = ss as usize;
-        while k <= se as usize {
+
+        // Compute nonzero bitmap once for the entire block. Maintained across
+        // Huffman events: bits are cleared as nonzero positions are processed,
+        // so we never recompute range_bitmap per event (~11M instruction savings).
+        let mut nz_remaining = *bitmap & range_bitmap(ss, se);
+
+        while k <= se_usize {
             // Huffman decode uses normal path (infrequent, needs ScanRead handling)
             let symbol = match self.decode_huffman(ac_table)? {
                 ScanRead::Value(v) => v,
@@ -1334,7 +1351,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // ZRL in refinement - skip 16 zeros (not 15!)
                     num_zeros_to_skip = 16;
                 } else {
-                    // EOB — apply refinement to remaining nonzero coeffs via bitmap
+                    // EOB — apply refinement to remaining nonzero coeffs.
+                    // nz_remaining already has exactly the remaining nonzero
+                    // positions from k to se (maintained across events).
                     if run != 0 {
                         let extra = match self.reader.read_bits(run)? {
                             ScanRead::Value(v) => v as u16,
@@ -1343,11 +1362,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         };
                         *eob_run = (1 << run) + extra - 1;
                     }
-                    // Apply refinement to remaining nonzero coeffs [k..=se]
-                    let range_mask = range_bitmap(k as u8, se);
-                    let mut nz = *bitmap & range_mask;
-                    while nz != 0 {
-                        let j = nz.trailing_zeros() as usize;
+                    while nz_remaining != 0 {
+                        let j = nz_remaining.trailing_zeros() as usize;
                         let bit = self.reader.read_bit_refine();
                         if bit != 0 && (coeffs[j] & bit_val) == 0 {
                             if coeffs[j] > 0 {
@@ -1356,7 +1372,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 coeffs[j] = coeffs[j].wrapping_sub(bit_val);
                             }
                         }
-                        nz &= nz - 1;
+                        nz_remaining &= nz_remaining - 1;
                     }
                     return Ok(ScanRead::Value(()));
                 }
@@ -1371,42 +1387,66 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 None
             };
 
-            // Skip zeros and apply refinement bits to nonzero coefficients.
-            // Must iterate in order because refinement bits are read sequentially.
-            while k <= se as usize {
-                // For ZRL (size=0), stop immediately after skipping all 16 zeros.
+            // Bitmap-accelerated inner scan: jump between nonzero positions
+            // instead of checking every position k..=se individually.
+            // nz_remaining is maintained across events (computed once per block).
+            loop {
+                // ZRL termination: stop when all zeros have been skipped.
                 if size == 0 && num_zeros_to_skip == 0 {
                     break;
                 }
 
-                if (*bitmap & (1u64 << (k & 63))) != 0 {
-                    // Apply refinement bit for previously-nonzero coefficient
-                    let bit = self.reader.read_bit_refine();
-                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                        if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                        } else {
-                            coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                        }
-                    }
-                } else if num_zeros_to_skip > 0 {
-                    num_zeros_to_skip -= 1;
-                } else {
-                    // Found our target position (for NEW_NZ symbols)
+                if nz_remaining == 0 {
+                    // All remaining positions are zeros — skip in bulk.
+                    k += num_zeros_to_skip;
+                    num_zeros_to_skip = 0;
                     break;
                 }
+
+                let next_nz = nz_remaining.trailing_zeros() as usize;
+                let zero_gap = next_nz - k;
+
+                if num_zeros_to_skip < zero_gap {
+                    // Target zero position is before next nonzero.
+                    k += num_zeros_to_skip;
+                    num_zeros_to_skip = 0;
+                    break;
+                }
+
+                // Skip zeros in this gap.
+                num_zeros_to_skip -= zero_gap;
+                k = next_nz;
+
+                // ZRL: stop after exhausting zero count, before processing nonzero.
+                if size == 0 && num_zeros_to_skip == 0 {
+                    break;
+                }
+
+                // Process nonzero position: read refinement bit.
+                let bit = self.reader.read_bit_refine();
+                if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                    if coeffs[k] > 0 {
+                        coeffs[k] = coeffs[k].wrapping_add(bit_val);
+                    } else {
+                        coeffs[k] = coeffs[k].wrapping_sub(bit_val);
+                    }
+                }
+
+                nz_remaining &= nz_remaining - 1; // clear lowest set bit
                 k += 1;
             }
 
             if let Some(val) = new_val {
-                if k <= se as usize {
-                    // Place newly-nonzero coefficient and update bitmap
+                if k <= se_usize {
+                    // Place newly-nonzero coefficient and update bitmap.
+                    // Don't add to nz_remaining — this coefficient was just placed
+                    // and doesn't need refinement bits in this scan.
                     coeffs[k] = val;
                     *bitmap |= 1u64 << (k & 63);
                     k += 1; // Move past the placed coefficient
                 }
             }
-            // For ZRL (size==0), k already points past the 16 zeros we skipped
+            // For ZRL (size==0), k already points past the zeros we skipped
         }
 
         Ok(ScanRead::Value(()))
@@ -1420,12 +1460,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     ///
     /// The bitmap must already be masked to the spectral range [ss, se].
     #[inline(always)]
-    pub fn refine_eob_bits(
-        &mut self,
-        coeffs: &mut [i16; DCT_BLOCK_SIZE],
-        nz_bits: u64,
-        al: u8,
-    ) {
+    pub fn refine_eob_bits(&mut self, coeffs: &mut [i16; DCT_BLOCK_SIZE], nz_bits: u64, al: u8) {
         let bit_val = 1i16 << al;
         let mut nz = nz_bits;
         while nz != 0 {
