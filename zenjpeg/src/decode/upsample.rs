@@ -11,6 +11,10 @@ use archmage::{arcane, rite, SimdToken};
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
+/// Max chroma strip width for stack-allocated scratch in triangle upsampling.
+/// Covers images up to 8192px wide (chroma width 4096 at 4:2:0).
+pub(crate) const MAX_UPSAMPLE_SCRATCH: usize = 4096;
+
 /// Fancy upsampling with triangle filter (3:1 weights).
 ///
 /// Applies separable 3:1 interpolation: (3 * near + far) / 4.

@@ -25,7 +25,7 @@ use crate::decode::ChromaUpsampling;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
-use crate::quant::dequantize_unzigzag_i32_partial;
+use crate::quant::dequantize_unzigzag_i32_into_partial;
 use rayon::prelude::*;
 
 use crate::decode::parser::JpegParser;
@@ -46,14 +46,15 @@ fn idct_block_into(
     dst_offset: usize,
     strip_width: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     if coeff_count <= 1 {
         let dc = coeffs[0] as i32 * quant[0] as i32;
         idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
     } else {
-        let mut dequant_i32 = dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+        dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
         idct_fn(
-            &mut dequant_i32,
+            dequant_buf,
             &mut strip[dst_offset..],
             strip_width,
             coeff_count,
@@ -71,6 +72,7 @@ fn idct_comp_mcu_row(
     strip: &mut [i16],
     strip_width: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     for iy in 0..info.v_samp {
         let by = imcu_row * info.v_samp + iy;
@@ -95,6 +97,7 @@ fn idct_comp_mcu_row(
                 dst_offset,
                 strip_width,
                 idct_fn,
+                dequant_buf,
             );
         }
     }
@@ -113,6 +116,7 @@ fn idct_chroma_into_ext(
     c_strip_height: usize,
     chroma_height_total: usize,
     idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
+    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
 ) {
     let data_offset = c_strip_width; // skip context row 0
 
@@ -139,6 +143,7 @@ fn idct_chroma_into_ext(
                 dst_offset,
                 c_strip_width,
                 idct_fn,
+                dequant_buf,
             );
         }
     }
@@ -232,6 +237,7 @@ impl<'a> JpegParser<'a> {
                 let mut y_strip = vec![0i16; strip_size];
                 let mut cb_strip = vec![0i16; strip_size];
                 let mut cr_strip = vec![0i16; strip_size];
+                let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
 
                 let start_row = batch_idx * batch_size;
                 let end_row = (start_row + batch_size).min(mcu_rows);
@@ -251,6 +257,7 @@ impl<'a> JpegParser<'a> {
                             strip,
                             strip_width,
                             idct_fn,
+                            &mut dequant_buf,
                         );
                     }
 
@@ -429,6 +436,7 @@ impl<'a> JpegParser<'a> {
                 } else {
                     (Vec::new(), Vec::new())
                 };
+                let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
 
                 // IDCT first chroma strip into ext_a
                 idct_chroma_into_ext(
@@ -442,6 +450,7 @@ impl<'a> JpegParser<'a> {
                     c_strip_height,
                     chroma_height_total,
                     idct_fn,
+                    &mut dequant_buf,
                 );
                 idct_chroma_into_ext(
                     &mut ext_cr_a,
@@ -454,6 +463,7 @@ impl<'a> JpegParser<'a> {
                     c_strip_height,
                     chroma_height_total,
                     idct_fn,
+                    &mut dequant_buf,
                 );
 
                 // Set above context for first strip in this batch.
@@ -476,6 +486,7 @@ impl<'a> JpegParser<'a> {
                         c_strip_height,
                         chroma_height_total,
                         idct_fn,
+                        &mut dequant_buf,
                     );
                     idct_chroma_into_ext(
                         &mut ext_cr_b,
@@ -488,6 +499,7 @@ impl<'a> JpegParser<'a> {
                         c_strip_height,
                         chroma_height_total,
                         idct_fn,
+                        &mut dequant_buf,
                     );
                     let last_data = c_strip_height * c_strip_width;
                     ext_cb_a[..c_strip_width]
@@ -509,6 +521,7 @@ impl<'a> JpegParser<'a> {
                         c_strip_height,
                         chroma_height_total,
                         idct_fn,
+                        &mut dequant_buf,
                     );
                     idct_chroma_into_ext(
                         &mut ext_cr_b,
@@ -521,6 +534,7 @@ impl<'a> JpegParser<'a> {
                         c_strip_height,
                         chroma_height_total,
                         idct_fn,
+                        &mut dequant_buf,
                     );
                 }
 
@@ -560,6 +574,7 @@ impl<'a> JpegParser<'a> {
                         &mut y_strip,
                         y_strip_width,
                         idct_fn,
+                        &mut dequant_buf,
                     );
 
                     let y_rows_this_mcu =
@@ -648,6 +663,7 @@ impl<'a> JpegParser<'a> {
                                 c_strip_height,
                                 chroma_height_total,
                                 idct_fn,
+                                &mut dequant_buf,
                             );
                             idct_chroma_into_ext(
                                 &mut ext_cr_b,
@@ -660,6 +676,7 @@ impl<'a> JpegParser<'a> {
                                 c_strip_height,
                                 chroma_height_total,
                                 idct_fn,
+                                &mut dequant_buf,
                             );
                         }
                     }

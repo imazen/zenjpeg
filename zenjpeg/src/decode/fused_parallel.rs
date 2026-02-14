@@ -28,6 +28,7 @@ use crate::quant::dequantize_unzigzag_i32_into_partial;
 
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::rst_scan::compute_segments;
+use super::upsample::MAX_UPSAMPLE_SCRATCH;
 use super::{ChromaUpsampling, DecodeWarning, Strictness};
 
 use super::parser::JpegParser;
@@ -130,8 +131,7 @@ impl<'a> JpegParser<'a> {
 
         // One segment per restart interval (no grouping — rayon handles work distribution)
         let group_stride = 1;
-        let (seg_starts, seg_ends) =
-            compute_segments(&rst_result.markers, rst_result.entropy_end);
+        let (seg_starts, seg_ends) = compute_segments(&rst_result.markers, rst_result.entropy_end);
         let num_segments = seg_starts.len();
 
         // Need enough segments after grouping
@@ -418,8 +418,13 @@ impl<'a> JpegParser<'a> {
                 let (mcu_start, mcu_end) =
                     Self::segment_mcu_range(seg_idx, num_segments, ri, group_stride, total_mcus);
 
-                let mut decoder =
-                    Self::setup_segment_decoder(seg_data, &scan_comps, &dc_tables, &ac_tables, lenient);
+                let mut decoder = Self::setup_segment_decoder(
+                    seg_data,
+                    &scan_comps,
+                    &dc_tables,
+                    &ac_tables,
+                    lenient,
+                );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
@@ -452,7 +457,8 @@ impl<'a> JpegParser<'a> {
                     // Flush completed MCU row to RGB
                     if mcu_row != current_mcu_row {
                         // Convert strip to RGB
-                        let pixel_row_start = (current_mcu_row * 8).saturating_sub(seg_first_pixel_row);
+                        let pixel_row_start =
+                            (current_mcu_row * 8).saturating_sub(seg_first_pixel_row);
                         let pixel_rows_this = 8.min(height.saturating_sub(current_mcu_row * 8));
                         let cols_this = width.min(strip_width);
 
@@ -667,8 +673,13 @@ impl<'a> JpegParser<'a> {
                 let (mcu_start, mcu_end) =
                     Self::segment_mcu_range(seg_idx, num_segments, ri, group_stride, total_mcus);
 
-                let mut decoder =
-                    Self::setup_segment_decoder(seg_data, &scan_comps, &dc_tables, &ac_tables, lenient);
+                let mut decoder = Self::setup_segment_decoder(
+                    seg_data,
+                    &scan_comps,
+                    &dc_tables,
+                    &ac_tables,
+                    lenient,
+                );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
@@ -687,14 +698,14 @@ impl<'a> JpegParser<'a> {
 
                 // Closure to flush one MCU row of strips to RGB via fused box upsample
                 let flush_mcu_row = |current_mcu_row: usize,
-                                      y_strip: &[i16],
-                                      cb_strip: &[i16],
-                                      cr_strip: &[i16],
-                                      rgb_chunk: &mut [u8]| {
+                                     y_strip: &[i16],
+                                     cb_strip: &[i16],
+                                     cr_strip: &[i16],
+                                     rgb_chunk: &mut [u8]| {
                     let pixel_row_start =
                         (current_mcu_row * mcu_pixel_height).saturating_sub(seg_first_pixel_row);
-                    let pixel_rows_this =
-                        mcu_pixel_height.min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
+                    let pixel_rows_this = mcu_pixel_height
+                        .min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
                     let cols_this = width.min(y_strip_width);
 
                     for py in 0..pixel_rows_this {
@@ -762,8 +773,8 @@ impl<'a> JpegParser<'a> {
                                 let strip_off = block_py * strip_stride + block_px;
 
                                 if count == 1 {
-                                    let dc = coeffs_buf[0] as i32
-                                        * quant_tables[*comp_idx][0] as i32;
+                                    let dc =
+                                        coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
                                     idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
                                 } else {
                                     dequantize_unzigzag_i32_into_partial(
@@ -846,7 +857,6 @@ impl<'a> JpegParser<'a> {
 
         let y_h = self.components[0].h_samp_factor as usize;
         let y_v = self.components[0].v_samp_factor as usize;
-        let _c_h = self.components[1].h_samp_factor as usize;
         let c_v = self.components[1].v_samp_factor as usize;
 
         let mcu_pixel_height = y_v * 8; // y_v == max_v_samp for h2v2
@@ -873,7 +883,7 @@ impl<'a> JpegParser<'a> {
             _ => upsample_h2v2_i16_fancy,
         };
         let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::Triangle)
-            && c_strip_width <= 4096;
+            && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
         let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::Triangle);
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
@@ -933,8 +943,13 @@ impl<'a> JpegParser<'a> {
                 let (mcu_start, mcu_end) =
                     Self::segment_mcu_range(seg_idx, num_segments, ri, group_stride, total_mcus);
 
-                let mut decoder =
-                    Self::setup_segment_decoder(seg_data, &scan_comps, &dc_tables, &ac_tables, lenient);
+                let mut decoder = Self::setup_segment_decoder(
+                    seg_data,
+                    &scan_comps,
+                    &dc_tables,
+                    &ac_tables,
+                    lenient,
+                );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
@@ -959,7 +974,7 @@ impl<'a> JpegParser<'a> {
                 let mut cr_up: Vec<i16> = vec![0i16; upsample_out_size];
 
                 // Scratch for Triangle upsample
-                let mut upsample_scratch = [0i16; 4096];
+                let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
                 // Boundary data to save
                 let mut boundary = SegmentBoundary {
@@ -986,27 +1001,43 @@ impl<'a> JpegParser<'a> {
                      ext_cr: &[i16],
                      cb_up: &mut [i16],
                      cr_up: &mut [i16],
-                     scratch: &mut [i16; 4096],
+                     scratch: &mut [i16; MAX_UPSAMPLE_SCRATCH],
                      rgb_chunk: &mut [u8]| {
                         if use_scratch_upsample {
                             upsample_h2v2_i16_fancy_reuse_scratch(
-                                ext_cb, c_strip_width, ext_height,
-                                cb_up, y_strip_width, upsample_out_height,
+                                ext_cb,
+                                c_strip_width,
+                                ext_height,
+                                cb_up,
+                                y_strip_width,
+                                upsample_out_height,
                                 scratch,
                             );
                             upsample_h2v2_i16_fancy_reuse_scratch(
-                                ext_cr, c_strip_width, ext_height,
-                                cr_up, y_strip_width, upsample_out_height,
+                                ext_cr,
+                                c_strip_width,
+                                ext_height,
+                                cr_up,
+                                y_strip_width,
+                                upsample_out_height,
                                 scratch,
                             );
                         } else {
                             upsample_fn(
-                                ext_cb, c_strip_width, ext_height,
-                                cb_up, y_strip_width, upsample_out_height,
+                                ext_cb,
+                                c_strip_width,
+                                ext_height,
+                                cb_up,
+                                y_strip_width,
+                                upsample_out_height,
                             );
                             upsample_fn(
-                                ext_cr, c_strip_width, ext_height,
-                                cr_up, y_strip_width, upsample_out_height,
+                                ext_cr,
+                                c_strip_width,
+                                ext_height,
+                                cr_up,
+                                y_strip_width,
+                                upsample_out_height,
                             );
                         }
 
@@ -1285,8 +1316,7 @@ impl<'a> JpegParser<'a> {
                 }
 
                 // Compute MCU row boundaries for these segments
-                let seg_n_last = ((junc + 1) * mcu_rows_per_seg_nominal - 1)
-                    .min(mcu_rows - 1);
+                let seg_n_last = ((junc + 1) * mcu_rows_per_seg_nominal - 1).min(mcu_rows - 1);
                 let seg_n1_first = (junc + 1) * mcu_rows_per_seg_nominal;
 
                 // Fix bottom pixel row of segment N's last MCU row

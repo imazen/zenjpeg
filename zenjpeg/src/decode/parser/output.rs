@@ -44,6 +44,7 @@ use crate::quant::{
 use crate::types::PixelFormat;
 use enough::Stop;
 
+use super::super::upsample::MAX_UPSAMPLE_SCRATCH;
 use super::{CompInfo, JpegParser};
 
 /// Returns true for formats that decode via the RGB u8 fast paths
@@ -600,8 +601,8 @@ impl<'a> JpegParser<'a> {
             && h_ratio == 2
             && v_ratio == 2
             && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
-            && c_strip_width <= 4096;
-        let mut upsample_scratch = [0i16; 4096];
+            && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
+        let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
         for imcu_row in 0..mcu_rows {
             // Set below context for current strip (ext_a)
