@@ -323,7 +323,8 @@ fn encode_jpeg(
     // when optimize_huffman=true to match C++ cjpegli --progressive_level=2
     let config = EncoderConfig::ycbcr(quality, subsampling)
         .progressive(optimize_huffman) // progressive when optimized
-        .optimize_huffman(optimize_huffman);
+        .optimize_huffman(optimize_huffman)
+        .restart_mcu_rows(0); // Disable restart markers for parity comparison with C++
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
