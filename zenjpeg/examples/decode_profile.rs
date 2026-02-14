@@ -25,7 +25,7 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
