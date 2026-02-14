@@ -2,9 +2,9 @@
 
 **Date:** 2026-02-14
 **Branch:** `decode-speed-optimization` (clean worktree)
-**Last commit:** `10bfe9e` refactor: remove standard parallel decode path
+**Last commit:** `872561d` feat: single-pass fused parallel decode for 4:2:0 + fancy upsample
 
-## Current task: Fix fused parallel decode for fancy upsample
+## COMPLETED: Fix fused parallel decode for fancy upsample
 
 ### The problem
 
