@@ -1269,13 +1269,14 @@ impl<'a> JpegParser<'a> {
 
         // Boundary fixup pass: correct the 2 pixel rows per segment junction
         // where edge replication was used instead of real adjacent chroma.
-        if do_fixup && num_segments > 1 {
+        let boundary_count = seg_boundaries.len();
+        if do_fixup && boundary_count > 1 {
             let mcu_rows_per_seg_nominal = mcu_rows_per_ri * group_stride;
 
             let mut cb_up_row = vec![0i16; y_strip_width];
             let mut cr_up_row = vec![0i16; y_strip_width];
 
-            for junc in 0..num_segments - 1 {
+            for junc in 0..boundary_count - 1 {
                 let seg_n = &seg_boundaries[junc];
                 let seg_n1 = &seg_boundaries[junc + 1];
 
