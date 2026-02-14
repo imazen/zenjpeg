@@ -829,8 +829,8 @@ impl<'a> JpegParser<'a> {
         num_segments: usize,
         mcu_cols: usize,
         mcu_rows: usize,
-        max_h_samp: usize,
-        max_v_samp: usize,
+        _max_h_samp: usize,
+        _max_v_samp: usize,
         ri: usize,
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
@@ -849,7 +849,7 @@ impl<'a> JpegParser<'a> {
         let _c_h = self.components[1].h_samp_factor as usize;
         let c_v = self.components[1].v_samp_factor as usize;
 
-        let mcu_pixel_height = max_v_samp * 8;
+        let mcu_pixel_height = y_v * 8; // y_v == max_v_samp for h2v2
         let v_ratio = y_v / c_v; // 2 for h2v2
 
         // Strip dimensions for one MCU row
