@@ -1,82 +1,158 @@
 # Context Handoff — decode-speed-optimization branch
 
 **Date:** 2026-02-14
-**Branch:** `decode-speed-optimization` (rebased on `main`, clean worktree)
-**Last commit:** `647c1e2` fix: skip trailing restart marker in XYB encoder
+**Branch:** `decode-speed-optimization` (clean worktree)
+**Last commit:** `10bfe9e` refactor: remove standard parallel decode path
 
-## What this branch does
+## Current task: Fix fused parallel decode for fancy upsample
 
-Decoder performance optimizations. 17 commits on top of main (which has parallel decode + lossless restructuring). The branch was rebased cleanly onto main with zero file conflicts — the two branches touched completely disjoint file sets (main: encoder-side, this branch: decoder-side).
+### The problem
 
-## Commits (oldest first)
+With `--features parallel`, the default decoder (4:2:0 + Triangle upsampling) hits a
+**2-2.5x regression** vs sequential. The fused parallel path for fancy upsample
+(`decode_fused_subsampled_planes` in `fused_parallel.rs:825`) allocates full-image
+Y/Cb/Cr planes, then does a sequential second pass for upsample+color. This is strictly
+worse than the sequential strip-based approach which keeps data cache-hot.
 
-| Commit | Type | Summary |
-|--------|------|---------|
-| `32b296e` | infra | Decode-only profiling example (isolates from encoder overhead) |
-| `7c63e43` | infra | mozjpeg decode speed comparison benchmark |
-| `b3bcd88` | refactor | `#[rite]` for SIMD helpers (inline into `#[arcane]` callers) |
-| `839c9cf` | perf | Dequant buffer reuse + BitReader single-buffer refactor (-7.7%) |
-| `64ed176` | perf | Eliminate bounds checks in IDCT strided writes (-0.6%) |
-| `17dc6cf` | chore | Switch decode_profile to baseline JPEG |
-| `09228f8` | perf | Reuse scratch buffer for upsample (-7.1% wall-clock) |
-| `0ddbed9` | perf | `chunks_exact` in upsampler (-3.5%, -125M instructions) |
-| `3e4de3f` | perf | `chunks_exact` in YCbCr→RGB AVX2 (-2.0%, -70M instructions) |
-| `7e402d2` | perf | Hoist loop-invariant values out of MCU loop (-1.8%) |
-| `b3aad56` | perf | True partial dequantization using coeff_count (-6.4%) |
-| `acdbaef` | perf | Pre-slice coefficient arrays in output pass (-2.1%) |
-| `678585a` | perf | Skip padding check for MCU-aligned components |
-| `31ab751` | perf | Slice-based BitReader refill + inline DC decode (-4.1%) |
-| `9b9b518` | refactor | Fixed-size array for fast_ac decode table |
-| `e2fc85e` | fix | Handle stray restart markers between scans in decoder |
-| `647c1e2` | fix | Skip trailing restart marker in XYB encoder |
+Meanwhile, the fused box-filter path (`decode_fused_subsampled_box`, line 601) works
+perfectly — 6x faster than mozjpeg at 2048 — because it's truly single-pass.
 
-## Performance summary
+### Benchmark evidence (decode_mozjpeg, 4:2:0 baseline, frymire photo)
 
-Starting point: ~1.20x slower than mozjpeg at 2048x2048 baseline 4:2:0.
-After optimizations: ~1.05-1.10x, competitive or faster at ≤1024.
+| Size | sequential | parallel fancy (BROKEN) | parallel box (GOOD) |
+|------|-----------|------------------------|---------------------|
+| 512 | 1.09ms | 1.95ms (1.8x slower) | 594µs (1.8x faster) |
+| 1024 | 3.14ms | 7.93ms (2.5x slower) | 1.20ms (2.6x faster) |
+| 2048 | 12.94ms | 27.68ms (2.1x slower) | 2.10ms (6.2x faster) |
 
-Three themes dominated gains:
-1. **Bounds check elimination** (~340M instructions) — `chunks_exact`, pre-slicing, upfront assertions
-2. **Partial/lazy computation** (~213M) — partial dequant skipping zero coefficients
-3. **Memory traffic reduction** (~100M+, 15% wall-clock) — buffer reuse, eliminating repeated zeroing
+### The fix
 
-## Bug fixes (this session)
+Replace `decode_fused_subsampled_planes` with a single-pass approach that mirrors the
+box path's structure but uses double-buffered extended chroma strips for fancy upsampling.
 
-### Stray restart marker decode failure (FIXED)
+**Key insight:** Triangle upsample only needs ±1 chroma row of vertical context. The
+sequential path already solves this with extended chroma buffers (c_strip_height + 2 rows:
+context above, data, context below). Each parallel segment can do the same independently.
 
-**Root cause:** When `restart_interval == total_mcu_count`, the encoder wrote a trailing RST0 after all MCUs. The decoder's MCU loop never consumed it (the restart check fires for the *next* MCU, which doesn't exist). The main parser then hit `FF D0`, fell through to `skip_segment()`, which tried to read a 2-byte length from a standalone marker — interpreting `FF D9` (EOI) as length 65497 and overshooting the data.
+**Architecture per segment:**
+1. Allocate per-thread strip buffers: Y strip + double-buffered extended Cb/Cr strips
+2. Decode first MCU row's chroma into ext_a, second into ext_b
+3. Set above context for first MCU row via edge replication (same as image top edge)
+4. For each MCU row in segment:
+   - Set below context in ext_a from first row of ext_b
+   - IDCT Y blocks into Y strip
+   - Upsample extended Cb/Cr strips to full resolution
+   - YCbCr→RGB, write to output
+   - Swap ext_a/ext_b, IDCT next chroma into freed buffer
+5. At segment boundaries: edge replication (identical to image-edge behavior)
 
-**Decoder fix** (`mod.rs`): Added `0xD0..=0xD7 => {}` arm to ignore stray RST markers between scans.
+**Reference code:**
+- Box fused path (working model): `fused_parallel.rs:601-818`
+- Sequential extended-strip approach: `output.rs:347-620`
+- Per-row upsample primitive: `upsample.rs:934` (`upsample_row_h2_fancy_bilinear`)
+- Full-strip upsample with scratch: `upsample.rs:232` (`upsample_h2v2_i16_fancy_reuse_scratch`)
 
-**Encoder fix** (`blocks.rs`): Both XYB baseline paths now skip `check_restart()` on the last MCU, matching the existing YCbCr behavior. Progressive tokenizer was already correct.
+### CRITICAL: Hash-lock decode outputs
 
-## Test status
+**The fused path reassembles RGB from independently-processed parallel segments. Any
+off-by-one in segment boundaries, chroma context, or strip addressing will cause visible
+horizontal lines at MCU row boundaries where segments meet.**
 
-- **766 lib tests pass**, 0 failures
-- **encoder_matrix**: 3 passed, 0 failed (was 2 passed, 1 failed before our fix)
-- **Pre-existing failures on main** (not caused by this branch):
-  - `frymire_hash_locked` — encoder output size drifted (+140 bytes at Q50)
-  - `locked_values` — 84 hash mismatches from restart marker / lossless changes on main
-  - `metrics_comparison` — SSIMULACRA2 Q95 = -35.76 (likely degenerate test image)
-  - `multi_decoder_compatibility` — zune-jpeg grayscale butteraugli = 23.5 (zune bug)
+**Before merging the fix, you MUST:**
 
-## Key files modified
+1. **Hash-lock test**: Encode a test image with `restart_mcu_rows=4`, decode with
+   `--features parallel` (fused path) and without (sequential path). The RGB output
+   must be **byte-identical**. Write a test that asserts this:
+   ```rust
+   let sequential_rgb = Decoder::new().decode(&jpeg, Unstoppable)?;
+   let parallel_rgb = Decoder::new().decode(&jpeg, Unstoppable)?;  // with parallel feature
+   assert_eq!(sha256(&sequential_rgb.pixels_u8()), sha256(&parallel_rgb.pixels_u8()));
+   ```
 
-| File | What changed |
-|------|-------------|
-| `decode/parser/output.rs` | Buffer reuse, pre-slicing, scratch buffers |
-| `decode/parser/scan.rs` | MCU loop hoisting, padding skip, streaming guard |
-| `decode/parser/mod.rs` | Stray RST marker handling |
-| `decode/idct_int.rs` | Bounds check elimination via upfront assertion |
-| `decode/upsample.rs` | `chunks_exact`, scratch buffer reuse |
-| `color/ycbcr.rs` | `chunks_exact` in AVX2 kernel |
-| `entropy/decoder.rs` | Inline DC decode, fixed-size fast_ac array |
-| `foundation/bitstream.rs` | Single-buffer BitReader, slice-based refill |
-| `quant/mod.rs` | True partial dequantization |
-| `encode/blocks.rs` | Skip trailing RST in XYB encoder |
+2. **Multi-size hash-lock**: Test at multiple sizes (256, 512, 1024, 2048) to catch
+   edge cases in segment boundary handling. Include non-MCU-aligned dimensions
+   (e.g., 1000x1000, 513x513) to test partial MCU rows at image edges.
 
-## What's NOT done / next steps
+3. **Cross-segment boundary visual check**: Decode a smooth-gradient test image and
+   inspect rows at segment boundaries (every `restart_mcu_rows * mcu_height` rows).
+   Any discontinuity = bug. The `jpeg_inspect --validate` tool can help.
 
-- Branch is not merged to main yet
-- The remaining ~5-10% gap to mozjpeg at large sizes is from the two-pass coefficient architecture (cache misses in output pass). The scanline decoder avoids this and already matches/beats mozjpeg.
-- Progressive decode gap at 4096+ is from AC refinement (inherently serial Huffman + refinement bits)
+4. **Edge replication parity**: At segment boundaries, the fused path uses edge
+   replication for the missing ±1 chroma context row. This means the fused path's
+   output will differ slightly from sequential at these rows (sequential has the real
+   adjacent chroma). The hash-lock test should account for this:
+   - Option A: Accept the tiny difference (max 1 pixel value per channel) and hash-lock
+     the parallel output separately
+   - Option B: After all segments complete, do a thin fixup pass on the 2 boundary rows
+     per segment junction using the now-available adjacent chroma, achieving exact parity
+   - **Prefer option B** — exact parity is more maintainable
+
+5. **Regression gate**: The `fused_parallel_decode` test file
+   (`tests/fused_parallel_decode.rs`) already has 10 tests comparing fused vs sequential.
+   These MUST continue to pass. Run: `cargo test --release --features parallel,decoder
+   -p zenjpeg --test fused_parallel_decode`
+
+### What NOT to do
+
+- Do NOT allocate full-image planes. The whole point is strip-based processing.
+- Do NOT use `FusedResult::Planes`. Delete it — it was the broken two-phase approach.
+  Return `FusedResult::Rgb` from all fused paths.
+- Do NOT skip the parallel path for fancy upsample as a "quick fix". The default decoder
+  uses Triangle upsampling on 4:2:0, which is ~90% of all JPEGs. Skipping parallel for
+  the default case defeats the purpose.
+
+## Decode path summary (after `parallel.rs` deletion)
+
+```
+Baseline + parallel feature:
+  1. Fused parallel?  → MCU-row-aligned DRI + ≥1024 MCUs + ≥4 segments
+     ├─ 4:4:4/gray:   single-pass → RGB                    (working)
+     ├─ 4:2:0 + box:  single-pass → RGB                    (working, 6x speedup)
+     └─ 4:2:0 + fancy: *** NEEDS FIX *** (currently 2x regression)
+  2. Streaming RGB?   → 4:4:4 + prefer_streaming
+  3. Sequential       → fallback
+
+Output from stored coefficients:
+  1. Return fused/streaming result
+  2. Parallel IDCT+color (output_parallel.rs) → ≥8M pixels
+  3. Sequential i16 4:4:4 or subsampled
+  4. f32 precise fallback
+```
+
+## Other session work (already committed)
+
+- Deleted `parallel.rs` (standard parallel entropy decode) — 648 lines removed.
+  Was strictly inferior to fused parallel and caused 2-2.5x regressions. Commit `10bfe9e`.
+- Added "make archmage-simd mandatory" to CLAUDE.md TODO (not yet implemented).
+
+## Files to modify
+
+| File | What to do |
+|------|-----------|
+| `decode/fused_parallel.rs` | Replace `decode_fused_subsampled_planes` with strip-based single-pass |
+| `decode/fused_parallel.rs` | Delete `FusedResult::Planes` and `PixelPlanes` struct |
+| `decode/parser/output.rs` | Remove `convert_from_pixel_planes` (was phase 2 of broken path) |
+| `tests/fused_parallel_decode.rs` | Add hash-lock test comparing parallel vs sequential output |
+
+## Benchmark commands
+
+```bash
+# Sequential (no parallel)
+cargo bench --bench decode_mozjpeg -- --quick
+
+# Parallel (fused paths)
+cargo bench --bench decode_mozjpeg --features parallel -- --quick
+
+# Full decoder comparison (includes cjpegli, zune, progressive, 4:4:4)
+cargo bench --bench decode_compare -- --quick
+
+# Fused parallel correctness tests
+cargo test --release --features parallel,decoder -p zenjpeg --test fused_parallel_decode
+```
+
+## Pre-existing test failures (not caused by this branch)
+
+- `locked_values` — 84 hash mismatches from restart marker changes on main
+- `frymire_hash_locked` — encoder output size drift
+- `metrics_comparison` — degenerate test image SSIMULACRA2
+- `multi_decoder_compatibility` — zune-jpeg grayscale butteraugli bug
