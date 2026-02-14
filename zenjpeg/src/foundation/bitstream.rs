@@ -483,13 +483,9 @@ impl<'a> BitReader<'a> {
         }
 
         // Try fast 4-byte path (no 0xFF bytes)
-        if self.position + 4 <= self.data.len() {
-            let bytes = [
-                self.data[self.position],
-                self.data[self.position + 1],
-                self.data[self.position + 2],
-                self.data[self.position + 3],
-            ];
+        // Use get() + try_into to give compiler a single bounds check and u32 load
+        if let Some(chunk) = self.data.get(self.position..self.position + 4) {
+            let bytes: [u8; 4] = chunk.try_into().unwrap();
             let word = u32::from_be_bytes(bytes);
 
             // Check if any byte is 0xFF using SWAR

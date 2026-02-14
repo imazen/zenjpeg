@@ -16,13 +16,22 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
 fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+    // Noise+patches pattern (realistic AC coefficient distribution)
     let mut data = vec![0u8; (width * height * 3) as usize];
+    let mut rng: u32 = 0xDEADBEEF;
     for y in 0..height as usize {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
-            data[idx] = ((x * 255) / width as usize) as u8;
-            data[idx + 1] = ((y * 255) / height as usize) as u8;
-            data[idx + 2] = 128;
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            let noise = ((rng >> 16) & 0xFF) as u8;
+            let patch_x = (x / 64) & 3;
+            let patch_y = (y / 64) & 3;
+            let base = ((patch_x * 64 + patch_y * 32) & 255) as u8;
+            data[idx] = base.wrapping_add(noise >> 2);
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            data[idx + 1] = base.wrapping_add(((rng >> 16) & 0x3F) as u8);
+            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+            data[idx + 2] = (255 - base).wrapping_add(((rng >> 16) & 0x1F) as u8);
         }
     }
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
