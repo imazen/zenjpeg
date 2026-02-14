@@ -26,7 +26,6 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into_partial;
 
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
-use super::parallel::should_use_parallel;
 use super::rst_scan::compute_segments;
 use super::{ChromaUpsampling, DecodeWarning, Strictness};
 
@@ -34,8 +33,30 @@ use super::parser::JpegParser;
 
 use rayon::prelude::*;
 
+/// Minimum restart segments to justify parallel overhead.
+const MIN_SEGMENTS: usize = 4;
+
+/// Minimum total MCUs to justify parallel decode.
+const MIN_BLOCKS: usize = 1024;
+
 /// Minimum grouped segments to justify parallel overhead.
 const MIN_FUSED_SEGMENTS: usize = 4;
+
+/// Check if parallel decode should be used for this image.
+pub(super) fn should_use_parallel(
+    restart_interval: u16,
+    total_mcus: usize,
+    num_rst_markers: usize,
+) -> bool {
+    if restart_interval == 0 {
+        return false;
+    }
+    let num_segments = num_rst_markers + 1;
+    if num_segments < MIN_SEGMENTS {
+        return false;
+    }
+    total_mcus >= MIN_BLOCKS
+}
 
 /// Result of a fused decode function: (result, ac_overflow, invalid_huffman, truncation_mcu, padding_error, total_mcus)
 type FusedDecodeResult = Result<(FusedResult, bool, bool, Option<u32>, bool, u32)>;
