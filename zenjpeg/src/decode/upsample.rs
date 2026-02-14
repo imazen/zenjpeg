@@ -223,6 +223,40 @@ pub fn upsample_h2v2_i16_fancy(
     upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
 }
 
+/// Like [`upsample_h2v2_i16_fancy`] but reuses a caller-provided scratch buffer
+/// to avoid re-zeroing a `[0i16; 4096]` stack array on every call.
+///
+/// The scratch buffer must have length >= `in_width`. Its contents are overwritten
+/// by the vertical pass before the horizontal pass reads them, so it does NOT
+/// need to be zeroed between calls.
+pub fn upsample_h2v2_i16_fancy_reuse_scratch(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+    scratch: &mut [i16],
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            upsample_h2v2_i16_fancy_avx2_with_scratch(
+                token, input, in_width, in_height, output, out_width, out_height, scratch,
+            );
+            return;
+        }
+    }
+
+    // Scalar fallback (doesn't use scratch buffer)
+    upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
+}
+
 /// Triangle filter 2x2 upsampling with explicit strides (for SIMD-aligned buffers).
 ///
 /// Same algorithm as `upsample_h2v2_i16_fancy` but supports buffers where
@@ -663,6 +697,181 @@ fn upsample_h2v2_i16_fancy_avx2(
             );
             safe_simd::_mm256_storeu_si256(
                 <&mut [i16; 16]>::try_from(&mut out_row[out_offset + 16..out_offset + 32]).unwrap(),
+                v_out1,
+            );
+        }
+
+        // Scalar remainder for horizontal pass
+        let processed_in = 1 + h_chunks * 16;
+        for in_x in processed_in..in_width.saturating_sub(1) {
+            let out_x = in_x * 2;
+            if out_x + 1 >= out_width {
+                break;
+            }
+
+            let prev = scratch[in_x - 1] as i32;
+            let curr = scratch[in_x] as i32;
+            let next = scratch[in_x + 1] as i32;
+
+            out_row[out_x] = ((3 * curr + prev + 2) >> 2) as i16;
+            out_row[out_x + 1] = ((3 * curr + next + 2) >> 2) as i16;
+        }
+
+        // Edge: last input pixel
+        if in_width >= 1 {
+            let last_in = in_width - 1;
+            let last_out = last_in * 2;
+            let curr = scratch[last_in] as i32;
+            let prev = if last_in > 0 {
+                scratch[last_in - 1] as i32
+            } else {
+                curr
+            };
+
+            if last_out < out_width {
+                out_row[last_out] = ((3 * curr + prev + 2) >> 2) as i16;
+            }
+            if last_out + 1 < out_width {
+                out_row[last_out + 1] = curr as i16;
+            }
+        }
+    }
+}
+
+/// AVX2 triangle-filter 2x2 upsample using a caller-provided scratch buffer.
+///
+/// Same algorithm as `upsample_h2v2_i16_fancy_avx2` but avoids allocating and
+/// zeroing a `[0i16; 4096]` stack array on each call. The scratch buffer is
+/// written by the vertical pass before the horizontal pass reads it, so it
+/// does not need zeroing between calls.
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[arcane]
+fn upsample_h2v2_i16_fancy_avx2_with_scratch(
+    _token: archmage::X64V3Token,
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+    scratch_storage: &mut [i16],
+) {
+    use core::arch::x86_64::*;
+
+    if in_width > scratch_storage.len() {
+        // Fall back to scalar for inputs larger than scratch
+        upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
+        return;
+    }
+
+    let scratch = &mut scratch_storage[..in_width];
+
+    let v_three = _mm256_set1_epi16(3);
+    let v_two = _mm256_set1_epi16(2);
+
+    // Process each output row
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let is_top_half = out_y % 2 == 0;
+
+        let v_neighbor_y = if is_top_half {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let curr_row = &input[in_y * in_width..][..in_width];
+        let v_neighbor_row = &input[v_neighbor_y * in_width..][..in_width];
+        let out_row = &mut output[out_y * out_width..][..out_width];
+
+        // Pass 1: Vertical interpolation (3*curr + neighbor + 2) >> 2
+        let chunks = in_width / 16;
+        for i in 0..chunks {
+            let offset = i * 16;
+            let v_curr = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&curr_row[offset..offset + 16]).unwrap(),
+            );
+            let v_neighbor = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&v_neighbor_row[offset..offset + 16]).unwrap(),
+            );
+
+            let v_result = _mm256_srai_epi16(
+                _mm256_add_epi16(
+                    _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_neighbor),
+                    v_two,
+                ),
+                2,
+            );
+
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut scratch[offset..offset + 16]).unwrap(),
+                v_result,
+            );
+        }
+
+        // Scalar remainder for vertical pass
+        for x in (chunks * 16)..in_width {
+            let c = curr_row[x] as i32;
+            let n = v_neighbor_row[x] as i32;
+            scratch[x] = ((3 * c + n + 2) >> 2) as i16;
+        }
+
+        // Pass 2: Horizontal 2x upsampling from scratch to output
+        // Edge: first two output pixels
+        if out_width >= 1 {
+            out_row[0] = scratch[0];
+        }
+        if out_width >= 2 && in_width > 1 {
+            let curr = scratch[0] as i32;
+            let next = scratch[1] as i32;
+            out_row[1] = ((3 * curr + next + 2) >> 2) as i16;
+        }
+
+        // Interior: SIMD processing
+        let h_chunks = (in_width.saturating_sub(2)) / 16;
+
+        for chunk in 0..h_chunks {
+            let in_offset = chunk * 16 + 1;
+            let out_offset = 2 + chunk * 32;
+
+            if out_offset + 32 > out_width {
+                break;
+            }
+
+            let v_prev = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset - 1..in_offset + 15]).unwrap(),
+            );
+            let v_curr = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset..in_offset + 16]).unwrap(),
+            );
+            let v_next = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset + 1..in_offset + 17]).unwrap(),
+            );
+
+            // 3*curr + 2
+            let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
+
+            // Even outputs: (3*curr + prev + 2) >> 2
+            let v_even = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_prev), 2);
+
+            // Odd outputs: (3*curr + next + 2) >> 2
+            let v_odd = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_next), 2);
+
+            // Interleave even and odd
+            let v_lo = _mm256_unpacklo_epi16(v_even, v_odd);
+            let v_hi = _mm256_unpackhi_epi16(v_even, v_odd);
+
+            // Fix lane order
+            let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20);
+            let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
+
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut out_row[out_offset..out_offset + 16]).unwrap(),
+                v_out0,
+            );
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut out_row[out_offset + 16..out_offset + 32])
+                    .unwrap(),
                 v_out1,
             );
         }
