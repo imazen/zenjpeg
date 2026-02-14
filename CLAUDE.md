@@ -655,6 +655,12 @@ sensitivity tables, and preset baselines.
 
 ## Planned Features / TODO
 
+### Make archmage-simd mandatory (not a feature flag)
+
+Move `archmage`, `magetypes`, and `safe_unaligned_simd` from optional to required dependencies.
+Remove the `archmage-simd` feature flag and all `#[cfg(feature = "archmage-simd")]` gates.
+SIMD should always be compiled in — there's no reason to support a non-SIMD build.
+
 ### Needs Heavy Analysis: CMA-ES auto_optimize() (2026-02-04)
 
 Merged from `feat/formula-optimization`. Adds `EncoderConfig::auto_optimize()` with CMA-ES
