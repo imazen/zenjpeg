@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-wide = "0.7"
+wide = "1.1"
 multiversion = "0.7"
 
 # Portable timing that works on native and WASM
