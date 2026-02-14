@@ -175,10 +175,12 @@ fn encode_config(
         EncoderConfig::xyb(quality as f32, XybSubsampling::BQuarter)
             .progressive(progressive)
             .optimize_huffman(optimize)
+            .restart_mcu_rows(0) // Disable restart markers to match locked hashes
     } else {
         EncoderConfig::ycbcr(quality as f32, subsamp)
             .progressive(progressive)
             .optimize_huffman(optimize)
+            .restart_mcu_rows(0) // Disable restart markers to match locked hashes
     };
 
     let mut enc = config

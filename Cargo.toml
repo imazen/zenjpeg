@@ -87,6 +87,7 @@ zencodec-types = { path = "../zencodec-types" }
 # Published crates
 butteraugli = "0.4"
 mozjpeg-rs = "0.5.3"
+mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
 
 # Metadata crates (for integration testing)
 kamadak-exif = "0.6"

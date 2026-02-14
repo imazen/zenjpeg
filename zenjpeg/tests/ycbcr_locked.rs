@@ -248,7 +248,8 @@ fn encode_jpeg(
 ) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality as f32, subsampling)
         .optimize_huffman(true)
-        .progressive(progressive);
+        .progressive(progressive)
+        .restart_mcu_rows(0); // Disable restart markers to match locked hashes
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

@@ -347,20 +347,19 @@ impl Default for BitWriter {
 /// Bit reader for JPEG decoding.
 ///
 /// Reads bits with byte unstuffing (0xFF 0x00 -> 0xFF).
-/// Uses dual 64-bit buffers for optimized peek/read operations:
-/// - `bit_buffer`: Bottom-aligned (LSB) for building up
-/// - `aligned_buffer`: Top-aligned (MSB at bit 63) for fast peek operations
+/// Single MSB-aligned 64-bit buffer for optimized peek/read operations.
+/// Valid bits are packed at the top (MSBs). Consumed bits shift out left,
+/// new bits are OR'd into freed positions on the right during refill.
 #[derive(Debug)]
 pub struct BitReader<'a> {
     /// Input data
     data: &'a [u8],
     /// Current byte position
     position: usize,
-    /// Bottom-aligned bit buffer (bits in low positions)
-    bit_buffer: u64,
-    /// Top-aligned bit buffer (MSB at bit 63) for fast peek operations
+    /// Top-aligned bit buffer (MSB at bit 63) for fast peek operations.
+    /// Valid bits at positions [63..64-bits_in_buffer], lower positions are 0.
     aligned_buffer: u64,
-    /// Number of bits in buffer (0-64)
+    /// Number of valid bits in buffer (0-64)
     bits_in_buffer: u8,
     /// Whether we've hit a marker
     marker_found: Option<u8>,
@@ -372,7 +371,6 @@ pub struct BitReader<'a> {
 #[derive(Clone, Copy)]
 pub struct BitReaderState {
     position: usize,
-    bit_buffer: u64,
     aligned_buffer: u64,
     bits_in_buffer: u8,
     marker_found: Option<u8>,
@@ -410,7 +408,6 @@ impl<'a> BitReader<'a> {
         Self {
             data,
             position: 0,
-            bit_buffer: 0,
             aligned_buffer: 0,
             bits_in_buffer: 0,
             marker_found: None,
@@ -465,21 +462,11 @@ impl<'a> BitReader<'a> {
         Some(byte)
     }
 
-    /// Sync aligned_buffer from bit_buffer.
-    /// Call after modifying bit_buffer to keep both in sync.
-    #[inline(always)]
-    fn sync_aligned(&mut self) {
-        self.aligned_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
-            self.bit_buffer << (64 - self.bits_in_buffer)
-        } else if self.bits_in_buffer == 64 {
-            self.bit_buffer
-        } else {
-            0
-        };
-    }
-
     /// Refills the bit buffer to have at least 32 bits.
     /// Uses fast 4-byte path when no 0xFF bytes are present.
+    ///
+    /// Single-buffer design: new bytes are OR'd directly into the freed
+    /// positions of aligned_buffer (which are always 0 after left-shifts).
     #[inline(always)]
     pub fn refill(&mut self) -> Result<bool> {
         // Only refill if we have fewer than 32 bits
@@ -487,43 +474,26 @@ impl<'a> BitReader<'a> {
             return Ok(true);
         }
 
-        // Reconstruct bit_buffer from aligned_buffer.
-        // This handles lazy sync from read_bit_refine() which only updates aligned_buffer.
-        // Cost: one right-shift, amortized over 32+ bits consumed between refills.
-        self.bit_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
-            self.aligned_buffer >> (64 - self.bits_in_buffer)
-        } else if self.bits_in_buffer == 64 {
-            self.aligned_buffer
-        } else {
-            0
-        };
-
-        // If we've found a marker or are overreading, extend with zeros
+        // If we've found a marker or are overreading, extend with zeros.
+        // The freed positions in aligned_buffer are already 0 (from left-shifts),
+        // so we just claim more bits without modifying the buffer.
         if self.marker_found.is_some() || self.overread_by > 0 {
-            // Shift in zeros (important: actually fill with zeros, not just claim more bits)
-            self.bit_buffer <<= 32;
             self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
-            self.sync_aligned();
             return Ok(true);
         }
 
         // Try fast 4-byte path (no 0xFF bytes)
-        if self.position + 4 <= self.data.len() {
-            let bytes = [
-                self.data[self.position],
-                self.data[self.position + 1],
-                self.data[self.position + 2],
-                self.data[self.position + 3],
-            ];
+        // Use get() + try_into to give compiler a single bounds check and u32 load
+        if let Some(chunk) = self.data.get(self.position..self.position + 4) {
+            let bytes: [u8; 4] = chunk.try_into().unwrap();
             let word = u32::from_be_bytes(bytes);
 
             // Check if any byte is 0xFF using SWAR
             if !has_byte_0xff_u32(word) {
-                // No 0xFF - fast path
+                // No 0xFF - fast path: OR new word into freed positions
                 self.position += 4;
-                self.bit_buffer = (self.bit_buffer << 32) | (word as u64);
+                self.aligned_buffer |= (word as u64) << (32 - self.bits_in_buffer);
                 self.bits_in_buffer += 32;
-                self.sync_aligned();
                 return Ok(true);
             }
             // Has 0xFF - fall through to slow path
@@ -533,7 +503,7 @@ impl<'a> BitReader<'a> {
         while self.bits_in_buffer <= 56 {
             match self.read_byte_slow() {
                 Some(byte) => {
-                    self.bit_buffer = (self.bit_buffer << 8) | (byte as u64);
+                    self.aligned_buffer |= (byte as u64) << (56 - self.bits_in_buffer);
                     self.bits_in_buffer += 8;
                 }
                 None => break,
@@ -542,7 +512,6 @@ impl<'a> BitReader<'a> {
                 break;
             }
         }
-        self.sync_aligned();
         Ok(self.bits_in_buffer > 0)
     }
 
@@ -551,11 +520,7 @@ impl<'a> BitReader<'a> {
     /// Returns 0 or 1 as i32. Returns 0 when buffer is exhausted (safe for
     /// refinement — a 0 bit means "don't modify coefficient").
     ///
-    /// Only updates `aligned_buffer` and `bits_in_buffer` — leaves `bit_buffer`
-    /// stale. This is safe because `refill()` reconstructs `bit_buffer` from
-    /// `aligned_buffer` before use. Other methods (`skip_bits_fast`, `drop_bits`,
-    /// etc.) keep both in sync, so mixing fast and normal reads is safe as long
-    /// as `refill()` is called before any normal reads after `read_bit_refine()`.
+    /// Only updates `aligned_buffer` and `bits_in_buffer`.
     #[inline(always)]
     pub fn read_bit_refine(&mut self) -> i32 {
         if self.bits_in_buffer == 0 {
@@ -612,7 +577,6 @@ impl<'a> BitReader<'a> {
     }
 
     /// Skip bits without any checks. Only call after successful peek.
-    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     pub fn skip_bits_fast(&mut self, count: u8) {
         self.bits_in_buffer -= count;
@@ -621,7 +585,6 @@ impl<'a> BitReader<'a> {
 
     /// Read bits without refill. Only call when you know enough bits are available.
     /// Returns the bits and consumes them.
-    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     pub fn read_bits_fast(&mut self, count: u8) -> u32 {
         let bits = (self.aligned_buffer >> (64 - count)) as u32;
@@ -677,7 +640,6 @@ impl<'a> BitReader<'a> {
     }
 
     /// Drops `count` bits from the buffer.
-    /// bit_buffer is left stale — refill() reconstructs it from aligned_buffer.
     #[inline(always)]
     fn drop_bits(&mut self, count: u8) {
         self.bits_in_buffer = self.bits_in_buffer.saturating_sub(count);
@@ -729,21 +691,10 @@ impl<'a> BitReader<'a> {
     }
 
     /// Saves the current reader state for potential rollback.
-    /// Reconstructs bit_buffer from aligned_buffer (may be stale from lazy-sync reads).
     #[must_use]
     pub fn save_state(&self) -> BitReaderState {
-        // Reconstruct bit_buffer from aligned_buffer since drop_bits/skip_bits_fast
-        // leave bit_buffer stale (only aligned_buffer is authoritative).
-        let bit_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
-            self.aligned_buffer >> (64 - self.bits_in_buffer)
-        } else if self.bits_in_buffer == 64 {
-            self.aligned_buffer
-        } else {
-            0
-        };
         BitReaderState {
             position: self.position,
-            bit_buffer,
             aligned_buffer: self.aligned_buffer,
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
@@ -754,7 +705,6 @@ impl<'a> BitReader<'a> {
     /// Restores a previously saved state.
     pub fn restore_state(&mut self, state: BitReaderState) {
         self.position = state.position;
-        self.bit_buffer = state.bit_buffer;
         self.aligned_buffer = state.aligned_buffer;
         self.bits_in_buffer = state.bits_in_buffer;
         self.marker_found = state.marker_found;

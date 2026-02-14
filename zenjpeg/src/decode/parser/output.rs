@@ -39,11 +39,12 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
-    dequantize_unzigzag_i32_partial, DequantBiasStats,
+    dequantize_unzigzag_i32_into_partial, DequantBiasStats,
 };
 use crate::types::PixelFormat;
 use enough::Stop;
 
+use super::super::upsample::MAX_UPSAMPLE_SCRATCH;
 use super::{CompInfo, JpegParser};
 
 /// Returns true for formats that decode via the RGB u8 fast paths
@@ -242,6 +243,9 @@ impl<'a> JpegParser<'a> {
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
         // Process MCU row by row
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
         for imcu_row in 0..mcu_rows {
             // No need to clear strips - we write all pixels we'll read
 
@@ -280,8 +284,12 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs,
+                                quant,
+                                &mut dequant_i32,
+                                coeff_count,
+                            );
                             match chroma_upsampling {
                                 super::super::ChromaUpsampling::LibjpegCompat => {
                                     idct_int_tiered_libjpeg(
@@ -358,7 +366,8 @@ impl<'a> JpegParser<'a> {
         use crate::decode::upsample::{
             upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
             upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-            upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+            upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
+            upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
         // Select IDCT function based on compatibility mode
@@ -498,10 +507,19 @@ impl<'a> JpegParser<'a> {
         // Helper: IDCT one chroma strip into rows 1..c_strip_height+1 of ext buffer.
         // Then replicate the last valid chroma row to fill any remaining data rows
         // (needed when the image ends before a full MCU row of chroma).
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
         let idct_chroma_strip =
-            |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64]| {
+            |ext: &mut [i16],
+             comp_idx: usize,
+             imcu_row: usize,
+             quant: &[u16; 64],
+             dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
                 let info = &comp_infos[comp_idx];
                 let data_offset = c_strip_width; // skip context row 0
+                let comp_coeffs = &self.coeffs[comp_idx];
+                let comp_counts = &self.coeff_counts[comp_idx];
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -510,13 +528,15 @@ impl<'a> JpegParser<'a> {
                     }
                     let strip_row = iy * DCT_SIZE;
 
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[comp_idx].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[comp_idx][block_idx];
-                        let coeff_count = self.coeff_counts[comp_idx][block_idx];
+                    // Pre-slice the row of blocks to eliminate per-block bounds checks
+                    let row_start = by * info.comp_blocks_h;
+                    let row_end = (row_start + info.comp_blocks_h).min(comp_coeffs.len());
+                    let row_coeffs = &comp_coeffs[row_start..row_end];
+                    let row_counts = &comp_counts[row_start..row_end];
+
+                    for (bx, (coeffs, &coeff_count)) in
+                        row_coeffs.iter().zip(row_counts).enumerate()
+                    {
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = data_offset + strip_row * c_strip_width + base_px;
 
@@ -524,10 +544,14 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut ext[dst_offset..], c_strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs,
+                                quant,
+                                dequant_buf,
+                                coeff_count,
+                            );
                             idct_fn(
-                                &mut dequant_i32,
+                                dequant_buf,
                                 &mut ext[dst_offset..],
                                 c_strip_width,
                                 coeff_count,
@@ -556,18 +580,29 @@ impl<'a> JpegParser<'a> {
             };
 
         // IDCT strip 0 into ext_a
-        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb);
-        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr);
+        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb, &mut dequant_i32);
+        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr, &mut dequant_i32);
 
         // IDCT strip 1 into ext_b (if exists)
         if mcu_rows > 1 {
-            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb);
-            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr);
+            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb, &mut dequant_i32);
+            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr, &mut dequant_i32);
         }
 
         // Set above context for first strip: edge replication (copy first data row)
         ext_cb_a.copy_within(c_strip_width..2 * c_strip_width, 0);
         ext_cr_a.copy_within(c_strip_width..2 * c_strip_width, 0);
+
+        // Pre-allocate scratch buffer for upsample — reused across all MCU rows
+        // to avoid re-zeroing [0i16; 4096] on every upsample call (saves ~3M instr/decode).
+        // Only used for h2v2 triangle-filter path; the scratch is written by the vertical
+        // pass before the horizontal pass reads it, so it doesn't need re-zeroing.
+        let use_scratch_upsample = needs_full_upsample
+            && h_ratio == 2
+            && v_ratio == 2
+            && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+            && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
+        let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
         for imcu_row in 0..mcu_rows {
             // Set below context for current strip (ext_a)
@@ -595,6 +630,8 @@ impl<'a> JpegParser<'a> {
             // IDCT Y blocks (full resolution)
             {
                 let info = &comp_infos[0];
+                let y_coeffs = &self.coeffs[0];
+                let y_counts = &self.coeff_counts[0];
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -603,13 +640,15 @@ impl<'a> JpegParser<'a> {
                     }
                     let strip_row = iy * DCT_SIZE;
 
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[0].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[0][block_idx];
-                        let coeff_count = self.coeff_counts[0][block_idx];
+                    // Pre-slice the row of blocks to eliminate per-block bounds checks
+                    let row_start = by * info.comp_blocks_h;
+                    let row_end = (row_start + info.comp_blocks_h).min(y_coeffs.len());
+                    let row_coeffs = &y_coeffs[row_start..row_end];
+                    let row_counts = &y_counts[row_start..row_end];
+
+                    for (bx, (coeffs, &coeff_count)) in
+                        row_coeffs.iter().zip(row_counts).enumerate()
+                    {
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * y_strip_width + base_px;
 
@@ -617,8 +656,12 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant_y[0] as i32;
                             idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant_y, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs,
+                                quant_y,
+                                &mut dequant_i32,
+                                coeff_count,
+                            );
                             idct_fn(
                                 &mut dequant_i32,
                                 &mut y_strip[dst_offset..],
@@ -657,22 +700,45 @@ impl<'a> JpegParser<'a> {
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
-                upsample_fn(
-                    &ext_cb_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cb_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
-                upsample_fn(
-                    &ext_cr_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cr_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
+                if use_scratch_upsample {
+                    // Fast path: reuse scratch buffer to avoid per-call [0i16; 4096] zeroing
+                    upsample_h2v2_i16_fancy_reuse_scratch(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                        &mut upsample_scratch,
+                    );
+                    upsample_h2v2_i16_fancy_reuse_scratch(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                        &mut upsample_scratch,
+                    );
+                } else {
+                    // Generic upsample path (other methods or very wide images)
+                    upsample_fn(
+                        &ext_cb_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cb_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                    upsample_fn(
+                        &ext_cr_a,
+                        c_strip_width,
+                        ext_height,
+                        &mut cr_up,
+                        y_strip_width,
+                        upsample_out_height,
+                    );
+                }
 
                 // Use upsampled rows starting at offset v_ratio (skip context rows)
                 for row in 0..y_rows_this_mcu {
@@ -705,8 +771,8 @@ impl<'a> JpegParser<'a> {
 
                 // IDCT the strip after next into the now-free ext_b
                 if imcu_row + 2 < mcu_rows {
-                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb);
-                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr);
+                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb, &mut dequant_i32);
+                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr, &mut dequant_i32);
                 }
             }
         }
@@ -920,15 +986,8 @@ impl<'a> JpegParser<'a> {
         if is_rgb_family_u8(format) && !is_xyb && !dequant_bias {
             if let Some(fused) = self.fused_result.take() {
                 use super::super::fused_parallel::FusedResult;
-                match fused {
-                    FusedResult::Rgb(rgb) => {
-                        return reformat_rgb_output(rgb, format, width, height);
-                    }
-                    FusedResult::Planes(planes) => {
-                        let rgb = self.convert_from_pixel_planes(planes, chroma_upsampling)?;
-                        return reformat_rgb_output(rgb, format, width, height);
-                    }
-                }
+                let FusedResult(rgb) = fused;
+                return reformat_rgb_output(rgb, format, width, height);
             }
         }
 
@@ -1452,129 +1511,5 @@ impl<'a> JpegParser<'a> {
             core::mem::take(&mut planes_f32[1]),
             core::mem::take(&mut planes_f32[2]),
         ))
-    }
-
-    /// Phase 2 of fused parallel decode: upsample chroma planes + color convert → RGB.
-    ///
-    /// The pixel planes contain IDCT'd values (i16) from phase 1. This method
-    /// upsamples Cb/Cr using the full planes (natural ±1 row context) and
-    /// color converts to RGB in parallel.
-    #[cfg(feature = "parallel")]
-    fn convert_from_pixel_planes(
-        &self,
-        planes: super::super::fused_parallel::PixelPlanes,
-        chroma_upsampling: super::super::ChromaUpsampling,
-    ) -> Result<Vec<u8>> {
-        use super::super::ChromaUpsampling;
-        use crate::decode::upsample::{
-            upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
-            upsample_h2v2_i16_nearest_strided,
-            upsample_h2v1_i16_fancy_strided, upsample_h2v1_i16_libjpeg_strided,
-            upsample_h2v1_i16_nearest_strided,
-            upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
-            upsample_h1v2_i16_nearest_strided,
-        };
-        use rayon::prelude::*;
-
-        let width = self.width as usize;
-        let height = self.height as usize;
-
-        let y_h = self.components[0].h_samp_factor as usize;
-        let y_v = self.components[0].v_samp_factor as usize;
-        let c_h = self.components[1].h_samp_factor as usize;
-        let c_v = self.components[1].v_samp_factor as usize;
-        let h_ratio = y_h / c_h;
-        let v_ratio = y_v / c_v;
-
-        // Select strided upsample function
-        type StridedUpsampleFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
-        let upsample_fn: StridedUpsampleFn = match (h_ratio, v_ratio) {
-            (2, 2) => match chroma_upsampling {
-                ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy_strided,
-                ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg_strided,
-                ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
-            },
-            (2, 1) => match chroma_upsampling {
-                ChromaUpsampling::Triangle => upsample_h2v1_i16_fancy_strided,
-                ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg_strided,
-                ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
-            },
-            (1, 2) => match chroma_upsampling {
-                ChromaUpsampling::Triangle => upsample_h1v2_i16_fancy_strided,
-                ChromaUpsampling::LibjpegCompat => upsample_h1v2_i16_libjpeg_strided,
-                ChromaUpsampling::NearestNeighbor => upsample_h1v2_i16_nearest_strided,
-            },
-            _ => {
-                return Err(Error::internal(
-                    "unsupported subsampling ratio for fused decode",
-                ));
-            }
-        };
-
-        // Upsample Cb and Cr to full-resolution planes
-        let c_in_width = (width + h_ratio - 1) / h_ratio;
-        let c_in_height = (height + v_ratio - 1) / v_ratio;
-
-        let up_size = checked_size_2d(width, height)?;
-        let mut cb_up: Vec<i16> = try_alloc_maybeuninit(up_size, "Cb upsample buffer")?;
-        let mut cr_up: Vec<i16> = try_alloc_maybeuninit(up_size, "Cr upsample buffer")?;
-
-        upsample_fn(
-            &planes.cb,
-            c_in_width,
-            planes.c_stride,
-            c_in_height,
-            &mut cb_up,
-            width,
-            width,
-            height,
-        );
-        upsample_fn(
-            &planes.cr,
-            c_in_width,
-            planes.c_stride,
-            c_in_height,
-            &mut cr_up,
-            width,
-            width,
-            height,
-        );
-
-        // Color convert Y + upsampled Cb/Cr → RGB (parallel by row batch)
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "fused planes RGB output")?;
-
-        let rgb_row_bytes = width * 3;
-        let batch_rows = 16; // Process 16 rows at a time
-        let batch_rgb_bytes = batch_rows * rgb_row_bytes;
-
-        let rgb_chunks: Vec<&mut [u8]> = rgb.chunks_mut(batch_rgb_bytes).collect();
-
-        rgb_chunks
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(batch_idx, rgb_batch)| {
-                let start_row = batch_idx * batch_rows;
-                let rows_this = batch_rows.min(height - start_row);
-
-                for row in 0..rows_this {
-                    let y_row = start_row + row;
-                    let y_off = y_row * planes.y_stride;
-                    let up_off = y_row * width;
-                    let rgb_off = row * rgb_row_bytes;
-
-                    let y_end = (y_off + width).min(planes.y.len());
-                    let y_slice = &planes.y[y_off..y_end];
-                    let cb_slice = &cb_up[up_off..up_off + width];
-                    let cr_slice = &cr_up[up_off..up_off + width];
-                    let rgb_slice = &mut rgb_batch[rgb_off..rgb_off + width * 3];
-
-                    crate::color::ycbcr_planes_i16_to_rgb_u8(
-                        y_slice, cb_slice, cr_slice, rgb_slice,
-                    );
-                }
-            });
-
-        Ok(rgb)
     }
 }

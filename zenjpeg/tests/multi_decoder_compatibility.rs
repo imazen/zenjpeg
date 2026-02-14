@@ -6,7 +6,7 @@
 //!
 //! Decoders tested:
 //! - zenjpeg (our decoder, 12-bit precision f32 pipeline)
-//! - zune-jpeg (fastest pure Rust decoder, integer IDCT)
+//! - jpeg-decoder (libjpeg-compatible pure Rust decoder)
 //!
 //! Run with:
 //! ```
@@ -131,26 +131,22 @@ fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     }
 }
 
-fn decode_zune_jpeg(data: &[u8]) -> Option<DecoderResult> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
-    use zune_jpeg::JpegDecoder;
-
+fn decode_jpeg_decoder(data: &[u8]) -> Option<DecoderResult> {
     let start = std::time::Instant::now();
-    let cursor = ZCursor::new(data);
-    let mut decoder = JpegDecoder::new(cursor);
+    let mut decoder = jpeg_decoder::Decoder::new(data);
     match decoder.decode() {
         Ok(pixels) => {
-            let (width, height) = decoder.dimensions().unwrap();
+            let info = decoder.info().unwrap();
             Some(DecoderResult {
-                decoder_name: "zune-jpeg".to_string(),
+                decoder_name: "jpeg-decoder".to_string(),
                 pixels,
-                width,
-                height,
+                width: info.width as usize,
+                height: info.height as usize,
                 decode_time_us: start.elapsed().as_micros() as u64,
             })
         }
         Err(e) => {
-            eprintln!("zune-jpeg decode failed: {:?}", e);
+            eprintln!("jpeg-decoder decode failed: {:?}", e);
             None
         }
     }
@@ -203,8 +199,10 @@ fn test_all_decoders(
     let mut results: HashMap<String, (f64, f64, u64)> = HashMap::new();
 
     // Collect all decoder results
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
-        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
+        ("zenjpeg", decode_jpegli),
+        ("jpeg-decoder", decode_jpeg_decoder),
+    ];
 
     let mut decoder_results: Vec<DecoderResult> = Vec::new();
 
@@ -326,7 +324,7 @@ fn test_multi_decoder_compatibility() {
     ];
 
     println!("\n=== Multi-Decoder Compatibility Test ===\n");
-    println!("{:<25} {:>12} {:>12}", "Config", "zenjpeg", "zune-jpeg");
+    println!("{:<25} {:>12} {:>12}", "Config", "zenjpeg", "jpeg-decoder");
     println!("{}", "-".repeat(55));
 
     let mut all_passed = true;
@@ -344,7 +342,7 @@ fn test_multi_decoder_compatibility() {
         let max_allowed = max_butteraugli_for_quality(config.quality);
 
         print!("{:<25}", config.name);
-        for decoder_name in &["zenjpeg", "zune-jpeg"] {
+        for decoder_name in &["zenjpeg", "jpeg-decoder"] {
             if let Some((butteraugli, _, _)) = results.get(*decoder_name) {
                 let status = if *butteraugli <= max_allowed {
                     "OK"
@@ -466,8 +464,10 @@ fn benchmark_decoders() {
     );
 
     let iterations = 50;
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
-        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
+        ("zenjpeg", decode_jpegli),
+        ("jpeg-decoder", decode_jpeg_decoder),
+    ];
 
     for (name, decoder_fn) in &decoder_fns {
         let start = std::time::Instant::now();
@@ -511,8 +511,10 @@ fn test_grayscale_compatibility() {
     println!("\n=== Grayscale Compatibility Test ===\n");
 
     // All decoders should handle RGB that happens to be grayscale
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
-        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
+        ("zenjpeg", decode_jpegli),
+        ("jpeg-decoder", decode_jpeg_decoder),
+    ];
 
     for (name, decoder_fn) in &decoder_fns {
         match decoder_fn(&jpeg_data) {

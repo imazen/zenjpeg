@@ -493,6 +493,15 @@ impl HuffmanDecodeTable {
         }
     }
 
+    /// Returns the fast AC decode table as a fixed-size array reference.
+    /// Using `[i16; 512]` instead of `&[i16]` lets the compiler prove
+    /// that 9-bit indices (0-511) are always in bounds, eliminating
+    /// bounds checks in the decode hot loop.
+    #[inline(always)]
+    pub fn fast_ac_array(&self) -> Option<&[i16; 1 << Self::FAST_BITS]> {
+        self.fast_ac.as_deref()
+    }
+
     /// Slow decode path for codes longer than FAST_BITS.
     /// Input: 16 bits peeked from the top of the buffer.
     /// Uses pre-shifted `maxcode_16bit` for direct comparison without per-iteration shifts.
