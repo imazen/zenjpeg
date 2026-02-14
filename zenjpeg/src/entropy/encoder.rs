@@ -695,8 +695,22 @@ impl<'a> EntropyEncoder<'a> {
     /// # Arguments
     /// * `tokens` - Slice of tokens to replay
     /// * `context_to_table` - Maps context IDs to table indices
-    pub fn write_dc_tokens(&mut self, tokens: &[Token], context_to_table: &[usize]) -> Result<()> {
-        for token in tokens {
+    pub fn write_dc_tokens(
+        &mut self,
+        tokens: &[Token],
+        context_to_table: &[usize],
+        restarts: &[usize],
+    ) -> Result<()> {
+        let mut next_rst = 0;
+
+        for (i, token) in tokens.iter().enumerate() {
+            // Insert restart marker at pre-computed positions.
+            if next_rst < restarts.len() && i == restarts[next_rst] {
+                self.write_restart_marker();
+                self.reset_dc();
+                next_rst += 1;
+            }
+
             let table_idx = context_to_table
                 .get(token.context as usize)
                 .copied()
@@ -711,10 +725,6 @@ impl<'a> EntropyEncoder<'a> {
 
             // Handle symbol not in table (shouldn't happen if tokenization is correct)
             if len == 0 && token.symbol != 0 {
-                // This can happen for very small images where not all DC categories appear.
-                // Fall back to encoding using a longer code that's guaranteed to exist.
-                // For DC, category 0 always exists, so we can't encode missing categories.
-                // This is a limitation - the tokenization should ensure all used symbols exist.
                 return Err(Error::internal(
                     "DC symbol not in Huffman table during replay - histogram may be incomplete",
                 ));
@@ -736,11 +746,24 @@ impl<'a> EntropyEncoder<'a> {
     /// # Arguments
     /// * `tokens` - Slice of tokens to replay
     /// * `table_idx` - AC Huffman table index to use
-    pub fn write_ac_first_tokens(&mut self, tokens: &[Token], table_idx: usize) -> Result<()> {
+    pub fn write_ac_first_tokens(
+        &mut self,
+        tokens: &[Token],
+        table_idx: usize,
+        restarts: &[usize],
+    ) -> Result<()> {
         let ac_table = self.ac_tables[table_idx]
             .ok_or_else(|| Error::internal("AC table not set for token replay"))?;
 
-        for token in tokens {
+        let mut next_rst = 0;
+
+        for (i, token) in tokens.iter().enumerate() {
+            // Insert restart marker at pre-computed positions.
+            if next_rst < restarts.len() && i == restarts[next_rst] {
+                self.write_restart_marker();
+                next_rst += 1;
+            }
+
             // Write the Huffman code for the symbol
             let (code, len) = ac_table.encode(token.symbol);
 
@@ -789,14 +812,21 @@ impl<'a> EntropyEncoder<'a> {
         &mut self,
         scan_info: &ScanTokenInfo,
         table_idx: usize,
+        restarts: &[usize],
     ) -> Result<()> {
         let ac_table = self.ac_tables[table_idx]
             .ok_or_else(|| Error::internal("AC table not set for refinement replay"))?;
 
         let mut refbit_idx = 0;
         let mut eobrun_idx = 0;
+        let mut next_rst = 0;
 
-        for ref_token in &scan_info.ref_tokens {
+        for (i, ref_token) in scan_info.ref_tokens.iter().enumerate() {
+            // Insert restart marker at pre-computed positions.
+            if next_rst < restarts.len() && i == restarts[next_rst] {
+                self.write_restart_marker();
+                next_rst += 1;
+            }
             // For AC refinement, symbols may have sign bit in bit 1:
             // - 0x01 = negative newly-nonzero (run=0)
             // - 0x03 = positive newly-nonzero (run=0)

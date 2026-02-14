@@ -32,6 +32,8 @@ mod config;
 mod extras;
 mod image;
 #[cfg(feature = "parallel")]
+mod fused_parallel;
+#[cfg(feature = "parallel")]
 mod parallel;
 mod parser;
 mod pipeline;
@@ -555,6 +557,7 @@ impl DecodeConfig {
             let num_components = parser.num_components;
 
             // Fully decode the image (scanline reader doesn't support cancellation)
+            parser.chroma_upsampling = self.chroma_upsampling;
             parser.decode(&Unstoppable)?;
 
             // Compute subsampling from sampling factors
@@ -601,6 +604,7 @@ impl DecodeConfig {
             let num_components = parser.num_components;
             let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
 
+            parser.chroma_upsampling = self.chroma_upsampling;
             parser.decode(&Unstoppable)?;
 
             let output_format = if is_grayscale {
@@ -655,6 +659,7 @@ impl DecodeConfig {
 
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.prefer_streaming = false; // Need coefficient storage
+        parser.chroma_upsampling = self.chroma_upsampling;
         parser.decode(&Unstoppable)?;
 
         // Compute MCU height for crop resolution
@@ -799,6 +804,7 @@ impl DecodeConfig {
         {
             parser.prefer_streaming = false;
         }
+        parser.chroma_upsampling = self.chroma_upsampling;
         parser.decode(&stop)?;
 
         // Propagate force_f32_idct from config (set by tests for fair comparison)

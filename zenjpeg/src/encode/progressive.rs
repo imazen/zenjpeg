@@ -119,7 +119,7 @@ impl ComputedConfig {
                     }
                 })
                 .collect();
-            encoder.write_dc_tokens(tokens, &dc_context_map)?;
+            encoder.write_dc_tokens(tokens, &dc_context_map, &scan_info.restarts)?;
         } else if scan.ah == 0 {
             // AC first scan: replay AC tokens
             let (_cluster_idx, slot_id) = ac_scan_slot(
@@ -130,7 +130,7 @@ impl ComputedConfig {
                 ac_slot_ids,
             );
             let tokens = token_buffer.scan_tokens(scan_idx);
-            encoder.write_ac_first_tokens(tokens, slot_id)?;
+            encoder.write_ac_first_tokens(tokens, slot_id, &scan_info.restarts)?;
         } else {
             // AC refinement scan: replay refinement tokens
             let (_cluster_idx, slot_id) = ac_scan_slot(
@@ -143,7 +143,7 @@ impl ComputedConfig {
             if cfg!(debug_assertions) && std::env::var("DUMP_RUST_AC_REFINEMENT").is_ok() {
                 scan_info.debug_dump(scan_idx);
             }
-            encoder.write_ac_refinement_tokens(scan_info, slot_id)?;
+            encoder.write_ac_refinement_tokens(scan_info, slot_id, &scan_info.restarts)?;
         }
 
         Ok(encoder.finish())
@@ -469,7 +469,13 @@ impl ComputedConfig {
                     .collect();
                 let component_indices: Vec<usize> =
                     scan.components.iter().map(|&c| c as usize).collect();
-                token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
+                token_buffer.tokenize_dc_scan(
+                    &blocks,
+                    &component_indices,
+                    scan.al,
+                    scan.ah,
+                    self.restart_interval,
+                );
             } else if scan.ah == 0 {
                 // AC first scan
                 let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
@@ -478,7 +484,14 @@ impl ComputedConfig {
                     2 => cr_blocks,
                     _ => return Err(Error::internal("Invalid component")),
                 };
-                token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
+                token_buffer.tokenize_ac_first_scan(
+                    blocks,
+                    context,
+                    scan.ss,
+                    scan.se,
+                    scan.al,
+                    self.restart_interval,
+                );
             } else {
                 // AC refinement scan
                 let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
@@ -488,7 +501,13 @@ impl ComputedConfig {
                     _ => return Err(Error::internal("Invalid component")),
                 };
                 token_buffer.tokenize_ac_refinement_scan(
-                    blocks, context, scan.ss, scan.se, scan.ah, scan.al,
+                    blocks,
+                    context,
+                    scan.ss,
+                    scan.se,
+                    scan.ah,
+                    scan.al,
+                    self.restart_interval,
                 )?;
             }
         }

@@ -101,22 +101,31 @@ impl<'a> JpegParser<'a> {
             }
             _ => {
                 // Baseline/Extended Huffman modes
-                // Try parallel decode first when restart markers present and image is large enough
+                // Try fused parallel decode first (MCU-row-aligned DRI only)
                 #[cfg(feature = "parallel")]
-                let used_parallel = self.try_decode_scan_parallel(&scan_components)?;
+                let used_fused = self.try_fused_parallel_decode(&scan_components)?;
                 #[cfg(not(feature = "parallel"))]
-                let used_parallel = false;
+                let used_fused = false;
 
-                if !used_parallel {
-                    if self.prefer_streaming
-                        && self.can_use_streaming()
-                        && self.streaming_rgb.is_none()
-                    {
-                        // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
-                        let rgb = self.decode_baseline_streaming_rgb(&scan_components, stop)?;
-                        self.streaming_rgb = Some(rgb);
-                    } else {
-                        self.decode_scan(&scan_components, stop)?;
+                if !used_fused {
+                    // Try regular parallel decode (any DRI)
+                    #[cfg(feature = "parallel")]
+                    let used_parallel = self.try_decode_scan_parallel(&scan_components)?;
+                    #[cfg(not(feature = "parallel"))]
+                    let used_parallel = false;
+
+                    if !used_parallel {
+                        if self.prefer_streaming
+                            && self.can_use_streaming()
+                            && self.streaming_rgb.is_none()
+                        {
+                            // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
+                            let rgb =
+                                self.decode_baseline_streaming_rgb(&scan_components, stop)?;
+                            self.streaming_rgb = Some(rgb);
+                        } else {
+                            self.decode_scan(&scan_components, stop)?;
+                        }
                     }
                 }
             }

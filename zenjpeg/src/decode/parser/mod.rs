@@ -114,6 +114,13 @@ pub(super) struct JpegParser<'a> {
     // Whether to prefer streaming decode (set false for f32 output which needs coefficients)
     pub(super) prefer_streaming: bool,
 
+    /// Fused parallel decode result (entropy + IDCT in one pass).
+    #[cfg(feature = "parallel")]
+    pub(super) fused_result: Option<super::fused_parallel::FusedResult>,
+
+    /// Chroma upsampling method (set from DecodeConfig before decode).
+    pub(super) chroma_upsampling: super::ChromaUpsampling,
+
     // ICC profile (extracted from raw data, not during parsing)
     pub(super) icc_profile: Option<Vec<u8>>,
 
@@ -198,6 +205,9 @@ impl<'a> JpegParser<'a> {
             nonzero_bitmaps: Vec::new(),
             streaming_rgb: None,
             prefer_streaming: true, // Default to streaming for RGB decode
+            #[cfg(feature = "parallel")]
+            fused_result: None,
+            chroma_upsampling: super::ChromaUpsampling::default(),
             icc_profile,
             max_pixels,
             preserve_config,
