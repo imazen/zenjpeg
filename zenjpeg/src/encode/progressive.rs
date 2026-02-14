@@ -608,3 +608,93 @@ impl ComputedConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(feature = "decoder")]
+    fn test_restart_marker_overhead_progressive() {
+        use crate::encode::encoder_config::EncoderConfig;
+        use crate::encode::encoder_types::ChromaSubsampling;
+
+        let width = 512u32;
+        let height = 512u32;
+
+        // Generate a gradient + noise pattern (not a pure gradient, which
+        // produces degenerate DCT coefficients).
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                // Hash-based noise layered on a diagonal gradient
+                let grad = ((x as u32 + y as u32) * 255 / (width + height)) as u8;
+                let noise = ((x.wrapping_mul(31337) ^ y.wrapping_mul(7919))
+                    .wrapping_mul(2654435761)
+                    >> 24) as u8;
+                let r = grad.wrapping_add(noise & 0x1F);
+                let g = grad.wrapping_add((noise >> 2) & 0x1F).wrapping_add(30);
+                let b = grad.wrapping_add((noise >> 4) & 0x1F).wrapping_add(80);
+                pixels.push(rgb::RGB { r, g, b });
+            }
+        }
+
+        let restart_rows_values: &[(u16, &str)] =
+            &[(0, "disabled"), (1, "1 row"), (4, "4 rows (default)"), (8, "8 rows")];
+
+        let mut sizes: Vec<(u16, &str, usize)> = Vec::new();
+
+        for &(rows, label) in restart_rows_values {
+            let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+                .progressive(true)
+                .restart_mcu_rows(rows);
+
+            let jpeg = config.encode(&pixels, width, height).unwrap();
+            let file_size = jpeg.len();
+            sizes.push((rows, label, file_size));
+
+            // Verify the output decodes successfully
+            #[allow(deprecated)]
+            let decoded = crate::decode::Decoder::new()
+                .decode(&jpeg, enough::Unstoppable)
+                .expect(&format!("decode failed for restart_mcu_rows={}", rows));
+            assert_eq!(decoded.width, width);
+            assert_eq!(decoded.height, height);
+            assert_eq!(
+                decoded.pixels_u8().unwrap().len(),
+                (width * height * 3) as usize,
+                "wrong pixel count for restart_mcu_rows={}",
+                rows,
+            );
+        }
+
+        // Print results (visible with --nocapture)
+        let baseline_size = sizes[0].2; // restart disabled
+        eprintln!();
+        eprintln!("Progressive JPEG restart marker overhead (512x512 Q85 4:2:0):");
+        eprintln!("{:<22} {:>8} {:>10}", "Setting", "Bytes", "Overhead");
+        eprintln!("{}", "-".repeat(42));
+        for &(rows, label, size) in &sizes {
+            let overhead_pct = if rows == 0 {
+                0.0
+            } else {
+                (size as f64 - baseline_size as f64) / baseline_size as f64 * 100.0
+            };
+            eprintln!("{:<22} {:>8} {:>+9.3}%", label, size, overhead_pct);
+        }
+        eprintln!();
+
+        // Assert that the default 4-row restart overhead is less than 2%.
+        // Real photographic images see ~0.04% overhead; this synthetic 512x512
+        // test image is worst-case due to its small size (fewer MCUs means each
+        // restart marker is a larger fraction of the total bitstream).
+        let default_size = sizes.iter().find(|s| s.0 == 4).unwrap().2;
+        let default_overhead =
+            (default_size as f64 - baseline_size as f64) / baseline_size as f64 * 100.0;
+        assert!(
+            default_overhead < 2.0,
+            "4-row restart overhead {:.3}% exceeds 2% limit (baseline={}, 4-row={})",
+            default_overhead,
+            baseline_size,
+            default_size,
+        );
+    }
+}
