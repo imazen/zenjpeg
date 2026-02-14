@@ -460,9 +460,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let ac_table =
             self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
-        // Pre-fetch fast_ac slice to avoid Option check in hot loop
-        let fast_ac = ac_table.fast_ac_slice();
-        let has_fast_ac = !fast_ac.is_empty();
+        // Pre-fetch fast_ac as fixed-size array reference to eliminate bounds checks
+        let fast_ac = ac_table.fast_ac_array();
 
         // Smart zeroing: only clear positions written by previous block.
         // This is the zune-jpeg optimization - consecutive blocks have similar sparsity.
@@ -518,10 +517,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             {
                 let idx = bits9 as usize;
 
-                // Try fast AC decode first (combined Huffman + sign extend)
-                // Use direct slice access instead of method call
-                if has_fast_ac {
-                    let fast_ac_entry = fast_ac[idx];
+                // Try fast AC decode first (fixed-size array = no bounds check)
+                if let Some(fast_ac_arr) = fast_ac {
+                    let fast_ac_entry = fast_ac_arr[idx];
                     if fast_ac_entry != 0 {
                         let value = fast_ac_entry >> 8;
                         let run = ((fast_ac_entry >> 4) & 0xF) as usize;
@@ -709,9 +707,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let ac_table =
             self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
-        // Pre-fetch fast_ac slice to avoid Option check in hot loop
-        let fast_ac = ac_table.fast_ac_slice();
-        let has_fast_ac = !fast_ac.is_empty();
+        // Pre-fetch fast_ac as fixed-size array reference to eliminate bounds checks.
+        // Using &[i16; 512] lets the compiler prove 9-bit indices are always valid.
+        let fast_ac = ac_table.fast_ac_array();
 
         // Smart zeroing: only clear positions written by previous block.
         // Caller tracks prev_coeff_count per-component for interleaved MCUs.
@@ -721,11 +719,31 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             coeffs[..clear_len].fill(0);
         }
 
-        // Decode DC coefficient
-        let dc_cat = match decode_huffman_symbol(&mut self.reader, dc_table)? {
-            ScanRead::Value(v) => v,
-            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        // Decode DC coefficient — inline fast path to avoid function call overhead
+        let dc_cat = if let Some(bits9) = self
+            .reader
+            .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+        {
+            let lookup = dc_table.fast_lookup[bits9 as usize];
+            if lookup >= 0 {
+                let symbol = (lookup & 0xFF) as u8;
+                let len = (lookup >> 8) as u8;
+                self.reader.skip_bits_fast(len);
+                symbol
+            } else {
+                // Slow path for long DC codes (rare)
+                match decode_huffman_symbol(&mut self.reader, dc_table)? {
+                    ScanRead::Value(v) => v,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                }
+            }
+        } else {
+            match decode_huffman_symbol(&mut self.reader, dc_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            }
         };
 
         let dc_diff = if dc_cat == 0 {
@@ -756,9 +774,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             {
                 let idx = bits9 as usize;
 
-                // Try fast AC decode first
-                if has_fast_ac {
-                    let fast_ac_entry = fast_ac[idx];
+                // Try fast AC decode first (fixed-size array = no bounds check)
+                if let Some(fast_ac_arr) = fast_ac {
+                    let fast_ac_entry = fast_ac_arr[idx];
                     if fast_ac_entry != 0 {
                         let value = fast_ac_entry >> 8;
                         let run = ((fast_ac_entry >> 4) & 0xF) as usize;

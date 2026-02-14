@@ -75,12 +75,15 @@ pub fn idct_int_dc_only(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
     // Level shift: add 1024 (128 << 3)
     let coeff = wa(wa(dc_coeff, 4), 1024).wrapping_shr(3).clamp(0, 255) as i16;
 
-    // Fill first row, then advance 7 times (8 rows total)
-    let mut out = out_vector;
-    out[..8].fill(coeff);
-    for _ in 0..7 {
-        out = &mut out[stride..];
-        out[..8].fill(coeff);
+    // Single bounds check: ensure the buffer can hold 8 strided rows.
+    // This lets the compiler prove all indexed accesses are in-bounds
+    // and elide per-row bounds checks in the loop below.
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out = &mut out_vector[..min_len];
+    for i in 0..8 {
+        let off = i * stride;
+        out[off..off + 8].fill(coeff);
     }
 }
 
@@ -139,6 +142,11 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
     if is_dc_only_int(in_vector) {
         return idct_int_dc_only(in_vector[0], out_vector, stride);
     }
+
+    // Single bounds check for all strided writes below
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out_vector = &mut out_vector[..min_len];
 
     let mut workspace = [0i32; 64];
 
@@ -534,7 +542,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 ))]
 mod avx2 {
     use super::*;
-    use archmage::arcane;
+    use archmage::{arcane, rite};
 
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
@@ -548,8 +556,7 @@ mod avx2 {
     }
 
     /// Clamp i16 values to [0, 255] range.
-    #[inline]
-    #[arcane]
+    #[rite]
     fn clamp_avx(_token: archmage::X64V3Token, reg: __m256i) -> __m256i {
         let min_s = _mm256_set1_epi16(0);
         let max_s = _mm256_set1_epi16(255);
@@ -558,7 +565,7 @@ mod avx2 {
     }
 
     /// In-register 8x8 transpose for i32 values.
-    #[arcane]
+    #[rite]
     fn transpose_8x8_i32(
         _token: archmage::X64V3Token,
         v0: &mut __m256i,
@@ -635,6 +642,9 @@ mod avx2 {
         out_vector: &mut [i16],
         stride: usize,
     ) {
+        // Single bounds check for all strided writes (DC-only and full IDCT paths)
+        assert!(out_vector.len() >= stride * 7 + 8);
+
         // Load all 8 rows
         let mut row0 =
             safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
@@ -859,12 +869,16 @@ mod wide_simd {
         // Transpose back to row-major order
         rows = i32x8::transpose(rows);
 
-        // Extract and clamp to output with stride
+        // Extract and clamp to output with stride.
+        // Single bounds check proves all strided writes are in-bounds.
+        let min_len = stride * 7 + 8;
+        assert!(out_vector.len() >= min_len);
+        let out = &mut out_vector[..min_len];
         let mut out_pos = 0;
         for row in &rows {
             let arr = row.to_array();
             for (j, &val) in arr.iter().enumerate() {
-                out_vector[out_pos + j] = val.clamp(0, 255) as i16;
+                out[out_pos + j] = val.clamp(0, 255) as i16;
             }
             out_pos += stride;
         }
@@ -1055,11 +1069,12 @@ pub fn pixels_i16_to_f32_centered(pixels: &[i16; 64]) -> [f32; 64] {
 pub fn idct_int_dc_only_unclamped(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
     let coeff = wa(wa(dc_coeff, 4), 1024).wrapping_shr(3) as i16;
 
-    let mut out = out_vector;
-    out[..8].fill(coeff);
-    for _ in 0..7 {
-        out = &mut out[stride..];
-        out[..8].fill(coeff);
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out = &mut out_vector[..min_len];
+    for i in 0..8 {
+        let off = i * stride;
+        out[off..off + 8].fill(coeff);
     }
 }
 
@@ -1083,12 +1098,15 @@ fn idct_int_wide_unclamped(in_vector: &[i32; 64], out_vector: &mut [i16], stride
     wide_simd::idct_pass(&mut rows, i32x8::splat(SCALE_BITS), 17);
     rows = i32x8::transpose(rows);
 
-    // Store WITHOUT clamping
+    // Store WITHOUT clamping — single bounds check for all strided writes
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out = &mut out_vector[..min_len];
     let mut out_pos = 0;
     for row in &rows {
         let arr = row.to_array();
         for (j, &val) in arr.iter().enumerate() {
-            out_vector[out_pos + j] = val as i16;
+            out[out_pos + j] = val as i16;
         }
         out_pos += stride;
     }
@@ -1100,6 +1118,11 @@ pub fn idct_int_libjpeg_unclamped(
     out_vector: &mut [i16],
     stride: usize,
 ) {
+    // Single bounds check for all strided writes below
+    let min_len = stride * 7 + 8;
+    assert!(out_vector.len() >= min_len);
+    let out_vector = &mut out_vector[..min_len];
+
     // Same butterfly as idct_int_libjpeg, but without clamping.
     // We reuse the column pass (which writes to workspace), then do the row pass
     // with unclamped output.

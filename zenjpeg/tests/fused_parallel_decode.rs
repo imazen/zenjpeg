@@ -24,9 +24,8 @@ fn generate_test_pixels(width: u32, height: u32) -> Vec<rgb::RGB<u8>> {
             // Mix of gradients, noise, and sharp edges
             let block_x = x / 8;
             let block_y = y / 8;
-            let hash = ((block_x.wrapping_mul(17) ^ block_y.wrapping_mul(31)) as u8).wrapping_add(
-                (x.wrapping_mul(7) ^ y.wrapping_mul(13)) as u8,
-            );
+            let hash = ((block_x.wrapping_mul(17) ^ block_y.wrapping_mul(31)) as u8)
+                .wrapping_add((x.wrapping_mul(7) ^ y.wrapping_mul(13)) as u8);
 
             let r = if x < width / 3 {
                 (y * 255 / height) as u8
@@ -120,7 +119,8 @@ fn assert_pixels_equal(fused: &[u8], sequential: &[u8], label: &str) {
         }
     }
     assert_eq!(
-        diff_count, 0,
+        diff_count,
+        0,
         "{}: {} pixel differences (max_diff={}, first at byte {})",
         label,
         diff_count,
@@ -174,7 +174,7 @@ fn test_fused_420_nearest_correctness() {
 }
 
 // ============================================================================
-// Test: 4:2:0 + Triangle (two-phase fused: planes → upsample+CC)
+// Test: 4:2:0 + Triangle (single-pass fused with extended chroma strips)
 // ============================================================================
 
 #[test]
@@ -281,4 +281,104 @@ fn test_non_aligned_dri_fallback() {
     let result2 = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&result1, &result2, "no DRI (sequential only)");
+}
+
+// ============================================================================
+// Hash-lock tests: multi-size fused vs sequential byte-identical parity
+//
+// Tests at 256, 512, 1024, 2048 (MCU-aligned) and 513x513, 1000x1000
+// (non-MCU-aligned) to catch edge cases in segment boundary handling,
+// partial MCU rows, and chroma context.
+// ============================================================================
+
+/// Test fused vs sequential at multiple sizes with DRI=1.
+/// This catches boundary fixup issues that only manifest at certain
+/// segment counts or image dimensions.
+#[test]
+fn test_hashlock_multisize_triangle_dri1() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+        assert_pixels_equal(
+            &fused,
+            &sequential,
+            &format!("4:2:0 Triangle DRI=1 {w}x{h}"),
+        );
+    }
+}
+
+/// Multi-size with DRI=4 (fewer, larger segments — different boundary pattern).
+#[test]
+fn test_hashlock_multisize_triangle_dri4() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+        assert_pixels_equal(
+            &fused,
+            &sequential,
+            &format!("4:2:0 Triangle DRI=4 {w}x{h}"),
+        );
+    }
+}
+
+/// Non-MCU-aligned dimensions test partial MCU rows at image edges.
+/// 513 = 32*16 + 1 (1 pixel past MCU boundary for 4:2:0)
+/// 1000 = 62*16 + 8 (half MCU past boundary)
+#[test]
+fn test_hashlock_non_mcu_aligned_triangle() {
+    for (w, h) in [(513, 513), (1000, 1000), (257, 129), (1023, 767)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+        assert_pixels_equal(
+            &fused,
+            &sequential,
+            &format!("4:2:0 Triangle non-aligned {w}x{h}"),
+        );
+    }
+}
+
+/// LibjpegCompat upsampling multi-size parity.
+#[test]
+fn test_hashlock_multisize_libjpeg_compat() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::LibjpegCompat);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::LibjpegCompat);
+        assert_pixels_equal(&fused, &sequential, &format!("4:2:0 LibjpegCompat {w}x{h}"));
+    }
+}
+
+/// NearestNeighbor multi-size (box filter path, always single-pass).
+#[test]
+fn test_hashlock_multisize_nearest() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::NearestNeighbor);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::NearestNeighbor);
+        assert_pixels_equal(
+            &fused,
+            &sequential,
+            &format!("4:2:0 NearestNeighbor {w}x{h}"),
+        );
+    }
+}
+
+/// 4:4:4 multi-size parity.
+#[test]
+fn test_hashlock_multisize_444() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+        assert_pixels_equal(&fused, &sequential, &format!("4:4:4 {w}x{h}"));
+    }
 }

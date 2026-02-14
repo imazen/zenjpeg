@@ -1380,7 +1380,6 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
     use core::arch::x86_64::*;
 
     let len = y_plane.len();
-    let chunks = len / 16;
 
     // Preload constants outside the loop
     let bias = _mm256_set1_epi16(128);
@@ -1414,20 +1413,18 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         -1, 0, 0, -1, 0,
     );
 
-    for chunk in 0..chunks {
-        let in_offset = chunk * 16;
-        let out_offset = chunk * 48;
-
+    // Use chunks_exact to let the compiler prove slice lengths, eliminating bounds checks.
+    // Input: 3 planes of i16, chunked by 16. Output: interleaved RGB u8, chunked by 48.
+    let y_chunks = y_plane.chunks_exact(16);
+    let remainder_len = y_chunks.remainder().len();
+    for ((y_chunk, cb_chunk), (cr_chunk, rgb_chunk)) in y_chunks
+        .zip(cb_plane.chunks_exact(16))
+        .zip(cr_plane.chunks_exact(16).zip(rgb.chunks_exact_mut(48)))
+    {
         let (y_vec, cb_vec, cr_vec) = (
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&y_plane[in_offset..in_offset + 16]).unwrap(),
-            ),
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&cb_plane[in_offset..in_offset + 16]).unwrap(),
-            ),
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(&cr_plane[in_offset..in_offset + 16]).unwrap(),
-            ),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap()),
         );
 
         // Subtract 128 from Cb and Cr
@@ -1514,18 +1511,16 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
         // Store 48 bytes (16 pixels * 3 channels)
-        safe_simd::_mm256_storeu_si256(
-            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
-            rgb0,
-        );
+        let (rgb_lo, rgb_hi) = rgb_chunk.split_at_mut(32);
+        safe_simd::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(rgb_lo).unwrap(), rgb0);
         safe_simd::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
+            <&mut [u8; 16]>::try_from(rgb_hi).unwrap(),
             _mm256_castsi256_si128(rgb1),
         );
     }
 
     // Handle remainder with scalar
-    let remainder_start = chunks * 16;
+    let remainder_start = len - remainder_len;
     for i in remainder_start..len {
         let y_val = i32::from(y_plane[i]);
         let cb_val = i32::from(cb_plane[i]) - 128;

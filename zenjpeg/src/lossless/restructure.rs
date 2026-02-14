@@ -16,9 +16,7 @@ use crate::foundation::consts::{
 use crate::huffman::optimize::{ContextConfig, ProgressiveTokenBuffer};
 use enough::Stop;
 
-use super::coeff_transform::{
-    transform_coefficients, TransformConfig, TransformedCoefficients,
-};
+use super::coeff_transform::{transform_coefficients, TransformConfig, TransformedCoefficients};
 use super::pipeline::{
     component_to_blocks, encode_from_coefficients, write_dri, write_marker_segment,
     write_quant_tables,
@@ -121,9 +119,7 @@ pub fn restructure(
     let preserved = extras.as_ref().map(|e| e.segments());
 
     match config.output_mode {
-        OutputMode::Sequential => {
-            encode_from_coefficients(&coeffs, preserved, restart_mcus, &stop)
-        }
+        OutputMode::Sequential => encode_from_coefficients(&coeffs, preserved, restart_mcus, &stop),
         OutputMode::Progressive => {
             encode_progressive_from_coefficients(&coeffs, preserved, restart_mcus, &stop)
         }
@@ -151,8 +147,7 @@ fn compute_restart_interval(
 
             // Luma blocks_wide / max_h_samp = MCU columns
             let luma = &components[0];
-            let mcus_wide =
-                (luma.blocks_wide + max_h_samp - 1) / max_h_samp;
+            let mcus_wide = (luma.blocks_wide + max_h_samp - 1) / max_h_samp;
 
             let mcus_per_interval = mcus_wide * rows as usize;
             mcus_per_interval.min(u16::MAX as usize) as u16
@@ -167,10 +162,7 @@ fn compute_restart_interval(
 /// - DC first (interleaved for 4:4:4, non-interleaved for subsampled)
 /// - AC 1-2 full precision per component
 /// - AC 3-63 with successive approximation (Al=2 → 1 → 0)
-fn jpegli_scan_script(
-    num_components: usize,
-    is_subsampled: bool,
-) -> Vec<ProgressiveScan> {
+fn jpegli_scan_script(num_components: usize, is_subsampled: bool) -> Vec<ProgressiveScan> {
     let mut scans = Vec::new();
 
     // DC scans
@@ -264,11 +256,8 @@ fn encode_progressive_from_coefficients(
     };
 
     // Convert to block arrays
-    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> = coeffs
-        .components
-        .iter()
-        .map(component_to_blocks)
-        .collect();
+    let all_blocks: Vec<Vec<[i16; DCT_BLOCK_SIZE]>> =
+        coeffs.components.iter().map(component_to_blocks).collect();
 
     stop.check()?;
 
@@ -282,8 +271,7 @@ fn encode_progressive_from_coefficients(
     );
 
     // ========== PASS 1: TOKENIZATION ==========
-    let mut token_buffer =
-        ProgressiveTokenBuffer::new(num_components, context_config.num_contexts);
+    let mut token_buffer = ProgressiveTokenBuffer::new(num_components, context_config.num_contexts);
 
     for (scan_idx, scan) in scans.iter().enumerate() {
         let context = if scan.ss == 0 && scan.se == 0 {
@@ -329,9 +317,8 @@ fn encode_progressive_from_coefficients(
     stop.check()?;
 
     // ========== WRITE JPEG STRUCTURE ==========
-    let mut output = Vec::with_capacity(
-        all_blocks.iter().map(|b| b.len()).sum::<usize>() * 32 + 2048,
-    );
+    let mut output =
+        Vec::with_capacity(all_blocks.iter().map(|b| b.len()).sum::<usize>() * 32 + 2048);
 
     // SOI
     output.push(0xFF);
@@ -417,12 +404,7 @@ fn encode_progressive_from_coefficients(
 }
 
 /// Write SOF2 (progressive) frame header using actual component IDs.
-fn write_sof2(
-    output: &mut Vec<u8>,
-    width: u32,
-    height: u32,
-    components: &[ComponentCoefficients],
-) {
+fn write_sof2(output: &mut Vec<u8>, width: u32, height: u32, components: &[ComponentCoefficients]) {
     let num_components = components.len();
     let len = 2 + 1 + 2 + 2 + 1 + num_components * 3;
 

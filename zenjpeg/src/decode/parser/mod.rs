@@ -530,6 +530,10 @@ impl<'a> JpegParser<'a> {
                 MARKER_DHT => self.parse_huffman_table()?,
                 MARKER_DAC => self.parse_dac()?,
                 MARKER_DRI => self.parse_restart_interval()?,
+                // Stray restart markers between scans — some encoders write a
+                // trailing RST after the final MCU interval. These are standalone
+                // 2-byte markers with no length field, so just skip them.
+                0xD0..=0xD7 => {}
                 MARKER_EOI => {
                     // Validate that we have a valid height (either from SOF or DNL)
                     if self.height == 0 {

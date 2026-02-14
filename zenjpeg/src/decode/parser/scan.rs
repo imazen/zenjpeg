@@ -108,24 +108,15 @@ impl<'a> JpegParser<'a> {
                 let used_fused = false;
 
                 if !used_fused {
-                    // Try regular parallel decode (any DRI)
-                    #[cfg(feature = "parallel")]
-                    let used_parallel = self.try_decode_scan_parallel(&scan_components)?;
-                    #[cfg(not(feature = "parallel"))]
-                    let used_parallel = false;
-
-                    if !used_parallel {
-                        if self.prefer_streaming
-                            && self.can_use_streaming()
-                            && self.streaming_rgb.is_none()
-                        {
-                            // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
-                            let rgb =
-                                self.decode_baseline_streaming_rgb(&scan_components, stop)?;
-                            self.streaming_rgb = Some(rgb);
-                        } else {
-                            self.decode_scan(&scan_components, stop)?;
-                        }
+                    if self.prefer_streaming
+                        && self.can_use_streaming()
+                        && self.streaming_rgb.is_none()
+                    {
+                        // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
+                        let rgb = self.decode_baseline_streaming_rgb(&scan_components, stop)?;
+                        self.streaming_rgb = Some(rgb);
+                    } else {
+                        self.decode_scan(&scan_components, stop)?;
                     }
                 }
             }
@@ -251,6 +242,52 @@ impl<'a> JpegParser<'a> {
         let mut had_padding_error = false;
         let mut truncation_mcu: Option<u32> = None;
 
+        // Pre-compute per-component invariants outside the MCU loop.
+        // These values are constant for the entire scan but were being recomputed
+        // per MCU × per component (~1.5M times), costing ~57M instructions.
+        struct CompScanInfo {
+            comp_idx: usize,
+            dc_table: usize,
+            ac_table: usize,
+            h_samp: usize,
+            v_samp: usize,
+            comp_blocks_h: usize,
+            actual_blocks_h: usize,
+            actual_blocks_v: usize,
+            is_single_component_oversample: bool,
+            has_any_padding: bool,
+        }
+        let comp_scan_infos: Vec<CompScanInfo> = scan_components
+            .iter()
+            .map(|(comp_idx, dc_table, ac_table)| {
+                let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                let comp_blocks_h = mcu_cols * h_samp;
+                let comp_width =
+                    (self.width as usize * h_samp + max_h_samp as usize - 1) / max_h_samp as usize;
+                let comp_height =
+                    (self.height as usize * v_samp + max_v_samp as usize - 1) / max_v_samp as usize;
+                let actual_blocks_h = (comp_width + 7) / 8;
+                let actual_blocks_v = (comp_height + 7) / 8;
+                let is_single_component_oversample =
+                    scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
+                let has_any_padding =
+                    actual_blocks_h < comp_blocks_h || actual_blocks_v < mcu_rows * v_samp;
+                CompScanInfo {
+                    comp_idx: *comp_idx,
+                    dc_table: *dc_table as usize,
+                    ac_table: *ac_table as usize,
+                    h_samp,
+                    v_samp,
+                    comp_blocks_h,
+                    actual_blocks_h,
+                    actual_blocks_v,
+                    is_single_component_oversample,
+                    has_any_padding,
+                }
+            })
+            .collect();
+
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
             if stop.should_stop() {
@@ -272,42 +309,30 @@ impl<'a> JpegParser<'a> {
                     prev_coeff_counts = [64; 4];
                 }
 
-                // For each component in the scan
-                for (comp_idx, dc_table, ac_table) in scan_components {
-                    let h_samp = self.components[*comp_idx].h_samp_factor as usize;
-                    let v_samp = self.components[*comp_idx].v_samp_factor as usize;
-                    let comp_blocks_h = mcu_cols * h_samp;
-
-                    // Calculate actual content dimensions for this component
-                    // Some encoders omit padding blocks beyond the image bounds
-                    let comp_width = (self.width as usize * h_samp + max_h_samp as usize - 1)
-                        / max_h_samp as usize;
-                    let comp_height = (self.height as usize * v_samp + max_v_samp as usize - 1)
-                        / max_v_samp as usize;
-                    let actual_blocks_h = (comp_width + 7) / 8;
-                    let actual_blocks_v = (comp_height + 7) / 8;
-
-                    // For single-component images with unusual sampling (grayscale with h/v > 1),
-                    // some encoders omit padding blocks entirely. Detect this case.
-                    let is_single_component_oversample =
-                        scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
+                // For each component in the scan (using pre-computed invariants)
+                for info in &comp_scan_infos {
+                    // Hoist block coordinate base outside v/h loops
+                    let base_block_x = mcu_x * info.h_samp;
+                    let base_block_y = mcu_y * info.v_samp;
 
                     // Decode all blocks for this component in this MCU
-                    for v in 0..v_samp {
-                        for h in 0..h_samp {
-                            let block_x = mcu_x * h_samp + h;
-                            let block_y = mcu_y * v_samp + v;
-                            let block_idx = block_y * comp_blocks_h + block_x;
+                    for v in 0..info.v_samp {
+                        let block_y = base_block_y + v;
+                        for h in 0..info.h_samp {
+                            let block_x = base_block_x + h;
+                            let block_idx = block_y * info.comp_blocks_h + block_x;
 
-                            // Check if this block is beyond actual image bounds (padding)
-                            let is_padding =
-                                block_x >= actual_blocks_h || block_y >= actual_blocks_v;
+                            // Check if this block is beyond actual image bounds (padding).
+                            // Skip the check entirely for MCU-aligned components (no padding possible).
+                            let is_padding = info.has_any_padding
+                                && (block_x >= info.actual_blocks_h
+                                    || block_y >= info.actual_blocks_v);
 
-                            if is_padding && is_single_component_oversample {
+                            if is_padding && info.is_single_component_oversample {
                                 // Single-component with oversampling: skip padding blocks
                                 // These encoders typically omit them
-                                self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                self.coeff_counts[*comp_idx][block_idx] = 1; // DC-only (zeros)
+                                self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                self.coeff_counts[info.comp_idx][block_idx] = 1; // DC-only (zeros)
                                 continue;
                             }
 
@@ -320,11 +345,11 @@ impl<'a> JpegParser<'a> {
                                 if self.strictness == Strictness::Strict {
                                     // Strict: require padding blocks, propagate errors
                                     let count = match decoder.decode_block_into(
-                                        &mut self.coeffs[*comp_idx][block_idx],
-                                        prev_coeff_counts[*comp_idx],
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
+                                        &mut self.coeffs[info.comp_idx][block_idx],
+                                        prev_coeff_counts[info.comp_idx],
+                                        info.comp_idx,
+                                        info.dc_table,
+                                        info.ac_table,
                                     )? {
                                         ScanRead::Value(c) => c,
                                         ScanRead::EndOfScan | ScanRead::Truncated => {
@@ -333,34 +358,34 @@ impl<'a> JpegParser<'a> {
                                             ));
                                         }
                                     };
-                                    self.coeff_counts[*comp_idx][block_idx] = count;
-                                    prev_coeff_counts[*comp_idx] = count;
+                                    self.coeff_counts[info.comp_idx][block_idx] = count;
+                                    prev_coeff_counts[info.comp_idx] = count;
                                 } else {
                                     // Balanced/Lenient: speculative decoding with recovery
                                     let saved_state = decoder.save_state();
                                     match decoder.decode_block_into(
-                                        &mut self.coeffs[*comp_idx][block_idx],
-                                        prev_coeff_counts[*comp_idx],
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
+                                        &mut self.coeffs[info.comp_idx][block_idx],
+                                        prev_coeff_counts[info.comp_idx],
+                                        info.comp_idx,
+                                        info.dc_table,
+                                        info.ac_table,
                                     ) {
                                         Ok(ScanRead::Value(count)) => {
-                                            self.coeff_counts[*comp_idx][block_idx] = count;
-                                            prev_coeff_counts[*comp_idx] = count;
+                                            self.coeff_counts[info.comp_idx][block_idx] = count;
+                                            prev_coeff_counts[info.comp_idx] = count;
                                         }
                                         Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
                                             decoder.restore_state(saved_state);
-                                            self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                            self.coeff_counts[*comp_idx][block_idx] = 1;
-                                            prev_coeff_counts[*comp_idx] = 64;
+                                            self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                            self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                            prev_coeff_counts[info.comp_idx] = 64;
                                             had_padding_error = true;
                                         }
                                         Err(_e) => {
                                             decoder.restore_state(saved_state);
-                                            self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                            self.coeff_counts[*comp_idx][block_idx] = 1;
-                                            prev_coeff_counts[*comp_idx] = 64;
+                                            self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                            self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                            prev_coeff_counts[info.comp_idx] = 64;
                                             had_padding_error = true;
                                         }
                                     }
@@ -368,11 +393,11 @@ impl<'a> JpegParser<'a> {
                             } else {
                                 // Non-padding block: decode with strictness-aware truncation handling
                                 let count = match decoder.decode_block_into(
-                                    &mut self.coeffs[*comp_idx][block_idx],
-                                    prev_coeff_counts[*comp_idx],
-                                    *comp_idx,
-                                    *dc_table as usize,
-                                    *ac_table as usize,
+                                    &mut self.coeffs[info.comp_idx][block_idx],
+                                    prev_coeff_counts[info.comp_idx],
+                                    info.comp_idx,
+                                    info.dc_table,
+                                    info.ac_table,
                                 )? {
                                     ScanRead::Value(c) => c,
                                     ScanRead::EndOfScan | ScanRead::Truncated => {
@@ -380,14 +405,14 @@ impl<'a> JpegParser<'a> {
                                         if truncation_mcu.is_none() {
                                             truncation_mcu = Some(mcu_count);
                                         }
-                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
-                                        self.coeff_counts[*comp_idx][block_idx] = 1;
-                                        prev_coeff_counts[*comp_idx] = 64;
+                                        self.coeffs[info.comp_idx][block_idx] = [0i16; 64];
+                                        self.coeff_counts[info.comp_idx][block_idx] = 1;
+                                        prev_coeff_counts[info.comp_idx] = 64;
                                         continue;
                                     }
                                 };
-                                self.coeff_counts[*comp_idx][block_idx] = count;
-                                prev_coeff_counts[*comp_idx] = count;
+                                self.coeff_counts[info.comp_idx][block_idx] = count;
+                                prev_coeff_counts[info.comp_idx] = count;
                             }
                         }
                     }
@@ -690,91 +715,5 @@ impl<'a> JpegParser<'a> {
         }
 
         Ok(rgb)
-    }
-
-    /// Try parallel decode if conditions are met.
-    /// Returns Ok(true) if parallel decode was used, Ok(false) to fall back to serial.
-    #[cfg(feature = "parallel")]
-    pub(super) fn try_decode_scan_parallel(
-        &mut self,
-        scan_components: &[(usize, u8, u8)],
-    ) -> Result<bool> {
-        use super::super::parallel::should_use_parallel;
-        use super::super::rst_scan::scan_rst_markers;
-
-        // Quick checks before doing the SIMD scan
-        if self.restart_interval == 0 {
-            return Ok(false);
-        }
-
-        // Calculate total MCUs
-        let max_h_samp = (0..self.num_components as usize)
-            .map(|i| self.components[i].h_samp_factor)
-            .max()
-            .unwrap_or(1) as usize;
-        let max_v_samp = (0..self.num_components as usize)
-            .map(|i| self.components[i].v_samp_factor)
-            .max()
-            .unwrap_or(1) as usize;
-        let mcu_width = max_h_samp * 8;
-        let mcu_height = max_v_samp * 8;
-        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
-        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
-        let total_mcus = mcu_cols * mcu_rows;
-
-        if total_mcus < 1024 {
-            return Ok(false);
-        }
-
-        // Compute expected RST marker count from DRI for pre-allocation
-        let expected_markers = total_mcus / self.restart_interval as usize;
-
-        // Do the SIMD scan once — result is passed to decode_scan_parallel
-        let scan_data = &self.data[self.position..];
-        let rst_result = scan_rst_markers(scan_data, expected_markers);
-
-        if !should_use_parallel(self.restart_interval, total_mcus, rst_result.markers.len()) {
-            return Ok(false);
-        }
-
-        // Allocate coefficient storage if needed (same as decode_scan)
-        if self.coeffs.is_empty() {
-            for i in 0..self.num_components as usize {
-                let h_samp = self.components[i].h_samp_factor as usize;
-                let v_samp = self.components[i].v_samp_factor as usize;
-                let comp_blocks_h = crate::foundation::alloc::checked_size_2d(mcu_cols, h_samp)?;
-                let comp_blocks_v = crate::foundation::alloc::checked_size_2d(mcu_rows, v_samp)?;
-                let num_blocks =
-                    crate::foundation::alloc::checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs
-                    .push(crate::foundation::alloc::try_alloc_dct_blocks(
-                        num_blocks,
-                        "allocating DCT coefficients (parallel)",
-                    )?);
-                self.coeff_counts.push(vec![64u8; num_blocks]);
-            }
-        }
-
-        // Check for missing DHT and emit warning before parallel decode
-        {
-            let mut any_missing = false;
-            for (_comp_idx, dc_table, ac_table) in scan_components {
-                let dc_idx =
-                    (*dc_table as usize).min(crate::foundation::consts::MAX_HUFFMAN_TABLES - 1);
-                let ac_idx =
-                    (*ac_table as usize).min(crate::foundation::consts::MAX_HUFFMAN_TABLES - 1);
-                if self.dc_tables[dc_idx].is_none() || self.ac_tables[ac_idx].is_none() {
-                    any_missing = true;
-                    break;
-                }
-            }
-            if any_missing {
-                self.warn(super::super::DecodeWarning::MissingHuffmanTables)?;
-            }
-        }
-
-        // Pass the pre-scanned result — no second scan needed
-        self.decode_scan_parallel(scan_components, rst_result)?;
-        Ok(true)
     }
 }

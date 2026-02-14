@@ -2,12 +2,7 @@ use enough::Unstoppable;
 use std::time::Instant;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-fn benchmark(
-    width: usize,
-    height: usize,
-    restart_rows: u16,
-    iterations: usize,
-) -> (f64, usize) {
+fn benchmark(width: usize, height: usize, restart_rows: u16, iterations: usize) -> (f64, usize) {
     // Create test image - moderate complexity
     let mut pixels = vec![0u8; width * height * 3];
     let mut seed = 12345u64;

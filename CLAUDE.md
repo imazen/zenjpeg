@@ -397,6 +397,28 @@ Progressive beats zune at ≤1024, within 9% at 4096.
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
 
+### Parallel Decode (2026-02-14, `--features parallel`)
+
+Fused parallel decode: entropy decode + IDCT + color convert in one pass per
+restart segment using rayon. Requires MCU-row-aligned DRI (default `restart_mcu_rows=4`).
+
+**Wall-clock baseline 4:2:0 + Triangle (default), commit 872561d:**
+
+| Size | mozjpeg | zune | zenjpeg parallel | vs mozjpeg | vs sequential |
+|------|---------|------|-----------------|------------|---------------|
+| 256 | 207µs | 186µs | 184µs | 1.1x | ~1.0x |
+| 512 | 720µs | 779µs | 683µs | 1.1x | 1.6x |
+| 1024 | 3.01ms | 3.08ms | 1.35ms | **2.2x** | **2.3x** |
+| 2048 | 13.31ms | 12.91ms | 2.69ms | **4.9x** | **4.8x** |
+| 4096 | 78.1ms | 78.7ms | 38.5ms | **2.0x** | N/A |
+
+Three fused paths: 4:4:4/gray (single-pass), 4:2:0+box (single-pass), 4:2:0+fancy
+(single-pass with double-buffered extended chroma strips + boundary fixup). All
+produce byte-identical output to sequential path (16 hash-lock tests verify this).
+
+Previous broken approach (two-phase full-image planes) was 2-2.5x *slower* than
+sequential. Fixed by replacing with strip-based single-pass in commit 872561d.
+
 ### Dequantization Bias (2026-02-06)
 
 `Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases
@@ -654,6 +676,12 @@ sensitivity tables, and preset baselines.
 - See `docs/TUNING_HISTORY.md` for older fixed bugs.
 
 ## Planned Features / TODO
+
+### Make archmage-simd mandatory (not a feature flag)
+
+Move `archmage`, `magetypes`, and `safe_unaligned_simd` from optional to required dependencies.
+Remove the `archmage-simd` feature flag and all `#[cfg(feature = "archmage-simd")]` gates.
+SIMD should always be compiled in — there's no reason to support a non-SIMD build.
 
 ### Needs Heavy Analysis: CMA-ES auto_optimize() (2026-02-04)
 
