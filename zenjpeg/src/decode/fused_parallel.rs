@@ -8,9 +8,10 @@
 //!
 //! - **4:4:4 / grayscale**: Single pass — decode → IDCT → color convert → RGB
 //! - **4:2:0 + NearestNeighbor**: Single pass — decode → IDCT → fused box upsample+CC → RGB
-//! - **4:2:0 + fancy upsample**: Two phases:
-//!   1. Parallel decode → IDCT → write to Y/Cb/Cr pixel planes
-//!   2. Parallel upsample + color convert → RGB (full ±1 row context available)
+//! - **4:2:0 + fancy upsample**: Single pass with double-buffered extended chroma strips.
+//!   Each thread processes MCU rows with a 1-row lag for ±1 chroma context. Boundary
+//!   fixup pass after all threads complete corrects the 2 rows per segment junction
+//!   where edge replication was used.
 //!
 //! ## Adaptive Segment Grouping
 //!
@@ -61,25 +62,8 @@ pub(super) fn should_use_parallel(
 /// Result of a fused decode function: (result, ac_overflow, invalid_huffman, truncation_mcu, padding_error, total_mcus)
 type FusedDecodeResult = Result<(FusedResult, bool, bool, Option<u32>, bool, u32)>;
 
-/// IDCT'd pixel planes for the two-phase subsampled path.
-#[allow(dead_code)]
-pub(super) struct PixelPlanes {
-    pub y: Vec<i16>,
-    pub cb: Vec<i16>,
-    pub cr: Vec<i16>,
-    pub y_stride: usize,
-    pub c_stride: usize,
-    pub y_height: usize,
-    pub c_height: usize,
-}
-
-/// Result of fused parallel decode.
-pub(super) enum FusedResult {
-    /// Single-pass: already converted to RGB (4:4:4, grayscale, box-filter 4:2:0)
-    Rgb(Vec<u8>),
-    /// Two-phase: IDCT'd planes ready for upsample + color convert
-    Planes(PixelPlanes),
-}
+/// Result of fused parallel decode — always single-pass RGB.
+pub(super) struct FusedResult(pub Vec<u8>);
 
 /// Warnings collected from a single segment decode.
 struct SegmentWarnings {
@@ -215,8 +199,16 @@ impl<'a> JpegParser<'a> {
                 group_stride,
             )?
         } else {
-            // 4:2:0 + fancy upsample — two-phase
-            self.decode_fused_subsampled_planes(
+            // 4:2:0 + fancy upsample — single-pass with extended chroma strips
+            // Only handle h2v2 (2:1 horizontal, 2:1 vertical); fall through for rare modes
+            let y_h = self.components[0].h_samp_factor as usize;
+            let y_v = self.components[0].v_samp_factor as usize;
+            let c_h = self.components[1].h_samp_factor as usize;
+            let c_v = self.components[1].v_samp_factor as usize;
+            if y_h / c_h != 2 || y_v / c_v != 2 {
+                return Ok(false); // Fall through to sequential for non-h2v2
+            }
+            self.decode_fused_subsampled_fancy(
                 scan_components,
                 scan_data,
                 &seg_starts,
@@ -585,7 +577,7 @@ impl<'a> JpegParser<'a> {
             Self::aggregate_fused_warnings(seg_warnings)?;
 
         Ok((
-            FusedResult::Rgb(rgb),
+            FusedResult(rgb),
             any_ac,
             any_huff,
             first_trunc,
@@ -808,7 +800,7 @@ impl<'a> JpegParser<'a> {
             Self::aggregate_fused_warnings(seg_warnings)?;
 
         Ok((
-            FusedResult::Rgb(rgb),
+            FusedResult(rgb),
             any_ac,
             any_huff,
             first_trunc,
@@ -817,12 +809,18 @@ impl<'a> JpegParser<'a> {
         ))
     }
 
-    /// Two-phase fused decode for subsampled + fancy upsample.
+    /// Single-pass fused decode for subsampled + fancy upsample (h2v2 only).
     ///
-    /// Phase 1: Parallel entropy decode → dequant → IDCT → write to Y/Cb/Cr planes.
-    /// Phase 2: Upsample + color convert in output.rs (convert_from_pixel_planes).
+    /// Each thread uses double-buffered extended chroma strips (c_strip_height + 2
+    /// rows) with a 1-MCU-row lag: decode MCU row N+1, then output MCU row N
+    /// using N+1's first chroma row as below context. At segment boundaries,
+    /// edge replication is used (identical to image-edge behavior).
+    ///
+    /// After all segments complete, a sequential fixup pass corrects the 2
+    /// pixel rows per segment junction where edge replication differed from the
+    /// real adjacent chroma, achieving exact parity with the sequential path.
     #[allow(clippy::too_many_arguments)]
-    fn decode_fused_subsampled_planes(
+    fn decode_fused_subsampled_fancy(
         &self,
         scan_components: &[(usize, u8, u8)],
         scan_data: &[u8],
@@ -831,35 +829,52 @@ impl<'a> JpegParser<'a> {
         num_segments: usize,
         mcu_cols: usize,
         mcu_rows: usize,
-        _max_h_samp: usize,
-        _max_v_samp: usize,
+        max_h_samp: usize,
+        max_v_samp: usize,
         ri: usize,
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
     ) -> FusedDecodeResult {
-        let _width = self.width as usize;
-        let _height = self.height as usize;
+        use super::upsample::{
+            upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
+            upsample_h2v2_i16_libjpeg, upsample_row_h2_fancy_bilinear,
+        };
+
+        let width = self.width as usize;
+        let height = self.height as usize;
         let total_mcus = mcu_cols * mcu_rows;
 
         let y_h = self.components[0].h_samp_factor as usize;
         let y_v = self.components[0].v_samp_factor as usize;
-        let c_h = self.components[1].h_samp_factor as usize;
+        let _c_h = self.components[1].h_samp_factor as usize;
         let c_v = self.components[1].v_samp_factor as usize;
 
-        // Plane dimensions (MCU-padded)
-        let y_stride = mcu_cols * y_h * 8;
-        let y_height = mcu_rows * y_v * 8;
-        let c_stride = mcu_cols * c_h * 8;
-        let c_height = mcu_rows * c_v * 8;
+        let mcu_pixel_height = max_v_samp * 8;
+        let v_ratio = y_v / c_v; // 2 for h2v2
 
-        let y_plane_size = checked_size_2d(y_stride, y_height)?;
-        let c_plane_size = checked_size_2d(c_stride, c_height)?;
+        // Strip dimensions for one MCU row
+        let y_strip_width = mcu_cols * y_h * 8;
+        let y_strip_height = y_v * 8;
+        let c_strip_width = mcu_cols * self.components[1].h_samp_factor as usize * 8;
+        let c_strip_height = c_v * 8;
+
+        let ext_height = c_strip_height + 2;
 
         // Select IDCT function
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
             ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
             _ => idct_int_tiered,
         };
+
+        // Select upsample function
+        type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
+        let upsample_fn: UpsampleFn = match chroma_upsampling {
+            ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg,
+            _ => upsample_h2v2_i16_fancy,
+        };
+        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+            && c_strip_width <= 4096;
+        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::Triangle);
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 
@@ -881,39 +896,36 @@ impl<'a> JpegParser<'a> {
             .map(|ci| self.components[ci].v_samp_factor as usize)
             .collect();
 
-        // Allocate planes
-        let mut y_plane: Vec<i16> = try_alloc_maybeuninit(y_plane_size, "fused Y plane")?;
-        let mut cb_plane: Vec<i16> = try_alloc_maybeuninit(c_plane_size, "fused Cb plane")?;
-        let mut cr_plane: Vec<i16> = try_alloc_maybeuninit(c_plane_size, "fused Cr plane")?;
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "fused fancy RGB output")?;
 
-        // Compute rows per segment for splitting planes
+        let rgb_row_bytes = width * 3;
         let mcu_rows_per_ri = ri / mcu_cols;
         let mcu_rows_per_seg = mcu_rows_per_ri * group_stride;
+        let pixel_rows_per_seg = mcu_rows_per_seg * mcu_pixel_height;
+        let seg_rgb_bytes = pixel_rows_per_seg * rgb_row_bytes;
 
-        let y_rows_per_seg = mcu_rows_per_seg * y_v * 8;
-        let c_rows_per_seg = mcu_rows_per_seg * c_v * 8;
+        let rgb_chunks: Vec<&mut [u8]> = rgb.chunks_mut(seg_rgb_bytes).collect();
 
-        let y_pixels_per_seg = y_rows_per_seg * y_stride;
-        let c_pixels_per_seg = c_rows_per_seg * c_stride;
+        let upsample_out_height = ext_height * v_ratio;
+        let upsample_out_size = upsample_out_height * y_strip_width;
+        let y_cols_this_image = width.min(y_strip_width);
 
-        // Split planes into per-segment slices
-        let y_chunks: Vec<&mut [i16]> = y_plane.chunks_mut(y_pixels_per_seg).collect();
-        let cb_chunks: Vec<&mut [i16]> = cb_plane.chunks_mut(c_pixels_per_seg).collect();
-        let cr_chunks: Vec<&mut [i16]> = cr_plane.chunks_mut(c_pixels_per_seg).collect();
+        // Boundary data saved per segment for the fixup pass
+        struct SegmentBoundary {
+            first_cb_row: Vec<i16>,
+            first_cr_row: Vec<i16>,
+            last_cb_row: Vec<i16>,
+            last_cr_row: Vec<i16>,
+            first_y_row: Vec<i16>,
+            last_y_row: Vec<i16>,
+        }
 
-        // Zip into (y, cb, cr) per segment
-        let plane_chunks: Vec<(&mut [i16], &mut [i16], &mut [i16])> = y_chunks
-            .into_iter()
-            .zip(cb_chunks)
-            .zip(cr_chunks)
-            .map(|((y, cb), cr)| (y, cb, cr))
-            .collect();
-
-        // Parallel phase 1: decode + IDCT into planes
-        let seg_warnings: Vec<Result<SegmentWarnings>> = plane_chunks
+        // Parallel decode + IDCT + upsample + color convert
+        let results: Vec<Result<(SegmentWarnings, SegmentBoundary)>> = rgb_chunks
             .into_par_iter()
             .enumerate()
-            .map(|(seg_idx, (y_seg, cb_seg, cr_seg))| {
+            .map(|(seg_idx, rgb_chunk)| {
                 let seg_start = seg_starts[seg_idx];
                 let seg_end = seg_ends[seg_idx];
                 let seg_data = &scan_data[seg_start..seg_end];
@@ -930,100 +942,410 @@ impl<'a> JpegParser<'a> {
                 let mut truncation_mcu: Option<u32> = None;
                 let had_padding_error = false;
 
-                // Segment's first MCU row
+                // Double-buffered Y strips (one MCU row each)
+                let y_strip_size = y_strip_width * y_strip_height;
+                let mut y_strip_a: Vec<i16> = vec![0i16; y_strip_size];
+                let mut y_strip_b: Vec<i16> = vec![0i16; y_strip_size];
+
+                // Double-buffered extended chroma strips
+                let ext_size = ext_height * c_strip_width;
+                let mut ext_cb_a: Vec<i16> = vec![0i16; ext_size];
+                let mut ext_cb_b: Vec<i16> = vec![0i16; ext_size];
+                let mut ext_cr_a: Vec<i16> = vec![0i16; ext_size];
+                let mut ext_cr_b: Vec<i16> = vec![0i16; ext_size];
+
+                // Upsampled chroma output
+                let mut cb_up: Vec<i16> = vec![0i16; upsample_out_size];
+                let mut cr_up: Vec<i16> = vec![0i16; upsample_out_size];
+
+                // Scratch for Triangle upsample
+                let mut upsample_scratch = [0i16; 4096];
+
+                // Boundary data to save
+                let mut boundary = SegmentBoundary {
+                    first_cb_row: vec![0i16; c_strip_width],
+                    first_cr_row: vec![0i16; c_strip_width],
+                    last_cb_row: vec![0i16; c_strip_width],
+                    last_cr_row: vec![0i16; c_strip_width],
+                    first_y_row: vec![0i16; y_strip_width],
+                    last_y_row: vec![0i16; y_strip_width],
+                };
+
                 let first_mcu_row = mcu_start / mcu_cols;
+                let last_mcu_idx = (mcu_end - 1).max(mcu_start);
+                let last_mcu_row = last_mcu_idx / mcu_cols;
+                let seg_mcu_rows = last_mcu_row - first_mcu_row + 1;
+                let seg_first_pixel_row = first_mcu_row * mcu_pixel_height;
 
-                for mcu_idx in mcu_start..mcu_end {
-                    let mcu_row = mcu_idx / mcu_cols;
-                    let mcu_col = mcu_idx % mcu_cols;
+                // Helper closure: upsample extended chroma strip and color convert
+                // one MCU row to RGB output
+                let upsample_and_output =
+                    |mcu_row: usize,
+                     y_strip: &[i16],
+                     ext_cb: &[i16],
+                     ext_cr: &[i16],
+                     cb_up: &mut [i16],
+                     cr_up: &mut [i16],
+                     scratch: &mut [i16; 4096],
+                     rgb_chunk: &mut [u8]| {
+                        if use_scratch_upsample {
+                            upsample_h2v2_i16_fancy_reuse_scratch(
+                                ext_cb, c_strip_width, ext_height,
+                                cb_up, y_strip_width, upsample_out_height,
+                                scratch,
+                            );
+                            upsample_h2v2_i16_fancy_reuse_scratch(
+                                ext_cr, c_strip_width, ext_height,
+                                cr_up, y_strip_width, upsample_out_height,
+                                scratch,
+                            );
+                        } else {
+                            upsample_fn(
+                                ext_cb, c_strip_width, ext_height,
+                                cb_up, y_strip_width, upsample_out_height,
+                            );
+                            upsample_fn(
+                                ext_cr, c_strip_width, ext_height,
+                                cr_up, y_strip_width, upsample_out_height,
+                            );
+                        }
 
-                    for (_sc_idx, (comp_idx, dc_table, ac_table)) in scan_comps.iter().enumerate()
-                    {
-                        let h_samp = comp_h_samps[*comp_idx];
-                        let v_samp = comp_v_samps[*comp_idx];
+                        let pixel_row_start =
+                            (mcu_row * mcu_pixel_height).saturating_sub(seg_first_pixel_row);
+                        let pixel_rows_this =
+                            mcu_pixel_height.min(height.saturating_sub(mcu_row * mcu_pixel_height));
 
-                        let (seg_slice, stride) = match *comp_idx {
-                            0 => (&mut *y_seg, y_stride),
-                            1 => (&mut *cb_seg, c_stride),
-                            _ => (&mut *cr_seg, c_stride),
-                        };
+                        for row in 0..pixel_rows_this {
+                            let y_off = row * y_strip_width;
+                            let up_row = v_ratio + row;
+                            let chroma_off = up_row * y_strip_width;
+                            let rgb_off = (pixel_row_start + row) * rgb_row_bytes;
+                            if rgb_off + y_cols_this_image * 3 > rgb_chunk.len() {
+                                break;
+                            }
+                            crate::color::ycbcr_planes_i16_to_rgb_u8(
+                                &y_strip[y_off..y_off + y_cols_this_image],
+                                &cb_up[chroma_off..chroma_off + y_cols_this_image],
+                                &cr_up[chroma_off..chroma_off + y_cols_this_image],
+                                &mut rgb_chunk[rgb_off..rgb_off + y_cols_this_image * 3],
+                            );
+                        }
+                    };
 
-                        for v in 0..v_samp {
-                            for h in 0..h_samp {
-                                let count = match decoder.decode_block_into(
-                                    &mut coeffs_buf,
-                                    prev_coeff_count,
-                                    *comp_idx,
-                                    *dc_table as usize,
-                                    *ac_table as usize,
-                                ) {
-                                    Ok(ScanRead::Value(c)) => c,
-                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                        if truncation_mcu.is_none() {
-                                            truncation_mcu = Some(mcu_idx as u32);
+                // Process MCU rows with 1-row lag for chroma context
+                for local_row in 0..seg_mcu_rows {
+                    let mcu_row = first_mcu_row + local_row;
+                    let row_mcu_start = mcu_row * mcu_cols;
+                    let row_mcu_end = ((mcu_row + 1) * mcu_cols).min(mcu_end);
+
+                    // Decode all MCUs in this row into b buffers
+                    // Y blocks → y_strip_b, chroma blocks → ext_cb_b/ext_cr_b data region
+                    for mcu_idx in row_mcu_start..row_mcu_end {
+                        let mcu_col = mcu_idx % mcu_cols;
+
+                        for (sc_idx, (comp_idx, dc_table, ac_table)) in
+                            scan_comps.iter().enumerate()
+                        {
+                            let h_samp = comp_h_samps[*comp_idx];
+                            let v_samp = comp_v_samps[*comp_idx];
+
+                            for v in 0..v_samp {
+                                for h in 0..h_samp {
+                                    let count = match decoder.decode_block_into(
+                                        &mut coeffs_buf,
+                                        prev_coeff_count,
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    ) {
+                                        Ok(ScanRead::Value(c)) => c,
+                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                            if truncation_mcu.is_none() {
+                                                truncation_mcu = Some(mcu_idx as u32);
+                                            }
+                                            coeffs_buf = [0i16; 64];
+                                            1
                                         }
-                                        coeffs_buf = [0i16; 64];
-                                        1
-                                    }
-                                    Err(e) => return Err(e),
-                                };
-                                prev_coeff_count = count;
+                                        Err(e) => return Err(e),
+                                    };
+                                    prev_coeff_count = count;
 
-                                // Compute position within the segment slice
-                                let block_x = mcu_col * h_samp * 8 + h * 8;
-                                let block_y =
-                                    (mcu_row - first_mcu_row) * v_samp * 8 + v * 8;
-                                let off = block_y * stride + block_x;
+                                    if sc_idx == 0 {
+                                        // Y block → y_strip_b
+                                        let block_px = mcu_col * h_samp * 8 + h * 8;
+                                        let block_py = v * 8;
+                                        let strip_off = block_py * y_strip_width + block_px;
 
-                                if count == 1 {
-                                    let dc = coeffs_buf[0] as i32
-                                        * quant_tables[*comp_idx][0] as i32;
-                                    if off < seg_slice.len() {
-                                        idct_int_dc_only(dc, &mut seg_slice[off..], stride);
-                                    }
-                                } else {
-                                    dequantize_unzigzag_i32_into_partial(
-                                        &coeffs_buf,
-                                        quant_tables[*comp_idx],
-                                        &mut dequant_buf,
-                                        count,
-                                    );
-                                    if off < seg_slice.len() {
-                                        idct_fn(
-                                            &mut dequant_buf,
-                                            &mut seg_slice[off..],
-                                            stride,
-                                            count,
-                                        );
+                                        if count == 1 {
+                                            let dc = coeffs_buf[0] as i32
+                                                * quant_tables[*comp_idx][0] as i32;
+                                            idct_int_dc_only(
+                                                dc,
+                                                &mut y_strip_b[strip_off..],
+                                                y_strip_width,
+                                            );
+                                        } else {
+                                            dequantize_unzigzag_i32_into_partial(
+                                                &coeffs_buf,
+                                                quant_tables[*comp_idx],
+                                                &mut dequant_buf,
+                                                count,
+                                            );
+                                            idct_fn(
+                                                &mut dequant_buf,
+                                                &mut y_strip_b[strip_off..],
+                                                y_strip_width,
+                                                count,
+                                            );
+                                        }
+                                    } else {
+                                        // Chroma block → ext_cb_b or ext_cr_b data region
+                                        // Data region starts at row 1 (row 0 is above context)
+                                        let ext = if sc_idx == 1 {
+                                            &mut ext_cb_b
+                                        } else {
+                                            &mut ext_cr_b
+                                        };
+                                        let block_px = mcu_col * h_samp * 8 + h * 8;
+                                        let block_py = v * 8;
+                                        let data_offset = c_strip_width; // skip row 0 (context)
+                                        let strip_off =
+                                            data_offset + block_py * c_strip_width + block_px;
+
+                                        if count == 1 {
+                                            let dc = coeffs_buf[0] as i32
+                                                * quant_tables[*comp_idx][0] as i32;
+                                            idct_int_dc_only(
+                                                dc,
+                                                &mut ext[strip_off..],
+                                                c_strip_width,
+                                            );
+                                        } else {
+                                            dequantize_unzigzag_i32_into_partial(
+                                                &coeffs_buf,
+                                                quant_tables[*comp_idx],
+                                                &mut dequant_buf,
+                                                count,
+                                            );
+                                            idct_fn(
+                                                &mut dequant_buf,
+                                                &mut ext[strip_off..],
+                                                c_strip_width,
+                                                count,
+                                            );
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+
+                    // MCU row decoded into b buffers. Handle context and output.
+
+                    if local_row == 0 {
+                        // First row in segment: set above context = edge replicate
+                        ext_cb_b.copy_within(c_strip_width..2 * c_strip_width, 0);
+                        ext_cr_b.copy_within(c_strip_width..2 * c_strip_width, 0);
+                    }
+
+                    if local_row > 0 {
+                        // Output previous row (in a buffers) — now we have below context
+                        let below_ctx_start = (c_strip_height + 1) * c_strip_width;
+                        // Set a's below context = b's first data row
+                        let src = c_strip_width;
+                        ext_cb_a[below_ctx_start..below_ctx_start + c_strip_width]
+                            .copy_from_slice(&ext_cb_b[src..src + c_strip_width]);
+                        ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
+                            .copy_from_slice(&ext_cr_b[src..src + c_strip_width]);
+
+                        upsample_and_output(
+                            first_mcu_row + local_row - 1,
+                            &y_strip_a,
+                            &ext_cb_a,
+                            &ext_cr_a,
+                            &mut cb_up,
+                            &mut cr_up,
+                            &mut upsample_scratch,
+                            rgb_chunk,
+                        );
+
+                        // Set b's above context = a's last data row
+                        let last_data = c_strip_height * c_strip_width;
+                        ext_cb_b[..c_strip_width]
+                            .copy_from_slice(&ext_cb_a[last_data..last_data + c_strip_width]);
+                        ext_cr_b[..c_strip_width]
+                            .copy_from_slice(&ext_cr_a[last_data..last_data + c_strip_width]);
+                    }
+
+                    // Save boundary data
+                    if local_row == 0 {
+                        let src = c_strip_width; // first data row in ext
+                        boundary
+                            .first_cb_row
+                            .copy_from_slice(&ext_cb_b[src..src + c_strip_width]);
+                        boundary
+                            .first_cr_row
+                            .copy_from_slice(&ext_cr_b[src..src + c_strip_width]);
+                        boundary
+                            .first_y_row
+                            .copy_from_slice(&y_strip_b[..y_strip_width]);
+                    }
+                    if local_row == seg_mcu_rows - 1 {
+                        let last_data = c_strip_height * c_strip_width;
+                        boundary
+                            .last_cb_row
+                            .copy_from_slice(&ext_cb_b[last_data..last_data + c_strip_width]);
+                        boundary
+                            .last_cr_row
+                            .copy_from_slice(&ext_cr_b[last_data..last_data + c_strip_width]);
+                        let last_y_off = (y_strip_height - 1) * y_strip_width;
+                        boundary
+                            .last_y_row
+                            .copy_from_slice(&y_strip_b[last_y_off..last_y_off + y_strip_width]);
+                    }
+
+                    // Swap buffers: b becomes a (pending output), a becomes b (free)
+                    core::mem::swap(&mut y_strip_a, &mut y_strip_b);
+                    core::mem::swap(&mut ext_cb_a, &mut ext_cb_b);
+                    core::mem::swap(&mut ext_cr_a, &mut ext_cr_b);
                 }
 
-                Ok(SegmentWarnings {
-                    had_ac_overflow: decoder.had_ac_overflow,
-                    had_invalid_huffman: decoder.had_invalid_huffman,
-                    truncation_mcu,
-                    had_padding_error,
-                })
+                // Output last MCU row (now in a buffers after final swap)
+                let below_ctx_start = (c_strip_height + 1) * c_strip_width;
+                let last_data = c_strip_height * c_strip_width;
+                // Set below context = edge replicate (segment boundary)
+                ext_cb_a.copy_within(last_data..last_data + c_strip_width, below_ctx_start);
+                ext_cr_a.copy_within(last_data..last_data + c_strip_width, below_ctx_start);
+
+                upsample_and_output(
+                    last_mcu_row,
+                    &y_strip_a,
+                    &ext_cb_a,
+                    &ext_cr_a,
+                    &mut cb_up,
+                    &mut cr_up,
+                    &mut upsample_scratch,
+                    rgb_chunk,
+                );
+
+                Ok((
+                    SegmentWarnings {
+                        had_ac_overflow: decoder.had_ac_overflow,
+                        had_invalid_huffman: decoder.had_invalid_huffman,
+                        truncation_mcu,
+                        had_padding_error,
+                    },
+                    boundary,
+                ))
             })
             .collect();
+
+        // Separate warnings from boundary data
+        let mut seg_boundaries: Vec<SegmentBoundary> = Vec::with_capacity(num_segments);
+        let mut seg_warnings: Vec<Result<SegmentWarnings>> = Vec::with_capacity(num_segments);
+        for result in results {
+            match result {
+                Ok((warnings, boundary)) => {
+                    seg_warnings.push(Ok(warnings));
+                    seg_boundaries.push(boundary);
+                }
+                Err(e) => {
+                    seg_warnings.push(Err(e));
+                    // Push dummy boundary so indices stay aligned
+                    seg_boundaries.push(SegmentBoundary {
+                        first_cb_row: Vec::new(),
+                        first_cr_row: Vec::new(),
+                        last_cb_row: Vec::new(),
+                        last_cr_row: Vec::new(),
+                        first_y_row: Vec::new(),
+                        last_y_row: Vec::new(),
+                    });
+                }
+            }
+        }
 
         let (any_ac, any_huff, first_trunc, any_pad) =
             Self::aggregate_fused_warnings(seg_warnings)?;
 
+        // Boundary fixup pass: correct the 2 pixel rows per segment junction
+        // where edge replication was used instead of real adjacent chroma.
+        if do_fixup && num_segments > 1 {
+            let mcu_rows_per_seg_nominal = mcu_rows_per_ri * group_stride;
+
+            let mut cb_up_row = vec![0i16; y_strip_width];
+            let mut cr_up_row = vec![0i16; y_strip_width];
+
+            for junc in 0..num_segments - 1 {
+                let seg_n = &seg_boundaries[junc];
+                let seg_n1 = &seg_boundaries[junc + 1];
+
+                if seg_n.last_cb_row.is_empty() || seg_n1.first_cb_row.is_empty() {
+                    continue;
+                }
+
+                // Compute MCU row boundaries for these segments
+                let seg_n_last = ((junc + 1) * mcu_rows_per_seg_nominal - 1)
+                    .min(mcu_rows - 1);
+                let seg_n1_first = (junc + 1) * mcu_rows_per_seg_nominal;
+
+                // Fix bottom pixel row of segment N's last MCU row
+                // This is the last output pixel row: mcu_pixel_height - 1 within the MCU
+                let fix_row_bottom = (seg_n_last + 1) * mcu_pixel_height - 1;
+                if fix_row_bottom < height {
+                    // Re-upsample with correct below context
+                    upsample_row_h2_fancy_bilinear(
+                        &seg_n.last_cb_row,
+                        &seg_n1.first_cb_row,
+                        c_strip_width,
+                        &mut cb_up_row,
+                        false,
+                    );
+                    upsample_row_h2_fancy_bilinear(
+                        &seg_n.last_cr_row,
+                        &seg_n1.first_cr_row,
+                        c_strip_width,
+                        &mut cr_up_row,
+                        false,
+                    );
+                    let rgb_off = fix_row_bottom * rgb_row_bytes;
+                    crate::color::ycbcr_planes_i16_to_rgb_u8(
+                        &seg_n.last_y_row[..y_cols_this_image],
+                        &cb_up_row[..y_cols_this_image],
+                        &cr_up_row[..y_cols_this_image],
+                        &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                    );
+                }
+
+                // Fix top pixel row of segment N+1's first MCU row
+                let fix_row_top = seg_n1_first * mcu_pixel_height;
+                if fix_row_top < height {
+                    upsample_row_h2_fancy_bilinear(
+                        &seg_n1.first_cb_row,
+                        &seg_n.last_cb_row,
+                        c_strip_width,
+                        &mut cb_up_row,
+                        true,
+                    );
+                    upsample_row_h2_fancy_bilinear(
+                        &seg_n1.first_cr_row,
+                        &seg_n.last_cr_row,
+                        c_strip_width,
+                        &mut cr_up_row,
+                        true,
+                    );
+                    let rgb_off = fix_row_top * rgb_row_bytes;
+                    crate::color::ycbcr_planes_i16_to_rgb_u8(
+                        &seg_n1.first_y_row[..y_cols_this_image],
+                        &cb_up_row[..y_cols_this_image],
+                        &cr_up_row[..y_cols_this_image],
+                        &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                    );
+                }
+            }
+        }
+
         Ok((
-            FusedResult::Planes(PixelPlanes {
-                y: y_plane,
-                cb: cb_plane,
-                cr: cr_plane,
-                y_stride,
-                c_stride,
-                y_height,
-                c_height,
-            }),
+            FusedResult(rgb),
             any_ac,
             any_huff,
             first_trunc,
