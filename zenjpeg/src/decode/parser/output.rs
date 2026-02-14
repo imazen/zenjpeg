@@ -39,7 +39,7 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
-    dequantize_unzigzag_i32_partial, DequantBiasStats,
+    dequantize_unzigzag_i32_into_partial, DequantBiasStats,
 };
 use crate::types::PixelFormat;
 use enough::Stop;
@@ -242,6 +242,9 @@ impl<'a> JpegParser<'a> {
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
         // Process MCU row by row
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
         for imcu_row in 0..mcu_rows {
             // No need to clear strips - we write all pixels we'll read
 
@@ -280,8 +283,9 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs, quant, &mut dequant_i32, coeff_count,
+                            );
                             match chroma_upsampling {
                                 super::super::ChromaUpsampling::LibjpegCompat => {
                                     idct_int_tiered_libjpeg(
@@ -498,8 +502,11 @@ impl<'a> JpegParser<'a> {
         // Helper: IDCT one chroma strip into rows 1..c_strip_height+1 of ext buffer.
         // Then replicate the last valid chroma row to fill any remaining data rows
         // (needed when the image ends before a full MCU row of chroma).
+        // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
+        let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
+
         let idct_chroma_strip =
-            |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64]| {
+            |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64], dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
                 let info = &comp_infos[comp_idx];
                 let data_offset = c_strip_width; // skip context row 0
 
@@ -524,10 +531,11 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant[0] as i32;
                             idct_int_dc_only(dc, &mut ext[dst_offset..], c_strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs, quant, dequant_buf, coeff_count,
+                            );
                             idct_fn(
-                                &mut dequant_i32,
+                                dequant_buf,
                                 &mut ext[dst_offset..],
                                 c_strip_width,
                                 coeff_count,
@@ -556,13 +564,13 @@ impl<'a> JpegParser<'a> {
             };
 
         // IDCT strip 0 into ext_a
-        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb);
-        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr);
+        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb, &mut dequant_i32);
+        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr, &mut dequant_i32);
 
         // IDCT strip 1 into ext_b (if exists)
         if mcu_rows > 1 {
-            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb);
-            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr);
+            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb, &mut dequant_i32);
+            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr, &mut dequant_i32);
         }
 
         // Set above context for first strip: edge replication (copy first data row)
@@ -617,8 +625,9 @@ impl<'a> JpegParser<'a> {
                             let dc = coeffs[0] as i32 * quant_y[0] as i32;
                             idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
                         } else {
-                            let mut dequant_i32 =
-                                dequantize_unzigzag_i32_partial(coeffs, quant_y, coeff_count);
+                            dequantize_unzigzag_i32_into_partial(
+                                coeffs, quant_y, &mut dequant_i32, coeff_count,
+                            );
                             idct_fn(
                                 &mut dequant_i32,
                                 &mut y_strip[dst_offset..],
@@ -705,8 +714,8 @@ impl<'a> JpegParser<'a> {
 
                 // IDCT the strip after next into the now-free ext_b
                 if imcu_row + 2 < mcu_rows {
-                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb);
-                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr);
+                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb, &mut dequant_i32);
+                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr, &mut dequant_i32);
                 }
             }
         }
