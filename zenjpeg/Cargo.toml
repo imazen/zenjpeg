@@ -295,3 +295,7 @@ required-features = ["test-utils", "ffi-tests"]
 [[example]]
 name = "debug_ultrahdr_detection"
 required-features = ["ultrahdr"]
+
+[[example]]
+name = "bench_decode_matrix"
+required-features = ["parallel", "decoder"]
