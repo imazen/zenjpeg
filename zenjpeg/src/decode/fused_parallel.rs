@@ -387,6 +387,26 @@ impl<'a> JpegParser<'a> {
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness == Strictness::Lenient;
+        let strict = self.strictness == Strictness::Strict;
+
+        // Pre-compute per-component actual block counts for padding detection.
+        // 4:4:4: all components have h_samp=1, v_samp=1, so actual_blocks = ceil(dim/8).
+        let actual_blocks_h: Vec<usize> = scan_comps
+            .iter()
+            .map(|(ci, _, _)| {
+                let h = self.components[*ci].h_samp_factor as usize;
+                let comp_w = (width * h + _max_h_samp - 1) / _max_h_samp;
+                (comp_w + 7) / 8
+            })
+            .collect();
+        let actual_blocks_v: Vec<usize> = scan_comps
+            .iter()
+            .map(|(ci, _, _)| {
+                let v = self.components[*ci].v_samp_factor as usize;
+                let comp_h = (height * v + _max_v_samp - 1) / _max_v_samp;
+                (comp_h + 7) / 8
+            })
+            .collect();
 
         // Allocate RGB output
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
@@ -430,6 +450,7 @@ impl<'a> JpegParser<'a> {
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
                 let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
+                let mut had_padding_error = false;
 
                 // Thread-local strip buffers for one MCU row height
                 let strip_pixels = strip_width * 8;
@@ -496,22 +517,47 @@ impl<'a> JpegParser<'a> {
                     let base_px = mcu_col * 8;
 
                     for (sc_idx, (comp_idx, dc_table, ac_table)) in scan_comps.iter().enumerate() {
-                        let count = match decoder.decode_block_into(
-                            &mut coeffs_buf,
-                            prev_coeff_count,
-                            *comp_idx,
-                            *dc_table as usize,
-                            *ac_table as usize,
-                        ) {
-                            Ok(ScanRead::Value(c)) => c,
-                            Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                if truncation_mcu.is_none() {
-                                    truncation_mcu = Some(mcu_idx as u32);
+                        // Check if this block is beyond actual image bounds (padding)
+                        let is_padding = mcu_col >= actual_blocks_h[sc_idx]
+                            || mcu_row >= actual_blocks_v[sc_idx];
+
+                        let count = if is_padding && !strict {
+                            // Speculative decode with rollback for padding blocks
+                            let saved_state = decoder.save_state();
+                            match decoder.decode_block_into(
+                                &mut coeffs_buf,
+                                prev_coeff_count,
+                                *comp_idx,
+                                *dc_table as usize,
+                                *ac_table as usize,
+                            ) {
+                                Ok(ScanRead::Value(c)) => c,
+                                Ok(ScanRead::EndOfScan | ScanRead::Truncated) | Err(_) => {
+                                    decoder.restore_state(saved_state);
+                                    coeffs_buf = [0i16; 64];
+                                    had_padding_error = true;
+                                    prev_coeff_count = 64;
+                                    continue; // Skip IDCT for failed padding block
                                 }
-                                coeffs_buf = [0i16; 64];
-                                1
                             }
-                            Err(e) => return Err(e),
+                        } else {
+                            match decoder.decode_block_into(
+                                &mut coeffs_buf,
+                                prev_coeff_count,
+                                *comp_idx,
+                                *dc_table as usize,
+                                *ac_table as usize,
+                            ) {
+                                Ok(ScanRead::Value(c)) => c,
+                                Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                    if truncation_mcu.is_none() {
+                                        truncation_mcu = Some(mcu_idx as u32);
+                                    }
+                                    coeffs_buf = [0i16; 64];
+                                    1
+                                }
+                                Err(e) => return Err(e),
+                            }
                         };
                         prev_coeff_count = count;
 
@@ -574,7 +620,7 @@ impl<'a> JpegParser<'a> {
                     had_ac_overflow: decoder.had_ac_overflow,
                     had_invalid_huffman: decoder.had_invalid_huffman,
                     truncation_mcu,
-                    had_padding_error: false,
+                    had_padding_error,
                 })
             })
             .collect();
@@ -642,6 +688,7 @@ impl<'a> JpegParser<'a> {
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness == Strictness::Lenient;
+        let strict = self.strictness == Strictness::Strict;
 
         // Component info for sub-block iteration
         let comp_h_samps: Vec<usize> = (0..3)
@@ -649,6 +696,22 @@ impl<'a> JpegParser<'a> {
             .collect();
         let comp_v_samps: Vec<usize> = (0..3)
             .map(|ci| self.components[ci].v_samp_factor as usize)
+            .collect();
+
+        // Pre-compute per-component actual block counts for padding detection
+        let actual_blocks_h: Vec<usize> = (0..3)
+            .map(|ci| {
+                let h = self.components[ci].h_samp_factor as usize;
+                let comp_w = (width * h + max_h_samp - 1) / max_h_samp;
+                (comp_w + 7) / 8
+            })
+            .collect();
+        let actual_blocks_v: Vec<usize> = (0..3)
+            .map(|ci| {
+                let v = self.components[ci].v_samp_factor as usize;
+                let comp_h = (height * v + max_v_samp - 1) / max_v_samp;
+                (comp_h + 7) / 8
+            })
             .collect();
 
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
@@ -685,7 +748,7 @@ impl<'a> JpegParser<'a> {
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
                 let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
-                let had_padding_error = false;
+                let mut had_padding_error = false;
 
                 // Thread-local strip buffers
                 let mut y_strip: Vec<i16> = vec![0i16; y_strip_width * y_strip_height];
@@ -749,22 +812,48 @@ impl<'a> JpegParser<'a> {
 
                         for v in 0..v_samp {
                             for h in 0..h_samp {
-                                let count = match decoder.decode_block_into(
-                                    &mut coeffs_buf,
-                                    prev_coeff_count,
-                                    *comp_idx,
-                                    *dc_table as usize,
-                                    *ac_table as usize,
-                                ) {
-                                    Ok(ScanRead::Value(c)) => c,
-                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                        if truncation_mcu.is_none() {
-                                            truncation_mcu = Some(mcu_idx as u32);
+                                // Check if this sub-block is beyond actual image bounds
+                                let block_x = mcu_col * h_samp + h;
+                                let block_y = mcu_row * v_samp + v;
+                                let is_padding = block_x >= actual_blocks_h[*comp_idx]
+                                    || block_y >= actual_blocks_v[*comp_idx];
+
+                                let count = if is_padding && !strict {
+                                    let saved_state = decoder.save_state();
+                                    match decoder.decode_block_into(
+                                        &mut coeffs_buf,
+                                        prev_coeff_count,
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    ) {
+                                        Ok(ScanRead::Value(c)) => c,
+                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) | Err(_) => {
+                                            decoder.restore_state(saved_state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
                                         }
-                                        coeffs_buf = [0i16; 64];
-                                        1
                                     }
-                                    Err(e) => return Err(e),
+                                } else {
+                                    match decoder.decode_block_into(
+                                        &mut coeffs_buf,
+                                        prev_coeff_count,
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    ) {
+                                        Ok(ScanRead::Value(c)) => c,
+                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                            if truncation_mcu.is_none() {
+                                                truncation_mcu = Some(mcu_idx as u32);
+                                            }
+                                            coeffs_buf = [0i16; 64];
+                                            1
+                                        }
+                                        Err(e) => return Err(e),
+                                    }
                                 };
                                 prev_coeff_count = count;
 
@@ -898,12 +987,31 @@ impl<'a> JpegParser<'a> {
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
         let lenient = self.strictness == Strictness::Lenient;
+        let strict = self.strictness == Strictness::Strict;
+        let max_h_samp = _max_h_samp;
+        let max_v_samp = _max_v_samp;
 
         let comp_h_samps: Vec<usize> = (0..3)
             .map(|ci| self.components[ci].h_samp_factor as usize)
             .collect();
         let comp_v_samps: Vec<usize> = (0..3)
             .map(|ci| self.components[ci].v_samp_factor as usize)
+            .collect();
+
+        // Pre-compute per-component actual block counts for padding detection
+        let actual_blocks_h: Vec<usize> = (0..3)
+            .map(|ci| {
+                let h = self.components[ci].h_samp_factor as usize;
+                let comp_w = (width * h + max_h_samp - 1) / max_h_samp;
+                (comp_w + 7) / 8
+            })
+            .collect();
+        let actual_blocks_v: Vec<usize> = (0..3)
+            .map(|ci| {
+                let v = self.components[ci].v_samp_factor as usize;
+                let comp_h = (height * v + max_v_samp - 1) / max_v_samp;
+                (comp_h + 7) / 8
+            })
             .collect();
 
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
@@ -955,7 +1063,7 @@ impl<'a> JpegParser<'a> {
                 let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
                 let mut prev_coeff_count: u8 = 64;
                 let mut truncation_mcu: Option<u32> = None;
-                let had_padding_error = false;
+                let mut had_padding_error = false;
 
                 // Double-buffered Y strips (one MCU row each)
                 let y_strip_size = y_strip_width * y_strip_height;
@@ -1082,22 +1190,49 @@ impl<'a> JpegParser<'a> {
 
                             for v in 0..v_samp {
                                 for h in 0..h_samp {
-                                    let count = match decoder.decode_block_into(
-                                        &mut coeffs_buf,
-                                        prev_coeff_count,
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
-                                    ) {
-                                        Ok(ScanRead::Value(c)) => c,
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                            if truncation_mcu.is_none() {
-                                                truncation_mcu = Some(mcu_idx as u32);
+                                    // Check if this sub-block is beyond actual image bounds
+                                    let block_x = mcu_col * h_samp + h;
+                                    let block_y = mcu_row * v_samp + v;
+                                    let is_padding = block_x >= actual_blocks_h[*comp_idx]
+                                        || block_y >= actual_blocks_v[*comp_idx];
+
+                                    let count = if is_padding && !strict {
+                                        let saved_state = decoder.save_state();
+                                        match decoder.decode_block_into(
+                                            &mut coeffs_buf,
+                                            prev_coeff_count,
+                                            *comp_idx,
+                                            *dc_table as usize,
+                                            *ac_table as usize,
+                                        ) {
+                                            Ok(ScanRead::Value(c)) => c,
+                                            Ok(ScanRead::EndOfScan | ScanRead::Truncated)
+                                            | Err(_) => {
+                                                decoder.restore_state(saved_state);
+                                                coeffs_buf = [0i16; 64];
+                                                had_padding_error = true;
+                                                prev_coeff_count = 64;
+                                                continue;
                                             }
-                                            coeffs_buf = [0i16; 64];
-                                            1
                                         }
-                                        Err(e) => return Err(e),
+                                    } else {
+                                        match decoder.decode_block_into(
+                                            &mut coeffs_buf,
+                                            prev_coeff_count,
+                                            *comp_idx,
+                                            *dc_table as usize,
+                                            *ac_table as usize,
+                                        ) {
+                                            Ok(ScanRead::Value(c)) => c,
+                                            Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                                if truncation_mcu.is_none() {
+                                                    truncation_mcu = Some(mcu_idx as u32);
+                                                }
+                                                coeffs_buf = [0i16; 64];
+                                                1
+                                            }
+                                            Err(e) => return Err(e),
+                                        }
                                     };
                                     prev_coeff_count = count;
 
