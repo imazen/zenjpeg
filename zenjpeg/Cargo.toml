@@ -92,6 +92,9 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
 zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
+# mozjpeg/libjpeg-turbo with NASM SIMD for decode speed comparison
+# NOTE: Must be used in SEPARATE binaries from jpegli to avoid symbol conflicts
+mozjpeg-sys = { workspace = true }
 # UltraHDR crate for detection comparison tests
 ultrahdr-rs = { workspace = true }
 # For FFI comparison testing against C++ jpegli (internal development only)
@@ -229,6 +232,11 @@ required-features = ["test-utils"]
 
 [[bench]]
 name = "decode_compare"
+harness = false
+required-features = ["decoder"]
+
+[[bench]]
+name = "decode_mozjpeg"
 harness = false
 required-features = ["decoder"]
 
