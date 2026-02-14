@@ -24,9 +24,8 @@ fn generate_test_pixels(width: u32, height: u32) -> Vec<rgb::RGB<u8>> {
             // Mix of gradients, noise, and sharp edges
             let block_x = x / 8;
             let block_y = y / 8;
-            let hash = ((block_x.wrapping_mul(17) ^ block_y.wrapping_mul(31)) as u8).wrapping_add(
-                (x.wrapping_mul(7) ^ y.wrapping_mul(13)) as u8,
-            );
+            let hash = ((block_x.wrapping_mul(17) ^ block_y.wrapping_mul(31)) as u8)
+                .wrapping_add((x.wrapping_mul(7) ^ y.wrapping_mul(13)) as u8);
 
             let r = if x < width / 3 {
                 (y * 255 / height) as u8
@@ -120,7 +119,8 @@ fn assert_pixels_equal(fused: &[u8], sequential: &[u8], label: &str) {
         }
     }
     assert_eq!(
-        diff_count, 0,
+        diff_count,
+        0,
         "{}: {} pixel differences (max_diff={}, first at byte {})",
         label,
         diff_count,
@@ -351,11 +351,7 @@ fn test_hashlock_multisize_libjpeg_compat() {
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
         let fused = decode_fused(&jpeg, ChromaUpsampling::LibjpegCompat);
         let sequential = decode_sequential(&jpeg, ChromaUpsampling::LibjpegCompat);
-        assert_pixels_equal(
-            &fused,
-            &sequential,
-            &format!("4:2:0 LibjpegCompat {w}x{h}"),
-        );
+        assert_pixels_equal(&fused, &sequential, &format!("4:2:0 LibjpegCompat {w}x{h}"));
     }
 }
 

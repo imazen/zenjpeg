@@ -106,7 +106,8 @@ fn bench_decode_mozjpeg(c: &mut Criterion) {
         (2048, 2048),
         (4096, 4096),
     ] {
-        let jpeg_baseline = create_test_jpeg(width, height, 85.0, false, ChromaSubsampling::Quarter);
+        let jpeg_baseline =
+            create_test_jpeg(width, height, 85.0, false, ChromaSubsampling::Quarter);
         let pixels = (width * height) as u64;
         let size_label = format!("{}x{}", width, height);
 

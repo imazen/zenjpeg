@@ -43,18 +43,31 @@ mod bench {
         let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
             png::ColorType::Rgb => buf
                 .chunks_exact(3)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
             png::ColorType::Rgba => buf
                 .chunks_exact(4)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
             _ => panic!("Unsupported: {:?}", info.color_type),
         };
         (pixels, info.width, info.height)
     }
 
-    fn tile_to_size(pixels: &[rgb::RGB<u8>], src_w: u32, src_h: u32, target: u32) -> Vec<rgb::RGB<u8>> {
+    fn tile_to_size(
+        pixels: &[rgb::RGB<u8>],
+        src_w: u32,
+        src_h: u32,
+        target: u32,
+    ) -> Vec<rgb::RGB<u8>> {
         let tw = target as usize;
         let th = target as usize;
         let sw = src_w as usize;
@@ -84,7 +97,8 @@ mod bench {
 
         for _ in 0..3 {
             pool.install(|| {
-                buf.par_chunks_mut(stripe).for_each(|chunk| chunk.fill(0x42));
+                buf.par_chunks_mut(stripe)
+                    .for_each(|chunk| chunk.fill(0x42));
             });
         }
 
@@ -92,7 +106,8 @@ mod bench {
         for _ in 0..iters {
             let start = Instant::now();
             pool.install(|| {
-                buf.par_chunks_mut(stripe).for_each(|chunk| chunk.fill(0x42));
+                buf.par_chunks_mut(stripe)
+                    .for_each(|chunk| chunk.fill(0x42));
             });
             times.push(start.elapsed().as_secs_f64());
         }
@@ -246,7 +261,13 @@ mod bench {
         let pools: Vec<(usize, rayon::ThreadPool)> = thread_counts
             .iter()
             .map(|&n| {
-                (n, rayon::ThreadPoolBuilder::new().num_threads(n).build().unwrap())
+                (
+                    n,
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(n)
+                        .build()
+                        .unwrap(),
+                )
             })
             .collect();
 
@@ -256,8 +277,10 @@ mod bench {
         eprintln!("\n=== Part 1: Raw write bandwidth (MB/s) ===");
         eprintln!("Buffer = width² × 3 (RGB output size)\n");
 
-        eprintln!("{:>7} {:>8} {:>10} {:>10} {:>10} {:>10} {:>9} {:>9}",
-            "Size", "buf MB", "1T fill", "8T fill", "1T NT", "8T NT", "NT/fill", "time ms");
+        eprintln!(
+            "{:>7} {:>8} {:>10} {:>10} {:>10} {:>10} {:>9} {:>9}",
+            "Size", "buf MB", "1T fill", "8T fill", "1T NT", "8T NT", "NT/fill", "time ms"
+        );
         eprintln!("{}", "-".repeat(90));
 
         let pool_8t = &pools.iter().find(|(n, _)| *n == 8).unwrap().1;
@@ -292,7 +315,14 @@ mod bench {
             {
                 eprintln!(
                     "{:>5}² {:>6.1}MB {:>8.0}MB/s {:>8.0}MB/s {:>10} {:>10} {:>9} {:>7.2}ms",
-                    size, buf_mb, bw_1t, bw_8t, "n/a", "n/a", "n/a", t_8t * 1000.0
+                    size,
+                    buf_mb,
+                    bw_1t,
+                    bw_8t,
+                    "n/a",
+                    "n/a",
+                    "n/a",
+                    t_8t * 1000.0
                 );
             }
         }
@@ -300,7 +330,10 @@ mod bench {
         // ============================================================
         // Part 2: Decode times
         // ============================================================
-        eprintln!("\n=== Part 2: Actual decode times (bl-420 Q85, avg of {} images) ===\n", source_images.len());
+        eprintln!(
+            "\n=== Part 2: Actual decode times (bl-420 Q85, avg of {} images) ===\n",
+            source_images.len()
+        );
 
         // Encode test JPEGs
         eprintln!("Encoding test JPEGs...");
@@ -392,8 +425,10 @@ mod bench {
         // Part 3: Per-pixel cost analysis
         // ============================================================
         eprintln!("\n=== Part 3: Per-pixel cost (ns/pixel) ===\n");
-        eprintln!("{:>7} {:>9} {:>9} {:>9} {:>9} {:>12}",
-            "Size", "zen-1T", "zen-8T", "write-8T", "decode-only", "Amdahl limit");
+        eprintln!(
+            "{:>7} {:>9} {:>9} {:>9} {:>9} {:>12}",
+            "Size", "zen-1T", "zen-8T", "write-8T", "decode-only", "Amdahl limit"
+        );
         eprintln!("{}", "-".repeat(70));
 
         for &size in sizes {
@@ -413,11 +448,15 @@ mod bench {
                 let decoder = Decoder::new().output_format(PixelFormat::Rgb);
                 let mut times = Vec::with_capacity(decode_iters);
                 for _ in 0..decode_warmup {
-                    pool_1t.install(|| { std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap()); });
+                    pool_1t.install(|| {
+                        std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                    });
                 }
                 for _ in 0..decode_iters {
                     let start = Instant::now();
-                    pool_1t.install(|| { std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap()); });
+                    pool_1t.install(|| {
+                        std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                    });
                     times.push(start.elapsed().as_secs_f64());
                 }
                 t_1t_avg += median_of(&mut times);
@@ -430,11 +469,15 @@ mod bench {
                 let decoder = Decoder::new().output_format(PixelFormat::Rgb);
                 let mut times = Vec::with_capacity(decode_iters);
                 for _ in 0..decode_warmup {
-                    pool_8t.install(|| { std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap()); });
+                    pool_8t.install(|| {
+                        std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                    });
                 }
                 for _ in 0..decode_iters {
                     let start = Instant::now();
-                    pool_8t.install(|| { std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap()); });
+                    pool_8t.install(|| {
+                        std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                    });
                     times.push(start.elapsed().as_secs_f64());
                 }
                 t_8t_avg += median_of(&mut times);
@@ -461,10 +504,16 @@ mod bench {
         }
 
         eprintln!("\nNotes:");
-        eprintln!("  - 'write%' = raw 8T write time / decode-8T time (how much of decode is just writes)");
-        eprintln!("  - 'Amdahl limit' = max theoretical 8T speedup if writes are serial bottleneck");
+        eprintln!(
+            "  - 'write%' = raw 8T write time / decode-8T time (how much of decode is just writes)"
+        );
+        eprintln!(
+            "  - 'Amdahl limit' = max theoretical 8T speedup if writes are serial bottleneck"
+        );
         eprintln!("  - L2 = 1MB/core, L3 = 32MB shared (AMD 7950X)");
-        eprintln!("  - 512²×3 = 0.75MB (fits L2), 2048²×3 = 12MB (fits L3), 4096²×3 = 48MB (exceeds L3)");
+        eprintln!(
+            "  - 512²×3 = 0.75MB (fits L2), 2048²×3 = 12MB (fits L3), 4096²×3 = 48MB (exceeds L3)"
+        );
     }
 
     fn format_time(secs: f64) -> String {

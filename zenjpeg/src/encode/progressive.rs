@@ -637,8 +637,12 @@ mod tests {
             }
         }
 
-        let restart_rows_values: &[(u16, &str)] =
-            &[(0, "disabled"), (1, "1 row"), (4, "4 rows (default)"), (8, "8 rows")];
+        let restart_rows_values: &[(u16, &str)] = &[
+            (0, "disabled"),
+            (1, "1 row"),
+            (4, "4 rows (default)"),
+            (8, "8 rows"),
+        ];
 
         let mut sizes: Vec<(u16, &str, usize)> = Vec::new();
 

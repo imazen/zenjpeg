@@ -110,42 +110,41 @@ pub(super) fn encode_from_coefficients(
     // Build optimized Huffman tables from coefficient frequencies.
     // When restart markers are enabled, DC prediction resets at interval
     // boundaries, so frequency counting must match the encoder's MCU order.
-    let (dc_luma_table, ac_luma_table, dc_chroma_table, ac_chroma_table) =
-        if restart_interval > 0 {
-            build_tables_with_restart(
-                &y_blocks,
-                &cb_blocks,
-                &cr_blocks,
-                is_color,
-                coeffs.width as usize,
-                coeffs.height as usize,
-                h_samp,
-                v_samp,
-                restart_interval,
-            )?
+    let (dc_luma_table, ac_luma_table, dc_chroma_table, ac_chroma_table) = if restart_interval > 0 {
+        build_tables_with_restart(
+            &y_blocks,
+            &cb_blocks,
+            &cr_blocks,
+            is_color,
+            coeffs.width as usize,
+            coeffs.height as usize,
+            h_samp,
+            v_samp,
+            restart_interval,
+        )?
+    } else {
+        let (dc_luma, ac_luma) = build_tables_from_blocks(&y_blocks)?;
+        let (dc_chroma, ac_chroma) = if is_color {
+            let mut dc_freq = [0u64; 256];
+            let mut ac_freq = [0u64; 256];
+            count_frequencies(&cb_blocks, &mut dc_freq, &mut ac_freq);
+            count_frequencies(&cr_blocks, &mut dc_freq, &mut ac_freq);
+            let dc_lengths = build_code_lengths(&dc_freq, 16);
+            let ac_lengths = build_code_lengths(&ac_freq, 16);
+            let (dc_bits, dc_vals) = lengths_to_bits_values(&dc_lengths);
+            let (ac_bits, ac_vals) = lengths_to_bits_values(&ac_lengths);
+            (
+                HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_vals)?,
+                HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_vals)?,
+            )
         } else {
-            let (dc_luma, ac_luma) = build_tables_from_blocks(&y_blocks)?;
-            let (dc_chroma, ac_chroma) = if is_color {
-                let mut dc_freq = [0u64; 256];
-                let mut ac_freq = [0u64; 256];
-                count_frequencies(&cb_blocks, &mut dc_freq, &mut ac_freq);
-                count_frequencies(&cr_blocks, &mut dc_freq, &mut ac_freq);
-                let dc_lengths = build_code_lengths(&dc_freq, 16);
-                let ac_lengths = build_code_lengths(&ac_freq, 16);
-                let (dc_bits, dc_vals) = lengths_to_bits_values(&dc_lengths);
-                let (ac_bits, ac_vals) = lengths_to_bits_values(&ac_lengths);
-                (
-                    HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_vals)?,
-                    HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_vals)?,
-                )
-            } else {
-                (
-                    HuffmanEncodeTable::std_dc_chrominance().clone(),
-                    HuffmanEncodeTable::std_ac_chrominance().clone(),
-                )
-            };
-            (dc_luma, ac_luma, dc_chroma, ac_chroma)
+            (
+                HuffmanEncodeTable::std_dc_chrominance().clone(),
+                HuffmanEncodeTable::std_ac_chrominance().clone(),
+            )
         };
+        (dc_luma, ac_luma, dc_chroma, ac_chroma)
+    };
 
     stop.check()?;
 
@@ -386,7 +385,12 @@ fn build_tables_with_restart(
         )
     };
 
-    Ok((dc_luma_table, ac_luma_table, dc_chroma_table, ac_chroma_table))
+    Ok((
+        dc_luma_table,
+        ac_luma_table,
+        dc_chroma_table,
+        ac_chroma_table,
+    ))
 }
 
 /// Build optimized Huffman tables from a set of coefficient blocks.
@@ -409,7 +413,9 @@ pub(super) fn build_tables_from_blocks(
 }
 
 /// Convert a `ComponentCoefficients` to a Vec of `[i16; 64]` blocks.
-pub(super) fn component_to_blocks(comp: &crate::decode::ComponentCoefficients) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+pub(super) fn component_to_blocks(
+    comp: &crate::decode::ComponentCoefficients,
+) -> Vec<[i16; DCT_BLOCK_SIZE]> {
     let num_blocks = comp.num_blocks();
     let mut blocks = Vec::with_capacity(num_blocks);
     for i in 0..num_blocks {
@@ -637,7 +643,11 @@ pub(super) fn write_sof(
     }
 }
 
-pub(super) fn write_huffman_table(output: &mut Vec<u8>, table_class_and_id: u8, table: &HuffmanEncodeTable) {
+pub(super) fn write_huffman_table(
+    output: &mut Vec<u8>,
+    table_class_and_id: u8,
+    table: &HuffmanEncodeTable,
+) {
     let (bits, values) = crate::huffman::encode::lengths_to_bits_values(&table.lengths);
 
     let len = 2 + 1 + 16 + values.len();

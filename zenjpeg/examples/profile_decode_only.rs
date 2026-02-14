@@ -48,7 +48,10 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage:");
-        eprintln!("  {} generate <size>          # Generate test JPEG", args[0]);
+        eprintln!(
+            "  {} generate <size>          # Generate test JPEG",
+            args[0]
+        );
         eprintln!(
             "  {} decode <file.jpg> [reps] # Decode JPEG N times",
             args[0]
@@ -66,10 +69,7 @@ fn main() {
             eprintln!("Wrote {} bytes to {}", jpeg_data.len(), path);
         }
         "decode" => {
-            let path = args
-                .get(2)
-                .expect("need JPEG file path")
-                .clone();
+            let path = args.get(2).expect("need JPEG file path").clone();
             let reps: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
             let jpeg_data = std::fs::read(&path).expect("failed to read JPEG");
             eprintln!(

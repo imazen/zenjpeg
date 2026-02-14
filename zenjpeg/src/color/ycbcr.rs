@@ -1423,15 +1423,9 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         .zip(cr_plane.chunks_exact(16).zip(rgb.chunks_exact_mut(48)))
     {
         let (y_vec, cb_vec, cr_vec) = (
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(y_chunk).unwrap(),
-            ),
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(cb_chunk).unwrap(),
-            ),
-            safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(cr_chunk).unwrap(),
-            ),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap()),
         );
 
         // Subtract 128 from Cb and Cr
@@ -1519,10 +1513,7 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
 
         // Store 48 bytes (16 pixels * 3 channels)
         let (rgb_lo, rgb_hi) = rgb_chunk.split_at_mut(32);
-        safe_simd::_mm256_storeu_si256(
-            <&mut [u8; 32]>::try_from(rgb_lo).unwrap(),
-            rgb0,
-        );
+        safe_simd::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(rgb_lo).unwrap(), rgb0);
         safe_simd::_mm_storeu_si128(
             <&mut [u8; 16]>::try_from(rgb_hi).unwrap(),
             _mm256_castsi256_si128(rgb1),
