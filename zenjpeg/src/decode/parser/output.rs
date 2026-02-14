@@ -510,6 +510,8 @@ impl<'a> JpegParser<'a> {
             |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64], dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
                 let info = &comp_infos[comp_idx];
                 let data_offset = c_strip_width; // skip context row 0
+                let comp_coeffs = &self.coeffs[comp_idx];
+                let comp_counts = &self.coeff_counts[comp_idx];
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -518,13 +520,16 @@ impl<'a> JpegParser<'a> {
                     }
                     let strip_row = iy * DCT_SIZE;
 
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[comp_idx].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[comp_idx][block_idx];
-                        let coeff_count = self.coeff_counts[comp_idx][block_idx];
+                    // Pre-slice the row of blocks to eliminate per-block bounds checks
+                    let row_start = by * info.comp_blocks_h;
+                    let row_end =
+                        (row_start + info.comp_blocks_h).min(comp_coeffs.len());
+                    let row_coeffs = &comp_coeffs[row_start..row_end];
+                    let row_counts = &comp_counts[row_start..row_end];
+
+                    for (bx, (coeffs, &coeff_count)) in
+                        row_coeffs.iter().zip(row_counts).enumerate()
+                    {
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = data_offset + strip_row * c_strip_width + base_px;
 
@@ -615,6 +620,8 @@ impl<'a> JpegParser<'a> {
             // IDCT Y blocks (full resolution)
             {
                 let info = &comp_infos[0];
+                let y_coeffs = &self.coeffs[0];
+                let y_counts = &self.coeff_counts[0];
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -623,13 +630,16 @@ impl<'a> JpegParser<'a> {
                     }
                     let strip_row = iy * DCT_SIZE;
 
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[0].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[0][block_idx];
-                        let coeff_count = self.coeff_counts[0][block_idx];
+                    // Pre-slice the row of blocks to eliminate per-block bounds checks
+                    let row_start = by * info.comp_blocks_h;
+                    let row_end =
+                        (row_start + info.comp_blocks_h).min(y_coeffs.len());
+                    let row_coeffs = &y_coeffs[row_start..row_end];
+                    let row_counts = &y_counts[row_start..row_end];
+
+                    for (bx, (coeffs, &coeff_count)) in
+                        row_coeffs.iter().zip(row_counts).enumerate()
+                    {
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * y_strip_width + base_px;
 
