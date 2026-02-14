@@ -81,11 +81,10 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
 }
 
 fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
+    let mut decoder = jpeg_decoder::Decoder::new(jpeg);
     let pixels = decoder.decode().expect("jpeg-decoder decode failed");
-    let (width, height) = decoder.dimensions().unwrap();
-    (pixels, width, height)
+    let info = decoder.info().unwrap();
+    (pixels, info.width as usize, info.height as usize)
 }
 
 /// Test roundtrip quality on the flower_small test image.

@@ -78,8 +78,7 @@ fn encode_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder = jpeg_decoder::Decoder::new(data);
     decoder.decode().expect("decode")
 }
 
@@ -276,30 +275,32 @@ fn test_ssimulacra2_score_ranges() {
     // 30-50: Fair, noticeable artifacts
     // <30: Poor, significant degradation
 
-    let width = 128usize;
-    let height = 128usize;
+    // Use a real test image — synthetic images produce degenerate SSIMULACRA2 scores
+    let png_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/1.png");
+    let png_data = fs::read(&png_path).expect("Failed to read 1.png");
+    let decoder = png::Decoder::new(&png_data[..]);
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).unwrap();
+    let width = info.width as usize;
+    let height = info.height as usize;
+    let rgb: Vec<u8> = match info.color_type {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        _ => panic!("Unsupported color type"),
+    };
 
-    // Create a smooth gradient (more natural, easier to compress)
-    let mut rgb = vec![0u8; width * height * 3];
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * 3;
-            rgb[idx] = (x * 2) as u8;
-            rgb[idx + 1] = (y * 2) as u8;
-            rgb[idx + 2] = 128;
-        }
-    }
-
-    // High quality encoding should score > 70
     let jpeg_data = encode_jpegli(&rgb, width as u32, height as u32, 95);
     let decoded = decode_jpeg(&jpeg_data);
     let ssim2 = compute_ssimulacra2(&rgb, &decoded, width, height);
 
-    println!("Q95 SSIMULACRA2 score: {:.2}", ssim2);
-    // Smooth gradients at Q95 should score very high
+    println!("Q95 SSIMULACRA2 score on real image: {:.2}", ssim2);
     assert!(
         ssim2 > 70.0,
-        "Q95 should have SSIMULACRA2 > 70, got {}",
+        "Q95 on real image should have SSIMULACRA2 > 70, got {}",
         ssim2
     );
 }
