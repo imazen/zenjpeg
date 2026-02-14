@@ -93,6 +93,12 @@ fn main() {
         jpeg.len() / 1024
     );
 
+    // Save JPEG if --save <path> is passed
+    if let Some(save_path) = std::env::args().nth(2).filter(|s| s == "--save").and_then(|_| std::env::args().nth(3)) {
+        std::fs::write(&save_path, &jpeg).expect("failed to write JPEG");
+        eprintln!("Saved to {save_path}");
+    }
+
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
     let result = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
     let pixels = result.into_pixels_u8().unwrap();

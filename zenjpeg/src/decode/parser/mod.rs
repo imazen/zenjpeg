@@ -550,6 +550,31 @@ impl<'a> JpegParser<'a> {
             }
         }
 
+        // For progressive decode, compute actual coeff_counts from nonzero bitmaps.
+        // Progressive scans initialize coeff_counts to 64 (full IDCT) because the
+        // final coefficient layout isn't known until all scans complete. Now that all
+        // scans are done, we can compute the actual highest nonzero zigzag position
+        // per block, enabling tiered IDCT (DC-only fast path, partial dequant).
+        if matches!(
+            self.mode,
+            JpegMode::Progressive | JpegMode::ArithmeticProgressive
+        ) && !self.nonzero_bitmaps.is_empty()
+        {
+            for comp_idx in 0..self.nonzero_bitmaps.len() {
+                let bitmaps = &self.nonzero_bitmaps[comp_idx];
+                let counts = &mut self.coeff_counts[comp_idx];
+                for (block_idx, bitmap) in bitmaps.iter().enumerate() {
+                    if *bitmap == 0 {
+                        // DC only (or all zeros) — use DC-only IDCT fast path
+                        counts[block_idx] = 1;
+                    } else {
+                        // Highest set bit position + 1 = number of zigzag positions to process
+                        counts[block_idx] = (64 - bitmap.leading_zeros()) as u8;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
