@@ -19,7 +19,7 @@ wide = "1.1"
 aligned-vec = "0.6"
 bytemuck = { version = "1.14", features = ["derive"] }
 rgb = { version = "0.8", features = ["as-bytes"] }
-imgref = "1.10"
+imgref = "1.12"
 
 # Serialization (for test data)
 serde = { version = "1.0", features = ["derive"] }
@@ -31,7 +31,7 @@ lcms2 = "6.0"
 moxcms = "0.6"
 
 # Image I/O (for testing)
-png = "0.17"
+png = "0.18"
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
@@ -47,7 +47,7 @@ yuv = { version = "0.8", features = ["professional_mode"] }
 # Testing
 approx = "0.5"
 proptest = "1.4"
-criterion = "0.5"
+criterion = "0.8"
 test-case = "3.3"
 codec-eval = "0.3"
 
@@ -69,9 +69,9 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 linear-srgb = "0.4"
 
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.6", features = ["macros", "avx512"] }
+archmage = { version = "0.7", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.4", features = ["avx512"] }
-magetypes = "0.6"
+magetypes = "0.7"
 
 # Error tracing with location tracking
 whereat = "0.1.3"
