@@ -301,6 +301,15 @@ impl StreamingEncoder {
             scan_strategy: builder.scan_strategy,
         };
 
+        // Enforce MCU row alignment for any nonzero restart interval.
+        // Non-row-aligned restarts break the fused chroma upsample + color
+        // conversion decode path, which processes complete MCU rows.
+        #[allow(unused_mut)]
+        let mut config = config;
+        if config.restart_interval > 0 {
+            config.restart_interval = config.align_restart_to_row(config.restart_interval);
+        }
+
         // Determine if we can use streaming-through encoding:
         // - Need known Huffman tables (Custom or Fixed)
         // - Must be sequential (progressive needs multi-pass)
@@ -1735,9 +1744,10 @@ mod tests {
         let data = make_test_image(width, height);
         let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
+        // Use row-aligned interval: 16 MCU cols for 128px 4:4:4
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
-            .restart_interval(10)
+            .restart_interval(16)
             .encode(&data)
             .unwrap();
 

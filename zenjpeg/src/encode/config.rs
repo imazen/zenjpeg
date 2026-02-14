@@ -149,6 +149,31 @@ pub struct ComputedConfig {
     pub trellis: Option<super::trellis::TrellisConfig>,
 }
 
+impl ComputedConfig {
+    /// MCU columns for this image's dimensions and subsampling.
+    pub(crate) fn mcu_cols(&self) -> u32 {
+        let h_samp = match self.subsampling {
+            Subsampling::S444 | Subsampling::S440 => 1u32,
+            Subsampling::S422 | Subsampling::S420 => 2,
+        };
+        let mcu_w = h_samp * 8;
+        (self.width + mcu_w - 1) / mcu_w
+    }
+
+    /// Round a restart interval down to the nearest MCU row boundary.
+    ///
+    /// Non-row-aligned restart intervals break the fused chroma upsample +
+    /// color conversion decode path, which processes complete MCU rows.
+    /// Returns 0 if interval is less than one row.
+    pub(crate) fn align_restart_to_row(&self, interval: u16) -> u16 {
+        let mcu_cols = self.mcu_cols() as u16;
+        if mcu_cols == 0 {
+            return 0;
+        }
+        (interval / mcu_cols) * mcu_cols
+    }
+}
+
 impl Default for ComputedConfig {
     fn default() -> Self {
         Self {
