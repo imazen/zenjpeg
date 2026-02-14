@@ -301,16 +301,16 @@ fn encode_progressive_from_coefficients(
                 .collect();
             let component_indices: Vec<usize> =
                 scan.components.iter().map(|&c| c as usize).collect();
-            token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
+            token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah, 0);
         } else if scan.ah == 0 {
             // AC first scan
             let blocks = &all_blocks[scan.components[0] as usize];
-            token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
+            token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al, 0);
         } else {
             // AC refinement scan
             let blocks = &all_blocks[scan.components[0] as usize];
             token_buffer.tokenize_ac_refinement_scan(
-                blocks, context, scan.ss, scan.se, scan.ah, scan.al,
+                blocks, context, scan.ss, scan.se, scan.ah, scan.al, 0,
             )?;
         }
     }
@@ -599,7 +599,7 @@ fn replay_scan(
                 }
             })
             .collect();
-        encoder.write_dc_tokens(tokens, &dc_context_map)?;
+        encoder.write_dc_tokens(tokens, &dc_context_map, &[])?;
     } else if scan.ah == 0 {
         // AC first scan
         let ac_context = context_config.ac_context(scan_idx, 0);
@@ -612,7 +612,7 @@ fn replay_scan(
             .copied()
             .unwrap_or(cluster_idx % 4);
         let tokens = token_buffer.scan_tokens(scan_idx);
-        encoder.write_ac_first_tokens(tokens, slot_id)?;
+        encoder.write_ac_first_tokens(tokens, slot_id, &[])?;
     } else {
         // AC refinement scan
         let ac_context = context_config.ac_context(scan_idx, 0);
@@ -624,7 +624,7 @@ fn replay_scan(
             .get(cluster_idx)
             .copied()
             .unwrap_or(cluster_idx % 4);
-        encoder.write_ac_refinement_tokens(scan_info, slot_id)?;
+        encoder.write_ac_refinement_tokens(scan_info, slot_id, &[])?;
     }
 
     Ok(encoder.finish())
