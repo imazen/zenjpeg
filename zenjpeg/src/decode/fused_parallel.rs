@@ -517,46 +517,47 @@ impl<'a> JpegParser<'a> {
                     let base_px = mcu_col * 8;
 
                     for (sc_idx, (comp_idx, dc_table, ac_table)) in scan_comps.iter().enumerate() {
-                        // Check if this block is beyond actual image bounds (padding)
+                        // Check if this block is beyond actual image bounds (padding).
+                        // Save decoder state only for padding blocks (rare: edge MCUs only).
                         let is_padding = mcu_col >= actual_blocks_h[sc_idx]
                             || mcu_row >= actual_blocks_v[sc_idx];
+                        let padding_state = if is_padding && !strict {
+                            Some(decoder.save_state())
+                        } else {
+                            None
+                        };
 
-                        let count = if is_padding && !strict {
-                            // Speculative decode with rollback for padding blocks
-                            let saved_state = decoder.save_state();
-                            match decoder.decode_block_into(
-                                &mut coeffs_buf,
-                                prev_coeff_count,
-                                *comp_idx,
-                                *dc_table as usize,
-                                *ac_table as usize,
-                            ) {
-                                Ok(ScanRead::Value(c)) => c,
-                                Ok(ScanRead::EndOfScan | ScanRead::Truncated) | Err(_) => {
-                                    decoder.restore_state(saved_state);
+                        let count = match decoder.decode_block_into(
+                            &mut coeffs_buf,
+                            prev_coeff_count,
+                            *comp_idx,
+                            *dc_table as usize,
+                            *ac_table as usize,
+                        ) {
+                            Ok(ScanRead::Value(c)) => c,
+                            Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                if let Some(state) = padding_state {
+                                    decoder.restore_state(state);
                                     coeffs_buf = [0i16; 64];
                                     had_padding_error = true;
                                     prev_coeff_count = 64;
-                                    continue; // Skip IDCT for failed padding block
+                                    continue;
                                 }
+                                if truncation_mcu.is_none() {
+                                    truncation_mcu = Some(mcu_idx as u32);
+                                }
+                                coeffs_buf = [0i16; 64];
+                                1
                             }
-                        } else {
-                            match decoder.decode_block_into(
-                                &mut coeffs_buf,
-                                prev_coeff_count,
-                                *comp_idx,
-                                *dc_table as usize,
-                                *ac_table as usize,
-                            ) {
-                                Ok(ScanRead::Value(c)) => c,
-                                Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                    if truncation_mcu.is_none() {
-                                        truncation_mcu = Some(mcu_idx as u32);
-                                    }
+                            Err(e) => {
+                                if let Some(state) = padding_state {
+                                    decoder.restore_state(state);
                                     coeffs_buf = [0i16; 64];
-                                    1
+                                    had_padding_error = true;
+                                    prev_coeff_count = 64;
+                                    continue;
                                 }
-                                Err(e) => return Err(e),
+                                return Err(e);
                             }
                         };
                         prev_coeff_count = count;
@@ -818,41 +819,43 @@ impl<'a> JpegParser<'a> {
                                 let is_padding = block_x >= actual_blocks_h[*comp_idx]
                                     || block_y >= actual_blocks_v[*comp_idx];
 
-                                let count = if is_padding && !strict {
-                                    let saved_state = decoder.save_state();
-                                    match decoder.decode_block_into(
-                                        &mut coeffs_buf,
-                                        prev_coeff_count,
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
-                                    ) {
-                                        Ok(ScanRead::Value(c)) => c,
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) | Err(_) => {
-                                            decoder.restore_state(saved_state);
+                                let padding_state = if is_padding && !strict {
+                                    Some(decoder.save_state())
+                                } else {
+                                    None
+                                };
+
+                                let count = match decoder.decode_block_into(
+                                    &mut coeffs_buf,
+                                    prev_coeff_count,
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                ) {
+                                    Ok(ScanRead::Value(c)) => c,
+                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
                                             coeffs_buf = [0i16; 64];
                                             had_padding_error = true;
                                             prev_coeff_count = 64;
                                             continue;
                                         }
-                                    }
-                                } else {
-                                    match decoder.decode_block_into(
-                                        &mut coeffs_buf,
-                                        prev_coeff_count,
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        *ac_table as usize,
-                                    ) {
-                                        Ok(ScanRead::Value(c)) => c,
-                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                            if truncation_mcu.is_none() {
-                                                truncation_mcu = Some(mcu_idx as u32);
-                                            }
-                                            coeffs_buf = [0i16; 64];
-                                            1
+                                        if truncation_mcu.is_none() {
+                                            truncation_mcu = Some(mcu_idx as u32);
                                         }
-                                        Err(e) => return Err(e),
+                                        coeffs_buf = [0i16; 64];
+                                        1
+                                    }
+                                    Err(e) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        return Err(e);
                                     }
                                 };
                                 prev_coeff_count = count;
@@ -1196,42 +1199,43 @@ impl<'a> JpegParser<'a> {
                                     let is_padding = block_x >= actual_blocks_h[*comp_idx]
                                         || block_y >= actual_blocks_v[*comp_idx];
 
-                                    let count = if is_padding && !strict {
-                                        let saved_state = decoder.save_state();
-                                        match decoder.decode_block_into(
-                                            &mut coeffs_buf,
-                                            prev_coeff_count,
-                                            *comp_idx,
-                                            *dc_table as usize,
-                                            *ac_table as usize,
-                                        ) {
-                                            Ok(ScanRead::Value(c)) => c,
-                                            Ok(ScanRead::EndOfScan | ScanRead::Truncated)
-                                            | Err(_) => {
-                                                decoder.restore_state(saved_state);
+                                    let padding_state = if is_padding && !strict {
+                                        Some(decoder.save_state())
+                                    } else {
+                                        None
+                                    };
+
+                                    let count = match decoder.decode_block_into(
+                                        &mut coeffs_buf,
+                                        prev_coeff_count,
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        *ac_table as usize,
+                                    ) {
+                                        Ok(ScanRead::Value(c)) => c,
+                                        Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                            if let Some(state) = padding_state {
+                                                decoder.restore_state(state);
                                                 coeffs_buf = [0i16; 64];
                                                 had_padding_error = true;
                                                 prev_coeff_count = 64;
                                                 continue;
                                             }
-                                        }
-                                    } else {
-                                        match decoder.decode_block_into(
-                                            &mut coeffs_buf,
-                                            prev_coeff_count,
-                                            *comp_idx,
-                                            *dc_table as usize,
-                                            *ac_table as usize,
-                                        ) {
-                                            Ok(ScanRead::Value(c)) => c,
-                                            Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
-                                                if truncation_mcu.is_none() {
-                                                    truncation_mcu = Some(mcu_idx as u32);
-                                                }
-                                                coeffs_buf = [0i16; 64];
-                                                1
+                                            if truncation_mcu.is_none() {
+                                                truncation_mcu = Some(mcu_idx as u32);
                                             }
-                                            Err(e) => return Err(e),
+                                            coeffs_buf = [0i16; 64];
+                                            1
+                                        }
+                                        Err(e) => {
+                                            if let Some(state) = padding_state {
+                                                decoder.restore_state(state);
+                                                coeffs_buf = [0i16; 64];
+                                                had_padding_error = true;
+                                                prev_coeff_count = 64;
+                                                continue;
+                                            }
+                                            return Err(e);
                                         }
                                     };
                                     prev_coeff_count = count;
