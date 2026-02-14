@@ -150,6 +150,30 @@ pub struct ComputedConfig {
 }
 
 impl ComputedConfig {
+    /// MCU columns for this image dimensions and subsampling.
+    pub(crate) fn mcu_cols(&self) -> u32 {
+        let h_samp = match self.subsampling {
+            Subsampling::S444 | Subsampling::S440 => 1u32,
+            Subsampling::S422 | Subsampling::S420 => 2,
+        };
+        let mcu_w = h_samp * 8;
+        (self.width + mcu_w - 1) / mcu_w
+    }
+
+    /// Round a restart interval down to the nearest MCU row boundary.
+    ///
+    /// Non-row-aligned restart intervals break the fused chroma upsample +
+    /// color conversion decode path, which processes complete MCU rows.
+    /// Returns 0 if interval is less than one row.
+    pub(crate) fn align_restart_to_row(&self, interval: u16) -> u16 {
+        let mcu_cols = self.mcu_cols() as u16;
+        if mcu_cols == 0 {
+            return 0;
+        }
+        // Round down to nearest multiple of mcu_cols
+        (interval / mcu_cols) * mcu_cols
+    }
+
     /// Compute an optimal row-aligned restart interval for parallel encoding.
     ///
     /// Row-aligned intervals minimize DC prediction reset cost because the spatial
@@ -164,17 +188,13 @@ impl ComputedConfig {
     ///
     /// Returns 0 if the image is too small for parallel encoding.
     pub(crate) fn compute_parallel_restart_interval(&self) -> u16 {
-        let (h_samp, v_samp) = match self.subsampling {
-            Subsampling::S444 => (1u32, 1u32),
-            Subsampling::S422 => (2, 1),
-            Subsampling::S420 => (2, 2),
-            Subsampling::S440 => (1, 2),
+        let v_samp = match self.subsampling {
+            Subsampling::S444 | Subsampling::S422 => 1u32,
+            Subsampling::S420 | Subsampling::S440 => 2,
         };
 
-        // MCU dimensions
-        let mcu_w = h_samp * 8;
         let mcu_h = v_samp * 8;
-        let mcu_cols = (self.width + mcu_w - 1) / mcu_w;
+        let mcu_cols = self.mcu_cols();
         let mcu_rows = (self.height + mcu_h - 1) / mcu_h;
         let total_mcus = mcu_cols * mcu_rows;
 

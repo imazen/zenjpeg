@@ -310,6 +310,13 @@ impl StreamingEncoder {
             config.restart_interval = config.compute_parallel_restart_interval();
         }
 
+        // Enforce MCU row alignment for any nonzero restart interval.
+        // Non-row-aligned restarts break the fused chroma upsample + color
+        // conversion decode path, which processes complete MCU rows.
+        if config.restart_interval > 0 {
+            config.restart_interval = config.align_restart_to_row(config.restart_interval);
+        }
+
         // Determine if we can use streaming-through encoding:
         // - Need known Huffman tables (Custom or Fixed)
         // - Must be sequential (progressive needs multi-pass)
