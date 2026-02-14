@@ -793,12 +793,9 @@ fn upsample_h2v2_i16_fancy_avx2_with_scratch(
             .zip(v_neighbor_row.chunks_exact(16))
             .zip(scratch.chunks_exact_mut(16))
         {
-            let v_c = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(curr_chunk).unwrap(),
-            );
-            let v_n = safe_simd::_mm256_loadu_si256(
-                <&[i16; 16]>::try_from(neighbor_chunk).unwrap(),
-            );
+            let v_c = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(curr_chunk).unwrap());
+            let v_n =
+                safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(neighbor_chunk).unwrap());
 
             let v_result = _mm256_srai_epi16(
                 _mm256_add_epi16(
@@ -874,14 +871,8 @@ fn upsample_h2v2_i16_fancy_avx2_with_scratch(
                 let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
 
                 let (out_lo, out_hi) = out_chunk.split_at_mut(16);
-                safe_simd::_mm256_storeu_si256(
-                    <&mut [i16; 16]>::try_from(out_lo).unwrap(),
-                    v_out0,
-                );
-                safe_simd::_mm256_storeu_si256(
-                    <&mut [i16; 16]>::try_from(out_hi).unwrap(),
-                    v_out1,
-                );
+                safe_simd::_mm256_storeu_si256(<&mut [i16; 16]>::try_from(out_lo).unwrap(), v_out0);
+                safe_simd::_mm256_storeu_si256(<&mut [i16; 16]>::try_from(out_hi).unwrap(), v_out1);
             }
         }
 

@@ -113,8 +113,7 @@ impl<'a> JpegParser<'a> {
                         && self.streaming_rgb.is_none()
                     {
                         // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
-                        let rgb =
-                            self.decode_baseline_streaming_rgb(&scan_components, stop)?;
+                        let rgb = self.decode_baseline_streaming_rgb(&scan_components, stop)?;
                         self.streaming_rgb = Some(rgb);
                     } else {
                         self.decode_scan(&scan_components, stop)?;
@@ -264,16 +263,16 @@ impl<'a> JpegParser<'a> {
                 let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                 let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                 let comp_blocks_h = mcu_cols * h_samp;
-                let comp_width = (self.width as usize * h_samp + max_h_samp as usize - 1)
-                    / max_h_samp as usize;
-                let comp_height = (self.height as usize * v_samp + max_v_samp as usize - 1)
-                    / max_v_samp as usize;
+                let comp_width =
+                    (self.width as usize * h_samp + max_h_samp as usize - 1) / max_h_samp as usize;
+                let comp_height =
+                    (self.height as usize * v_samp + max_v_samp as usize - 1) / max_v_samp as usize;
                 let actual_blocks_h = (comp_width + 7) / 8;
                 let actual_blocks_v = (comp_height + 7) / 8;
                 let is_single_component_oversample =
                     scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
-                let has_any_padding = actual_blocks_h < comp_blocks_h
-                    || actual_blocks_v < mcu_rows * v_samp;
+                let has_any_padding =
+                    actual_blocks_h < comp_blocks_h || actual_blocks_v < mcu_rows * v_samp;
                 CompScanInfo {
                     comp_idx: *comp_idx,
                     dc_table: *dc_table as usize,
@@ -717,5 +716,4 @@ impl<'a> JpegParser<'a> {
 
         Ok(rgb)
     }
-
 }

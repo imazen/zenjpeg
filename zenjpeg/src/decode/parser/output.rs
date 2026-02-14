@@ -284,7 +284,10 @@ impl<'a> JpegParser<'a> {
                             idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
                         } else {
                             dequantize_unzigzag_i32_into_partial(
-                                coeffs, quant, &mut dequant_i32, coeff_count,
+                                coeffs,
+                                quant,
+                                &mut dequant_i32,
+                                coeff_count,
                             );
                             match chroma_upsampling {
                                 super::super::ChromaUpsampling::LibjpegCompat => {
@@ -507,7 +510,11 @@ impl<'a> JpegParser<'a> {
         let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
 
         let idct_chroma_strip =
-            |ext: &mut [i16], comp_idx: usize, imcu_row: usize, quant: &[u16; 64], dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
+            |ext: &mut [i16],
+             comp_idx: usize,
+             imcu_row: usize,
+             quant: &[u16; 64],
+             dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
                 let info = &comp_infos[comp_idx];
                 let data_offset = c_strip_width; // skip context row 0
                 let comp_coeffs = &self.coeffs[comp_idx];
@@ -522,8 +529,7 @@ impl<'a> JpegParser<'a> {
 
                     // Pre-slice the row of blocks to eliminate per-block bounds checks
                     let row_start = by * info.comp_blocks_h;
-                    let row_end =
-                        (row_start + info.comp_blocks_h).min(comp_coeffs.len());
+                    let row_end = (row_start + info.comp_blocks_h).min(comp_coeffs.len());
                     let row_coeffs = &comp_coeffs[row_start..row_end];
                     let row_counts = &comp_counts[row_start..row_end];
 
@@ -538,7 +544,10 @@ impl<'a> JpegParser<'a> {
                             idct_int_dc_only(dc, &mut ext[dst_offset..], c_strip_width);
                         } else {
                             dequantize_unzigzag_i32_into_partial(
-                                coeffs, quant, dequant_buf, coeff_count,
+                                coeffs,
+                                quant,
+                                dequant_buf,
+                                coeff_count,
                             );
                             idct_fn(
                                 dequant_buf,
@@ -632,8 +641,7 @@ impl<'a> JpegParser<'a> {
 
                     // Pre-slice the row of blocks to eliminate per-block bounds checks
                     let row_start = by * info.comp_blocks_h;
-                    let row_end =
-                        (row_start + info.comp_blocks_h).min(y_coeffs.len());
+                    let row_end = (row_start + info.comp_blocks_h).min(y_coeffs.len());
                     let row_coeffs = &y_coeffs[row_start..row_end];
                     let row_counts = &y_counts[row_start..row_end];
 
@@ -648,7 +656,10 @@ impl<'a> JpegParser<'a> {
                             idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
                         } else {
                             dequantize_unzigzag_i32_into_partial(
-                                coeffs, quant_y, &mut dequant_i32, coeff_count,
+                                coeffs,
+                                quant_y,
+                                &mut dequant_i32,
+                                coeff_count,
                             );
                             idct_fn(
                                 &mut dequant_i32,
@@ -1500,5 +1511,4 @@ impl<'a> JpegParser<'a> {
             core::mem::take(&mut planes_f32[2]),
         ))
     }
-
 }

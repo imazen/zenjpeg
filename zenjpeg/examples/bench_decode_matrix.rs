@@ -56,16 +56,30 @@ mod bench {
         let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
             png::ColorType::Rgb => buf
                 .chunks_exact(3)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
             png::ColorType::Rgba => buf
                 .chunks_exact(4)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
-            png::ColorType::Grayscale => buf.iter().map(|&v| rgb::RGB { r: v, g: v, b: v }).collect(),
+            png::ColorType::Grayscale => {
+                buf.iter().map(|&v| rgb::RGB { r: v, g: v, b: v }).collect()
+            }
             png::ColorType::GrayscaleAlpha => buf
                 .chunks_exact(2)
-                .map(|c| rgb::RGB { r: c[0], g: c[0], b: c[0] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[0],
+                    b: c[0],
+                })
                 .collect(),
             _ => panic!("Unsupported color type: {:?}", info.color_type),
         };
@@ -73,7 +87,12 @@ mod bench {
         (pixels, width, height)
     }
 
-    fn center_crop(pixels: &[rgb::RGB<u8>], src_w: u32, src_h: u32, target: u32) -> Vec<rgb::RGB<u8>> {
+    fn center_crop(
+        pixels: &[rgb::RGB<u8>],
+        src_w: u32,
+        src_h: u32,
+        target: u32,
+    ) -> Vec<rgb::RGB<u8>> {
         let tw = target as usize;
         let th = target as usize;
         let sw = src_w as usize;
@@ -93,7 +112,12 @@ mod bench {
         out
     }
 
-    fn tile_to_size(pixels: &[rgb::RGB<u8>], src_w: u32, src_h: u32, target: u32) -> Vec<rgb::RGB<u8>> {
+    fn tile_to_size(
+        pixels: &[rgb::RGB<u8>],
+        src_w: u32,
+        src_h: u32,
+        target: u32,
+    ) -> Vec<rgb::RGB<u8>> {
         let tw = target as usize;
         let th = target as usize;
         let sw = src_w as usize;
@@ -149,7 +173,13 @@ mod bench {
         }
     }
 
-    fn encode_jpeg(pixels: &[rgb::RGB<u8>], w: u32, h: u32, mode: EncodeMode, quality: f32) -> Vec<u8> {
+    fn encode_jpeg(
+        pixels: &[rgb::RGB<u8>],
+        w: u32,
+        h: u32,
+        mode: EncodeMode,
+        quality: f32,
+    ) -> Vec<u8> {
         let config = match mode {
             EncodeMode::Baseline420 => EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
                 .progressive(false)
@@ -157,8 +187,9 @@ mod bench {
             EncodeMode::Baseline444 => EncoderConfig::ycbcr(quality, ChromaSubsampling::None)
                 .progressive(false)
                 .restart_mcu_rows(4),
-            EncodeMode::Progressive420 => EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
-                .progressive(true),
+            EncodeMode::Progressive420 => {
+                EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(true)
+            }
             EncodeMode::XybBQuarter => EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
                 .progressive(false)
                 .restart_mcu_rows(4),
@@ -243,7 +274,9 @@ mod bench {
     fn decode_with_zenjpeg_scanline(data: &[u8]) -> Vec<u8> {
         use imgref::ImgRefMut;
         let decoder = Decoder::new();
-        let mut reader = decoder.scanline_reader(data).expect("scanline_reader failed");
+        let mut reader = decoder
+            .scanline_reader(data)
+            .expect("scanline_reader failed");
         let w = reader.width() as usize;
         let h = reader.height() as usize;
         let mut pixels = vec![0u8; w * h * 3];
@@ -364,7 +397,10 @@ mod bench {
             .collect();
 
         // Prepare all square images at all sizes (shared across modes/qualities)
-        eprintln!("\nPreparing square images at {} sizes...", target_sizes.len());
+        eprintln!(
+            "\nPreparing square images at {} sizes...",
+            target_sizes.len()
+        );
         // Key: (image_idx, size) -> pixels
         let mut prepared: HashMap<(usize, u32), Vec<rgb::RGB<u8>>> = HashMap::new();
         for (idx, (_name, pixels, w, h)) in source_images.iter().enumerate() {
@@ -379,7 +415,8 @@ mod bench {
         // Key: (image_idx, size, mode, quality) -> jpeg bytes
         eprintln!("\nEncoding all combinations...");
         let mut encoded: HashMap<(usize, u32, EncodeMode, u32), Vec<u8>> = HashMap::new();
-        let total_encodes = source_images.len() * target_sizes.len() * modes.len() * qualities.len();
+        let total_encodes =
+            source_images.len() * target_sizes.len() * modes.len() * qualities.len();
         let mut count = 0;
         for (idx, (name, ..)) in source_images.iter().enumerate() {
             for &size in target_sizes {
@@ -390,8 +427,17 @@ mod bench {
                         let jpeg = encode_jpeg(pixels, size, size, mode, q);
                         count += 1;
                         if count % 20 == 0 || count == total_encodes {
-                            eprint!("\r  {}/{} encoded ({} {}x{} {} Q{}  {} bytes)    ",
-                                count, total_encodes, name, size, size, mode.label(), qi, jpeg.len());
+                            eprint!(
+                                "\r  {}/{} encoded ({} {}x{} {} Q{}  {} bytes)    ",
+                                count,
+                                total_encodes,
+                                name,
+                                size,
+                                size,
+                                mode.label(),
+                                qi,
+                                jpeg.len()
+                            );
                         }
                         encoded.insert((idx, size, mode, qi), jpeg);
                     }
@@ -503,7 +549,11 @@ mod bench {
                             let time = match (v.upsampler.as_str(), v.name.as_str()) {
                                 ("libjpeg", _) => {
                                     let data = jpeg.clone();
-                                    bench_median(|| unsafe { decode_with_mozjpeg(&data) }, warmup, iters)
+                                    bench_median(
+                                        || unsafe { decode_with_mozjpeg(&data) },
+                                        warmup,
+                                        iters,
+                                    )
                                 }
                                 ("zune", _) => {
                                     let data = jpeg.clone();
@@ -525,11 +575,19 @@ mod bench {
                                         .unwrap();
                                     let pool = &pools[pool_idx].1;
                                     let data = jpeg.clone();
-                                    bench_median(|| decode_with_zenjpeg_box(&data, pool), warmup, iters)
+                                    bench_median(
+                                        || decode_with_zenjpeg_box(&data, pool),
+                                        warmup,
+                                        iters,
+                                    )
                                 }
                                 ("scanline", _) => {
                                     let data = jpeg.clone();
-                                    bench_median(|| decode_with_zenjpeg_scanline(&data), warmup, iters)
+                                    bench_median(
+                                        || decode_with_zenjpeg_scanline(&data),
+                                        warmup,
+                                        iters,
+                                    )
                                 }
                                 _ => unreachable!(),
                             };
@@ -585,9 +643,7 @@ mod bench {
                             .collect();
                         let base_records: Vec<_> = csv_records
                             .iter()
-                            .filter(|r| {
-                                r.mode == mode && r.quality == qi && r.decoder == "zen-1T"
-                            })
+                            .filter(|r| r.mode == mode && r.quality == qi && r.decoder == "zen-1T")
                             .collect();
 
                         if this_records.len() == base_records.len() && !this_records.is_empty() {
@@ -635,7 +691,11 @@ mod bench {
 
     fn write_csv(path: &Path, records: &[CsvRecord]) {
         let mut f = std::fs::File::create(path).unwrap();
-        writeln!(f, "image,size,mode,quality,decoder,threads,upsampler,time_ms,mpix_per_sec").unwrap();
+        writeln!(
+            f,
+            "image,size,mode,quality,decoder,threads,upsampler,time_ms,mpix_per_sec"
+        )
+        .unwrap();
         for r in records {
             writeln!(
                 f,

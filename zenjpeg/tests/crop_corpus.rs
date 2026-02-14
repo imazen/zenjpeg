@@ -92,13 +92,7 @@ fn crop_regions(img_w: u32, img_h: u32) -> Vec<(u32, u32, u32, u32)> {
 
 /// Run crop verification for a single file with a given crop region.
 /// Returns (max_diff, mean_diff) for the buffered path, or None if decode fails.
-fn verify_crop_buffered(
-    data: &[u8],
-    cx: u32,
-    cy: u32,
-    cw: u32,
-    ch: u32,
-) -> Option<(u8, f64)> {
+fn verify_crop_buffered(data: &[u8], cx: u32, cy: u32, cw: u32, ch: u32) -> Option<(u8, f64)> {
     use zenjpeg::decoder::CropRegion;
     use zenjpeg::decoder::Decoder;
 
@@ -109,7 +103,15 @@ fn verify_crop_buffered(
     let full_pix = full.into_pixels_u8()?;
 
     // Manual crop from full decode
-    let reference = manual_crop(&full_pix, fw, bpp, cx as usize, cy as usize, cw as usize, ch as usize);
+    let reference = manual_crop(
+        &full_pix,
+        fw,
+        bpp,
+        cx as usize,
+        cy as usize,
+        cw as usize,
+        ch as usize,
+    );
 
     // Cropped decode
     let cropped = Decoder::new()
@@ -140,13 +142,7 @@ fn verify_crop_buffered(
 }
 
 /// Run crop verification via scanline reader.
-fn verify_crop_scanline(
-    data: &[u8],
-    cx: u32,
-    cy: u32,
-    cw: u32,
-    ch: u32,
-) -> Option<(u8, f64)> {
+fn verify_crop_scanline(data: &[u8], cx: u32, cy: u32, cw: u32, ch: u32) -> Option<(u8, f64)> {
     use zenjpeg::decoder::CropRegion;
     use zenjpeg::decoder::Decoder;
 
@@ -158,13 +154,20 @@ fn verify_crop_scanline(
     let mut rows_read = 0;
     while !full_reader.is_finished() {
         let remaining = fh - rows_read;
-        let output =
-            imgref::ImgRefMut::new(&mut full_pix[rows_read * fw * 3..], fw * 3, remaining);
+        let output = imgref::ImgRefMut::new(&mut full_pix[rows_read * fw * 3..], fw * 3, remaining);
         rows_read += full_reader.read_rows_rgb8(output).ok()?;
     }
 
     // Manual crop
-    let reference = manual_crop(&full_pix, fw, 3, cx as usize, cy as usize, cw as usize, ch as usize);
+    let reference = manual_crop(
+        &full_pix,
+        fw,
+        3,
+        cx as usize,
+        cy as usize,
+        cw as usize,
+        ch as usize,
+    );
 
     // Cropped scanline decode
     let mut reader = Decoder::new()
@@ -182,8 +185,11 @@ fn verify_crop_scanline(
     let mut rows_read = 0;
     while !reader.is_finished() {
         let remaining = out_h - rows_read;
-        let output =
-            imgref::ImgRefMut::new(&mut cropped_pix[rows_read * out_w * 3..], out_w * 3, remaining);
+        let output = imgref::ImgRefMut::new(
+            &mut cropped_pix[rows_read * out_w * 3..],
+            out_w * 3,
+            remaining,
+        );
         rows_read += reader.read_rows_rgb8(output).ok()?;
     }
 
@@ -226,7 +232,15 @@ fn verify_crop_with_transform(
     let full_pix = full.into_pixels_u8()?;
 
     // Manual crop from full transformed decode
-    let reference = manual_crop(&full_pix, fw, bpp, cx as usize, cy as usize, cw as usize, ch as usize);
+    let reference = manual_crop(
+        &full_pix,
+        fw,
+        bpp,
+        cx as usize,
+        cy as usize,
+        cw as usize,
+        ch as usize,
+    );
 
     // Cropped + transformed decode
     let cropped = Decoder::new()
@@ -294,7 +308,15 @@ fn verify_crop_scanline_with_transform(
         _ => return None, // CMYK or other unsupported format
     };
 
-    let reference = manual_crop(&full_pix, fw, 3, cx as usize, cy as usize, cw as usize, ch as usize);
+    let reference = manual_crop(
+        &full_pix,
+        fw,
+        3,
+        cx as usize,
+        cy as usize,
+        cw as usize,
+        ch as usize,
+    );
 
     // Cropped + transformed scanline decode
     let mut reader = Decoder::new()
@@ -313,8 +335,11 @@ fn verify_crop_scanline_with_transform(
     let mut rows_read = 0;
     while !reader.is_finished() {
         let remaining = out_h - rows_read;
-        let output =
-            imgref::ImgRefMut::new(&mut cropped_pix[rows_read * out_w * 3..], out_w * 3, remaining);
+        let output = imgref::ImgRefMut::new(
+            &mut cropped_pix[rows_read * out_w * 3..],
+            out_w * 3,
+            remaining,
+        );
         rows_read += reader.read_rows_rgb8(output).ok()?;
     }
 
@@ -407,8 +432,14 @@ fn corpus_crop_buffered() {
         );
     }
 
-    eprintln!("\n{} total crops tested, {} with nonzero diff", total_crops, total_failures);
-    assert_eq!(total_failures, 0, "All buffered crop results should be pixel-identical");
+    eprintln!(
+        "\n{} total crops tested, {} with nonzero diff",
+        total_crops, total_failures
+    );
+    assert_eq!(
+        total_failures, 0,
+        "All buffered crop results should be pixel-identical"
+    );
 }
 
 #[test]
@@ -430,7 +461,10 @@ fn corpus_crop_scanline() {
     };
 
     let files = collect_jpgs(&corpus_dir);
-    eprintln!("Testing {} files via scanline_reader() crop path\n", files.len());
+    eprintln!(
+        "Testing {} files via scanline_reader() crop path\n",
+        files.len()
+    );
     eprintln!(
         "{:<45} {:>8} {:>8} {:>6} {:>6} {:>10}",
         "File", "ImgW", "ImgH", "Crops", "MaxD", "MeanD"
@@ -484,8 +518,14 @@ fn corpus_crop_scanline() {
         );
     }
 
-    eprintln!("\n{} total crops tested, {} with nonzero diff", total_crops, total_failures);
-    assert_eq!(total_failures, 0, "All scanline crop results should be pixel-identical");
+    eprintln!(
+        "\n{} total crops tested, {} with nonzero diff",
+        total_crops, total_failures
+    );
+    assert_eq!(
+        total_failures, 0,
+        "All scanline crop results should be pixel-identical"
+    );
 }
 
 #[test]

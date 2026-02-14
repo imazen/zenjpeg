@@ -30,9 +30,9 @@ pub mod idct_int;
 
 mod config;
 mod extras;
-mod image;
 #[cfg(feature = "parallel")]
 mod fused_parallel;
+mod image;
 mod parser;
 mod pipeline;
 pub(crate) mod rst_scan;

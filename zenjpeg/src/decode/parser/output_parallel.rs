@@ -152,7 +152,10 @@ fn idct_chroma_into_ext(
         let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
         for pad_row in c_valid..c_strip_height {
             let pad_start = data_offset + pad_row * c_strip_width;
-            ext.copy_within(last_valid_start..last_valid_start + c_strip_width, pad_start);
+            ext.copy_within(
+                last_valid_start..last_valid_start + c_strip_width,
+                pad_start,
+            );
         }
     }
 }

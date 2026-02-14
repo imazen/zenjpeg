@@ -38,19 +38,30 @@ mod bench {
         let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
             png::ColorType::Rgb => buf
                 .chunks_exact(3)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
             png::ColorType::Rgba => buf
                 .chunks_exact(4)
-                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[1],
+                    b: c[2],
+                })
                 .collect(),
-            png::ColorType::Grayscale => buf
-                .iter()
-                .map(|&v| rgb::RGB { r: v, g: v, b: v })
-                .collect(),
+            png::ColorType::Grayscale => {
+                buf.iter().map(|&v| rgb::RGB { r: v, g: v, b: v }).collect()
+            }
             png::ColorType::GrayscaleAlpha => buf
                 .chunks_exact(2)
-                .map(|c| rgb::RGB { r: c[0], g: c[0], b: c[0] })
+                .map(|c| rgb::RGB {
+                    r: c[0],
+                    g: c[0],
+                    b: c[0],
+                })
                 .collect(),
             _ => panic!("Unsupported color type: {:?}", info.color_type),
         };
@@ -175,9 +186,7 @@ mod bench {
         }
 
         // Sort by pixel count descending
-        source_images.sort_by(|a, b| {
-            (b.2 as u64 * b.3 as u64).cmp(&(a.2 as u64 * a.3 as u64))
-        });
+        source_images.sort_by(|a, b| (b.2 as u64 * b.3 as u64).cmp(&(a.2 as u64 * a.3 as u64)));
 
         // Encode each image in multiple modes
         struct EncodedSet {
@@ -193,7 +202,10 @@ mod bench {
             iterations: usize,
         }
 
-        eprintln!("Encoding {} images in 4 modes (Q90, 4:2:0)...\n", source_images.len());
+        eprintln!(
+            "Encoding {} images in 4 modes (Q90, 4:2:0)...\n",
+            source_images.len()
+        );
 
         let mut images: Vec<EncodedSet> = Vec::new();
 
@@ -308,7 +320,10 @@ mod bench {
             eprint!(" {:>7}", format!("{}T/1T", n));
         }
         eprintln!();
-        eprintln!("{}", "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8));
+        eprintln!(
+            "{}",
+            "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8)
+        );
 
         let mut dri1_1t_total = 0.0f64;
         let mut dri1_4t_total = 0.0f64;
@@ -341,7 +356,10 @@ mod bench {
             eprint!(" {:>7}", format!("{}T/1T", n));
         }
         eprintln!();
-        eprintln!("{}", "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8));
+        eprintln!(
+            "{}",
+            "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8)
+        );
 
         let mut dri4_4t_total = 0.0f64;
         for img in &images {
@@ -363,13 +381,22 @@ mod bench {
         }
 
         // === Summary ===
-        eprintln!("\n=== Summary (total decode time across {} images) ===", images.len());
+        eprintln!(
+            "\n=== Summary (total decode time across {} images) ===",
+            images.len()
+        );
         eprintln!("Progressive 1T:         {:>7.1}ms", prog_1t_total * 1000.0);
         eprintln!("BL+DRI/1row 1T:         {:>7.1}ms", dri1_1t_total * 1000.0);
-        eprintln!("BL+DRI/1row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
-            dri1_4t_total * 1000.0, prog_1t_total / dri1_4t_total);
-        eprintln!("BL+DRI/4row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
-            dri4_4t_total * 1000.0, prog_1t_total / dri4_4t_total);
+        eprintln!(
+            "BL+DRI/1row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
+            dri1_4t_total * 1000.0,
+            prog_1t_total / dri1_4t_total
+        );
+        eprintln!(
+            "BL+DRI/4row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
+            dri4_4t_total * 1000.0,
+            prog_1t_total / dri4_4t_total
+        );
         eprintln!("File size cost (DRI/1row vs prog): +{:.1}%", dri1_vs_prog);
     }
 }
