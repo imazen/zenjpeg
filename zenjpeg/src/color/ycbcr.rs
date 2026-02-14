@@ -1380,7 +1380,6 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
     use core::arch::x86_64::*;
 
     let len = y_plane.len();
-    let chunks = len / 16;
 
     // Preload constants outside the loop
     let bias = _mm256_set1_epi16(128);
