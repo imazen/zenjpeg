@@ -35,7 +35,7 @@
 //!     .progressive(true)                        // Progressive JPEG (~3% smaller)
 //!     .optimize_huffman(true)                   // Optimal Huffman tables (default)
 //!     .sharp_yuv(true)                          // Better color edges (~3x slower)
-//!     .restart_interval_rows(4);                 // MCU rows between restart markers
+//!     .restart_mcu_rows(4);                      // MCU rows between restart markers (default)
 //!
 //! // XYB (perceptual color space)
 //! let config = EncoderConfig::xyb(85, XybSubsampling::BQuarter)

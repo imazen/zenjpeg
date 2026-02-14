@@ -97,7 +97,7 @@ impl BytesEncoder {
         };
 
         let restart_interval =
-            super::config::resolve_restart_rows(config.restart_rows, width, subsampling);
+            super::config::resolve_restart_rows(config.restart_mcu_rows, width, subsampling);
 
         let mut builder = SE::new(width, height)
             .quality(config.quality)
@@ -971,7 +971,7 @@ impl YCbCrPlanarEncoder {
         };
 
         let restart_interval =
-            super::config::resolve_restart_rows(config.restart_rows, width, subsampling);
+            super::config::resolve_restart_rows(config.restart_mcu_rows, width, subsampling);
 
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing

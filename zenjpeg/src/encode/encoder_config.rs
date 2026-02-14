@@ -23,9 +23,15 @@ pub struct EncoderConfig {
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
-    /// Restart interval in MCU rows (0 = disabled).
-    /// Resolved to MCU count at encode time when image dimensions are known.
-    pub(crate) restart_rows: u16,
+    /// Restart marker interval in MCU rows (0 = disabled, default = 4).
+    ///
+    /// An MCU row is one row of Minimum Coded Units: 8 pixels tall for 4:4:4,
+    /// 16 pixels tall for 4:2:0/4:2:2. Resolved to an exact MCU count at
+    /// encode time when image dimensions are known.
+    ///
+    /// Restart markers enable parallel decoding and error recovery with
+    /// negligible compression overhead when row-aligned (+0.04% at 4 rows).
+    pub(crate) restart_mcu_rows: u16,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -184,7 +190,7 @@ impl EncoderConfig {
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
-            restart_rows: 0,
+            restart_mcu_rows: 4,
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
@@ -528,27 +534,50 @@ impl EncoderConfig {
         self.progressive(false).allow_16bit_quant_tables(false)
     }
 
-    /// Set the restart interval in MCU rows.
+    /// Set the restart marker interval in MCU rows (default: 4).
     ///
-    /// Restart markers allow parallel decoding and error recovery.
-    /// Set to 0 to disable restart markers (default).
+    /// An MCU (Minimum Coded Unit) row is one row of coding units in the
+    /// JPEG grid. Its height in pixels depends on chroma subsampling:
+    /// - 4:4:4 / 4:2:2: 8 pixels tall (1 block row)
+    /// - 4:2:0 / 4:4:0: 16 pixels tall (2 block rows)
     ///
-    /// The interval is always MCU-row-aligned — resolved to an exact MCU
-    /// count at encode time when image dimensions are known. This ensures
-    /// the fused chroma upsample + color conversion decode path works
-    /// correctly.
+    /// The value is resolved to an exact MCU count at encode time when
+    /// image dimensions are known (interval = rows × mcu_cols). This
+    /// guarantees MCU-row-aligned restart boundaries, which is required
+    /// for the fused chroma upsample + color conversion decode path.
     ///
-    /// Measured overhead across 80 images at Q85:
-    /// - 1 MCU row:  +0.16% total file size
-    /// - 4 MCU rows: +0.04%
-    /// - 8 MCU rows: +0.02%
+    /// # Why restart markers matter
     ///
-    /// For parallel encoding, 4-8 rows is the sweet spot: negligible
-    /// compression cost with good parallelism (8-64 segments for
-    /// typical images).
+    /// Restart markers reset the DC prediction state and byte-align the
+    /// bitstream, enabling:
+    /// - **Parallel decoding**: independent segments can be decoded on
+    ///   separate threads
+    /// - **Error recovery**: corruption in one segment doesn't propagate
+    /// - **Random access**: decoders can seek to any restart boundary
+    ///
+    /// # Compression overhead
+    ///
+    /// Row-aligned restart markers have negligible overhead because the
+    /// DC prediction already makes a large jump at row boundaries (the
+    /// last MCU of one row is spatially distant from the first MCU of
+    /// the next row). Measured across 80 images at Q85:
+    ///
+    /// | MCU rows | Overhead | Pixel height (4:2:0) |
+    /// |----------|----------|---------------------|
+    /// | 1        | +0.16%   | 16 px               |
+    /// | 4        | +0.04%   | 64 px               |
+    /// | 8        | +0.02%   | 128 px              |
+    ///
+    /// Non-row-aligned intervals (e.g., DRI=64 MCUs) cost 3-15× more
+    /// because they break DC prediction between adjacent MCUs mid-row.
+    ///
+    /// # Special values
+    ///
+    /// - `0`: disable restart markers entirely
+    /// - `4` (default): good balance of parallelism and overhead
     #[must_use]
-    pub fn restart_interval_rows(mut self, rows: u16) -> Self {
-        self.restart_rows = rows;
+    pub fn restart_mcu_rows(mut self, rows: u16) -> Self {
+        self.restart_mcu_rows = rows;
         self
     }
 
@@ -561,9 +590,9 @@ impl EncoderConfig {
     /// # Restart Marker Behavior
     ///
     /// Parallel entropy encoding requires restart markers between segments.
-    /// When parallel encoding is enabled and `restart_interval_rows` is 0,
-    /// the encoder auto-selects an optimal row-aligned interval (4-16 rows)
-    /// targeting 8+ segments for good parallelism.
+    /// The default of 4 MCU rows works well. If `restart_mcu_rows` is 0,
+    /// the encoder auto-selects an optimal interval (4-16 rows) targeting
+    /// 8+ segments for good parallelism.
     ///
     /// # Performance
     ///
