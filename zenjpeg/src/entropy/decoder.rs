@@ -721,11 +721,31 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             coeffs[..clear_len].fill(0);
         }
 
-        // Decode DC coefficient
-        let dc_cat = match decode_huffman_symbol(&mut self.reader, dc_table)? {
-            ScanRead::Value(v) => v,
-            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        // Decode DC coefficient — inline fast path to avoid function call overhead
+        let dc_cat = if let Some(bits9) = self
+            .reader
+            .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+        {
+            let lookup = dc_table.fast_lookup[bits9 as usize];
+            if lookup >= 0 {
+                let symbol = (lookup & 0xFF) as u8;
+                let len = (lookup >> 8) as u8;
+                self.reader.skip_bits_fast(len);
+                symbol
+            } else {
+                // Slow path for long DC codes (rare)
+                match decode_huffman_symbol(&mut self.reader, dc_table)? {
+                    ScanRead::Value(v) => v,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                }
+            }
+        } else {
+            match decode_huffman_symbol(&mut self.reader, dc_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            }
         };
 
         let dc_diff = if dc_cat == 0 {
