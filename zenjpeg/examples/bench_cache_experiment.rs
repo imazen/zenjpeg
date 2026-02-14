@@ -514,6 +514,122 @@ mod bench {
         eprintln!(
             "  - 512²×3 = 0.75MB (fits L2), 2048²×3 = 12MB (fits L3), 4096²×3 = 48MB (exceeds L3)"
         );
+
+        // ============================================================
+        // Part 4: DRI sweep — optimal restart interval per image size
+        // ============================================================
+        eprintln!(
+            "\n=== Part 4: DRI sweep (bl-420 Q85, avg of {} images) ===\n",
+            source_images.len()
+        );
+        eprintln!("Encoding with different restart_mcu_rows values...");
+
+        let dri_values: &[u16] = &[0, 1, 2, 4, 8, 16];
+        let dri_iters = 15;
+        let dri_warmup = 5;
+
+        // Header
+        eprint!("{:>7} {:>4}", "Size", "DRI");
+        eprint!(" {:>7} {:>9} {:>9} {:>9}", "segs", "1T", "4T", "8T");
+        eprint!(" {:>7} {:>7}", "8T/1T", "vs DRI4");
+        eprintln!();
+        eprintln!("{}", "-".repeat(80));
+
+        for &size in sizes {
+            // Encode with each DRI
+            let mut dri_jpegs: Vec<(u16, Vec<Vec<u8>>)> = Vec::new();
+            for &dri in dri_values {
+                let mut jpegs = Vec::new();
+                for (pixels, w, h) in &source_images {
+                    let square = tile_to_size(pixels, *w, *h, size);
+                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                        .progressive(false)
+                        .restart_mcu_rows(dri);
+                    jpegs.push(config.encode(&square, size, size).unwrap());
+                }
+                dri_jpegs.push((dri, jpegs));
+            }
+
+            let mut dri4_8t = 0.0f64; // baseline for comparison
+
+            for (dri, ref jpegs) in &dri_jpegs {
+                // Count restart segments by checking file
+                let decoder_probe = Decoder::new().output_format(PixelFormat::Rgb);
+                let _probe = decoder_probe.decode(&jpegs[0], Unstoppable).unwrap();
+
+                // Decode with 1T, 4T, 8T
+                let thread_counts = [1usize, 4, 8];
+                let mut times_by_tc: Vec<f64> = Vec::new();
+
+                for &tc in &thread_counts {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(tc)
+                        .build()
+                        .unwrap();
+
+                    let mut avg = 0.0;
+                    for jpeg in jpegs {
+                        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+                        let mut times = Vec::with_capacity(dri_iters);
+
+                        for _ in 0..dri_warmup {
+                            pool.install(|| {
+                                std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                            });
+                        }
+                        for _ in 0..dri_iters {
+                            let start = Instant::now();
+                            pool.install(|| {
+                                std::hint::black_box(decoder.decode(jpeg, Unstoppable).unwrap());
+                            });
+                            times.push(start.elapsed().as_secs_f64());
+                        }
+                        avg += median_of(&mut times);
+                    }
+                    avg /= jpegs.len() as f64;
+                    times_by_tc.push(avg);
+                }
+
+                let t_1t = times_by_tc[0];
+                let t_4t = times_by_tc[1];
+                let t_8t = times_by_tc[2];
+                let ratio_8t = t_1t / t_8t;
+
+                if *dri == 4 {
+                    dri4_8t = t_8t;
+                }
+
+                // Estimate segment count
+                let _mcu_cols = (size as usize + 15) / 16;
+                let mcu_rows = (size as usize + 15) / 16;
+                let segs = if *dri == 0 {
+                    1
+                } else {
+                    mcu_rows / (*dri as usize)
+                };
+
+                let vs_dri4 = if dri4_8t > 0.0 && *dri != 4 {
+                    format!("{:+.1}%", (t_8t / dri4_8t - 1.0) * 100.0)
+                } else if *dri == 4 {
+                    "  base".to_string()
+                } else {
+                    "  n/a".to_string()
+                };
+
+                eprintln!(
+                    "{:>5}² {:>4} {:>7} {:>9} {:>9} {:>9} {:>7.2}x {:>7}",
+                    size,
+                    dri,
+                    segs,
+                    format_time(t_1t),
+                    format_time(t_4t),
+                    format_time(t_8t),
+                    ratio_8t,
+                    vs_dri4,
+                );
+            }
+            eprintln!(); // blank line between sizes
+        }
     }
 
     fn format_time(secs: f64) -> String {
