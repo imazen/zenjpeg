@@ -93,10 +93,13 @@ fn test_progressive_subsampling_file_sizes() {
         }
     }
 
+    // Disable restart markers — on tiny images the per-restart overhead can
+    // reverse the expected subsampling size ordering
     let encode = |sub: ChromaSubsampling| -> usize {
         let config = EncoderConfig::ycbcr(85.0, sub)
             .progressive(true)
-            .optimize_huffman(true);
+            .optimize_huffman(true)
+            .restart_mcu_rows(0);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
