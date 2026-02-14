@@ -835,6 +835,9 @@ impl ComputedConfig {
             encoder.set_restart_interval(self.restart_interval);
         }
 
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0;
+
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
                 // X blocks (4 per MCU in 2x2 arrangement)
@@ -876,7 +879,11 @@ impl ComputedConfig {
                 };
                 encoder.encode_block(b_block, 2, 0, 0);
 
-                encoder.check_restart();
+                // Only check restart if not the last MCU
+                mcu_idx += 1;
+                if mcu_idx < total_mcus {
+                    encoder.check_restart();
+                }
             }
         }
 
@@ -920,6 +927,9 @@ impl ComputedConfig {
             encoder.set_restart_interval(self.restart_interval);
         }
 
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = 0;
+
         for mcu_y in 0..mcu_v {
             for mcu_x in 0..mcu_h {
                 // X blocks (4 per MCU in 2x2 arrangement)
@@ -961,7 +971,11 @@ impl ComputedConfig {
                 };
                 encoder.encode_block(b_block, 2, 0, 0);
 
-                encoder.check_restart();
+                // Only check restart if not the last MCU
+                mcu_idx += 1;
+                if mcu_idx < total_mcus {
+                    encoder.check_restart();
+                }
             }
         }
 
