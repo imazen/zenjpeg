@@ -9,6 +9,7 @@
 //! - AC-first (ss>0, ah=0): Initial AC coefficient values for range [ss, se]
 //! - AC-refine (ss>0, ah>0): Refine AC coefficient precision for range [ss, se]
 
+use crate::entropy::decoder::range_bitmap;
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
@@ -90,15 +91,6 @@ impl<'a> JpegParser<'a> {
 
         // Set up entropy decoder
         let scan_data = &self.data[self.position..];
-
-        // Debug: print progressive scan info
-        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
-            let first_bytes: Vec<u8> = scan_data.iter().take(8).copied().collect();
-            eprintln!(
-                "DEBUG prog: ss={} se={} ah={} al={} comps={:?} pos={} data={:02x?}",
-                ss, se, ah, al, scan_components, self.position, first_bytes
-            );
-        }
 
         let mut decoder = EntropyDecoder::new(scan_data);
 
@@ -374,15 +366,6 @@ impl<'a> JpegParser<'a> {
                     mcu_count += 1;
                 }
             }
-        }
-
-        // Debug: print position after scan
-        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
-            eprintln!(
-                "DEBUG prog end: decoder.position()={} new self.position={}",
-                decoder.position(),
-                self.position + decoder.position()
-            );
         }
 
         // Extract warning flags before dropping decoder

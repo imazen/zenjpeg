@@ -26,7 +26,7 @@ pub(crate) enum HuffmanResult {
 /// Returns a u64 bitmask with bits [lo..=hi] set (0-indexed, both inclusive).
 /// Used for masking nonzero bitmaps to a spectral selection range.
 #[inline(always)]
-fn range_bitmap(lo: u8, hi: u8) -> u64 {
+pub(crate) fn range_bitmap(lo: u8, hi: u8) -> u64 {
     debug_assert!(lo <= hi && hi < 64);
     // Shift trick: ((1 << (hi+1)) - 1) & !((1 << lo) - 1)
     // Handle hi=63 overflow: use wrapping shift
@@ -1410,6 +1410,36 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         }
 
         Ok(ScanRead::Value(()))
+    }
+
+    /// Apply refinement bits to existing nonzero coefficients during an EOB run.
+    ///
+    /// This is the lean hot path for AC refinement EOB blocks. Called from the
+    /// outer scan loop when eob_run > 0, bypassing the full decode_ac_refine()
+    /// which includes unnecessary Huffman table lookup and ScanResult wrapping.
+    ///
+    /// The bitmap must already be masked to the spectral range [ss, se].
+    #[inline(always)]
+    pub fn refine_eob_bits(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        nz_bits: u64,
+        al: u8,
+    ) {
+        let bit_val = 1i16 << al;
+        let mut nz = nz_bits;
+        while nz != 0 {
+            let k = nz.trailing_zeros() as usize;
+            let bit = self.reader.read_bit_refine();
+            if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                if coeffs[k] > 0 {
+                    coeffs[k] = coeffs[k].wrapping_add(bit_val);
+                } else {
+                    coeffs[k] = coeffs[k].wrapping_sub(bit_val);
+                }
+            }
+            nz &= nz - 1; // clear lowest set bit
+        }
     }
 }
 
