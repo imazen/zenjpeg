@@ -264,6 +264,7 @@ impl<'a> JpegParser<'a> {
             actual_blocks_h: usize,
             actual_blocks_v: usize,
             is_single_component_oversample: bool,
+            has_any_padding: bool,
         }
         let comp_scan_infos: Vec<CompScanInfo> = scan_components
             .iter()
@@ -279,6 +280,8 @@ impl<'a> JpegParser<'a> {
                 let actual_blocks_v = (comp_height + 7) / 8;
                 let is_single_component_oversample =
                     scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
+                let has_any_padding = actual_blocks_h < comp_blocks_h
+                    || actual_blocks_v < mcu_rows * v_samp;
                 CompScanInfo {
                     comp_idx: *comp_idx,
                     dc_table: *dc_table as usize,
@@ -289,6 +292,7 @@ impl<'a> JpegParser<'a> {
                     actual_blocks_h,
                     actual_blocks_v,
                     is_single_component_oversample,
+                    has_any_padding,
                 }
             })
             .collect();
@@ -316,16 +320,22 @@ impl<'a> JpegParser<'a> {
 
                 // For each component in the scan (using pre-computed invariants)
                 for info in &comp_scan_infos {
+                    // Hoist block coordinate base outside v/h loops
+                    let base_block_x = mcu_x * info.h_samp;
+                    let base_block_y = mcu_y * info.v_samp;
+
                     // Decode all blocks for this component in this MCU
                     for v in 0..info.v_samp {
+                        let block_y = base_block_y + v;
                         for h in 0..info.h_samp {
-                            let block_x = mcu_x * info.h_samp + h;
-                            let block_y = mcu_y * info.v_samp + v;
+                            let block_x = base_block_x + h;
                             let block_idx = block_y * info.comp_blocks_h + block_x;
 
-                            // Check if this block is beyond actual image bounds (padding)
-                            let is_padding =
-                                block_x >= info.actual_blocks_h || block_y >= info.actual_blocks_v;
+                            // Check if this block is beyond actual image bounds (padding).
+                            // Skip the check entirely for MCU-aligned components (no padding possible).
+                            let is_padding = info.has_any_padding
+                                && (block_x >= info.actual_blocks_h
+                                    || block_y >= info.actual_blocks_v);
 
                             if is_padding && info.is_single_component_oversample {
                                 // Single-component with oversampling: skip padding blocks
