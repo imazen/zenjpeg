@@ -5,7 +5,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 fn benchmark(
     width: usize,
     height: usize,
-    restart_interval: u16,
+    restart_rows: u16,
     iterations: usize,
 ) -> (f64, usize) {
     // Create test image - moderate complexity
@@ -24,7 +24,7 @@ fn benchmark(
     }
 
     let config =
-        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).restart_interval(restart_interval);
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).restart_interval_rows(restart_rows);
 
     // Warmup
     for _ in 0..3 {
@@ -54,7 +54,7 @@ fn benchmark(
 
 fn main() {
     println!("Full Encoder Benchmark - Sequential vs Parallel\n");
-    println!("Note: parallel feature requires restart_interval > 0\n");
+    println!("Note: parallel feature requires restart_interval_rows > 0\n");
 
     let sizes = [(1024, 1024), (2048, 2048), (4096, 4096)];
     let iterations = 10;
@@ -63,23 +63,23 @@ fn main() {
         let megapixels = (width * height) as f64 / 1_000_000.0;
         println!("=== {}x{} ({:.1} MP) ===", width, height, megapixels);
 
-        // Sequential (no restart interval)
+        // Sequential (no restart rows)
         let (seq_time, seq_size) = benchmark(width, height, 0, iterations);
         println!(
-            "Sequential (restart=0):   {:7.2}ms, {:7} bytes, {:5.1} MP/s",
+            "Sequential (rows=0):      {:7.2}ms, {:7} bytes, {:5.1} MP/s",
             seq_time,
             seq_size,
             megapixels / seq_time * 1000.0
         );
 
-        // With restart interval (enables parallel when feature is on)
-        for &restart in &[64, 256, 1024] {
-            let (par_time, par_size) = benchmark(width, height, restart, iterations);
+        // With restart rows (enables parallel when feature is on)
+        for &rows in &[1, 4, 16] {
+            let (par_time, par_size) = benchmark(width, height, rows, iterations);
             let speedup = seq_time / par_time;
             let size_diff = (par_size as f64 - seq_size as f64) / seq_size as f64 * 100.0;
             println!(
-                "Restart interval {:4}:    {:7.2}ms, {:7} bytes ({:+.2}%), {:5.1} MP/s, {:.2}x",
-                restart,
+                "Restart rows {:2}:          {:7.2}ms, {:7} bytes ({:+.2}%), {:5.1} MP/s, {:.2}x",
+                rows,
                 par_time,
                 par_size,
                 size_diff,

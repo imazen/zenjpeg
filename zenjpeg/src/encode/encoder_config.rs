@@ -23,7 +23,9 @@ pub struct EncoderConfig {
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
-    pub(crate) restart_interval: u16,
+    /// Restart interval in MCU rows (0 = disabled).
+    /// Resolved to MCU count at encode time when image dimensions are known.
+    pub(crate) restart_rows: u16,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -182,7 +184,7 @@ impl EncoderConfig {
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
-            restart_interval: 0,
+            restart_rows: 0,
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
@@ -526,27 +528,15 @@ impl EncoderConfig {
         self.progressive(false).allow_16bit_quant_tables(false)
     }
 
-    /// Set the restart interval (MCUs between restart markers).
+    /// Set the restart interval in MCU rows.
     ///
-    /// Restart markers allow partial decoding and error recovery.
+    /// Restart markers allow parallel decoding and error recovery.
     /// Set to 0 to disable restart markers (default).
     ///
-    /// The interval is automatically rounded down to the nearest MCU row
-    /// boundary. Non-row-aligned intervals break the fused chroma upsample
-    /// decode path. For row-aligned intervals, use [`restart_interval_rows`]
-    /// instead.
-    #[must_use]
-    pub fn restart_interval(mut self, interval: u16) -> Self {
-        self.restart_interval = interval;
-        self
-    }
-
-    /// Set the restart interval in MCU rows for a given image width.
-    ///
-    /// Row-aligned restart intervals minimize the compression overhead
-    /// of restart markers because DC prediction naturally makes a larger
-    /// jump at row boundaries (spatial distance), reducing the cost of
-    /// resetting to 0.
+    /// The interval is always MCU-row-aligned — resolved to an exact MCU
+    /// count at encode time when image dimensions are known. This ensures
+    /// the fused chroma upsample + color conversion decode path works
+    /// correctly.
     ///
     /// Measured overhead across 80 images at Q85:
     /// - 1 MCU row:  +0.16% total file size
@@ -557,18 +547,8 @@ impl EncoderConfig {
     /// compression cost with good parallelism (8-64 segments for
     /// typical images).
     #[must_use]
-    pub fn restart_interval_rows(mut self, rows: u16, image_width: u32) -> Self {
-        let h_samp = match &self.color_mode {
-            super::encoder_types::ColorMode::YCbCr { subsampling } => {
-                subsampling.h_factor() as u32
-            }
-            _ => 1,
-        };
-        let mcu_w = h_samp * 8;
-        let mcu_cols = ((image_width + mcu_w - 1) / mcu_w) as u16;
-        // Reduce rows if needed to stay within u16 while keeping row-alignment
-        let max_rows = u16::MAX / mcu_cols.max(1);
-        self.restart_interval = rows.min(max_rows) * mcu_cols;
+    pub fn restart_interval_rows(mut self, rows: u16) -> Self {
+        self.restart_rows = rows;
         self
     }
 
@@ -581,11 +561,9 @@ impl EncoderConfig {
     /// # Restart Marker Behavior
     ///
     /// Parallel entropy encoding requires restart markers between segments.
-    /// When parallel encoding is enabled:
-    /// - If `restart_interval` is 0 or too small, it will be **increased** to an
-    ///   optimal value based on thread count and image size
-    /// - User-specified `restart_interval` values are respected as a minimum
-    ///   (the encoder may increase but will not decrease them)
+    /// When parallel encoding is enabled and `restart_interval_rows` is 0,
+    /// the encoder auto-selects an optimal row-aligned interval (4-16 rows)
+    /// targeting 8+ segments for good parallelism.
     ///
     /// # Performance
     ///

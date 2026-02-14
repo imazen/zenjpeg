@@ -1,8 +1,7 @@
-//! Benchmark parallel decode pipeline (entropy + output pass).
+//! Benchmark: encode-for-fast-decode strategies.
 //!
-//! Compares 1-thread (serial) vs N-thread (parallel) decode for images
-//! with restart markers, measuring the combined speedup from both
-//! parallel entropy decode and parallel output pass.
+//! Compares baseline+DRI vs progressive (no DRI) on real corpus images.
+//! Shows file size cost and decode speedup at 1-4 threads.
 //!
 //! Run with: cargo run --release --features parallel --example bench_parallel_decode
 
@@ -20,34 +19,63 @@ fn main() {
 #[cfg(feature = "parallel")]
 mod bench {
     use enough::Unstoppable;
+    use std::path::Path;
     use std::time::Instant;
     use zenjpeg::decode::Decoder;
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
-    fn create_test_jpeg(
+    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+        let data = std::fs::read(path).unwrap();
+        let decoder = png::Decoder::new(std::io::Cursor::new(&data));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        buf.truncate(info.buffer_size());
+        let width = info.width;
+        let height = info.height;
+
+        let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
+            png::ColorType::Rgb => buf
+                .chunks_exact(3)
+                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .collect(),
+            png::ColorType::Rgba => buf
+                .chunks_exact(4)
+                .map(|c| rgb::RGB { r: c[0], g: c[1], b: c[2] })
+                .collect(),
+            png::ColorType::Grayscale => buf
+                .iter()
+                .map(|&v| rgb::RGB { r: v, g: v, b: v })
+                .collect(),
+            png::ColorType::GrayscaleAlpha => buf
+                .chunks_exact(2)
+                .map(|c| rgb::RGB { r: c[0], g: c[0], b: c[0] })
+                .collect(),
+            _ => panic!("Unsupported color type: {:?}", info.color_type),
+        };
+
+        (pixels, width, height)
+    }
+
+    fn encode_jpeg(
+        pixels: &[rgb::RGB<u8>],
         width: u32,
         height: u32,
         subsampling: ChromaSubsampling,
-        restart_interval: u16,
+        progressive: bool,
+        restart_rows: u16,
     ) -> Vec<u8> {
-        let pixels: Vec<rgb::RGB<u8>> = (0..width as usize * height as usize)
-            .map(|i| {
-                let x = i % width as usize;
-                let y = i / width as usize;
-                rgb::RGB {
-                    r: ((x * 7 + y * 3) % 256) as u8,
-                    g: ((x * 11 + y * 5) % 256) as u8,
-                    b: ((x * 13 + y * 9) % 256) as u8,
-                }
-            })
-            .collect();
-
-        // Must use progressive(false) — progressive doesn't emit RST markers
         let config = EncoderConfig::ycbcr(90.0, subsampling)
-            .progressive(false)
-            .restart_interval(restart_interval);
-        config.encode(&pixels, width, height).unwrap()
+            .progressive(progressive)
+            .restart_interval_rows(restart_rows);
+        config.encode(pixels, width, height).unwrap()
+    }
+
+    fn count_rst_markers(data: &[u8]) -> usize {
+        data.windows(2)
+            .filter(|w| w[0] == 0xFF && (0xD0..=0xD7).contains(&w[1]))
+            .count()
     }
 
     fn bench_decode(data: &[u8], pool: &rayon::ThreadPool, iterations: usize) -> f64 {
@@ -68,169 +96,280 @@ mod bench {
     }
 
     pub fn run() {
-        let num_threads = rayon::current_num_threads();
-        eprintln!("Parallel decode benchmark (entropy + output pass)");
-        eprintln!("Threads: {}", num_threads);
+        let corpus_base = std::path::PathBuf::from(
+            std::env::var("CORPUS_PATH")
+                .unwrap_or_else(|_| String::from("/home/lilith/work/codec-eval/codec-corpus")),
+        );
 
-        let serial_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap();
-        let parallel_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
+        if !corpus_base.exists() {
+            eprintln!("ERROR: corpus not found at {:?}", corpus_base);
+            return;
+        }
 
-        eprintln!("\nGenerating test images...");
+        let thread_counts = [1, 2, 3, 4];
 
-        struct TestCase {
-            label: &'static str,
+        eprintln!("Encode-for-fast-decode benchmark");
+        eprintln!("Comparing: progressive (no DRI) vs baseline + row-aligned DRI");
+        eprintln!("Thread counts: {:?}\n", thread_counts);
+
+        let pools: Vec<(usize, rayon::ThreadPool)> = thread_counts
+            .iter()
+            .map(|&n| {
+                (
+                    n,
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(n)
+                        .build()
+                        .unwrap(),
+                )
+            })
+            .collect();
+
+        // Collect source images
+        let mut source_images: Vec<(String, Vec<rgb::RGB<u8>>, u32, u32)> = Vec::new();
+
+        // CLIC2025 photos
+        let clic_dir = corpus_base.join("clic2025/final-test");
+        if clic_dir.exists() {
+            let mut clic_files: Vec<_> = std::fs::read_dir(&clic_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .collect();
+            clic_files.sort_by_key(|e| e.file_name());
+            for entry in clic_files.iter().step_by(5).take(6) {
+                let path = entry.path();
+                let (pixels, w, h) = load_png(&path);
+                let name = path.file_stem().unwrap().to_string_lossy();
+                source_images.push((format!("clic_{}", &name[..8]), pixels, w, h));
+            }
+        }
+
+        // gb82-sc screenshots
+        let sc_dir = corpus_base.join("gb82-sc");
+        if sc_dir.exists() {
+            for name in &["imac_dark", "codec_wiki", "windows"] {
+                let path = sc_dir.join(format!("{}.png", name));
+                if path.exists() {
+                    let (pixels, w, h) = load_png(&path);
+                    source_images.push((format!("sc_{}", name), pixels, w, h));
+                }
+            }
+        }
+
+        // gb82 photos
+        let gb82_dir = corpus_base.join("gb82");
+        if gb82_dir.exists() {
+            for name in &["baby", "city", "flowers"] {
+                let path = gb82_dir.join(format!("{}-lossless.png", name));
+                if path.exists() {
+                    let (pixels, w, h) = load_png(&path);
+                    source_images.push((format!("gb82_{}", name), pixels, w, h));
+                }
+            }
+        }
+
+        if source_images.is_empty() {
+            eprintln!("ERROR: no source images found");
+            return;
+        }
+
+        // Sort by pixel count descending
+        source_images.sort_by(|a, b| {
+            (b.2 as u64 * b.3 as u64).cmp(&(a.2 as u64 * a.3 as u64))
+        });
+
+        // Encode each image in multiple modes
+        struct EncodedSet {
+            name: String,
             width: u32,
             height: u32,
-            subsampling: ChromaSubsampling,
-            dri: u16,
+            progressive: Vec<u8>,
+            baseline_nodri: Vec<u8>,
+            baseline_dri_1row: Vec<u8>,
+            baseline_dri_4row: Vec<u8>,
+            rst_count_1row: usize,
+            rst_count_4row: usize,
             iterations: usize,
         }
 
-        let cases = [
-            // 4:4:4 — parallel output path activates at >=8M pixels
-            TestCase {
-                label: "2048x2048 4:4:4 DRI=20",
-                width: 2048,
-                height: 2048,
-                subsampling: ChromaSubsampling::None,
-                dri: 20,
-                iterations: 20,
-            },
-            TestCase {
-                label: "4096x2160 4:4:4 DRI=20",
-                width: 4096,
-                height: 2160,
-                subsampling: ChromaSubsampling::None,
-                dri: 20,
-                iterations: 10,
-            },
-            TestCase {
-                label: "7680x4320 4:4:4 DRI=20",
-                width: 7680,
-                height: 4320,
-                subsampling: ChromaSubsampling::None,
-                dri: 20,
-                iterations: 5,
-            },
-            // 4:2:0 — both entropy and output parallelism
-            TestCase {
-                label: "2048x2048 4:2:0 DRI=20",
-                width: 2048,
-                height: 2048,
-                subsampling: ChromaSubsampling::Quarter,
-                dri: 20,
-                iterations: 20,
-            },
-            TestCase {
-                label: "4096x2160 4:2:0 DRI=20",
-                width: 4096,
-                height: 2160,
-                subsampling: ChromaSubsampling::Quarter,
-                dri: 20,
-                iterations: 10,
-            },
-            TestCase {
-                label: "7680x4320 4:2:0 DRI=20",
-                width: 7680,
-                height: 4320,
-                subsampling: ChromaSubsampling::Quarter,
-                dri: 20,
-                iterations: 5,
-            },
-            // 8K with larger restart interval (fewer, bigger segments)
-            TestCase {
-                label: "7680x4320 4:2:0 DRI=100",
-                width: 7680,
-                height: 4320,
-                subsampling: ChromaSubsampling::Quarter,
-                dri: 100,
-                iterations: 5,
-            },
-        ];
+        eprintln!("Encoding {} images in 4 modes (Q90, 4:2:0)...\n", source_images.len());
 
-        // Pre-encode all test images
-        let images: Vec<(&TestCase, Vec<u8>)> = cases
-            .iter()
-            .map(|tc| {
-                let jpeg = create_test_jpeg(tc.width, tc.height, tc.subsampling, tc.dri);
-                let rst_count = jpeg
-                    .windows(2)
-                    .filter(|w| w[0] == 0xFF && (0xD0..=0xD7).contains(&w[1]))
-                    .count();
-                eprintln!(
-                    "  {}: {} bytes, {} RST markers",
-                    tc.label,
-                    jpeg.len(),
-                    rst_count
-                );
-                (tc, jpeg)
-            })
-            .collect();
+        let mut images: Vec<EncodedSet> = Vec::new();
 
-        // Also create no-DRI versions to isolate output-pass parallelism
-        eprintln!("\nGenerating no-DRI baseline images...");
-        let nodri_cases = [
-            ("4096x2160 4:2:0 noDRI", 4096u32, 2160u32, ChromaSubsampling::Quarter, 10usize),
-            ("7680x4320 4:2:0 noDRI", 7680, 4320, ChromaSubsampling::Quarter, 5),
-            ("7680x4320 4:4:4 noDRI", 7680, 4320, ChromaSubsampling::None, 5),
-        ];
-        let nodri_images: Vec<(&str, Vec<u8>, usize)> = nodri_cases
-            .iter()
-            .map(|(label, w, h, ss, iters)| {
-                let jpeg = create_test_jpeg(*w, *h, *ss, 0);
-                eprintln!("  {}: {} bytes", label, jpeg.len());
-                (*label, jpeg, *iters)
-            })
-            .collect();
+        for (name, pixels, w, h) in &source_images {
+            let mpix = (*w as f64 * *h as f64) / 1e6;
 
+            let progressive = encode_jpeg(pixels, *w, *h, ChromaSubsampling::Quarter, true, 0);
+            let baseline_nodri = encode_jpeg(pixels, *w, *h, ChromaSubsampling::Quarter, false, 0);
+            let baseline_dri_1row =
+                encode_jpeg(pixels, *w, *h, ChromaSubsampling::Quarter, false, 1);
+            let baseline_dri_4row =
+                encode_jpeg(pixels, *w, *h, ChromaSubsampling::Quarter, false, 4);
+
+            let rst_1row = count_rst_markers(&baseline_dri_1row);
+            let rst_4row = count_rst_markers(&baseline_dri_4row);
+            let iters = if mpix > 3.0 { 10 } else { 20 };
+
+            images.push(EncodedSet {
+                name: name.clone(),
+                width: *w,
+                height: *h,
+                progressive,
+                baseline_nodri,
+                baseline_dri_1row,
+                baseline_dri_4row,
+                rst_count_1row: rst_1row,
+                rst_count_4row: rst_4row,
+                iterations: iters,
+            });
+        }
+
+        // === File size comparison ===
+        eprintln!("=== File sizes (bytes) ===");
         eprintln!(
-            "\n{:>30} {:>10} {:>10} {:>8}",
-            "Image", "Serial", "Parallel", "Speedup"
+            "{:>16} {:>9} {:>10} {:>10} {:>10} {:>10} {:>6} {:>6}",
+            "Image", "Size", "Prog", "BL noDRI", "BL DRI/1r", "BL DRI/4r", "RST/1", "RST/4"
         );
-        eprintln!("{}", "-".repeat(62));
+        eprintln!("{}", "-".repeat(90));
 
-        // DRI images (parallel entropy + parallel output)
-        eprintln!("--- DRI images (parallel entropy + output) ---");
-        for (tc, jpeg) in &images {
-            let t_serial = bench_decode(jpeg, &serial_pool, tc.iterations);
-            let t_parallel = bench_decode(jpeg, &parallel_pool, tc.iterations);
-            let speedup = t_serial / t_parallel;
+        let mut total_prog = 0usize;
+        let mut total_bl = 0usize;
+        let mut total_dri1 = 0usize;
+        let mut total_dri4 = 0usize;
+
+        for img in &images {
+            total_prog += img.progressive.len();
+            total_bl += img.baseline_nodri.len();
+            total_dri1 += img.baseline_dri_1row.len();
+            total_dri4 += img.baseline_dri_4row.len();
 
             eprintln!(
-                "{:>30} {:>8.2}ms {:>8.2}ms {:>7.2}x",
-                tc.label,
-                t_serial * 1000.0,
-                t_parallel * 1000.0,
-                speedup,
+                "{:>16} {:>4}x{:<4} {:>10} {:>10} {:>10} {:>10} {:>6} {:>6}",
+                img.name,
+                img.width,
+                img.height,
+                img.progressive.len(),
+                img.baseline_nodri.len(),
+                img.baseline_dri_1row.len(),
+                img.baseline_dri_4row.len(),
+                img.rst_count_1row,
+                img.rst_count_4row,
             );
         }
 
-        // No-DRI images (parallel output only)
-        eprintln!("--- No-DRI images (parallel output only) ---");
-        for (label, jpeg, iters) in &nodri_images {
-            let t_serial = bench_decode(jpeg, &serial_pool, *iters);
-            let t_parallel = bench_decode(jpeg, &parallel_pool, *iters);
-            let speedup = t_serial / t_parallel;
+        eprintln!("{}", "-".repeat(90));
+        eprintln!(
+            "{:>16} {:>9} {:>10} {:>10} {:>10} {:>10}",
+            "TOTAL", "", total_prog, total_bl, total_dri1, total_dri4
+        );
+        let dri1_vs_prog = (total_dri1 as f64 / total_prog as f64 - 1.0) * 100.0;
+        let dri4_vs_prog = (total_dri4 as f64 / total_prog as f64 - 1.0) * 100.0;
+        let dri1_vs_bl = (total_dri1 as f64 / total_bl as f64 - 1.0) * 100.0;
+        let dri4_vs_bl = (total_dri4 as f64 / total_bl as f64 - 1.0) * 100.0;
+        let bl_vs_prog = (total_bl as f64 / total_prog as f64 - 1.0) * 100.0;
+        eprintln!("\nBL noDRI vs Prog:  +{:.1}%", bl_vs_prog);
+        eprintln!("BL DRI/1row vs Prog: +{:.1}%", dri1_vs_prog);
+        eprintln!("BL DRI/4row vs Prog: +{:.1}%", dri4_vs_prog);
+        eprintln!("DRI/1row vs BL noDRI: +{:.2}%", dri1_vs_bl);
+        eprintln!("DRI/4row vs BL noDRI: +{:.2}%", dri4_vs_bl);
 
-            eprintln!(
-                "{:>30} {:>8.2}ms {:>8.2}ms {:>7.2}x",
-                label,
-                t_serial * 1000.0,
-                t_parallel * 1000.0,
-                speedup,
-            );
+        // === Decode speed: Progressive (1T baseline) ===
+        eprintln!("\n=== Decode: Progressive (no parallel entropy possible) ===");
+        eprint!("{:>16} {:>9}", "Image", "Size");
+        for &(n, _) in &pools {
+            eprint!(" {:>8}", format!("{}T", n));
+        }
+        eprintln!();
+        eprintln!("{}", "-".repeat(16 + 10 + pools.len() * 9));
+
+        let mut prog_1t_total = 0.0f64;
+        for img in &images {
+            let times: Vec<f64> = pools
+                .iter()
+                .map(|(_, pool)| bench_decode(&img.progressive, pool, img.iterations))
+                .collect();
+
+            prog_1t_total += times[0];
+            eprint!("{:>16} {:>4}x{:<4}", img.name, img.width, img.height);
+            for t in &times {
+                eprint!(" {:>6.1}ms", t * 1000.0);
+            }
+            eprintln!();
         }
 
-        eprintln!("\nNotes:");
-        eprintln!("- Serial = 1-thread rayon pool, Parallel = {}-thread pool", num_threads);
-        eprintln!("- DRI: parallel entropy decode + parallel output pass");
-        eprintln!("- No-DRI: parallel output pass only (entropy is always serial)");
-        eprintln!("- Parallel output activates at >= 8M pixels");
+        // === Decode speed: Baseline + DRI/1row ===
+        eprintln!("\n=== Decode: Baseline + DRI/1row (parallel entropy + output) ===");
+        eprint!("{:>16} {:>9}", "Image", "Size");
+        for &(n, _) in &pools {
+            eprint!(" {:>8}", format!("{}T", n));
+        }
+        for &(n, _) in &pools[1..] {
+            eprint!(" {:>7}", format!("{}T/1T", n));
+        }
+        eprintln!();
+        eprintln!("{}", "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8));
+
+        let mut dri1_1t_total = 0.0f64;
+        let mut dri1_4t_total = 0.0f64;
+        for img in &images {
+            let times: Vec<f64> = pools
+                .iter()
+                .map(|(_, pool)| bench_decode(&img.baseline_dri_1row, pool, img.iterations))
+                .collect();
+
+            dri1_1t_total += times[0];
+            dri1_4t_total += times[times.len() - 1];
+            eprint!("{:>16} {:>4}x{:<4}", img.name, img.width, img.height);
+            for t in &times {
+                eprint!(" {:>6.1}ms", t * 1000.0);
+            }
+            let t1 = times[0];
+            for t in &times[1..] {
+                eprint!(" {:>6.2}x", t1 / t);
+            }
+            eprintln!();
+        }
+
+        // === Decode speed: Baseline + DRI/4row ===
+        eprintln!("\n=== Decode: Baseline + DRI/4row (parallel entropy + output) ===");
+        eprint!("{:>16} {:>9}", "Image", "Size");
+        for &(n, _) in &pools {
+            eprint!(" {:>8}", format!("{}T", n));
+        }
+        for &(n, _) in &pools[1..] {
+            eprint!(" {:>7}", format!("{}T/1T", n));
+        }
+        eprintln!();
+        eprintln!("{}", "-".repeat(16 + 10 + pools.len() * 9 + (pools.len() - 1) * 8));
+
+        let mut dri4_4t_total = 0.0f64;
+        for img in &images {
+            let times: Vec<f64> = pools
+                .iter()
+                .map(|(_, pool)| bench_decode(&img.baseline_dri_4row, pool, img.iterations))
+                .collect();
+
+            dri4_4t_total += times[times.len() - 1];
+            eprint!("{:>16} {:>4}x{:<4}", img.name, img.width, img.height);
+            for t in &times {
+                eprint!(" {:>6.1}ms", t * 1000.0);
+            }
+            let t1 = times[0];
+            for t in &times[1..] {
+                eprint!(" {:>6.2}x", t1 / t);
+            }
+            eprintln!();
+        }
+
+        // === Summary ===
+        eprintln!("\n=== Summary (total decode time across {} images) ===", images.len());
+        eprintln!("Progressive 1T:         {:>7.1}ms", prog_1t_total * 1000.0);
+        eprintln!("BL+DRI/1row 1T:         {:>7.1}ms", dri1_1t_total * 1000.0);
+        eprintln!("BL+DRI/1row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
+            dri1_4t_total * 1000.0, prog_1t_total / dri1_4t_total);
+        eprintln!("BL+DRI/4row 4T:         {:>7.1}ms  ({:.2}x vs prog 1T)",
+            dri4_4t_total * 1000.0, prog_1t_total / dri4_4t_total);
+        eprintln!("File size cost (DRI/1row vs prog): +{:.1}%", dri1_vs_prog);
     }
 }

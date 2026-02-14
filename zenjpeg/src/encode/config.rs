@@ -149,6 +149,25 @@ pub struct ComputedConfig {
     pub trellis: Option<super::trellis::TrellisConfig>,
 }
 
+/// Resolve restart rows to MCU-aligned restart interval.
+///
+/// Returns 0 if rows is 0. Ensures the result fits in u16 by reducing
+/// rows if needed.
+pub(crate) fn resolve_restart_rows(rows: u16, width: u32, subsampling: Subsampling) -> u16 {
+    if rows == 0 {
+        return 0;
+    }
+    let h_samp = match subsampling {
+        Subsampling::S444 | Subsampling::S440 => 1u32,
+        Subsampling::S422 | Subsampling::S420 => 2,
+    };
+    let mcu_w = h_samp * 8;
+    let mcu_cols = (width + mcu_w - 1) / mcu_w;
+    let max_rows = (u16::MAX as u32) / mcu_cols.max(1);
+    let rows = (rows as u32).min(max_rows);
+    (rows * mcu_cols) as u16
+}
+
 impl ComputedConfig {
     /// MCU columns for this image's dimensions and subsampling.
     pub(crate) fn mcu_cols(&self) -> u32 {

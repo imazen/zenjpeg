@@ -96,13 +96,16 @@ impl BytesEncoder {
             super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
         };
 
+        let restart_interval =
+            super::config::resolve_restart_rows(config.restart_rows, width, subsampling);
+
         let mut builder = SE::new(width, height)
             .quality(config.quality)
             .pixel_format(pixel_format)
             .subsampling(subsampling)
             .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
-            .restart_interval(config.restart_interval);
+            .restart_interval(restart_interval);
 
         // Decompose QuantTableConfig into builder's individual fields
         if let Some(tables) = config.quant_table_config.custom_tables() {
@@ -967,6 +970,9 @@ impl YCbCrPlanarEncoder {
             _ => crate::types::Subsampling::S444,
         };
 
+        let restart_interval =
+            super::config::resolve_restart_rows(config.restart_rows, width, subsampling);
+
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing
         let mut builder = StreamingEncoder::new(width, height)
@@ -975,7 +981,7 @@ impl YCbCrPlanarEncoder {
             .subsampling(subsampling)
             .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
-            .restart_interval(config.restart_interval);
+            .restart_interval(restart_interval);
 
         // Decompose QuantTableConfig into builder's individual fields
         if let Some(tables) = config.quant_table_config.custom_tables() {
