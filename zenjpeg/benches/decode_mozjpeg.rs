@@ -154,7 +154,7 @@ fn bench_decode_mozjpeg(c: &mut Criterion) {
 
         // zenjpeg fast mode (box filter)
         group.bench_with_input(
-            BenchmarkId::new("zenjpeg-fast", &size_label),
+            BenchmarkId::new("zenjpeg-boxfilter", &size_label),
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
