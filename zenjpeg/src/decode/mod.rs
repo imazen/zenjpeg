@@ -33,8 +33,6 @@ mod extras;
 mod image;
 #[cfg(feature = "parallel")]
 mod fused_parallel;
-#[cfg(feature = "parallel")]
-mod parallel;
 mod parser;
 mod pipeline;
 pub(crate) mod rst_scan;
