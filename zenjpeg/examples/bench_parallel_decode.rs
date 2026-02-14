@@ -68,7 +68,7 @@ mod bench {
     ) -> Vec<u8> {
         let config = EncoderConfig::ycbcr(90.0, subsampling)
             .progressive(progressive)
-            .restart_interval_rows(restart_rows);
+            .restart_mcu_rows(restart_rows);
         config.encode(pixels, width, height).unwrap()
     }
 
