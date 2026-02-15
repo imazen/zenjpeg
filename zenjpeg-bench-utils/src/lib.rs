@@ -810,13 +810,14 @@ impl TestImages {
 /// Handles RGB, RGBA (alpha discarded), grayscale, and grayscale+alpha.
 pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
     let file = std::fs::File::open(path).map_err(|e| PngLoadError::Io(e.to_string()))?;
+    let file = std::io::BufReader::new(file);
 
     let decoder = png::Decoder::new(file);
     let mut reader = decoder
         .read_info()
         .map_err(|e| PngLoadError::Decode(e.to_string()))?;
 
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
     let info = reader
         .next_frame(&mut buf)
         .map_err(|e| PngLoadError::Decode(e.to_string()))?;
