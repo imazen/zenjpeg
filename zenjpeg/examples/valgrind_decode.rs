@@ -94,12 +94,13 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!(
-            "Usage: {} <jpegli|zune> [size|file.jpg] [progressive]",
+            "Usage: {} <jpegli|zune|save> [size|file.jpg] [progressive] [save_path]",
             args[0]
         );
         eprintln!("  size: 512 (default), 1024, or 2048");
         eprintln!("  file.jpg: read JPEG from file instead of generating");
         eprintln!("  progressive: add 'progressive' or 'prog' for progressive JPEG");
+        eprintln!("  save: write generated JPEG to file (default /tmp/test.jpg)");
         std::process::exit(1);
     }
 
@@ -125,6 +126,14 @@ fn main() {
         create_test_jpeg(size, size, progressive)
     };
     eprintln!("JPEG size: {} bytes", jpeg_data.len());
+
+    // save mode: write JPEG to /tmp and exit (for creating test data)
+    if decoder_type == "save" {
+        let path = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/test.jpg");
+        std::fs::write(path, &jpeg_data).unwrap();
+        eprintln!("Saved to {}", path);
+        return;
+    }
 
     eprintln!("Decoding with {}...", decoder_type);
 

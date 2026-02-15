@@ -476,11 +476,17 @@ impl<'a> BitReader<'a> {
     ///
     /// Single-buffer design: new bytes are OR'd directly into the freed
     /// positions of aligned_buffer (which are always 0 after left-shifts).
+    /// Refills the bit buffer to have at least 32 bits.
+    /// Uses fast 4-byte path when no 0xFF bytes are present.
+    ///
+    /// Returns true if any bits are available after refill.
+    /// This function is infallible — errors (marker found, truncation)
+    /// are recorded in struct fields, not returned.
     #[inline(always)]
-    pub fn refill(&mut self) -> Result<bool> {
+    pub fn refill(&mut self) -> bool {
         // Only refill if we have fewer than 32 bits
         if self.bits_in_buffer >= 32 {
-            return Ok(true);
+            return true;
         }
 
         // If we've found a marker or are overreading, extend with zeros.
@@ -488,7 +494,7 @@ impl<'a> BitReader<'a> {
         // so we just claim more bits without modifying the buffer.
         if self.marker_found.is_some() || self.overread_by > 0 {
             self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
-            return Ok(true);
+            return true;
         }
 
         // Try fast 4-byte path (no 0xFF bytes)
@@ -503,7 +509,7 @@ impl<'a> BitReader<'a> {
                 self.position += 4;
                 self.aligned_buffer |= (word as u64) << (32 - self.bits_in_buffer);
                 self.bits_in_buffer += 32;
-                return Ok(true);
+                return true;
             }
             // Has 0xFF - fall through to slow path
         }
@@ -521,7 +527,7 @@ impl<'a> BitReader<'a> {
                 break;
             }
         }
-        Ok(self.bits_in_buffer > 0)
+        self.bits_in_buffer > 0
     }
 
     /// Fast single-bit read for AC refinement hot path.
@@ -546,11 +552,11 @@ impl<'a> BitReader<'a> {
 
     /// Fills the bit buffer to have at least `count` bits.
     #[inline(always)]
-    fn fill_buffer(&mut self, count: u8) -> Result<bool> {
+    fn fill_buffer(&mut self, count: u8) -> bool {
         if self.bits_in_buffer < count {
-            self.refill()?;
+            self.refill();
         }
-        Ok(self.bits_in_buffer >= count)
+        self.bits_in_buffer >= count
     }
 
     /// Peeks at the next `count` bits without consuming them.
@@ -562,7 +568,7 @@ impl<'a> BitReader<'a> {
     #[inline(always)]
     pub fn peek_bits(&mut self, count: u8) -> ScanResult<u32> {
         debug_assert!(count <= 32);
-        self.fill_buffer(count)?;
+        self.fill_buffer(count);
         if self.bits_in_buffer < count {
             return Ok(self.end_state());
         }
@@ -638,7 +644,7 @@ impl<'a> BitReader<'a> {
     /// - `Ok(ScanRead::Truncated)` if data ended without a marker
     #[inline(always)]
     pub fn read_bits(&mut self, count: u8) -> ScanResult<u32> {
-        self.fill_buffer(count)?;
+        self.fill_buffer(count);
         if self.bits_in_buffer < count {
             return Ok(self.end_state());
         }
