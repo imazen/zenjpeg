@@ -310,6 +310,9 @@ impl<'a> JpegParser<'a> {
             mcu_count = 0;
             next_restart_num = 0;
 
+            // Pre-compute range mask once — invariant within scan (ss, se don't change).
+            let range_mask = range_bitmap(ss, se);
+
             'ac_scan: for block_y in 0..comp_blocks_v {
                 // Check for cancellation at each block row
                 if stop.should_stop() {
@@ -344,8 +347,19 @@ impl<'a> JpegParser<'a> {
                                 break 'ac_scan;
                             }
                         }
+                    } else if eob_run > 0 {
+                        // AC refinement EOB fast path — hoisted from decode_ac_refine.
+                        // Avoids function call overhead, ScanResult wrapping, Huffman
+                        // table lookup, and per-block range_bitmap recomputation.
+                        let nz = self.nonzero_bitmaps[comp_idx][block_idx] & range_mask;
+                        decoder.refine_eob_bits(
+                            &mut self.coeffs[comp_idx][block_idx],
+                            nz,
+                            al,
+                        );
+                        eob_run -= 1;
                     } else {
-                        // AC refinement scan
+                        // AC refinement scan — non-EOB blocks (Huffman decode path)
                         match decoder.decode_ac_refine(
                             &mut self.coeffs[comp_idx][block_idx],
                             &mut self.nonzero_bitmaps[comp_idx][block_idx],

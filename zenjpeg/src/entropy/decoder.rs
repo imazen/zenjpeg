@@ -1306,21 +1306,21 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         // EOB fast path FIRST — before table lookup (most common path).
         // Avoids get_ac_table's Result overhead for blocks in EOB runs.
+        // Note: When called from progressive.rs, this path is usually intercepted
+        // by the hoisted EOB check in the outer loop (which calls refine_eob_bits
+        // directly). This remains as a fallback for other callers.
         if *eob_run > 0 {
-            // Use bitmap to iterate only nonzero positions (skip zeros via trailing_zeros).
             let range_mask = range_bitmap(ss, se);
             let mut nz = *bitmap & range_mask;
-            // Pre-refill: one refill gives 32+ bits, enough for typical blocks (5-15 nonzero).
+            let _ = self.reader.refill();
             while nz != 0 {
                 let k = nz.trailing_zeros() as usize;
                 let bit = self.reader.read_bit_refine();
-                // Branchless refinement: apply bit_val with sign of coefficient,
-                // but only if bit=1 and this bit position isn't already set.
                 let c = coeffs[k];
-                let sign = (c >> 15) | 1; // -1 for negative, +1 for positive
+                let sign = (c >> 15) | 1;
                 let not_set = ((c & bit_val) == 0) as i16;
                 coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
-                nz &= nz - 1; // clear lowest set bit
+                nz &= nz - 1;
             }
             *eob_run -= 1;
             return Ok(ScanRead::Value(()));
@@ -1458,20 +1458,23 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// which includes unnecessary Huffman table lookup and ScanResult wrapping.
     ///
     /// The bitmap must already be masked to the spectral range [ss, se].
+    /// Pre-refills the bit buffer once (32+ bits covers typical 5-15 nonzero
+    /// positions per block), then uses branchless refinement arithmetic.
     #[inline(always)]
     pub fn refine_eob_bits(&mut self, coeffs: &mut [i16; DCT_BLOCK_SIZE], nz_bits: u64, al: u8) {
         let bit_val = 1i16 << al;
         let mut nz = nz_bits;
+        // Pre-refill: one refill gives 32+ bits, enough for typical blocks.
+        let _ = self.reader.refill();
         while nz != 0 {
             let k = nz.trailing_zeros() as usize;
             let bit = self.reader.read_bit_refine();
-            if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                if coeffs[k] > 0 {
-                    coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                } else {
-                    coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                }
-            }
+            // Branchless refinement: apply bit_val with sign of coefficient,
+            // but only if bit=1 and this bit position isn't already set.
+            let c = coeffs[k];
+            let sign = (c >> 15) | 1; // -1 for negative, +1 for positive
+            let not_set = ((c & bit_val) == 0) as i16;
+            coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
             nz &= nz - 1; // clear lowest set bit
         }
     }
