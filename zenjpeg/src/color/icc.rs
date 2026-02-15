@@ -351,9 +351,19 @@ mod tests {
         let xyb_profile = b"...XYB_Per...";
         assert!(is_xyb_profile(xyb_profile));
 
+        // Known XYB ICC profile constant should match
+        assert!(is_xyb_profile(&crate::foundation::consts::XYB_ICC_PROFILE));
+
         // Regular sRGB shouldn't match
         let srgb = b"sRGB IEC61966-2.1";
         assert!(!is_xyb_profile(srgb));
+
+        // Regression: "jxl " CMM type alone must NOT trigger XYB detection.
+        // cjpegli writes "jxl " for ALL ICC profiles including standard sRGB.
+        let mut jxl_srgb = vec![0u8; 128];
+        jxl_srgb[4..8].copy_from_slice(b"jxl ");
+        jxl_srgb[8..23].copy_from_slice(b"sRGB IEC61966-2");
+        assert!(!is_xyb_profile(&jxl_srgb), "jxl CMM type alone should not be detected as XYB");
     }
 
     #[test]
