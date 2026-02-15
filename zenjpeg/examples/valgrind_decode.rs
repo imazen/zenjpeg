@@ -67,7 +67,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: {} <jpegli|zune> [size|file.jpg] [progressive]", args[0]);
+        eprintln!(
+            "Usage: {} <jpegli|zune> [size|file.jpg] [progressive]",
+            args[0]
+        );
         eprintln!("  size: 512 (default), 1024, or 2048");
         eprintln!("  file.jpg: read JPEG from file instead of generating");
         eprintln!("  progressive: add 'progressive' or 'prog' for progressive JPEG");

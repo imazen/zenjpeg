@@ -363,7 +363,10 @@ mod tests {
         let mut jxl_srgb = vec![0u8; 128];
         jxl_srgb[4..8].copy_from_slice(b"jxl ");
         jxl_srgb[8..23].copy_from_slice(b"sRGB IEC61966-2");
-        assert!(!is_xyb_profile(&jxl_srgb), "jxl CMM type alone should not be detected as XYB");
+        assert!(
+            !is_xyb_profile(&jxl_srgb),
+            "jxl CMM type alone should not be detected as XYB"
+        );
     }
 
     #[test]
