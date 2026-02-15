@@ -743,6 +743,31 @@ trellis only). CMA-ES scaling modifies quant table generation and is described a
 ### Remaining Hardening
 
 - `serialize.rs::write_frame_header_xyb_ex()` still hardcodes 0x22/0x11 (low priority, always correct for XYB)
+- **Decoder marker validation parity with libjpeg-turbo** — see `docs/strictness.md` for
+  the full comparison table. The goal: any malformed input that could crash *any* decoder
+  (division by zero, out-of-bounds index, integer overflow) must be caught at parse time,
+  regardless of strictness level. Structural validation should never be skippable.
+  Specific gaps to close:
+  - **DRI length validation**: currently reads 2 bytes without checking `length == 4`.
+    Malformed DRI could desync the parser. (`markers.rs:parse_restart_interval`)
+  - **SOS length validation**: doesn't check `length == 6 + 2*num_components`. A crafted
+    SOS with wrong length could cause reads past the marker boundary. (`scan.rs:parse_scan`)
+  - **Duplicate component in SOS**: not checked. libjpeg-turbo rejects duplicate component
+    IDs within a single scan. A duplicate could cause the same coefficient buffer to be
+    written twice, producing garbage. (`scan.rs:parse_scan`)
+  - **Ah/Al range validation**: successive approximation values not bounds-checked (valid
+    range 0-13). Out-of-range values could cause shift overflow in progressive/arithmetic
+    refinement. (`scan.rs:parse_scan`)
+  - **Extraneous inter-marker bytes**: silently skipped with no count or warning. Should
+    at least count discarded bytes and emit a warning in Balanced mode, error in Strict.
+    (`mod.rs:read_marker`)
+  - **DHT symbol count vs remaining length**: validated via length arithmetic but should
+    explicitly check `num_values <= 256` before reading. (`markers.rs:parse_huffman_table`)
+  - **Restart marker resync**: no recovery strategy when the wrong RST marker appears.
+    libjpeg-turbo has a 3-action resync (discard/scan forward/leave unread). zenjpeg
+    should at minimum handle the "RST off by 1-2" case gracefully in Balanced/Lenient.
+  - **Tables-only streams (EOI before SOS)**: currently fatal. Consider supporting in
+    Balanced mode (return empty image or header-only result) like libjpeg-turbo does.
 
 ### API Improvements (Future)
 
