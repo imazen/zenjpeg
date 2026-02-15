@@ -26,6 +26,7 @@
 
 mod fingerprint;
 mod quality;
+mod reencode;
 mod scanner;
 
 pub use fingerprint::EncoderFamily;
