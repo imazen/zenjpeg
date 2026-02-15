@@ -361,9 +361,11 @@ Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables a
 ## Decoder Performance (2026-02-06)
 
 Scanline decoder matches or beats zune-jpeg. Buffered fast mode within 15%.
-Progressive beats zune at ≤1024, within 9% at 4096.
 
-**Wall-clock progressive (commit aba9777):**
+**WARNING: Old progressive numbers below used gradient test images (degenerate DC-only blocks).
+See "realistic content" table for accurate comparisons.**
+
+**Wall-clock progressive — gradient images (commit aba9777, MISLEADING):**
 | Size | zune-jpeg | zenjpeg prog | ratio | zenjpeg fast | ratio |
 |------|-----------|-------------|-------|-------------|-------|
 | 256 | 247µs | 164µs | **0.66x** | 143µs | **0.58x** |
@@ -371,6 +373,32 @@ Progressive beats zune at ≤1024, within 9% at 4096.
 | 1024 | 2.68ms | 2.16ms | **0.81x** | 1.96ms | **0.73x** |
 | 2048 | 8.85ms | 9.16ms | 1.03x | 8.36ms | **0.94x** |
 | 4096 | 91.3ms | 99.1ms | 1.09x | 97.7ms | 1.07x |
+
+**Wall-clock progressive — noise+patches, NO DRI (commit 0c6d6ba, CORRECT):**
+| Size | zune-jpeg | zenjpeg prog | zen/zune | cjpegli | zen/cjpegli |
+|------|-----------|-------------|----------|---------|-------------|
+| 256 | 0.89ms | 0.50ms | **0.56x** | 0.98ms | **0.51x** |
+| 512 | 3.48ms | 1.92ms | **0.55x** | 3.81ms | **0.50x** |
+| 1024 | 13.8ms | 7.73ms | **0.56x** | 15.1ms | **0.51x** |
+| 2048 | 62.1ms | 32.0ms | **0.52x** | 60.8ms | **0.53x** |
+| 4096 | 251ms | 164ms | **0.65x** | 278ms | **0.59x** |
+
+**CRITICAL BUG IN ZUNE-JPEG 0.5.12:** Previous numbers showed zune 3-7x faster, but
+zune-jpeg silently skips AC refinement scans when restart markers (DRI) are present.
+Our encoder defaults to `restart_mcu_rows=4`, so all previous benchmark JPEGs triggered
+the bug. Without DRI, zune produces correct output matching zenjpeg byte-for-byte.
+With DRI: max_diff=224, 99.4% of pixels wrong, mean_abs_diff=48.4.
+
+Corrected: zenjpeg is **1.5-1.9x faster than zune** and **~2x faster than cjpegli**
+on correct progressive decode across all sizes.
+
+**Callgrind (2048x2048, Q85 4:2:0, noise+patches, commit 0c6d6ba):**
+| Decoder | With DRI | Without DRI (correct) |
+|---------|----------|-----------------------|
+| zenjpeg | 418M | 415M (barely changes) |
+| zune | 78M (BUGGY, skips AC refine) | 580M (correct) |
+
+zenjpeg 415M vs zune 580M = zenjpeg is 28% fewer instructions when both correct.
 
 **Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
@@ -393,6 +421,13 @@ Progressive beats zune at ≤1024, within 9% at 4096.
 9. AVX-512 dispatch for YCbCr→RGB (correct but no measurable benefit on Zen 4)
 10. Nonzero coefficient bitmap (u64 per block) for AC refinement — skip zero
     positions via `trailing_zeros()`. 12% instruction reduction in AC refine.
+11. Fused AC scan methods: `decode_ac_first_scan` and `decode_ac_refine_scan` process
+    entire block grids without ScanResult enum wrapping or per-block function calls.
+    Fast_ac combined 9-bit Huffman+value lookup for AC first scan. Partial peek
+    fallback for end-of-scan with <9 bits. 33% entropy instruction reduction.
+12. Split AC refine inner loop into separate ZRL and NEW_NZ code paths. Eliminates
+    per-iteration `size == 0` check, Option<i16> wrapping, redundant termination
+    checks. -6.1% AC refine instructions, -3% wall-clock.
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -487,14 +522,49 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.09x gap at 4096x4096** (down from 1.92x originally):
-- AC refinement still dominates at 67% of decode instructions (289M/~430M at 2048)
-- Already heavily optimized: bitmap skip, `read_bit_refine()`, all-zeros early exit
-- Size-dependent gap: at ≤1024, coefficient data fits L2 cache (two-pass is fine);
-  at 4096+, coefficient data exceeds L2, causing cache misses in output pass
-- Remaining overhead is Huffman decode interspersed with refinement bits (inherently serial)
-- The tokenize_ac_refinement_scan encoder-side function also iterates coefficients
-  similarly but is not part of the decode path
+**Progressive: zenjpeg WINS 1.5-1.9x vs zune** (noise+patches, correct output):
+- Previous "3-7x slower" was INVALID: zune-jpeg 0.5.12 silently skips AC refinement
+  scans when restart markers (DRI) are present, producing corrupt output (max_diff=224).
+- Callgrind (2048x2048, Q85 4:2:0 progressive, no DRI, commit 0c6d6ba):
+  zenjpeg 415M Ir vs zune 580M Ir = zenjpeg is **28% fewer instructions**
+- Wall-clock: zenjpeg 32ms vs zune 62ms vs cjpegli 61ms at 2048x2048
+- All optimizations from previous sessions contributed to the current lead:
+  - Fused scan methods, branchless coefficient updates, bitmap acceleration
+  - Pre-refill Huffman decode, EOB batch bit reads, structural ZRL/NEW_NZ split
+- Parallel output pass (`--features parallel`): additional 14% at 2048+
+  Cannot be closed without sacrificing robustness. zenjpeg compensates with competitive
+  output pass (0.9x) and 2x advantage over cjpegli (C++ jpegli)
+
+### Decoder Strictness Levels (2026-02-15)
+
+Four levels controlling error tolerance during decode:
+
+| Behavior | Strict | Balanced | Lenient | Permissive |
+|----------|--------|----------|---------|------------|
+| Non-JFIF markers | Error | Warn | Warn | Warn |
+| Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
+| Bad restart count | Error | Error | Warn | Resync fwd |
+| RST sequence wrong | Error | Error | Error | Accept any |
+| Zero quant value | Error | Error | Error | Clamp to 1 |
+| Malformed segment | Error | Error | Error | Skip |
+| Bad Huffman idx | Error | Error | Error | Clamp to 0 |
+| Malformed DNL | Error | Error | Error | Skip |
+
+Test results (commit 8d26d2c, 177-file conformance corpus):
+
+| Decoder | Valid OK | Inv Rejected | Non-conf Accept |
+|---------|----------|-------------|-----------------|
+| zen-Strict | 39/41 | 100/116 | 8/20 |
+| zen-Balanced | 41/41 | 92/116 | 14/20 |
+| zen-Lenient | 41/41 | 88/116 | 14/20 |
+| zen-Permissive | 41/41 | 80/116 | 14/20 |
+| libjpeg-turbo | 37/41 | 75/116 | 14/20 |
+
+Remaining 17-file gap vs libjpeg-turbo: all 613-byte fuzz-mutated files needing
+scan-level longjmp recovery (diminishing returns). Non-conformant acceptance
+matches libjpeg-turbo exactly (14/20).
+
+Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison --features decoder -- compare_strictness --nocapture --ignored`
 
 ## Failed Explorations
 
@@ -570,6 +640,87 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
 
 **Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+
+### Linear Iteration for AC Refinement (2026-02-14)
+
+**Attempted:** Replace bitmap-accelerated inner scan loop in `decode_ac_refine` with linear
+iteration (k from ss to se), matching zune-jpeg's approach. Goal was to eliminate the
+`num_zeros_to_skip < zero_gap` branch that caused 1.08M mispredicts (25.5% of ALL mispredicts).
+
+**Results:** WORSE. Instructions 449M → 469M (+4.4%), mispredicts 4.24M → 7.75M (+83%).
+
+**Why it failed:** Linear iteration visits EVERY position from k to se (~49 positions per block
+for band [15,63]), while bitmap visits only nonzero positions (~5-10). Even though individual
+branches are more predictable (`coeffs[k] != 0` is 90% false for sparse blocks), the total
+branch count is much higher: 49 × ~2.5 branches = ~123 per block vs bitmap's 10 × ~7 = ~70.
+The unconditional refinement bit reads in the nonzero case happen the same number of times,
+but the zero-position checking adds massive overhead for sparse progressive blocks.
+
+**Conclusion:** Bitmap is fundamentally better for sparse coefficient data. The O(nonzero)
+iteration count dominates the per-iteration branch cost.
+
+### Unchecked Bit Reads for AC Refinement (2026-02-14)
+
+**Attempted:** Add `read_bit_unchecked()` (no refill check) with `ensure_n_bits()` pre-fill
+before bitmap loops. Save ~2 instructions per bit read by eliminating the `bits_in_buffer == 0`
+check in the hot loop.
+
+**Results:** Breaks restart marker handling. 5 test failures including "expected 0xFF for restart
+marker" and "invalid Huffman code".
+
+**Why it failed:** Near restart markers, `refill()` returns fewer bits than requested and sets
+`marker_found`. The checked `read_bit_refine()` calls `refill()` when buffer empties, which
+re-adds zero padding. Unchecked reads consume past the marker boundary. Even with
+`saturating_sub` to prevent u8 underflow, the consumed bits corrupt the position for
+subsequent Huffman decodes. Safe handling requires tracking available bits vs needed bits per
+loop iteration, which adds complexity matching the cost of the original check.
+
+**Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
+
+### Pre-refill AC First Scan (2026-02-15)
+
+**Attempted:** Apply the same `ensure_bits()` + `peek_top(9)` pre-refill pattern (from AC
+refine commit 43b24d6) to `decode_ac_first_scan`.
+
+**Results:** Callgrind showed +11% regression (34.8M → 38.6M instructions). AC refine scan
+(unchanged code) also regressed +6.4% (162.7M → 173.1M) due to code layout changes from
+recompilation. Function is only 2.43% of total — even a 20% improvement saves <0.5%.
+
+**Conclusion:** Not worth pursuing. The function is too small a fraction of total decode
+time. Code layout effects from the change outweigh the algorithmic improvement.
+
+### Conditional read_bit_fast in AC Refinement (2026-02-15)
+
+**Attempted:** Add `read_bit_fast()` (no refill check) to bitstream.rs. Use `fast_bits`
+boolean in AC refine to choose between `read_bit_fast()` and `read_bit_refine()` per
+refinement bit read, based on whether `ensure_bits()` succeeded.
+
+**Results:** All tests passed but callgrind showed 162.7M → 218.7M (+56M, +34%).
+
+**Why it failed:** The per-read `if fast_bits { read_bit_fast() } else { read_bit_refine() }`
+branch costs ~2 instructions — exactly the same as the refill check it replaces. Net effect
+is zero benefit with added code complexity. The branch predictor handles the refill check
+(`bits_in_buffer == 0` is rarely true) just as well as the `fast_bits` check.
+
+**Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
+different approach (e.g., reading multiple refinement bits in one operation).
+
+### Branchy Coefficient Update in AC Refinement (2026-02-15)
+
+**Attempted:** Replace branchless `c.wrapping_add((bit as i16) * not_set * sign * bit_val)`
+with branchy `if bit != 0 && (c & bit_val) == 0 { if c > 0 { +bit_val } else { -bit_val } }`.
+
+**Results:** Callgrind AC refine dropped from 225.2M to 184.5M (-18.1%). But wall-clock
+was 5-21% WORSE across all sizes.
+
+**Why it failed:** The `bit != 0` and `c > 0` branches are poorly predicted — coefficient
+signs and refinement bits are effectively random. Each misprediction costs ~15 cycles but
+counts as only 1 instruction in callgrind. The branchless version has more instructions but
+is fully predictable (no branches = no mispredictions). Branch misprediction overhead
+dominates instruction-count savings.
+
+**Conclusion:** Callgrind instruction count can be misleading when branch prediction matters.
+Branchless is correct for this hot path despite higher instruction count.
 
 ### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
@@ -666,6 +817,16 @@ sensitivity tables, and preset baselines.
      xyb_rust_vs_cpp_ssim2.rs — these use zune-jpeg and will show wrong metrics for zen output
 
 ### Fixed Bugs (historical reference)
+
+- **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
+  `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
+  writes "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones. This caused
+  every cjpegli JPEG with an ICC profile to be misidentified as XYB, bypassing the fast i16
+  decode path and falling through to the f32 XYB→RGB conversion — producing completely wrong
+  colors (max_diff=252). Fix: replace "jxl " CMM check with exact-match against the known
+  720-byte XYB ICC profile, falling back to "XYB" text search in the profile description.
+  Also affected baseline streaming and fused parallel paths (would have returned "no decoded
+  data" error for cjpegli images).
 
 - **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
   Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43

@@ -43,22 +43,32 @@ impl<'a> JpegParser<'a> {
 
         let mut scan_components = Vec::with_capacity(num_components as usize);
 
+        let permissive = self.strictness == Strictness::Permissive;
+
         for _ in 0..num_components {
             let component_id = self.read_u8()?;
             let tables = self.read_u8()?;
-            let dc_table = tables >> 4;
-            let ac_table = tables & 0x0F;
+            let mut dc_table = tables >> 4;
+            let mut ac_table = tables & 0x0F;
 
             // Validate Huffman table indexes
             if dc_table as usize >= MAX_HUFFMAN_TABLES {
-                return Err(Error::invalid_jpeg_data(
-                    "SOS DC Huffman table index out of range",
-                ));
+                if permissive {
+                    dc_table = 0; // Fallback to table 0
+                } else {
+                    return Err(Error::invalid_jpeg_data(
+                        "SOS DC Huffman table index out of range",
+                    ));
+                }
             }
             if ac_table as usize >= MAX_HUFFMAN_TABLES {
-                return Err(Error::invalid_jpeg_data(
-                    "SOS AC Huffman table index out of range",
-                ));
+                if permissive {
+                    ac_table = 0; // Fallback to table 0
+                } else {
+                    return Err(Error::invalid_jpeg_data(
+                        "SOS AC Huffman table index out of range",
+                    ));
+                }
             }
 
             // Find component index
@@ -178,9 +188,15 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Enable lenient mode for maximum error recovery
-        if self.strictness == Strictness::Lenient {
+        // Enable lenient/permissive error recovery
+        if matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        ) {
             decoder.set_lenient(true);
+        }
+        if self.strictness == Strictness::Permissive {
+            decoder.set_permissive_rst(true);
         }
 
         // Check for missing DHT and emit warning/error BEFORE borrowing tables.
@@ -531,9 +547,15 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Enable lenient mode for maximum error recovery
-        if self.strictness == Strictness::Lenient {
+        // Enable lenient/permissive error recovery
+        if matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        ) {
             decoder.set_lenient(true);
+        }
+        if self.strictness == Strictness::Permissive {
+            decoder.set_permissive_rst(true);
         }
 
         for (comp_idx, dc_table, ac_table) in scan_components {

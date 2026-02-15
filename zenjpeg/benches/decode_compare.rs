@@ -88,18 +88,74 @@ fn create_test_jpeg_with_subsampling(
     progressive: bool,
     subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    // Create gradient test pattern
+    // Deterministic noise+patches pattern that produces realistic DCT
+    // coefficient distributions. Smooth gradients are degenerate (mostly
+    // DC-only blocks) and don't represent real photographic content.
     let mut data = vec![0u8; (width * height * 3) as usize];
     for y in 0..height as usize {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
-            data[idx] = ((x * 255) / width as usize) as u8;
-            data[idx + 1] = ((y * 255) / height as usize) as u8;
-            data[idx + 2] = (((x + y) * 128) / (width + height) as usize) as u8;
+            // Block-level variation (8x8 aligned patches with different content)
+            let bx = (x / 8) as u32;
+            let by = (y / 8) as u32;
+            let block_hash = bx
+                .wrapping_mul(2654435761)
+                .wrapping_add(by.wrapping_mul(40503));
+            let block_type = block_hash % 4;
+
+            // Pixel-level deterministic noise (xorshift-inspired)
+            let px = x as u32;
+            let py = y as u32;
+            let mut h = px
+                .wrapping_mul(374761393)
+                .wrapping_add(py.wrapping_mul(668265263));
+            h = (h ^ (h >> 13)).wrapping_mul(1274126177);
+            let noise = (h >> 24) as u8;
+
+            match block_type {
+                0 => {
+                    // Textured patch: noise with local bias
+                    let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
+                    data[idx] = bias.wrapping_add(noise >> 2);
+                    data[idx + 1] = bias.wrapping_add(noise >> 1);
+                    data[idx + 2] = bias.wrapping_add(noise >> 3);
+                }
+                1 => {
+                    // Gradient region (some DC-heavy blocks are realistic)
+                    data[idx] = ((x * 255) / width as usize) as u8;
+                    data[idx + 1] = ((y * 255) / height as usize) as u8;
+                    data[idx + 2] = noise >> 2;
+                }
+                2 => {
+                    // Sharp edges: checkerboard within block
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
+                    data[idx] = edge;
+                    data[idx + 1] = edge.wrapping_add(noise >> 4);
+                    data[idx + 2] = 255 - edge;
+                }
+                _ => {
+                    // High-frequency noise (exercises many AC coefficients)
+                    data[idx] = noise;
+                    data[idx + 1] = noise.wrapping_mul(3);
+                    data[idx + 2] = noise.wrapping_mul(7);
+                }
+            }
         }
     }
 
-    let config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
+    let mut config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
+    if progressive {
+        // Disable restart markers for progressive JPEGs in benchmarks.
+        // zune-jpeg 0.5.12 has a bug where it silently skips AC refinement
+        // scans when restart markers are present, producing incorrect output
+        // (max_diff=224, 99.4% of pixels wrong). Without DRI, zune produces
+        // correct output matching zenjpeg and cjpegli byte-for-byte.
+        config = config.restart_mcu_rows(0);
+    }
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation should succeed");
@@ -257,6 +313,43 @@ fn bench_decode_comparison(c: &mut Criterion) {
             &jpeg_progressive,
             |b, data| {
                 b.iter(|| unsafe { decode_with_cjpegli(black_box(data)) });
+            },
+        );
+
+        // zenjpeg baseline parallel (requires parallel + decoder features)
+        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        group.bench_with_input(
+            BenchmarkId::new("zenjpeg-baseline-parallel", format!("{}x{}", width, height)),
+            &jpeg_baseline,
+            |b, data| {
+                b.iter(|| {
+                    use zenjpeg::decode::Decoder;
+                    use zenjpeg::decoder::PixelFormat;
+                    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
+                });
+            },
+        );
+
+        // zenjpeg progressive parallel (requires parallel + decoder features)
+        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        group.bench_with_input(
+            BenchmarkId::new(
+                "zenjpeg-progressive-parallel",
+                format!("{}x{}", width, height),
+            ),
+            &jpeg_progressive,
+            |b, data| {
+                b.iter(|| {
+                    use zenjpeg::decode::Decoder;
+                    use zenjpeg::decoder::PixelFormat;
+                    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+                    decoder
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
+                });
             },
         );
 

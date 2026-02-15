@@ -26,7 +26,7 @@ pub(crate) enum HuffmanResult {
 /// Returns a u64 bitmask with bits [lo..=hi] set (0-indexed, both inclusive).
 /// Used for masking nonzero bitmaps to a spectral selection range.
 #[inline(always)]
-fn range_bitmap(lo: u8, hi: u8) -> u64 {
+pub(crate) fn range_bitmap(lo: u8, hi: u8) -> u64 {
     debug_assert!(lo <= hi && hi < 64);
     // Shift trick: ((1 << (hi+1)) - 1) & !((1 << lo) - 1)
     // Handle hi=63 overflow: use wrapping shift
@@ -171,6 +171,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.lenient = lenient;
     }
 
+    /// Enables permissive restart marker handling.
+    ///
+    /// When enabled, any RST marker is accepted instead of requiring
+    /// the exact expected sequence number.
+    pub fn set_permissive_rst(&mut self, permissive: bool) {
+        self.reader.set_permissive_rst(permissive);
+    }
+
     /// Sets a DC Huffman table (borrowed, not cloned).
     pub fn set_dc_table(&mut self, idx: usize, table: &'tables HuffmanDecodeTable) {
         if idx < 4 {
@@ -274,6 +282,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Safely gets an AC table reference, handling out-of-bounds indices.
     /// Returns with 'tables lifetime to avoid borrowing self.
+    #[inline(always)]
     fn get_ac_table(&self, idx: usize) -> Result<&'tables HuffmanDecodeTable> {
         self.ac_tables
             .get(idx)
@@ -1197,6 +1206,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Decodes AC coefficients for progressive first scan (ah=0).
     /// Writes coefficients to the provided slice in range [ss, se].
     /// Returns the EOB run remaining after this block.
+    #[inline(always)]
     pub fn decode_ac_first(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
@@ -1207,13 +1217,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         al: u8,
         eob_run: &mut u16,
     ) -> ScanResult<()> {
-        let ac_table = self.get_ac_table(ac_table_idx)?;
-
-        // If we have a pending EOB run, decrement and skip this block
+        // EOB fast path FIRST — before table lookup (most common path).
+        // Avoids get_ac_table's Result overhead for blocks in EOB runs.
         if *eob_run > 0 {
             *eob_run -= 1;
             return Ok(ScanRead::Value(()));
         }
+
+        let ac_table = self.get_ac_table(ac_table_idx)?;
 
         let mut k = ss as usize;
         while k <= se as usize {
@@ -1280,6 +1291,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Hot path optimization: refinement bit reads use `read_bit_refine()` which
     /// avoids ScanRead enum wrapping, bit_buffer sync, and fill checks per bit.
     /// Returns 0 on exhaustion (safe: means "don't modify coefficient").
+    ///
+    /// The inner scan uses bitmap-accelerated iteration: instead of checking
+    /// every position from k to se (O(se-k)), it jumps between nonzero positions
+    /// via `trailing_zeros()` (O(nonzero_count)). For sparse blocks this reduces
+    /// iterations from ~61 to ~3-10.
+    ///
+    /// Refinement bit application uses branchless arithmetic to eliminate
+    /// unpredictable sign-dependent branches on the hot path.
+    #[inline(always)]
     pub fn decode_ac_refine(
         &mut self,
         coeffs: &mut [i16; DCT_BLOCK_SIZE],
@@ -1290,34 +1310,42 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         al: u8,
         eob_run: &mut u16,
     ) -> ScanResult<()> {
-        let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
 
-        // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return.
-        // This is the most common path in progressive JPEGs — tight loop, no Huffman decodes.
+        // EOB fast path FIRST — before table lookup (most common path).
+        // Avoids get_ac_table's Result overhead for blocks in EOB runs.
+        // Note: When called from progressive.rs, this path is usually intercepted
+        // by the hoisted EOB check in the outer loop (which calls refine_eob_bits
+        // directly). This remains as a fallback for other callers.
         if *eob_run > 0 {
-            // Use bitmap to iterate only nonzero positions (skip zeros via trailing_zeros).
-            // Mask to the spectral selection range [ss, se].
             let range_mask = range_bitmap(ss, se);
             let mut nz = *bitmap & range_mask;
+            let _ = self.reader.refill();
             while nz != 0 {
                 let k = nz.trailing_zeros() as usize;
                 let bit = self.reader.read_bit_refine();
-                if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                    if coeffs[k] > 0 {
-                        coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                    } else {
-                        coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                    }
-                }
-                nz &= nz - 1; // clear lowest set bit
+                let c = coeffs[k];
+                let sign = (c >> 15) | 1;
+                let not_set = ((c & bit_val) == 0) as i16;
+                coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                nz &= nz - 1;
             }
             *eob_run -= 1;
             return Ok(ScanRead::Value(()));
         }
 
+        // Table lookup only needed for non-EOB blocks (Huffman decode path).
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+
+        let se_usize = se as usize;
         let mut k = ss as usize;
-        while k <= se as usize {
+
+        // Compute nonzero bitmap once for the entire block. Maintained across
+        // Huffman events: bits are cleared as nonzero positions are processed,
+        // so we never recompute range_bitmap per event (~11M instruction savings).
+        let mut nz_remaining = *bitmap & range_bitmap(ss, se);
+
+        while k <= se_usize {
             // Huffman decode uses normal path (infrequent, needs ScanRead handling)
             let symbol = match self.decode_huffman(ac_table)? {
                 ScanRead::Value(v) => v,
@@ -1334,7 +1362,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // ZRL in refinement - skip 16 zeros (not 15!)
                     num_zeros_to_skip = 16;
                 } else {
-                    // EOB — apply refinement to remaining nonzero coeffs via bitmap
+                    // EOB — apply refinement to remaining nonzero coeffs.
+                    // nz_remaining already has exactly the remaining nonzero
+                    // positions from k to se (maintained across events).
                     if run != 0 {
                         let extra = match self.reader.read_bits(run)? {
                             ScanRead::Value(v) => v as u16,
@@ -1343,20 +1373,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         };
                         *eob_run = (1 << run) + extra - 1;
                     }
-                    // Apply refinement to remaining nonzero coeffs [k..=se]
-                    let range_mask = range_bitmap(k as u8, se);
-                    let mut nz = *bitmap & range_mask;
-                    while nz != 0 {
-                        let j = nz.trailing_zeros() as usize;
+                    while nz_remaining != 0 {
+                        let j = nz_remaining.trailing_zeros() as usize;
                         let bit = self.reader.read_bit_refine();
-                        if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                            if coeffs[j] > 0 {
-                                coeffs[j] = coeffs[j].wrapping_add(bit_val);
-                            } else {
-                                coeffs[j] = coeffs[j].wrapping_sub(bit_val);
-                            }
-                        }
-                        nz &= nz - 1;
+                        let c = coeffs[j];
+                        let sign = (c >> 15) | 1;
+                        let not_set = ((c & bit_val) == 0) as i16;
+                        coeffs[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                        nz_remaining &= nz_remaining - 1;
                     }
                     return Ok(ScanRead::Value(()));
                 }
@@ -1371,45 +1395,546 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 None
             };
 
-            // Skip zeros and apply refinement bits to nonzero coefficients.
-            // Must iterate in order because refinement bits are read sequentially.
-            while k <= se as usize {
-                // For ZRL (size=0), stop immediately after skipping all 16 zeros.
+            // Bitmap-accelerated inner scan: jump between nonzero positions
+            // instead of checking every position k..=se individually.
+            // nz_remaining is maintained across events (computed once per block).
+            // Huffman decode just refilled buffer (32+ bits); inner scan consumes
+            // at most ~15 bits (sign + refinement), well within available bits.
+            loop {
+                // ZRL termination: stop when all zeros have been skipped.
                 if size == 0 && num_zeros_to_skip == 0 {
                     break;
                 }
 
-                if (*bitmap & (1u64 << (k & 63))) != 0 {
-                    // Apply refinement bit for previously-nonzero coefficient
-                    let bit = self.reader.read_bit_refine();
-                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                        if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                        } else {
-                            coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                        }
-                    }
-                } else if num_zeros_to_skip > 0 {
-                    num_zeros_to_skip -= 1;
-                } else {
-                    // Found our target position (for NEW_NZ symbols)
+                if nz_remaining == 0 {
+                    // All remaining positions are zeros — skip in bulk.
+                    k += num_zeros_to_skip;
                     break;
                 }
+
+                let next_nz = nz_remaining.trailing_zeros() as usize;
+                let zero_gap = next_nz - k;
+
+                if num_zeros_to_skip < zero_gap {
+                    // Target zero position is before next nonzero.
+                    k += num_zeros_to_skip;
+                    break;
+                }
+
+                // Skip zeros in this gap.
+                num_zeros_to_skip -= zero_gap;
+                k = next_nz;
+
+                // ZRL: stop after exhausting zero count, before processing nonzero.
+                if size == 0 && num_zeros_to_skip == 0 {
+                    break;
+                }
+
+                // Process nonzero position: read refinement bit (branchless apply).
+                let bit = self.reader.read_bit_refine();
+                let c = coeffs[k];
+                let sign = (c >> 15) | 1;
+                let not_set = ((c & bit_val) == 0) as i16;
+                coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+
+                nz_remaining &= nz_remaining - 1; // clear lowest set bit
                 k += 1;
             }
 
             if let Some(val) = new_val {
-                if k <= se as usize {
-                    // Place newly-nonzero coefficient and update bitmap
+                if k <= se_usize {
+                    // Place newly-nonzero coefficient and update bitmap.
+                    // Don't add to nz_remaining — this coefficient was just placed
+                    // and doesn't need refinement bits in this scan.
                     coeffs[k] = val;
                     *bitmap |= 1u64 << (k & 63);
                     k += 1; // Move past the placed coefficient
                 }
             }
-            // For ZRL (size==0), k already points past the 16 zeros we skipped
+            // For ZRL (size==0), k already points past the zeros we skipped
         }
 
         Ok(ScanRead::Value(()))
+    }
+
+    /// Apply refinement bits to existing nonzero coefficients during an EOB run.
+    ///
+    /// This is the lean hot path for AC refinement EOB blocks. Called from the
+    /// outer scan loop when eob_run > 0, bypassing the full decode_ac_refine()
+    /// which includes unnecessary Huffman table lookup and ScanResult wrapping.
+    ///
+    /// The bitmap must already be masked to the spectral range [ss, se].
+    /// Pre-refills the bit buffer once (32+ bits covers typical 5-15 nonzero
+    /// positions per block), then uses branchless refinement arithmetic.
+    #[inline(always)]
+    pub fn refine_eob_bits(&mut self, coeffs: &mut [i16; DCT_BLOCK_SIZE], nz_bits: u64, al: u8) {
+        let bit_val = 1i16 << al;
+        let mut nz = nz_bits;
+        // Pre-refill: one refill gives 32+ bits, enough for typical blocks.
+        let _ = self.reader.refill();
+        while nz != 0 {
+            let k = nz.trailing_zeros() as usize;
+            let bit = self.reader.read_bit_refine();
+            // Branchless refinement: apply bit_val with sign of coefficient,
+            // but only if bit=1 and this bit position isn't already set.
+            let c = coeffs[k];
+            let sign = (c >> 15) | 1; // -1 for negative, +1 for positive
+            let not_set = ((c & bit_val) == 0) as i16;
+            coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+            nz &= nz - 1; // clear lowest set bit
+        }
+    }
+
+    // ===== Fused progressive scan methods (no ScanResult wrapping) =====
+
+    /// Fused AC first scan: processes entire block grid without ScanResult wrapping.
+    ///
+    /// Returns `Ok(false)` on truncation, `Ok(true)` on successful completion.
+    /// Uses fast_ac combined Huffman+value lookup where available, and
+    /// `peek_bits_refill(9)` for graceful end-of-scan handling (unlike
+    /// `ensure_bits()` which requires 32 bits and fails prematurely).
+    ///
+    /// This eliminates per-block function call overhead, ScanResult enum
+    /// construction/matching, and HuffmanResult→ScanRead conversion that
+    /// dominates progressive decode instruction count.
+    pub fn decode_ac_first_scan(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+        let fast_ac = ac_table.fast_ac_array();
+        let se_usize = se as usize;
+        let mut eob_run = 0u16;
+        let mut mcu_count = 0u32;
+        let mut next_restart_num = 0u8;
+
+        for block_y in 0..blocks_v {
+            if block_y & 15 == 0 && stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..blocks_h {
+                // Restart marker handling
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Drain any unloaded coded bytes before the marker.
+                    // The fast_ac path triggers fewer refills than the standard
+                    // Huffman path, so position may lag behind consumed data.
+                    while self.reader.marker_found().is_none() {
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() >= 32 {
+                            self.reader.skip_bits_fast(32);
+                        } else {
+                            break;
+                        }
+                    }
+                    self.reader.align_to_byte();
+                    self.reader.read_restart_marker(next_restart_num)?;
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    self.prev_dc = [0; 4];
+                    eob_run = 0;
+                }
+
+                let block_idx = block_y * padded_blocks_h + block_x;
+                let block = &mut coeffs[comp_idx][block_idx];
+                let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // EOB fast path — most common case in progressive
+                if eob_run > 0 {
+                    eob_run -= 1;
+                    mcu_count += 1;
+                    continue;
+                }
+
+                let mut k = ss as usize;
+                'block: while k <= se_usize {
+                    // Peek 9 bits for Huffman lookup. peek_bits_refill handles
+                    // refill internally and returns None only when truly exhausted
+                    // (unlike ensure_bits which demands 32 bits).
+                    // Peek 9 bits for Huffman + fast_ac lookup.
+                    // When <9 bits remain after refill, use peek_top(9) with
+                    // available-bits validation (the MSB-aligned zero-padding
+                    // still gives a valid fast_lookup index for codes ≤ avail bits).
+                    let bits9;
+                    let partial_peek;
+                    match self.reader.peek_bits_refill(9) {
+                        Some(b) => {
+                            bits9 = b;
+                            partial_peek = false;
+                        }
+                        None => {
+                            let avail = self.reader.bits_available();
+                            if avail == 0 {
+                                return Ok(false);
+                            }
+                            bits9 = self.reader.peek_top(9);
+                            partial_peek = true;
+                        }
+                    };
+
+                    // Try fast_ac combined lookup first (9-bit → symbol + value)
+                    if !partial_peek {
+                        if let Some(fast_ac_arr) = fast_ac {
+                            let entry = fast_ac_arr[bits9 as usize];
+                            if entry != 0 {
+                                let value = (entry >> 8) as i16;
+                                let run = ((entry >> 4) & 0xF) as usize;
+                                let total_bits = (entry & 0xF) as u8;
+                                self.reader.skip_bits_fast(total_bits);
+                                k += run;
+                                if k > se_usize {
+                                    break 'block;
+                                }
+                                block[k] = value << al;
+                                *bitmap |= 1u64 << (k & 63);
+                                k += 1;
+                                continue 'block;
+                            }
+                        }
+                    }
+
+                    // Standard Huffman decode using the (possibly partial) 9-bit peek
+                    let lookup = ac_table.fast_lookup[bits9 as usize];
+                    let symbol = if lookup >= 0 {
+                        let code_len = (lookup >> 8) as u8;
+                        // For partial peeks, verify the code fits in available bits
+                        if partial_peek && code_len > self.reader.bits_available() {
+                            return Ok(false);
+                        }
+                        self.reader.skip_bits_fast(code_len);
+                        (lookup & 0xFF) as u8
+                    } else {
+                        // Slow path: need 16 bits for extended Huffman codes
+                        match self.reader.peek_bits_refill(16) {
+                            Some(bits16) => {
+                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                                    self.reader.skip_bits_fast(len);
+                                    sym
+                                } else {
+                                    // Invalid code — treat as EOB
+                                    break 'block;
+                                }
+                            }
+                            None => return Ok(false),
+                        }
+                    };
+
+                    let run = symbol >> 4;
+                    let size = symbol & 0x0F;
+
+                    if size == 0 {
+                        if run == 15 {
+                            k += 16;
+                        } else if run == 0 {
+                            // Single EOB
+                            break 'block;
+                        } else {
+                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits)
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < run {
+                                return Ok(false);
+                            }
+                            let extra = self.reader.read_bits_fast(run) as u16;
+                            eob_run = (1 << run) + extra - 1;
+                            break 'block;
+                        }
+                    } else {
+                        k += run as usize;
+                        if k > se_usize {
+                            // AC overflow — treat as EOB in lenient mode
+                            break 'block;
+                        }
+                        // Extra bits for coefficient value (size ≤ 10)
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() < size {
+                            return Ok(false);
+                        }
+                        let bits = self.reader.read_bits_fast(size) as u16;
+                        let value = decode_value(size, bits);
+                        block[k] = value << al;
+                        *bitmap |= 1u64 << (k & 63);
+                        k += 1;
+                    }
+                }
+
+                mcu_count += 1;
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Fused AC refinement scan: processes entire block grid without ScanResult wrapping.
+    ///
+    /// Returns `Ok(false)` on truncation, `Ok(true)` on successful completion.
+    /// Combines the EOB fast path and Huffman decode path into one loop with
+    /// `peek_bits_refill(9)` for Huffman and branchless refinement arithmetic.
+    pub fn decode_ac_refine_scan(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+        let bit_val = 1i16 << al;
+        let range_mask = range_bitmap(ss, se);
+        let se_usize = se as usize;
+        let mut eob_run = 0u16;
+        let mut mcu_count = 0u32;
+        let mut next_restart_num = 0u8;
+
+        for block_y in 0..blocks_v {
+            if block_y & 15 == 0 && stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..blocks_h {
+                // Restart marker handling
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Drain any unloaded coded bytes before the marker.
+                    while self.reader.marker_found().is_none() {
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() >= 32 {
+                            self.reader.skip_bits_fast(32);
+                        } else {
+                            break;
+                        }
+                    }
+                    self.reader.align_to_byte();
+                    self.reader.read_restart_marker(next_restart_num)?;
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    self.prev_dc = [0; 4];
+                    eob_run = 0;
+                }
+
+                let block_idx = block_y * padded_blocks_h + block_x;
+                let block = &mut coeffs[comp_idx][block_idx];
+                let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // EOB fast path — apply refinement bits to existing nonzero coefficients
+                if eob_run > 0 {
+                    let nz = *bitmap & range_mask;
+                    let nz_count = nz.count_ones() as u8;
+                    if nz_count > 0 {
+                        let _ = self.reader.refill();
+                        if nz_count <= 32 && nz_count <= self.reader.bits_available() {
+                            // Batch: read all refinement bits at once
+                            let batch = self.reader.read_bits_fast(nz_count);
+                            let mut remaining = nz;
+                            let mut shift = nz_count;
+                            while remaining != 0 {
+                                let j = remaining.trailing_zeros() as usize;
+                                shift -= 1;
+                                let bit = ((batch >> shift) & 1) as i16;
+                                let c = block[j];
+                                let sign = (c >> 15) | 1;
+                                let not_set = ((c & bit_val) == 0) as i16;
+                                block[j] = c.wrapping_add(bit * not_set * sign * bit_val);
+                                remaining &= remaining - 1;
+                            }
+                        } else {
+                            // Fallback for >32 nonzero or insufficient bits
+                            let mut remaining = nz;
+                            while remaining != 0 {
+                                let j = remaining.trailing_zeros() as usize;
+                                let bit = self.reader.read_bit_refine();
+                                let c = block[j];
+                                let sign = (c >> 15) | 1;
+                                let not_set = ((c & bit_val) == 0) as i16;
+                                block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                                remaining &= remaining - 1;
+                            }
+                        }
+                    }
+                    eob_run -= 1;
+                    mcu_count += 1;
+                    continue;
+                }
+
+                // Non-EOB block: Huffman decode path
+                let mut k = ss as usize;
+                let mut nz_remaining = *bitmap & range_mask;
+
+                // Pre-refill for fast Huffman decode (optimization, not required)
+                let _ = self.reader.ensure_bits();
+
+                while k <= se_usize {
+                    // Refill when bits are low. Fast lookup needs 9 bits minimum;
+                    // 25 covers one full Huffman event (16-bit code + 1 sign + 8 refine).
+                    if self.reader.bits_available() < 25 {
+                        let _ = self.reader.ensure_bits();
+                        if self.reader.bits_available() < 9 {
+                            break; // Not enough for even a fast Huffman lookup
+                        }
+                    }
+
+                    // Huffman decode: peek_top is safe because we have >= 9 bits.
+                    // Fast lookup (positive) always has code_len <= 9, so no overflow.
+                    let bits9 = self.reader.peek_top(9) as usize;
+                    let lookup = ac_table.fast_lookup[bits9];
+                    let symbol = if lookup >= 0 {
+                        let code_len = (lookup >> 8) as u8;
+                        self.reader.skip_bits_fast(code_len);
+                        (lookup & 0xFF) as u8
+                    } else {
+                        // Slow path: extended codes need up to 16 bits
+                        if self.reader.bits_available() < 16 {
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < 16 {
+                                break;
+                            }
+                        }
+                        let bits16 = self.reader.peek_top(16);
+                        if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                            self.reader.skip_bits_fast(len);
+                            sym
+                        } else {
+                            break;
+                        }
+                    };
+
+                    let run = symbol >> 4;
+                    let size = symbol & 0x0F;
+
+                    if size == 0 {
+                        if run != 15 {
+                            // EOB — apply refinement to remaining nonzero coeffs
+                            if run != 0 {
+                                let _ = self.reader.refill();
+                                if self.reader.bits_available() < run {
+                                    break;
+                                }
+                                let extra = self.reader.read_bits_fast(run) as u16;
+                                eob_run = (1 << run) + extra - 1;
+                            }
+                            let rem_count = nz_remaining.count_ones() as u8;
+                            if rem_count > 0 {
+                                if rem_count > self.reader.bits_available() {
+                                    let _ = self.reader.refill();
+                                }
+                                if rem_count <= 32 && rem_count <= self.reader.bits_available() {
+                                    let batch = self.reader.read_bits_fast(rem_count);
+                                    let mut shift = rem_count;
+                                    while nz_remaining != 0 {
+                                        let j = nz_remaining.trailing_zeros() as usize;
+                                        shift -= 1;
+                                        let bit = ((batch >> shift) & 1) as i16;
+                                        let c = block[j];
+                                        let sign = (c >> 15) | 1;
+                                        let not_set = ((c & bit_val) == 0) as i16;
+                                        block[j] =
+                                            c.wrapping_add(bit * not_set * sign * bit_val);
+                                        nz_remaining &= nz_remaining - 1;
+                                    }
+                                } else {
+                                    while nz_remaining != 0 {
+                                        let j = nz_remaining.trailing_zeros() as usize;
+                                        let bit = self.reader.read_bit_refine();
+                                        let c = block[j];
+                                        let sign = (c >> 15) | 1;
+                                        let not_set = ((c & bit_val) == 0) as i16;
+                                        block[j] = c.wrapping_add(
+                                            (bit as i16) * not_set * sign * bit_val,
+                                        );
+                                        nz_remaining &= nz_remaining - 1;
+                                    }
+                                }
+                            }
+                            break; // Done with this block
+                        }
+
+                        // ZRL: skip 16 zero positions, refining nonzeros along the way.
+                        // Separate path avoids `size == 0` checks in inner loop.
+                        let mut num_zeros_to_skip: usize = 16;
+                        loop {
+                            if num_zeros_to_skip == 0 {
+                                break;
+                            }
+                            if nz_remaining == 0 {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            let next_nz = nz_remaining.trailing_zeros() as usize;
+                            let zero_gap = next_nz - k;
+                            if num_zeros_to_skip <= zero_gap {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            num_zeros_to_skip -= zero_gap;
+                            k = next_nz;
+
+                            let bit = self.reader.read_bit_refine();
+                            let c = block[k];
+                            let sign = (c >> 15) | 1;
+                            let not_set = ((c & bit_val) == 0) as i16;
+                            block[k] =
+                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            nz_remaining &= nz_remaining - 1;
+                            k += 1;
+                        }
+                    } else {
+                        // NEW_NZ: skip `run` zero positions, then place new coefficient.
+                        // Separate path avoids Option wrapping and `size == 0` checks.
+                        let sign_bit = self.reader.read_bit_refine();
+                        let new_val = if sign_bit != 0 { bit_val } else { -bit_val };
+                        let mut num_zeros_to_skip = run as usize;
+
+                        loop {
+                            if nz_remaining == 0 {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            let next_nz = nz_remaining.trailing_zeros() as usize;
+                            let zero_gap = next_nz - k;
+                            if num_zeros_to_skip < zero_gap {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            num_zeros_to_skip -= zero_gap;
+                            k = next_nz;
+
+                            let bit = self.reader.read_bit_refine();
+                            let c = block[k];
+                            let sign = (c >> 15) | 1;
+                            let not_set = ((c & bit_val) == 0) as i16;
+                            block[k] =
+                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            nz_remaining &= nz_remaining - 1;
+                            k += 1;
+                        }
+
+                        if k <= se_usize {
+                            block[k] = new_val;
+                            *bitmap |= 1u64 << (k & 63);
+                            k += 1;
+                        }
+                    }
+                }
+
+                mcu_count += 1;
+            }
+        }
+
+        Ok(true)
     }
 }
 

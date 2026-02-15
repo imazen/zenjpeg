@@ -79,6 +79,7 @@ jpeg-decoder = "0.3.2"
 zune-jpeg.workspace = true
 zune-core = "0.5.1"
 codec-corpus = "1"
+tempfile = "3"
 
 
 # WASM testing dependencies (browser + Node.js)

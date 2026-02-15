@@ -884,11 +884,16 @@ pub fn dequantize_unzigzag_i32_into_partial(
 ) {
     use crate::foundation::consts::JPEG_NATURAL_ORDER;
 
-    // Zero the entire output first (compiles to a fast memset of 256 bytes)
-    *result = [0i32; DCT_BLOCK_SIZE];
-
-    // Only process non-zero zigzag positions
     let count = (coeff_count as usize).min(DCT_BLOCK_SIZE);
+
+    // When coeff_count < 64, zero the buffer so unwritten positions are 0.
+    // When coeff_count == 64, the loop below writes ALL 64 natural-order positions
+    // (JPEG_NATURAL_ORDER is a permutation of 0..63), so zeroing is redundant.
+    // This matters for progressive decode where IDCT dirties the reused buffer.
+    if count < DCT_BLOCK_SIZE {
+        *result = [0i32; DCT_BLOCK_SIZE];
+    }
+
     for zigzag_idx in 0..count {
         let natural_idx = (JPEG_NATURAL_ORDER[zigzag_idx] & 63) as usize;
         result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;

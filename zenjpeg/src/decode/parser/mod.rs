@@ -29,7 +29,7 @@ struct ScanInfo {
     data_start: usize,
 }
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::foundation::alloc::checked_size_2d;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
@@ -241,6 +241,9 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::TruncatedProgressiveScan => "progressive scan data truncated",
                 DecodeWarning::AcIndexOverflow => "AC coefficient index out of bounds",
                 DecodeWarning::InvalidHuffmanCode => "invalid Huffman code mid-scan",
+                DecodeWarning::ZeroQuantValue { .. } => "zero quantization value in DQT",
+                DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
+                DecodeWarning::RestartMarkerResync { .. } => "restart marker sequence mismatch",
             }));
         }
         // Deduplicate: don't add the same warning twice
@@ -508,6 +511,9 @@ impl<'a> JpegParser<'a> {
         self.position = 2; // Skip SOI
         self.read_header()?;
 
+        // Track whether we've decoded at least one scan (for truncation recovery)
+        let mut scans_decoded = 0u32;
+
         // Continue parsing until we hit EOI
         loop {
             // Check for cancellation
@@ -515,12 +521,49 @@ impl<'a> JpegParser<'a> {
                 return Err(Error::cancelled());
             }
 
-            let marker = self.read_marker()?;
+            let marker = match self.read_marker() {
+                Ok(m) => m,
+                Err(e) => {
+                    // In Balanced/Lenient mode, treat truncation after at least one
+                    // scan as end-of-image. This handles missing EOI, truncated
+                    // progressive scans, and files cut off between scans.
+                    // Matches libjpeg-turbo behavior (JWRN_HIT_MARKER + partial output).
+                    if self.strictness != Strictness::Strict
+                        && scans_decoded > 0
+                        && matches!(e.kind(), ErrorKind::TruncatedData { .. })
+                    {
+                        self.warnings.push(DecodeWarning::TruncatedScan {
+                            blocks_decoded: 0,
+                            blocks_expected: 0,
+                        });
+                        break;
+                    }
+                    return Err(e);
+                }
+            };
 
             match marker {
                 MARKER_SOS => {
-                    self.parse_scan(stop)?;
-                    // After scan, look for more markers
+                    match self.parse_scan(stop) {
+                        Ok(()) => {
+                            scans_decoded += 1;
+                        }
+                        Err(e) => {
+                            // In Balanced/Lenient mode, truncation during a scan
+                            // is recoverable if we have partial data.
+                            if self.strictness != Strictness::Strict
+                                && matches!(e.kind(), ErrorKind::TruncatedData { .. })
+                            {
+                                scans_decoded += 1;
+                                self.warnings.push(DecodeWarning::TruncatedScan {
+                                    blocks_decoded: 0,
+                                    blocks_expected: 0,
+                                });
+                                break;
+                            }
+                            return Err(e);
+                        }
+                    }
                 }
                 MARKER_DNL => {
                     // Define Number of Lines - update height if it was 0 in SOF
@@ -547,6 +590,31 @@ impl<'a> JpegParser<'a> {
                 }
                 MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
                 _ => self.skip_segment()?,
+            }
+        }
+
+        // For progressive decode, compute actual coeff_counts from nonzero bitmaps.
+        // Progressive scans initialize coeff_counts to 64 (full IDCT) because the
+        // final coefficient layout isn't known until all scans complete. Now that all
+        // scans are done, we can compute the actual highest nonzero zigzag position
+        // per block, enabling tiered IDCT (DC-only fast path, partial dequant).
+        if matches!(
+            self.mode,
+            JpegMode::Progressive | JpegMode::ArithmeticProgressive
+        ) && !self.nonzero_bitmaps.is_empty()
+        {
+            for comp_idx in 0..self.nonzero_bitmaps.len() {
+                let bitmaps = &self.nonzero_bitmaps[comp_idx];
+                let counts = &mut self.coeff_counts[comp_idx];
+                for (block_idx, bitmap) in bitmaps.iter().enumerate() {
+                    if *bitmap == 0 {
+                        // DC only (or all zeros) — use DC-only IDCT fast path
+                        counts[block_idx] = 1;
+                    } else {
+                        // Highest set bit position + 1 = number of zigzag positions to process
+                        counts[block_idx] = (64 - bitmap.leading_zeros()) as u8;
+                    }
+                }
             }
         }
 

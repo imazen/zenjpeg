@@ -278,6 +278,7 @@ impl DecodeConfig {
     /// - [`Strictness::Strict`]: Fail on any spec violation or truncation
     /// - [`Strictness::Balanced`]: Reject violations, recover from truncation (default)
     /// - [`Strictness::Lenient`]: Recover from all errors when possible
+    /// - [`Strictness::Permissive`]: Maximum libjpeg-turbo compatibility
     ///
     /// # Example
     ///
@@ -292,6 +293,9 @@ impl DecodeConfig {
     ///
     /// // Lenient mode for corrupt file recovery
     /// let decoder = Decoder::new().strictness(Strictness::Lenient);
+    ///
+    /// // Permissive mode for maximum compatibility
+    /// let decoder = Decoder::new().strictness(Strictness::Permissive);
     /// ```
     #[must_use]
     pub fn strictness(mut self, strictness: Strictness) -> Self {
@@ -305,10 +309,16 @@ impl DecodeConfig {
         self.strictness(Strictness::Strict)
     }
 
-    /// Convenience: use lenient mode (maximum compatibility).
+    /// Convenience: use lenient mode (recover from all errors).
     #[must_use]
     pub fn lenient(self) -> Self {
         self.strictness(Strictness::Lenient)
+    }
+
+    /// Convenience: use permissive mode (maximum libjpeg-turbo compatibility).
+    #[must_use]
+    pub fn permissive(self) -> Self {
+        self.strictness(Strictness::Permissive)
     }
 
     /// Sets the output target controlling precision, transfer function, and IDCT variant.
