@@ -9,7 +9,6 @@
 //! - AC-first (ss>0, ah=0): Initial AC coefficient values for range [ss, se]
 //! - AC-refine (ss>0, ah>0): Refine AC coefficient precision for range [ss, se]
 
-use crate::entropy::decoder::range_bitmap;
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
@@ -134,9 +133,6 @@ impl<'a> JpegParser<'a> {
         // Determine scan type
         let is_dc_scan = ss == 0 && se == 0;
         let is_first_scan = ah == 0;
-
-        // EOB run tracking for AC scans
-        let mut eob_run = 0u16;
 
         // Restart marker handling
         let mut mcu_count = 0u32;
@@ -306,79 +302,42 @@ impl<'a> JpegParser<'a> {
             // Storage stride: MCU-padded (matches output path)
             let padded_blocks_h = mcu_cols * h_samp;
 
-            // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
-            mcu_count = 0;
-            next_restart_num = 0;
-
-            // Pre-compute range mask once — invariant within scan (ss, se don't change).
-            let range_mask = range_bitmap(ss, se);
-
-            'ac_scan: for block_y in 0..comp_blocks_v {
-                // Check for cancellation at each block row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
+            // Fused AC scan: entire block grid processed in one call.
+            // Eliminates per-block ScanResult wrapping, function call overhead,
+            // and HuffmanResult→ScanRead conversion. Uses fast_ac combined lookup
+            // for AC first scans and pre-refilled bit reads for refinement.
+            if is_first_scan {
+                if !decoder.decode_ac_first_scan(
+                    &mut self.coeffs,
+                    &mut self.nonzero_bitmaps,
+                    comp_idx,
+                    ac_table as usize,
+                    ss,
+                    se,
+                    al,
+                    comp_blocks_h,
+                    comp_blocks_v,
+                    padded_blocks_h,
+                    restart_interval,
+                    stop,
+                )? {
+                    had_progressive_truncation = true;
                 }
-
-                for block_x in 0..comp_blocks_h {
-                    // Check for restart marker
-                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        decoder.align_to_byte();
-                        decoder.read_restart_marker(next_restart_num)?;
-                        next_restart_num = (next_restart_num + 1) & 7;
-                        decoder.reset_dc();
-                        eob_run = 0;
-                    }
-
-                    let block_idx = block_y * padded_blocks_h + block_x;
-                    if is_first_scan {
-                        // AC first scan
-                        match decoder.decode_ac_first(
-                            &mut self.coeffs[comp_idx][block_idx],
-                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                            ac_table as usize,
-                            ss,
-                            se,
-                            al,
-                            &mut eob_run,
-                        )? {
-                            ScanRead::Value(()) => {}
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break 'ac_scan;
-                            }
-                        }
-                    } else if eob_run > 0 {
-                        // AC refinement EOB fast path — hoisted from decode_ac_refine.
-                        // Avoids function call overhead, ScanResult wrapping, Huffman
-                        // table lookup, and per-block range_bitmap recomputation.
-                        let nz = self.nonzero_bitmaps[comp_idx][block_idx] & range_mask;
-                        decoder.refine_eob_bits(
-                            &mut self.coeffs[comp_idx][block_idx],
-                            nz,
-                            al,
-                        );
-                        eob_run -= 1;
-                    } else {
-                        // AC refinement scan — non-EOB blocks (Huffman decode path)
-                        match decoder.decode_ac_refine(
-                            &mut self.coeffs[comp_idx][block_idx],
-                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                            ac_table as usize,
-                            ss,
-                            se,
-                            al,
-                            &mut eob_run,
-                        )? {
-                            ScanRead::Value(()) => {}
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break 'ac_scan;
-                            }
-                        }
-                    }
-
-                    mcu_count += 1;
-                }
+            } else if !decoder.decode_ac_refine_scan(
+                &mut self.coeffs,
+                &mut self.nonzero_bitmaps,
+                comp_idx,
+                ac_table as usize,
+                ss,
+                se,
+                al,
+                comp_blocks_h,
+                comp_blocks_v,
+                padded_blocks_h,
+                restart_interval,
+                stop,
+            )? {
+                had_progressive_truncation = true;
             }
         }
 

@@ -1478,6 +1478,404 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             nz &= nz - 1; // clear lowest set bit
         }
     }
+
+    // ===== Fused progressive scan methods (no ScanResult wrapping) =====
+
+    /// Fused AC first scan: processes entire block grid without ScanResult wrapping.
+    ///
+    /// Returns `Ok(false)` on truncation, `Ok(true)` on successful completion.
+    /// Uses fast_ac combined Huffman+value lookup where available, and
+    /// `peek_bits_refill(9)` for graceful end-of-scan handling (unlike
+    /// `ensure_bits()` which requires 32 bits and fails prematurely).
+    ///
+    /// This eliminates per-block function call overhead, ScanResult enum
+    /// construction/matching, and HuffmanResult→ScanRead conversion that
+    /// dominates progressive decode instruction count.
+    pub fn decode_ac_first_scan(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+        let fast_ac = ac_table.fast_ac_array();
+        let se_usize = se as usize;
+        let mut eob_run = 0u16;
+        let mut mcu_count = 0u32;
+        let mut next_restart_num = 0u8;
+
+        for block_y in 0..blocks_v {
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..blocks_h {
+                // Restart marker handling
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Drain any unloaded coded bytes before the marker.
+                    // The fast_ac path triggers fewer refills than the standard
+                    // Huffman path, so position may lag behind consumed data.
+                    while self.reader.marker_found().is_none() {
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() >= 32 {
+                            self.reader.skip_bits_fast(32);
+                        } else {
+                            break;
+                        }
+                    }
+                    self.reader.align_to_byte();
+                    self.reader.read_restart_marker(next_restart_num)?;
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    self.prev_dc = [0; 4];
+                    eob_run = 0;
+                }
+
+                let block_idx = block_y * padded_blocks_h + block_x;
+                let block = &mut coeffs[comp_idx][block_idx];
+                let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // EOB fast path — most common case in progressive
+                if eob_run > 0 {
+                    eob_run -= 1;
+                    mcu_count += 1;
+                    continue;
+                }
+
+                let mut k = ss as usize;
+                'block: while k <= se_usize {
+                    // Peek 9 bits for Huffman lookup. peek_bits_refill handles
+                    // refill internally and returns None only when truly exhausted
+                    // (unlike ensure_bits which demands 32 bits).
+                    // Peek 9 bits for Huffman + fast_ac lookup.
+                    // When <9 bits remain after refill, use peek_top(9) with
+                    // available-bits validation (the MSB-aligned zero-padding
+                    // still gives a valid fast_lookup index for codes ≤ avail bits).
+                    let bits9;
+                    let partial_peek;
+                    match self.reader.peek_bits_refill(9) {
+                        Some(b) => {
+                            bits9 = b;
+                            partial_peek = false;
+                        }
+                        None => {
+                            let avail = self.reader.bits_available();
+                            if avail == 0 {
+                                return Ok(false);
+                            }
+                            bits9 = self.reader.peek_top(9);
+                            partial_peek = true;
+                        }
+                    };
+
+                    // Try fast_ac combined lookup first (9-bit → symbol + value)
+                    if !partial_peek {
+                        if let Some(fast_ac_arr) = fast_ac {
+                            let entry = fast_ac_arr[bits9 as usize];
+                            if entry != 0 {
+                                let value = (entry >> 8) as i16;
+                                let run = ((entry >> 4) & 0xF) as usize;
+                                let total_bits = (entry & 0xF) as u8;
+                                self.reader.skip_bits_fast(total_bits);
+                                k += run;
+                                if k > se_usize {
+                                    break 'block;
+                                }
+                                block[k] = value << al;
+                                *bitmap |= 1u64 << (k & 63);
+                                k += 1;
+                                continue 'block;
+                            }
+                        }
+                    }
+
+                    // Standard Huffman decode using the (possibly partial) 9-bit peek
+                    let lookup = ac_table.fast_lookup[bits9 as usize];
+                    let symbol = if lookup >= 0 {
+                        let code_len = (lookup >> 8) as u8;
+                        // For partial peeks, verify the code fits in available bits
+                        if partial_peek && code_len > self.reader.bits_available() {
+                            return Ok(false);
+                        }
+                        self.reader.skip_bits_fast(code_len);
+                        (lookup & 0xFF) as u8
+                    } else {
+                        // Slow path: need 16 bits for extended Huffman codes
+                        match self.reader.peek_bits_refill(16) {
+                            Some(bits16) => {
+                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                                    self.reader.skip_bits_fast(len);
+                                    sym
+                                } else {
+                                    // Invalid code — treat as EOB
+                                    break 'block;
+                                }
+                            }
+                            None => return Ok(false),
+                        }
+                    };
+
+                    let run = symbol >> 4;
+                    let size = symbol & 0x0F;
+
+                    if size == 0 {
+                        if run == 15 {
+                            k += 16;
+                        } else if run == 0 {
+                            // Single EOB
+                            break 'block;
+                        } else {
+                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits)
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < run {
+                                return Ok(false);
+                            }
+                            let extra = self.reader.read_bits_fast(run) as u16;
+                            eob_run = (1 << run) + extra - 1;
+                            break 'block;
+                        }
+                    } else {
+                        k += run as usize;
+                        if k > se_usize {
+                            // AC overflow — treat as EOB in lenient mode
+                            break 'block;
+                        }
+                        // Extra bits for coefficient value (size ≤ 10)
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() < size {
+                            return Ok(false);
+                        }
+                        let bits = self.reader.read_bits_fast(size) as u16;
+                        let value = decode_value(size, bits);
+                        block[k] = value << al;
+                        *bitmap |= 1u64 << (k & 63);
+                        k += 1;
+                    }
+                }
+
+                mcu_count += 1;
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Fused AC refinement scan: processes entire block grid without ScanResult wrapping.
+    ///
+    /// Returns `Ok(false)` on truncation, `Ok(true)` on successful completion.
+    /// Combines the EOB fast path and Huffman decode path into one loop with
+    /// `peek_bits_refill(9)` for Huffman and branchless refinement arithmetic.
+    pub fn decode_ac_refine_scan(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
+        let ac_table = self.get_ac_table(ac_table_idx)?;
+        let bit_val = 1i16 << al;
+        let range_mask = range_bitmap(ss, se);
+        let se_usize = se as usize;
+        let mut eob_run = 0u16;
+        let mut mcu_count = 0u32;
+        let mut next_restart_num = 0u8;
+
+        for block_y in 0..blocks_v {
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..blocks_h {
+                // Restart marker handling
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Drain any unloaded coded bytes before the marker.
+                    while self.reader.marker_found().is_none() {
+                        let _ = self.reader.refill();
+                        if self.reader.bits_available() >= 32 {
+                            self.reader.skip_bits_fast(32);
+                        } else {
+                            break;
+                        }
+                    }
+                    self.reader.align_to_byte();
+                    self.reader.read_restart_marker(next_restart_num)?;
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    self.prev_dc = [0; 4];
+                    eob_run = 0;
+                }
+
+                let block_idx = block_y * padded_blocks_h + block_x;
+                let block = &mut coeffs[comp_idx][block_idx];
+                let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // EOB fast path — apply refinement bits to existing nonzero coefficients
+                if eob_run > 0 {
+                    let mut nz = *bitmap & range_mask;
+                    let _ = self.reader.refill();
+                    while nz != 0 {
+                        let j = nz.trailing_zeros() as usize;
+                        let bit = self.reader.read_bit_refine();
+                        let c = block[j];
+                        let sign = (c >> 15) | 1;
+                        let not_set = ((c & bit_val) == 0) as i16;
+                        block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                        nz &= nz - 1;
+                    }
+                    eob_run -= 1;
+                    mcu_count += 1;
+                    continue;
+                }
+
+                // Non-EOB block: Huffman decode path
+                let mut k = ss as usize;
+                let mut nz_remaining = *bitmap & range_mask;
+
+                while k <= se_usize {
+                    // Peek 9 bits for Huffman lookup (handles end-of-data gracefully)
+                    // When <9 bits remain, use peek_top(9) with length validation.
+                    let bits9;
+                    let partial_peek;
+                    match self.reader.peek_bits_refill(9) {
+                        Some(b) => {
+                            bits9 = b;
+                            partial_peek = false;
+                        }
+                        None => {
+                            if self.reader.bits_available() == 0 {
+                                break;
+                            }
+                            bits9 = self.reader.peek_top(9);
+                            partial_peek = true;
+                        }
+                    };
+
+                    // Inline Huffman decode (no ScanResult wrapping)
+                    let lookup = ac_table.fast_lookup[bits9 as usize];
+                    let symbol = if lookup >= 0 {
+                        let code_len = (lookup >> 8) as u8;
+                        if partial_peek && code_len > self.reader.bits_available() {
+                            break;
+                        }
+                        self.reader.skip_bits_fast(code_len);
+                        (lookup & 0xFF) as u8
+                    } else {
+                        // Slow path: need 16 bits for extended Huffman codes
+                        match self.reader.peek_bits_refill(16) {
+                            Some(bits16) => {
+                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                                    self.reader.skip_bits_fast(len);
+                                    sym
+                                } else {
+                                    break; // Invalid code near end of scan
+                                }
+                            }
+                            None => break,
+                        }
+                    };
+
+                    let run = symbol >> 4;
+                    let size = symbol & 0x0F;
+                    let mut num_zeros_to_skip = run as usize;
+
+                    if size == 0 {
+                        if run == 15 {
+                            num_zeros_to_skip = 16;
+                        } else {
+                            // EOB — apply refinement to remaining nonzero coeffs
+                            if run != 0 {
+                                // EOB run extra bits (run ≤ 14)
+                                let _ = self.reader.refill();
+                                if self.reader.bits_available() < run {
+                                    break;
+                                }
+                                let extra = self.reader.read_bits_fast(run) as u16;
+                                eob_run = (1 << run) + extra - 1;
+                            }
+                            while nz_remaining != 0 {
+                                let j = nz_remaining.trailing_zeros() as usize;
+                                let bit = self.reader.read_bit_refine();
+                                let c = block[j];
+                                let sign = (c >> 15) | 1;
+                                let not_set = ((c & bit_val) == 0) as i16;
+                                block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                                nz_remaining &= nz_remaining - 1;
+                            }
+                            break; // Done with this block
+                        }
+                    }
+
+                    // Read sign bit for NEW_NZ (size=1) before refinement bits
+                    let new_val = if size != 0 {
+                        let sign_bit = self.reader.read_bit_refine();
+                        Some(if sign_bit != 0 { bit_val } else { -bit_val })
+                    } else {
+                        None
+                    };
+
+                    // Bitmap-accelerated inner scan
+                    loop {
+                        if size == 0 && num_zeros_to_skip == 0 {
+                            break;
+                        }
+                        if nz_remaining == 0 {
+                            k += num_zeros_to_skip;
+                            num_zeros_to_skip = 0;
+                            break;
+                        }
+                        let next_nz = nz_remaining.trailing_zeros() as usize;
+                        let zero_gap = next_nz - k;
+                        if num_zeros_to_skip < zero_gap {
+                            k += num_zeros_to_skip;
+                            num_zeros_to_skip = 0;
+                            break;
+                        }
+                        num_zeros_to_skip -= zero_gap;
+                        k = next_nz;
+                        if size == 0 && num_zeros_to_skip == 0 {
+                            break;
+                        }
+
+                        // Process nonzero position: read refinement bit (branchless)
+                        let bit = self.reader.read_bit_refine();
+                        let c = block[k];
+                        let sign = (c >> 15) | 1;
+                        let not_set = ((c & bit_val) == 0) as i16;
+                        block[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                        nz_remaining &= nz_remaining - 1;
+                        k += 1;
+                    }
+
+                    if let Some(val) = new_val {
+                        if k <= se_usize {
+                            block[k] = val;
+                            *bitmap |= 1u64 << (k & 63);
+                            k += 1;
+                        }
+                    }
+                }
+
+                mcu_count += 1;
+            }
+        }
+
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
