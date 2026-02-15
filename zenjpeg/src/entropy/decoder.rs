@@ -1409,7 +1409,6 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 if nz_remaining == 0 {
                     // All remaining positions are zeros — skip in bulk.
                     k += num_zeros_to_skip;
-                    num_zeros_to_skip = 0;
                     break;
                 }
 
@@ -1419,7 +1418,6 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 if num_zeros_to_skip < zero_gap {
                     // Target zero position is before next nonzero.
                     k += num_zeros_to_skip;
-                    num_zeros_to_skip = 0;
                     break;
                 }
 
