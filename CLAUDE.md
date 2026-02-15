@@ -361,9 +361,11 @@ Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables a
 ## Decoder Performance (2026-02-06)
 
 Scanline decoder matches or beats zune-jpeg. Buffered fast mode within 15%.
-Progressive beats zune at ≤1024, within 9% at 4096.
 
-**Wall-clock progressive (commit aba9777):**
+**WARNING: Old progressive numbers below used gradient test images (degenerate DC-only blocks).
+See "realistic content" table for accurate comparisons.**
+
+**Wall-clock progressive — gradient images (commit aba9777, MISLEADING):**
 | Size | zune-jpeg | zenjpeg prog | ratio | zenjpeg fast | ratio |
 |------|-----------|-------------|-------|-------------|-------|
 | 256 | 247µs | 164µs | **0.66x** | 143µs | **0.58x** |
@@ -371,6 +373,18 @@ Progressive beats zune at ≤1024, within 9% at 4096.
 | 1024 | 2.68ms | 2.16ms | **0.81x** | 1.96ms | **0.73x** |
 | 2048 | 8.85ms | 9.16ms | 1.03x | 8.36ms | **0.94x** |
 | 4096 | 91.3ms | 99.1ms | 1.09x | 97.7ms | 1.07x |
+
+**Wall-clock progressive — noise+patches (commit ff371b1, REALISTIC):**
+| Size | zune-jpeg | zenjpeg prog | ratio | cjpegli | zen/cjpegli |
+|------|-----------|-------------|-------|---------|-------------|
+| 256 | 65.8µs | 465µs | 7.1x | 969µs | **0.48x** |
+| 512 | 251µs | 1.79ms | 7.1x | 3.69ms | **0.49x** |
+| 1024 | 957µs | 6.92ms | 7.2x | 14.7ms | **0.47x** |
+| 2048 | 4.72ms | 29.1ms | 6.2x | 59.4ms | **0.49x** |
+| 4096 | 50.0ms | 149.5ms | 3.0x | 269ms | **0.56x** |
+
+Note: zenjpeg is 2x faster than cjpegli but 3-7x slower than zune on realistic content.
+The gap narrows at 4096 (3x) due to cache effects affecting both decoders.
 
 **Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
@@ -487,14 +501,22 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 1.09x gap at 4096x4096** (down from 1.92x originally):
-- AC refinement still dominates at 67% of decode instructions (289M/~430M at 2048)
-- Already heavily optimized: bitmap skip, `read_bit_refine()`, all-zeros early exit
-- Size-dependent gap: at ≤1024, coefficient data fits L2 cache (two-pass is fine);
-  at 4096+, coefficient data exceeds L2, causing cache misses in output pass
-- Remaining overhead is Huffman decode interspersed with refinement bits (inherently serial)
-- The tokenize_ac_refinement_scan encoder-side function also iterates coefficients
-  similarly but is not part of the decode path
+**Progressive 3-7x gap vs zune on realistic content** (noise+patches, not gradients):
+- Previous "1.09x gap" was measured with gradient test images that produce degenerate
+  DC-only blocks. With realistic coefficient distributions, the gap is much larger.
+- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches):
+  zenjpeg 464.6M Ir vs zune 77.9M Ir = 6.0x instruction ratio
+- Entropy decode: zenjpeg ~309M vs zune ~15M = 20.6x ratio
+- Root causes: (1) per-bit refill check in `read_bit_refine` (~2 instructions/read),
+  (2) ScanResult enum wrapping on every Huffman decode, (3) bitmap gap comparison
+  branch mispredictions (partially addressed by branchless refinement, -32% mispredicts)
+- zune achieves low instruction count by fully inlining scan loop + bitstream ops into
+  one monolithic function with zero per-bit checks (`get_bit` trusts refill was called)
+- Branchless refinement (commit ff371b1) reduced mispredicts 4.24M→2.87M but increased
+  total instructions by 3.4% (unconditional stores). Wall-clock improved -12% to -32%.
+- Further optimization requires architectural changes: fusing the scan loop with the
+  entropy decoder to eliminate per-block function call overhead, or eliminating ScanResult
+  wrapping on the hot Huffman decode path
 
 ## Failed Explorations
 
@@ -570,6 +592,42 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
 
 **Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+
+### Linear Iteration for AC Refinement (2026-02-14)
+
+**Attempted:** Replace bitmap-accelerated inner scan loop in `decode_ac_refine` with linear
+iteration (k from ss to se), matching zune-jpeg's approach. Goal was to eliminate the
+`num_zeros_to_skip < zero_gap` branch that caused 1.08M mispredicts (25.5% of ALL mispredicts).
+
+**Results:** WORSE. Instructions 449M → 469M (+4.4%), mispredicts 4.24M → 7.75M (+83%).
+
+**Why it failed:** Linear iteration visits EVERY position from k to se (~49 positions per block
+for band [15,63]), while bitmap visits only nonzero positions (~5-10). Even though individual
+branches are more predictable (`coeffs[k] != 0` is 90% false for sparse blocks), the total
+branch count is much higher: 49 × ~2.5 branches = ~123 per block vs bitmap's 10 × ~7 = ~70.
+The unconditional refinement bit reads in the nonzero case happen the same number of times,
+but the zero-position checking adds massive overhead for sparse progressive blocks.
+
+**Conclusion:** Bitmap is fundamentally better for sparse coefficient data. The O(nonzero)
+iteration count dominates the per-iteration branch cost.
+
+### Unchecked Bit Reads for AC Refinement (2026-02-14)
+
+**Attempted:** Add `read_bit_unchecked()` (no refill check) with `ensure_n_bits()` pre-fill
+before bitmap loops. Save ~2 instructions per bit read by eliminating the `bits_in_buffer == 0`
+check in the hot loop.
+
+**Results:** Breaks restart marker handling. 5 test failures including "expected 0xFF for restart
+marker" and "invalid Huffman code".
+
+**Why it failed:** Near restart markers, `refill()` returns fewer bits than requested and sets
+`marker_found`. The checked `read_bit_refine()` calls `refill()` when buffer empties, which
+re-adds zero padding. Unchecked reads consume past the marker boundary. Even with
+`saturating_sub` to prevent u8 underflow, the consumed bits corrupt the position for
+subsequent Huffman decodes. Safe handling requires tracking available bits vs needed bits per
+loop iteration, which adds complexity matching the cost of the original check.
+
+**Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
 
 ### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
