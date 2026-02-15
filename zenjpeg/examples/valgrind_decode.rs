@@ -110,12 +110,13 @@ fn main() {
     let decoder_type = &args[1];
     let arg2 = args.get(2).map(|s| s.as_str()).unwrap_or("512");
 
+    let extra: Vec<&str> = args.iter().skip(3).map(|s| s.as_str()).collect();
+
     let jpeg_data = if arg2.ends_with(".jpg") || arg2.ends_with(".jpeg") {
         eprintln!("Reading JPEG from {}...", arg2);
         std::fs::read(arg2).expect("failed to read JPEG file")
     } else {
         let size: u32 = arg2.parse().unwrap_or(512);
-        let extra: Vec<&str> = args.iter().skip(3).map(|s| s.as_str()).collect();
         let progressive = extra.iter().any(|s| s.starts_with("prog"));
         let no_dri = extra.iter().any(|s| *s == "nodri");
         eprintln!(
@@ -131,8 +132,8 @@ fn main() {
 
     // save mode: write JPEG to /tmp and exit (for creating test data)
     if decoder_type == "save" {
-        let path = args.iter().skip(3).find(|s| s.ends_with(".jpg") || s.ends_with(".jpeg"))
-            .map(|s| s.as_str())
+        let path = extra.iter().find(|s| s.ends_with(".jpg") || s.ends_with(".jpeg"))
+            .copied()
             .unwrap_or("/tmp/test.jpg");
         std::fs::write(path, &jpeg_data).unwrap();
         eprintln!("Saved to {}", path);
