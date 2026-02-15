@@ -93,9 +93,15 @@ impl<'a> JpegParser<'a> {
 
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Enable lenient mode for maximum error recovery
-        if self.strictness == Strictness::Lenient {
+        // Enable lenient/permissive error recovery
+        if matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        ) {
             decoder.set_lenient(true);
+        }
+        if self.strictness == Strictness::Permissive {
+            decoder.set_permissive_rst(true);
         }
 
         for (_comp_idx, dc_table, ac_table) in scan_components {

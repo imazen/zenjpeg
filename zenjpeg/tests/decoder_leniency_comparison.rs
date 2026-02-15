@@ -58,6 +58,15 @@ fn decode_zenjpeg_lenient(data: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn decode_zenjpeg_permissive(data: &[u8]) -> Result<(), String> {
+    use zenjpeg::decoder::{Decoder, Strictness};
+    Decoder::new()
+        .strictness(Strictness::Permissive)
+        .decode(data, Unstoppable)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn decode_zune(data: &[u8]) -> Result<(), String> {
     use zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -435,6 +444,7 @@ fn compare_strictness_vs_libjpeg_turbo() {
         ("zen-Strict", Box::new(decode_zenjpeg_strict)),
         ("zen-Balanced", Box::new(decode_zenjpeg)),
         ("zen-Lenient", Box::new(decode_zenjpeg_lenient)),
+        ("zen-Permissive", Box::new(decode_zenjpeg_permissive)),
         ("libjpeg-turbo", Box::new(decode_djpeg)),
         ("zune-jpeg", Box::new(decode_zune)),
         ("jpeg-decoder", Box::new(decode_jpeg_decoder)),
@@ -485,12 +495,12 @@ fn compare_strictness_vs_libjpeg_turbo() {
     // ========== Non-conformant per-file detail ==========
     println!("\n## Non-conformant files (per-file behavior)");
     println!(
-        "| {:40} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} |",
-        "File", "Strict", "Balan", "Lennt", "ljt", "zune", "jpgdc"
+        "| {:40} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} |",
+        "File", "Strict", "Balan", "Lennt", "Perms", "ljt", "zune", "jpgdc"
     );
     println!(
-        "|{:-<42}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|",
-        "", "", "", "", "", "", ""
+        "|{:-<42}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|{:-<8}|",
+        "", "", "", "", "", "", "", ""
     );
 
     for (path, data) in &nonconf_files {
@@ -513,8 +523,15 @@ fn compare_strictness_vs_libjpeg_turbo() {
             .collect();
 
         println!(
-            "| {:40} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} |",
-            short, results[0], results[1], results[2], results[3], results[4], results[5]
+            "| {:40} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} | {:6} |",
+            short,
+            results[0],
+            results[1],
+            results[2],
+            results[3],
+            results[4],
+            results[5],
+            results[6]
         );
     }
 
@@ -570,6 +587,28 @@ fn compare_strictness_vs_libjpeg_turbo() {
         let ljt_ok = decode_djpeg(data).is_ok();
         let balanced_ok = decode_zenjpeg(data).is_ok();
         if !ljt_ok && balanced_ok {
+            let fname = path.file_name().unwrap().to_string_lossy();
+            println!("  {}", fname);
+        }
+    }
+
+    // ========== Lenient vs Permissive comparison ==========
+    println!("\n## Lenient rejects but Permissive accepts:");
+    for (path, data) in invalid_files.iter().chain(nonconf_files.iter()) {
+        let lenient_ok = decode_zenjpeg_lenient(data).is_ok();
+        let permissive_ok = decode_zenjpeg_permissive(data).is_ok();
+        if !lenient_ok && permissive_ok {
+            let fname = path.file_name().unwrap().to_string_lossy();
+            println!("  {}", fname);
+        }
+    }
+
+    // ========== libjpeg-turbo accepts but Permissive rejects (gap) ==========
+    println!("\n## libjpeg-turbo accepts but zenjpeg-Permissive rejects (remaining gap):");
+    for (path, data) in invalid_files.iter().chain(nonconf_files.iter()) {
+        let ljt_ok = decode_djpeg(data).is_ok();
+        let permissive_ok = decode_zenjpeg_permissive(data).is_ok();
+        if ljt_ok && !permissive_ok {
             let fname = path.file_name().unwrap().to_string_lossy();
             println!("  {}", fname);
         }

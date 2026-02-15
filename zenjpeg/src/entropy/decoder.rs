@@ -171,6 +171,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.lenient = lenient;
     }
 
+    /// Enables permissive restart marker handling.
+    ///
+    /// When enabled, any RST marker is accepted instead of requiring
+    /// the exact expected sequence number.
+    pub fn set_permissive_rst(&mut self, permissive: bool) {
+        self.reader.set_permissive_rst(permissive);
+    }
+
     /// Sets a DC Huffman table (borrowed, not cloned).
     pub fn set_dc_table(&mut self, idx: usize, table: &'tables HuffmanDecodeTable) {
         if idx < 4 {
