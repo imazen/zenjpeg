@@ -1514,7 +1514,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut next_restart_num = 0u8;
 
         for block_y in 0..blocks_v {
-            if stop.should_stop() {
+            if block_y & 15 == 0 && stop.should_stop() {
                 return Err(Error::cancelled());
             }
 
@@ -1697,7 +1697,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut next_restart_num = 0u8;
 
         for block_y in 0..blocks_v {
-            if stop.should_stop() {
+            if block_y & 15 == 0 && stop.should_stop() {
                 return Err(Error::cancelled());
             }
 
@@ -1726,16 +1726,38 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                 // EOB fast path — apply refinement bits to existing nonzero coefficients
                 if eob_run > 0 {
-                    let mut nz = *bitmap & range_mask;
-                    let _ = self.reader.refill();
-                    while nz != 0 {
-                        let j = nz.trailing_zeros() as usize;
-                        let bit = self.reader.read_bit_refine();
-                        let c = block[j];
-                        let sign = (c >> 15) | 1;
-                        let not_set = ((c & bit_val) == 0) as i16;
-                        block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
-                        nz &= nz - 1;
+                    let nz = *bitmap & range_mask;
+                    let nz_count = nz.count_ones() as u8;
+                    if nz_count > 0 {
+                        let _ = self.reader.refill();
+                        if nz_count <= 32 && nz_count <= self.reader.bits_available() {
+                            // Batch: read all refinement bits at once
+                            let batch = self.reader.read_bits_fast(nz_count);
+                            let mut remaining = nz;
+                            let mut shift = nz_count;
+                            while remaining != 0 {
+                                let j = remaining.trailing_zeros() as usize;
+                                shift -= 1;
+                                let bit = ((batch >> shift) & 1) as i16;
+                                let c = block[j];
+                                let sign = (c >> 15) | 1;
+                                let not_set = ((c & bit_val) == 0) as i16;
+                                block[j] = c.wrapping_add(bit * not_set * sign * bit_val);
+                                remaining &= remaining - 1;
+                            }
+                        } else {
+                            // Fallback for >32 nonzero or insufficient bits
+                            let mut remaining = nz;
+                            while remaining != 0 {
+                                let j = remaining.trailing_zeros() as usize;
+                                let bit = self.reader.read_bit_refine();
+                                let c = block[j];
+                                let sign = (c >> 15) | 1;
+                                let not_set = ((c & bit_val) == 0) as i16;
+                                block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                                remaining &= remaining - 1;
+                            }
+                        }
                     }
                     eob_run -= 1;
                     mcu_count += 1;
@@ -1807,14 +1829,34 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 let extra = self.reader.read_bits_fast(run) as u16;
                                 eob_run = (1 << run) + extra - 1;
                             }
-                            while nz_remaining != 0 {
-                                let j = nz_remaining.trailing_zeros() as usize;
-                                let bit = self.reader.read_bit_refine();
-                                let c = block[j];
-                                let sign = (c >> 15) | 1;
-                                let not_set = ((c & bit_val) == 0) as i16;
-                                block[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
-                                nz_remaining &= nz_remaining - 1;
+                            let rem_count = nz_remaining.count_ones() as u8;
+                            if rem_count > 0 {
+                                let _ = self.reader.refill();
+                                if rem_count <= 32 && rem_count <= self.reader.bits_available() {
+                                    let batch = self.reader.read_bits_fast(rem_count);
+                                    let mut shift = rem_count;
+                                    while nz_remaining != 0 {
+                                        let j = nz_remaining.trailing_zeros() as usize;
+                                        shift -= 1;
+                                        let bit = ((batch >> shift) & 1) as i16;
+                                        let c = block[j];
+                                        let sign = (c >> 15) | 1;
+                                        let not_set = ((c & bit_val) == 0) as i16;
+                                        block[j] = c.wrapping_add(bit * not_set * sign * bit_val);
+                                        nz_remaining &= nz_remaining - 1;
+                                    }
+                                } else {
+                                    while nz_remaining != 0 {
+                                        let j = nz_remaining.trailing_zeros() as usize;
+                                        let bit = self.reader.read_bit_refine();
+                                        let c = block[j];
+                                        let sign = (c >> 15) | 1;
+                                        let not_set = ((c & bit_val) == 0) as i16;
+                                        block[j] =
+                                            c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                                        nz_remaining &= nz_remaining - 1;
+                                    }
+                                }
                             }
                             break; // Done with this block
                         }
