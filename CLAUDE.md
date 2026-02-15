@@ -374,29 +374,31 @@ See "realistic content" table for accurate comparisons.**
 | 2048 | 8.85ms | 9.16ms | 1.03x | 8.36ms | **0.94x** |
 | 4096 | 91.3ms | 99.1ms | 1.09x | 97.7ms | 1.07x |
 
-**Wall-clock progressive — noise+patches (commit d06883d, REALISTIC):**
-| Size | zune-jpeg | zenjpeg prog | ratio | cjpegli | zen/cjpegli |
-|------|-----------|-------------|-------|---------|-------------|
-| 256 | 70.6µs | 460µs | 6.5x | 985µs | **0.47x** |
-| 512 | 258µs | 1.78ms | 6.9x | 3.81ms | **0.47x** |
-| 1024 | 1.02ms | 6.98ms | 6.8x | 15.6ms | **0.45x** |
-| 2048 | 4.88ms | 29.2ms | 6.0x | 62.4ms | **0.47x** |
-| 4096 | 52.3ms | 146.8ms | 2.8x | 406ms | **0.36x** |
+**Wall-clock progressive — noise+patches, NO DRI (commit 0c6d6ba, CORRECT):**
+| Size | zune-jpeg | zenjpeg prog | zen/zune | cjpegli | zen/cjpegli |
+|------|-----------|-------------|----------|---------|-------------|
+| 256 | 0.89ms | 0.50ms | **0.56x** | 0.98ms | **0.51x** |
+| 512 | 3.48ms | 1.92ms | **0.55x** | 3.81ms | **0.50x** |
+| 1024 | 13.8ms | 7.73ms | **0.56x** | 15.1ms | **0.51x** |
+| 2048 | 62.1ms | 32.0ms | **0.52x** | 60.8ms | **0.53x** |
+| 4096 | 251ms | 164ms | **0.65x** | 278ms | **0.59x** |
 
-Note: zenjpeg is 2x faster than cjpegli but 2.8-6.9x slower than zune on realistic content.
-The gap narrows at 4096 (2.8x) due to cache effects equalizing.
+**CRITICAL BUG IN ZUNE-JPEG 0.5.12:** Previous numbers showed zune 3-7x faster, but
+zune-jpeg silently skips AC refinement scans when restart markers (DRI) are present.
+Our encoder defaults to `restart_mcu_rows=4`, so all previous benchmark JPEGs triggered
+the bug. Without DRI, zune produces correct output matching zenjpeg byte-for-byte.
+With DRI: max_diff=224, 99.4% of pixels wrong, mean_abs_diff=48.4.
 
-**Callgrind breakdown (2048x2048, Q85 4:2:0, noise+patches, commit d06883d):**
-| Component | zenjpeg | zune | Ratio |
-|-----------|---------|------|-------|
-| Entropy decode | ~269M | 14.9M | 18x |
-| Output (IDCT+dequant+color) | ~78M | ~86M | 0.9x |
-| **Total decode** | **~347M** | **~103M** | **3.4x** |
+Corrected: zenjpeg is **1.5-1.9x faster than zune** and **~2x faster than cjpegli**
+on correct progressive decode across all sizes.
 
-The entire gap is in entropy decode. Output pass is competitive (0.9x). The 18x
-entropy gap is architectural: zune uses a monolithic scan loop with unchecked bit
-reads (~3 instructions/bit) while zenjpeg has per-bit refill checks, bitmap
-tracking, and proper error handling (~6.5 instructions/bit).
+**Callgrind (2048x2048, Q85 4:2:0, noise+patches, commit 0c6d6ba):**
+| Decoder | With DRI | Without DRI (correct) |
+|---------|----------|-----------------------|
+| zenjpeg | 418M | 415M (barely changes) |
+| zune | 78M (BUGGY, skips AC refine) | 580M (correct) |
+
+zenjpeg 415M vs zune 580M = zenjpeg is 28% fewer instructions when both correct.
 
 **Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
@@ -520,31 +522,16 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
   extra cache misses vs zune's inline IDCT-during-decode approach
 - Scanline decoder avoids this, which is why it matches/beats zune
 
-**Progressive 2.8-6.9x gap vs zune on realistic content** (noise+patches, not gradients):
-- Previous "1.09x gap" was measured with gradient test images that produce degenerate
-  DC-only blocks. With realistic coefficient distributions, the gap is much larger.
-- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches, commit d06883d):
-  zenjpeg ~347M decode Ir vs zune ~103M = 3.4x instruction ratio
-- Entropy decode: zenjpeg ~269M vs zune ~15M = 18x ratio
-  AC refine dominates at ~197M (73% of entropy), AC first ~68M, DC ~4M
-- Output pass: zenjpeg ~78M vs zune ~86M = **0.9x** (competitive)
-  IDCT 23.5M, dequant 28.3M, YCbCr→RGB 12.3M, upsample 3.9M
-- The entire progressive gap is in entropy decode; output pass is competitive
-- Optimizations applied (cumulative):
-  - Fused scan methods eliminated ScanResult wrapping, 33% entropy reduction
-  - Pre-refill Huffman decode: AC refine 170M→163M (-4.5%)
-  - EOB batch bit reads: read all refinement bits in one read_bits_fast
-  - Structural ZRL/NEW_NZ split: AC refine 225M→211M (-6.1%), -3% wall-clock
-  - Branchless coefficient update: ~8 instructions vs branchy ~5 instructions
-    but branchless is faster due to unpredictable branch patterns
-- Parallel output pass (`--features parallel`): 14% improvement at 2048+
-  by parallelizing IDCT+color across MCU rows. No help for entropy decode
-  (progressive scans must be sequential). MIN_PIXELS_PARALLEL=2M avoids
-  overhead at 1024.
-- zune achieves low instruction count by fully inlining scan loop + bitstream ops into
-  one monolithic function with zero per-bit checks (`get_bit` trusts refill was called)
-- **Conclusion**: Local optimizations exhausted. The 18x entropy gap is architectural
-  (safe per-bit refill + error handling + bitmap tracking vs monolithic unchecked loop).
+**Progressive: zenjpeg WINS 1.5-1.9x vs zune** (noise+patches, correct output):
+- Previous "3-7x slower" was INVALID: zune-jpeg 0.5.12 silently skips AC refinement
+  scans when restart markers (DRI) are present, producing corrupt output (max_diff=224).
+- Callgrind (2048x2048, Q85 4:2:0 progressive, no DRI, commit 0c6d6ba):
+  zenjpeg 415M Ir vs zune 580M Ir = zenjpeg is **28% fewer instructions**
+- Wall-clock: zenjpeg 32ms vs zune 62ms vs cjpegli 61ms at 2048x2048
+- All optimizations from previous sessions contributed to the current lead:
+  - Fused scan methods, branchless coefficient updates, bitmap acceleration
+  - Pre-refill Huffman decode, EOB batch bit reads, structural ZRL/NEW_NZ split
+- Parallel output pass (`--features parallel`): additional 14% at 2048+
   Cannot be closed without sacrificing robustness. zenjpeg compensates with competitive
   output pass (0.9x) and 2x advantage over cjpegli (C++ jpegli)
 
