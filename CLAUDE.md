@@ -653,6 +653,18 @@ sensitivity tables, and preset baselines.
    panicked on grayscale (1-component) images because they called `row_planes()` which
    requires cb/cr buffers that are empty for grayscale. Fixed: commit be24fac.
 
+5. **zune-jpeg cannot decode zenjpeg progressive output (2026-02-15)** - zune-jpeg decodes
+   zenjpeg's progressive JPEGs as grayscale (all chroma lost). Decoded pixels show uniform
+   ~125 values instead of correct colors. Both djpeg (libjpeg-turbo) and zenjpeg's own
+   decoder handle the same files correctly. Root cause unknown — likely a zune-jpeg bug with
+   zenjpeg's specific progressive scan structure.
+   - Impact: `decode_jpeg_to_rgb()` in bench-utils produces wrong results for zenjpeg output
+   - Workaround: Use `decode_jpeg_with_icc()` (zenjpeg decoder) instead
+   - Fixed in: knobs_vs_jpegli.rs, reencode_calibration.rs (commit b8fd306)
+   - Still affected: hybrid_parameter_sweep.rs, hybrid_auto_detect.rs, ssim2_pareto_sweep.rs,
+     quality_compare.rs (line 261), xyb_dc_debug.rs, ycbcr_rust_vs_cpp_ssim2.rs,
+     xyb_rust_vs_cpp_ssim2.rs — these use zune-jpeg and will show wrong metrics for zen output
+
 ### Fixed Bugs (historical reference)
 
 - **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
