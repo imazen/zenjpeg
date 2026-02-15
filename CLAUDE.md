@@ -713,6 +713,16 @@ sensitivity tables, and preset baselines.
 
 ### Fixed Bugs (historical reference)
 
+- **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
+  `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
+  writes "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones. This caused
+  every cjpegli JPEG with an ICC profile to be misidentified as XYB, bypassing the fast i16
+  decode path and falling through to the f32 XYB→RGB conversion — producing completely wrong
+  colors (max_diff=252). Fix: replace "jxl " CMM check with exact-match against the known
+  720-byte XYB ICC profile, falling back to "XYB" text search in the profile description.
+  Also affected baseline streaming and fused parallel paths (would have returned "no decoded
+  data" error for cjpegli images).
+
 - **4:2:0 scanline chroma upsampling at MCU bottom boundaries (FIXED 2026-02-09, commit bd0f8d7)** -
   Bilinear chroma upsampler used edge replication at MCU row bottom boundaries (max ~43
   pixel error for streaming, ~57 for coefficient/transform path). Fix: mirror the existing
