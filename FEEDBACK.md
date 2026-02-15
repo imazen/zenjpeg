@@ -1,5 +1,12 @@
 # User Feedback Log
 
+## 2026-02-14
+- User request: Research JPEG quality estimation techniques for re-encoding
+  - Goal: detect approximate quality a JPEG was encoded under, calibrated for libjpeg, libjpeg-turbo, imagemagick, mozjpeg, cjpegli, and zenjpeg
+  - Including repeated compression (2-4x) scenarios
+  - Use case: re-encode matching quality when must reduce file size or perform pixel resize
+  - Deliverable: docs/quality_estimation_research.md with empirical validation data
+
 ## 2026-02-02
 - User request: Implement plan for mozjpeg-rs bug fixes + OptimizationPreset enum
   - Bug 1: DC trellis row-by-row propagation (mozjpeg-rs 8c7f411)
