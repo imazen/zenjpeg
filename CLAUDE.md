@@ -374,17 +374,20 @@ See "realistic content" table for accurate comparisons.**
 | 2048 | 8.85ms | 9.16ms | 1.03x | 8.36ms | **0.94x** |
 | 4096 | 91.3ms | 99.1ms | 1.09x | 97.7ms | 1.07x |
 
-**Wall-clock progressive — noise+patches (commit ff371b1, REALISTIC):**
+**Wall-clock progressive — noise+patches (commit 674f811, REALISTIC):**
 | Size | zune-jpeg | zenjpeg prog | ratio | cjpegli | zen/cjpegli |
 |------|-----------|-------------|-------|---------|-------------|
-| 256 | 65.8µs | 465µs | 7.1x | 969µs | **0.48x** |
-| 512 | 251µs | 1.79ms | 7.1x | 3.69ms | **0.49x** |
-| 1024 | 957µs | 6.92ms | 7.2x | 14.7ms | **0.47x** |
-| 2048 | 4.72ms | 29.1ms | 6.2x | 59.4ms | **0.49x** |
-| 4096 | 50.0ms | 149.5ms | 3.0x | 269ms | **0.56x** |
+| 256 | 68.9µs | 460µs | 6.7x | 978µs | **0.47x** |
+| 512 | 260µs | 1.77ms | 6.8x | 3.75ms | **0.47x** |
+| 1024 | 973µs | 6.89ms | 7.1x | 15.3ms | **0.45x** |
+| 2048 | 4.81ms | 27.7ms | 5.8x | 63.1ms | **0.44x** |
+| 4096 | 38.8ms | 149.3ms | 3.8x | 277ms | **0.54x** |
 
 Note: zenjpeg is 2x faster than cjpegli but 3-7x slower than zune on realistic content.
-The gap narrows at 4096 (3x) due to cache effects affecting both decoders.
+The gap narrows at 4096 (3.8x) due to cache effects affecting both decoders.
+Fused AC scan methods (commit 674f811) reduced entropy decode instructions ~33%
+(309M → 206M at 2048) but wall-clock improvement is only 3-7% at 2048+, suggesting
+the bottleneck has shifted to memory access patterns and branch prediction.
 
 **Wall-clock baseline/scanline (2048x2048, commit 4ae7ed6):**
 | Mode | zune-jpeg | zenjpeg | Ratio |
@@ -407,6 +410,10 @@ The gap narrows at 4096 (3x) due to cache effects affecting both decoders.
 9. AVX-512 dispatch for YCbCr→RGB (correct but no measurable benefit on Zen 4)
 10. Nonzero coefficient bitmap (u64 per block) for AC refinement — skip zero
     positions via `trailing_zeros()`. 12% instruction reduction in AC refine.
+11. Fused AC scan methods: `decode_ac_first_scan` and `decode_ac_refine_scan` process
+    entire block grids without ScanResult enum wrapping or per-block function calls.
+    Fast_ac combined 9-bit Huffman+value lookup for AC first scan. Partial peek
+    fallback for end-of-scan with <9 bits. 33% entropy instruction reduction.
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -504,19 +511,21 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
 **Progressive 3-7x gap vs zune on realistic content** (noise+patches, not gradients):
 - Previous "1.09x gap" was measured with gradient test images that produce degenerate
   DC-only blocks. With realistic coefficient distributions, the gap is much larger.
-- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches):
-  zenjpeg 464.6M Ir vs zune 77.9M Ir = 6.0x instruction ratio
-- Entropy decode: zenjpeg ~309M vs zune ~15M = 20.6x ratio
-- Root causes: (1) per-bit refill check in `read_bit_refine` (~2 instructions/read),
-  (2) ScanResult enum wrapping on every Huffman decode, (3) bitmap gap comparison
-  branch mispredictions (partially addressed by branchless refinement, -32% mispredicts)
+- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches, commit 674f811):
+  zenjpeg ~256M decode Ir vs zune ~60M = 4.3x instruction ratio (was 6.0x before fuse)
+- Entropy decode: zenjpeg ~206M vs zune ~8M = 25.4x ratio
+  AC refine dominates at ~163M (79% of entropy), AC first ~32M, DC ~8M
+- Fused scan methods (commit 674f811) eliminated ScanResult wrapping and per-block
+  function calls. Fast_ac 9-bit combined lookup for AC first scan. Entropy instructions
+  reduced 33% (309M → 206M). Wall-clock improved 3-7% at 2048+.
+- Remaining bottleneck: AC refinement reads one bit per nonzero coefficient via
+  `read_bit_refine()` with per-bit refill check. 163M instructions for refinement
+  alone. The bitmap-accelerated iteration (O(nonzero)) is optimal for sparse blocks
+  but the per-bit overhead is fundamentally higher than zune's monolithic approach.
 - zune achieves low instruction count by fully inlining scan loop + bitstream ops into
   one monolithic function with zero per-bit checks (`get_bit` trusts refill was called)
-- Branchless refinement (commit ff371b1) reduced mispredicts 4.24M→2.87M but increased
-  total instructions by 3.4% (unconditional stores). Wall-clock improved -12% to -32%.
-- Further optimization requires architectural changes: fusing the scan loop with the
-  entropy decoder to eliminate per-block function call overhead, or eliminating ScanResult
-  wrapping on the hot Huffman decode path
+- Further optimization would require unsafe bitstream operations (removing per-bit
+  refill checks) or batching refinement bits (read N bits at once for N nonzero coeffs)
 
 ## Failed Explorations
 
