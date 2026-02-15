@@ -31,6 +31,7 @@ mod scanner;
 
 pub use fingerprint::EncoderFamily;
 pub use quality::{Confidence, QualityEstimate, QualityScale};
+pub use reencode::{ReencodeError, ReencodeSettings};
 
 use crate::foundation::consts::{MARKER_SOF0, MARKER_SOF2};
 use crate::types::{Dimensions, JpegMode, Subsampling};

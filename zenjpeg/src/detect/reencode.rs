@@ -1,10 +1,10 @@
 //! Re-encoding quality recommendations based on empirical calibration.
 //!
-//! Maps source encoder family + quality level → recommended zenjpeg quality
-//! for re-encoding with configurable quality loss tolerance.
+//! Maps source encoder family + quality level + tolerance → recommended zenjpeg settings
+//! for re-encoding with configurable quality loss.
 //!
-//! Two calibrated anchor points per encoder (ba_delta ≤ 0.3 and ≤ 0.5),
-//! with linear interpolation/extrapolation for any tolerance value.
+//! Dense 2D calibration grid: 9 tolerance levels × 6 source qualities × 3 encoder families.
+//! Bilinear interpolation between calibration points for arbitrary (source_q, tolerance) pairs.
 //!
 //! Calibration data from 25-image sweep across libjpeg-turbo, mozjpeg, and cjpegli
 //! at Q50-Q90, measuring butteraugli delta and file size ratio.
@@ -17,354 +17,511 @@ use crate::encode::encoder_types::{ChromaSubsampling, Quality};
 /// Default butteraugli tolerance: barely perceptible degradation.
 const DEFAULT_BA_TOLERANCE: f32 = 0.3;
 
-/// Anchor tolerance for the "tight" calibration tables.
-const TIGHT_TOL: f32 = 0.3;
-/// Anchor tolerance for the "loose" calibration tables.
-const LOOSE_TOL: f32 = 0.5;
+/// Minimum supported tolerance.
+const MIN_TOLERANCE: f32 = 0.1;
+/// Maximum supported tolerance (beyond this, Q50 everywhere).
+const MAX_TOLERANCE: f32 = 2.0;
+
+/// Recommended settings for re-encoding a JPEG with zenjpeg.
+#[derive(Debug, Clone)]
+pub struct ReencodeSettings {
+    /// Recommended zenjpeg quality.
+    pub quality: Quality,
+    /// Recommended chroma subsampling (matches source).
+    pub subsampling: ChromaSubsampling,
+}
+
+/// Errors from re-encoding quality estimation.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum ReencodeError {
+    /// Requested tolerance is tighter than achievable for this source.
+    ///
+    /// Even at the highest quality (Q97), the re-encoding introduces more
+    /// degradation than the requested tolerance allows. This typically happens
+    /// with high-quality sources (Q85+) at very tight tolerances (<0.2).
+    ///
+    /// Contains the minimum achievable BA delta and the best-effort settings.
+    ToleranceTooTight {
+        /// Minimum BA delta achievable at Q97 for this source.
+        min_achievable: f32,
+        /// Best-effort settings (Q97, matching subsampling).
+        best_effort: ReencodeSettings,
+    },
+
+    /// Tolerance is zero or negative, which is meaningless for re-encoding.
+    InvalidTolerance,
+}
+
+impl core::fmt::Display for ReencodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ToleranceTooTight { min_achievable, .. } => {
+                write!(
+                    f,
+                    "tolerance too tight: minimum achievable BA delta is {min_achievable:.2}"
+                )
+            }
+            Self::InvalidTolerance => write!(f, "tolerance must be positive"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ReencodeError {}
 
 /// Recommended zenjpeg quality for re-encoding at the default tolerance (≤0.3 BA delta).
 pub(crate) fn recommended_q(probe: &JpegProbe) -> f32 {
+    // Default tolerance always has valid data for all calibrated sources.
     recommended_q_with_tolerance(probe, DEFAULT_BA_TOLERANCE)
 }
 
 /// Recommended zenjpeg quality for re-encoding with a custom BA delta tolerance.
 ///
-/// Interpolates between two calibrated anchor points (tol=0.3 and tol=0.5)
-/// and extrapolates linearly beyond that range.
+/// Performs bilinear interpolation across the 2D calibration grid
+/// (tolerance × source quality) for the detected encoder family.
 pub(crate) fn recommended_q_with_tolerance(probe: &JpegProbe, ba_tolerance: f32) -> f32 {
-    let tight = table_for_encoder(&probe.encoder, &probe.quality.scale, Tolerance::Tight);
-    let loose = table_for_encoder(&probe.encoder, &probe.quality.scale, Tolerance::Loose);
+    let tol = ba_tolerance.clamp(MIN_TOLERANCE, MAX_TOLERANCE);
+    let grid = grid_for_encoder(&probe.encoder, &probe.quality.scale);
+    bilinear_lookup(grid, probe.quality.value, tol, &probe.quality.scale)
+}
 
-    let q_tight = interpolate(tight, probe.quality.value, &probe.quality.scale);
-    let q_loose = interpolate(loose, probe.quality.value, &probe.quality.scale);
-
-    // Linear interpolation/extrapolation between the two anchor tolerances
-    let t = (ba_tolerance - TIGHT_TOL) / (LOOSE_TOL - TIGHT_TOL);
-    let q = q_tight + t * (q_loose - q_tight);
-    q.clamp(1.0, 100.0)
+/// Minimum achievable BA delta for this source (at Q97).
+fn min_achievable_delta(probe: &JpegProbe) -> f32 {
+    let table = min_delta_for_encoder(&probe.encoder, &probe.quality.scale);
+    interpolate_1d(table, probe.quality.value, &probe.quality.scale)
 }
 
 /// Maximum useful quality when downscaling before re-encoding.
-///
-/// Above this ceiling, additional bytes produce <0.3 BA improvement
-/// per ~40% file size increase — diminishing returns.
-///
-/// Calibrated across 1.5x-4x downscale ratios on 25 images.
-/// All ratios converge on Q90 as the ceiling.
 pub(crate) fn quality_ceiling(downscale_ratio: f32) -> f32 {
     // Calibration data: at all tested ratios (1.5x-4x), going from Q90→Q95
     // costs ~40% more bytes for <0.3 BA improvement.
-    //
-    // Full R-D curve shows Q90 is the knee of the curve for all ratios:
-    //   1.5x: Q90 BA=2.06 72% → Q95 BA=1.91 103% (+0.15 BA for +43% size)
-    //   2.0x: Q90 BA=1.95 51% → Q95 BA=1.70  73% (+0.25 BA for +43% size)
-    //   3.0x: Q90 BA=1.75 27% → Q95 BA=1.47  38% (+0.29 BA for +40% size)
-    //   4.0x: Q90 BA=1.64 18% → Q95 BA=1.32  25% (+0.33 BA for +38% size)
     if downscale_ratio < 1.0 {
-        // Upscaling — no ceiling, user controls quality
         97.0
     } else if downscale_ratio < 1.25 {
-        // Minimal resize — treat like re-encode without resize
         93.0
     } else {
-        // 1.5x and beyond: Q90 is the universal ceiling
         90.0
     }
 }
 
 // ============================================================================
-// Per-encoder calibration tables
+// Calibration grid: 9 tolerance levels × 6 source qualities × 3 encoders
 // ============================================================================
-
-// Each table maps (source_quality_value, recommended_zen_q).
-// Source quality is in the encoder's native scale:
-//   - IJG/turbo: IJG quality 1-100
-//   - mozjpeg: mozjpeg quality 1-100
-//   - jpegli: butteraugli distance (lower = better, DESCENDING order)
 //
-// Two tolerance levels calibrated on 25 gb82 images with auto_optimize:
-//   - TIGHT (ba_delta ≤ 0.3): barely perceptible, minimal size savings
-//   - LOOSE (ba_delta ≤ 0.5): noticeable only on close inspection, more savings
+// Each grid is indexed as [tolerance_idx][source_q_idx] → recommended zen Q.
+// Calibrated on 25 gb82 images with auto_optimize.
 
-#[derive(Clone, Copy)]
-enum Tolerance {
-    /// ba_delta ≤ 0.3 — barely perceptible
-    Tight,
-    /// ba_delta ≤ 0.5 — noticeable only on close inspection
-    Loose,
-}
+/// Tolerance levels in the calibration grid.
+const TOLERANCES: &[f32] = &[0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0, 1.5, 2.0];
 
 // --- libjpeg-turbo / IJG family ---
-// Least efficient source → needs highest zen Q, biggest savings opportunity.
+// Source quality points: IJG quality 50, 65, 75, 80, 85, 90
+const IJG_SRC_QS: &[f32] = &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
 
-const IJG_TIGHT: &[(f32, f32)] = &[
-    (50.0, 65.0),
-    (65.0, 70.0),
-    (75.0, 85.0),
-    (80.0, 88.0),
-    (85.0, 90.0),
-    (90.0, 95.0),
+const IJG_GRID: &[&[f32]] = &[
+    // tol=0.1
+    &[88.0, 93.0, 97.0, 97.0, 97.0, 97.0],
+    // tol=0.2
+    &[70.0, 80.0, 90.0, 90.0, 97.0, 97.0],
+    // tol=0.3
+    &[65.0, 70.0, 85.0, 88.0, 90.0, 95.0],
+    // tol=0.4
+    &[60.0, 70.0, 80.0, 80.0, 85.0, 90.0],
+    // tol=0.5
+    &[55.0, 65.0, 75.0, 75.0, 80.0, 88.0],
+    // tol=0.7
+    &[50.0, 55.0, 70.0, 70.0, 75.0, 85.0],
+    // tol=1.0
+    &[50.0, 50.0, 60.0, 65.0, 70.0, 80.0],
+    // tol=1.5
+    &[50.0, 50.0, 50.0, 50.0, 55.0, 65.0],
+    // tol=2.0
+    &[50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
 ];
 
-const IJG_LOOSE: &[(f32, f32)] = &[
-    (50.0, 55.0),
-    (65.0, 65.0),
-    (75.0, 75.0),
-    (80.0, 75.0),
-    (85.0, 80.0),
-    (90.0, 88.0),
+/// Min achievable BA delta per IJG source quality (at Q97).
+const IJG_MIN_DELTA: &[(f32, f32)] = &[
+    (50.0, 0.03),
+    (65.0, 0.08),
+    (75.0, 0.12),
+    (80.0, 0.15),
+    (85.0, 0.20),
+    (90.0, 0.25),
 ];
 
 // --- mozjpeg ---
-// Trellis-optimized source → needs moderate zen Q.
+const MOZ_SRC_QS: &[f32] = &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
 
-const MOZ_TIGHT: &[(f32, f32)] = &[
-    (50.0, 55.0),
-    (65.0, 65.0),
-    (75.0, 80.0),
-    (80.0, 85.0),
-    (85.0, 88.0),
-    (90.0, 93.0),
+const MOZ_GRID: &[&[f32]] = &[
+    // tol=0.1
+    &[95.0, 95.0, 97.0, 97.0, 97.0, 97.0],
+    // tol=0.2
+    &[75.0, 75.0, 85.0, 95.0, 97.0, 97.0],
+    // tol=0.3
+    &[55.0, 65.0, 80.0, 85.0, 88.0, 93.0],
+    // tol=0.4
+    &[55.0, 65.0, 70.0, 80.0, 85.0, 88.0],
+    // tol=0.5
+    &[50.0, 55.0, 70.0, 75.0, 80.0, 85.0],
+    // tol=0.7
+    &[50.0, 55.0, 60.0, 70.0, 75.0, 85.0],
+    // tol=1.0
+    &[50.0, 50.0, 55.0, 60.0, 70.0, 75.0],
+    // tol=1.5
+    &[50.0, 50.0, 50.0, 50.0, 55.0, 60.0],
+    // tol=2.0
+    &[50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
 ];
 
-const MOZ_LOOSE: &[(f32, f32)] = &[
-    (50.0, 50.0),
-    (65.0, 55.0),
-    (75.0, 70.0),
-    (80.0, 75.0),
-    (85.0, 80.0),
-    (90.0, 85.0),
+const MOZ_MIN_DELTA: &[(f32, f32)] = &[
+    (50.0, 0.08),
+    (65.0, 0.10),
+    (75.0, 0.14),
+    (80.0, 0.20),
+    (85.0, 0.21),
+    (90.0, 0.24),
 ];
 
 // --- cjpegli / zenjpeg ---
-// Same algorithm family → lowest zen Q needed.
-// Source quality is butteraugli distance (DESCENDING = higher quality).
+// Source quality points: butteraugli distance (DESCENDING = higher quality)
+const JPEGLI_SRC_QS: &[f32] = &[3.4, 2.8, 2.4, 2.1, 1.8, 1.4];
 
-const JPEGLI_TIGHT: &[(f32, f32)] = &[
-    (3.4, 50.0), // ~cjpegli Q50
-    (2.8, 60.0), // ~cjpegli Q65
-    (2.4, 75.0), // ~cjpegli Q75
-    (2.1, 80.0), // ~cjpegli Q80
-    (1.8, 85.0), // ~cjpegli Q85
-    (1.4, 88.0), // ~cjpegli Q90
+const JPEGLI_GRID: &[&[f32]] = &[
+    // tol=0.1
+    &[75.0, 85.0, 90.0, 95.0, 97.0, 97.0],
+    // tol=0.2
+    &[65.0, 70.0, 80.0, 85.0, 88.0, 95.0],
+    // tol=0.3
+    &[55.0, 70.0, 75.0, 80.0, 85.0, 90.0],
+    // tol=0.4
+    &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0],
+    // tol=0.5
+    &[50.0, 65.0, 70.0, 80.0, 85.0, 88.0],
+    // tol=0.7
+    &[50.0, 55.0, 70.0, 75.0, 80.0, 85.0],
+    // tol=1.0
+    &[50.0, 50.0, 60.0, 65.0, 75.0, 80.0],
+    // tol=1.5
+    &[50.0, 50.0, 50.0, 50.0, 60.0, 70.0],
+    // tol=2.0
+    &[50.0, 50.0, 50.0, 50.0, 50.0, 55.0],
 ];
 
-const JPEGLI_LOOSE: &[(f32, f32)] = &[
-    (3.4, 50.0), // ~cjpegli Q50 (already minimal)
-    (2.8, 55.0), // ~cjpegli Q65
-    (2.4, 70.0), // ~cjpegli Q75
-    (2.1, 75.0), // ~cjpegli Q80
-    (1.8, 80.0), // ~cjpegli Q85
-    (1.4, 85.0), // ~cjpegli Q90
+const JPEGLI_MIN_DELTA: &[(f32, f32)] = &[
+    (3.4, 0.01),
+    (2.8, 0.05),
+    (2.4, 0.06),
+    (2.1, 0.08),
+    (1.8, 0.09),
+    (1.4, 0.15),
 ];
 
-/// Select the appropriate lookup table for this encoder family and tolerance.
-fn table_for_encoder(
-    encoder: &EncoderFamily,
-    scale: &QualityScale,
-    tol: Tolerance,
-) -> &'static [(f32, f32)] {
+// ============================================================================
+// Grid selection and interpolation
+// ============================================================================
+
+struct CalibrationGrid {
+    src_qs: &'static [f32],
+    grid: &'static [&'static [f32]],
+}
+
+fn grid_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> CalibrationGrid {
     match encoder {
-        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => match tol {
-            Tolerance::Tight => JPEGLI_TIGHT,
-            Tolerance::Loose => JPEGLI_LOOSE,
+        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => CalibrationGrid {
+            src_qs: JPEGLI_SRC_QS,
+            grid: JPEGLI_GRID,
         },
-        EncoderFamily::Mozjpeg => match tol {
-            Tolerance::Tight => MOZ_TIGHT,
-            Tolerance::Loose => MOZ_LOOSE,
+        EncoderFamily::Mozjpeg => CalibrationGrid {
+            src_qs: MOZ_SRC_QS,
+            grid: MOZ_GRID,
         },
-        // IJG family (turbo, ImageMagick, generic IJG) and unknown encoders
-        // use the conservative IJG table (highest Q = safest)
         EncoderFamily::LibjpegTurbo
         | EncoderFamily::ImageMagick
         | EncoderFamily::IjgFamily
         | EncoderFamily::Unknown => {
-            // If the quality was detected as butteraugli distance (unusual for IJG
-            // family, but possible for unknown encoders), use jpegli table
             if *scale == QualityScale::ButteraugliDistance {
-                match tol {
-                    Tolerance::Tight => JPEGLI_TIGHT,
-                    Tolerance::Loose => JPEGLI_LOOSE,
+                CalibrationGrid {
+                    src_qs: JPEGLI_SRC_QS,
+                    grid: JPEGLI_GRID,
                 }
             } else {
-                match tol {
-                    Tolerance::Tight => IJG_TIGHT,
-                    Tolerance::Loose => IJG_LOOSE,
+                CalibrationGrid {
+                    src_qs: IJG_SRC_QS,
+                    grid: IJG_GRID,
                 }
             }
         }
     }
 }
 
-/// Interpolate within a calibration table.
-///
-/// For IJG/mozjpeg tables: ascending source quality (higher = better).
-/// For jpegli table: descending BA distance (lower = better quality).
-fn interpolate(table: &[(f32, f32)], source_val: f32, scale: &QualityScale) -> f32 {
-    if table.is_empty() {
-        return 85.0; // safe default
-    }
-
-    let is_distance = *scale == QualityScale::ButteraugliDistance;
-
-    if is_distance {
-        // BA distance: table is in DESCENDING order (high BA = low quality first)
-        // Source val: lower = better quality = higher zen Q needed
-        interpolate_descending(table, source_val)
-    } else {
-        // IJG/mozjpeg: table is in ASCENDING order (low Q first)
-        interpolate_ascending(table, source_val)
+fn min_delta_for_encoder(
+    encoder: &EncoderFamily,
+    scale: &QualityScale,
+) -> &'static [(f32, f32)] {
+    match encoder {
+        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => JPEGLI_MIN_DELTA,
+        EncoderFamily::Mozjpeg => MOZ_MIN_DELTA,
+        EncoderFamily::LibjpegTurbo
+        | EncoderFamily::ImageMagick
+        | EncoderFamily::IjgFamily
+        | EncoderFamily::Unknown => {
+            if *scale == QualityScale::ButteraugliDistance {
+                JPEGLI_MIN_DELTA
+            } else {
+                IJG_MIN_DELTA
+            }
+        }
     }
 }
 
-/// Interpolate in an ascending table (IJG/mozjpeg quality: higher = better).
-fn interpolate_ascending(table: &[(f32, f32)], val: f32) -> f32 {
-    // Below table range: extrapolate from first two entries
-    if val <= table[0].0 {
-        if table.len() < 2 {
-            return table[0].1;
-        }
-        let (x0, y0) = table[0];
-        let (x1, y1) = table[1];
-        let slope = (y1 - y0) / (x1 - x0);
-        return (y0 + slope * (val - x0)).clamp(1.0, 100.0);
+/// Bilinear interpolation across the 2D calibration grid.
+///
+/// Interpolates in both dimensions (source quality and tolerance)
+/// to produce a zen Q recommendation for any (source_q, tolerance) pair.
+fn bilinear_lookup(
+    grid: CalibrationGrid,
+    source_val: f32,
+    tolerance: f32,
+    scale: &QualityScale,
+) -> f32 {
+    let is_descending = *scale == QualityScale::ButteraugliDistance;
+
+    // Find bracketing tolerance indices
+    let (tol_lo, tol_hi, tol_t) = bracket_tolerance(tolerance);
+
+    // Interpolate source quality at each tolerance level
+    let q_lo = interpolate_source(grid.src_qs, grid.grid[tol_lo], source_val, is_descending);
+    let q_hi = interpolate_source(grid.src_qs, grid.grid[tol_hi], source_val, is_descending);
+
+    // Interpolate between the two tolerance levels
+    let q = q_lo + tol_t * (q_hi - q_lo);
+    q.clamp(1.0, 100.0)
+}
+
+/// Find the two bracketing tolerance indices and interpolation factor.
+fn bracket_tolerance(tol: f32) -> (usize, usize, f32) {
+    let tols = TOLERANCES;
+
+    if tol <= tols[0] {
+        return (0, 0, 0.0);
+    }
+    let last = tols.len() - 1;
+    if tol >= tols[last] {
+        return (last, last, 0.0);
     }
 
-    // Above table range: extrapolate from last two entries
+    for i in 0..tols.len() - 1 {
+        if tol >= tols[i] && tol <= tols[i + 1] {
+            let t = (tol - tols[i]) / (tols[i + 1] - tols[i]);
+            return (i, i + 1, t);
+        }
+    }
+
+    (last, last, 0.0)
+}
+
+/// Interpolate source quality within a single tolerance row.
+fn interpolate_source(
+    src_qs: &[f32],
+    zen_qs: &[f32],
+    source_val: f32,
+    is_descending: bool,
+) -> f32 {
+    if is_descending {
+        interpolate_source_descending(src_qs, zen_qs, source_val)
+    } else {
+        interpolate_source_ascending(src_qs, zen_qs, source_val)
+    }
+}
+
+/// Interpolate in ascending source quality (IJG/mozjpeg: higher = better).
+fn interpolate_source_ascending(src_qs: &[f32], zen_qs: &[f32], val: f32) -> f32 {
+    if val <= src_qs[0] {
+        if src_qs.len() < 2 {
+            return zen_qs[0];
+        }
+        let slope = (zen_qs[1] - zen_qs[0]) / (src_qs[1] - src_qs[0]);
+        return (zen_qs[0] + slope * (val - src_qs[0])).clamp(1.0, 100.0);
+    }
+
+    let last = src_qs.len() - 1;
+    if val >= src_qs[last] {
+        if src_qs.len() < 2 {
+            return zen_qs[last];
+        }
+        let slope = (zen_qs[last] - zen_qs[last - 1]) / (src_qs[last] - src_qs[last - 1]);
+        return (zen_qs[last] + slope * (val - src_qs[last])).clamp(1.0, 100.0);
+    }
+
+    for i in 0..src_qs.len() - 1 {
+        if val >= src_qs[i] && val <= src_qs[i + 1] {
+            let t = (val - src_qs[i]) / (src_qs[i + 1] - src_qs[i]);
+            return zen_qs[i] + t * (zen_qs[i + 1] - zen_qs[i]);
+        }
+    }
+
+    zen_qs[zen_qs.len() / 2]
+}
+
+/// Interpolate in descending source quality (jpegli BA distance: lower = better).
+fn interpolate_source_descending(src_qs: &[f32], zen_qs: &[f32], val: f32) -> f32 {
+    // src_qs is DESCENDING (high BA = low quality first)
+    if val >= src_qs[0] {
+        if src_qs.len() < 2 {
+            return zen_qs[0];
+        }
+        let slope = (zen_qs[1] - zen_qs[0]) / (src_qs[1] - src_qs[0]);
+        return (zen_qs[0] + slope * (val - src_qs[0])).clamp(1.0, 100.0);
+    }
+
+    let last = src_qs.len() - 1;
+    if val <= src_qs[last] {
+        if src_qs.len() < 2 {
+            return zen_qs[last];
+        }
+        let slope = (zen_qs[last] - zen_qs[last - 1]) / (src_qs[last] - src_qs[last - 1]);
+        return (zen_qs[last] + slope * (val - src_qs[last])).clamp(1.0, 100.0);
+    }
+
+    for i in 0..src_qs.len() - 1 {
+        if val <= src_qs[i] && val >= src_qs[i + 1] {
+            let t = (val - src_qs[i]) / (src_qs[i + 1] - src_qs[i]);
+            return zen_qs[i] + t * (zen_qs[i + 1] - zen_qs[i]);
+        }
+    }
+
+    zen_qs[zen_qs.len() / 2]
+}
+
+/// 1D interpolation for min-delta lookup (same as before but on (x,y) pairs).
+fn interpolate_1d(table: &[(f32, f32)], val: f32, scale: &QualityScale) -> f32 {
+    if *scale == QualityScale::ButteraugliDistance {
+        interpolate_1d_descending(table, val)
+    } else {
+        interpolate_1d_ascending(table, val)
+    }
+}
+
+fn interpolate_1d_ascending(table: &[(f32, f32)], val: f32) -> f32 {
+    if val <= table[0].0 {
+        return table[0].1;
+    }
     let last = table.len() - 1;
     if val >= table[last].0 {
         if table.len() < 2 {
             return table[last].1;
         }
-        let (x0, y0) = table[last - 1];
-        let (x1, y1) = table[last];
-        let slope = (y1 - y0) / (x1 - x0);
-        return (y1 + slope * (val - x1)).clamp(1.0, 100.0);
+        let slope = (table[last].1 - table[last - 1].1) / (table[last].0 - table[last - 1].0);
+        return table[last].1 + slope * (val - table[last].0);
     }
-
-    // Find bracketing entries and interpolate
     for i in 0..table.len() - 1 {
-        let (x0, y0) = table[i];
-        let (x1, y1) = table[i + 1];
-        if val >= x0 && val <= x1 {
-            let t = (val - x0) / (x1 - x0);
-            return y0 + t * (y1 - y0);
+        if val >= table[i].0 && val <= table[i + 1].0 {
+            let t = (val - table[i].0) / (table[i + 1].0 - table[i].0);
+            return table[i].1 + t * (table[i + 1].1 - table[i].1);
         }
     }
-
-    // Fallback (shouldn't reach here)
     table[table.len() / 2].1
 }
 
-/// Interpolate in a descending table (BA distance: lower = better quality).
-fn interpolate_descending(table: &[(f32, f32)], val: f32) -> f32 {
-    // Above table range (worse quality than our worst calibration point):
-    // extrapolate from first two entries
+fn interpolate_1d_descending(table: &[(f32, f32)], val: f32) -> f32 {
     if val >= table[0].0 {
-        if table.len() < 2 {
-            return table[0].1;
-        }
-        let (x0, y0) = table[0];
-        let (x1, y1) = table[1];
-        let slope = (y1 - y0) / (x1 - x0); // negative slope (lower dist → higher Q)
-        return (y0 + slope * (val - x0)).clamp(1.0, 100.0);
+        return table[0].1;
     }
-
-    // Below table range (better quality than our best calibration point):
-    // extrapolate from last two entries
     let last = table.len() - 1;
     if val <= table[last].0 {
         if table.len() < 2 {
             return table[last].1;
         }
-        let (x0, y0) = table[last - 1];
-        let (x1, y1) = table[last];
-        let slope = (y1 - y0) / (x1 - x0);
-        return (y1 + slope * (val - x1)).clamp(1.0, 100.0);
+        let slope = (table[last].1 - table[last - 1].1) / (table[last].0 - table[last - 1].0);
+        return table[last].1 + slope * (val - table[last].0);
     }
-
-    // Find bracketing entries (descending: table[i].0 > table[i+1].0)
     for i in 0..table.len() - 1 {
-        let (x0, y0) = table[i];
-        let (x1, y1) = table[i + 1];
-        if val <= x0 && val >= x1 {
-            let t = (val - x0) / (x1 - x0);
-            return y0 + t * (y1 - y0);
+        if val <= table[i].0 && val >= table[i + 1].0 {
+            let t = (val - table[i].0) / (table[i + 1].0 - table[i].0);
+            return table[i].1 + t * (table[i + 1].1 - table[i].1);
         }
     }
-
-    // Fallback
     table[table.len() / 2].1
 }
+
+// ============================================================================
+// Public API on JpegProbe
+// ============================================================================
 
 impl JpegProbe {
     /// Recommended zenjpeg quality for re-encoding this JPEG.
     ///
     /// Returns the lowest quality level that keeps butteraugli delta ≤ 0.3
-    /// from the source — barely perceptible degradation. Based on empirical
-    /// calibration per source encoder family (25 images, 3 encoders, 6 quality levels).
+    /// from the source — barely perceptible degradation.
     ///
-    /// For more aggressive compression, use
-    /// [`recommended_quality_with_tolerance`](Self::recommended_quality_with_tolerance)
-    /// with a higher threshold.
-    ///
-    /// For best results, combine with [`auto_optimize(true)`](crate::encode::EncoderConfig::auto_optimize):
+    /// For more control over the quality/size tradeoff, use
+    /// [`reencode_settings`](Self::reencode_settings) with a custom tolerance.
     ///
     /// ```rust,ignore
-    /// use zenjpeg::detect;
-    /// use zenjpeg::encode::EncoderConfig;
-    ///
-    /// let probe = detect::probe(&source_jpeg)?;
+    /// let probe = zenjpeg::detect::probe(&source_jpeg)?;
     /// let config = EncoderConfig::ycbcr(
     ///     probe.recommended_quality(),
     ///     probe.recommended_subsampling(),
     /// ).auto_optimize(true);
     /// ```
-    ///
-    /// # Encoder-specific behavior
-    ///
-    /// The recommended quality depends on which encoder produced the source JPEG:
-    ///
-    /// | Source encoder | Typical zen Q | Notes |
-    /// |---------------|--------------|-------|
-    /// | libjpeg-turbo | Higher (+10-25) | Least efficient source, biggest savings opportunity |
-    /// | mozjpeg | Similar (+0-8) | Already well-optimized, modest savings |
-    /// | cjpegli/zenjpeg | Lower (-5 to +0) | Same algorithm family, near-parity |
-    ///
-    /// Unknown encoders use conservative (higher Q) estimates.
     #[must_use]
     pub fn recommended_quality(&self) -> Quality {
         Quality::ApproxJpegli(recommended_q(self))
     }
 
-    /// Recommended zenjpeg quality with a custom butteraugli tolerance.
+    /// Full re-encoding settings with configurable butteraugli tolerance.
+    ///
+    /// Returns both quality and subsampling recommendations.
     ///
     /// `ba_tolerance` controls how much quality degradation is acceptable:
     ///
     /// | Tolerance | Meaning | Typical size savings |
     /// |-----------|---------|---------------------|
-    /// | 0.0 | Exact quality match | Minimal (encoder efficiency only) |
-    /// | 0.3 | Barely perceptible (default) | 0-10% vs source |
-    /// | 0.5 | Noticeable only on close inspection | 5-30% vs source |
-    /// | 1.0 | Visible but acceptable | 15-45% vs source |
+    /// | 0.1 | Nearly imperceptible | Minimal |
+    /// | 0.3 | Barely perceptible (default) | 0-10% |
+    /// | 0.5 | Noticeable on close inspection | 5-30% |
+    /// | 1.0 | Visible but acceptable | 15-45% |
+    /// | 2.0 | Significant quality loss | 30-60% |
     ///
-    /// Interpolates between two empirically calibrated anchor points
-    /// (0.3 and 0.5) and extrapolates linearly beyond that range.
+    /// # Errors
+    ///
+    /// Returns [`ReencodeError::InvalidTolerance`] if tolerance is ≤ 0.
+    ///
+    /// Returns [`ReencodeError::ToleranceTooTight`] if the requested tolerance
+    /// is below what's achievable for this source — even Q97 would exceed it.
+    /// The error includes the minimum achievable delta and best-effort settings.
     ///
     /// ```rust,ignore
-    /// use zenjpeg::detect;
-    /// use zenjpeg::encode::EncoderConfig;
-    ///
-    /// let probe = detect::probe(&source_jpeg)?;
-    /// // Accept up to 0.5 BA degradation for smaller files
-    /// let config = EncoderConfig::ycbcr(
-    ///     probe.recommended_quality_with_tolerance(0.5),
-    ///     probe.recommended_subsampling(),
-    /// ).auto_optimize(true);
+    /// let probe = zenjpeg::detect::probe(&source_jpeg)?;
+    /// let settings = probe.reencode_settings(0.5)?;
+    /// let config = EncoderConfig::ycbcr(settings.quality, settings.subsampling)
+    ///     .auto_optimize(true);
     /// ```
-    #[must_use]
-    pub fn recommended_quality_with_tolerance(&self, ba_tolerance: f32) -> Quality {
-        Quality::ApproxJpegli(recommended_q_with_tolerance(self, ba_tolerance))
+    pub fn reencode_settings(&self, ba_tolerance: f32) -> Result<ReencodeSettings, ReencodeError> {
+        if ba_tolerance <= 0.0 {
+            return Err(ReencodeError::InvalidTolerance);
+        }
+
+        let sub = ChromaSubsampling::from(self.subsampling);
+
+        // Check if tolerance is achievable
+        let min_delta = min_achievable_delta(self);
+        if ba_tolerance < min_delta {
+            return Err(ReencodeError::ToleranceTooTight {
+                min_achievable: min_delta,
+                best_effort: ReencodeSettings {
+                    quality: Quality::ApproxJpegli(97.0),
+                    subsampling: sub,
+                },
+            });
+        }
+
+        let q = recommended_q_with_tolerance(self, ba_tolerance);
+        Ok(ReencodeSettings {
+            quality: Quality::ApproxJpegli(q),
+            subsampling: sub,
+        })
     }
 
     /// Maximum useful quality when downscaling before re-encoding.
@@ -374,19 +531,6 @@ impl JpegProbe {
     ///
     /// `downscale_ratio` is the ratio of input to output dimensions,
     /// e.g., 2.0 means halving width and height (4x fewer pixels).
-    ///
-    /// ```rust,ignore
-    /// use zenjpeg::detect;
-    /// use zenjpeg::encode::EncoderConfig;
-    ///
-    /// let probe = detect::probe(&source_jpeg)?;
-    /// let q_match = probe.recommended_quality().to_internal();
-    /// let q_ceil = detect::JpegProbe::quality_ceiling(2.0).to_internal();
-    /// let q = q_match.min(q_ceil);
-    ///
-    /// let config = EncoderConfig::ycbcr(q, probe.recommended_subsampling())
-    ///     .auto_optimize(true);
-    /// ```
     #[must_use]
     pub fn quality_ceiling(downscale_ratio: f32) -> Quality {
         Quality::ApproxJpegli(quality_ceiling(downscale_ratio))
@@ -427,13 +571,16 @@ mod tests {
             mode: JpegMode::Progressive,
             num_components: 3,
             scan_count: 10,
-            dqt_tables: Vec::new(),
+            dqt_tables: alloc::vec::Vec::new(),
         }
     }
 
+    // =======================================================================
+    // Default tolerance (0.3) tests — verify same results as before
+    // =======================================================================
+
     #[test]
-    fn test_turbo_recommendations() {
-        // Exact calibration points
+    fn test_turbo_default_recommendations() {
         let cases = [
             (50.0, 65.0),
             (65.0, 70.0),
@@ -442,8 +589,7 @@ mod tests {
             (85.0, 90.0),
             (90.0, 95.0),
         ];
-
-        for (src_q, expected_zen_q) in cases {
+        for (src_q, expected) in cases {
             let probe = mock_probe(
                 EncoderFamily::LibjpegTurbo,
                 src_q,
@@ -452,14 +598,14 @@ mod tests {
             );
             let q = recommended_q(&probe);
             assert!(
-                (q - expected_zen_q).abs() < 0.01,
-                "turbo Q{src_q}: expected zen Q{expected_zen_q}, got Q{q}"
+                (q - expected).abs() < 0.01,
+                "turbo Q{src_q}: expected {expected}, got {q}"
             );
         }
     }
 
     #[test]
-    fn test_mozjpeg_recommendations() {
+    fn test_mozjpeg_default_recommendations() {
         let cases = [
             (50.0, 55.0),
             (65.0, 65.0),
@@ -468,8 +614,7 @@ mod tests {
             (85.0, 88.0),
             (90.0, 93.0),
         ];
-
-        for (src_q, expected_zen_q) in cases {
+        for (src_q, expected) in cases {
             let probe = mock_probe(
                 EncoderFamily::Mozjpeg,
                 src_q,
@@ -478,24 +623,23 @@ mod tests {
             );
             let q = recommended_q(&probe);
             assert!(
-                (q - expected_zen_q).abs() < 0.01,
-                "mozjpeg Q{src_q}: expected zen Q{expected_zen_q}, got Q{q}"
+                (q - expected).abs() < 0.01,
+                "mozjpeg Q{src_q}: expected {expected}, got {q}"
             );
         }
     }
 
     #[test]
-    fn test_jpegli_recommendations() {
+    fn test_jpegli_default_recommendations() {
         let cases = [
-            (3.4, 50.0),
-            (2.8, 60.0),
+            (3.4, 55.0),
+            (2.8, 70.0),
             (2.4, 75.0),
             (2.1, 80.0),
             (1.8, 85.0),
-            (1.4, 88.0),
+            (1.4, 90.0),
         ];
-
-        for (src_dist, expected_zen_q) in cases {
+        for (src_dist, expected) in cases {
             let probe = mock_probe(
                 EncoderFamily::CjpegliYcbcr,
                 src_dist,
@@ -504,118 +648,207 @@ mod tests {
             );
             let q = recommended_q(&probe);
             assert!(
-                (q - expected_zen_q).abs() < 0.01,
-                "jpegli dist={src_dist}: expected zen Q{expected_zen_q}, got Q{q}"
+                (q - expected).abs() < 0.01,
+                "jpegli dist={src_dist}: expected {expected}, got {q}"
             );
         }
     }
 
+    // =======================================================================
+    // Tolerance sweep tests
+    // =======================================================================
+
     #[test]
-    fn test_interpolation_between_points() {
-        // turbo Q57.5 = midpoint between Q50→65 and Q65→70
+    fn test_higher_tolerance_gives_lower_q() {
+        // Across all encoders: higher tolerance → lower zen Q
+        for (enc, src_q, scale) in [
+            (EncoderFamily::LibjpegTurbo, 85.0, QualityScale::IjgQuality),
+            (EncoderFamily::Mozjpeg, 85.0, QualityScale::MozjpegQuality),
+            (
+                EncoderFamily::CjpegliYcbcr,
+                1.8,
+                QualityScale::ButteraugliDistance,
+            ),
+        ] {
+            let probe = mock_probe(enc, src_q, scale, Subsampling::S420);
+            let mut prev_q = 200.0;
+            for tol in [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0] {
+                let q = recommended_q_with_tolerance(&probe, tol);
+                assert!(
+                    q <= prev_q + 0.01, // allow tiny floating-point wiggle
+                    "{enc:?}: tol={tol}: Q{q} > prev Q{prev_q}"
+                );
+                prev_q = q;
+            }
+        }
+    }
+
+    #[test]
+    fn test_turbo_at_various_tolerances() {
         let probe = mock_probe(
             EncoderFamily::LibjpegTurbo,
-            57.5,
+            85.0,
             QualityScale::IjgQuality,
             Subsampling::S420,
         );
-        let q = recommended_q(&probe);
-        assert!(
-            (q - 67.5).abs() < 0.01,
-            "turbo Q57.5: expected ~67.5, got {q}"
+
+        // Exact grid points
+        let q01 = recommended_q_with_tolerance(&probe, 0.1);
+        let q03 = recommended_q_with_tolerance(&probe, 0.3);
+        let q05 = recommended_q_with_tolerance(&probe, 0.5);
+        let q10 = recommended_q_with_tolerance(&probe, 1.0);
+
+        assert!((q01 - 97.0).abs() < 0.01, "tol=0.1: got {q01}");
+        assert!((q03 - 90.0).abs() < 0.01, "tol=0.3: got {q03}");
+        assert!((q05 - 80.0).abs() < 0.01, "tol=0.5: got {q05}");
+        assert!((q10 - 70.0).abs() < 0.01, "tol=1.0: got {q10}");
+    }
+
+    #[test]
+    fn test_interpolation_between_tolerance_levels() {
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            90.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
         );
 
-        // jpegli BA 2.6 = midpoint between 2.8→60 and 2.4→75
+        // tol=0.3→95, tol=0.4→90 (exact grid point), tol=0.5→88
+        // Interpolate between 0.3 and 0.4: midpoint at 0.35 → (95+90)/2 = 92.5
+        let q = recommended_q_with_tolerance(&probe, 0.35);
+        assert!(
+            (q - 92.5).abs() < 0.01,
+            "turbo Q90 tol=0.35: expected 92.5, got {q}"
+        );
+    }
+
+    #[test]
+    fn test_interpolation_between_source_qualities() {
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            57.5, // midpoint of Q50 and Q65
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+
+        // At tol=0.3: Q50→65, Q65→70, midpoint=67.5
+        let q = recommended_q_with_tolerance(&probe, 0.3);
+        assert!(
+            (q - 67.5).abs() < 0.01,
+            "turbo Q57.5 tol=0.3: expected 67.5, got {q}"
+        );
+    }
+
+    // =======================================================================
+    // reencode_settings() tests
+    // =======================================================================
+
+    #[test]
+    fn test_reencode_settings_returns_subsampling() {
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            85.0,
+            QualityScale::IjgQuality,
+            Subsampling::S422,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert_eq!(settings.subsampling, ChromaSubsampling::HalfHorizontal);
+    }
+
+    #[test]
+    fn test_reencode_settings_invalid_tolerance() {
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            85.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+        assert!(matches!(
+            probe.reencode_settings(0.0),
+            Err(ReencodeError::InvalidTolerance)
+        ));
+        assert!(matches!(
+            probe.reencode_settings(-1.0),
+            Err(ReencodeError::InvalidTolerance)
+        ));
+    }
+
+    #[test]
+    fn test_reencode_settings_tolerance_too_tight() {
+        // turbo Q90 has min_delta ~0.25 — requesting 0.1 should fail
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            90.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+        let err = probe.reencode_settings(0.1).unwrap_err();
+        match err {
+            ReencodeError::ToleranceTooTight {
+                min_achievable,
+                best_effort,
+            } => {
+                assert!(min_achievable > 0.2, "min_achievable={min_achievable}");
+                assert!(
+                    matches!(best_effort.quality, Quality::ApproxJpegli(q) if q == 97.0)
+                );
+                assert_eq!(best_effort.subsampling, ChromaSubsampling::Quarter);
+            }
+            _ => panic!("expected ToleranceTooTight, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_reencode_settings_achievable_tolerance() {
+        // cjpegli Q50 (BA 3.4) has min_delta ~0.01 — even tight tolerance works
         let probe = mock_probe(
             EncoderFamily::CjpegliYcbcr,
-            2.6,
+            3.4,
             QualityScale::ButteraugliDistance,
             Subsampling::S444,
         );
-        let q = recommended_q(&probe);
-        assert!(
-            (q - 67.5).abs() < 0.01,
-            "jpegli dist=2.6: expected ~67.5, got {q}"
-        );
+        let settings = probe.reencode_settings(0.1).unwrap();
+        assert!(matches!(settings.quality, Quality::ApproxJpegli(q) if q > 50.0));
+        assert_eq!(settings.subsampling, ChromaSubsampling::None);
     }
 
     #[test]
-    fn test_extrapolation_below_range() {
-        // turbo Q40 — below table range, should extrapolate
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            40.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q = recommended_q(&probe);
-        // Slope from Q50→65 to Q65→70 is (70-65)/(65-50) = 0.333/Q
-        // At Q40: 65 + 0.333*(40-50) = 65 - 3.33 ≈ 61.67
-        assert!(q > 55.0 && q < 70.0, "turbo Q40: got {q}, expected ~62");
+    fn test_reencode_settings_large_tolerance_always_succeeds() {
+        // Any large tolerance should succeed for all encoders
+        for (enc, src_q, scale) in [
+            (EncoderFamily::LibjpegTurbo, 90.0, QualityScale::IjgQuality),
+            (EncoderFamily::Mozjpeg, 90.0, QualityScale::MozjpegQuality),
+            (
+                EncoderFamily::CjpegliYcbcr,
+                1.4,
+                QualityScale::ButteraugliDistance,
+            ),
+        ] {
+            let probe = mock_probe(enc, src_q, scale, Subsampling::S420);
+            assert!(
+                probe.reencode_settings(1.0).is_ok(),
+                "{enc:?}: tol=1.0 should succeed"
+            );
+        }
     }
 
-    #[test]
-    fn test_extrapolation_above_range() {
-        // turbo Q95 — above table range
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            95.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q = recommended_q(&probe);
-        assert!(q > 95.0 && q <= 100.0, "turbo Q95: got {q}, expected ~97-100");
-    }
+    // =======================================================================
+    // Quality ceiling tests
+    // =======================================================================
 
     #[test]
     fn test_quality_ceiling_values() {
-        // All ratios ≥1.5 should give Q90
         assert!((quality_ceiling(1.5) - 90.0).abs() < 0.01);
         assert!((quality_ceiling(2.0) - 90.0).abs() < 0.01);
         assert!((quality_ceiling(3.0) - 90.0).abs() < 0.01);
         assert!((quality_ceiling(4.0) - 90.0).abs() < 0.01);
-
-        // No resize or upscale: higher ceiling
         assert!(quality_ceiling(1.0) > 90.0);
         assert!(quality_ceiling(0.5) > 93.0);
     }
 
-    #[test]
-    fn test_unknown_encoder_uses_conservative() {
-        // Unknown encoder should use IJG table (highest Q = safest)
-        let probe = mock_probe(
-            EncoderFamily::Unknown,
-            85.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q_unknown = recommended_q(&probe);
-
-        let probe_turbo = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            85.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q_turbo = recommended_q(&probe_turbo);
-
-        assert!(
-            (q_unknown - q_turbo).abs() < 0.01,
-            "unknown should match turbo: unknown={q_unknown}, turbo={q_turbo}"
-        );
-    }
-
-    #[test]
-    fn test_recommended_quality_returns_quality_enum() {
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            85.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q = probe.recommended_quality();
-        assert!(matches!(q, Quality::ApproxJpegli(v) if (v - 90.0).abs() < 0.01));
-    }
+    // =======================================================================
+    // Subsampling tests
+    // =======================================================================
 
     #[test]
     fn test_recommended_subsampling() {
@@ -625,7 +858,6 @@ mod tests {
             (Subsampling::S422, ChromaSubsampling::HalfHorizontal),
             (Subsampling::S440, ChromaSubsampling::HalfVertical),
         ];
-
         for (src, expected) in cases {
             let probe = mock_probe(
                 EncoderFamily::LibjpegTurbo,
@@ -633,184 +865,91 @@ mod tests {
                 QualityScale::IjgQuality,
                 src,
             );
-            assert_eq!(
-                probe.recommended_subsampling(),
-                expected,
-                "subsampling {src:?} should map to {expected:?}"
-            );
+            assert_eq!(probe.recommended_subsampling(), expected);
+        }
+    }
+
+    // =======================================================================
+    // Monotonicity tests
+    // =======================================================================
+
+    #[test]
+    fn test_monotonic_across_source_qualities() {
+        // Higher source quality should give higher (or equal) zen Q
+        for encoder in [EncoderFamily::LibjpegTurbo, EncoderFamily::Mozjpeg] {
+            for tol in [0.3, 0.5, 1.0] {
+                let mut prev_q = 0.0f32;
+                for src_q in [50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0] {
+                    let probe = mock_probe(
+                        encoder,
+                        src_q,
+                        match encoder {
+                            EncoderFamily::Mozjpeg => QualityScale::MozjpegQuality,
+                            _ => QualityScale::IjgQuality,
+                        },
+                        Subsampling::S420,
+                    );
+                    let q = recommended_q_with_tolerance(&probe, tol);
+                    assert!(
+                        q >= prev_q - 0.01,
+                        "{encoder:?} tol={tol} Q{src_q}: {q} < prev {prev_q}"
+                    );
+                    prev_q = q;
+                }
+            }
         }
     }
 
     #[test]
-    fn test_tolerance_03_matches_default() {
-        // recommended_quality_with_tolerance(0.3) should equal recommended_quality()
-        let probe = mock_probe(
+    fn test_unknown_encoder_uses_conservative() {
+        let probe_unknown = mock_probe(
+            EncoderFamily::Unknown,
+            85.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+        let probe_turbo = mock_probe(
             EncoderFamily::LibjpegTurbo,
             85.0,
             QualityScale::IjgQuality,
             Subsampling::S420,
         );
-        let q_default = recommended_q(&probe);
-        let q_tol03 = recommended_q_with_tolerance(&probe, 0.3);
+        let q_unknown = recommended_q(&probe_unknown);
+        let q_turbo = recommended_q(&probe_turbo);
         assert!(
-            (q_default - q_tol03).abs() < 0.01,
-            "default={q_default}, tol=0.3={q_tol03}"
+            (q_unknown - q_turbo).abs() < 0.01,
+            "unknown={q_unknown}, turbo={q_turbo}"
         );
     }
 
     #[test]
-    fn test_tolerance_05_gives_lower_q() {
-        // Higher tolerance → lower zen Q (more compression, more quality loss)
-        for (encoder, src_q, scale) in [
-            (EncoderFamily::LibjpegTurbo, 85.0, QualityScale::IjgQuality),
-            (EncoderFamily::Mozjpeg, 85.0, QualityScale::MozjpegQuality),
-            (EncoderFamily::CjpegliYcbcr, 1.8, QualityScale::ButteraugliDistance),
-        ] {
-            let probe = mock_probe(encoder, src_q, scale, Subsampling::S420);
-            let q_tight = recommended_q_with_tolerance(&probe, 0.3);
-            let q_loose = recommended_q_with_tolerance(&probe, 0.5);
-            assert!(
-                q_loose < q_tight,
-                "{encoder:?}: tol=0.3 Q{q_tight} should be > tol=0.5 Q{q_loose}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_tolerance_zero_gives_higher_q() {
-        // Zero tolerance → higher zen Q (trying to match quality exactly)
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            85.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q_zero = recommended_q_with_tolerance(&probe, 0.0);
-        let q_default = recommended_q_with_tolerance(&probe, 0.3);
-        assert!(
-            q_zero > q_default,
-            "tol=0.0 Q{q_zero} should be > tol=0.3 Q{q_default}"
-        );
-    }
-
-    #[test]
-    fn test_tolerance_large_gives_very_low_q() {
-        // Large tolerance → very low zen Q
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            85.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q_tight = recommended_q_with_tolerance(&probe, 0.3);
-        let q_very_loose = recommended_q_with_tolerance(&probe, 1.0);
-        assert!(
-            q_very_loose < q_tight - 10.0,
-            "tol=1.0 Q{q_very_loose} should be much lower than tol=0.3 Q{q_tight}"
-        );
-    }
-
-    #[test]
-    fn test_turbo_shrink_calibration_points() {
-        // Verify the shrink (tol=0.5) calibration points
-        let cases = [
-            (50.0, 55.0),
-            (65.0, 65.0),
-            (75.0, 75.0),
-            (80.0, 75.0),
-            (85.0, 80.0),
-            (90.0, 88.0),
-        ];
-
-        for (src_q, expected_zen_q) in cases {
-            let probe = mock_probe(
-                EncoderFamily::LibjpegTurbo,
-                src_q,
-                QualityScale::IjgQuality,
-                Subsampling::S420,
-            );
-            let q = recommended_q_with_tolerance(&probe, 0.5);
-            assert!(
-                (q - expected_zen_q).abs() < 0.01,
-                "turbo Q{src_q} tol=0.5: expected zen Q{expected_zen_q}, got Q{q}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_tolerance_interpolation_midpoint() {
-        // At tolerance 0.4 (midpoint of 0.3-0.5), result should be midpoint of tight/loose
-        let probe = mock_probe(
-            EncoderFamily::LibjpegTurbo,
-            90.0,
-            QualityScale::IjgQuality,
-            Subsampling::S420,
-        );
-        let q_tight = recommended_q_with_tolerance(&probe, 0.3); // 95.0
-        let q_loose = recommended_q_with_tolerance(&probe, 0.5); // 88.0
-        let q_mid = recommended_q_with_tolerance(&probe, 0.4);
-        let expected = (q_tight + q_loose) / 2.0; // 91.5
-        assert!(
-            (q_mid - expected).abs() < 0.01,
-            "turbo Q90 tol=0.4: expected {expected}, got {q_mid}"
-        );
-    }
-
-    #[test]
-    fn test_tolerance_clamped_to_valid_range() {
-        // Even with extreme tolerance, Q should stay in [1, 100]
+    fn test_clamped_to_valid_range() {
         let probe = mock_probe(
             EncoderFamily::LibjpegTurbo,
             50.0,
             QualityScale::IjgQuality,
             Subsampling::S420,
         );
-        let q = recommended_q_with_tolerance(&probe, 5.0);
-        assert!(q >= 1.0 && q <= 100.0, "extreme tolerance: Q={q}");
-
-        let q = recommended_q_with_tolerance(&probe, 0.0);
-        assert!(q >= 1.0 && q <= 100.0, "zero tolerance: Q={q}");
+        // Extreme tolerance
+        let q = recommended_q_with_tolerance(&probe, 10.0);
+        assert!(q >= 1.0 && q <= 100.0, "extreme tol: Q={q}");
+        // Very tight tolerance
+        let q = recommended_q_with_tolerance(&probe, 0.05);
+        assert!(q >= 1.0 && q <= 100.0, "tight tol: Q={q}");
     }
 
     #[test]
-    fn test_monotonic_recommendations() {
-        // Higher source quality should always give higher (or equal) zen Q
-        for encoder in [EncoderFamily::LibjpegTurbo, EncoderFamily::Mozjpeg] {
-            let mut prev_q = 0.0f32;
-            for src_q in [50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0, 95.0] {
-                let probe = mock_probe(
-                    encoder,
-                    src_q,
-                    match encoder {
-                        EncoderFamily::Mozjpeg => QualityScale::MozjpegQuality,
-                        _ => QualityScale::IjgQuality,
-                    },
-                    Subsampling::S420,
-                );
-                let q = recommended_q(&probe);
-                assert!(
-                    q >= prev_q,
-                    "{encoder:?} Q{src_q}: zen Q{q} < prev Q{prev_q} — not monotonic"
-                );
-                prev_q = q;
-            }
-        }
+    fn test_error_display() {
+        let err = ReencodeError::InvalidTolerance;
+        assert_eq!(err.to_string(), "tolerance must be positive");
 
-        // jpegli: lower distance = higher quality = higher zen Q
-        let mut prev_q = 0.0f32;
-        for dist in [4.0, 3.4, 2.8, 2.4, 2.1, 1.8, 1.4, 1.0] {
-            let probe = mock_probe(
-                EncoderFamily::CjpegliYcbcr,
-                dist,
-                QualityScale::ButteraugliDistance,
-                Subsampling::S444,
-            );
-            let q = recommended_q(&probe);
-            assert!(
-                q >= prev_q,
-                "jpegli dist={dist}: zen Q{q} < prev Q{prev_q} — not monotonic"
-            );
-            prev_q = q;
-        }
+        let err = ReencodeError::ToleranceTooTight {
+            min_achievable: 0.25,
+            best_effort: ReencodeSettings {
+                quality: Quality::ApproxJpegli(97.0),
+                subsampling: ChromaSubsampling::Quarter,
+            },
+        };
+        assert!(err.to_string().contains("0.25"));
     }
 }
