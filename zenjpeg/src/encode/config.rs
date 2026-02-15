@@ -149,10 +149,15 @@ pub struct ComputedConfig {
     pub trellis: Option<super::trellis::TrellisConfig>,
 }
 
+/// Minimum MCUs per restart segment. Below this, restart overhead
+/// dominates and parallel decode has too little work per segment.
+const MIN_MCUS_PER_RESTART: u32 = 64;
+
 /// Resolve restart rows to MCU-aligned restart interval.
 ///
-/// Returns 0 if rows is 0. Ensures the result fits in u16 by reducing
-/// rows if needed.
+/// Returns 0 if rows is 0. Increases row count when the resulting
+/// MCU count would be below `MIN_MCUS_PER_RESTART` (e.g. narrow images).
+/// Ensures the result fits in u16 by reducing rows if needed.
 pub(crate) fn resolve_restart_rows(rows: u16, width: u32, subsampling: Subsampling) -> u16 {
     if rows == 0 {
         return 0;
@@ -163,8 +168,11 @@ pub(crate) fn resolve_restart_rows(rows: u16, width: u32, subsampling: Subsampli
     };
     let mcu_w = h_samp * 8;
     let mcu_cols = (width + mcu_w - 1) / mcu_w;
+    // Ensure each restart segment has at least MIN_MCUS_PER_RESTART MCUs
+    let min_rows = (MIN_MCUS_PER_RESTART + mcu_cols - 1) / mcu_cols.max(1);
+    let rows = (rows as u32).max(min_rows);
     let max_rows = (u16::MAX as u32) / mcu_cols.max(1);
-    let rows = (rows as u32).min(max_rows);
+    let rows = rows.min(max_rows);
     (rows * mcu_cols) as u16
 }
 
