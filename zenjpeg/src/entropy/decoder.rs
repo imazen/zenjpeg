@@ -1816,15 +1816,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     let run = symbol >> 4;
                     let size = symbol & 0x0F;
-                    let mut num_zeros_to_skip = run as usize;
 
                     if size == 0 {
-                        if run == 15 {
-                            num_zeros_to_skip = 16;
-                        } else {
+                        if run != 15 {
                             // EOB — apply refinement to remaining nonzero coeffs
                             if run != 0 {
-                                // EOB run extra bits (run ≤ 14)
                                 let _ = self.reader.refill();
                                 if self.reader.bits_available() < run {
                                     break;
@@ -1847,7 +1843,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                         let c = block[j];
                                         let sign = (c >> 15) | 1;
                                         let not_set = ((c & bit_val) == 0) as i16;
-                                        block[j] = c.wrapping_add(bit * not_set * sign * bit_val);
+                                        block[j] =
+                                            c.wrapping_add(bit * not_set * sign * bit_val);
                                         nz_remaining &= nz_remaining - 1;
                                     }
                                 } else {
@@ -1857,60 +1854,78 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                         let c = block[j];
                                         let sign = (c >> 15) | 1;
                                         let not_set = ((c & bit_val) == 0) as i16;
-                                        block[j] =
-                                            c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                                        block[j] = c.wrapping_add(
+                                            (bit as i16) * not_set * sign * bit_val,
+                                        );
                                         nz_remaining &= nz_remaining - 1;
                                     }
                                 }
                             }
                             break; // Done with this block
                         }
-                    }
 
-                    // Read sign bit for NEW_NZ (size=1) before refinement bits
-                    let new_val = if size != 0 {
-                        let sign_bit = self.reader.read_bit_refine();
-                        Some(if sign_bit != 0 { bit_val } else { -bit_val })
+                        // ZRL: skip 16 zero positions, refining nonzeros along the way.
+                        // Separate path avoids `size == 0` checks in inner loop.
+                        let mut num_zeros_to_skip: usize = 16;
+                        loop {
+                            if num_zeros_to_skip == 0 {
+                                break;
+                            }
+                            if nz_remaining == 0 {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            let next_nz = nz_remaining.trailing_zeros() as usize;
+                            let zero_gap = next_nz - k;
+                            if num_zeros_to_skip <= zero_gap {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            num_zeros_to_skip -= zero_gap;
+                            k = next_nz;
+
+                            let bit = self.reader.read_bit_refine();
+                            let c = block[k];
+                            let sign = (c >> 15) | 1;
+                            let not_set = ((c & bit_val) == 0) as i16;
+                            block[k] =
+                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            nz_remaining &= nz_remaining - 1;
+                            k += 1;
+                        }
                     } else {
-                        None
-                    };
+                        // NEW_NZ: skip `run` zero positions, then place new coefficient.
+                        // Separate path avoids Option wrapping and `size == 0` checks.
+                        let sign_bit = self.reader.read_bit_refine();
+                        let new_val = if sign_bit != 0 { bit_val } else { -bit_val };
+                        let mut num_zeros_to_skip = run as usize;
 
-                    // Bitmap-accelerated inner scan
-                    loop {
-                        if size == 0 && num_zeros_to_skip == 0 {
-                            break;
-                        }
-                        if nz_remaining == 0 {
-                            k += num_zeros_to_skip;
-                            num_zeros_to_skip = 0;
-                            break;
-                        }
-                        let next_nz = nz_remaining.trailing_zeros() as usize;
-                        let zero_gap = next_nz - k;
-                        if num_zeros_to_skip < zero_gap {
-                            k += num_zeros_to_skip;
-                            num_zeros_to_skip = 0;
-                            break;
-                        }
-                        num_zeros_to_skip -= zero_gap;
-                        k = next_nz;
-                        if size == 0 && num_zeros_to_skip == 0 {
-                            break;
+                        loop {
+                            if nz_remaining == 0 {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            let next_nz = nz_remaining.trailing_zeros() as usize;
+                            let zero_gap = next_nz - k;
+                            if num_zeros_to_skip < zero_gap {
+                                k += num_zeros_to_skip;
+                                break;
+                            }
+                            num_zeros_to_skip -= zero_gap;
+                            k = next_nz;
+
+                            let bit = self.reader.read_bit_refine();
+                            let c = block[k];
+                            let sign = (c >> 15) | 1;
+                            let not_set = ((c & bit_val) == 0) as i16;
+                            block[k] =
+                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            nz_remaining &= nz_remaining - 1;
+                            k += 1;
                         }
 
-                        // Process nonzero position: read refinement bit (branchless)
-                        let bit = self.reader.read_bit_refine();
-                        let c = block[k];
-                        let sign = (c >> 15) | 1;
-                        let not_set = ((c & bit_val) == 0) as i16;
-                        block[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
-                        nz_remaining &= nz_remaining - 1;
-                        k += 1;
-                    }
-
-                    if let Some(val) = new_val {
                         if k <= se_usize {
-                            block[k] = val;
+                            block[k] = new_val;
                             *bitmap |= 1u64 << (k & 63);
                             k += 1;
                         }
