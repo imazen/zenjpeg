@@ -50,6 +50,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 - **Streaming API** - Memory-efficient row-by-row encoding for large images
 - **Parallel encoding** - Multi-threaded for large images (1024x1024+)
 - **Lossless transforms** - Rotate/flip/transpose in DCT domain with zero generation loss
+- **JPEG detection** - Identify source encoder, estimate quality, and get optimal re-encoding settings from headers alone (<1µs)
 - **UltraHDR support** - Encode/decode HDR gain maps (optional `ultrahdr` feature)
 - **Color management** - Optional ICC profile support
 
@@ -553,6 +554,115 @@ while !reader.is_finished() {
 | `read_rows_rgba_f32()` | 16 | Linear f32 RGBA |
 | `read_rows_gray8()` | 1 | Grayscale u8 |
 | `read_rows_gray_f32()` | 4 | Grayscale f32 |
+
+---
+
+### Detect API (Encoder Identification & Re-encoding)
+
+Identify the encoder and quality of any JPEG from its headers (~500 bytes, <1µs),
+then get optimal re-encoding settings. Requires `features = ["decoder"]`.
+
+All detect types are in `zenjpeg::detect`:
+
+```rust
+use zenjpeg::detect::{probe, EncoderFamily, QualityScale, ReencodeSettings};
+```
+
+#### Probing a JPEG
+
+```rust
+use zenjpeg::detect::probe;
+
+let info = probe(&jpeg_data)?;
+println!("Encoder: {:?}", info.encoder);       // e.g., Mozjpeg, LibjpegTurbo, CjpegliYcbcr
+println!("Quality: {:.0} ({:?})", info.quality.value, info.quality.scale);
+println!("{}x{}, {:?}, {:?}", info.dimensions.width, info.dimensions.height,
+    info.subsampling, info.mode);
+```
+
+`probe()` reads only JPEG headers — no entropy decoding, no pixel buffers.
+
+#### Re-encoding Recommendations
+
+Different source encoders need different zenjpeg quality settings to match perceptual
+quality. A turbo Q85 JPEG needs zen Q90 to avoid degradation, while a jpegli Q85 only
+needs zen Q85. The calibration data comes from a 25-image sweep across three encoder
+families at six quality levels, measuring butteraugli delta at 13 zen quality points
+(22K data points total).
+
+```rust
+use zenjpeg::detect::probe;
+use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+
+let info = probe(&source_jpeg)?;
+
+// Default: barely perceptible degradation (BA delta <= 0.3)
+let config = EncoderConfig::ycbcr(
+    info.recommended_quality(),
+    info.recommended_subsampling(),
+).auto_optimize(true);
+```
+
+#### Configurable Quality/Size Tradeoff
+
+`reencode_settings()` takes a butteraugli tolerance and returns both quality and
+subsampling. Higher tolerance = smaller files, more degradation.
+
+| Tolerance | Meaning | Typical size savings |
+|-----------|---------|---------------------|
+| 0.1 | Nearly imperceptible | Minimal |
+| 0.3 | Barely perceptible (default) | 0-10% |
+| 0.5 | Noticeable on close inspection | 5-30% |
+| 1.0 | Visible but acceptable | 15-45% |
+| 2.0 | Significant quality loss | 30-60% |
+
+```rust
+use zenjpeg::detect::{probe, ReencodeError};
+
+let info = probe(&source_jpeg)?;
+
+// Aggressive compression — allow 0.5 BA delta
+match info.reencode_settings(0.5) {
+    Ok(settings) => {
+        let config = EncoderConfig::ycbcr(settings.quality, settings.subsampling)
+            .auto_optimize(true);
+        // encode...
+    }
+    Err(ReencodeError::ToleranceTooTight { min_achievable, best_effort }) => {
+        // Requested tolerance stricter than achievable (e.g., turbo Q90 at tol=0.1)
+        // min_achievable: smallest BA delta possible at Q97
+        // best_effort: Q97 settings if you want to proceed anyway
+        eprintln!("Min achievable delta: {min_achievable:.2}");
+    }
+    Err(ReencodeError::InvalidTolerance) => {
+        // Tolerance was <= 0
+    }
+}
+```
+
+#### Quality Ceilings for Downscaled Re-encodes
+
+When downscaling before re-encoding, there's a quality ceiling above which extra
+bytes produce imperceptible gains. At all tested ratios (1.5x-4x), going from Q90
+to Q95 costs ~40% more bytes for <0.3 butteraugli improvement.
+
+```rust
+use zenjpeg::detect::JpegProbe;
+
+let ceiling = JpegProbe::quality_ceiling(2.0);  // 2x downscale → Q90 ceiling
+```
+
+#### Detected Encoder Families
+
+| `EncoderFamily` | Source | Quality Scale |
+|-----------------|--------|---------------|
+| `LibjpegTurbo` | libjpeg-turbo / IJG | IJG quality (1-100) |
+| `Mozjpeg` | mozjpeg | mozjpeg quality (1-100) |
+| `CjpegliYcbcr` | jpegli (YCbCr mode) | Butteraugli distance |
+| `CjpegliXyb` | jpegli (XYB mode) | Butteraugli distance |
+| `ImageMagick` | ImageMagick (optimized Huffman) | IJG quality (1-100) |
+| `IjgFamily` | IJG-compatible (other) | IJG quality (1-100) |
+| `Unknown` | Unrecognized | IJG quality (estimated) |
 
 ## Performance
 
