@@ -67,27 +67,34 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: {} <jpegli|zune> [size] [progressive]", args[0]);
+        eprintln!("Usage: {} <jpegli|zune> [size|file.jpg] [progressive]", args[0]);
         eprintln!("  size: 512 (default), 1024, or 2048");
+        eprintln!("  file.jpg: read JPEG from file instead of generating");
         eprintln!("  progressive: add 'progressive' or 'prog' for progressive JPEG");
         std::process::exit(1);
     }
 
     let decoder_type = &args[1];
-    let size: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(512);
-    let progressive = args.get(3).map(|s| s.starts_with("prog")).unwrap_or(false);
+    let arg2 = args.get(2).map(|s| s.as_str()).unwrap_or("512");
 
-    eprintln!(
-        "Creating {}x{} {} test JPEG...",
-        size,
-        size,
-        if progressive {
-            "progressive"
-        } else {
-            "baseline"
-        }
-    );
-    let jpeg_data = create_test_jpeg(size, size, progressive);
+    let jpeg_data = if arg2.ends_with(".jpg") || arg2.ends_with(".jpeg") {
+        eprintln!("Reading JPEG from {}...", arg2);
+        std::fs::read(arg2).expect("failed to read JPEG file")
+    } else {
+        let size: u32 = arg2.parse().unwrap_or(512);
+        let progressive = args.get(3).map(|s| s.starts_with("prog")).unwrap_or(false);
+        eprintln!(
+            "Creating {}x{} {} test JPEG...",
+            size,
+            size,
+            if progressive {
+                "progressive"
+            } else {
+                "baseline"
+            }
+        );
+        create_test_jpeg(size, size, progressive)
+    };
     eprintln!("JPEG size: {} bytes", jpeg_data.len());
 
     eprintln!("Decoding with {}...", decoder_type);
