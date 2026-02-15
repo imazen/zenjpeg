@@ -1,0 +1,1022 @@
+//! JPEG re-encoding calibration tool.
+//!
+//! Generates source JPEGs using libjpeg-turbo, mozjpeg, and cjpegli, then re-encodes
+//! with zenjpeg at various quality levels. Measures quality degradation and size changes
+//! to find optimal re-encoding parameters.
+//!
+//! Three modes:
+//! - **Match**: Don't degrade quality, don't increase size (within tolerance)
+//! - **Shrink**: Minimize size with configurable quality loss tolerance
+//! - **Resize+re-encode**: How downscaling interacts with optimal quality selection
+//!
+//! Usage:
+//! ```bash
+//! # Default: gb82 corpus, 10 images
+//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis
+//!
+//! # Smoke test
+//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --images 2
+//!
+//! # With resize experiments
+//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --resize
+//!
+//! # Full sweep (more quality levels + 4:4:4 sources for turbo/mozjpeg)
+//! cargo run --release -p zenjpeg --example reencode_calibration --features trellis -- --full-sweep
+//! ```
+
+use enough::Unstoppable;
+use rayon::prelude::*;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use zenjpeg::detect;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg_bench_utils::{
+    bytes_to_rgb, decode_jpeg_to_rgb, decode_jpeg_with_icc, rgb_to_bytes, write_ppm, ImageData,
+    QualityMetrics, RgbImage,
+};
+
+const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/reencode_calibration";
+
+const SRC_QUALITIES: [u8; 6] = [50, 65, 75, 80, 85, 90];
+const SRC_QUALITIES_FULL: [u8; 10] = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+const ZEN_QUALITIES: [f32; 13] = [
+    50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 88.0, 90.0, 93.0, 95.0, 97.0,
+];
+const RESIZE_QUALITIES: [f32; 8] = [55.0, 65.0, 75.0, 80.0, 85.0, 88.0, 90.0, 95.0];
+const RESIZE_RATIOS: [f64; 4] = [1.5, 2.0, 3.0, 4.0];
+
+// ---------------------------------------------------------------------------
+// CLI args
+// ---------------------------------------------------------------------------
+
+struct Args {
+    corpus: PathBuf,
+    output: PathBuf,
+    max_images: usize,
+    ba_tolerance: f64,
+    shrink_tolerance: f64,
+    size_tolerance: f64,
+    full_sweep: bool,
+    resize: bool,
+    no_turbo: bool,
+    no_mozjpeg: bool,
+    no_cjpegli: bool,
+    verbose: bool,
+}
+
+fn default_corpus_dir() -> PathBuf {
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus unavailable")
+        .get("gb82")
+        .expect("gb82 corpus not available")
+}
+
+fn expand_tilde(s: &str) -> PathBuf {
+    if s.starts_with('~') {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(&s[2..]);
+        }
+    }
+    PathBuf::from(s)
+}
+
+fn parse_args() -> Args {
+    let mut args = Args {
+        corpus: default_corpus_dir(),
+        output: PathBuf::from(DEFAULT_OUTPUT_DIR),
+        max_images: 10,
+        ba_tolerance: 0.0,
+        shrink_tolerance: 0.5,
+        size_tolerance: 0.02,
+        full_sweep: false,
+        resize: false,
+        no_turbo: false,
+        no_mozjpeg: false,
+        no_cjpegli: false,
+        verbose: false,
+    };
+    let mut iter = std::env::args().skip(1);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--corpus" => {
+                if let Some(s) = iter.next() {
+                    args.corpus = expand_tilde(&s);
+                }
+            }
+            "--output" => {
+                if let Some(s) = iter.next() {
+                    args.output = PathBuf::from(s);
+                }
+            }
+            "--images" => {
+                args.max_images = iter.next().and_then(|s| s.parse().ok()).unwrap_or(10);
+            }
+            "--ba-tolerance" => {
+                args.ba_tolerance = iter.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            }
+            "--shrink-tolerance" => {
+                args.shrink_tolerance = iter.next().and_then(|s| s.parse().ok()).unwrap_or(0.5);
+            }
+            "--size-tolerance" => {
+                args.size_tolerance = iter.next().and_then(|s| s.parse().ok()).unwrap_or(0.02);
+            }
+            "--full-sweep" => args.full_sweep = true,
+            "--resize" => args.resize = true,
+            "--no-turbo" => args.no_turbo = true,
+            "--no-mozjpeg" => args.no_mozjpeg = true,
+            "--no-cjpegli" => args.no_cjpegli = true,
+            "--verbose" | "-v" => args.verbose = true,
+            "--help" | "-h" => {
+                eprintln!("Usage: reencode_calibration [OPTIONS]");
+                eprintln!("  --corpus <dir>          Image directory (default: gb82)");
+                eprintln!("  --output <dir>          Output dir (default: {DEFAULT_OUTPUT_DIR})");
+                eprintln!("  --images <N>            Max images (default: 10)");
+                eprintln!("  --ba-tolerance <f>      Match BA tolerance (default: 0.0)");
+                eprintln!("  --shrink-tolerance <f>  Shrink BA tolerance (default: 0.5)");
+                eprintln!("  --size-tolerance <f>    Size ratio tolerance (default: 0.02)");
+                eprintln!("  --full-sweep            All quality+subsampling combos");
+                eprintln!("  --resize                Enable Phase 3 resize experiments");
+                eprintln!("  --no-turbo              Skip libjpeg-turbo");
+                eprintln!("  --no-mozjpeg            Skip mozjpeg");
+                eprintln!("  --no-cjpegli            Skip cjpegli");
+                eprintln!("  --verbose               Per-image output");
+                std::process::exit(0);
+            }
+            other => {
+                eprintln!("Unknown argument: {other}");
+                std::process::exit(1);
+            }
+        }
+    }
+    args
+}
+
+// ---------------------------------------------------------------------------
+// Source JPEG encoding
+// ---------------------------------------------------------------------------
+
+fn check_binary(name: &str) -> bool {
+    Command::new("which")
+        .arg(name)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Encode with libjpeg-turbo cjpeg CLI (4:2:0 default). Returns JPEG bytes.
+fn encode_turbo(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
+    let output = Command::new("cjpeg")
+        .arg("-quality")
+        .arg(quality.to_string())
+        .arg(ppm_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("cjpeg failed: {}", String::from_utf8_lossy(&output.stderr)),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+/// Encode with libjpeg-turbo at 4:4:4 (for full-sweep).
+fn encode_turbo_444(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
+    let output = Command::new("cjpeg")
+        .arg("-quality")
+        .arg(quality.to_string())
+        .arg("-sample")
+        .arg("1x1")
+        .arg(ppm_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("cjpeg 444 failed: {}", String::from_utf8_lossy(&output.stderr)),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+/// Encode with mozjpeg-rs (pure Rust, in-process).
+fn encode_mozjpeg(pixels: &[u8], w: usize, h: usize, quality: u8, sub_444: bool) -> Option<Vec<u8>> {
+    let sub = if sub_444 {
+        mozjpeg_rs::Subsampling::S444
+    } else {
+        mozjpeg_rs::Subsampling::S420
+    };
+    mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::ProgressiveSmallest)
+        .quality(quality)
+        .subsampling(sub)
+        .encode_rgb(pixels, w as u32, h as u32)
+        .ok()
+}
+
+/// Encode with cjpegli CLI (4:4:4 default). Returns JPEG bytes.
+fn encode_cjpegli(png_path: &Path, quality: u8, tmp_dir: &Path) -> io::Result<Vec<u8>> {
+    let stem = png_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let tmp_out = tmp_dir.join(format!("cjpegli_{stem}_q{quality}.jpg"));
+    let output = Command::new("cjpegli")
+        .arg(png_path)
+        .arg(&tmp_out)
+        .arg("-q")
+        .arg(quality.to_string())
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("cjpegli failed: {}", String::from_utf8_lossy(&output.stderr)),
+        ));
+    }
+    let data = std::fs::read(&tmp_out)?;
+    std::fs::remove_file(&tmp_out).ok();
+    Ok(data)
+}
+
+// ---------------------------------------------------------------------------
+// Re-encoding with zenjpeg
+// ---------------------------------------------------------------------------
+
+fn encode_zen(
+    pixels: &[u8],
+    w: usize,
+    h: usize,
+    quality: f32,
+    sub: ChromaSubsampling,
+) -> Option<Vec<u8>> {
+    let config = EncoderConfig::ycbcr(quality, sub).auto_optimize(true);
+    let mut e = config
+        .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
+        .ok()?;
+    e.push_packed(pixels, Unstoppable).ok()?;
+    e.finish().ok()
+}
+
+// ---------------------------------------------------------------------------
+// Resize (Phase 3)
+// ---------------------------------------------------------------------------
+
+fn resize_rgb(pixels: &[u8], w: u32, h: u32, out_w: u32, out_h: u32) -> Vec<u8> {
+    use zenresize::{Filter, PixelFormat, PixelLayout as ZrLayout, ResizeConfig, Resizer};
+    let config = ResizeConfig::builder(w, h, out_w, out_h)
+        .filter(Filter::Lanczos)
+        .format(PixelFormat::Srgb8(ZrLayout::Rgb))
+        .build();
+    Resizer::new(&config).resize(pixels)
+}
+
+// ---------------------------------------------------------------------------
+// Measurement
+// ---------------------------------------------------------------------------
+
+fn measure_rgb(reference: &RgbImage, distorted: &RgbImage) -> (f64, f64) {
+    let ba = QualityMetrics::butteraugli(reference.as_ref(), distorted.as_ref());
+    let ss2 = QualityMetrics::ssimulacra2(reference.as_ref(), distorted.as_ref());
+    (ba, ss2)
+}
+
+fn measure_jpeg(reference: &RgbImage, jpeg: &[u8]) -> Option<(f64, f64)> {
+    // Use zenjpeg's decoder — zune-jpeg fails on zenjpeg's progressive scan structure
+    let dec = decode_jpeg_with_icc(jpeg).ok()?;
+    Some(measure_rgb(reference, &dec))
+}
+
+// ---------------------------------------------------------------------------
+// Data types
+// ---------------------------------------------------------------------------
+
+struct RawResult {
+    image: String,
+    src_encoder: String,
+    src_quality: u8,
+    src_sub: String,
+    src_ba: f64,
+    src_ss2: f64,
+    src_size: usize,
+    resize_ratio: f64,
+    zen_quality: f32,
+    zen_sub: String,
+    reenc_ba: f64,
+    reenc_ss2: f64,
+    reenc_size: usize,
+    ba_delta: f64,
+    ss2_delta: f64,
+    size_ratio: f64,
+}
+
+struct SummaryRow {
+    src_encoder: String,
+    src_quality: u8,
+    src_sub: String,
+    mean_src_ba: f64,
+    match_zen_q: Option<f32>,
+    match_ba_delta: f64,
+    match_size_ratio: f64,
+    ci95_zen_q: Option<f32>,
+    shrink_zen_q: Option<f32>,
+    shrink_size_ratio: f64,
+}
+
+#[derive(Clone)]
+struct SourceConfig {
+    encoder: String,
+    sub: String,
+}
+
+// ---------------------------------------------------------------------------
+// Per-image processing
+// ---------------------------------------------------------------------------
+
+fn process_source(
+    img_name: &str,
+    reference: &RgbImage,
+    source_jpeg: &[u8],
+    src_encoder: &str,
+    src_quality: u8,
+    src_sub: &str,
+    zen_qualities: &[f32],
+    verbose: bool,
+) -> Vec<RawResult> {
+    let mut results = Vec::new();
+
+    // Validate with probe
+    if verbose {
+        if let Ok(probe) = detect::probe(source_jpeg) {
+            eprintln!(
+                "    {} Q{}: detected {:?} Q{:.0} {:?}",
+                src_encoder, src_quality, probe.encoder, probe.quality.value, probe.subsampling
+            );
+        }
+    }
+
+    // Decode source JPEG
+    let decoded = match decode_jpeg_to_rgb(source_jpeg) {
+        Ok(d) => d,
+        Err(e) => {
+            if verbose {
+                eprintln!("    decode failed: {e}");
+            }
+            return results;
+        }
+    };
+
+    let (src_ba, src_ss2) = measure_rgb(reference, &decoded);
+    let src_size = source_jpeg.len();
+    let decoded_bytes = rgb_to_bytes(decoded.as_ref());
+    let w = decoded.width();
+    let h = decoded.height();
+
+    // Determine which zenjpeg subsampling modes to try
+    let zen_subs: Vec<(&str, ChromaSubsampling)> = if src_sub == "444" {
+        vec![
+            ("444", ChromaSubsampling::None),
+            ("420", ChromaSubsampling::Quarter),
+        ]
+    } else {
+        vec![("420", ChromaSubsampling::Quarter)]
+    };
+
+    for &zen_q in zen_qualities {
+        for &(zen_sub_str, zen_sub) in &zen_subs {
+            if let Some(reenc) = encode_zen(&decoded_bytes, w, h, zen_q, zen_sub) {
+                if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
+                    let reenc_size = reenc.len();
+                    results.push(RawResult {
+                        image: img_name.to_string(),
+                        src_encoder: src_encoder.to_string(),
+                        src_quality,
+                        src_sub: src_sub.to_string(),
+                        src_ba,
+                        src_ss2,
+                        src_size,
+                        resize_ratio: 1.0,
+                        zen_quality: zen_q,
+                        zen_sub: zen_sub_str.to_string(),
+                        reenc_ba,
+                        reenc_ss2,
+                        reenc_size,
+                        ba_delta: reenc_ba - src_ba,
+                        ss2_delta: reenc_ss2 - src_ss2,
+                        size_ratio: reenc_size as f64 / src_size as f64,
+                    });
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn process_resize(
+    img: &ImageData,
+    _reference: &RgbImage,
+    source_jpeg: &[u8],
+    src_encoder: &str,
+    src_quality: u8,
+    src_sub: &str,
+) -> Vec<RawResult> {
+    let mut results = Vec::new();
+
+    let decoded = match decode_jpeg_to_rgb(source_jpeg) {
+        Ok(d) => d,
+        Err(_) => return results,
+    };
+    let decoded_bytes = rgb_to_bytes(decoded.as_ref());
+    let src_size = source_jpeg.len();
+    let (orig_w, orig_h) = (img.width as u32, img.height as u32);
+
+    for &ratio in &RESIZE_RATIOS {
+        let out_w = (orig_w as f64 / ratio).round() as u32;
+        let out_h = (orig_h as f64 / ratio).round() as u32;
+        if out_w < 8 || out_h < 8 {
+            continue;
+        }
+
+        // Resize reference (original PNG → smaller)
+        let resized_ref_bytes = resize_rgb(&img.pixels, orig_w, orig_h, out_w, out_h);
+        let resized_ref = bytes_to_rgb(&resized_ref_bytes, out_w as usize, out_h as usize);
+
+        // Resize decoded source JPEG → smaller
+        let resized_dec_bytes =
+            resize_rgb(&decoded_bytes, decoded.width() as u32, decoded.height() as u32, out_w, out_h);
+
+        // Source BA for resized: compare resized decoded vs resized reference
+        let resized_dec = bytes_to_rgb(&resized_dec_bytes, out_w as usize, out_h as usize);
+        let (rsrc_ba, rsrc_ss2) = measure_rgb(&resized_ref, &resized_dec);
+
+        for &zen_q in &RESIZE_QUALITIES {
+            if let Some(reenc) = encode_zen(
+                &resized_dec_bytes,
+                out_w as usize,
+                out_h as usize,
+                zen_q,
+                ChromaSubsampling::Quarter,
+            ) {
+                if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(&resized_ref, &reenc) {
+                    let reenc_size = reenc.len();
+                    results.push(RawResult {
+                        image: img.name.clone(),
+                        src_encoder: src_encoder.to_string(),
+                        src_quality,
+                        src_sub: src_sub.to_string(),
+                        src_ba: rsrc_ba,
+                        src_ss2: rsrc_ss2,
+                        src_size,
+                        resize_ratio: ratio,
+                        zen_quality: zen_q,
+                        zen_sub: "420".to_string(),
+                        reenc_ba,
+                        reenc_ss2,
+                        reenc_size,
+                        ba_delta: reenc_ba - rsrc_ba,
+                        ss2_delta: reenc_ss2 - rsrc_ss2,
+                        size_ratio: reenc_size as f64 / src_size as f64,
+                    });
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn process_image(
+    img: &ImageData,
+    png_path: &Path,
+    tmp_dir: &Path,
+    source_configs: &[SourceConfig],
+    src_qualities: &[u8],
+    args: &Args,
+) -> Vec<RawResult> {
+    let reference = bytes_to_rgb(&img.pixels, img.width, img.height);
+    let mut results = Vec::new();
+
+    // Sanity check: encode original PNG directly with zenjpeg at Q90
+    if args.verbose {
+        if let Some(direct) =
+            encode_zen(&img.pixels, img.width, img.height, 90.0, ChromaSubsampling::Quarter)
+        {
+            if let Some((ba, ss2)) = measure_jpeg(&reference, &direct) {
+                eprintln!(
+                    "  [sanity] {} direct zen Q90: BA={:.2}, SS2={:.2}, size={}",
+                    img.name, ba, ss2, direct.len()
+                );
+            }
+        }
+    }
+
+    // Write PPM for turbo (once per image)
+    let ppm_path = tmp_dir.join(format!("{}.ppm", img.name));
+    let has_turbo = source_configs.iter().any(|c| c.encoder == "turbo");
+    if has_turbo {
+        if let Err(e) = write_ppm(&ppm_path, reference.as_ref()) {
+            eprintln!("  warning: cannot write PPM for {}: {e}", img.name);
+        }
+    }
+
+    for src_cfg in source_configs {
+        for &sq in src_qualities {
+            // Generate source JPEG
+            let source_jpeg = match (src_cfg.encoder.as_str(), src_cfg.sub.as_str()) {
+                ("turbo", "420") => encode_turbo(&ppm_path, sq).ok(),
+                ("turbo", "444") => encode_turbo_444(&ppm_path, sq).ok(),
+                ("mozjpeg", sub) => encode_mozjpeg(&img.pixels, img.width, img.height, sq, sub == "444"),
+                ("cjpegli", _) => encode_cjpegli(png_path, sq, tmp_dir).ok(),
+                _ => None,
+            };
+
+            let source_jpeg = match source_jpeg {
+                Some(j) if !j.is_empty() => j,
+                _ => continue,
+            };
+
+            // Phase 2: Re-encoding sweep
+            results.extend(process_source(
+                &img.name,
+                &reference,
+                &source_jpeg,
+                &src_cfg.encoder,
+                sq,
+                &src_cfg.sub,
+                &ZEN_QUALITIES,
+                args.verbose,
+            ));
+
+            // Phase 3: Resize experiments
+            if args.resize {
+                results.extend(process_resize(
+                    img,
+                    &reference,
+                    &source_jpeg,
+                    &src_cfg.encoder,
+                    sq,
+                    &src_cfg.sub,
+                ));
+            }
+        }
+    }
+
+    // Cleanup PPM
+    if has_turbo {
+        std::fs::remove_file(&ppm_path).ok();
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Analysis
+// ---------------------------------------------------------------------------
+
+fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
+    // Only non-resize results
+    let non_resize: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio == 1.0).collect();
+
+    // Group by (src_encoder, src_quality, src_sub)
+    let mut groups: std::collections::BTreeMap<(String, u8, String), Vec<&RawResult>> =
+        std::collections::BTreeMap::new();
+    for r in &non_resize {
+        groups
+            .entry((r.src_encoder.clone(), r.src_quality, r.src_sub.clone()))
+            .or_default()
+            .push(r);
+    }
+
+    let mut summary = Vec::new();
+    for ((enc, sq, sub), group) in &groups {
+        // Compute mean source BA (deduplicate by image — each image has same src_ba for this group)
+        let mut seen_images: Vec<&str> = Vec::new();
+        let mut src_ba_sum = 0.0;
+        for r in group.iter() {
+            if !seen_images.contains(&r.image.as_str()) {
+                seen_images.push(&r.image);
+                src_ba_sum += r.src_ba;
+            }
+        }
+        let mean_src_ba = if seen_images.is_empty() {
+            0.0
+        } else {
+            src_ba_sum / seen_images.len() as f64
+        };
+
+        let mut match_zen_q = None;
+        let mut match_ba_delta = 0.0;
+        let mut match_size_ratio = 0.0;
+        let mut ci95_zen_q = None;
+        let mut shrink_zen_q = None;
+        let mut shrink_size_ratio = 0.0;
+
+        // Match: scan from highest to lowest zen_q, matching subsampling
+        for &zq in ZEN_QUALITIES.iter().rev() {
+            let matching: Vec<&&RawResult> = group
+                .iter()
+                .filter(|r| r.zen_quality == zq && r.zen_sub == *sub)
+                .collect();
+            if matching.is_empty() {
+                continue;
+            }
+
+            let n = matching.len() as f64;
+            let mean_bd = matching.iter().map(|r| r.ba_delta).sum::<f64>() / n;
+            let mean_sr = matching.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+
+            if match_zen_q.is_none()
+                && mean_bd <= args.ba_tolerance
+                && mean_sr <= 1.0 + args.size_tolerance
+            {
+                match_zen_q = Some(zq);
+                match_ba_delta = mean_bd;
+                match_size_ratio = mean_sr;
+            }
+
+            // 95% CI
+            let passing = matching
+                .iter()
+                .filter(|r| {
+                    r.ba_delta <= args.ba_tolerance && r.size_ratio <= 1.0 + args.size_tolerance
+                })
+                .count();
+            if ci95_zen_q.is_none() && passing as f64 / n >= 0.95 {
+                ci95_zen_q = Some(zq);
+            }
+        }
+
+        // Shrink: scan from lowest to highest zen_q
+        for &zq in &ZEN_QUALITIES {
+            let matching: Vec<&&RawResult> = group
+                .iter()
+                .filter(|r| r.zen_quality == zq && r.zen_sub == *sub)
+                .collect();
+            if matching.is_empty() {
+                continue;
+            }
+
+            let n = matching.len() as f64;
+            let mean_bd = matching.iter().map(|r| r.ba_delta).sum::<f64>() / n;
+            let mean_sr = matching.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+
+            if mean_bd <= args.shrink_tolerance {
+                shrink_zen_q = Some(zq);
+                shrink_size_ratio = mean_sr;
+                break;
+            }
+        }
+
+        summary.push(SummaryRow {
+            src_encoder: enc.clone(),
+            src_quality: *sq,
+            src_sub: sub.clone(),
+            mean_src_ba,
+            match_zen_q,
+            match_ba_delta,
+            match_size_ratio,
+            ci95_zen_q,
+            shrink_zen_q,
+            shrink_size_ratio,
+        });
+    }
+
+    summary
+}
+
+fn print_summary(results: &[RawResult], args: &Args) {
+    let summary = compute_summary(results, args);
+
+    // Group by (src_encoder, src_sub) for display
+    let mut display_groups: Vec<(String, String, Vec<&SummaryRow>)> = Vec::new();
+    for row in &summary {
+        if let Some(g) = display_groups
+            .iter_mut()
+            .find(|(e, s, _)| *e == row.src_encoder && *s == row.src_sub)
+        {
+            g.2.push(row);
+        } else {
+            display_groups.push((row.src_encoder.clone(), row.src_sub.clone(), vec![row]));
+        }
+    }
+
+    println!("\n{}", "=".repeat(90));
+
+    for (enc, sub, rows) in &display_groups {
+        println!("\nSource: {} {}", enc, sub);
+        for row in rows {
+            let match_str = match row.match_zen_q {
+                Some(q) => format!(
+                    "match=zen Q{:.0} (\u{0394} {:.2}, size {:+.0}%)",
+                    q,
+                    row.match_ba_delta,
+                    (row.match_size_ratio - 1.0) * 100.0
+                ),
+                None => "match=NONE".to_string(),
+            };
+            let shrink_str = match row.shrink_zen_q {
+                Some(q) => format!(
+                    "shrink=zen Q{:.0} (size {:+.0}%)",
+                    q,
+                    (row.shrink_size_ratio - 1.0) * 100.0
+                ),
+                None => "shrink=NONE".to_string(),
+            };
+            println!(
+                "  Q{} (BA ~{:.1}): {}  {}",
+                row.src_quality, row.mean_src_ba, match_str, shrink_str
+            );
+        }
+    }
+
+    // Resize summary (if present)
+    let resize_results: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio > 1.0).collect();
+    if !resize_results.is_empty() {
+        println!("\n{}", "=".repeat(90));
+        println!("\nResize Experiments:");
+
+        for &ratio in &RESIZE_RATIOS {
+            let at_ratio: Vec<&&RawResult> = resize_results
+                .iter()
+                .filter(|r| (r.resize_ratio - ratio).abs() < 0.01)
+                .collect();
+            if at_ratio.is_empty() {
+                continue;
+            }
+
+            println!("\n  {:.1}x downscale:", ratio);
+            for &zq in &RESIZE_QUALITIES {
+                let at_q: Vec<&&&RawResult> =
+                    at_ratio.iter().filter(|r| r.zen_quality == zq).collect();
+                if at_q.is_empty() {
+                    continue;
+                }
+                let n = at_q.len() as f64;
+                let mean_ba = at_q.iter().map(|r| r.reenc_ba).sum::<f64>() / n;
+                let mean_bd = at_q.iter().map(|r| r.ba_delta).sum::<f64>() / n;
+                let mean_sr = at_q.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+                println!(
+                    "    zen Q{:.0}: BA {:.2}, \u{0394} {:.2}, size {:.0}%",
+                    zq,
+                    mean_ba,
+                    mean_bd,
+                    mean_sr * 100.0
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CSV output
+// ---------------------------------------------------------------------------
+
+fn write_raw_csv(path: &Path, results: &[RawResult]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let mut f = match std::fs::File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Cannot create {}: {e}", path.display());
+            return;
+        }
+    };
+    writeln!(
+        f,
+        "image,src_encoder,src_quality,src_sub,src_ba,src_ss2,src_size,\
+         resize_ratio,zen_quality,zen_sub,reenc_ba,reenc_ss2,reenc_size,\
+         ba_delta,ss2_delta,size_ratio"
+    )
+    .ok();
+    for r in results {
+        writeln!(
+            f,
+            "{},{},{},{},{:.4},{:.2},{},{:.1},{:.0},{},{:.4},{:.2},{},{:.4},{:.2},{:.4}",
+            r.image,
+            r.src_encoder,
+            r.src_quality,
+            r.src_sub,
+            r.src_ba,
+            r.src_ss2,
+            r.src_size,
+            r.resize_ratio,
+            r.zen_quality,
+            r.zen_sub,
+            r.reenc_ba,
+            r.reenc_ss2,
+            r.reenc_size,
+            r.ba_delta,
+            r.ss2_delta,
+            r.size_ratio,
+        )
+        .ok();
+    }
+    println!("  raw_data.csv: {} rows", results.len());
+}
+
+fn write_summary_csv(path: &Path, summary: &[SummaryRow]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let mut f = match std::fs::File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Cannot create {}: {e}", path.display());
+            return;
+        }
+    };
+    writeln!(
+        f,
+        "src_encoder,src_quality,src_sub,mean_src_ba,\
+         match_zen_q,match_mean_ba_delta,match_mean_size_ratio,\
+         ci95_zen_q,shrink_zen_q,shrink_mean_size_ratio"
+    )
+    .ok();
+    for r in summary {
+        writeln!(
+            f,
+            "{},{},{},{:.4},{},{:.4},{:.4},{},{},{:.4}",
+            r.src_encoder,
+            r.src_quality,
+            r.src_sub,
+            r.mean_src_ba,
+            r.match_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.match_ba_delta,
+            r.match_size_ratio,
+            r.ci95_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.shrink_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.shrink_size_ratio,
+        )
+        .ok();
+    }
+    println!("  summary.csv: {} rows", summary.len());
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+fn main() {
+    let args = parse_args();
+
+    // Create output + tmp dirs
+    let tmp_dir = args.output.join("tmp");
+    std::fs::create_dir_all(&tmp_dir).unwrap_or_else(|e| {
+        eprintln!("Cannot create output dir {}: {e}", args.output.display());
+        std::process::exit(1);
+    });
+
+    // Check available encoders
+    let has_turbo = !args.no_turbo && check_binary("cjpeg");
+    let has_cjpegli = !args.no_cjpegli && check_binary("cjpegli");
+    let has_mozjpeg = !args.no_mozjpeg;
+
+    if !has_turbo && !args.no_turbo {
+        eprintln!("warning: cjpeg not found, skipping libjpeg-turbo");
+    }
+    if !has_cjpegli && !args.no_cjpegli {
+        eprintln!("warning: cjpegli not found, skipping cjpegli");
+    }
+
+    // Build source configs
+    let mut source_configs = Vec::new();
+    if has_turbo {
+        source_configs.push(SourceConfig {
+            encoder: "turbo".to_string(),
+            sub: "420".to_string(),
+        });
+        if args.full_sweep {
+            source_configs.push(SourceConfig {
+                encoder: "turbo".to_string(),
+                sub: "444".to_string(),
+            });
+        }
+    }
+    if has_mozjpeg {
+        source_configs.push(SourceConfig {
+            encoder: "mozjpeg".to_string(),
+            sub: "420".to_string(),
+        });
+        if args.full_sweep {
+            source_configs.push(SourceConfig {
+                encoder: "mozjpeg".to_string(),
+                sub: "444".to_string(),
+            });
+        }
+    }
+    if has_cjpegli {
+        source_configs.push(SourceConfig {
+            encoder: "cjpegli".to_string(),
+            sub: "444".to_string(),
+        });
+    }
+
+    if source_configs.is_empty() {
+        eprintln!("No encoders available. Nothing to do.");
+        std::process::exit(1);
+    }
+
+    // Load images
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&args.corpus)
+        .unwrap_or_else(|e| {
+            eprintln!("Cannot read {}: {e}", args.corpus.display());
+            std::process::exit(1);
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("png"))
+        })
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    paths.truncate(args.max_images);
+
+    let images: Vec<(PathBuf, ImageData)> = paths
+        .iter()
+        .filter_map(|p| ImageData::from_path(p).map(|img| (p.clone(), img)))
+        .collect();
+
+    if images.is_empty() {
+        eprintln!("No PNG images found in {}", args.corpus.display());
+        std::process::exit(1);
+    }
+
+    let corpus_name = args
+        .corpus
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+
+    let src_qualities: &[u8] = if args.full_sweep {
+        &SRC_QUALITIES_FULL
+    } else {
+        &SRC_QUALITIES
+    };
+
+    // Estimate work
+    let configs_per_img = source_configs.len() * src_qualities.len();
+    let zen_combos = ZEN_QUALITIES.len() * 2; // rough max (some have 1 sub, some have 2)
+    let est_encodes = images.len() * configs_per_img * zen_combos;
+
+    // Print header
+    println!("=== Re-encoding Calibration ===");
+    println!(
+        "{} images ({}), BA tol={:.2}, shrink tol={:.2}, size tol={:.2}",
+        images.len(),
+        corpus_name,
+        args.ba_tolerance,
+        args.shrink_tolerance,
+        args.size_tolerance
+    );
+    println!(
+        "Encoders: {}",
+        source_configs
+            .iter()
+            .map(|c| format!("{} {}", c.encoder, c.sub))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!("Source qualities: {src_qualities:?}");
+    println!("Zen qualities: {:?}", &ZEN_QUALITIES);
+    if args.resize {
+        println!("Resize ratios: {:?}", &RESIZE_RATIOS);
+    }
+    println!("Estimated re-encodes: ~{est_encodes}");
+    println!();
+
+    // Process all images in parallel
+    let progress = AtomicUsize::new(0);
+    let total = images.len();
+
+    let all_results: Vec<Vec<RawResult>> = images
+        .par_iter()
+        .map(|(png_path, img)| {
+            let r = process_image(img, png_path, &tmp_dir, &source_configs, src_qualities, &args);
+            let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
+            eprint!("\r  [{done}/{total}] {:<40}", img.name);
+            io::stderr().flush().ok();
+            r
+        })
+        .collect();
+
+    eprintln!("\r  [{total}/{total}] done{:40}", "");
+
+    let results: Vec<RawResult> = all_results.into_iter().flatten().collect();
+    println!("Total results: {}", results.len());
+
+    // Write raw CSV
+    write_raw_csv(&args.output.join("raw_data.csv"), &results);
+
+    // Compute summary and write CSV
+    let summary = compute_summary(&results, &args);
+    write_summary_csv(&args.output.join("summary.csv"), &summary);
+
+    // Print summary to stdout
+    print_summary(&results, &args);
+
+    // Cleanup tmp dir
+    std::fs::remove_dir_all(&tmp_dir).ok();
+
+    println!("\nOutput written to {}", args.output.display());
+}

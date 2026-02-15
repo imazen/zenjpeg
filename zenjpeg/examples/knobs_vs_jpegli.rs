@@ -27,7 +27,7 @@ use zenjpeg::encode::{
     ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout,
 };
 use zenjpeg_bench_utils::{
-    bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
+    bytes_to_rgb, decode_jpeg_with_icc, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
     EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, RgbImage,
     ScanMode,
 };
@@ -105,7 +105,8 @@ struct Metrics {
 fn compute_metrics(img: &ImageData, jpeg: &[u8]) -> Option<Metrics> {
     let px = (img.width * img.height) as f64;
     let orig = bytes_to_rgb(&img.pixels, img.width, img.height);
-    let dec: RgbImage = decode_jpeg_to_rgb(jpeg).ok()?;
+    // Use zenjpeg decoder — zune-jpeg fails on zenjpeg's progressive scan structure
+    let dec: RgbImage = decode_jpeg_with_icc(jpeg).ok()?;
     Some(Metrics {
         bpp: jpeg.len() as f64 * 8.0 / px,
         ssim2: QualityMetrics::ssimulacra2(orig.as_ref(), dec.as_ref()),

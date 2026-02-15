@@ -89,6 +89,9 @@ butteraugli = "0.4"
 mozjpeg-rs = "0.5.3"
 mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
 
+# Image resize (for examples/benchmarks)
+zenresize = { path = "../zenresize" }
+
 # Metadata crates (for integration testing)
 kamadak-exif = "0.6"
 img-parts = "0.4"
