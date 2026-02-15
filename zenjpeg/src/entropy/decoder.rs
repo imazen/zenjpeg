@@ -1288,6 +1288,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// every position from k to se (O(se-k)), it jumps between nonzero positions
     /// via `trailing_zeros()` (O(nonzero_count)). For sparse blocks this reduces
     /// iterations from ~61 to ~3-10.
+    ///
+    /// Refinement bit application uses branchless arithmetic to eliminate
+    /// unpredictable sign-dependent branches on the hot path.
     #[inline(always)]
     pub fn decode_ac_refine(
         &mut self,
@@ -1307,16 +1310,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // Use bitmap to iterate only nonzero positions (skip zeros via trailing_zeros).
             let range_mask = range_bitmap(ss, se);
             let mut nz = *bitmap & range_mask;
+            // Pre-refill: one refill gives 32+ bits, enough for typical blocks (5-15 nonzero).
             while nz != 0 {
                 let k = nz.trailing_zeros() as usize;
                 let bit = self.reader.read_bit_refine();
-                if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                    if coeffs[k] > 0 {
-                        coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                    } else {
-                        coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                    }
-                }
+                // Branchless refinement: apply bit_val with sign of coefficient,
+                // but only if bit=1 and this bit position isn't already set.
+                let c = coeffs[k];
+                let sign = (c >> 15) | 1; // -1 for negative, +1 for positive
+                let not_set = ((c & bit_val) == 0) as i16;
+                coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
                 nz &= nz - 1; // clear lowest set bit
             }
             *eob_run -= 1;
@@ -1365,13 +1368,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     while nz_remaining != 0 {
                         let j = nz_remaining.trailing_zeros() as usize;
                         let bit = self.reader.read_bit_refine();
-                        if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                            if coeffs[j] > 0 {
-                                coeffs[j] = coeffs[j].wrapping_add(bit_val);
-                            } else {
-                                coeffs[j] = coeffs[j].wrapping_sub(bit_val);
-                            }
-                        }
+                        let c = coeffs[j];
+                        let sign = (c >> 15) | 1;
+                        let not_set = ((c & bit_val) == 0) as i16;
+                        coeffs[j] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
                         nz_remaining &= nz_remaining - 1;
                     }
                     return Ok(ScanRead::Value(()));
@@ -1390,6 +1390,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // Bitmap-accelerated inner scan: jump between nonzero positions
             // instead of checking every position k..=se individually.
             // nz_remaining is maintained across events (computed once per block).
+            // Huffman decode just refilled buffer (32+ bits); inner scan consumes
+            // at most ~15 bits (sign + refinement), well within available bits.
             loop {
                 // ZRL termination: stop when all zeros have been skipped.
                 if size == 0 && num_zeros_to_skip == 0 {
@@ -1422,15 +1424,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     break;
                 }
 
-                // Process nonzero position: read refinement bit.
+                // Process nonzero position: read refinement bit (branchless apply).
                 let bit = self.reader.read_bit_refine();
-                if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                    if coeffs[k] > 0 {
-                        coeffs[k] = coeffs[k].wrapping_add(bit_val);
-                    } else {
-                        coeffs[k] = coeffs[k].wrapping_sub(bit_val);
-                    }
-                }
+                let c = coeffs[k];
+                let sign = (c >> 15) | 1;
+                let not_set = ((c & bit_val) == 0) as i16;
+                coeffs[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
 
                 nz_remaining &= nz_remaining - 1; // clear lowest set bit
                 k += 1;
