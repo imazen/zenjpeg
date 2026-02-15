@@ -527,6 +527,37 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
 - Further optimization would require unsafe bitstream operations (removing per-bit
   refill checks) or batching refinement bits (read N bits at once for N nonzero coeffs)
 
+### Decoder Strictness Levels (2026-02-15)
+
+Four levels controlling error tolerance during decode:
+
+| Behavior | Strict | Balanced | Lenient | Permissive |
+|----------|--------|----------|---------|------------|
+| Non-JFIF markers | Error | Warn | Warn | Warn |
+| Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
+| Bad restart count | Error | Error | Warn | Resync fwd |
+| RST sequence wrong | Error | Error | Error | Accept any |
+| Zero quant value | Error | Error | Error | Clamp to 1 |
+| Malformed segment | Error | Error | Error | Skip |
+| Bad Huffman idx | Error | Error | Error | Clamp to 0 |
+| Malformed DNL | Error | Error | Error | Skip |
+
+Test results (commit 8d26d2c, 177-file conformance corpus):
+
+| Decoder | Valid OK | Inv Rejected | Non-conf Accept |
+|---------|----------|-------------|-----------------|
+| zen-Strict | 39/41 | 100/116 | 8/20 |
+| zen-Balanced | 41/41 | 92/116 | 14/20 |
+| zen-Lenient | 41/41 | 88/116 | 14/20 |
+| zen-Permissive | 41/41 | 80/116 | 14/20 |
+| libjpeg-turbo | 37/41 | 75/116 | 14/20 |
+
+Remaining 17-file gap vs libjpeg-turbo: all 613-byte fuzz-mutated files needing
+scan-level longjmp recovery (diminishing returns). Non-conformant acceptance
+matches libjpeg-turbo exactly (14/20).
+
+Run: `cargo test --release -p zenjpeg --test decoder_leniency_comparison --features decoder -- compare_strictness --nocapture --ignored`
+
 ## Failed Explorations
 
 ### Parallel AQ (2026-01-17)

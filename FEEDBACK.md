@@ -38,3 +38,13 @@
 - User request: Add QuantTableSource enum + wire granular flags in OptimizationPreset
   - Goal: mozjpeg presets switch to Robidoux tables, all presets set allow_16bit_quant_tables=false
   - Result: completed, new QuantTableSource enum (Jpegli/MozjpegDefault), mozjpeg_table_data.rs always compiled, pipeline wired through
+- User request: Investigate why zenjpeg Permissive mode rejects files that libjpeg-turbo accepts
+  - Goal: categorize error types for 8 specific invalid JPEG files from conformance corpus
+  - Result: identified 4 error categories, all files are heavily corrupted fuzz targets
+
+## 2026-02-15
+- User request: Continue decode speed optimization, implement Strictness::Permissive
+  - Added 4th strictness level with 6 recovery mechanisms: RST resync, zero quant clamp,
+    malformed segment skip, DNL skip, Huffman table index clamp, header error recovery
+  - Results: 8 more files accepted vs Lenient, non-conformant parity with libjpeg-turbo (14/20)
+  - 17 remaining gap files are 613-byte fuzz-mutated (diminishing returns)
