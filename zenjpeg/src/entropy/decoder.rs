@@ -1776,46 +1776,41 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 let mut k = ss as usize;
                 let mut nz_remaining = *bitmap & range_mask;
 
-                while k <= se_usize {
-                    // Peek 9 bits for Huffman lookup (handles end-of-data gracefully)
-                    // When <9 bits remain, use peek_top(9) with length validation.
-                    let bits9;
-                    let partial_peek;
-                    match self.reader.peek_bits_refill(9) {
-                        Some(b) => {
-                            bits9 = b;
-                            partial_peek = false;
-                        }
-                        None => {
-                            if self.reader.bits_available() == 0 {
-                                break;
-                            }
-                            bits9 = self.reader.peek_top(9);
-                            partial_peek = true;
-                        }
-                    };
+                // Pre-refill for fast Huffman decode (optimization, not required)
+                let _ = self.reader.ensure_bits();
 
-                    // Inline Huffman decode (no ScanResult wrapping)
-                    let lookup = ac_table.fast_lookup[bits9 as usize];
+                while k <= se_usize {
+                    // Refill when bits are low. Fast lookup needs 9 bits minimum;
+                    // 25 covers one full Huffman event (16-bit code + 1 sign + 8 refine).
+                    if self.reader.bits_available() < 25 {
+                        let _ = self.reader.ensure_bits();
+                        if self.reader.bits_available() < 9 {
+                            break; // Not enough for even a fast Huffman lookup
+                        }
+                    }
+
+                    // Huffman decode: peek_top is safe because we have >= 9 bits.
+                    // Fast lookup (positive) always has code_len <= 9, so no overflow.
+                    let bits9 = self.reader.peek_top(9) as usize;
+                    let lookup = ac_table.fast_lookup[bits9];
                     let symbol = if lookup >= 0 {
                         let code_len = (lookup >> 8) as u8;
-                        if partial_peek && code_len > self.reader.bits_available() {
-                            break;
-                        }
                         self.reader.skip_bits_fast(code_len);
                         (lookup & 0xFF) as u8
                     } else {
-                        // Slow path: need 16 bits for extended Huffman codes
-                        match self.reader.peek_bits_refill(16) {
-                            Some(bits16) => {
-                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
-                                    self.reader.skip_bits_fast(len);
-                                    sym
-                                } else {
-                                    break; // Invalid code near end of scan
-                                }
+                        // Slow path: extended codes need up to 16 bits
+                        if self.reader.bits_available() < 16 {
+                            let _ = self.reader.refill();
+                            if self.reader.bits_available() < 16 {
+                                break;
                             }
-                            None => break,
+                        }
+                        let bits16 = self.reader.peek_top(16);
+                        if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                            self.reader.skip_bits_fast(len);
+                            sym
+                        } else {
+                            break;
                         }
                     };
 
@@ -1839,7 +1834,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             }
                             let rem_count = nz_remaining.count_ones() as u8;
                             if rem_count > 0 {
-                                let _ = self.reader.refill();
+                                if rem_count > self.reader.bits_available() {
+                                    let _ = self.reader.refill();
+                                }
                                 if rem_count <= 32 && rem_count <= self.reader.bits_available() {
                                     let batch = self.reader.read_bits_fast(rem_count);
                                     let mut shift = rem_count;
