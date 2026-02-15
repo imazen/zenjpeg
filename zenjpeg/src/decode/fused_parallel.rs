@@ -304,10 +304,14 @@ impl<'a> JpegParser<'a> {
         dc_tables: &'t [Option<HuffmanDecodeTable>],
         ac_tables: &'t [Option<HuffmanDecodeTable>],
         lenient: bool,
+        permissive_rst: bool,
     ) -> EntropyDecoder<'d, 't> {
         let mut decoder = EntropyDecoder::new(seg_data);
         if lenient {
             decoder.set_lenient(true);
+        }
+        if permissive_rst {
+            decoder.set_permissive_rst(true);
         }
         for (_, dc_table, ac_table) in scan_comps {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
@@ -386,7 +390,11 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = self.strictness == Strictness::Lenient;
+        let lenient = matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        );
+        let permissive_rst = self.strictness == Strictness::Permissive;
         let strict = self.strictness == Strictness::Strict;
 
         // Pre-compute per-component actual block counts for padding detection.
@@ -444,6 +452,7 @@ impl<'a> JpegParser<'a> {
                     &dc_tables,
                     &ac_tables,
                     lenient,
+                    permissive_rst,
                 );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -688,7 +697,11 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = self.strictness == Strictness::Lenient;
+        let lenient = matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        );
+        let permissive_rst = self.strictness == Strictness::Permissive;
         let strict = self.strictness == Strictness::Strict;
 
         // Component info for sub-block iteration
@@ -743,6 +756,7 @@ impl<'a> JpegParser<'a> {
                     &dc_tables,
                     &ac_tables,
                     lenient,
+                    permissive_rst,
                 );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -989,7 +1003,11 @@ impl<'a> JpegParser<'a> {
             .collect();
 
         let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
-        let lenient = self.strictness == Strictness::Lenient;
+        let lenient = matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        );
+        let permissive_rst = self.strictness == Strictness::Permissive;
         let strict = self.strictness == Strictness::Strict;
         let max_h_samp = _max_h_samp;
         let max_v_samp = _max_v_samp;
@@ -1060,6 +1078,7 @@ impl<'a> JpegParser<'a> {
                     &dc_tables,
                     &ac_tables,
                     lenient,
+                    permissive_rst,
                 );
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];

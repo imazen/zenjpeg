@@ -365,6 +365,8 @@ pub struct BitReader<'a> {
     marker_found: Option<u8>,
     /// Number of bytes we've over-read past end of data
     overread_by: usize,
+    /// When true, accept any RST marker instead of requiring exact sequence.
+    permissive_rst: bool,
 }
 
 /// Saved state of a BitReader for speculative decoding.
@@ -375,6 +377,7 @@ pub struct BitReaderState {
     bits_in_buffer: u8,
     marker_found: Option<u8>,
     overread_by: usize,
+    permissive_rst: bool,
 }
 
 /// Check if a u32 contains a 0xFF byte using SWAR (SIMD Within A Register).
@@ -412,7 +415,13 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: 0,
             marker_found: None,
             overread_by: 0,
+            permissive_rst: false,
         }
+    }
+
+    /// Enable permissive restart marker handling (accept any RST marker).
+    pub fn set_permissive_rst(&mut self, permissive: bool) {
+        self.permissive_rst = permissive;
     }
 
     /// Reads a single byte with byte unstuffing (slow path).
@@ -467,11 +476,17 @@ impl<'a> BitReader<'a> {
     ///
     /// Single-buffer design: new bytes are OR'd directly into the freed
     /// positions of aligned_buffer (which are always 0 after left-shifts).
+    /// Refills the bit buffer to have at least 32 bits.
+    /// Uses fast 4-byte path when no 0xFF bytes are present.
+    ///
+    /// Returns true if any bits are available after refill.
+    /// This function is infallible — errors (marker found, truncation)
+    /// are recorded in struct fields, not returned.
     #[inline(always)]
-    pub fn refill(&mut self) -> Result<bool> {
+    pub fn refill(&mut self) -> bool {
         // Only refill if we have fewer than 32 bits
         if self.bits_in_buffer >= 32 {
-            return Ok(true);
+            return true;
         }
 
         // If we've found a marker or are overreading, extend with zeros.
@@ -479,7 +494,7 @@ impl<'a> BitReader<'a> {
         // so we just claim more bits without modifying the buffer.
         if self.marker_found.is_some() || self.overread_by > 0 {
             self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
-            return Ok(true);
+            return true;
         }
 
         // Try fast 4-byte path (no 0xFF bytes)
@@ -494,7 +509,7 @@ impl<'a> BitReader<'a> {
                 self.position += 4;
                 self.aligned_buffer |= (word as u64) << (32 - self.bits_in_buffer);
                 self.bits_in_buffer += 32;
-                return Ok(true);
+                return true;
             }
             // Has 0xFF - fall through to slow path
         }
@@ -512,7 +527,7 @@ impl<'a> BitReader<'a> {
                 break;
             }
         }
-        Ok(self.bits_in_buffer > 0)
+        self.bits_in_buffer > 0
     }
 
     /// Fast single-bit read for AC refinement hot path.
@@ -537,11 +552,11 @@ impl<'a> BitReader<'a> {
 
     /// Fills the bit buffer to have at least `count` bits.
     #[inline(always)]
-    fn fill_buffer(&mut self, count: u8) -> Result<bool> {
+    fn fill_buffer(&mut self, count: u8) -> bool {
         if self.bits_in_buffer < count {
-            self.refill()?;
+            self.refill();
         }
-        Ok(self.bits_in_buffer >= count)
+        self.bits_in_buffer >= count
     }
 
     /// Peeks at the next `count` bits without consuming them.
@@ -553,7 +568,7 @@ impl<'a> BitReader<'a> {
     #[inline(always)]
     pub fn peek_bits(&mut self, count: u8) -> ScanResult<u32> {
         debug_assert!(count <= 32);
-        self.fill_buffer(count)?;
+        self.fill_buffer(count);
         if self.bits_in_buffer < count {
             return Ok(self.end_state());
         }
@@ -629,7 +644,7 @@ impl<'a> BitReader<'a> {
     /// - `Ok(ScanRead::Truncated)` if data ended without a marker
     #[inline(always)]
     pub fn read_bits(&mut self, count: u8) -> ScanResult<u32> {
-        self.fill_buffer(count)?;
+        self.fill_buffer(count);
         if self.bits_in_buffer < count {
             return Ok(self.end_state());
         }
@@ -699,6 +714,7 @@ impl<'a> BitReader<'a> {
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
             overread_by: self.overread_by,
+            permissive_rst: self.permissive_rst,
         }
     }
 
@@ -709,6 +725,7 @@ impl<'a> BitReader<'a> {
         self.bits_in_buffer = state.bits_in_buffer;
         self.marker_found = state.marker_found;
         self.overread_by = state.overread_by;
+        self.permissive_rst = state.permissive_rst;
     }
 
     /// Reads and verifies a restart marker.
@@ -730,6 +747,10 @@ impl<'a> BitReader<'a> {
         }
         let first = self.data[self.position];
         if first != 0xFF {
+            if self.permissive_rst {
+                // Scan forward for any RST marker (libjpeg-turbo resync behavior)
+                return self.resync_to_restart();
+            }
             return Err(Error::invalid_jpeg_data("expected 0xFF for restart marker"));
         }
         self.position += 1;
@@ -745,7 +766,16 @@ impl<'a> BitReader<'a> {
         if second != expected_marker {
             // Check if it's a different restart marker (resync case)
             if (0xD0..=0xD7).contains(&second) {
+                if self.permissive_rst {
+                    // Accept any RST marker in permissive mode
+                    self.position += 1;
+                    return Ok(());
+                }
                 return Err(Error::invalid_jpeg_data("restart marker sequence mismatch"));
+            }
+            if self.permissive_rst {
+                // Not a RST marker at all — scan forward for one
+                return self.resync_to_restart();
             }
             return Err(Error::invalid_jpeg_data(
                 "expected restart marker not found",
@@ -754,6 +784,38 @@ impl<'a> BitReader<'a> {
         self.position += 1;
 
         Ok(())
+    }
+
+    /// Scan forward through the data looking for any restart marker (FF D0-D7).
+    ///
+    /// Mimics libjpeg-turbo's `jpeg_resync_to_restart` behavior: skip junk bytes
+    /// until we find a valid RST marker, then continue decoding from there.
+    /// Scans at most 4096 bytes forward to avoid runaway searches in very
+    /// corrupted data.
+    fn resync_to_restart(&mut self) -> Result<()> {
+        let max_scan = 4096.min(self.data.len().saturating_sub(self.position));
+        let scan_start = self.position;
+        let scan_end = scan_start + max_scan;
+
+        let mut pos = scan_start;
+        while pos + 1 < scan_end {
+            if self.data[pos] == 0xFF {
+                let marker = self.data[pos + 1];
+                if (0xD0..=0xD7).contains(&marker) {
+                    // Found a restart marker — skip past it
+                    self.position = pos + 2;
+                    return Ok(());
+                }
+                // FF 00 (stuffed byte) or other marker — skip the FF
+                pos += 1;
+            }
+            pos += 1;
+        }
+
+        // Couldn't find any RST marker within range — treat as truncation
+        Err(Error::invalid_jpeg_data(
+            "could not resync to restart marker",
+        ))
     }
 
     /// Reads a raw byte (assumes byte-aligned).

@@ -91,20 +91,17 @@ impl<'a> JpegParser<'a> {
         // Set up entropy decoder
         let scan_data = &self.data[self.position..];
 
-        // Debug: print progressive scan info
-        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
-            let first_bytes: Vec<u8> = scan_data.iter().take(8).copied().collect();
-            eprintln!(
-                "DEBUG prog: ss={} se={} ah={} al={} comps={:?} pos={} data={:02x?}",
-                ss, se, ah, al, scan_components, self.position, first_bytes
-            );
-        }
-
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        // Enable lenient mode for maximum error recovery
-        if self.strictness == Strictness::Lenient {
+        // Enable lenient/permissive error recovery
+        if matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        ) {
             decoder.set_lenient(true);
+        }
+        if self.strictness == Strictness::Permissive {
+            decoder.set_permissive_rst(true);
         }
 
         for (_comp_idx, dc_table, ac_table) in scan_components {
@@ -142,9 +139,6 @@ impl<'a> JpegParser<'a> {
         // Determine scan type
         let is_dc_scan = ss == 0 && se == 0;
         let is_first_scan = ah == 0;
-
-        // EOB run tracking for AC scans
-        let mut eob_run = 0u16;
 
         // Restart marker handling
         let mut mcu_count = 0u32;
@@ -314,75 +308,43 @@ impl<'a> JpegParser<'a> {
             // Storage stride: MCU-padded (matches output path)
             let padded_blocks_h = mcu_cols * h_samp;
 
-            // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
-            mcu_count = 0;
-            next_restart_num = 0;
-
-            'ac_scan: for block_y in 0..comp_blocks_v {
-                // Check for cancellation at each block row
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
+            // Fused AC scan: entire block grid processed in one call.
+            // Eliminates per-block ScanResult wrapping, function call overhead,
+            // and HuffmanResult→ScanRead conversion. Uses fast_ac combined lookup
+            // for AC first scans and pre-refilled bit reads for refinement.
+            if is_first_scan {
+                if !decoder.decode_ac_first_scan(
+                    &mut self.coeffs,
+                    &mut self.nonzero_bitmaps,
+                    comp_idx,
+                    ac_table as usize,
+                    ss,
+                    se,
+                    al,
+                    comp_blocks_h,
+                    comp_blocks_v,
+                    padded_blocks_h,
+                    restart_interval,
+                    stop,
+                )? {
+                    had_progressive_truncation = true;
                 }
-
-                for block_x in 0..comp_blocks_h {
-                    // Check for restart marker
-                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        decoder.align_to_byte();
-                        decoder.read_restart_marker(next_restart_num)?;
-                        next_restart_num = (next_restart_num + 1) & 7;
-                        decoder.reset_dc();
-                        eob_run = 0;
-                    }
-
-                    let block_idx = block_y * padded_blocks_h + block_x;
-                    if is_first_scan {
-                        // AC first scan
-                        match decoder.decode_ac_first(
-                            &mut self.coeffs[comp_idx][block_idx],
-                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                            ac_table as usize,
-                            ss,
-                            se,
-                            al,
-                            &mut eob_run,
-                        )? {
-                            ScanRead::Value(()) => {}
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break 'ac_scan;
-                            }
-                        }
-                    } else {
-                        // AC refinement scan
-                        match decoder.decode_ac_refine(
-                            &mut self.coeffs[comp_idx][block_idx],
-                            &mut self.nonzero_bitmaps[comp_idx][block_idx],
-                            ac_table as usize,
-                            ss,
-                            se,
-                            al,
-                            &mut eob_run,
-                        )? {
-                            ScanRead::Value(()) => {}
-                            ScanRead::EndOfScan | ScanRead::Truncated => {
-                                had_progressive_truncation = true;
-                                break 'ac_scan;
-                            }
-                        }
-                    }
-
-                    mcu_count += 1;
-                }
+            } else if !decoder.decode_ac_refine_scan(
+                &mut self.coeffs,
+                &mut self.nonzero_bitmaps,
+                comp_idx,
+                ac_table as usize,
+                ss,
+                se,
+                al,
+                comp_blocks_h,
+                comp_blocks_v,
+                padded_blocks_h,
+                restart_interval,
+                stop,
+            )? {
+                had_progressive_truncation = true;
             }
-        }
-
-        // Debug: print position after scan
-        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
-            eprintln!(
-                "DEBUG prog end: decoder.position()={} new self.position={}",
-                decoder.position(),
-                self.position + decoder.position()
-            );
         }
 
         // Extract warning flags before dropping decoder

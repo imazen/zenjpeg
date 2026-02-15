@@ -824,15 +824,29 @@ impl ProgressiveTokenBuffer {
                 eob_run = 0;
             }
 
+            // Pre-compute last position with a newly-nonzero coefficient.
+            // ZRL must only be emitted BEFORE this position — after it, any
+            // ZRL would be followed by EOB, which djpegli rejects (in_zero_run
+            // is only cleared by a newly-nonzero symbol, not by EOB).
+            // The C++ jpegli encoder handles this by speculatively writing ZRL
+            // tokens and rewinding them if EOB follows (next_eob_token mechanism).
+            // We use a simpler approach: don't emit ZRL past the last newly-nonzero.
+            let last_newly_nonzero_pos = coeffs.iter().rposition(|&c| {
+                let abs_coef = c.unsigned_abs();
+                let absval = abs_coef >> al;
+                absval == 1
+            });
+
             // Process coefficients - match C++ order exactly:
             // 1. If completely zero, increment run
             // 2. Emit ZRL if run > 15 (BEFORE adding current position's refbit)
+            //    BUT only if a newly-nonzero follows later in this block
             // 3. If previously nonzero (absval > 1), add refbit
             // 4. If newly nonzero (absval == 1), emit token
             let mut run = 0u8;
             block_refbits.clear(); // Reuse allocation from previous iteration
 
-            for &coef in coeffs {
+            for (pos, &coef) in coeffs.iter().enumerate() {
                 let abs_coef = coef.unsigned_abs();
 
                 // Step 1: Check if coefficient is completely zero
@@ -853,15 +867,13 @@ impl ProgressiveTokenBuffer {
                 // We have a nonzero coefficient at current precision.
                 // FIRST check for ZRL, THEN add refbit or emit newly-nonzero.
 
-                // Flush pending EOB run if any
-                if eob_run > 0 || !pending_refbits.is_empty() {
-                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
-                    pending_refbits.clear();
-                    eob_run = 0;
-                }
-
-                // Step 3: Emit ZRL tokens BEFORE processing current coefficient
-                while run >= 16 {
+                // Step 3: Emit ZRL tokens BEFORE processing current coefficient,
+                // but ONLY if a newly-nonzero coefficient follows later in this
+                // block. Otherwise the ZRL would be followed by EOB, which is
+                // invalid per djpegli's decoder (in_zero_run check). When we
+                // suppress ZRL, the run and refbits accumulate until EOB.
+                let may_emit_zrl = last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
+                while run >= 16 && may_emit_zrl {
                     let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
                     self.push_ref(ref_token);
                     for &bit in &block_refbits {

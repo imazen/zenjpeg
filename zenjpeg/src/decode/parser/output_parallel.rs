@@ -34,7 +34,9 @@ use crate::decode::parser::JpegParser;
 const MIN_MCU_ROWS_PARALLEL: usize = 8;
 
 /// Minimum pixel count (width × height) to justify parallel output.
-const MIN_PIXELS_PARALLEL: usize = 8_000_000;
+/// 2M disables parallelism at 1024×1024 (1M) where rayon overhead exceeds
+/// the benefit, while keeping it for 2048×2048 (4.2M) and above.
+const MIN_PIXELS_PARALLEL: usize = 2_000_000;
 
 /// IDCT one block into a strip buffer at the given offset.
 #[inline]

@@ -111,74 +111,74 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 321247),
-    (70, 424984),
-    (85, 579695),
-    (90, 694090),
-    (95, 905428),
+    (50, 320320),
+    (70, 423516),
+    (85, 577429),
+    (90, 691442),
+    (95, 902410),
 ];
 
 #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 321247),
-    (70, 424984),
-    (85, 579702),
-    (90, 694018),
-    (95, 905420),
+    (50, 320320),
+    (70, 423513),
+    (85, 577433),
+    (90, 691401),
+    (95, 902392),
 ];
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 286863),
-    (70, 375651),
-    (85, 504319),
-    (90, 594336),
-    (95, 758815),
+    (50, 285948),
+    (70, 374209),
+    (85, 502181),
+    (90, 592037),
+    (95, 756373),
 ];
 
 #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 286863),
-    (70, 375651),
-    (85, 504319),
-    (90, 594301),
-    (95, 758810),
+    (50, 285948),
+    (70, 374206),
+    (85, 502181),
+    (90, 592004),
+    (95, 756381),
 ];
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 263131),
-    (70, 350659),
-    (85, 477444),
-    (90, 563816),
-    (95, 717002),
+    (50, 262226),
+    (70, 349393),
+    (85, 475480),
+    (90, 561470),
+    (95, 714787),
 ];
 
 #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 263131),
-    (70, 350659),
-    (85, 477444),
-    (90, 563791),
-    (95, 717002),
+    (50, 262226),
+    (70, 349393),
+    (85, 475480),
+    (90, 561486),
+    (95, 714787),
 ];
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 285069),
-    (70, 374081),
-    (85, 503629),
-    (90, 593922),
-    (95, 758078),
+    (50, 284132),
+    (70, 372519),
+    (85, 501348),
+    (90, 591552),
+    (95, 755674),
 ];
 
 #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 285069),
-    (70, 374081),
-    (85, 503629),
-    (90, 593887),
-    (95, 758081),
+    (50, 284132),
+    (70, 372516),
+    (85, 501348),
+    (90, 591519),
+    (95, 755662),
 ];
 
 // =============================================================================
@@ -188,25 +188,25 @@ const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 mod hashes {
     pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x05b00d168eae7f72;
-    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0xfd5e1e68867b214e;
+    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x2c0a6aca998d8042;
     pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x8491935fc04738a4;
-    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x4d75caebc638195a;
+    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x4ac5a06df3bc5fe7;
     pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
-    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xdf2caab44709624f;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb3e29b767042bdf5;
     pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x44a3acddda6d0591;
-    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x61159799bc83077d;
+    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x48d3cbff0f61e3e2;
 }
 
 #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
 mod hashes {
     pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x00cb3ae82091dd1c;
-    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x7e9f99eceec55c93;
+    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x4233015231b9e826;
     pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xff9fffa84d091a73;
-    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x6d7bcd82d2b04bd2;
+    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x88b176f2aaaf20a6;
     pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
-    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1d1c16350780d052;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb3e29b767042bdf5;
     pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xef45fac2c99a3211;
-    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x913f8179586a52d7;
+    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x396ad62cab795db0;
 }
 
 use hashes::*;
