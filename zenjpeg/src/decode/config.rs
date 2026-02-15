@@ -59,18 +59,21 @@ pub enum ChromaUpsampling {
 ///
 /// # Behavior matrix
 ///
-/// | Situation | ITU-T T.81 spec | mozjpeg | Strict | Balanced | Lenient |
-/// |---|---|---|---|---|---|
-/// | Truncated scan data | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
-/// | Missing padding blocks | Invalid (MCUs required) | Implicit zero fill | Error | Speculative+zero | Speculative+zero |
-/// | DNL conflicts with SOF | Invalid (B.2.5) | Ignored entirely | Error | Ignored | Ignored |
-/// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan |
-/// | Missing DHT before scan | Invalid (B.2.4.2) | std_huff_tables() fallback | Error | Std tables | Std tables |
-/// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros |
-/// | AC index overflow | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB |
-/// | Invalid Huffman mid-scan | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB |
-/// | Bad DQT/DHT structure | Invalid | ERREXIT (fatal) | Error | Error | Error |
-/// | Bad component ID in SOS | Invalid (B.2.3) | ERREXIT (fatal) | Error | Error | Error |
+/// | Situation | ITU-T T.81 spec | mozjpeg | Strict | Balanced | Lenient | Permissive |
+/// |---|---|---|---|---|---|---|
+/// | Truncated scan data | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros | Fill zeros |
+/// | Missing padding blocks | Invalid (MCUs required) | Implicit zero fill | Error | Speculative+zero | Speculative+zero | Speculative+zero |
+/// | DNL conflicts with SOF | Invalid (B.2.5) | Ignored entirely | Error | Ignored | Ignored | Ignored |
+/// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan | EndOfScan |
+/// | Missing DHT before scan | Invalid (B.2.4.2) | std_huff_tables() fallback | Error | Std tables | Std tables | Std tables |
+/// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros | Fill zeros |
+/// | AC index overflow | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB | Treat as EOB |
+/// | Invalid Huffman mid-scan | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB | Treat as EOB |
+/// | Zero quant value in DQT | Invalid | ERREXIT (fatal) | Error | Error | Error | Clamp to 1 |
+/// | Malformed segment length | Invalid | ERREXIT (fatal) | Error | Error | Error | Skip segment |
+/// | RST marker mismatch | Invalid | jpeg_resync_to_restart | Error | Error | Error | Accept any RST |
+/// | Bad DQT/DHT structure | Invalid | ERREXIT (fatal) | Error | Error | Error | Error |
+/// | Bad component ID in SOS | Invalid (B.2.3) | ERREXIT (fatal) | Error | Error | Error | Error |
 ///
 /// "Speculative+zero" means: attempt to decode the block; if the data is
 /// missing or invalid, restore decoder state and fill with zeros.
@@ -119,9 +122,21 @@ pub enum Strictness {
     ///
     /// Use for:
     /// - Corrupt file recovery
-    /// - Maximum compatibility
     /// - Forensic analysis of damaged files
     Lenient,
+
+    /// Maximum compatibility: accept anything libjpeg-turbo accepts.
+    ///
+    /// Includes all Lenient recovery, plus:
+    /// - Zero quantization values (clamped to 1)
+    /// - Malformed segment lengths (skipped)
+    /// - Restart marker sequence mismatches (resynced)
+    ///
+    /// Use for:
+    /// - Processing images from unknown/untrusted sources
+    /// - Web crawlers and image scrapers
+    /// - Maximum libjpeg-turbo compatibility
+    Permissive,
 }
 
 /// Issues discovered during JPEG decoding.
@@ -199,6 +214,31 @@ pub enum DecodeWarning {
     /// Only recovered in Lenient mode. Indicates corrupted entropy data
     /// where a bit sequence doesn't match any valid Huffman code.
     InvalidHuffmanCode,
+
+    /// Zero quantization value clamped to 1.
+    ///
+    /// Only recovered in Permissive mode. Zero values are invalid per spec
+    /// (division by zero during dequantization).
+    ZeroQuantValue {
+        /// Which quantization table contained the zero value.
+        table_idx: u8,
+    },
+
+    /// Malformed segment with invalid length was skipped.
+    ///
+    /// Only recovered in Permissive mode. Segments must have length >= 2.
+    MalformedSegmentSkipped,
+
+    /// Restart marker sequence mismatch was resynced.
+    ///
+    /// Only recovered in Permissive mode. Expected one RST marker number
+    /// but found a different one; accepted the found marker and continued.
+    RestartMarkerResync {
+        /// Expected restart marker number (0-7).
+        expected: u8,
+        /// Actual restart marker number found (0-7).
+        found: u8,
+    },
 }
 
 impl core::fmt::Display for DecodeWarning {
@@ -237,6 +277,23 @@ impl core::fmt::Display for DecodeWarning {
             }
             Self::InvalidHuffmanCode => {
                 write!(f, "invalid Huffman code; treated as end-of-block")
+            }
+            Self::ZeroQuantValue { table_idx } => {
+                write!(
+                    f,
+                    "zero quantization value in table {}; clamped to 1",
+                    table_idx
+                )
+            }
+            Self::MalformedSegmentSkipped => {
+                write!(f, "malformed segment with invalid length; skipped")
+            }
+            Self::RestartMarkerResync { expected, found } => {
+                write!(
+                    f,
+                    "restart marker mismatch: expected RST{}, found RST{}; resynced",
+                    expected, found
+                )
             }
         }
     }

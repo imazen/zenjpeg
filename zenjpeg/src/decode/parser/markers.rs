@@ -15,7 +15,7 @@ use crate::foundation::consts::{
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
 
-use super::super::DecodeWarning;
+use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 
 /// Marker parsing methods for JpegParser.
@@ -46,17 +46,54 @@ impl<'a> JpegParser<'a> {
                     self.parse_frame_header()?;
                     return Ok(());
                 }
-                MARKER_DQT => self.parse_quant_table()?,
-                MARKER_DHT => self.parse_huffman_table()?,
-                MARKER_DAC => self.parse_dac()?,
-                MARKER_DRI => self.parse_restart_interval()?,
-                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
+                MARKER_DQT => self.parse_header_marker(|s| s.parse_quant_table())?,
+                MARKER_DHT => self.parse_header_marker(|s| s.parse_huffman_table())?,
+                MARKER_DAC => self.parse_header_marker(|s| s.parse_dac())?,
+                MARKER_DRI => self.parse_header_marker(|s| s.parse_restart_interval())?,
+                MARKER_APP0..=0xEF | MARKER_COM => {
+                    self.parse_header_marker(|s| s.process_app_or_com(marker))?;
+                }
                 MARKER_EOI => {
                     return Err(Error::invalid_jpeg_data(
                         "unexpected EOI before frame header",
                     ));
                 }
-                _ => self.skip_segment()?,
+                // Standalone markers (no length field) — skip silently.
+                // RST0-RST7 and TEM can appear as stray bytes in corrupted files.
+                0xD0..=0xD7 | 0x01 => {}
+                _ => self.parse_header_marker(|s| s.skip_segment())?,
+            }
+        }
+    }
+
+    /// Parse a header marker, recovering from errors in Permissive mode.
+    ///
+    /// In Permissive mode, if a marker's content is corrupted (wrong lengths,
+    /// invalid values, etc.), we skip it and continue to the next marker.
+    /// This mimics libjpeg-turbo's tolerance of fuzz-mutated files.
+    fn parse_header_marker(&mut self, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        if self.strictness != Strictness::Permissive {
+            return f(self);
+        }
+        // Save position so we can recover on error
+        let saved_pos = self.position;
+        match f(self) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                // Try to skip past the corrupted marker segment.
+                // Read the length from the original position and skip.
+                self.position = saved_pos;
+                if self.position + 2 <= self.data.len() {
+                    let len = ((self.data[self.position] as usize) << 8)
+                        | self.data[self.position + 1] as usize;
+                    if len >= 2 {
+                        self.position += len;
+                    } else {
+                        self.position += 2; // Skip at least the length field
+                    }
+                }
+                self.warn(DecodeWarning::MalformedSegmentSkipped)?;
+                Ok(())
             }
         }
     }
@@ -175,11 +212,19 @@ impl<'a> JpegParser<'a> {
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
+            let permissive = self.strictness == Strictness::Permissive;
+            let mut had_zero = false;
+
             if precision == 0 {
                 // 8-bit values
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u8()? as u16;
                     if val == 0 {
+                        if permissive {
+                            zigzag_values[i] = 1; // Clamp to 1
+                            had_zero = true;
+                            continue;
+                        }
                         return Err(Error::invalid_quant_table(
                             table_idx as u8,
                             "quantization value is zero",
@@ -193,6 +238,11 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u16()?;
                     if val == 0 {
+                        if permissive {
+                            zigzag_values[i] = 1; // Clamp to 1
+                            had_zero = true;
+                            continue;
+                        }
                         return Err(Error::invalid_quant_table(
                             table_idx as u8,
                             "quantization value is zero",
@@ -201,6 +251,12 @@ impl<'a> JpegParser<'a> {
                     zigzag_values[i] = val;
                 }
                 length -= 129;
+            }
+
+            if had_zero {
+                self.warn(DecodeWarning::ZeroQuantValue {
+                    table_idx: table_idx as u8,
+                })?;
             }
 
             // Validate DQT marker length consistency
@@ -341,6 +397,14 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_dnl(&mut self) -> Result<()> {
         let length = self.read_u16()?;
         if length != 4 {
+            if self.strictness == Strictness::Permissive {
+                // Skip malformed DNL marker using declared length
+                if length >= 2 {
+                    self.position += (length as usize).saturating_sub(2);
+                }
+                self.warn(DecodeWarning::MalformedSegmentSkipped)?;
+                return Ok(());
+            }
             return Err(Error::invalid_jpeg_data("DNL marker must have length 4"));
         }
 
@@ -366,6 +430,10 @@ impl<'a> JpegParser<'a> {
     pub(super) fn skip_segment(&mut self) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
+            if self.strictness == Strictness::Permissive {
+                self.warn(DecodeWarning::MalformedSegmentSkipped)?;
+                return Ok(());
+            }
             return Err(Error::invalid_jpeg_data("segment length too short"));
         }
         self.position += length - 2;
@@ -376,6 +444,10 @@ impl<'a> JpegParser<'a> {
     pub(super) fn process_app_or_com(&mut self, marker: u8) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
+            if self.strictness == Strictness::Permissive {
+                self.warn(DecodeWarning::MalformedSegmentSkipped)?;
+                return Ok(());
+            }
             return Err(Error::invalid_jpeg_data("segment length too short"));
         }
         let data_len = length - 2;

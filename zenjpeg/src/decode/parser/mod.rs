@@ -241,6 +241,9 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::TruncatedProgressiveScan => "progressive scan data truncated",
                 DecodeWarning::AcIndexOverflow => "AC coefficient index out of bounds",
                 DecodeWarning::InvalidHuffmanCode => "invalid Huffman code mid-scan",
+                DecodeWarning::ZeroQuantValue { .. } => "zero quantization value in DQT",
+                DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
+                DecodeWarning::RestartMarkerResync { .. } => "restart marker sequence mismatch",
             }));
         }
         // Deduplicate: don't add the same warning twice
