@@ -20,23 +20,49 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
 fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
-    // Use noise+patches pattern (not gradients — see CLAUDE.md)
+    // Deterministic noise+patches pattern matching decode_compare benchmark.
+    // 4 block types: textured, gradient, sharp edges, high-frequency noise.
     let mut data = vec![0u8; (width * height * 3) as usize];
-    let mut rng: u32 = 0xDEADBEEF;
     for y in 0..height as usize {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
-            // Simple LCG noise + patch pattern
-            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-            let noise = ((rng >> 16) & 0xFF) as u8;
-            let patch_x = (x / 64) & 3;
-            let patch_y = (y / 64) & 3;
-            let base = ((patch_x * 64 + patch_y * 32) & 255) as u8;
-            data[idx] = base.wrapping_add(noise >> 2);
-            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-            data[idx + 1] = base.wrapping_add(((rng >> 16) & 0x3F) as u8);
-            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-            data[idx + 2] = (255 - base).wrapping_add(((rng >> 16) & 0x1F) as u8);
+            let bx = (x / 8) as u32;
+            let by = (y / 8) as u32;
+            let block_hash = bx
+                .wrapping_mul(2654435761)
+                .wrapping_add(by.wrapping_mul(40503));
+            let block_type = block_hash % 4;
+            let px = x as u32;
+            let py = y as u32;
+            let mut h = px
+                .wrapping_mul(374761393)
+                .wrapping_add(py.wrapping_mul(668265263));
+            h = (h ^ (h >> 13)).wrapping_mul(1274126177);
+            let noise = (h >> 24) as u8;
+            match block_type {
+                0 => {
+                    let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
+                    data[idx] = bias.wrapping_add(noise >> 2);
+                    data[idx + 1] = bias.wrapping_add(noise >> 1);
+                    data[idx + 2] = bias.wrapping_add(noise >> 3);
+                }
+                1 => {
+                    data[idx] = ((x * 255) / width as usize) as u8;
+                    data[idx + 1] = ((y * 255) / height as usize) as u8;
+                    data[idx + 2] = noise >> 2;
+                }
+                2 => {
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    data[idx] = edge;
+                    data[idx + 1] = edge.wrapping_add(noise >> 4);
+                    data[idx + 2] = 255 - edge;
+                }
+                _ => {
+                    data[idx] = noise;
+                    data[idx + 1] = noise.wrapping_mul(3);
+                    data[idx + 2] = noise.wrapping_mul(7);
+                }
+            }
         }
     }
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
