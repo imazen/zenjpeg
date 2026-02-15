@@ -414,6 +414,9 @@ the bottleneck has shifted to memory access patterns and branch prediction.
     entire block grids without ScanResult enum wrapping or per-block function calls.
     Fast_ac combined 9-bit Huffman+value lookup for AC first scan. Partial peek
     fallback for end-of-scan with <9 bits. 33% entropy instruction reduction.
+12. Split AC refine inner loop into separate ZRL and NEW_NZ code paths. Eliminates
+    per-iteration `size == 0` check, Option<i16> wrapping, redundant termination
+    checks. -6.1% AC refine instructions, -3% wall-clock.
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -704,6 +707,23 @@ is zero benefit with added code complexity. The branch predictor handles the ref
 
 **Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
 different approach (e.g., reading multiple refinement bits in one operation).
+
+### Branchy Coefficient Update in AC Refinement (2026-02-15)
+
+**Attempted:** Replace branchless `c.wrapping_add((bit as i16) * not_set * sign * bit_val)`
+with branchy `if bit != 0 && (c & bit_val) == 0 { if c > 0 { +bit_val } else { -bit_val } }`.
+
+**Results:** Callgrind AC refine dropped from 225.2M to 184.5M (-18.1%). But wall-clock
+was 5-21% WORSE across all sizes.
+
+**Why it failed:** The `bit != 0` and `c > 0` branches are poorly predicted — coefficient
+signs and refinement bits are effectively random. Each misprediction costs ~15 cycles but
+counts as only 1 instruction in callgrind. The branchless version has more instructions but
+is fully predictable (no branches = no mispredictions). Branch misprediction overhead
+dominates instruction-count savings.
+
+**Conclusion:** Callgrind instruction count can be misleading when branch prediction matters.
+Branchless is correct for this hot path despite higher instruction count.
 
 ### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
