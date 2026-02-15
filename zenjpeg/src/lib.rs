@@ -176,6 +176,12 @@ pub mod encoder;
 /// Provides min/typical/max estimates for peak memory and time.
 pub mod heuristics;
 
+/// JPEG encoder detection and quality estimation.
+///
+/// Identifies which encoder produced a JPEG, estimates its quality level,
+/// and extracts structural metadata from header-only parsing (~500 bytes).
+pub mod detect;
+
 /// JPEG decoder - public API.
 ///
 /// Contains: `Decoder`, `DecodeResult`, `Error`, `Result`, etc.
