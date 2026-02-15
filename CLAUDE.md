@@ -511,21 +511,29 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
 **Progressive 3-7x gap vs zune on realistic content** (noise+patches, not gradients):
 - Previous "1.09x gap" was measured with gradient test images that produce degenerate
   DC-only blocks. With realistic coefficient distributions, the gap is much larger.
-- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches, commit 674f811):
-  zenjpeg ~256M decode Ir vs zune ~60M = 4.3x instruction ratio (was 6.0x before fuse)
-- Entropy decode: zenjpeg ~206M vs zune ~8M = 25.4x ratio
-  AC refine dominates at ~163M (79% of entropy), AC first ~32M, DC ~8M
+- Callgrind (2048x2048, Q85 4:2:0 progressive, noise+patches, commit 43b24d6):
+  zenjpeg ~256M decode Ir vs zune ~60M = 4.3x instruction ratio
+- Entropy decode: zenjpeg ~197M vs zune ~8M = 24.6x ratio
+  AC refine dominates at ~163M (82% of entropy), AC first ~35M, DC ~8M
 - Fused scan methods (commit 674f811) eliminated ScanResult wrapping and per-block
   function calls. Fast_ac 9-bit combined lookup for AC first scan. Entropy instructions
   reduced 33% (309M → 206M). Wall-clock improved 3-7% at 2048+.
-- Remaining bottleneck: AC refinement reads one bit per nonzero coefficient via
-  `read_bit_refine()` with per-bit refill check. 163M instructions for refinement
-  alone. The bitmap-accelerated iteration (O(nonzero)) is optimal for sparse blocks
-  but the per-bit overhead is fundamentally higher than zune's monolithic approach.
+- Pre-refill Huffman decode (commit 43b24d6): Replace `peek_bits_refill(9)` +
+  `partial_peek` tracking in AC refine with `ensure_bits()` + `peek_top(9)`.
+  Eliminates Option wrapping, partial_peek branch, and per-event refill calls.
+  AC refine: 170.3M → 162.7M (-4.5%), wall-clock ~6% improvement at 2048.
+- AC first scan (2.43% of total) not worth optimizing — same pattern regressed
+  callgrind by +11% due to code layout effects. Too small to matter.
+- `read_bit_refine` per-bit refill check costs 6.4M instructions (3.9% of AC refine).
+  Alternatives tried: (1) `read_bit_fast` with per-read branch — WORSE (+34%,
+  branch costs match refill check), (2) batch approach (two-pass bitmap) — WORSE
+  (adds ~4 instructions per nonzero, saves ~2). (3) unchecked reads with
+  `ensure_n_bits` pre-fill — breaks restart marker handling.
 - zune achieves low instruction count by fully inlining scan loop + bitstream ops into
   one monolithic function with zero per-bit checks (`get_bit` trusts refill was called)
-- Further optimization would require unsafe bitstream operations (removing per-bit
-  refill checks) or batching refinement bits (read N bits at once for N nonzero coeffs)
+- **Conclusion**: Local optimizations exhausted. The remaining gap is architectural
+  (per-block function calls + safe per-bit refill). Closing it requires either unsafe
+  bitstream operations or a monolithic fused scan loop — major refactor for ~2% gain
 
 ### Decoder Strictness Levels (2026-02-15)
 
@@ -668,6 +676,34 @@ subsequent Huffman decodes. Safe handling requires tracking available bits vs ne
 loop iteration, which adds complexity matching the cost of the original check.
 
 **Conclusion:** The 2-instruction saving per bit read isn't worth the marker boundary complexity.
+
+### Pre-refill AC First Scan (2026-02-15)
+
+**Attempted:** Apply the same `ensure_bits()` + `peek_top(9)` pre-refill pattern (from AC
+refine commit 43b24d6) to `decode_ac_first_scan`.
+
+**Results:** Callgrind showed +11% regression (34.8M → 38.6M instructions). AC refine scan
+(unchanged code) also regressed +6.4% (162.7M → 173.1M) due to code layout changes from
+recompilation. Function is only 2.43% of total — even a 20% improvement saves <0.5%.
+
+**Conclusion:** Not worth pursuing. The function is too small a fraction of total decode
+time. Code layout effects from the change outweigh the algorithmic improvement.
+
+### Conditional read_bit_fast in AC Refinement (2026-02-15)
+
+**Attempted:** Add `read_bit_fast()` (no refill check) to bitstream.rs. Use `fast_bits`
+boolean in AC refine to choose between `read_bit_fast()` and `read_bit_refine()` per
+refinement bit read, based on whether `ensure_bits()` succeeded.
+
+**Results:** All tests passed but callgrind showed 162.7M → 218.7M (+56M, +34%).
+
+**Why it failed:** The per-read `if fast_bits { read_bit_fast() } else { read_bit_refine() }`
+branch costs ~2 instructions — exactly the same as the refill check it replaces. Net effect
+is zero benefit with added code complexity. The branch predictor handles the refill check
+(`bits_in_buffer == 0` is rarely true) just as well as the `fast_bits` check.
+
+**Conclusion:** Cannot eliminate per-bit overhead through branching. Would need fundamentally
+different approach (e.g., reading multiple refinement bits in one operation).
 
 ### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
