@@ -36,6 +36,7 @@ mod image;
 mod parser;
 mod pipeline;
 pub(crate) mod rst_scan;
+mod row_slice;
 mod scanline;
 mod upsample;
 
@@ -59,6 +60,7 @@ pub use config::{
 pub type Decoder = DecodeConfig;
 use parser::JpegParser;
 
+pub use row_slice::{RowSlice, RowSliceF32};
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
 // UltraHDR streaming reader
@@ -84,6 +86,7 @@ use enough::Unstoppable;
 
 use crate::error::{Error, Result};
 use crate::foundation::consts::MAX_COMPONENTS;
+use imgref::ImgRefMut;
 
 /// Compute subsampling mode from component sampling factors.
 fn compute_subsampling(
@@ -1047,6 +1050,176 @@ impl DecodeConfig {
 
         result.set_gain_map(gain_map_result);
         Ok(result)
+    }
+
+    /// Push-based callback decode: calls `callback` once per row of decoded u8 pixels.
+    ///
+    /// This is the push counterpart to the pull-based [`scanline_reader()`](Self::scanline_reader).
+    /// The callback receives a [`RowSlice`] borrowing the decoder's internal buffer (zero-copy).
+    ///
+    /// Supported formats: [`PixelFormat::Rgb`], [`Bgr`](PixelFormat::Bgr),
+    /// [`Rgba`](PixelFormat::Rgba), [`Bgra`](PixelFormat::Bgra),
+    /// [`Bgrx`](PixelFormat::Bgrx), [`Gray`](PixelFormat::Gray).
+    ///
+    /// For f32 output, use [`decode_rows_f32()`](Self::decode_rows_f32).
+    ///
+    /// # Early abort
+    ///
+    /// Return `Err` from the callback to stop decoding immediately.
+    /// The error is propagated as the return value.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, PixelFormat};
+    ///
+    /// let mut hash = 0u64;
+    /// let info = Decoder::new().decode_rows(
+    ///     &jpeg_data,
+    ///     PixelFormat::Rgb,
+    ///     |row| {
+    ///         for &b in row.as_bytes() {
+    ///             hash = hash.wrapping_mul(31).wrapping_add(b as u64);
+    ///         }
+    ///         Ok(())
+    ///     },
+    ///     enough::Unstoppable,
+    /// )?;
+    /// println!("{}x{}, hash={}", info.dimensions.width, info.dimensions.height, hash);
+    /// ```
+    pub fn decode_rows<F>(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        mut callback: F,
+        stop: impl Stop,
+    ) -> Result<ScanlineInfo>
+    where
+        F: FnMut(RowSlice<'_>) -> Result<()>,
+    {
+        // Validate format is u8-based
+        match format {
+            PixelFormat::Rgb
+            | PixelFormat::Bgr
+            | PixelFormat::Rgba
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx
+            | PixelFormat::Gray => {}
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "decode_rows() only supports u8 formats (Rgb, Bgr, Rgba, Bgra, Bgrx, Gray). \
+                     For f32 formats use decode_rows_f32().",
+                ));
+            }
+        }
+
+        let mut reader = self.scanline_reader(data)?;
+        let info = reader.info();
+        let width = reader.width() as usize;
+        let bpp = format.bytes_per_pixel();
+        let row_bytes = width * bpp;
+
+        // Reusable single-row buffer
+        let mut row_buf = vec![0u8; row_bytes];
+
+        let mut row_index = 0usize;
+        while !reader.is_finished() {
+            stop.check()?;
+
+            // Wrap as 1-row ImgRefMut (width = stride in bytes for u8)
+            let img = ImgRefMut::new(&mut row_buf, row_bytes, 1);
+            let read = match format {
+                PixelFormat::Rgb => reader.read_rows_rgb8(img)?,
+                PixelFormat::Bgr => reader.read_rows_bgr8(img)?,
+                PixelFormat::Rgba => reader.read_rows_rgba8(img)?,
+                PixelFormat::Bgra => reader.read_rows_bgra8(img)?,
+                PixelFormat::Bgrx => reader.read_rows_bgrx8(img)?,
+                PixelFormat::Gray => reader.read_rows_gray8(img)?,
+                _ => unreachable!(),
+            };
+
+            if read > 0 {
+                let slice = RowSlice::new(&row_buf[..row_bytes], row_index, width, format);
+                callback(slice)?;
+                row_index += 1;
+            }
+        }
+
+        Ok(info)
+    }
+
+    /// Push-based callback decode for f32 pixel formats.
+    ///
+    /// The callback receives a [`RowSliceF32`] borrowing the decoder's internal buffer.
+    ///
+    /// Supported formats: [`PixelFormat::RgbaF32`], [`GrayF32`](PixelFormat::GrayF32).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, PixelFormat};
+    ///
+    /// Decoder::new().decode_rows_f32(
+    ///     &jpeg_data,
+    ///     PixelFormat::RgbaF32,
+    ///     |row| {
+    ///         let floats = row.as_slice();
+    ///         // Process RGBA f32 data...
+    ///         Ok(())
+    ///     },
+    ///     enough::Unstoppable,
+    /// )?;
+    /// ```
+    pub fn decode_rows_f32<F>(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        mut callback: F,
+        stop: impl Stop,
+    ) -> Result<ScanlineInfo>
+    where
+        F: FnMut(RowSliceF32<'_>) -> Result<()>,
+    {
+        // Validate format is f32-based
+        let floats_per_pixel = match format {
+            PixelFormat::RgbaF32 => 4,
+            PixelFormat::GrayF32 => 1,
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "decode_rows_f32() only supports f32 formats (RgbaF32, GrayF32). \
+                     For u8 formats use decode_rows().",
+                ));
+            }
+        };
+
+        let mut reader = self.scanline_reader(data)?;
+        let info = reader.info();
+        let width = reader.width() as usize;
+        let row_floats = width * floats_per_pixel;
+
+        // Reusable single-row buffer
+        let mut row_buf = vec![0f32; row_floats];
+
+        let mut row_index = 0usize;
+        while !reader.is_finished() {
+            stop.check()?;
+
+            // Wrap as 1-row ImgRefMut (width = stride in f32 elements)
+            let img = ImgRefMut::new(&mut row_buf, row_floats, 1);
+            let read = match format {
+                PixelFormat::RgbaF32 => reader.read_rows_rgba_f32(img)?,
+                PixelFormat::GrayF32 => reader.read_rows_gray_f32(img)?,
+                _ => unreachable!(),
+            };
+
+            if read > 0 {
+                let slice = RowSliceF32::new(&row_buf[..row_floats], row_index, width, format);
+                callback(slice)?;
+                row_index += 1;
+            }
+        }
+
+        Ok(info)
     }
 
     /// Decodes a JPEG and extracts raw quantized DCT coefficients.
