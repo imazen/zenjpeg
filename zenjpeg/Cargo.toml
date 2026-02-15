@@ -110,6 +110,7 @@ bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
+zenresize = { workspace = true }
 yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy testing
 # For corpus comparison tests (requires local codec-eval crate)
 codec-eval = { workspace = true }
@@ -263,7 +264,7 @@ required-features = ["trellis"]
 
 [[example]]
 name = "knobs_vs_jpegli"
-required-features = ["trellis"]
+required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "ssim2_pareto_sweep"
@@ -295,6 +296,10 @@ required-features = ["test-utils", "ffi-tests"]
 [[example]]
 name = "debug_ultrahdr_detection"
 required-features = ["ultrahdr"]
+
+[[example]]
+name = "reencode_calibration"
+required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "bench_decode_matrix"
