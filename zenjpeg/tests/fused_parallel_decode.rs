@@ -371,6 +371,102 @@ fn test_hashlock_multisize_nearest() {
     }
 }
 
+// ============================================================================
+// Test: 4:2:2 (h2v1) + fancy upsample
+// ============================================================================
+
+#[test]
+fn test_fused_422_triangle_correctness() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+
+    assert_pixels_equal(&fused, &sequential, "4:2:2 Triangle DRI=1row");
+}
+
+#[test]
+fn test_fused_422_libjpeg_compat_correctness() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+
+    let fused = decode_fused(&jpeg, ChromaUpsampling::LibjpegCompat);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::LibjpegCompat);
+
+    assert_pixels_equal(&fused, &sequential, "4:2:2 LibjpegCompat DRI=1row");
+}
+
+#[test]
+fn test_fused_422_nearest_correctness() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+
+    let fused = decode_fused(&jpeg, ChromaUpsampling::NearestNeighbor);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::NearestNeighbor);
+
+    assert_pixels_equal(&fused, &sequential, "4:2:2 NearestNeighbor DRI=1row");
+}
+
+#[test]
+fn test_fused_422_dri4_triangle() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 4);
+
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+
+    assert_pixels_equal(&fused, &sequential, "4:2:2 Triangle DRI=4row");
+}
+
+/// 4:2:2 multi-size with all upsample modes.
+#[test]
+fn test_hashlock_multisize_422_triangle() {
+    for (w, h) in [
+        (256, 256),
+        (512, 512),
+        (1024, 1024),
+        (513, 513),
+        (1000, 1000),
+    ] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
+        assert_pixels_equal(&fused, &sequential, &format!("4:2:2 Triangle {w}x{h}"));
+    }
+}
+
+#[test]
+fn test_hashlock_multisize_422_libjpeg_compat() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::LibjpegCompat);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::LibjpegCompat);
+        assert_pixels_equal(&fused, &sequential, &format!("4:2:2 LibjpegCompat {w}x{h}"));
+    }
+}
+
+#[test]
+fn test_hashlock_multisize_422_nearest() {
+    for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::NearestNeighbor);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::NearestNeighbor);
+        assert_pixels_equal(
+            &fused,
+            &sequential,
+            &format!("4:2:2 NearestNeighbor {w}x{h}"),
+        );
+    }
+}
+
 /// 4:4:4 multi-size parity.
 #[test]
 fn test_hashlock_multisize_444() {
