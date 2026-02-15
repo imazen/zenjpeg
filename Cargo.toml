@@ -90,7 +90,7 @@ mozjpeg-rs = "0.5.3"
 mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
 
 # Image resize (for examples/benchmarks)
-zenresize = { path = "../zenresize" }
+# zenresize = { path = "../zenresize" }  # Disabled: local linear-srgb bumped to 0.5, breaks zenresize ^0.4
 
 # Metadata crates (for integration testing)
 kamadak-exif = "0.6"

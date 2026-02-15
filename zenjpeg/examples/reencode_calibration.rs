@@ -260,12 +260,40 @@ fn encode_zen(
 // ---------------------------------------------------------------------------
 
 fn resize_rgb(pixels: &[u8], w: u32, h: u32, out_w: u32, out_h: u32) -> Vec<u8> {
-    use zenresize::{Filter, PixelFormat, PixelLayout as ZrLayout, ResizeConfig, Resizer};
-    let config = ResizeConfig::builder(w, h, out_w, out_h)
-        .filter(Filter::Lanczos)
-        .format(PixelFormat::Srgb8(ZrLayout::Rgb))
-        .build();
-    Resizer::new(&config).resize(pixels)
+    // Simple area-average downscale (no zenresize dependency needed)
+    let in_w = w as usize;
+    let in_h = h as usize;
+    let ow = out_w as usize;
+    let oh = out_h as usize;
+    let mut out = vec![0u8; ow * oh * 3];
+    let x_ratio = in_w as f64 / ow as f64;
+    let y_ratio = in_h as f64 / oh as f64;
+    for oy in 0..oh {
+        for ox in 0..ow {
+            let src_y0 = (oy as f64 * y_ratio) as usize;
+            let src_y1 = ((oy + 1) as f64 * y_ratio).ceil() as usize;
+            let src_x0 = (ox as f64 * x_ratio) as usize;
+            let src_x1 = ((ox + 1) as f64 * x_ratio).ceil() as usize;
+            let mut r = 0u32;
+            let mut g = 0u32;
+            let mut b = 0u32;
+            let mut count = 0u32;
+            for sy in src_y0..src_y1.min(in_h) {
+                for sx in src_x0..src_x1.min(in_w) {
+                    let idx = (sy * in_w + sx) * 3;
+                    r += pixels[idx] as u32;
+                    g += pixels[idx + 1] as u32;
+                    b += pixels[idx + 2] as u32;
+                    count += 1;
+                }
+            }
+            let oidx = (oy * ow + ox) * 3;
+            out[oidx] = (r / count) as u8;
+            out[oidx + 1] = (g / count) as u8;
+            out[oidx + 2] = (b / count) as u8;
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -312,12 +340,31 @@ struct SummaryRow {
     src_quality: u8,
     src_sub: String,
     mean_src_ba: f64,
+    /// Recommended: lowest Q where ba_delta ≤ 0.3 (barely perceptible re-encoding loss)
+    rec_zen_q: Option<f32>,
+    rec_ba_delta: f64,
+    rec_size_ratio: f64,
+    /// Match: highest Q where ba_delta ≤ ba_tolerance AND size ≤ 1.0 + size_tolerance
     match_zen_q: Option<f32>,
     match_ba_delta: f64,
     match_size_ratio: f64,
     ci95_zen_q: Option<f32>,
     shrink_zen_q: Option<f32>,
     shrink_size_ratio: f64,
+}
+
+/// Quality ceiling for a given resize ratio.
+struct ResizeCeiling {
+    ratio: f64,
+    /// The quality above which marginal BA improvement per % size is < threshold
+    ceiling_q: Option<f32>,
+    /// BA at ceiling quality
+    ceiling_ba: f64,
+    /// Size ratio at ceiling (vs unreized source)
+    ceiling_size_ratio: f64,
+    /// BA at the next quality above ceiling (showing diminishing returns)
+    next_ba: f64,
+    next_size_ratio: f64,
 }
 
 #[derive(Clone)]
@@ -602,6 +649,9 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
             src_ba_sum / seen_images.len() as f64
         };
 
+        let mut rec_zen_q = None;
+        let mut rec_ba_delta = 0.0;
+        let mut rec_size_ratio = 0.0;
         let mut match_zen_q = None;
         let mut match_ba_delta = 0.0;
         let mut match_size_ratio = 0.0;
@@ -609,8 +659,9 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
         let mut shrink_zen_q = None;
         let mut shrink_size_ratio = 0.0;
 
-        // Match: scan from highest to lowest zen_q, matching subsampling
-        for &zq in ZEN_QUALITIES.iter().rev() {
+        // Collect (zen_q → mean_ba_delta, mean_size_ratio) for matching subsampling
+        let mut q_stats: Vec<(f32, f64, f64)> = Vec::new();
+        for &zq in &ZEN_QUALITIES {
             let matching: Vec<&&RawResult> = group
                 .iter()
                 .filter(|r| r.zen_quality == zq && r.zen_sub == *sub)
@@ -618,21 +669,12 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
             if matching.is_empty() {
                 continue;
             }
-
             let n = matching.len() as f64;
             let mean_bd = matching.iter().map(|r| r.ba_delta).sum::<f64>() / n;
             let mean_sr = matching.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+            q_stats.push((zq, mean_bd, mean_sr));
 
-            if match_zen_q.is_none()
-                && mean_bd <= args.ba_tolerance
-                && mean_sr <= 1.0 + args.size_tolerance
-            {
-                match_zen_q = Some(zq);
-                match_ba_delta = mean_bd;
-                match_size_ratio = mean_sr;
-            }
-
-            // 95% CI
+            // 95% CI (scan high→low later)
             let passing = matching
                 .iter()
                 .filter(|r| {
@@ -644,23 +686,31 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
             }
         }
 
-        // Shrink: scan from lowest to highest zen_q
-        for &zq in &ZEN_QUALITIES {
-            let matching: Vec<&&RawResult> = group
-                .iter()
-                .filter(|r| r.zen_quality == zq && r.zen_sub == *sub)
-                .collect();
-            if matching.is_empty() {
-                continue;
+        // Recommended: lowest Q where ba_delta ≤ 0.3 (barely perceptible)
+        for &(zq, bd, sr) in &q_stats {
+            if bd <= 0.3 {
+                rec_zen_q = Some(zq);
+                rec_ba_delta = bd;
+                rec_size_ratio = sr;
+                break;
             }
+        }
 
-            let n = matching.len() as f64;
-            let mean_bd = matching.iter().map(|r| r.ba_delta).sum::<f64>() / n;
-            let mean_sr = matching.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+        // Match: highest Q where ba_delta ≤ ba_tolerance AND size ≤ 1.0+tol
+        for &(zq, bd, sr) in q_stats.iter().rev() {
+            if match_zen_q.is_none() && bd <= args.ba_tolerance && sr <= 1.0 + args.size_tolerance
+            {
+                match_zen_q = Some(zq);
+                match_ba_delta = bd;
+                match_size_ratio = sr;
+            }
+        }
 
-            if mean_bd <= args.shrink_tolerance {
+        // Shrink: lowest Q where ba_delta ≤ shrink_tolerance
+        for &(zq, bd, sr) in &q_stats {
+            if bd <= args.shrink_tolerance {
                 shrink_zen_q = Some(zq);
-                shrink_size_ratio = mean_sr;
+                shrink_size_ratio = sr;
                 break;
             }
         }
@@ -670,6 +720,9 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
             src_quality: *sq,
             src_sub: sub.clone(),
             mean_src_ba,
+            rec_zen_q,
+            rec_ba_delta,
+            rec_size_ratio,
             match_zen_q,
             match_ba_delta,
             match_size_ratio,
@@ -680,6 +733,91 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
     }
 
     summary
+}
+
+/// Compute quality ceilings for each resize ratio.
+///
+/// For each ratio, finds the quality above which you're wasting bytes:
+/// the marginal BA improvement per additional % file size drops below
+/// a threshold (0.01 BA per 1% size increase).
+fn compute_resize_ceilings(results: &[RawResult]) -> Vec<ResizeCeiling> {
+    let resize_results: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio > 1.0).collect();
+    let mut ceilings = Vec::new();
+
+    for &ratio in &RESIZE_RATIOS {
+        let at_ratio: Vec<&&RawResult> = resize_results
+            .iter()
+            .filter(|r| (r.resize_ratio - ratio).abs() < 0.01)
+            .collect();
+        if at_ratio.is_empty() {
+            continue;
+        }
+
+        // Compute (zen_q, mean_ba, mean_size_ratio) sorted by quality
+        let mut q_points: Vec<(f32, f64, f64)> = Vec::new();
+        for &zq in &RESIZE_QUALITIES {
+            let at_q: Vec<&&&RawResult> =
+                at_ratio.iter().filter(|r| r.zen_quality == zq).collect();
+            if at_q.is_empty() {
+                continue;
+            }
+            let n = at_q.len() as f64;
+            let mean_ba = at_q.iter().map(|r| r.reenc_ba).sum::<f64>() / n;
+            let mean_sr = at_q.iter().map(|r| r.size_ratio).sum::<f64>() / n;
+            q_points.push((zq, mean_ba, mean_sr));
+        }
+
+        // Find ceiling: last Q where efficiency (BA improvement / % size increase) ≥ 0.01
+        // In other words: scan pairs, when the next step gives < 0.01 BA per 1% size, stop.
+        let mut ceiling_q = None;
+        let mut ceiling_ba = 0.0;
+        let mut ceiling_sr = 0.0;
+        let mut next_ba = 0.0;
+        let mut next_sr = 0.0;
+
+        for i in 0..q_points.len().saturating_sub(1) {
+            let (q_lo, ba_lo, sr_lo) = q_points[i];
+            let (_q_hi, ba_hi, sr_hi) = q_points[i + 1];
+
+            let ba_improvement = ba_lo - ba_hi; // positive = quality improved
+            let size_increase_pct = (sr_hi - sr_lo) / sr_lo * 100.0;
+
+            if size_increase_pct > 0.0 {
+                let efficiency = ba_improvement / size_increase_pct;
+                if efficiency < 0.01 {
+                    // This step is wasteful — ceiling is at q_lo
+                    ceiling_q = Some(q_lo);
+                    ceiling_ba = ba_lo;
+                    ceiling_sr = sr_lo;
+                    next_ba = ba_hi;
+                    next_sr = sr_hi;
+                    break;
+                }
+            }
+        }
+
+        // If no ceiling found (all steps are efficient), ceiling is the highest Q
+        if ceiling_q.is_none() {
+            if let Some(&(q, ba, sr)) = q_points.last() {
+                ceiling_q = Some(q);
+                ceiling_ba = ba;
+                ceiling_sr = sr;
+                next_ba = ba;
+                next_sr = sr;
+            }
+        }
+
+        ceilings.push(ResizeCeiling {
+            ratio,
+            ceiling_q,
+            ceiling_ba,
+            ceiling_size_ratio: ceiling_sr,
+            next_ba,
+            next_size_ratio: next_sr,
+        });
+    }
+
+    ceilings
 }
 
 fn print_summary(results: &[RawResult], args: &Args) {
@@ -698,41 +836,60 @@ fn print_summary(results: &[RawResult], args: &Args) {
         }
     }
 
+    // === Recommended settings (primary output) ===
     println!("\n{}", "=".repeat(90));
+    println!("\nRecommended Re-encode Settings (barely perceptible, BA delta \u{2264} 0.3):");
 
     for (enc, sub, rows) in &display_groups {
-        println!("\nSource: {} {}", enc, sub);
+        println!("\n  {} {}:", enc, sub);
         for row in rows {
-            let match_str = match row.match_zen_q {
+            let rec_str = match row.rec_zen_q {
                 Some(q) => format!(
-                    "match=zen Q{:.0} (\u{0394} {:.2}, size {:+.0}%)",
+                    "zen Q{:.0}  \u{0394}BA {:.2}  size {:+.0}%",
                     q,
-                    row.match_ba_delta,
-                    (row.match_size_ratio - 1.0) * 100.0
+                    row.rec_ba_delta,
+                    (row.rec_size_ratio - 1.0) * 100.0
                 ),
-                None => "match=NONE".to_string(),
+                None => "no Q achieves \u{0394}BA \u{2264} 0.3".to_string(),
             };
-            let shrink_str = match row.shrink_zen_q {
-                Some(q) => format!(
-                    "shrink=zen Q{:.0} (size {:+.0}%)",
-                    q,
-                    (row.shrink_size_ratio - 1.0) * 100.0
-                ),
-                None => "shrink=NONE".to_string(),
-            };
-            println!(
-                "  Q{} (BA ~{:.1}): {}  {}",
-                row.src_quality, row.mean_src_ba, match_str, shrink_str
-            );
+            println!("    Q{:2} (BA ~{:.1}) \u{2192} {}", row.src_quality, row.mean_src_ba, rec_str);
         }
     }
 
-    // Resize summary (if present)
+    // === Resize quality ceilings ===
     let resize_results: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio > 1.0).collect();
     if !resize_results.is_empty() {
-        println!("\n{}", "=".repeat(90));
-        println!("\nResize Experiments:");
+        let ceilings = compute_resize_ceilings(results);
 
+        println!("\n{}", "=".repeat(90));
+        println!("\nResize Quality Ceilings (above ceiling, bytes wasted on imperceptible gain):");
+        println!("  {:>6}  {:>10}  {:>8}  {:>12}  {}", "ratio", "ceiling Q", "BA", "size vs src", "reason");
+        println!("  {:>6}  {:>10}  {:>8}  {:>12}  {}", "-----", "---------", "------", "-----------", "------");
+
+        for c in &ceilings {
+            let q_str = c.ceiling_q.map_or("-".to_string(), |q| format!("Q{:.0}", q));
+            let reason = if (c.next_ba - c.ceiling_ba).abs() < 0.001 {
+                "highest tested".to_string()
+            } else {
+                let ba_gain = c.ceiling_ba - c.next_ba;
+                let size_cost = (c.next_size_ratio - c.ceiling_size_ratio) / c.ceiling_size_ratio * 100.0;
+                format!(
+                    "next step: {:.2} BA for +{:.0}% size",
+                    ba_gain, size_cost
+                )
+            };
+            println!(
+                "  {:>5.1}x  {:>10}  {:>6.2}  {:>10.0}%  {}",
+                c.ratio,
+                q_str,
+                c.ceiling_ba,
+                c.ceiling_size_ratio * 100.0,
+                reason
+            );
+        }
+
+        // Also show the full R-D curve per ratio for context
+        println!("\n  Full R-D curves:");
         for &ratio in &RESIZE_RATIOS {
             let at_ratio: Vec<&&RawResult> = resize_results
                 .iter()
@@ -761,6 +918,37 @@ fn print_summary(results: &[RawResult], args: &Args) {
                     mean_sr * 100.0
                 );
             }
+        }
+    }
+
+    // === Detailed match/shrink (secondary) ===
+    println!("\n{}", "=".repeat(90));
+    println!("\nDetailed Match/Shrink Analysis:");
+
+    for (enc, sub, rows) in &display_groups {
+        println!("\n  {} {}:", enc, sub);
+        for row in rows {
+            let match_str = match row.match_zen_q {
+                Some(q) => format!(
+                    "match=Q{:.0} (\u{0394}{:.2}, {:+.0}%)",
+                    q,
+                    row.match_ba_delta,
+                    (row.match_size_ratio - 1.0) * 100.0
+                ),
+                None => "match=NONE".to_string(),
+            };
+            let shrink_str = match row.shrink_zen_q {
+                Some(q) => format!(
+                    "shrink=Q{:.0} ({:+.0}%)",
+                    q,
+                    (row.shrink_size_ratio - 1.0) * 100.0
+                ),
+                None => "shrink=NONE".to_string(),
+            };
+            println!(
+                "    Q{:2} (BA ~{:.1}): {}  {}",
+                row.src_quality, row.mean_src_ba, match_str, shrink_str
+            );
         }
     }
 }
@@ -827,6 +1015,7 @@ fn write_summary_csv(path: &Path, summary: &[SummaryRow]) {
     writeln!(
         f,
         "src_encoder,src_quality,src_sub,mean_src_ba,\
+         rec_zen_q,rec_ba_delta,rec_size_ratio,\
          match_zen_q,match_mean_ba_delta,match_mean_size_ratio,\
          ci95_zen_q,shrink_zen_q,shrink_mean_size_ratio"
     )
@@ -834,11 +1023,14 @@ fn write_summary_csv(path: &Path, summary: &[SummaryRow]) {
     for r in summary {
         writeln!(
             f,
-            "{},{},{},{:.4},{},{:.4},{:.4},{},{},{:.4}",
+            "{},{},{},{:.4},{},{:.4},{:.4},{},{:.4},{:.4},{},{},{:.4}",
             r.src_encoder,
             r.src_quality,
             r.src_sub,
             r.mean_src_ba,
+            r.rec_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.rec_ba_delta,
+            r.rec_size_ratio,
             r.match_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
             r.match_ba_delta,
             r.match_size_ratio,
