@@ -275,6 +275,17 @@ impl From<crate::encode::encoder_types::ChromaSubsampling> for Subsampling {
     }
 }
 
+impl From<Subsampling> for crate::encode::encoder_types::ChromaSubsampling {
+    fn from(s: Subsampling) -> Self {
+        match s {
+            Subsampling::S444 => Self::None,
+            Subsampling::S422 => Self::HalfHorizontal,
+            Subsampling::S420 => Self::Quarter,
+            Subsampling::S440 => Self::HalfVertical,
+        }
+    }
+}
+
 impl From<crate::encode::encoder_types::PixelLayout> for PixelFormat {
     fn from(layout: crate::encode::encoder_types::PixelLayout) -> Self {
         use crate::encode::encoder_types::PixelLayout;
