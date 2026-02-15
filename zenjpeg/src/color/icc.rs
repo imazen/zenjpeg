@@ -99,14 +99,19 @@ pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
 
 /// Check if an ICC profile is an XYB profile from jpegli/JPEG XL.
 pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
-    // XYB profiles from jpegli/libjxl have "jxl " as the CMM type (bytes 4-7)
-    // The description "XYB_Per" is stored as UTF-16BE which we could also check
-    if icc_data.len() >= 8 && &icc_data[4..8] == b"jxl " {
+    // Fast path: exact match against the known XYB ICC profile (720 bytes).
+    // This is the profile embedded by zenjpeg and jpegli for XYB-encoded JPEGs.
+    use crate::foundation::consts::XYB_ICC_PROFILE;
+    if icc_data == XYB_ICC_PROFILE {
         return true;
     }
 
-    // Fallback: check for "XYB" in profile (ASCII or UTF-16BE)
-    // UTF-16BE would be "\0X\0Y\0B" = [0, 88, 0, 89, 0, 66]
+    // Fallback: check for "XYB" in profile description (ASCII or UTF-16BE).
+    // XYB profiles have "XYB_Per" as description text.
+    //
+    // NOTE: The "jxl " CMM type (bytes 4-7) is NOT sufficient — cjpegli writes
+    // "jxl " for ALL ICC profiles (including standard sRGB), not just XYB ones.
+    // We must check for the XYB description text to avoid false positives.
     const XYB_UTF16BE: [u8; 6] = [0, b'X', 0, b'Y', 0, b'B'];
     icc_data
         .windows(XYB_PROFILE_MARKER.len())
