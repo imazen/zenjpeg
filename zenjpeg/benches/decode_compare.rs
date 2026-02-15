@@ -147,7 +147,15 @@ fn create_test_jpeg_with_subsampling(
         }
     }
 
-    let config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
+    let mut config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
+    if progressive {
+        // Disable restart markers for progressive JPEGs in benchmarks.
+        // zune-jpeg 0.5.12 has a bug where it silently skips AC refinement
+        // scans when restart markers are present, producing incorrect output
+        // (max_diff=224, 99.4% of pixels wrong). Without DRI, zune produces
+        // correct output matching zenjpeg and cjpegli byte-for-byte.
+        config = config.restart_mcu_rows(0);
+    }
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation should succeed");

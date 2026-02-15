@@ -19,7 +19,7 @@ use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;
 
-fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
+fn create_test_jpeg(width: u32, height: u32, progressive: bool, no_dri: bool) -> Vec<u8> {
     // Deterministic noise+patches pattern matching decode_compare benchmark.
     // 4 block types: textured, gradient, sharp edges, high-frequency noise.
     let mut data = vec![0u8; (width * height * 3) as usize];
@@ -65,7 +65,10 @@ fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
             }
         }
     }
-    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
+    let mut config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
+    if no_dri {
+        config = config.restart_mcu_rows(0);
+    }
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -112,26 +115,101 @@ fn main() {
         std::fs::read(arg2).expect("failed to read JPEG file")
     } else {
         let size: u32 = arg2.parse().unwrap_or(512);
-        let progressive = args.get(3).map(|s| s.starts_with("prog")).unwrap_or(false);
+        let extra: Vec<&str> = args.iter().skip(3).map(|s| s.as_str()).collect();
+        let progressive = extra.iter().any(|s| s.starts_with("prog"));
+        let no_dri = extra.iter().any(|s| *s == "nodri");
         eprintln!(
-            "Creating {}x{} {} test JPEG...",
+            "Creating {}x{} {}{} test JPEG...",
             size,
             size,
-            if progressive {
-                "progressive"
-            } else {
-                "baseline"
-            }
+            if progressive { "progressive" } else { "baseline" },
+            if no_dri { " (no DRI)" } else { "" }
         );
-        create_test_jpeg(size, size, progressive)
+        create_test_jpeg(size, size, progressive, no_dri)
     };
     eprintln!("JPEG size: {} bytes", jpeg_data.len());
 
     // save mode: write JPEG to /tmp and exit (for creating test data)
     if decoder_type == "save" {
-        let path = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/test.jpg");
+        let path = args.iter().skip(3).find(|s| s.ends_with(".jpg") || s.ends_with(".jpeg"))
+            .map(|s| s.as_str())
+            .unwrap_or("/tmp/test.jpg");
         std::fs::write(path, &jpeg_data).unwrap();
         eprintln!("Saved to {}", path);
+        return;
+    }
+
+    // compare mode: decode two files and compare pixel output
+    if decoder_type == "compare" {
+        let file_a = args.get(2).expect("need two file paths");
+        let file_b = args.get(3).expect("need two file paths");
+        let decoder_name = args.get(4).map(|s| s.as_str()).unwrap_or("zune");
+        let data_a = std::fs::read(file_a).unwrap();
+        let data_b = std::fs::read(file_b).unwrap();
+        let (out_a, out_b) = match decoder_name {
+            "zune" => {
+                let opts = DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB);
+                let opts2 = DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB);
+                let mut da = JpegDecoder::new_with_options(ZCursor::new(&data_a), opts);
+                let mut db = JpegDecoder::new_with_options(ZCursor::new(&data_b), opts2);
+                (da.decode().unwrap(), db.decode().unwrap())
+            }
+            "jpegli" => {
+                let dec = Decoder::new().output_format(PixelFormat::Rgb);
+                let ra = dec.decode(&data_a, Unstoppable).unwrap();
+                let rb = dec.decode(&data_b, Unstoppable).unwrap();
+                (ra.pixels_u8().unwrap().to_vec(), rb.pixels_u8().unwrap().to_vec())
+            }
+            _ => panic!("unknown decoder"),
+        };
+        eprintln!("A: {} bytes, B: {} bytes", out_a.len(), out_b.len());
+        if out_a == out_b {
+            eprintln!("IDENTICAL output");
+        } else {
+            let mut max_diff: u8 = 0;
+            let mut diff_count = 0u64;
+            let mut sum_abs: u64 = 0;
+            for (a, b) in out_a.iter().zip(out_b.iter()) {
+                let d = (*a as i16 - *b as i16).unsigned_abs() as u8;
+                if d > 0 { diff_count += 1; }
+                if d > max_diff { max_diff = d; }
+                sum_abs += d as u64;
+            }
+            eprintln!("DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
+                max_diff, diff_count, out_a.len(),
+                diff_count as f64 * 100.0 / out_a.len() as f64,
+                sum_abs as f64 / out_a.len() as f64);
+        }
+        return;
+    }
+
+    // cross-decoder comparison: compare zune vs jpegli output for same file
+    if decoder_type == "crosscheck" {
+        let file = args.get(2).expect("need file path");
+        let data = std::fs::read(file).unwrap();
+        let zune_opts = DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB);
+        let mut zune_dec = JpegDecoder::new_with_options(ZCursor::new(&data), zune_opts);
+        let zune_out = zune_dec.decode().unwrap();
+        let dec = Decoder::new().output_format(PixelFormat::Rgb);
+        let jpegli_out = dec.decode(&data, Unstoppable).unwrap().pixels_u8().unwrap().to_vec();
+        eprintln!("zune: {} bytes, jpegli: {} bytes", zune_out.len(), jpegli_out.len());
+        if zune_out == jpegli_out {
+            eprintln!("IDENTICAL output between zune and jpegli");
+        } else {
+            let mut max_diff: u8 = 0;
+            let mut diff_count = 0u64;
+            let mut sum_abs: u64 = 0;
+            for (a, b) in zune_out.iter().zip(jpegli_out.iter()) {
+                let d = (*a as i16 - *b as i16).unsigned_abs() as u8;
+                if d > 0 { diff_count += 1; }
+                if d > max_diff { max_diff = d; }
+                sum_abs += d as u64;
+            }
+            eprintln!("DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
+                max_diff, diff_count, zune_out.len(),
+                diff_count as f64 * 100.0 / zune_out.len() as f64,
+                sum_abs as f64 / zune_out.len() as f64);
+        }
         return;
     }
 
