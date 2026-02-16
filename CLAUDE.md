@@ -363,39 +363,40 @@ Run: `just wasm-bench`. See `docs/TUNING_HISTORY.md` for full benchmark tables a
 All benchmarks use noise+patches test patterns (not gradients). Noise+patches
 produce realistic DCT coefficient distributions; gradients are degenerate.
 
-**Wall-clock baseline 4:2:0 (sequential, commit 780427c):**
+**Wall-clock baseline 4:2:0 (sequential, streaming default, commit 39f012f):**
 
-| Size | mozjpeg | zune | zen-fast | cjpegli | zen-scanline | zen/moz | zen/zune |
-|------|---------|------|----------|---------|-------------|---------|----------|
-| 256 | 255µs | 257µs | 223µs | 354µs | 229µs | **0.87x** | **0.87x** |
-| 512 | 842µs | 1.04ms | 969µs | 1.48ms | 1.00ms | 1.15x | **0.93x** |
-| 1024 | 3.55ms | 4.11ms | 3.81ms | 5.93ms | 3.97ms | 1.07x | **0.93x** |
-| 2048 | 13.9ms | 16.8ms | 15.9ms | 25.1ms | 16.0ms | 1.14x | **0.94x** |
-| 4096 | 86.3ms | 68.5ms | 99.9ms | 97.3ms | 65.3ms | 1.16x | 1.46x |
+| Size | zune | zenjpeg | zen-fast | cjpegli | zen/zune |
+|------|------|---------|----------|---------|----------|
+| 256 | 266µs | 236µs | 214µs | 374µs | **0.89x** |
+| 512 | 1.05ms | 976µs | 915µs | 1.50ms | **0.93x** |
+| 1024 | 4.08ms | 3.89ms | 3.68ms | 6.17ms | **0.95x** |
+| 2048 | 17.7ms | 15.8ms | 15.2ms | 25.4ms | **0.90x** |
+| 4096 | 71.7ms | 63.8ms | 60.0ms | 101ms | **0.89x** |
 
-zen-fast = `fancy_upsampling(false)` (box filter). zen-scanline = streaming reader.
-At 4096, the buffered 2-pass architecture hurts; scanline reader (65ms) beats buffered (100ms).
-mozjpeg = libjpeg-turbo with NASM SIMD (C). At 256-1024 zenjpeg beats mozjpeg.
+zen-fast = `fancy_upsampling(false)` (box filter). All baseline 4:2:0 now uses
+streaming single-pass decode (entropy → IDCT → color convert → output, no coefficient
+storage). At 4096, streaming beats old buffered path by 40% (was 100ms, now 60ms).
+zenjpeg beats zune at ALL sizes (0.89-0.95x).
 
-**Wall-clock baseline 4:4:4 (sequential):**
+**Wall-clock baseline 4:4:4 (sequential, streaming):**
 
-| Size | zune | zenjpeg | cjpegli | zen-scanline | zen/zune |
-|------|------|---------|---------|-------------|----------|
-| 512 | 1.28ms | 1.15ms | 1.92ms | 1.19ms | **0.90x** |
-| 1024 | 5.20ms | 4.68ms | 8.07ms | 4.57ms | **0.90x** |
-| 2048 | 21.5ms | 19.2ms | 32.3ms | 19.0ms | **0.89x** |
+| Size | zune | zenjpeg | cjpegli | zen/zune |
+|------|------|---------|---------|----------|
+| 512 | 1.30ms | 1.14ms | 1.95ms | **0.88x** |
+| 1024 | 5.15ms | 4.48ms | 7.64ms | **0.87x** |
+| 2048 | 21.3ms | 18.6ms | 31.9ms | **0.87x** |
 
 **Wall-clock progressive — noise+patches, NO DRI (sequential):**
 
 | Size | zune | zenjpeg | cjpegli | zen/zune | zen/cjpegli |
 |------|------|---------|---------|----------|-------------|
-| 256 | 873µs | 495µs | 980µs | **0.57x** | **0.51x** |
-| 512 | 3.47ms | 1.88ms | 3.83ms | **0.54x** | **0.49x** |
-| 1024 | 13.4ms | 7.47ms | 15.2ms | **0.56x** | **0.49x** |
-| 2048 | 56.1ms | 30.8ms | 62.4ms | **0.55x** | **0.49x** |
-| 4096 | 245ms | 161ms | 279ms | **0.66x** | **0.58x** |
+| 256 | 933µs | 514µs | 1.01ms | **0.55x** | **0.51x** |
+| 512 | 3.51ms | 1.92ms | 3.92ms | **0.55x** | **0.49x** |
+| 1024 | 14.3ms | 7.72ms | 15.9ms | **0.54x** | **0.49x** |
+| 2048 | 57.8ms | 31.7ms | 61.9ms | **0.55x** | **0.51x** |
+| 4096 | 254ms | 163ms | 283ms | **0.64x** | **0.58x** |
 
-zenjpeg is **1.5-1.9x faster** than zune and **~2x faster** than cjpegli on progressive.
+zenjpeg is **1.6-1.9x faster** than zune and **~2x faster** than cjpegli on progressive.
 zune-jpeg 0.5.12 has a bug where it silently skips AC refinement with DRI, so progressive
 benchmarks use NO DRI. Without DRI, zune produces correct output.
 
@@ -421,6 +422,12 @@ zenjpeg 415M Ir vs zune 580M Ir = zenjpeg is 28% fewer instructions when both co
 12. Split AC refine inner loop into separate ZRL and NEW_NZ code paths. Eliminates
     per-iteration `size == 0` check, Option<i16> wrapping, redundant termination
     checks. -6.1% AC refine instructions, -3% wall-clock.
+13. Streaming single-pass decode for ALL baseline subsampling modes (4:4:4, 4:2:0,
+    4:2:2). Eliminates coefficient storage (~100MB for 4096×4096 4:2:0) and the
+    separate output pass. Entropy → IDCT → color convert → output in one MCU-row
+    pass. Fancy h2v2 uses double-buffered chroma strips with 1-row lag for vertical
+    context. 40% faster at 4096 (100ms → 60ms). `num_threads()` API for opt-in
+    parallel control (0=auto, 1=sequential).
 
 **Fast mode** (`fancy_upsampling(false)`): Uses box-filter upsampling fused with
 color conversion instead of bilinear. 5-10% faster, minimal quality difference.
@@ -525,16 +532,15 @@ Run: `cargo test --release -p zenjpeg --test dequant_bias_comparison --features 
 
 ### Remaining Bottlenecks
 
-**Buffered decoder gap at 4096** (baseline-fast vs zune at 4096: 100ms vs 69ms = 1.46x):
-- Two-pass architecture (store all coefficients → separate output pass) causes
-  extra cache misses at large sizes. At 2048 and below, competitive (0.94x vs zune).
-- Scanline decoder avoids this entirely: 65ms at 4096 (beats zune's 69ms).
-- With parallel: 42ms at 4096 (2.3x speedup, beats all sequential decoders).
+**Baseline: RESOLVED** — Streaming decode eliminates the 2-pass bottleneck.
+zenjpeg beats zune at all sizes (0.87-0.95x). Old buffered 4096 gap (1.46x vs zune)
+is eliminated — now 0.89x. Progressive images still use coefficient storage (required
+for multi-scan refinement) but zenjpeg already wins 1.6-1.9x vs zune there.
 
-**Progressive: zenjpeg WINS 1.5-1.8x vs zune** (noise+patches, correct output):
+**Progressive: zenjpeg WINS 1.6-1.9x vs zune** (noise+patches, correct output):
 - zune-jpeg 0.5.12 silently skips AC refinement with DRI (corrupt output, max_diff=224).
   Progressive benchmarks use NO DRI. Without DRI, zune produces correct output.
-- Wall-clock at 2048: zenjpeg 31ms vs zune 56ms vs cjpegli 62ms
+- Wall-clock at 2048: zenjpeg 32ms vs zune 58ms vs cjpegli 62ms
 - Callgrind: zenjpeg 415M Ir vs zune 580M Ir = 28% fewer instructions
 
 ### Decoder Strictness Levels (2026-02-15)
