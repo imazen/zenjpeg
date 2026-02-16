@@ -464,5 +464,77 @@ fn bench_decode_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark different parallel strategies at large sizes where grouping matters.
+///
+/// Compares PerSegment (stride=1), Grouped{2}, Grouped{1}, and Auto to measure
+/// cache locality impact from different segment-to-task mapping strategies.
+#[cfg(all(feature = "decoder", feature = "parallel"))]
+fn bench_parallel_strategies(c: &mut Criterion) {
+    use zenjpeg::decode::{Decoder, ParallelStrategy};
+    use zenjpeg::decoder::PixelFormat;
+
+    let mut group = c.benchmark_group("parallel_strategy");
+
+    for (width, height) in [(2048, 2048), (4096, 4096)] {
+        let jpeg = create_test_jpeg(width, height, 85.0, false);
+        let pixels = (width * height) as u64;
+        group.throughput(Throughput::Elements(pixels));
+
+        let strategies: &[(&str, ParallelStrategy)] = &[
+            ("per-segment", ParallelStrategy::PerSegment),
+            (
+                "grouped-2x",
+                ParallelStrategy::Grouped {
+                    groups_per_thread: 2,
+                },
+            ),
+            (
+                "grouped-1x",
+                ParallelStrategy::Grouped {
+                    groups_per_thread: 1,
+                },
+            ),
+            ("auto", ParallelStrategy::Auto),
+        ];
+
+        for (name, strategy) in strategies {
+            group.bench_with_input(
+                BenchmarkId::new(format!("zenjpeg-{name}"), format!("{width}x{height}")),
+                &jpeg,
+                |b, data| {
+                    b.iter(|| {
+                        Decoder::new()
+                            .output_format(PixelFormat::Rgb)
+                            .parallel_strategy(*strategy)
+                            .decode(black_box(data), Unstoppable)
+                            .expect("decode failed")
+                    });
+                },
+            );
+        }
+
+        // Also bench fast mode (box filter) with Auto for comparison
+        group.bench_with_input(
+            BenchmarkId::new("zenjpeg-auto-fast", format!("{width}x{height}")),
+            &jpeg,
+            |b, data| {
+                b.iter(|| {
+                    Decoder::new()
+                        .output_format(PixelFormat::Rgb)
+                        .parallel_strategy(ParallelStrategy::Auto)
+                        .fancy_upsampling(false)
+                        .decode(black_box(data), Unstoppable)
+                        .expect("decode failed")
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(all(feature = "decoder", feature = "parallel"))]
+criterion_group!(benches, bench_decode_comparison, bench_parallel_strategies);
+#[cfg(not(all(feature = "decoder", feature = "parallel")))]
 criterion_group!(benches, bench_decode_comparison);
 criterion_main!(benches);
