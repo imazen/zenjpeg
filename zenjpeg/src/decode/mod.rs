@@ -661,10 +661,130 @@ impl DecodeConfig {
         let scan_data = parser.into_scan_data(is_grayscale)?;
         let width = scan_data.width;
         let height = scan_data.height;
+
+        // Try wave-parallel mode for baseline 4:2:0 + box filter with DRI
+        #[cfg(feature = "parallel")]
+        if self.num_threads != 1 && !is_grayscale {
+            if let Some(reader) = self.try_wave_parallel(&scan_data, mcu_height)? {
+                return Ok(reader);
+            }
+        }
+
         let mut reader =
             ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
         Ok(reader)
+    }
+
+    /// Try to create a wave-parallel scanline reader.
+    ///
+    /// Returns `Ok(Some(reader))` if wave parallel is eligible and activated,
+    /// `Ok(None)` to fall through to the sequential streaming path.
+    ///
+    /// Eligibility: baseline 4:2:0, box filter, MCU-row-aligned DRI, enough segments.
+    #[cfg(feature = "parallel")]
+    fn try_wave_parallel<'a>(
+        &self,
+        scan_data: &parser::ParsedScanData<'a>,
+        mcu_height: usize,
+    ) -> Result<Option<ScanlineReader<'a>>> {
+        use fused_parallel::{build_huffman_tables_from_scan_data, WaveParallelState};
+        use rst_scan::{compute_segments, scan_rst_markers};
+
+        // Only box filter 4:2:0 for now
+        if !matches!(
+            self.chroma_upsampling,
+            ChromaUpsampling::NearestNeighbor
+        ) {
+            return Ok(None);
+        }
+
+        let num_comps = scan_data.num_components as usize;
+        if num_comps != 3 {
+            return Ok(None);
+        }
+
+        // Check subsampling is 4:2:0
+        let max_h = scan_data.h_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let is_subsampled = num_comps == 3
+            && (scan_data.h_samp[1] != scan_data.h_samp[0]
+                || scan_data.v_samp[1] != scan_data.v_samp[0]);
+        if !is_subsampled {
+            return Ok(None);
+        }
+
+        let ri = scan_data.restart_interval as usize;
+        if ri == 0 {
+            return Ok(None);
+        }
+
+        let mcu_width = max_h * 8;
+        let mcu_cols = (scan_data.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (scan_data.height as usize + mcu_height - 1) / mcu_height;
+        let total_mcus = mcu_cols * mcu_rows;
+
+        // MCU-row alignment check
+        if ri % mcu_cols != 0 {
+            return Ok(None);
+        }
+
+        if total_mcus < 1024 {
+            return Ok(None);
+        }
+
+        // Scan for RST markers
+        let expected_markers = total_mcus / ri;
+        let entropy_data = &scan_data.data[scan_data.scan_data_start..];
+        let rst_result = scan_rst_markers(entropy_data, expected_markers);
+
+        if rst_result.markers.is_empty() {
+            return Ok(None);
+        }
+
+        let (seg_starts, seg_ends) =
+            compute_segments(&rst_result.markers, rst_result.entropy_end);
+        let num_segments = seg_starts.len();
+
+        if num_segments < 4 {
+            return Ok(None);
+        }
+
+        // Build scan_comps from table_mapping
+        let scan_comps: Vec<(usize, u8, u8)> = (0..num_comps)
+            .map(|i| {
+                let (dc, ac) = scan_data.table_mapping[i];
+                (i, dc as u8, ac as u8)
+            })
+            .collect();
+
+        // Build Huffman tables
+        let (dc_tables, ac_tables) =
+            build_huffman_tables_from_scan_data(scan_data, &scan_comps);
+
+        // Determine wave size: 2x oversubscription for load balancing
+        let num_threads = rayon::current_num_threads();
+        let wave_size = (num_threads * 2).max(4).min(num_segments);
+
+        let wave_state = WaveParallelState::new(
+            scan_data,
+            seg_starts,
+            seg_ends,
+            scan_comps,
+            dc_tables,
+            ac_tables,
+            self.strictness,
+            wave_size,
+        );
+
+        let width = scan_data.width;
+        let height = scan_data.height;
+        let mut reader = ScanlineReader::new_wave_parallel(scan_data.data, wave_state);
+        self.apply_crop(&mut reader, width, height, mcu_height)?;
+        Ok(Some(reader))
     }
 
     /// Creates a scanline reader that applies a DCT-domain transform.
