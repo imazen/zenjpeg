@@ -35,8 +35,8 @@ mod fused_parallel;
 mod image;
 mod parser;
 mod pipeline;
-pub(crate) mod rst_scan;
 mod row_slice;
+pub(crate) mod rst_scan;
 mod scanline;
 mod upsample;
 

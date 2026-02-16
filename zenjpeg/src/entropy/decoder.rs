@@ -1841,8 +1841,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                         let c = block[j];
                                         let sign = (c >> 15) | 1;
                                         let not_set = ((c & bit_val) == 0) as i16;
-                                        block[j] =
-                                            c.wrapping_add(bit * not_set * sign * bit_val);
+                                        block[j] = c.wrapping_add(bit * not_set * sign * bit_val);
                                         nz_remaining &= nz_remaining - 1;
                                     }
                                 } else {
@@ -1852,9 +1851,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                         let c = block[j];
                                         let sign = (c >> 15) | 1;
                                         let not_set = ((c & bit_val) == 0) as i16;
-                                        block[j] = c.wrapping_add(
-                                            (bit as i16) * not_set * sign * bit_val,
-                                        );
+                                        block[j] =
+                                            c.wrapping_add((bit as i16) * not_set * sign * bit_val);
                                         nz_remaining &= nz_remaining - 1;
                                     }
                                 }
@@ -1886,8 +1884,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             let c = block[k];
                             let sign = (c >> 15) | 1;
                             let not_set = ((c & bit_val) == 0) as i16;
-                            block[k] =
-                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            block[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
                             nz_remaining &= nz_remaining - 1;
                             k += 1;
                         }
@@ -1916,8 +1913,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             let c = block[k];
                             let sign = (c >> 15) | 1;
                             let not_set = ((c & bit_val) == 0) as i16;
-                            block[k] =
-                                c.wrapping_add((bit as i16) * not_set * sign * bit_val);
+                            block[k] = c.wrapping_add((bit as i16) * not_set * sign * bit_val);
                             nz_remaining &= nz_remaining - 1;
                             k += 1;
                         }
