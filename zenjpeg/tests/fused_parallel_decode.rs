@@ -478,3 +478,166 @@ fn test_hashlock_multisize_444() {
         assert_pixels_equal(&fused, &sequential, &format!("4:4:4 {w}x{h}"));
     }
 }
+
+// ============================================================================
+// Wave parallel scanline reader tests
+//
+// Verify that the wave-parallel scanline reader produces identical output
+// to the sequential scanline reader for 4:2:0 + NearestNeighbor (box filter).
+// ============================================================================
+
+/// Decode via wave-parallel scanline reader (multi-threaded).
+fn decode_wave_scanline(jpeg: &[u8]) -> Vec<u8> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false) // box filter = NearestNeighbor
+            .scanline_reader(jpeg)
+            .expect("wave scanline_reader failed");
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let mut pixels = vec![0u8; width * height * 3];
+        let mut rows_read = 0;
+        while rows_read < height {
+            let remaining = height - rows_read;
+            let slice = &mut pixels[rows_read * width * 3..];
+            let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
+            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
+            rows_read += count;
+        }
+        assert!(reader.is_finished(), "reader should be finished");
+        pixels
+    })
+}
+
+/// Decode via sequential scanline reader (single-threaded).
+fn decode_sequential_scanline(jpeg: &[u8]) -> Vec<u8> {
+    let mut reader = Decoder::new()
+        .fancy_upsampling(false)
+        .num_threads(1)
+        .scanline_reader(jpeg)
+        .expect("sequential scanline_reader failed");
+    let width = reader.width() as usize;
+    let height = reader.height() as usize;
+    let mut pixels = vec![0u8; width * height * 3];
+    let mut rows_read = 0;
+    while rows_read < height {
+        let remaining = height - rows_read;
+        let slice = &mut pixels[rows_read * width * 3..];
+        let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
+        let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+        assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
+        rows_read += count;
+    }
+    pixels
+}
+
+#[test]
+fn test_wave_parallel_512x512() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 512x512 DRI=1");
+}
+
+#[test]
+fn test_wave_parallel_1024x768() {
+    let (w, h) = (1024, 768);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 1024x768 DRI=1");
+}
+
+#[test]
+fn test_wave_parallel_2048x2048() {
+    let (w, h) = (2048, 2048);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 2048x2048 DRI=4");
+}
+
+#[test]
+fn test_wave_parallel_non_aligned() {
+    // Non-MCU-aligned: 513 = 32*16 + 1
+    for (w, h) in [(513, 513), (1000, 1000), (300, 300)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+        let wave = decode_wave_scanline(&jpeg);
+        let sequential = decode_sequential_scanline(&jpeg);
+
+        assert_pixels_equal(
+            &wave,
+            &sequential,
+            &format!("wave 4:2:0 box {w}x{h} non-aligned"),
+        );
+    }
+}
+
+#[test]
+fn test_wave_parallel_dri4() {
+    for (w, h) in [(512, 512), (1024, 1024)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+        let wave = decode_wave_scanline(&jpeg);
+        let sequential = decode_sequential_scanline(&jpeg);
+
+        assert_pixels_equal(
+            &wave,
+            &sequential,
+            &format!("wave 4:2:0 box DRI=4 {w}x{h}"),
+        );
+    }
+}
+
+#[test]
+fn test_wave_parallel_small_chunks() {
+    // Test reading just 1 row at a time to exercise wave buffer refill
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    let wave = pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false)
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let mut all_pixels = vec![0u8; width * height * 3];
+        let mut rows_read = 0;
+        while rows_read < height {
+            // Read exactly 1 row at a time
+            let slice = &mut all_pixels[rows_read * width * 3..];
+            let output = imgref::ImgRefMut::new(slice, width * 3, 1);
+            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            assert_eq!(count, 1);
+            rows_read += 1;
+        }
+        all_pixels
+    });
+
+    let sequential = decode_sequential_scanline(&jpeg);
+    assert_pixels_equal(&wave, &sequential, "wave 1-row-at-a-time 512x512");
+}
