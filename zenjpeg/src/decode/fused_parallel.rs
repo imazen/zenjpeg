@@ -1927,3 +1927,455 @@ impl<'a> JpegParser<'a> {
         ))
     }
 }
+
+// ── Wave-based parallel decode state ─────────────────────────────────────────
+
+/// State for wave-based parallel scanline decode.
+///
+/// Captures everything needed to decode arbitrary restart segments on demand,
+/// outliving the `JpegParser`. The scanline reader holds this and decodes
+/// `wave_size` segments at a time into a reusable buffer, serving rows from
+/// it, then recycling the buffer for the next wave.
+///
+/// **Prototype scope**: Box filter 4:2:0 path only.
+pub(super) struct WaveParallelState {
+    /// Byte offset where scan data begins in the JPEG data.
+    pub scan_data_start: usize,
+    /// Per-segment byte offsets (relative to scan_data_start).
+    pub seg_starts: Vec<usize>,
+    pub seg_ends: Vec<usize>,
+
+    // Owned Huffman tables
+    pub dc_tables: Vec<Option<HuffmanDecodeTable>>,
+    pub ac_tables: Vec<Option<HuffmanDecodeTable>>,
+
+    // Per-component quant tables (indexed by component, not table slot)
+    pub quant_tables: Vec<[u16; DCT_BLOCK_SIZE]>,
+
+    // Scan component mapping: (comp_idx, dc_table_idx, ac_table_idx)
+    pub scan_comps: Vec<(usize, u8, u8)>,
+
+    // Dimensions
+    pub width: usize,
+    pub height: usize,
+    pub mcu_cols: usize,
+    pub mcu_rows: usize,
+    pub ri: usize,
+    pub max_h_samp: usize,
+    pub max_v_samp: usize,
+
+    // Per-component sampling
+    pub comp_h_samps: Vec<usize>,
+    pub comp_v_samps: Vec<usize>,
+    pub actual_blocks_h: Vec<usize>,
+    pub actual_blocks_v: Vec<usize>,
+
+    // Config
+    pub lenient: bool,
+    pub permissive_rst: bool,
+    pub strict: bool,
+
+    // Wave parameters
+    pub wave_size: usize,
+    pub num_segments: usize,
+    pub mcu_rows_per_ri: usize,
+    pub mcu_pixel_height: usize,
+    pub pixel_rows_per_seg: usize,
+}
+
+impl WaveParallelState {
+    /// Create wave state from parsed scan data and RST scan results.
+    ///
+    /// `scan_comps` is the (comp_idx, dc_table, ac_table) mapping from the SOS header.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        scan_data: &super::parser::ParsedScanData<'_>,
+        seg_starts: Vec<usize>,
+        seg_ends: Vec<usize>,
+        scan_comps: Vec<(usize, u8, u8)>,
+        dc_tables: Vec<Option<HuffmanDecodeTable>>,
+        ac_tables: Vec<Option<HuffmanDecodeTable>>,
+        strictness: super::Strictness,
+        wave_size: usize,
+    ) -> Self {
+        let width = scan_data.width as usize;
+        let height = scan_data.height as usize;
+        let num_comps = scan_data.num_components as usize;
+
+        let max_h_samp = scan_data.h_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let max_v_samp = scan_data.v_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+
+        let mcu_width = max_h_samp * 8;
+        let mcu_height = max_v_samp * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+        let ri = scan_data.restart_interval as usize;
+        let mcu_rows_per_ri = ri / mcu_cols;
+        let pixel_rows_per_seg = mcu_rows_per_ri * mcu_height;
+
+        // Build per-component quant tables (owned copies)
+        let quant_tables: Vec<[u16; DCT_BLOCK_SIZE]> = (0..num_comps)
+            .map(|ci| {
+                let qt_idx = scan_data.quant_indices[ci];
+                scan_data.quant_tables[qt_idx].unwrap()
+            })
+            .collect();
+
+        // Per-component sampling factors
+        let comp_h_samps: Vec<usize> = (0..num_comps)
+            .map(|ci| scan_data.h_samp[ci] as usize)
+            .collect();
+        let comp_v_samps: Vec<usize> = (0..num_comps)
+            .map(|ci| scan_data.v_samp[ci] as usize)
+            .collect();
+
+        // Actual block counts for padding detection
+        let actual_blocks_h: Vec<usize> = (0..num_comps)
+            .map(|ci| {
+                let h = scan_data.h_samp[ci] as usize;
+                let comp_w = (width * h + max_h_samp - 1) / max_h_samp;
+                (comp_w + 7) / 8
+            })
+            .collect();
+        let actual_blocks_v: Vec<usize> = (0..num_comps)
+            .map(|ci| {
+                let v = scan_data.v_samp[ci] as usize;
+                let comp_h = (height * v + max_v_samp - 1) / max_v_samp;
+                (comp_h + 7) / 8
+            })
+            .collect();
+
+        let lenient = matches!(
+            strictness,
+            super::Strictness::Lenient | super::Strictness::Permissive
+        );
+        let permissive_rst = strictness == super::Strictness::Permissive;
+        let strict = strictness == super::Strictness::Strict;
+
+        let num_segments = seg_starts.len();
+
+        WaveParallelState {
+            scan_data_start: scan_data.scan_data_start,
+            seg_starts,
+            seg_ends,
+            dc_tables,
+            ac_tables,
+            quant_tables,
+            scan_comps,
+            width,
+            height,
+            mcu_cols,
+            mcu_rows,
+            ri,
+            max_h_samp,
+            max_v_samp,
+            comp_h_samps,
+            comp_v_samps,
+            actual_blocks_h,
+            actual_blocks_v,
+            lenient,
+            permissive_rst,
+            strict,
+            wave_size,
+            num_segments,
+            mcu_rows_per_ri,
+            mcu_pixel_height: mcu_height,
+            pixel_rows_per_seg,
+        }
+    }
+
+    /// Decode a wave of segments in parallel, writing RGB output to `wave_buf`.
+    ///
+    /// Decodes segments `seg_range_start..seg_range_end` using rayon, with each
+    /// segment writing to its corresponding chunk in `wave_buf`.
+    ///
+    /// Returns the number of valid pixel rows written.
+    pub fn decode_wave_box(
+        &self,
+        jpeg_data: &[u8],
+        seg_range_start: usize,
+        seg_range_end: usize,
+        wave_buf: &mut [u8],
+    ) -> Result<usize> {
+        use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
+
+        let wave_count = seg_range_end - seg_range_start;
+        if wave_count == 0 {
+            return Ok(0);
+        }
+
+        let scan_data = &jpeg_data[self.scan_data_start..];
+        let rgb_row_bytes = self.width * 3;
+        let seg_rgb_bytes = self.pixel_rows_per_seg * rgb_row_bytes;
+        let total_mcus = self.mcu_cols * self.mcu_rows;
+
+        let y_h = self.comp_h_samps[0];
+        let y_v = self.comp_v_samps[0];
+        let y_strip_width = self.mcu_cols * y_h * 8;
+        let y_strip_height = y_v * 8;
+        let c_strip_width = self.mcu_cols * self.comp_h_samps[1] * 8;
+        let c_strip_height = self.comp_v_samps[1] * 8;
+
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = idct_int_tiered;
+
+        // Split wave buffer into per-segment chunks
+        let chunks: Vec<&mut [u8]> = wave_buf[..wave_count * seg_rgb_bytes]
+            .chunks_mut(seg_rgb_bytes)
+            .collect();
+
+        let seg_warnings: Vec<Result<SegmentWarnings>> = chunks
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, rgb_chunk)| {
+                let raw_idx = seg_range_start + i;
+                let seg_start = self.seg_starts[raw_idx];
+                let seg_end = self.seg_ends[raw_idx];
+                let seg_data = &scan_data[seg_start..seg_end];
+
+                let (mcu_start, mcu_end) =
+                    JpegParser::segment_mcu_range(raw_idx, self.num_segments, self.ri, 1, total_mcus);
+
+                let mut decoder = JpegParser::setup_segment_decoder(
+                    seg_data,
+                    &self.scan_comps,
+                    &self.dc_tables,
+                    &self.ac_tables,
+                    self.lenient,
+                    self.permissive_rst,
+                );
+
+                let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
+                let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
+                let mut prev_coeff_count: u8 = 64;
+                let mut truncation_mcu: Option<u32> = None;
+                let mut had_padding_error = false;
+
+                let mut y_strip: Vec<i16> = vec![0i16; y_strip_width * y_strip_height];
+                let mut cb_strip: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+                let mut cr_strip: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+
+                let first_mcu_row = mcu_start / self.mcu_cols;
+                let mut current_mcu_row = first_mcu_row;
+                let seg_first_pixel_row = first_mcu_row * self.mcu_pixel_height;
+
+                let flush_mcu_row = |current_mcu_row: usize,
+                                     y_strip: &[i16],
+                                     cb_strip: &[i16],
+                                     cr_strip: &[i16],
+                                     rgb_chunk: &mut [u8]| {
+                    let pixel_row_start = (current_mcu_row * self.mcu_pixel_height)
+                        .saturating_sub(seg_first_pixel_row);
+                    let pixel_rows_this = self
+                        .mcu_pixel_height
+                        .min(self.height.saturating_sub(current_mcu_row * self.mcu_pixel_height));
+                    let cols_this = self.width.min(y_strip_width);
+
+                    for py in 0..pixel_rows_this {
+                        let y_off = py * y_strip_width;
+                        let c_row =
+                            py / (self.max_v_samp / self.comp_v_samps[1].max(1));
+                        let c_off = c_row * c_strip_width;
+                        let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
+                        if rgb_off + cols_this * 3 > rgb_chunk.len() {
+                            break;
+                        }
+                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                            &y_strip[y_off..y_off + cols_this],
+                            &cb_strip[c_off..],
+                            &cr_strip[c_off..],
+                            &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                            cols_this,
+                        );
+                    }
+                };
+
+                for mcu_idx in mcu_start..mcu_end {
+                    let mcu_row = mcu_idx / self.mcu_cols;
+                    let mcu_col = mcu_idx % self.mcu_cols;
+
+                    if mcu_row != current_mcu_row {
+                        flush_mcu_row(
+                            current_mcu_row,
+                            &y_strip,
+                            &cb_strip,
+                            &cr_strip,
+                            rgb_chunk,
+                        );
+                        current_mcu_row = mcu_row;
+                    }
+
+                    for (sc_idx, (comp_idx, dc_table, ac_table)) in
+                        self.scan_comps.iter().enumerate()
+                    {
+                        let h_samp = self.comp_h_samps[*comp_idx];
+                        let v_samp = self.comp_v_samps[*comp_idx];
+
+                        let (strip, strip_stride) = match sc_idx {
+                            0 => (&mut y_strip as &mut Vec<i16>, y_strip_width),
+                            1 => (&mut cb_strip, c_strip_width),
+                            _ => (&mut cr_strip, c_strip_width),
+                        };
+
+                        for v in 0..v_samp {
+                            for h in 0..h_samp {
+                                let block_x = mcu_col * h_samp + h;
+                                let block_y = mcu_row * v_samp + v;
+                                let is_padding = block_x >= self.actual_blocks_h[*comp_idx]
+                                    || block_y >= self.actual_blocks_v[*comp_idx];
+
+                                let padding_state = if is_padding && !self.strict {
+                                    Some(decoder.save_state())
+                                } else {
+                                    None
+                                };
+
+                                let count = match decoder.decode_block_into(
+                                    &mut coeffs_buf,
+                                    prev_coeff_count,
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                ) {
+                                    Ok(ScanRead::Value(c)) => c,
+                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        if truncation_mcu.is_none() {
+                                            truncation_mcu = Some(mcu_idx as u32);
+                                        }
+                                        coeffs_buf = [0i16; 64];
+                                        1
+                                    }
+                                    Err(e) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        return Err(e);
+                                    }
+                                };
+                                prev_coeff_count = count;
+
+                                let block_px = mcu_col * h_samp * 8 + h * 8;
+                                let block_py = v * 8;
+                                let strip_off = block_py * strip_stride + block_px;
+
+                                if count == 1 {
+                                    let dc = coeffs_buf[0] as i32
+                                        * self.quant_tables[*comp_idx][0] as i32;
+                                    idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
+                                } else {
+                                    dequantize_unzigzag_i32_into_partial(
+                                        &coeffs_buf,
+                                        &self.quant_tables[*comp_idx],
+                                        &mut dequant_buf,
+                                        count,
+                                    );
+                                    idct_fn(
+                                        &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                        count,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Flush last MCU row
+                flush_mcu_row(
+                    current_mcu_row,
+                    &y_strip,
+                    &cb_strip,
+                    &cr_strip,
+                    rgb_chunk,
+                );
+
+                Ok(SegmentWarnings {
+                    had_ac_overflow: decoder.had_ac_overflow,
+                    had_invalid_huffman: decoder.had_invalid_huffman,
+                    truncation_mcu,
+                    had_padding_error,
+                })
+            })
+            .collect();
+
+        // Aggregate warnings (ignore for wave mode — just propagate errors)
+        for result in seg_warnings {
+            result?;
+        }
+
+        // Compute valid pixel rows
+        let first_row = seg_range_start * self.pixel_rows_per_seg;
+        let last_row = (seg_range_end * self.pixel_rows_per_seg).min(self.height);
+        Ok(last_row.saturating_sub(first_row))
+    }
+}
+
+/// Build Huffman table vectors from `ParsedScanData` for thread-safe parallel access.
+///
+/// Fills in default tables for any missing entries that are referenced by `scan_comps`.
+pub(super) fn build_huffman_tables_from_scan_data(
+    scan_data: &super::parser::ParsedScanData<'_>,
+    scan_comps: &[(usize, u8, u8)],
+) -> (
+    Vec<Option<HuffmanDecodeTable>>,
+    Vec<Option<HuffmanDecodeTable>>,
+) {
+    let dc_tables: Vec<Option<HuffmanDecodeTable>> = (0..MAX_HUFFMAN_TABLES)
+        .map(|idx| {
+            scan_data.dc_tables[idx].clone().or_else(|| {
+                let needed = scan_comps
+                    .iter()
+                    .any(|(_, dc, _)| (*dc as usize).min(MAX_HUFFMAN_TABLES - 1) == idx);
+                if needed {
+                    Some(if idx == 0 {
+                        HuffmanDecodeTable::std_dc_luminance().clone()
+                    } else {
+                        HuffmanDecodeTable::std_dc_chrominance().clone()
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let ac_tables: Vec<Option<HuffmanDecodeTable>> = (0..MAX_HUFFMAN_TABLES)
+        .map(|idx| {
+            scan_data.ac_tables[idx].clone().or_else(|| {
+                let needed = scan_comps
+                    .iter()
+                    .any(|(_, _, ac)| (*ac as usize).min(MAX_HUFFMAN_TABLES - 1) == idx);
+                if needed {
+                    Some(if idx == 0 {
+                        HuffmanDecodeTable::std_ac_luminance().clone()
+                    } else {
+                        HuffmanDecodeTable::std_ac_chrominance().clone()
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    (dc_tables, ac_tables)
+}
