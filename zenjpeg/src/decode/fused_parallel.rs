@@ -88,6 +88,9 @@ impl<'a> JpegParser<'a> {
         use super::rst_scan::scan_rst_markers;
 
         // Quick eligibility checks
+        if self.num_threads == 1 {
+            return Ok(false);
+        }
         if self.restart_interval == 0 {
             return Ok(false);
         }

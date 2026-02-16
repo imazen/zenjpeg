@@ -997,13 +997,16 @@ impl<'a> JpegParser<'a> {
 
         // Try parallel fast integer paths first (fall through to sequential if image too small)
         #[cfg(feature = "parallel")]
-        if !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
+        if self.num_threads != 1 && !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
             if let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)? {
                 return reformat_rgb_output(rgb, format, width, height);
             }
         }
         #[cfg(feature = "parallel")]
-        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
+        if self.num_threads != 1
+            && !dequant_bias
+            && self.can_use_fast_i16_subsampled(format, is_xyb)
+        {
             if let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)? {
                 return reformat_rgb_output(rgb, format, width, height);
             }
