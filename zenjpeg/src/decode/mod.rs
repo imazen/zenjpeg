@@ -422,6 +422,19 @@ impl DecodeConfig {
         self
     }
 
+    /// Sets the number of threads for parallel decode paths.
+    ///
+    /// - `0` (default): Auto — uses rayon's global thread pool. Fused parallel
+    ///   decode activates when DRI is present with enough segments.
+    /// - `1`: Force sequential — disables all parallel decode paths.
+    ///
+    /// Values > 1 are reserved for future use and currently behave like `0`.
+    #[must_use]
+    pub fn num_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         // Preserve metadata segments for extraction without full decode
@@ -816,6 +829,7 @@ impl DecodeConfig {
             parser.prefer_streaming = false;
         }
         parser.chroma_upsampling = self.chroma_upsampling;
+        parser.num_threads = self.num_threads;
         parser.decode(&stop)?;
 
         // Propagate force_f32_idct from config (set by tests for fair comparison)
