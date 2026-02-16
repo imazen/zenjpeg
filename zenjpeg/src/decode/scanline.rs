@@ -120,6 +120,19 @@ pub struct ScanlineReader<'a> {
     crop: Option<ResolvedCrop>,
     // Whether skip_to_crop_start() has been called.
     crop_skip_done: bool,
+
+    // Wave-based parallel decode state.
+    // When Some, decode wave_size segments at a time via rayon instead of streaming.
+    #[cfg(feature = "parallel")]
+    wave_state: Option<super::fused_parallel::WaveParallelState>,
+    #[cfg(feature = "parallel")]
+    wave_buf: Vec<u8>,
+    #[cfg(feature = "parallel")]
+    wave_first_row: usize,
+    #[cfg(feature = "parallel")]
+    wave_row_count: usize,
+    #[cfg(feature = "parallel")]
+    wave_next_seg: usize,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -187,6 +200,16 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
         })
     }
 
@@ -232,6 +255,16 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
         }
     }
 
@@ -328,6 +361,16 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
         })
     }
 
@@ -336,6 +379,65 @@ impl<'a> ScanlineReader<'a> {
     /// Must be called before reading any rows.
     pub(crate) fn set_crop(&mut self, crop: ResolvedCrop) {
         self.crop = Some(crop);
+    }
+
+    /// Creates a scanline reader in wave-parallel mode.
+    ///
+    /// Instead of decoding one MCU row at a time (streaming) or the full image
+    /// (buffered), this decodes `wave_size` restart segments at a time via rayon,
+    /// serving rows from a reusable buffer. Gives parallel speed with bounded
+    /// memory: `wave_size * pixel_rows_per_seg * width * 3` bytes.
+    ///
+    /// **Prototype scope**: Box filter 4:2:0 path only.
+    #[cfg(feature = "parallel")]
+    pub(super) fn new_wave_parallel(
+        data: &'a [u8],
+        wave_state: super::fused_parallel::WaveParallelState,
+    ) -> Self {
+        let width = wave_state.width as u32;
+        let height = wave_state.height as u32;
+
+        // Pre-allocate wave buffer for wave_size segments
+        let rgb_row_bytes = wave_state.width * 3;
+        let seg_rgb_bytes = wave_state.pixel_rows_per_seg * rgb_row_bytes;
+        let wave_buf_size = wave_state.wave_size * seg_rgb_bytes;
+        let wave_buf = vec![0u8; wave_buf_size];
+
+        Self {
+            data,
+            width,
+            height,
+            num_components: 3,
+            buffered_rgb: None,
+            strip: StripProcessor::new_dummy(Subsampling::S420),
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables: [None, None, None, None],
+            quant_indices: [0, 0, 0],
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb: false,
+            is_rgb: false,
+            stored_coeffs: None,
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            wave_state: Some(wave_state),
+            wave_buf,
+            wave_first_row: 0,
+            wave_row_count: 0,
+            wave_next_seg: 0,
+        }
     }
 
     /// Returns the output width (crop width if set, otherwise image width).
@@ -1042,6 +1144,12 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
+        // Wave-parallel mode: serve from wave buffer, decoding on demand
+        #[cfg(feature = "parallel")]
+        if self.wave_state.is_some() {
+            return self.read_rows_rgb8_wave(output);
+        }
+
         // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
@@ -1124,6 +1232,60 @@ impl<'a> ScanlineReader<'a> {
         }
 
         Ok(rows_written)
+    }
+
+    /// Wave-parallel: serve rows from wave buffer, triggering decode on demand.
+    #[cfg(feature = "parallel")]
+    fn read_rows_rgb8_wave(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
+        let max_rows = output.height();
+        let out_width = self.width() as usize;
+        let out_height = self.height() as usize;
+        let rgb_row_bytes = self.width as usize * 3;
+
+        let mut rows_written = 0;
+
+        while rows_written < max_rows && self.current_row < out_height {
+            // If current_row is beyond our wave buffer, decode next wave
+            if self.current_row >= self.wave_first_row + self.wave_row_count {
+                self.decode_next_wave()?;
+            }
+
+            // Copy row from wave buffer to output
+            let row_in_wave = self.current_row - self.wave_first_row;
+            let src_start = row_in_wave * rgb_row_bytes;
+            let src_end = src_start + out_width * 3;
+
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+            out_row[..out_width * 3].copy_from_slice(&self.wave_buf[src_start..src_end]);
+
+            rows_written += 1;
+            self.current_row += 1;
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Decode the next wave of segments into the wave buffer.
+    #[cfg(feature = "parallel")]
+    fn decode_next_wave(&mut self) -> Result<()> {
+        let state = self.wave_state.as_ref().unwrap();
+        let seg_start = self.wave_next_seg;
+        let seg_end = (seg_start + state.wave_size).min(state.num_segments);
+
+        if seg_start >= seg_end {
+            return Ok(());
+        }
+
+        let wave_count = seg_end - seg_start;
+        let _ = wave_count;
+
+        let row_count =
+            state.decode_wave_box(self.data, seg_start, seg_end, &mut self.wave_buf)?;
+
+        self.wave_first_row = seg_start * state.pixel_rows_per_seg;
+        self.wave_row_count = row_count;
+        self.wave_next_seg = seg_end;
+        Ok(())
     }
 
     /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
