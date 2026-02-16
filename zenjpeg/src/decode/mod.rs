@@ -822,11 +822,25 @@ impl DecodeConfig {
         let mut parser =
             JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
 
-        // f32 precise paths or actual transform need coefficients stored (not streaming)
-        if self.output_target.is_precise()
-            || effective_transform != crate::lossless::LosslessTransform::None
+        // Streaming decode produces RGB u8 directly — disable it when the output
+        // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats).
         {
-            parser.prefer_streaming = false;
+            let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
+            let needs_coefficients = self.output_target.is_f32()
+                || self.output_target.is_precise()
+                || self.output_target.uses_dequant_bias()
+                || effective_transform != crate::lossless::LosslessTransform::None
+                || !matches!(
+                    output_format,
+                    PixelFormat::Rgb
+                        | PixelFormat::Bgr
+                        | PixelFormat::Rgba
+                        | PixelFormat::Bgra
+                        | PixelFormat::Bgrx
+                );
+            if needs_coefficients {
+                parser.prefer_streaming = false;
+            }
         }
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.num_threads = self.num_threads;
