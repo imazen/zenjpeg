@@ -52,7 +52,11 @@ fn create_test_jpeg(width: u32, height: u32, progressive: bool, no_dri: bool) ->
                     data[idx + 2] = noise >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
                     data[idx] = edge;
                     data[idx + 1] = edge.wrapping_add(noise >> 4);
                     data[idx + 2] = 255 - edge;
@@ -65,7 +69,8 @@ fn create_test_jpeg(width: u32, height: u32, progressive: bool, no_dri: bool) ->
             }
         }
     }
-    let mut config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
+    let mut config =
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(progressive);
     if no_dri {
         config = config.restart_mcu_rows(0);
     }
@@ -123,7 +128,11 @@ fn main() {
             "Creating {}x{} {}{} test JPEG...",
             size,
             size,
-            if progressive { "progressive" } else { "baseline" },
+            if progressive {
+                "progressive"
+            } else {
+                "baseline"
+            },
             if no_dri { " (no DRI)" } else { "" }
         );
         create_test_jpeg(size, size, progressive, no_dri)
@@ -132,7 +141,9 @@ fn main() {
 
     // save mode: write JPEG to /tmp and exit (for creating test data)
     if decoder_type == "save" {
-        let path = extra.iter().find(|s| s.ends_with(".jpg") || s.ends_with(".jpeg"))
+        let path = extra
+            .iter()
+            .find(|s| s.ends_with(".jpg") || s.ends_with(".jpeg"))
             .copied()
             .unwrap_or("/tmp/test.jpg");
         std::fs::write(path, &jpeg_data).unwrap();
@@ -159,7 +170,10 @@ fn main() {
                 let dec = Decoder::new().output_format(PixelFormat::Rgb);
                 let ra = dec.decode(&data_a, Unstoppable).unwrap();
                 let rb = dec.decode(&data_b, Unstoppable).unwrap();
-                (ra.pixels_u8().unwrap().to_vec(), rb.pixels_u8().unwrap().to_vec())
+                (
+                    ra.pixels_u8().unwrap().to_vec(),
+                    rb.pixels_u8().unwrap().to_vec(),
+                )
             }
             _ => panic!("unknown decoder"),
         };
@@ -172,14 +186,22 @@ fn main() {
             let mut sum_abs: u64 = 0;
             for (a, b) in out_a.iter().zip(out_b.iter()) {
                 let d = (*a as i16 - *b as i16).unsigned_abs() as u8;
-                if d > 0 { diff_count += 1; }
-                if d > max_diff { max_diff = d; }
+                if d > 0 {
+                    diff_count += 1;
+                }
+                if d > max_diff {
+                    max_diff = d;
+                }
                 sum_abs += d as u64;
             }
-            eprintln!("DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
-                max_diff, diff_count, out_a.len(),
+            eprintln!(
+                "DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
+                max_diff,
+                diff_count,
+                out_a.len(),
                 diff_count as f64 * 100.0 / out_a.len() as f64,
-                sum_abs as f64 / out_a.len() as f64);
+                sum_abs as f64 / out_a.len() as f64
+            );
         }
         return;
     }
@@ -192,8 +214,17 @@ fn main() {
         let mut zune_dec = JpegDecoder::new_with_options(ZCursor::new(&data), zune_opts);
         let zune_out = zune_dec.decode().unwrap();
         let dec = Decoder::new().output_format(PixelFormat::Rgb);
-        let jpegli_out = dec.decode(&data, Unstoppable).unwrap().pixels_u8().unwrap().to_vec();
-        eprintln!("zune: {} bytes, jpegli: {} bytes", zune_out.len(), jpegli_out.len());
+        let jpegli_out = dec
+            .decode(&data, Unstoppable)
+            .unwrap()
+            .pixels_u8()
+            .unwrap()
+            .to_vec();
+        eprintln!(
+            "zune: {} bytes, jpegli: {} bytes",
+            zune_out.len(),
+            jpegli_out.len()
+        );
         if zune_out == jpegli_out {
             eprintln!("IDENTICAL output between zune and jpegli");
         } else {
@@ -202,14 +233,22 @@ fn main() {
             let mut sum_abs: u64 = 0;
             for (a, b) in zune_out.iter().zip(jpegli_out.iter()) {
                 let d = (*a as i16 - *b as i16).unsigned_abs() as u8;
-                if d > 0 { diff_count += 1; }
-                if d > max_diff { max_diff = d; }
+                if d > 0 {
+                    diff_count += 1;
+                }
+                if d > max_diff {
+                    max_diff = d;
+                }
                 sum_abs += d as u64;
             }
-            eprintln!("DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
-                max_diff, diff_count, zune_out.len(),
+            eprintln!(
+                "DIFFERENT! max_diff={}, diff_count={}/{} ({:.1}%), mean_abs={:.4}",
+                max_diff,
+                diff_count,
+                zune_out.len(),
                 diff_count as f64 * 100.0 / zune_out.len() as f64,
-                sum_abs as f64 / zune_out.len() as f64);
+                sum_abs as f64 / zune_out.len() as f64
+            );
         }
         return;
     }
