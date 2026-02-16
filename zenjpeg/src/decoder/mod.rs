@@ -63,7 +63,8 @@ pub use crate::error::{Error, Result};
 pub use crate::decode::{
     ChromaUpsampling, CropRegion, DecodeConfig, DecodeInfo, DecodeResult, DecodeWarning,
     DecodedCoefficients, DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, GainMapHandling,
-    GainMapResult, JpegInfo, OutputTarget, ScanlineInfo, ScanlineReader, Strictness,
+    GainMapResult, JpegInfo, OutputTarget, RowSlice, RowSliceF32, ScanlineInfo, ScanlineReader,
+    Strictness,
 };
 
 // === Metadata preservation types ===
