@@ -145,6 +145,10 @@ pub(super) struct JpegParser<'a> {
     /// Thread control: 0=auto, 1=force sequential.
     pub(super) num_threads: usize,
 
+    /// Parallel decode strategy (how segments map to rayon tasks).
+    #[cfg(feature = "parallel")]
+    pub(super) parallel_strategy: super::config::ParallelStrategy,
+
     /// Warnings collected during decode (Balanced/Lenient only).
     /// In Strict mode, warnings become errors instead of being collected.
     pub(super) warnings: Vec<DecodeWarning>,
@@ -219,6 +223,8 @@ impl<'a> JpegParser<'a> {
             adobe_transform: None,
             strictness,
             num_threads: 0,
+            #[cfg(feature = "parallel")]
+            parallel_strategy: super::config::ParallelStrategy::default(),
             warnings: Vec::new(),
             arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
             arith_ac_kx: [5; 4],        // Default Kx=5
