@@ -664,6 +664,9 @@ pub struct DecodeConfig {
     pub(crate) force_f32_idct: bool,
     /// Crop region to decode (skip IDCT for MCU rows outside the crop).
     pub(crate) crop_region: Option<CropRegion>,
+    /// Thread control for parallel decode paths.
+    /// 0 = auto (default, uses rayon global pool), 1 = force sequential.
+    pub(crate) num_threads: usize,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -682,6 +685,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("auto_orient", &self.auto_orient)
             .field("decode_transform", &self.decode_transform)
             .field("crop_region", &self.crop_region)
+            .field("num_threads", &self.num_threads)
             .finish()
     }
 }
@@ -704,6 +708,7 @@ impl Default for DecodeConfig {
             decode_transform: None,
             force_f32_idct: false,
             crop_region: None,
+            num_threads: 0,
         }
     }
 }

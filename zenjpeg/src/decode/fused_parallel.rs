@@ -12,6 +12,8 @@
 //!   Each thread processes MCU rows with a 1-row lag for ±1 chroma context. Boundary
 //!   fixup pass after all threads complete corrects the 2 rows per segment junction
 //!   where edge replication was used.
+//! - **4:2:2 (h2v1)**: Single pass — decode → IDCT → horizontal upsample Cb/Cr → CC → RGB.
+//!   No vertical subsampling, so no cross-segment boundary fixup needed.
 //!
 //! ## Adaptive Segment Grouping
 //!
@@ -86,6 +88,9 @@ impl<'a> JpegParser<'a> {
         use super::rst_scan::scan_rst_markers;
 
         // Quick eligibility checks
+        if self.num_threads == 1 {
+            return Ok(false);
+        }
         if self.restart_interval == 0 {
             return Ok(false);
         }
@@ -199,29 +204,48 @@ impl<'a> JpegParser<'a> {
                 group_stride,
             )?
         } else {
-            // 4:2:0 + fancy upsample — single-pass with extended chroma strips
-            // Only handle h2v2 (2:1 horizontal, 2:1 vertical); fall through for rare modes
+            // Subsampled + fancy upsample
             let y_h = self.components[0].h_samp_factor as usize;
             let y_v = self.components[0].v_samp_factor as usize;
             let c_h = self.components[1].h_samp_factor as usize;
             let c_v = self.components[1].v_samp_factor as usize;
-            if y_h / c_h != 2 || y_v / c_v != 2 {
-                return Ok(false); // Fall through to sequential for non-h2v2
+            let h_ratio = y_h / c_h.max(1);
+            let v_ratio = y_v / c_v.max(1);
+            if h_ratio == 2 && v_ratio == 2 {
+                // h2v2 (4:2:0) — extended chroma strips with boundary fixup
+                self.decode_fused_subsampled_fancy(
+                    scan_components,
+                    scan_data,
+                    &seg_starts,
+                    &seg_ends,
+                    num_segments,
+                    mcu_cols,
+                    mcu_rows,
+                    max_h_samp,
+                    max_v_samp,
+                    ri,
+                    group_stride,
+                    chroma_upsampling,
+                )?
+            } else if h_ratio == 2 && v_ratio == 1 {
+                // h2v1 (4:2:2) — horizontal-only upsample, no vertical context
+                self.decode_fused_subsampled_h2v1(
+                    scan_components,
+                    scan_data,
+                    &seg_starts,
+                    &seg_ends,
+                    num_segments,
+                    mcu_cols,
+                    mcu_rows,
+                    max_h_samp,
+                    max_v_samp,
+                    ri,
+                    group_stride,
+                    chroma_upsampling,
+                )?
+            } else {
+                return Ok(false); // Fall through to sequential for rare modes
             }
-            self.decode_fused_subsampled_fancy(
-                scan_components,
-                scan_data,
-                &seg_starts,
-                &seg_ends,
-                num_segments,
-                mcu_cols,
-                mcu_rows,
-                max_h_samp,
-                max_v_samp,
-                ri,
-                group_stride,
-                chroma_upsampling,
-            )?
         };
 
         // Advance position past entropy data
@@ -903,6 +927,334 @@ impl<'a> JpegParser<'a> {
 
                 // Flush last MCU row
                 flush_mcu_row(current_mcu_row, &y_strip, &cb_strip, &cr_strip, rgb_chunk);
+
+                Ok(SegmentWarnings {
+                    had_ac_overflow: decoder.had_ac_overflow,
+                    had_invalid_huffman: decoder.had_invalid_huffman,
+                    truncation_mcu,
+                    had_padding_error,
+                })
+            })
+            .collect();
+
+        let (any_ac, any_huff, first_trunc, any_pad) =
+            Self::aggregate_fused_warnings(seg_warnings)?;
+
+        Ok((
+            FusedResult(rgb),
+            any_ac,
+            any_huff,
+            first_trunc,
+            any_pad,
+            total_mcus as u32,
+        ))
+    }
+
+    /// Single-pass fused decode for 4:2:2 (h2v1) + fancy/libjpeg-compat upsample.
+    ///
+    /// Simpler than h2v2: no vertical subsampling means no cross-segment chroma
+    /// context and no boundary fixup. Each thread: entropy decode → IDCT →
+    /// horizontal upsample Cb/Cr → YCbCr→RGB color convert → write output.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_fused_subsampled_h2v1(
+        &self,
+        scan_components: &[(usize, u8, u8)],
+        scan_data: &[u8],
+        seg_starts: &[usize],
+        seg_ends: &[usize],
+        num_segments: usize,
+        mcu_cols: usize,
+        mcu_rows: usize,
+        max_h_samp: usize,
+        max_v_samp: usize,
+        ri: usize,
+        group_stride: usize,
+        chroma_upsampling: ChromaUpsampling,
+    ) -> FusedDecodeResult {
+        use super::upsample::{
+            upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
+        };
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let total_mcus = mcu_cols * mcu_rows;
+
+        let y_h = self.components[0].h_samp_factor as usize;
+        let y_v = self.components[0].v_samp_factor as usize;
+        let mcu_pixel_height = max_v_samp * 8; // v_samp=1 for h2v1, so 8
+
+        // Strip dimensions for one MCU row
+        let y_strip_width = mcu_cols * y_h * 8;
+        let y_strip_height = y_v * 8;
+        let c_strip_width = mcu_cols * self.components[1].h_samp_factor as usize * 8;
+        let c_strip_height = self.components[1].v_samp_factor as usize * 8;
+
+        // Select IDCT function
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
+            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
+            _ => idct_int_tiered,
+        };
+
+        // Select h2v1 upsample function
+        type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
+        let upsample_fn: UpsampleFn = match chroma_upsampling {
+            ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
+            ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg,
+            _ => upsample_h2v1_i16_fancy,
+        };
+
+        let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
+
+        let quant_tables: Vec<&[u16; DCT_BLOCK_SIZE]> = (0..3)
+            .map(|ci| {
+                self.quant_tables[self.components[ci].quant_table_idx as usize]
+                    .as_ref()
+                    .unwrap()
+            })
+            .collect();
+
+        let scan_comps: Vec<(usize, u8, u8)> = scan_components.to_vec();
+        let lenient = matches!(
+            self.strictness,
+            Strictness::Lenient | Strictness::Permissive
+        );
+        let permissive_rst = self.strictness == Strictness::Permissive;
+        let strict = self.strictness == Strictness::Strict;
+
+        let comp_h_samps: Vec<usize> = (0..3)
+            .map(|ci| self.components[ci].h_samp_factor as usize)
+            .collect();
+        let comp_v_samps: Vec<usize> = (0..3)
+            .map(|ci| self.components[ci].v_samp_factor as usize)
+            .collect();
+
+        // Pre-compute per-component actual block counts for padding detection
+        let actual_blocks_h: Vec<usize> = (0..3)
+            .map(|ci| {
+                let h = self.components[ci].h_samp_factor as usize;
+                let comp_w = (width * h + max_h_samp - 1) / max_h_samp;
+                (comp_w + 7) / 8
+            })
+            .collect();
+        let actual_blocks_v: Vec<usize> = (0..3)
+            .map(|ci| {
+                let v = self.components[ci].v_samp_factor as usize;
+                let comp_h = (height * v + max_v_samp - 1) / max_v_samp;
+                (comp_h + 7) / 8
+            })
+            .collect();
+
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "fused h2v1 RGB output")?;
+
+        let rgb_row_bytes = width * 3;
+        let mcu_rows_per_ri = ri / mcu_cols;
+        let mcu_rows_per_seg = mcu_rows_per_ri * group_stride;
+        let pixel_rows_per_seg = mcu_rows_per_seg * mcu_pixel_height;
+        let seg_rgb_bytes = pixel_rows_per_seg * rgb_row_bytes;
+        let y_cols_this = width.min(y_strip_width);
+
+        let rgb_chunks: Vec<&mut [u8]> = rgb.chunks_mut(seg_rgb_bytes).collect();
+
+        let seg_warnings: Vec<Result<SegmentWarnings>> = rgb_chunks
+            .into_par_iter()
+            .enumerate()
+            .map(|(seg_idx, rgb_chunk)| {
+                let seg_start = seg_starts[seg_idx];
+                let seg_end = seg_ends[seg_idx];
+                let seg_data = &scan_data[seg_start..seg_end];
+
+                let (mcu_start, mcu_end) =
+                    Self::segment_mcu_range(seg_idx, num_segments, ri, group_stride, total_mcus);
+
+                let mut decoder = Self::setup_segment_decoder(
+                    seg_data,
+                    &scan_comps,
+                    &dc_tables,
+                    &ac_tables,
+                    lenient,
+                    permissive_rst,
+                );
+
+                let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
+                let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
+                let mut prev_coeff_count: u8 = 64;
+                let mut truncation_mcu: Option<u32> = None;
+                let mut had_padding_error = false;
+
+                // Thread-local strip buffers
+                let mut y_strip: Vec<i16> = vec![0i16; y_strip_width * y_strip_height];
+                let mut cb_strip: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+                let mut cr_strip: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+                // Upsampled chroma (same height, double width)
+                let mut cb_up: Vec<i16> = vec![0i16; y_strip_width * c_strip_height];
+                let mut cr_up: Vec<i16> = vec![0i16; y_strip_width * c_strip_height];
+
+                let first_mcu_row = mcu_start / mcu_cols;
+                let mut current_mcu_row = first_mcu_row;
+                let seg_first_pixel_row = first_mcu_row * mcu_pixel_height;
+
+                // Flush one MCU row: upsample chroma horizontally, then color convert
+                let flush_mcu_row = |current_mcu_row: usize,
+                                     y_strip: &[i16],
+                                     cb_strip: &[i16],
+                                     cr_strip: &[i16],
+                                     cb_up: &mut [i16],
+                                     cr_up: &mut [i16],
+                                     rgb_chunk: &mut [u8]| {
+                    // Horizontal upsample Cb/Cr: c_strip_width → y_strip_width
+                    upsample_fn(
+                        cb_strip,
+                        c_strip_width,
+                        c_strip_height,
+                        cb_up,
+                        y_strip_width,
+                        c_strip_height,
+                    );
+                    upsample_fn(
+                        cr_strip,
+                        c_strip_width,
+                        c_strip_height,
+                        cr_up,
+                        y_strip_width,
+                        c_strip_height,
+                    );
+
+                    let pixel_row_start =
+                        (current_mcu_row * mcu_pixel_height).saturating_sub(seg_first_pixel_row);
+                    let pixel_rows_this = mcu_pixel_height
+                        .min(height.saturating_sub(current_mcu_row * mcu_pixel_height));
+
+                    for py in 0..pixel_rows_this {
+                        let y_off = py * y_strip_width;
+                        let c_off = py * y_strip_width; // same height, upsampled width
+                        let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
+                        if rgb_off + y_cols_this * 3 > rgb_chunk.len() {
+                            break;
+                        }
+                        crate::color::ycbcr_planes_i16_to_rgb_u8(
+                            &y_strip[y_off..y_off + y_cols_this],
+                            &cb_up[c_off..c_off + y_cols_this],
+                            &cr_up[c_off..c_off + y_cols_this],
+                            &mut rgb_chunk[rgb_off..rgb_off + y_cols_this * 3],
+                        );
+                    }
+                };
+
+                for mcu_idx in mcu_start..mcu_end {
+                    let mcu_row = mcu_idx / mcu_cols;
+                    let mcu_col = mcu_idx % mcu_cols;
+
+                    // Flush completed MCU row
+                    if mcu_row != current_mcu_row {
+                        flush_mcu_row(
+                            current_mcu_row,
+                            &y_strip,
+                            &cb_strip,
+                            &cr_strip,
+                            &mut cb_up,
+                            &mut cr_up,
+                            rgb_chunk,
+                        );
+                        current_mcu_row = mcu_row;
+                    }
+
+                    // Decode blocks for this MCU
+                    for (sc_idx, (comp_idx, dc_table, ac_table)) in scan_comps.iter().enumerate() {
+                        let h_samp = comp_h_samps[*comp_idx];
+                        let v_samp = comp_v_samps[*comp_idx];
+
+                        let (strip, strip_stride) = match sc_idx {
+                            0 => (&mut y_strip as &mut Vec<i16>, y_strip_width),
+                            1 => (&mut cb_strip, c_strip_width),
+                            _ => (&mut cr_strip, c_strip_width),
+                        };
+
+                        for v in 0..v_samp {
+                            for h in 0..h_samp {
+                                let block_x = mcu_col * h_samp + h;
+                                let block_y = mcu_row * v_samp + v;
+                                let is_padding = block_x >= actual_blocks_h[*comp_idx]
+                                    || block_y >= actual_blocks_v[*comp_idx];
+
+                                let padding_state = if is_padding && !strict {
+                                    Some(decoder.save_state())
+                                } else {
+                                    None
+                                };
+
+                                let count = match decoder.decode_block_into(
+                                    &mut coeffs_buf,
+                                    prev_coeff_count,
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                ) {
+                                    Ok(ScanRead::Value(c)) => c,
+                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        if truncation_mcu.is_none() {
+                                            truncation_mcu = Some(mcu_idx as u32);
+                                        }
+                                        coeffs_buf = [0i16; 64];
+                                        1
+                                    }
+                                    Err(e) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        return Err(e);
+                                    }
+                                };
+                                prev_coeff_count = count;
+
+                                let block_px = mcu_col * h_samp * 8 + h * 8;
+                                let block_py = v * 8;
+                                let strip_off = block_py * strip_stride + block_px;
+
+                                if count == 1 {
+                                    let dc =
+                                        coeffs_buf[0] as i32 * quant_tables[*comp_idx][0] as i32;
+                                    idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
+                                } else {
+                                    dequantize_unzigzag_i32_into_partial(
+                                        &coeffs_buf,
+                                        quant_tables[*comp_idx],
+                                        &mut dequant_buf,
+                                        count,
+                                    );
+                                    idct_fn(
+                                        &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                        count,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Flush last MCU row
+                flush_mcu_row(
+                    current_mcu_row,
+                    &y_strip,
+                    &cb_strip,
+                    &cr_strip,
+                    &mut cb_up,
+                    &mut cr_up,
+                    rgb_chunk,
+                );
 
                 Ok(SegmentWarnings {
                     had_ac_overflow: decoder.had_ac_overflow,

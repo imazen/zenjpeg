@@ -56,7 +56,11 @@ fn create_test_jpeg(width: u32, height: u32, progressive: bool) -> Vec<u8> {
                     data[idx + 2] = noise >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
                     data[idx] = edge;
                     data[idx + 1] = edge.wrapping_add(noise >> 4);
                     data[idx + 2] = 255 - edge;
@@ -177,10 +181,7 @@ fn test_decode_perf_baseline_2048() {
     let hash = hash_pixels(&jpeg);
     eprintln!("Output hash: {:#018x}", hash);
     if HASH_BASE_2048 != 0 {
-        assert_eq!(
-            hash, HASH_BASE_2048,
-            "Baseline 2048 output changed!"
-        );
+        assert_eq!(hash, HASH_BASE_2048, "Baseline 2048 output changed!");
     }
 }
 
@@ -188,10 +189,7 @@ fn test_decode_perf_baseline_2048() {
 #[ignore]
 fn test_decode_perf_progressive_1024() {
     let jpeg = create_test_jpeg(1024, 1024, true);
-    eprintln!(
-        "Progressive 1024x1024 JPEG (no DRI): {} bytes",
-        jpeg.len()
-    );
+    eprintln!("Progressive 1024x1024 JPEG (no DRI): {} bytes", jpeg.len());
 
     let _ = decode_and_measure(&jpeg);
 
@@ -225,10 +223,7 @@ fn test_decode_perf_progressive_1024() {
     let hash = hash_pixels(&jpeg);
     eprintln!("Output hash: {:#018x}", hash);
     if HASH_PROG_1024 != 0 {
-        assert_eq!(
-            hash, HASH_PROG_1024,
-            "Progressive 1024 output changed!"
-        );
+        assert_eq!(hash, HASH_PROG_1024, "Progressive 1024 output changed!");
     }
 }
 
@@ -236,10 +231,7 @@ fn test_decode_perf_progressive_1024() {
 #[ignore]
 fn test_decode_perf_progressive_2048() {
     let jpeg = create_test_jpeg(2048, 2048, true);
-    eprintln!(
-        "Progressive 2048x2048 JPEG (no DRI): {} bytes",
-        jpeg.len()
-    );
+    eprintln!("Progressive 2048x2048 JPEG (no DRI): {} bytes", jpeg.len());
 
     let _ = decode_and_measure(&jpeg);
 
@@ -273,9 +265,6 @@ fn test_decode_perf_progressive_2048() {
     let hash = hash_pixels(&jpeg);
     eprintln!("Output hash: {:#018x}", hash);
     if HASH_PROG_2048 != 0 {
-        assert_eq!(
-            hash, HASH_PROG_2048,
-            "Progressive 2048 output changed!"
-        );
+        assert_eq!(hash, HASH_PROG_2048, "Progressive 2048 output changed!");
     }
 }
