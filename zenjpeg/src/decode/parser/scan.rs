@@ -465,27 +465,33 @@ impl<'a> JpegParser<'a> {
     }
 
     /// Check if streaming decode can be used.
-    /// Streaming is only possible for baseline 4:4:4 YCbCr images.
+    ///
+    /// Streaming is supported for all baseline subsampling modes:
+    /// grayscale, 4:4:4, 4:2:0, 4:2:2, 4:4:0.
     pub(super) fn can_use_streaming(&self) -> bool {
-        // Must be baseline (not progressive)
+        // Must be baseline (not progressive — progressive needs multi-scan coefficient storage)
         if self.mode != JpegMode::Baseline {
             return false;
         }
-        // Must have 3 components (YCbCr)
-        if self.num_components != 3 {
+        // Must have 1 or 3 components (grayscale or YCbCr)
+        if self.num_components != 1 && self.num_components != 3 {
             return false;
         }
-        // Must be 4:4:4 (all components have same sampling factors)
-        let h0 = self.components[0].h_samp_factor;
-        let v0 = self.components[0].v_samp_factor;
-        for i in 1..3 {
-            if self.components[i].h_samp_factor != h0 || self.components[i].v_samp_factor != v0 {
+        // Validate sampling factors are within supported range (max 2x2)
+        if self.num_components == 3 {
+            let max_h = self.components[..3]
+                .iter()
+                .map(|c| c.h_samp_factor)
+                .max()
+                .unwrap_or(1);
+            let max_v = self.components[..3]
+                .iter()
+                .map(|c| c.v_samp_factor)
+                .max()
+                .unwrap_or(1);
+            if max_h > 2 || max_v > 2 {
                 return false;
             }
-        }
-        // Must have 1x1 sampling (no subsampling)
-        if h0 != 1 || v0 != 1 {
-            return false;
         }
         true
     }
