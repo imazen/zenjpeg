@@ -977,11 +977,36 @@ impl DeblockStrategy for CoeffRefineTV {
 /// "desired property" — reduce visible blocking artifacts.
 struct CoeffPOCS {
     iterations: usize,
+    /// Fraction of boundary discontinuity to correct per iteration (0.0-1.0)
+    correction: f32,
+    /// tc multiplier on dc_quant (higher = allow larger corrections)
+    tc_mul: f32,
+    /// Frequency cutoff: coefficients with row+col >= this are restored to original
+    /// 0 = full clamping (all coefficients), 4 = LF only, 8 = no clamping (all HF restored)
+    freq_cutoff: usize,
+    /// Label for output
+    label: &'static str,
 }
 
 impl CoeffPOCS {
     fn new(iterations: usize) -> Self {
-        Self { iterations }
+        Self {
+            iterations,
+            correction: 0.5,
+            tc_mul: 0.25,
+            freq_cutoff: 4,
+            label: "pocs",
+        }
+    }
+
+    fn with_params(
+        iterations: usize,
+        correction: f32,
+        tc_mul: f32,
+        freq_cutoff: usize,
+        label: &'static str,
+    ) -> Self {
+        Self { iterations, correction, tc_mul, freq_cutoff, label }
     }
 
     /// Compute the 8x8 orthonormal DCT-II basis matrix.
@@ -1082,6 +1107,9 @@ impl CoeffPOCS {
         blocks_high: usize,
         quant_table: &[u16; 64],
         iterations: usize,
+        correction: f32,
+        tc_mul: f32,
+        freq_cutoff: usize,
     ) -> Vec<f32> {
         let basis = Self::dct_basis();
         let num_blocks = blocks_wide * blocks_high;
@@ -1092,7 +1120,7 @@ impl CoeffPOCS {
         // Large Q = coarse quantization = big artifacts = smooth aggressively.
         // Small Q = fine quantization = subtle artifacts = smooth gently.
         let dc_quant = quant_table[0] as f32;
-        let tc = dc_quant * 0.25;
+        let tc = dc_quant * tc_mul;
 
         // Dequantize to natural order, track quantization intervals
         let mut coeffs = vec![[0.0f32; 64]; num_blocks];
@@ -1142,7 +1170,7 @@ impl CoeffPOCS {
                     let q0 = pixels[y * pw + x];
                     let disc = p0 - q0;
 
-                    let delta = (disc * 0.5).clamp(-tc, tc);
+                    let delta = (disc * correction).clamp(-tc, tc);
                     if delta.abs() < 0.1 {
                         continue;
                     }
@@ -1160,7 +1188,7 @@ impl CoeffPOCS {
                     let q0 = pixels[y * pw + x];
                     let disc = p0 - q0;
 
-                    let delta = (disc * 0.5).clamp(-tc, tc);
+                    let delta = (disc * correction).clamp(-tc, tc);
                     if delta.abs() < 0.1 {
                         continue;
                     }
@@ -1198,12 +1226,12 @@ impl CoeffPOCS {
                 for nat in 0..64 {
                     let row = nat / 8;
                     let col = nat % 8;
-                    if row + col < 4 {
-                        // LF: clamp to quantization interval (allow movement)
+                    if freq_cutoff == 0 || row + col < freq_cutoff {
+                        // Allowed band: clamp to quantization interval (allow movement)
                         coeffs[bi][nat] =
                             coeffs[bi][nat].clamp(coeff_min[bi][nat], coeff_max[bi][nat]);
                     } else {
-                        // HF: restore to original dequantized value (no change)
+                        // Frozen band: restore to original dequantized value
                         let zi = NATURAL_TO_ZIGZAG[nat];
                         let q = quant_table[nat] as f32;
                         coeffs[bi][nat] = block[zi] as f32 * q;
@@ -1232,7 +1260,7 @@ impl CoeffPOCS {
 
 impl DeblockStrategy for CoeffPOCS {
     fn name(&self) -> &str {
-        "pocs"
+        self.label
     }
 
     fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
@@ -1258,6 +1286,7 @@ impl DeblockStrategy for CoeffPOCS {
 
             let plane_data = Self::process_component(
                 &comp.coeffs, bw, bh, qt, self.iterations,
+                self.correction, self.tc_mul, self.freq_cutoff,
             );
 
             planes.push(ComponentPlane {
@@ -1730,7 +1759,8 @@ fn parse_args() -> Args {
             Box::new(QuantSmoothBilateral),
             Box::new(CoeffSmooth),
             Box::new(CoeffRefineTV::new(4)),
-            Box::new(CoeffPOCS::new(8)),
+            // POCS: 2 iterations, 15% correction, full interval clamping
+            Box::new(CoeffPOCS::with_params(2, 0.15, 0.25, 0, "pocs")),
         ],
         verbose: false,
     };
