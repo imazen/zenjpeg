@@ -428,6 +428,25 @@ impl StripProcessor {
         &self.y_strip[offset..offset + cols]
     }
 
+    /// Get native-resolution chroma row slices (before upsampling).
+    ///
+    /// `chroma_row` is the row index within the chroma strip (0..chroma_strip_height).
+    /// `cols` is the number of chroma samples to return.
+    ///
+    /// Returns `(cb_row, cr_row)` at native chroma resolution.
+    #[inline(always)]
+    pub fn chroma_row_native(
+        &self,
+        chroma_row: usize,
+        cols: usize,
+    ) -> (&[i16], &[i16]) {
+        let offset = chroma_row * self.chroma_strip_stride;
+        (
+            &self.cb_strip[offset..offset + cols],
+            &self.cr_strip[offset..offset + cols],
+        )
+    }
+
     // =========================================================================
     // Upsampling implementations
     // =========================================================================

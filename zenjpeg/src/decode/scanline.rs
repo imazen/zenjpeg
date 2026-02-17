@@ -508,6 +508,55 @@ impl<'a> ScanlineReader<'a> {
         self.num_components
     }
 
+    /// Returns the chroma plane width at native resolution (before upsampling).
+    ///
+    /// For 4:2:0 or 4:2:2: `(width + 1) / 2`. For 4:4:4: `width`. For grayscale: 0.
+    #[inline]
+    pub fn chroma_width(&self) -> u32 {
+        if self.num_components == 1 {
+            return 0;
+        }
+        self.strip.chroma_strip_width as u32
+    }
+
+    /// Returns the chroma plane height at native resolution (before upsampling).
+    ///
+    /// For 4:2:0 or 4:4:0: `(height + 1) / 2`. For 4:4:4 or 4:2:2: `height`. For grayscale: 0.
+    #[inline]
+    pub fn chroma_height(&self) -> u32 {
+        if self.num_components == 1 {
+            return 0;
+        }
+        let max_v = self.strip.v_samp[0].max(self.strip.v_samp[1]).max(self.strip.v_samp[2]);
+        let c_v = self.strip.v_samp[1];
+        if c_v < max_v {
+            // Vertically subsampled
+            (self.height + 1) / 2
+        } else {
+            self.height
+        }
+    }
+
+    /// Returns the number of luma rows per MCU row.
+    ///
+    /// 16 for 4:2:0/4:4:0, 8 for 4:4:4/4:2:2/grayscale.
+    #[inline]
+    pub fn luma_rows_per_mcu(&self) -> usize {
+        self.strip.mcu_height
+    }
+
+    /// Returns the number of chroma rows per MCU row at native resolution.
+    ///
+    /// Always 8 for color images. 0 for grayscale.
+    #[inline]
+    pub fn chroma_rows_per_mcu(&self) -> usize {
+        if self.num_components == 1 {
+            0
+        } else {
+            self.strip.chroma_strip_height
+        }
+    }
+
     /// Extract gain map JPEG bytes from an UltraHDR image, if present.
     ///
     /// Returns the raw gain map JPEG as a zero-copy slice into the original
@@ -1296,6 +1345,22 @@ impl<'a> ScanlineReader<'a> {
         Ok(())
     }
 
+    /// Wave-parallel: serve planar i16 rows from wave buffer, triggering decode on demand.
+    #[cfg(feature = "parallel")]
+    fn read_rows_planar_i16_wave(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        // TODO: implement wave-parallel planar decode in task 6
+        // For now, fall through to sequential
+        self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
+    }
+
     /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
     ///
     /// Returns the number of rows actually written.
@@ -1748,6 +1813,122 @@ impl<'a> ScanlineReader<'a> {
         }
 
         Ok(rows_written)
+    }
+
+    /// Read planar i16 Y/Cb/Cr at native resolution (no upsampling, no color conversion).
+    ///
+    /// Outputs raw IDCT samples as i16 at the native resolution of each component:
+    /// - Y plane: full image resolution
+    /// - Cb/Cr planes: native chroma resolution (e.g., half width/height for 4:2:0)
+    ///
+    /// For grayscale images, `cb` and `cr` are unused (pass empty slices).
+    ///
+    /// # Arguments
+    /// - `y`, `y_stride`: Luma output buffer and stride (in i16 elements)
+    /// - `cb`, `cr`, `c_stride`: Chroma output buffers and stride (in i16 elements)
+    /// - `max_mcu_rows`: Maximum number of MCU rows to decode
+    ///
+    /// # Returns
+    /// `(luma_rows, chroma_rows)` — the number of rows written to each plane.
+    /// For 4:2:0: luma_rows = 2 * chroma_rows. For 4:4:4: luma_rows = chroma_rows.
+    pub fn read_rows_planar_i16(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        if self.crop.is_some() {
+            return Err(Error::internal(
+                "read_rows_planar_i16 does not support crop",
+            ));
+        }
+
+        // Wave-parallel mode
+        #[cfg(feature = "parallel")]
+        if self.wave_state.is_some() {
+            return self.read_rows_planar_i16_wave(y, y_stride, cb, cr, c_stride, max_mcu_rows);
+        }
+
+        self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
+    }
+
+    /// Sequential implementation of `read_rows_planar_i16`.
+    fn read_rows_planar_i16_seq(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        let luma_width = self.width as usize;
+        let chroma_width = self.strip.chroma_strip_width;
+        let luma_rows_per_mcu = self.strip.mcu_height;
+        let chroma_rows_per_mcu = self.strip.chroma_strip_height;
+        let out_height = self.height as usize;
+        let is_grayscale = self.num_components == 1;
+
+        let total_mcu_rows = (out_height + luma_rows_per_mcu - 1) / luma_rows_per_mcu;
+        let mut total_luma_rows = 0usize;
+        let mut total_chroma_rows = 0usize;
+
+        for _ in 0..max_mcu_rows {
+            if self.current_mcu_row >= total_mcu_rows {
+                break;
+            }
+
+            // Decode this MCU row (entropy + IDCT + upsample; we ignore the upsample result)
+            self.decode_mcu_row()?;
+
+            // How many luma pixel rows in this MCU row?
+            let remaining_luma = out_height.saturating_sub(self.current_mcu_row * luma_rows_per_mcu);
+            let luma_rows_this = luma_rows_per_mcu.min(remaining_luma);
+
+            // How many chroma pixel rows in this MCU row?
+            let chroma_height_total = if is_grayscale {
+                0
+            } else {
+                self.chroma_height() as usize
+            };
+            let remaining_chroma =
+                chroma_height_total.saturating_sub(self.current_mcu_row * chroma_rows_per_mcu);
+            let chroma_rows_this = chroma_rows_per_mcu.min(remaining_chroma);
+
+            let strip_cols_y = luma_width.min(self.strip.strip_width);
+            let strip_cols_c = chroma_width.min(self.strip.chroma_strip_stride);
+
+            // Copy luma rows
+            for row in 0..luma_rows_this {
+                let src = self.strip.y_row(row, strip_cols_y);
+                let dst_off = (total_luma_rows + row) * y_stride;
+                y[dst_off..dst_off + luma_width.min(strip_cols_y)]
+                    .copy_from_slice(&src[..luma_width.min(strip_cols_y)]);
+            }
+
+            // Copy chroma rows
+            if !is_grayscale {
+                for row in 0..chroma_rows_this {
+                    let (cb_src, cr_src) = self.strip.chroma_row_native(row, strip_cols_c);
+                    let dst_off = (total_chroma_rows + row) * c_stride;
+                    let copy_width = chroma_width.min(strip_cols_c);
+                    cb[dst_off..dst_off + copy_width].copy_from_slice(&cb_src[..copy_width]);
+                    cr[dst_off..dst_off + copy_width].copy_from_slice(&cr_src[..copy_width]);
+                }
+            }
+
+            total_luma_rows += luma_rows_this;
+            total_chroma_rows += chroma_rows_this;
+
+            // Advance to next MCU row
+            self.current_row += luma_rows_this;
+            self.advance_mcu_row();
+        }
+
+        Ok((total_luma_rows, total_chroma_rows))
     }
 
     /// Read rows into a grayscale u8 buffer.
