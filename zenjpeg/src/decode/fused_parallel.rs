@@ -188,8 +188,11 @@ impl<'a> JpegParser<'a> {
                 group_stride,
                 chroma_upsampling,
             )?
-        } else if matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor) {
-            // 4:2:0 + box filter — single pass
+        } else if matches!(
+            chroma_upsampling,
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy
+        ) {
+            // 4:2:0 + box/hfancy filter — single pass (no vertical context needed)
             self.decode_fused_subsampled_box(
                 scan_components,
                 scan_data,
@@ -202,6 +205,7 @@ impl<'a> JpegParser<'a> {
                 max_v_samp,
                 ri,
                 group_stride,
+                chroma_upsampling,
             )?
         } else {
             // Subsampled + fancy upsample
@@ -689,8 +693,10 @@ impl<'a> JpegParser<'a> {
         max_v_samp: usize,
         ri: usize,
         group_stride: usize,
+        chroma_upsampling: ChromaUpsampling,
     ) -> FusedDecodeResult {
-        use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
+        use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, fused_h2v2_hfancy_ycbcr_to_rgb_u8};
+        let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -798,7 +804,7 @@ impl<'a> JpegParser<'a> {
                 let mut current_mcu_row = first_mcu_row;
                 let seg_first_pixel_row = first_mcu_row * mcu_pixel_height;
 
-                // Closure to flush one MCU row of strips to RGB via fused box upsample
+                // Closure to flush one MCU row of strips to RGB via fused box/hfancy upsample
                 let flush_mcu_row = |current_mcu_row: usize,
                                      y_strip: &[i16],
                                      cb_strip: &[i16],
@@ -818,13 +824,23 @@ impl<'a> JpegParser<'a> {
                         if rgb_off + cols_this * 3 > rgb_chunk.len() {
                             break;
                         }
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
-                            &y_strip[y_off..y_off + cols_this],
-                            &cb_strip[c_off..],
-                            &cr_strip[c_off..],
-                            &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                            cols_this,
-                        );
+                        if use_hfancy {
+                            fused_h2v2_hfancy_ycbcr_to_rgb_u8(
+                                &y_strip[y_off..y_off + cols_this],
+                                &cb_strip[c_off..],
+                                &cr_strip[c_off..],
+                                &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                                cols_this,
+                            );
+                        } else {
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_off..y_off + cols_this],
+                                &cb_strip[c_off..],
+                                &cr_strip[c_off..],
+                                &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                                cols_this,
+                            );
+                        }
                     }
                 };
 
