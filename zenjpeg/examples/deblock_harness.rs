@@ -42,7 +42,9 @@ use zenjpeg_bench_utils::{decode_jpeg_with_icc, ImageData, QualityMetrics, RgbIm
 const CACHE_DIR: &str = "/mnt/v/output/zenjpeg/deblock";
 const RESULTS_DIR: &str = "/mnt/v/output/zenjpeg/deblock/results";
 
-const QUALITY_LEVELS: [u8; 8] = [50, 60, 70, 75, 80, 85, 90, 95];
+const QUALITY_LEVELS: [u8; 17] = [
+    5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 75, 80, 85, 90, 93, 95, 97,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Encoder {
