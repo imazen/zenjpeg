@@ -1792,8 +1792,16 @@ pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
         let curr_cr = i32::from(cr_row[cx]);
 
         // Left output pixel: (3*curr + left_neighbor + 2) >> 2
-        let left_cb = if cx > 0 { i32::from(cb_row[cx - 1]) } else { curr_cb };
-        let left_cr = if cx > 0 { i32::from(cr_row[cx - 1]) } else { curr_cr };
+        let left_cb = if cx > 0 {
+            i32::from(cb_row[cx - 1])
+        } else {
+            curr_cb
+        };
+        let left_cr = if cx > 0 {
+            i32::from(cr_row[cx - 1])
+        } else {
+            curr_cr
+        };
         let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
         let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
 
@@ -1811,8 +1819,16 @@ pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
         }
 
         // Right output pixel: (3*curr + right_neighbor + 2) >> 2
-        let right_cb = if cx + 1 < chroma_width { i32::from(cb_row[cx + 1]) } else { curr_cb };
-        let right_cr = if cx + 1 < chroma_width { i32::from(cr_row[cx + 1]) } else { curr_cr };
+        let right_cb = if cx + 1 < chroma_width {
+            i32::from(cb_row[cx + 1])
+        } else {
+            curr_cb
+        };
+        let right_cr = if cx + 1 < chroma_width {
+            i32::from(cr_row[cx + 1])
+        } else {
+            curr_cr
+        };
         let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
         let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
 

@@ -278,8 +278,7 @@ fn main() {
 
                 println!(
                     "{:<14} {:>5} {:>8.0} {:>8.1} {:>8.2} {:>8.2} {:>8.2} {:>8.2}",
-                    name, conc, actual_mps, actual_ips, stats.mean, stats.p50, stats.p95,
-                    stats.p99,
+                    name, conc, actual_mps, actual_ips, stats.mean, stats.p50, stats.p95, stats.p99,
                 );
             }
             println!();

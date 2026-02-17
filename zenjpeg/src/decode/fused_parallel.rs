@@ -695,7 +695,9 @@ impl<'a> JpegParser<'a> {
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
     ) -> FusedDecodeResult {
-        use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, fused_h2v2_hfancy_ycbcr_to_rgb_u8};
+        use crate::color::ycbcr::{
+            fused_h2v2_box_ycbcr_to_rgb_u8, fused_h2v2_hfancy_ycbcr_to_rgb_u8,
+        };
         let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
 
         let width = self.width as usize;

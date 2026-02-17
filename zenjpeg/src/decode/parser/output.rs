@@ -444,8 +444,7 @@ impl<'a> JpegParser<'a> {
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
                 ),
-                ChromaUpsampling::NearestNeighbor
-                | ChromaUpsampling::HorizontalFancy => (
+                ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => (
                     upsample_h2v2_i16_nearest,
                     upsample_h2v1_i16_nearest,
                     upsample_h1v2_i16_nearest,
