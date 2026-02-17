@@ -1961,7 +1961,6 @@ pub(super) struct WaveParallelState {
     pub mcu_cols: usize,
     pub mcu_rows: usize,
     pub ri: usize,
-    pub max_h_samp: usize,
     pub max_v_samp: usize,
 
     // Per-component sampling
@@ -1978,7 +1977,6 @@ pub(super) struct WaveParallelState {
     // Wave parameters
     pub wave_size: usize,
     pub num_segments: usize,
-    pub mcu_rows_per_ri: usize,
     pub mcu_pixel_height: usize,
     pub pixel_rows_per_seg: usize,
 }
@@ -2075,7 +2073,6 @@ impl WaveParallelState {
             mcu_cols,
             mcu_rows,
             ri,
-            max_h_samp,
             max_v_samp,
             comp_h_samps,
             comp_v_samps,
@@ -2086,7 +2083,6 @@ impl WaveParallelState {
             strict,
             wave_size,
             num_segments,
-            mcu_rows_per_ri,
             mcu_pixel_height: mcu_height,
             pixel_rows_per_seg,
         }
