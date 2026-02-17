@@ -306,6 +306,10 @@ pub mod test_utils;
 #[cfg(feature = "decoder")]
 pub mod lossless;
 
+// Layout pipeline: lossless transforms + lossy decode→resize→encode
+#[cfg(feature = "layout")]
+pub mod layout;
+
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
