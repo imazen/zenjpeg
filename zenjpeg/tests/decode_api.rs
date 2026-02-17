@@ -753,7 +753,11 @@ fn request_scanline_reader_with_pool() {
     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
 
     // Create scanline reader via request
-    let mut reader = decoder.request(&jpeg).pool(&pool).scanline_reader().expect("scanline_reader");
+    let mut reader = decoder
+        .request(&jpeg)
+        .pool(&pool)
+        .scanline_reader()
+        .expect("scanline_reader");
 
     assert_eq!(pool.active_count(), 1, "pool slot held while reader alive");
 
@@ -763,17 +767,23 @@ fn request_scanline_reader_with_pool() {
     let mut rows_read = 0;
     while rows_read < h {
         let remaining = h - rows_read;
-        let output =
-            imgref::ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
+        let output = imgref::ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
         rows_read += reader.read_rows_rgb8(output).expect("read");
     }
 
     assert_eq!(rows_read, h);
-    assert!(!pixels.iter().all(|&p| p == 0), "pixels should not be all zero");
+    assert!(
+        !pixels.iter().all(|&p| p == 0),
+        "pixels should not be all zero"
+    );
 
     // Drop reader, pool slot should release
     drop(reader);
-    assert_eq!(pool.active_count(), 0, "pool must release slot on reader drop");
+    assert_eq!(
+        pool.active_count(),
+        0,
+        "pool must release slot on reader drop"
+    );
 }
 
 #[test]
@@ -790,7 +800,11 @@ fn request_scanline_reader_pool_releases_on_error() {
         .scanline_reader();
 
     assert!(result.is_err());
-    assert_eq!(pool.active_count(), 0, "pool must release slot on scanline error");
+    assert_eq!(
+        pool.active_count(),
+        0,
+        "pool must release slot on scanline error"
+    );
 }
 
 #[test]

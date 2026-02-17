@@ -111,8 +111,7 @@ fn decode_wave(data: &[u8]) -> Vec<u8> {
     let mut rows_read = 0;
     while rows_read < h {
         let remaining = h - rows_read;
-        let output =
-            imgref::ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
+        let output = imgref::ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
         rows_read += reader.read_rows_rgb8(output).expect("read");
     }
     pixels
@@ -256,7 +255,10 @@ impl Row {
 fn main() {
     let num_cpus = rayon::current_num_threads();
     let physical_cores = num_cpus / 2; // Assume SMT
-    println!("System: {} logical cores, {} physical (assumed)", num_cpus, physical_cores);
+    println!(
+        "System: {} logical cores, {} physical (assumed)",
+        num_cpus, physical_cores
+    );
     println!("Rayon global pool: {} threads", num_cpus);
     println!();
 
@@ -266,7 +268,10 @@ fn main() {
         let mpix = (width as f64 * height as f64) / 1e6;
         let rgb_mb = (width as f64 * height as f64 * 3.0) / (1024.0 * 1024.0);
 
-        println!("=== {}x{} ({:.1} MP, {:.1} MB RGB) ===", width, height, mpix, rgb_mb);
+        println!(
+            "=== {}x{} ({:.1} MP, {:.1} MB RGB) ===",
+            width, height, mpix, rgb_mb
+        );
 
         let jpeg = create_test_jpeg(width, height);
         println!("JPEG: {} KB\n", jpeg.len() / 1024);
@@ -332,8 +337,7 @@ fn main() {
                 if conc > num_cpus {
                     continue;
                 }
-                let (ips, lat) =
-                    measure_throughput_custom_pool(conc, pool_sz, &jpeg, target_secs);
+                let (ips, lat) = measure_throughput_custom_pool(conc, pool_sz, &jpeg, target_secs);
                 rows.push(Row {
                     strategy: format!("par-{}t", pool_sz),
                     concurrency: conc,
@@ -347,8 +351,11 @@ fn main() {
         }
 
         // Find baseline (1x seq) and peak for each strategy
-        let baseline_ips = rows.iter().find(|r| r.strategy == "seq" && r.concurrency == 1)
-            .map(|r| r.ips).unwrap_or(1.0);
+        let baseline_ips = rows
+            .iter()
+            .find(|r| r.strategy == "seq" && r.concurrency == 1)
+            .map(|r| r.ips)
+            .unwrap_or(1.0);
 
         // Sort by strategy then concurrency for display
         let strategies = ["seq", "par", "wave", "par-4t", "par-8t", "par-16t"];
@@ -359,24 +366,24 @@ fn main() {
         println!("{}", "-".repeat(68));
 
         for strat in &strategies {
-            let mut strat_rows: Vec<&Row> = rows.iter()
-                .filter(|r| r.strategy == *strat)
-                .collect();
+            let mut strat_rows: Vec<&Row> = rows.iter().filter(|r| r.strategy == *strat).collect();
             if strat_rows.is_empty() {
                 continue;
             }
             strat_rows.sort_by_key(|r| r.concurrency);
 
-            let peak = strat_rows.iter()
+            let peak = strat_rows
+                .iter()
                 .max_by(|a, b| a.mp_per_sec().partial_cmp(&b.mp_per_sec()).unwrap())
                 .unwrap();
 
             for r in &strat_rows {
-                let marker = if (r.mp_per_sec() - peak.mp_per_sec()).abs() / peak.mp_per_sec() < 0.03 {
-                    " *"
-                } else {
-                    ""
-                };
+                let marker =
+                    if (r.mp_per_sec() - peak.mp_per_sec()).abs() / peak.mp_per_sec() < 0.03 {
+                        " *"
+                    } else {
+                        ""
+                    };
                 let pool_str = if r.pool_threads == 0 {
                     "-".to_string()
                 } else {
@@ -401,7 +408,8 @@ fn main() {
         // Summary: best throughput per strategy
         println!("Peak system throughput:");
         for strat in &strategies {
-            if let Some(peak) = rows.iter()
+            if let Some(peak) = rows
+                .iter()
                 .filter(|r| r.strategy == *strat)
                 .max_by(|a, b| a.mp_per_sec().partial_cmp(&b.mp_per_sec()).unwrap())
             {

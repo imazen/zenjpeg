@@ -1008,12 +1008,14 @@ impl<'a> JpegParser<'a> {
                     (2, 2) => match self.chroma_upsampling {
                         ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy,
                         ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg,
-                        ChromaUpsampling::NearestNeighbor
-                        | ChromaUpsampling::HorizontalFancy => unreachable!(),
+                        ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                            unreachable!()
+                        }
                     },
                     (2, 1) => match self.chroma_upsampling {
-                        ChromaUpsampling::Triangle
-                        | ChromaUpsampling::HorizontalFancy => upsample_h2v1_i16_fancy,
+                        ChromaUpsampling::Triangle | ChromaUpsampling::HorizontalFancy => {
+                            upsample_h2v1_i16_fancy
+                        }
                         ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg,
                         ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
                     },
