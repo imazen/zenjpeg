@@ -957,6 +957,329 @@ impl DeblockStrategy for CoeffRefineTV {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy: POCS (Projection Onto Convex Sets) — matched FDCT/IDCT
+// ---------------------------------------------------------------------------
+
+/// True POCS deblocking with a matched forward/inverse DCT pair.
+///
+/// The key insight: pixel-domain boundary smoothing + DCT-domain quantization
+/// interval clamping. The matched DCT pair ensures the roundtrip is lossless
+/// (up to float precision), so the iterations converge instead of diverging.
+///
+/// Each iteration:
+/// 1. IDCT all blocks → pixel plane
+/// 2. Apply boundary smoothing (reduce block edge discontinuities)
+/// 3. FDCT all blocks → DCT coefficients
+/// 4. Clamp each coefficient to its quantization interval
+///
+/// The quantization intervals are the "convex set" — each coefficient must
+/// stay within [int*q - q/2, int*q + q/2]. The boundary smoothing is the
+/// "desired property" — reduce visible blocking artifacts.
+struct CoeffPOCS {
+    iterations: usize,
+}
+
+impl CoeffPOCS {
+    fn new(iterations: usize) -> Self {
+        Self { iterations }
+    }
+
+    /// Compute the 8x8 orthonormal DCT-II basis matrix.
+    /// basis[k][n] = alpha(k) * cos(pi * (2n+1) * k / 16)
+    /// where alpha(0) = 1/sqrt(8), alpha(k>0) = sqrt(2/8) = 1/2
+    fn dct_basis() -> [[f32; 8]; 8] {
+        let mut basis = [[0.0f32; 8]; 8];
+        for k in 0..8u32 {
+            let alpha = if k == 0 {
+                1.0 / (8.0f32).sqrt()
+            } else {
+                (2.0 / 8.0f32).sqrt()
+            };
+            for n in 0..8u32 {
+                basis[k as usize][n as usize] =
+                    alpha * (std::f32::consts::PI * (2 * n + 1) as f32 * k as f32 / 16.0).cos();
+            }
+        }
+        basis
+    }
+
+    /// 1D forward DCT: output[k] = sum_n basis[k][n] * input[n]
+    #[inline]
+    fn fdct_1d(input: &[f32; 8], basis: &[[f32; 8]; 8]) -> [f32; 8] {
+        let mut output = [0.0f32; 8];
+        for k in 0..8 {
+            let b = &basis[k];
+            output[k] = b[0] * input[0] + b[1] * input[1] + b[2] * input[2] + b[3] * input[3]
+                + b[4] * input[4] + b[5] * input[5] + b[6] * input[6] + b[7] * input[7];
+        }
+        output
+    }
+
+    /// 1D inverse DCT: output[n] = sum_k basis[k][n] * input[k] (transpose)
+    #[inline]
+    fn idct_1d(input: &[f32; 8], basis: &[[f32; 8]; 8]) -> [f32; 8] {
+        let mut output = [0.0f32; 8];
+        for n in 0..8 {
+            output[n] = basis[0][n] * input[0] + basis[1][n] * input[1]
+                + basis[2][n] * input[2] + basis[3][n] * input[3]
+                + basis[4][n] * input[4] + basis[5][n] * input[5]
+                + basis[6][n] * input[6] + basis[7][n] * input[7];
+        }
+        output
+    }
+
+    /// 2D forward DCT (separable): F = basis * pixels * basis^T
+    fn fdct_2d(block: &[f32; 64], basis: &[[f32; 8]; 8]) -> [f32; 64] {
+        // DCT on rows
+        let mut temp = [0.0f32; 64];
+        for row in 0..8 {
+            let input: [f32; 8] = block[row * 8..row * 8 + 8].try_into().unwrap();
+            let output = Self::fdct_1d(&input, basis);
+            temp[row * 8..row * 8 + 8].copy_from_slice(&output);
+        }
+        // DCT on columns
+        let mut result = [0.0f32; 64];
+        for col in 0..8 {
+            let mut input = [0.0f32; 8];
+            for row in 0..8 {
+                input[row] = temp[row * 8 + col];
+            }
+            let output = Self::fdct_1d(&input, basis);
+            for row in 0..8 {
+                result[row * 8 + col] = output[row];
+            }
+        }
+        result
+    }
+
+    /// 2D inverse DCT (separable): pixels = basis^T * F * basis
+    fn idct_2d(block: &[f32; 64], basis: &[[f32; 8]; 8]) -> [f32; 64] {
+        // IDCT on rows
+        let mut temp = [0.0f32; 64];
+        for row in 0..8 {
+            let input: [f32; 8] = block[row * 8..row * 8 + 8].try_into().unwrap();
+            let output = Self::idct_1d(&input, basis);
+            temp[row * 8..row * 8 + 8].copy_from_slice(&output);
+        }
+        // IDCT on columns
+        let mut result = [0.0f32; 64];
+        for col in 0..8 {
+            let mut input = [0.0f32; 8];
+            for row in 0..8 {
+                input[row] = temp[row * 8 + col];
+            }
+            let output = Self::idct_1d(&input, basis);
+            for row in 0..8 {
+                result[row * 8 + col] = output[row];
+            }
+        }
+        result
+    }
+
+    fn process_component(
+        zigzag_coeffs: &[i16],
+        blocks_wide: usize,
+        blocks_high: usize,
+        quant_table: &[u16; 64],
+        iterations: usize,
+    ) -> Vec<f32> {
+        let basis = Self::dct_basis();
+        let num_blocks = blocks_wide * blocks_high;
+        let pw = blocks_wide * 8;
+        let ph = blocks_high * 8;
+
+        // Derive smoothing threshold from DC quantization step.
+        // Large Q = coarse quantization = big artifacts = smooth aggressively.
+        // Small Q = fine quantization = subtle artifacts = smooth gently.
+        let dc_quant = quant_table[0] as f32;
+        let tc = dc_quant * 0.25;
+
+        // Dequantize to natural order, track quantization intervals
+        let mut coeffs = vec![[0.0f32; 64]; num_blocks];
+        let mut coeff_min = vec![[0.0f32; 64]; num_blocks];
+        let mut coeff_max = vec![[0.0f32; 64]; num_blocks];
+
+        for bi in 0..num_blocks {
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
+                .try_into()
+                .unwrap();
+            for nat in 0..64 {
+                let zi = NATURAL_TO_ZIGZAG[nat];
+                let q = quant_table[nat] as f32;
+                let mid = block[zi] as f32 * q;
+                coeffs[bi][nat] = mid;
+                coeff_min[bi][nat] = mid - q * 0.5;
+                coeff_max[bi][nat] = mid + q * 0.5;
+            }
+        }
+
+        let mut pixels = vec![0.0f32; pw * ph];
+
+        for _iter in 0..iterations {
+            // Step 1: IDCT all blocks → pixel plane
+            for bi in 0..num_blocks {
+                let by = bi / blocks_wide;
+                let bx = bi % blocks_wide;
+                let block_pixels = Self::idct_2d(&coeffs[bi], &basis);
+                for row in 0..8 {
+                    let py = by * 8 + row;
+                    let base = py * pw + bx * 8;
+                    for col in 0..8 {
+                        pixels[base + col] = block_pixels[row * 8 + col] + 128.0;
+                    }
+                }
+            }
+
+            // Step 2: Adaptive boundary smoothing in pixel domain.
+            // Only correct discontinuities, clamped by tc (from quant step).
+            // Only touch the two boundary pixels (p0, q0) — no p1/q1.
+
+            // Horizontal boundaries
+            for by in 1..blocks_high {
+                let y = by * 8;
+                for x in 0..pw {
+                    let p0 = pixels[(y - 1) * pw + x];
+                    let q0 = pixels[y * pw + x];
+                    let disc = p0 - q0;
+
+                    let delta = (disc * 0.5).clamp(-tc, tc);
+                    if delta.abs() < 0.1 {
+                        continue;
+                    }
+
+                    pixels[(y - 1) * pw + x] -= delta;
+                    pixels[y * pw + x] += delta;
+                }
+            }
+
+            // Vertical boundaries
+            for bx in 1..blocks_wide {
+                let x = bx * 8;
+                for y in 0..ph {
+                    let p0 = pixels[y * pw + x - 1];
+                    let q0 = pixels[y * pw + x];
+                    let disc = p0 - q0;
+
+                    let delta = (disc * 0.5).clamp(-tc, tc);
+                    if delta.abs() < 0.1 {
+                        continue;
+                    }
+
+                    pixels[y * pw + x - 1] -= delta;
+                    pixels[y * pw + x] += delta;
+                }
+            }
+
+            // Step 3: FDCT all blocks (matched pair — roundtrip is lossless)
+            for bi in 0..num_blocks {
+                let by = bi / blocks_wide;
+                let bx = bi % blocks_wide;
+                let mut block_pixels = [0.0f32; 64];
+                for row in 0..8 {
+                    let py = by * 8 + row;
+                    let base = py * pw + bx * 8;
+                    for col in 0..8 {
+                        block_pixels[row * 8 + col] = pixels[base + col] - 128.0;
+                    }
+                }
+                coeffs[bi] = Self::fdct_2d(&block_pixels, &basis);
+            }
+
+            // Step 4: Frequency-selective projection onto quantization intervals.
+            // LF coefficients (row+col < 4): clamp to full quantization interval.
+            //   These control block-to-block smoothness — the target of deblocking.
+            // HF coefficients (row+col >= 4): restore to original values.
+            //   This prevents boundary smoothing from introducing parasitic HF noise
+            //   that degrades interior pixels.
+            for bi in 0..num_blocks {
+                let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
+                    .try_into()
+                    .unwrap();
+                for nat in 0..64 {
+                    let row = nat / 8;
+                    let col = nat % 8;
+                    if row + col < 4 {
+                        // LF: clamp to quantization interval (allow movement)
+                        coeffs[bi][nat] =
+                            coeffs[bi][nat].clamp(coeff_min[bi][nat], coeff_max[bi][nat]);
+                    } else {
+                        // HF: restore to original dequantized value (no change)
+                        let zi = NATURAL_TO_ZIGZAG[nat];
+                        let q = quant_table[nat] as f32;
+                        coeffs[bi][nat] = block[zi] as f32 * q;
+                    }
+                }
+            }
+        }
+
+        // Final IDCT to pixel plane
+        for bi in 0..num_blocks {
+            let by = bi / blocks_wide;
+            let bx = bi % blocks_wide;
+            let block_pixels = Self::idct_2d(&coeffs[bi], &basis);
+            for row in 0..8 {
+                let py = by * 8 + row;
+                let base = py * pw + bx * 8;
+                for col in 0..8 {
+                    pixels[base + col] = block_pixels[row * 8 + col] + 128.0;
+                }
+            }
+        }
+
+        pixels
+    }
+}
+
+impl DeblockStrategy for CoeffPOCS {
+    fn name(&self) -> &str {
+        "pocs"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        use enough::Unstoppable;
+        use zenjpeg::decoder::Decoder;
+
+        let coeffs = Decoder::new()
+            .decode_coefficients(jpeg_bytes, Unstoppable)
+            .ok()?;
+
+        let w = coeffs.width as usize;
+        let h = coeffs.height as usize;
+
+        let mut planes = Vec::with_capacity(3);
+        for ci in 0..coeffs.components.len().min(3) {
+            let comp = &coeffs.components[ci];
+            let qt_idx = comp.quant_table_idx as usize;
+            let qt = coeffs.quant_tables[qt_idx].as_ref()?;
+            let bw = comp.blocks_wide;
+            let bh = comp.blocks_high;
+            let pw = bw * 8;
+            let ph = bh * 8;
+
+            let plane_data = Self::process_component(
+                &comp.coeffs, bw, bh, qt, self.iterations,
+            );
+
+            planes.push(ComponentPlane {
+                data: plane_data,
+                width: pw,
+                height: ph,
+                blocks_wide: bw,
+                blocks_high: bh,
+                quant_table: *qt,
+            });
+        }
+
+        let cp = CoeffPlanes {
+            planes,
+            image_width: w,
+            image_height: h,
+        };
+        Some(planes_to_rgb(&cp))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Strategy: Knusperli (Google) — single-pass DCT-domain boundary correction
 // ---------------------------------------------------------------------------
 
@@ -1407,6 +1730,7 @@ fn parse_args() -> Args {
             Box::new(QuantSmoothBilateral),
             Box::new(CoeffSmooth),
             Box::new(CoeffRefineTV::new(4)),
+            Box::new(CoeffPOCS::new(8)),
         ],
         verbose: false,
     };
