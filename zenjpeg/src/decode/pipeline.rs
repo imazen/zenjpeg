@@ -435,11 +435,7 @@ impl StripProcessor {
     ///
     /// Returns `(cb_row, cr_row)` at native chroma resolution.
     #[inline(always)]
-    pub fn chroma_row_native(
-        &self,
-        chroma_row: usize,
-        cols: usize,
-    ) -> (&[i16], &[i16]) {
+    pub fn chroma_row_native(&self, chroma_row: usize, cols: usize) -> (&[i16], &[i16]) {
         let offset = chroma_row * self.chroma_strip_stride;
         (
             &self.cb_strip[offset..offset + cols],

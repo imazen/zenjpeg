@@ -837,8 +837,7 @@ impl DecodeConfig {
         );
 
         // Determine if we can use the wave-only RGB box path (original behavior)
-        let is_box_filter =
-            matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor);
+        let is_box_filter = matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor);
         let is_subsampled_color = num_comps == 3
             && (scan_data.h_samp[1] != scan_data.h_samp[0]
                 || scan_data.v_samp[1] != scan_data.v_samp[0]);
