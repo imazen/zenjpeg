@@ -612,6 +612,7 @@ impl<'a> ScanlineReader<'a> {
             return 0;
         }
         // Wave-only readers have a dummy strip; use wave_state dimensions instead
+        #[cfg(feature = "parallel")]
         if let Some(ref ws) = self.wave_state {
             return ws.chroma_width() as u32;
         }
@@ -627,6 +628,7 @@ impl<'a> ScanlineReader<'a> {
             return 0;
         }
         // Wave-only readers have a dummy strip; derive from wave_state
+        #[cfg(feature = "parallel")]
         if let Some(ref ws) = self.wave_state {
             let v_scale = ws.max_v_samp;
             let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
@@ -653,6 +655,7 @@ impl<'a> ScanlineReader<'a> {
     /// 16 for 4:2:0/4:4:0, 8 for 4:4:4/4:2:2/grayscale.
     #[inline]
     pub fn luma_rows_per_mcu(&self) -> usize {
+        #[cfg(feature = "parallel")]
         if let Some(ref ws) = self.wave_state {
             return ws.mcu_pixel_height;
         }
@@ -667,6 +670,7 @@ impl<'a> ScanlineReader<'a> {
         if self.num_components == 1 {
             return 0;
         }
+        #[cfg(feature = "parallel")]
         if let Some(ref ws) = self.wave_state {
             let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
             return c_v * 8;
