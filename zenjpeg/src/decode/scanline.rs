@@ -605,11 +605,15 @@ impl<'a> ScanlineReader<'a> {
 
     /// Returns the chroma plane width at native resolution (before upsampling).
     ///
-    /// For 4:2:0 or 4:2:2: `(width + 1) / 2`. For 4:4:4: `width`. For grayscale: 0.
+    /// For 4:2:0 or 4:2:2: MCU-padded chroma width. For 4:4:4: same as luma. For grayscale: 0.
     #[inline]
     pub fn chroma_width(&self) -> u32 {
         if self.num_components == 1 {
             return 0;
+        }
+        // Wave-only readers have a dummy strip; use wave_state dimensions instead
+        if let Some(ref ws) = self.wave_state {
+            return ws.chroma_width() as u32;
         }
         self.strip.chroma_strip_width as u32
     }
@@ -622,7 +626,19 @@ impl<'a> ScanlineReader<'a> {
         if self.num_components == 1 {
             return 0;
         }
-        let max_v = self.strip.v_samp[0].max(self.strip.v_samp[1]).max(self.strip.v_samp[2]);
+        // Wave-only readers have a dummy strip; derive from wave_state
+        if let Some(ref ws) = self.wave_state {
+            let v_scale = ws.max_v_samp;
+            let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
+            return if c_v < v_scale {
+                ((self.height as usize + v_scale - 1) / v_scale) as u32
+            } else {
+                self.height
+            };
+        }
+        let max_v = self.strip.v_samp[0]
+            .max(self.strip.v_samp[1])
+            .max(self.strip.v_samp[2]);
         let c_v = self.strip.v_samp[1];
         if c_v < max_v {
             // Vertically subsampled
@@ -637,6 +653,9 @@ impl<'a> ScanlineReader<'a> {
     /// 16 for 4:2:0/4:4:0, 8 for 4:4:4/4:2:2/grayscale.
     #[inline]
     pub fn luma_rows_per_mcu(&self) -> usize {
+        if let Some(ref ws) = self.wave_state {
+            return ws.mcu_pixel_height;
+        }
         self.strip.mcu_height
     }
 
@@ -646,10 +665,13 @@ impl<'a> ScanlineReader<'a> {
     #[inline]
     pub fn chroma_rows_per_mcu(&self) -> usize {
         if self.num_components == 1 {
-            0
-        } else {
-            self.strip.chroma_strip_height
+            return 0;
         }
+        if let Some(ref ws) = self.wave_state {
+            let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
+            return c_v * 8;
+        }
+        self.strip.chroma_strip_height
     }
 
     /// Extract gain map JPEG bytes from an UltraHDR image, if present.
@@ -2096,7 +2118,8 @@ impl<'a> ScanlineReader<'a> {
             self.decode_mcu_row()?;
 
             // How many luma pixel rows in this MCU row?
-            let remaining_luma = out_height.saturating_sub(self.current_mcu_row * luma_rows_per_mcu);
+            let remaining_luma =
+                out_height.saturating_sub(self.current_mcu_row * luma_rows_per_mcu);
             let luma_rows_this = luma_rows_per_mcu.min(remaining_luma);
 
             // How many chroma pixel rows in this MCU row?
