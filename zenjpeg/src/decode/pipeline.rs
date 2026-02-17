@@ -453,7 +453,9 @@ impl StripProcessor {
     fn upsample_h2v1(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v1_i16_fancy_strided,
+            ChromaUpsampling::Triangle | ChromaUpsampling::HorizontalFancy => {
+                upsample_h2v1_i16_fancy_strided
+            }
             ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg_strided,
             ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
         };
@@ -466,7 +468,9 @@ impl StripProcessor {
         let upsample_fn: StridedFn = match self.chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h1v2_i16_fancy_strided,
             ChromaUpsampling::LibjpegCompat => upsample_h1v2_i16_libjpeg_strided,
-            ChromaUpsampling::NearestNeighbor => upsample_h1v2_i16_nearest_strided,
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                upsample_h1v2_i16_nearest_strided
+            }
         };
         self.upsample_both_channels(upsample_fn);
     }
@@ -477,7 +481,9 @@ impl StripProcessor {
         let upsample_fn: StridedFn = match self.chroma_upsampling {
             ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy_strided,
             ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg_strided,
-            ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                upsample_h2v2_i16_nearest_strided
+            }
         };
         self.upsample_both_channels(upsample_fn);
     }
@@ -589,8 +595,8 @@ impl StripProcessor {
                     false,
                 );
             }
-            ChromaUpsampling::NearestNeighbor => {
-                // No interpolation, no fixup needed
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No interpolation vertically, no fixup needed
             }
         }
     }
@@ -630,8 +636,8 @@ impl StripProcessor {
                         ((near_cr * 3 + far_cr + 2) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor => {
-                // No interpolation, no fixup needed
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No interpolation vertically, no fixup needed
             }
         }
     }
@@ -704,8 +710,8 @@ impl StripProcessor {
                     false,
                 );
             }
-            ChromaUpsampling::NearestNeighbor => {
-                // No interpolation needed, just copy from upsampled
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No vertical interpolation, just copy from upsampled
                 let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
                 self.deferred_cb_row[..out_width].copy_from_slice(
                     &self.cb_upsampled[last_out_offset..last_out_offset + out_width],
@@ -744,7 +750,8 @@ impl StripProcessor {
                     self.deferred_cr_row[x] = ((near_cr * 3 + far_cr + 2) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor => {
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No vertical interpolation, just copy from upsampled
                 let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
                 self.deferred_cb_row[..out_width].copy_from_slice(
                     &self.cb_upsampled[last_out_offset..last_out_offset + out_width],
@@ -849,8 +856,8 @@ impl StripProcessor {
                     true,
                 );
             }
-            ChromaUpsampling::NearestNeighbor => {
-                // Nearest neighbor doesn't interpolate vertically, no fixup needed
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No vertical interpolation, no fixup needed
             }
         }
     }
@@ -885,8 +892,8 @@ impl StripProcessor {
                     self.cr_upsampled[x] = ((near_cr * 3 + far_cr + 1) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor => {
-                // No interpolation, no fixup needed
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                // No vertical interpolation, no fixup needed
             }
         }
     }
