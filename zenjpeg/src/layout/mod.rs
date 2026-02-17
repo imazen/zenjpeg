@@ -25,6 +25,7 @@
 //! assert!(!result.lossless);
 //! ```
 
+mod gainmap;
 mod lossless;
 mod lossy;
 
@@ -200,6 +201,9 @@ impl<'a> LayoutRequest<'a> {
     /// Automatically selects the lossless DCT-domain path when only orientation
     /// changes are requested (no resize, no crop). Falls back to lossy
     /// decode → resize → encode otherwise.
+    ///
+    /// For UltraHDR JPEGs with gain maps, the gain map is detected, extracted,
+    /// transformed proportionally to the primary, and reassembled with MPF.
     pub fn execute(self, stop: &dyn Stop) -> Result<LayoutResult> {
         stop.check()?;
 
@@ -209,12 +213,15 @@ impl<'a> LayoutRequest<'a> {
         let src_w = info.dimensions.width;
         let src_h = info.dimensions.height;
 
+        // Detect UltraHDR gain map
+        let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
+
         // Check EXIF for auto_orient commands that reference the source
         let commands = self.resolve_auto_orient(&info);
 
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
-            let data = lossless::execute_lossless(
+            let primary = lossless::execute_lossless(
                 self.jpeg_data,
                 transform,
                 self.config.edge_handling,
@@ -228,6 +235,24 @@ impl<'a> LayoutRequest<'a> {
                 (src_w, src_h)
             };
 
+            // Transform and reattach gain map if present.
+            // Skip for identity (None) — the input already includes the gain map.
+            let data = if transform != crate::lossless::LosslessTransform::None {
+                if let Some(gm_bytes) = gain_map_jpeg {
+                    let gm_transformed = lossless::execute_lossless(
+                        &gm_bytes,
+                        transform,
+                        self.config.edge_handling,
+                        stop,
+                    )?;
+                    gainmap::assemble_ultrahdr(primary, gm_transformed)
+                } else {
+                    primary
+                }
+            } else {
+                primary
+            };
+
             return Ok(LayoutResult {
                 data,
                 lossless: true,
@@ -239,7 +264,7 @@ impl<'a> LayoutRequest<'a> {
         // Lossy path: use zenlayout to compute target dimensions
         let (target_w, target_h) = self.compute_target_dimensions(&commands, src_w, src_h)?;
 
-        let data = lossy::execute_lossy(
+        let primary = lossy::execute_lossy(
             self.jpeg_data,
             &info,
             self.config,
@@ -248,12 +273,71 @@ impl<'a> LayoutRequest<'a> {
             stop,
         )?;
 
+        // Transform gain map proportionally if present
+        let data = match gain_map_jpeg {
+            Some(gm_bytes) => match self.transform_gainmap_lossy(
+                &gm_bytes, src_w, src_h, target_w, target_h, stop,
+            )? {
+                Some(gm_transformed) => gainmap::assemble_ultrahdr(primary, gm_transformed),
+                None => primary,
+            },
+            None => primary,
+        };
+
         Ok(LayoutResult {
             data,
             lossless: false,
             width: target_w,
             height: target_h,
         })
+    }
+
+    /// Detect UltraHDR content and extract the gain map JPEG if present.
+    fn detect_and_extract_gainmap(&self, info: &crate::decode::JpegInfo) -> Option<Vec<u8>> {
+        let xmp = info.xmp.as_deref()?;
+        if !gainmap::is_ultrahdr_xmp(xmp) {
+            return None;
+        }
+        gainmap::find_secondary_jpeg(self.jpeg_data)
+    }
+
+    /// Transform the gain map through the lossy path with proportional dimensions.
+    fn transform_gainmap_lossy(
+        &self,
+        gm_bytes: &[u8],
+        primary_src_w: u32,
+        primary_src_h: u32,
+        primary_dst_w: u32,
+        primary_dst_h: u32,
+        stop: &dyn Stop,
+    ) -> Result<Option<Vec<u8>>> {
+        let decoder = DecodeConfig::new();
+        let gm_info = match decoder.read_info(gm_bytes) {
+            Ok(info) => info,
+            Err(_) => return Ok(None), // Corrupted gain map — skip silently
+        };
+        let gm_src_w = gm_info.dimensions.width;
+        let gm_src_h = gm_info.dimensions.height;
+
+        let (gm_dst_w, gm_dst_h) = gainmap::compute_gainmap_target(
+            primary_src_w,
+            primary_src_h,
+            primary_dst_w,
+            primary_dst_h,
+            gm_src_w,
+            gm_src_h,
+        );
+
+        let gm_transformed = lossy::execute_lossy(
+            gm_bytes,
+            &gm_info,
+            self.config,
+            gm_dst_w,
+            gm_dst_h,
+            stop,
+        )?;
+
+        Ok(Some(gm_transformed))
     }
 
     /// Resolve auto_orient commands that read from source EXIF.

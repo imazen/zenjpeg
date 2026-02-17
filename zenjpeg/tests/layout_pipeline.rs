@@ -540,3 +540,180 @@ fn lossless_flip_roundtrip() {
         .unwrap_or(0);
     assert_eq!(max_diff, 0, "double flip_h should be pixel-perfect lossless");
 }
+
+// =============================================================================
+// UltraHDR gain map preservation tests
+// =============================================================================
+
+/// UltraHDR XMP metadata for test images.
+const ULTRAHDR_XMP: &str = r#"<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
+<x:xmpmeta xmlns:x='adobe:ns:meta/'>
+  <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
+    <rdf:Description rdf:about=''
+      xmlns:hdrgm='http://ns.adobe.com/hdr-gain-map/1.0/'
+      hdrgm:Version='1.0'
+      hdrgm:GainMapMax='4.0'/>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end='w'?>"#;
+
+/// Create a fake UltraHDR JPEG: primary (with gain map XMP) + gain map JPEG appended after EOI.
+fn make_ultrahdr_jpeg(
+    primary_w: u32,
+    primary_h: u32,
+    gainmap_w: u32,
+    gainmap_h: u32,
+) -> Vec<u8> {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
+
+    // Encode primary with UltraHDR XMP
+    let primary_pixels = make_noise_pixels(primary_w, primary_h, 0x1234_5678);
+    let mut primary_encoder = config
+        .request()
+        .xmp(ULTRAHDR_XMP.as_bytes())
+        .encode_from_bytes(primary_w, primary_h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    primary_encoder
+        .push_packed(&primary_pixels, Unstoppable)
+        .unwrap();
+    let primary_jpeg = primary_encoder.finish().unwrap();
+
+    // Encode gain map (grayscale-like, but RGB for simplicity)
+    let gm_pixels = make_noise_pixels(gainmap_w, gainmap_h, 0xDEAD_BEEF);
+    let gm_config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter);
+    let mut gm_encoder = gm_config
+        .request()
+        .encode_from_bytes(gainmap_w, gainmap_h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    gm_encoder.push_packed(&gm_pixels, Unstoppable).unwrap();
+    let gm_jpeg = gm_encoder.finish().unwrap();
+
+    // Concatenate: primary + gain map (simple UltraHDR structure)
+    let mut ultrahdr = primary_jpeg;
+    ultrahdr.extend_from_slice(&gm_jpeg);
+    ultrahdr
+}
+
+/// Generate noise pixel data for test images.
+fn make_noise_pixels(width: u32, height: u32, seed: u32) -> Vec<u8> {
+    let pixel_count = (width * height) as usize;
+    let mut pixels = vec![0u8; pixel_count * 3];
+    let mut rng = seed;
+    let next = |rng: &mut u32| -> u8 {
+        *rng = rng.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        (*rng >> 16) as u8
+    };
+    for p in pixels.iter_mut() {
+        *p = next(&mut rng);
+    }
+    pixels
+}
+
+#[test]
+fn ultrahdr_lossless_identity_preserves_gainmap() {
+    let ultrahdr = make_ultrahdr_jpeg(64, 64, 32, 32);
+
+    let result = LayoutConfig::new(85.0)
+        .request(&ultrahdr)
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 64);
+
+    // The output should still contain the gain map (secondary JPEG after EOI)
+    // Identity lossless returns a copy, which includes the appended gain map
+    assert_eq!(result.data, ultrahdr, "identity should preserve the entire stream");
+}
+
+#[test]
+fn ultrahdr_lossless_rotate_preserves_gainmap() {
+    let ultrahdr = make_ultrahdr_jpeg(64, 48, 32, 24);
+
+    let result = LayoutConfig::new(85.0)
+        .request(&ultrahdr)
+        .rotate_180()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 48);
+
+    // Output should be larger than just the primary (gain map appended)
+    // Verify the output contains a secondary JPEG by checking for two SOI markers
+    let soi_count = result
+        .data
+        .windows(2)
+        .filter(|w| w[0] == 0xFF && w[1] == 0xD8)
+        .count();
+    assert!(
+        soi_count >= 2,
+        "output should contain at least 2 JPEG streams (primary + gain map), got {soi_count}"
+    );
+
+    // The output should be decodable as a regular JPEG (just the primary)
+    let decoded = Decoder::new()
+        .decode(&result.data, Unstoppable)
+        .unwrap();
+    assert_eq!(decoded.width(), 64);
+    assert_eq!(decoded.height(), 48);
+}
+
+#[test]
+fn ultrahdr_lossy_resize_preserves_gainmap() {
+    let ultrahdr = make_ultrahdr_jpeg(128, 128, 64, 64);
+
+    let result = LayoutConfig::new(85.0)
+        .request(&ultrahdr)
+        .fit(64, 64)
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(!result.lossless);
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 64);
+
+    // Output should contain the resized gain map (two SOI markers)
+    let soi_count = result
+        .data
+        .windows(2)
+        .filter(|w| w[0] == 0xFF && w[1] == 0xD8)
+        .count();
+    assert!(
+        soi_count >= 2,
+        "lossy resize should preserve gain map: got {soi_count} SOI markers"
+    );
+
+    // Primary should be decodable at target dimensions
+    let decoded = Decoder::new()
+        .decode(&result.data, Unstoppable)
+        .unwrap();
+    assert_eq!(decoded.width(), 64);
+    assert_eq!(decoded.height(), 64);
+}
+
+#[test]
+fn non_ultrahdr_jpeg_unchanged_by_gainmap_detection() {
+    // Regular JPEG without gain map XMP should work exactly as before
+    let jpeg = make_test_jpeg(64, 64);
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .rotate_180()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 64);
+
+    // Should have exactly one SOI (no gain map appended)
+    let soi_count = result
+        .data
+        .windows(2)
+        .filter(|w| w[0] == 0xFF && w[1] == 0xD8)
+        .count();
+    assert_eq!(soi_count, 1, "non-UltraHDR should have exactly 1 SOI");
+}
