@@ -1384,6 +1384,7 @@ impl DeblockStrategy for QuantSmoothBilateral {
 struct Args {
     generate: bool,
     measure: bool,
+    bench: bool,
     corpus: String,
     max_images: usize,
     strategies: Vec<Box<dyn DeblockStrategy>>,
@@ -1394,6 +1395,7 @@ fn parse_args() -> Args {
     let mut args = Args {
         generate: false,
         measure: false,
+        bench: false,
         corpus: "gb82+cid22".to_string(),
         max_images: usize::MAX,
         strategies: vec![
@@ -1414,6 +1416,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--generate" => args.generate = true,
             "--measure" => args.measure = true,
+            "--bench" => args.bench = true,
             "--corpus" => {
                 if let Some(s) = iter.next() {
                     args.corpus = s;
@@ -1430,6 +1433,7 @@ fn parse_args() -> Args {
                 eprintln!("Usage: deblock_harness [OPTIONS]");
                 eprintln!("  --generate       Encode cached JPEGs (skip if already cached)");
                 eprintln!("  --measure        Run measurements with deblock strategies");
+                eprintln!("  --bench          Benchmark decode timing per strategy");
                 eprintln!("  --corpus <name>  gb82, cid22, gb82-sc, or gb82+cid22 (default)");
                 eprintln!("  --images <N>     Max images per corpus");
                 eprintln!("  --verbose        Per-image output");
@@ -2214,11 +2218,163 @@ fn print_summary(measurements: &[Measurement]) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: decode-only timing per strategy
+// ---------------------------------------------------------------------------
+
+fn run_bench(strategies: &[Box<dyn DeblockStrategy>]) {
+    // Use cached JPEGs at a few quality levels
+    let qualities = [20, 50, 85];
+    let encoder = Encoder::Turbo420;
+
+    // Collect all available cached files for this encoder
+    let cache_dir = Path::new(CACHE_DIR)
+        .join("sources")
+        .join(encoder.dir_name());
+
+    // Find image names from Q50 files
+    let mut image_names: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with("_q50.jpg") {
+                let stem = name.trim_end_matches("_q50.jpg").to_string();
+                image_names.push(stem);
+            }
+        }
+    }
+    image_names.sort();
+
+    if image_names.is_empty() {
+        eprintln!("No cached JPEGs found! Run --generate first.");
+        return;
+    }
+
+    // Load all JPEGs into memory
+    let mut jpeg_data: Vec<(String, u8, Vec<u8>)> = Vec::new();
+    for name in &image_names {
+        for &q in &qualities {
+            let path = cache_path(encoder, name, q);
+            if let Ok(bytes) = std::fs::read(&path) {
+                jpeg_data.push((name.clone(), q, bytes));
+            }
+        }
+    }
+
+    let n_images = jpeg_data.len();
+    eprintln!(
+        "Benchmarking {} strategies x {} images ({} names x {} qualities)",
+        strategies.len(),
+        n_images,
+        image_names.len(),
+        qualities.len()
+    );
+
+    const WARMUP: usize = 1;
+    const ITERS: usize = 3;
+
+    // First: measure the shared coefficient decode + f32 IDCT cost
+    // (decode_to_coeff_planes + planes_to_rgb without any enhancement)
+    eprintln!("Measuring shared coeff decode + f32 IDCT baseline...");
+    for _ in 0..WARMUP {
+        for (_, _, bytes) in &jpeg_data {
+            let cp = decode_to_coeff_planes(bytes);
+            if let Some(cp) = cp {
+                let _ = std::hint::black_box(planes_to_rgb(&cp));
+            }
+        }
+    }
+    let start = Instant::now();
+    for _ in 0..ITERS {
+        for (_, _, bytes) in &jpeg_data {
+            let cp = decode_to_coeff_planes(bytes);
+            if let Some(cp) = cp {
+                let _ = std::hint::black_box(planes_to_rgb(&cp));
+            }
+        }
+    }
+    let coeff_baseline_ms = start.elapsed().as_secs_f64() * 1000.0 / ITERS as f64;
+
+    // Now measure each strategy
+    println!();
+    println!(
+        "{:<25} {:>8} {:>9} {:>10} {:>12}",
+        "Strategy", "Total ms", "ms/image", "vs i16dec", "vs coeff_dec"
+    );
+    println!("{}", "-".repeat(68));
+
+    let mut baseline_total = 0.0f64;
+
+    // Print shared coeff decode cost
+    println!(
+        "{:<25} {:>8.1} {:>9.2} {:>10} {:>12}",
+        "(coeff decode+IDCT)", coeff_baseline_ms, coeff_baseline_ms / n_images as f64,
+        "", "(shared base)"
+    );
+
+    for strategy in strategies {
+        // Warmup
+        for _ in 0..WARMUP {
+            for (_, _, bytes) in &jpeg_data {
+                let _ = strategy.decode(bytes);
+            }
+        }
+
+        // Timed iterations
+        let start = Instant::now();
+        for _ in 0..ITERS {
+            for (_, _, bytes) in &jpeg_data {
+                let _ = std::hint::black_box(strategy.decode(bytes));
+            }
+        }
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0; // ms
+        let total = elapsed / ITERS as f64;
+        let per_image = total / n_images as f64;
+
+        let name = strategy.name();
+        if name == "baseline" {
+            baseline_total = total;
+            println!(
+                "{:<25} {:>8.1} {:>9.2} {:>10} {:>12}",
+                name, total, per_image, "1.00x", "n/a (i16)"
+            );
+        } else {
+            let vs_i16 = total / baseline_total;
+            let enhancement_ms = total - coeff_baseline_ms;
+            let enhancement_per = enhancement_ms / n_images as f64;
+            if enhancement_ms > 0.0 {
+                println!(
+                    "{:<25} {:>8.1} {:>9.2} {:>9.1}x {:>+8.0}ms ({:>+.2}/img)",
+                    name, total, per_image, vs_i16,
+                    enhancement_ms, enhancement_per
+                );
+            } else {
+                println!(
+                    "{:<25} {:>8.1} {:>9.2} {:>9.1}x {:>12}",
+                    name, total, per_image, vs_i16, "(faster)"
+                );
+            }
+        }
+    }
+
+    eprintln!(
+        "\n({} images x {} iters, {} warmup, turbo-420 Q{{20,50,85}})",
+        n_images, ITERS, WARMUP
+    );
+    eprintln!("All non-baseline strategies share coeff decode + f32 IDCT cost ({:.1}ms).", coeff_baseline_ms);
+    eprintln!("The last column shows additional cost beyond that shared base.");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 fn main() {
     let args = parse_args();
+
+    if args.bench {
+        run_bench(&args.strategies);
+        return;
+    }
 
     eprintln!("Loading corpus: {}", args.corpus);
     let images = load_corpus_images(&args.corpus, args.max_images);
