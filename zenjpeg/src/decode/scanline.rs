@@ -531,6 +531,19 @@ impl<'a> ScanlineReader<'a> {
         }
     }
 
+    /// Attach wave-parallel state to a sequential reader.
+    ///
+    /// This enables `read_rows_planar_i16` to use wave-parallel decode while
+    /// `read_rows_rgb8` and other interleaved outputs continue using the
+    /// sequential streaming path.
+    #[cfg(feature = "parallel")]
+    pub(super) fn attach_wave_state(
+        &mut self,
+        wave_state: super::fused_parallel::WaveParallelState,
+    ) {
+        self.wave_state = Some(wave_state);
+    }
+
     /// Returns the output width (crop width if set, otherwise image width).
     #[inline]
     pub fn width(&self) -> u32 {
