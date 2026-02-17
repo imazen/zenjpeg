@@ -1279,8 +1279,7 @@ impl<'a> ScanlineReader<'a> {
         let wave_count = seg_end - seg_start;
         let _ = wave_count;
 
-        let row_count =
-            state.decode_wave_box(self.data, seg_start, seg_end, &mut self.wave_buf)?;
+        let row_count = state.decode_wave_box(self.data, seg_start, seg_end, &mut self.wave_buf)?;
 
         self.wave_first_row = seg_start * state.pixel_rows_per_seg;
         self.wave_row_count = row_count;

@@ -2140,8 +2140,13 @@ impl WaveParallelState {
                 let seg_end = self.seg_ends[raw_idx];
                 let seg_data = &scan_data[seg_start..seg_end];
 
-                let (mcu_start, mcu_end) =
-                    JpegParser::segment_mcu_range(raw_idx, self.num_segments, self.ri, 1, total_mcus);
+                let (mcu_start, mcu_end) = JpegParser::segment_mcu_range(
+                    raw_idx,
+                    self.num_segments,
+                    self.ri,
+                    1,
+                    total_mcus,
+                );
 
                 let mut decoder = JpegParser::setup_segment_decoder(
                     seg_data,
@@ -2173,15 +2178,15 @@ impl WaveParallelState {
                                      rgb_chunk: &mut [u8]| {
                     let pixel_row_start = (current_mcu_row * self.mcu_pixel_height)
                         .saturating_sub(seg_first_pixel_row);
-                    let pixel_rows_this = self
-                        .mcu_pixel_height
-                        .min(self.height.saturating_sub(current_mcu_row * self.mcu_pixel_height));
+                    let pixel_rows_this = self.mcu_pixel_height.min(
+                        self.height
+                            .saturating_sub(current_mcu_row * self.mcu_pixel_height),
+                    );
                     let cols_this = self.width.min(y_strip_width);
 
                     for py in 0..pixel_rows_this {
                         let y_off = py * y_strip_width;
-                        let c_row =
-                            py / (self.max_v_samp / self.comp_v_samps[1].max(1));
+                        let c_row = py / (self.max_v_samp / self.comp_v_samps[1].max(1));
                         let c_off = c_row * c_strip_width;
                         let rgb_off = (pixel_row_start + py) * rgb_row_bytes;
                         if rgb_off + cols_this * 3 > rgb_chunk.len() {
@@ -2202,13 +2207,7 @@ impl WaveParallelState {
                     let mcu_col = mcu_idx % self.mcu_cols;
 
                     if mcu_row != current_mcu_row {
-                        flush_mcu_row(
-                            current_mcu_row,
-                            &y_strip,
-                            &cb_strip,
-                            &cr_strip,
-                            rgb_chunk,
-                        );
+                        flush_mcu_row(current_mcu_row, &y_strip, &cb_strip, &cr_strip, rgb_chunk);
                         current_mcu_row = mcu_row;
                     }
 
@@ -2300,13 +2299,7 @@ impl WaveParallelState {
                 }
 
                 // Flush last MCU row
-                flush_mcu_row(
-                    current_mcu_row,
-                    &y_strip,
-                    &cb_strip,
-                    &cr_strip,
-                    rgb_chunk,
-                );
+                flush_mcu_row(current_mcu_row, &y_strip, &cb_strip, &cr_strip, rgb_chunk);
 
                 Ok(SegmentWarnings {
                     had_ac_overflow: decoder.had_ac_overflow,

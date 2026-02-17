@@ -692,10 +692,7 @@ impl DecodeConfig {
         use rst_scan::{compute_segments, scan_rst_markers};
 
         // Only box filter 4:2:0 for now
-        if !matches!(
-            self.chroma_upsampling,
-            ChromaUpsampling::NearestNeighbor
-        ) {
+        if !matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor) {
             return Ok(None);
         }
 
@@ -745,8 +742,7 @@ impl DecodeConfig {
             return Ok(None);
         }
 
-        let (seg_starts, seg_ends) =
-            compute_segments(&rst_result.markers, rst_result.entropy_end);
+        let (seg_starts, seg_ends) = compute_segments(&rst_result.markers, rst_result.entropy_end);
         let num_segments = seg_starts.len();
 
         if num_segments < 4 {
@@ -762,12 +758,44 @@ impl DecodeConfig {
             .collect();
 
         // Build Huffman tables
-        let (dc_tables, ac_tables) =
-            build_huffman_tables_from_scan_data(scan_data, &scan_comps);
+        let (dc_tables, ac_tables) = build_huffman_tables_from_scan_data(scan_data, &scan_comps);
 
-        // Determine wave size: 2x oversubscription for load balancing
+        // Determine wave size: balance parallelism, load balancing, and memory
         let num_threads = rayon::current_num_threads();
-        let wave_size = (num_threads * 2).max(4).min(num_segments);
+        let width = scan_data.width as usize;
+        let max_h = scan_data.h_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let max_v = scan_data.v_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let mcu_w = max_h * 8;
+        let mcu_h = max_v * 8;
+        let mcu_cols_wave = (width + mcu_w - 1) / mcu_w;
+        let ri = scan_data.restart_interval as usize;
+        let mcu_rows_per_ri = ri / mcu_cols_wave;
+        let pixel_rows_per_seg = mcu_rows_per_ri * mcu_h;
+        let seg_rgb_bytes = pixel_rows_per_seg * width * 3;
+
+        // Cap wave_buf at ~6 MB to reduce peak memory vs full-buffer decode.
+        // At 4096×4096 with DRI=4 MCU rows: seg_rgb_bytes = 768KB,
+        // so max_wave_by_mem = 8 segments, wave_buf = 6MB (vs 48MB full-buffer).
+        const WAVE_BUF_TARGET_BYTES: usize = 6 * 1024 * 1024;
+        let max_wave_by_mem = if seg_rgb_bytes > 0 {
+            (WAVE_BUF_TARGET_BYTES / seg_rgb_bytes).max(1)
+        } else {
+            num_segments
+        };
+
+        // 2x oversubscription for load balancing, capped by memory budget
+        let wave_size = (num_threads * 2)
+            .max(4)
+            .min(num_segments)
+            .min(max_wave_by_mem);
 
         let wave_state = WaveParallelState::new(
             scan_data,
