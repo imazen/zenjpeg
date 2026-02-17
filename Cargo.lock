@@ -2150,6 +2150,7 @@ dependencies = [
  "enough",
  "imgref",
  "rgb",
+ "whereat",
 ]
 
 [[package]]

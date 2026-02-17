@@ -175,6 +175,8 @@ yuv = ["dep:yuv"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
 ultrahdr = ["dep:ultrahdr-core", "decoder", "std"]
+# zencodec-types trait implementations (EncoderConfig, DecoderConfig, etc.)
+zencodec = ["decoder"]
 
 [[bench]]
 name = "encode"

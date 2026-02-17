@@ -310,8 +310,19 @@ pub mod lossless;
 pub mod profile;
 
 // zencodec-types trait implementations
-// TODO: re-enable once zencodec-types API stabilizes (broken on this branch)
 #[cfg(feature = "zencodec")]
 mod zencodec;
 #[cfg(feature = "zencodec")]
-pub use zencodec::{JpegDecodeJob, JpegDecoding, JpegEncodeJob, JpegEncoding};
+pub use zencodec::{
+    JpegDecodeJob,
+    JpegDecoder,
+    JpegDecoderConfig,
+    // Backwards compat aliases
+    JpegDecoding,
+    JpegEncodeJob,
+    JpegEncoder,
+    JpegEncoderConfig,
+    JpegEncoding,
+    JpegFrameDecoder,
+    JpegFrameEncoder,
+};
