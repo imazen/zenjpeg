@@ -35,6 +35,8 @@ mod fused_parallel;
 mod image;
 mod parser;
 mod pipeline;
+mod pool;
+mod request;
 mod row_slice;
 pub(crate) mod rst_scan;
 mod scanline;
@@ -60,6 +62,8 @@ pub use config::{
 pub type Decoder = DecodeConfig;
 use parser::JpegParser;
 
+pub use pool::DecodePool;
+pub use request::DecodeRequest;
 pub use row_slice::{RowSlice, RowSliceF32};
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
@@ -140,6 +144,32 @@ impl DecodeConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a per-job decode request binding this config with JPEG data.
+    ///
+    /// The returned [`DecodeRequest`] can optionally attach a [`DecodePool`]
+    /// for adaptive threading and a cancellation token before decoding.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, DecodePool};
+    ///
+    /// let decoder = Decoder::new().fancy_upsampling(false);
+    /// let pool = DecodePool::new();
+    ///
+    /// // With pool (server)
+    /// let result = decoder.request(&jpeg_data)
+    ///     .pool(&pool)
+    ///     .decode()?;
+    ///
+    /// // Without pool (standalone)
+    /// let result = decoder.request(&jpeg_data).decode()?;
+    /// ```
+    #[must_use]
+    pub fn request<'a>(&'a self, data: &'a [u8]) -> request::DecodeRequest<'a> {
+        request::DecodeRequest::new(self, data)
     }
 
     /// Sets the output pixel format.
