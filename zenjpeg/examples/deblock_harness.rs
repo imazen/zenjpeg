@@ -989,16 +989,6 @@ struct CoeffPOCS {
 }
 
 impl CoeffPOCS {
-    fn new(iterations: usize) -> Self {
-        Self {
-            iterations,
-            correction: 0.5,
-            tc_mul: 0.25,
-            freq_cutoff: 4,
-            label: "pocs",
-        }
-    }
-
     fn with_params(
         iterations: usize,
         correction: f32,
