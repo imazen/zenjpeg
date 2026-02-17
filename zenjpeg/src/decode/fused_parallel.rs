@@ -2334,6 +2334,414 @@ impl WaveParallelState {
         let last_row = (seg_range_end * self.pixel_rows_per_seg).min(self.height);
         Ok(last_row.saturating_sub(first_row))
     }
+
+    /// Number of native chroma pixel rows per restart segment.
+    pub fn chroma_rows_per_seg(&self) -> usize {
+        if self.scan_comps.len() < 2 {
+            return 0;
+        }
+        let c_v = self.comp_v_samps[1].max(1);
+        let v_scale = self.max_v_samp / c_v;
+        self.pixel_rows_per_seg / v_scale
+    }
+
+    /// Native chroma strip width in pixels.
+    pub fn chroma_width(&self) -> usize {
+        if self.scan_comps.len() < 2 {
+            return 0;
+        }
+        self.mcu_cols * self.comp_h_samps[1] * 8
+    }
+
+    /// Decode a wave of segments in parallel, writing planar i16 Y/Cb/Cr output.
+    ///
+    /// No upsampling or color conversion — raw IDCT samples at native resolution.
+    /// Y is written to `wave_y`, Cb to `wave_cb`, Cr to `wave_cr`.
+    ///
+    /// Returns `(luma_rows, chroma_rows)` written.
+    pub fn decode_wave_planar(
+        &self,
+        jpeg_data: &[u8],
+        seg_range_start: usize,
+        seg_range_end: usize,
+        wave_y: &mut [i16],
+        wave_cb: &mut [i16],
+        wave_cr: &mut [i16],
+    ) -> Result<(usize, usize)> {
+        let wave_count = seg_range_end - seg_range_start;
+        if wave_count == 0 {
+            return Ok((0, 0));
+        }
+
+        let scan_data = &jpeg_data[self.scan_data_start..];
+        let total_mcus = self.mcu_cols * self.mcu_rows;
+
+        let y_h = self.comp_h_samps[0];
+        let y_v = self.comp_v_samps[0];
+        let y_strip_width = self.mcu_cols * y_h * 8;
+        let y_strip_height = y_v * 8;
+
+        let num_comps = self.scan_comps.len();
+        let has_chroma = num_comps >= 3;
+        let c_strip_width = if has_chroma {
+            self.mcu_cols * self.comp_h_samps[1] * 8
+        } else {
+            0
+        };
+        let c_strip_height = if has_chroma {
+            self.comp_v_samps[1] * 8
+        } else {
+            0
+        };
+
+        let luma_rows_per_seg = self.pixel_rows_per_seg;
+        let chroma_rows_per_seg = self.chroma_rows_per_seg();
+        let y_seg_samples = luma_rows_per_seg * self.width;
+        let c_seg_samples = if has_chroma {
+            chroma_rows_per_seg * self.chroma_width()
+        } else {
+            0
+        };
+
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = idct_int_tiered;
+
+        // Split output buffers into per-segment chunks
+        let y_chunks: Vec<&mut [i16]> = wave_y[..wave_count * y_seg_samples]
+            .chunks_mut(y_seg_samples)
+            .collect();
+        let cb_chunks: Vec<&mut [i16]> = if has_chroma {
+            wave_cb[..wave_count * c_seg_samples]
+                .chunks_mut(c_seg_samples)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let cr_chunks: Vec<&mut [i16]> = if has_chroma {
+            wave_cr[..wave_count * c_seg_samples]
+                .chunks_mut(c_seg_samples)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Zip chunks for parallel iteration
+        struct SegChunks<'a> {
+            y: &'a mut [i16],
+            cb: Option<&'a mut [i16]>,
+            cr: Option<&'a mut [i16]>,
+        }
+
+        let mut seg_chunks: Vec<SegChunks<'_>> = Vec::with_capacity(wave_count);
+        {
+            let mut y_iter = y_chunks.into_iter();
+            let mut cb_iter = cb_chunks.into_iter();
+            let mut cr_iter = cr_chunks.into_iter();
+            for _ in 0..wave_count {
+                seg_chunks.push(SegChunks {
+                    y: y_iter.next().unwrap(),
+                    cb: if has_chroma { cb_iter.next() } else { None },
+                    cr: if has_chroma { cr_iter.next() } else { None },
+                });
+            }
+        }
+
+        let seg_warnings: Vec<Result<SegmentWarnings>> = seg_chunks
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, mut chunks)| {
+                let raw_idx = seg_range_start + i;
+                let seg_start = self.seg_starts[raw_idx];
+                let seg_end = self.seg_ends[raw_idx];
+                let seg_data = &scan_data[seg_start..seg_end];
+
+                let (mcu_start, mcu_end) = JpegParser::segment_mcu_range(
+                    raw_idx,
+                    self.num_segments,
+                    self.ri,
+                    1,
+                    total_mcus,
+                );
+
+                let mut decoder = JpegParser::setup_segment_decoder(
+                    seg_data,
+                    &self.scan_comps,
+                    &self.dc_tables,
+                    &self.ac_tables,
+                    self.lenient,
+                    self.permissive_rst,
+                );
+
+                let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
+                let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
+                let mut prev_coeff_count: u8 = 64;
+                let mut truncation_mcu: Option<u32> = None;
+                let mut had_padding_error = false;
+
+                // Thread-local strip buffers
+                let mut y_strip: Vec<i16> = vec![0i16; y_strip_width * y_strip_height];
+                let mut cb_strip_buf: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+                let mut cr_strip_buf: Vec<i16> = vec![0i16; c_strip_width * c_strip_height];
+
+                let first_mcu_row = mcu_start / self.mcu_cols;
+                let mut current_mcu_row = first_mcu_row;
+                let seg_first_pixel_row = first_mcu_row * self.mcu_pixel_height;
+                let seg_first_chroma_row = if has_chroma {
+                    first_mcu_row * c_strip_height
+                } else {
+                    0
+                };
+
+                // Geometry for flush
+                let img_width = self.width;
+                let img_height = self.height;
+                let mcu_pixel_height = self.mcu_pixel_height;
+                let max_v = self.max_v_samp;
+                let chroma_out_width = self.chroma_width();
+
+                // Main decode loop
+                for mcu_idx in mcu_start..mcu_end {
+                    let mcu_row = mcu_idx / self.mcu_cols;
+                    let mcu_col = mcu_idx % self.mcu_cols;
+
+                    if mcu_row != current_mcu_row {
+                        // Flush luma
+                        flush_planar_luma(
+                            current_mcu_row,
+                            &y_strip,
+                            y_strip_width,
+                            chunks.y,
+                            img_width,
+                            img_height,
+                            mcu_pixel_height,
+                            seg_first_pixel_row,
+                        );
+                        // Flush chroma
+                        if let (Some(ref mut cb_out), Some(ref mut cr_out)) =
+                            (&mut chunks.cb, &mut chunks.cr)
+                        {
+                            flush_planar_chroma(
+                                current_mcu_row,
+                                &cb_strip_buf,
+                                &cr_strip_buf,
+                                c_strip_width,
+                                c_strip_height,
+                                cb_out,
+                                cr_out,
+                                chroma_out_width,
+                                img_height,
+                                max_v,
+                                seg_first_chroma_row,
+                            );
+                        }
+                        current_mcu_row = mcu_row;
+                    }
+
+                    for (sc_idx, (comp_idx, dc_table, ac_table)) in
+                        self.scan_comps.iter().enumerate()
+                    {
+                        let h_samp = self.comp_h_samps[*comp_idx];
+                        let v_samp = self.comp_v_samps[*comp_idx];
+
+                        let (strip, strip_stride) = match sc_idx {
+                            0 => (&mut y_strip as &mut Vec<i16>, y_strip_width),
+                            1 => (&mut cb_strip_buf, c_strip_width),
+                            _ => (&mut cr_strip_buf, c_strip_width),
+                        };
+
+                        for v in 0..v_samp {
+                            for h in 0..h_samp {
+                                let block_x = mcu_col * h_samp + h;
+                                let block_y = mcu_row * v_samp + v;
+                                let is_padding = block_x >= self.actual_blocks_h[*comp_idx]
+                                    || block_y >= self.actual_blocks_v[*comp_idx];
+
+                                let padding_state = if is_padding && !self.strict {
+                                    Some(decoder.save_state())
+                                } else {
+                                    None
+                                };
+
+                                let count = match decoder.decode_block_into(
+                                    &mut coeffs_buf,
+                                    prev_coeff_count,
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                ) {
+                                    Ok(ScanRead::Value(c)) => c,
+                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        if truncation_mcu.is_none() {
+                                            truncation_mcu = Some(mcu_idx as u32);
+                                        }
+                                        coeffs_buf = [0i16; 64];
+                                        1
+                                    }
+                                    Err(e) => {
+                                        if let Some(state) = padding_state {
+                                            decoder.restore_state(state);
+                                            coeffs_buf = [0i16; 64];
+                                            had_padding_error = true;
+                                            prev_coeff_count = 64;
+                                            continue;
+                                        }
+                                        return Err(e);
+                                    }
+                                };
+                                prev_coeff_count = count;
+
+                                let block_px = mcu_col * h_samp * 8 + h * 8;
+                                let block_py = v * 8;
+                                let strip_off = block_py * strip_stride + block_px;
+
+                                if count == 1 {
+                                    let dc = coeffs_buf[0] as i32
+                                        * self.quant_tables[*comp_idx][0] as i32;
+                                    idct_int_dc_only(dc, &mut strip[strip_off..], strip_stride);
+                                } else {
+                                    dequantize_unzigzag_i32_into_partial(
+                                        &coeffs_buf,
+                                        &self.quant_tables[*comp_idx],
+                                        &mut dequant_buf,
+                                        count,
+                                    );
+                                    idct_fn(
+                                        &mut dequant_buf,
+                                        &mut strip[strip_off..],
+                                        strip_stride,
+                                        count,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Flush last MCU row
+                flush_planar_luma(
+                    current_mcu_row,
+                    &y_strip,
+                    y_strip_width,
+                    chunks.y,
+                    img_width,
+                    img_height,
+                    mcu_pixel_height,
+                    seg_first_pixel_row,
+                );
+                if let (Some(ref mut cb_out), Some(ref mut cr_out)) =
+                    (&mut chunks.cb, &mut chunks.cr)
+                {
+                    flush_planar_chroma(
+                        current_mcu_row,
+                        &cb_strip_buf,
+                        &cr_strip_buf,
+                        c_strip_width,
+                        c_strip_height,
+                        cb_out,
+                        cr_out,
+                        chroma_out_width,
+                        img_height,
+                        max_v,
+                        seg_first_chroma_row,
+                    );
+                }
+
+                Ok(SegmentWarnings {
+                    had_ac_overflow: decoder.had_ac_overflow,
+                    had_invalid_huffman: decoder.had_invalid_huffman,
+                    truncation_mcu,
+                    had_padding_error,
+                })
+            })
+            .collect();
+
+        // Propagate errors
+        for result in seg_warnings {
+            result?;
+        }
+
+        // Compute valid rows
+        let first_luma_row = seg_range_start * luma_rows_per_seg;
+        let last_luma_row = (seg_range_end * luma_rows_per_seg).min(self.height);
+        let luma_rows = last_luma_row.saturating_sub(first_luma_row);
+
+        let chroma_height_total = if has_chroma {
+            (self.height + self.max_v_samp - 1) / self.max_v_samp
+        } else {
+            0
+        };
+        let first_chroma_row = seg_range_start * chroma_rows_per_seg;
+        let last_chroma_row = (seg_range_end * chroma_rows_per_seg).min(chroma_height_total);
+        let chroma_rows = last_chroma_row.saturating_sub(first_chroma_row);
+
+        Ok((luma_rows, chroma_rows))
+    }
+}
+
+/// Flush luma strip rows to the planar output buffer.
+#[inline]
+fn flush_planar_luma(
+    current_mcu_row: usize,
+    y_strip: &[i16],
+    y_strip_width: usize,
+    y_out: &mut [i16],
+    img_width: usize,
+    img_height: usize,
+    mcu_pixel_height: usize,
+    seg_first_pixel_row: usize,
+) {
+    let y_row_start = (current_mcu_row * mcu_pixel_height).saturating_sub(seg_first_pixel_row);
+    let y_rows_this =
+        mcu_pixel_height.min(img_height.saturating_sub(current_mcu_row * mcu_pixel_height));
+    let cols_y = img_width.min(y_strip_width);
+
+    for py in 0..y_rows_this {
+        let src_off = py * y_strip_width;
+        let dst_off = (y_row_start + py) * img_width;
+        if dst_off + cols_y > y_out.len() {
+            break;
+        }
+        y_out[dst_off..dst_off + cols_y].copy_from_slice(&y_strip[src_off..src_off + cols_y]);
+    }
+}
+
+/// Flush chroma strip rows to the planar output buffers.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn flush_planar_chroma(
+    current_mcu_row: usize,
+    cb_strip: &[i16],
+    cr_strip: &[i16],
+    c_strip_width: usize,
+    c_strip_height: usize,
+    cb_out: &mut [i16],
+    cr_out: &mut [i16],
+    chroma_out_width: usize,
+    img_height: usize,
+    max_v_samp: usize,
+    seg_first_chroma_row: usize,
+) {
+    let c_row_start = (current_mcu_row * c_strip_height).saturating_sub(seg_first_chroma_row);
+    let chroma_height_total = (img_height + max_v_samp - 1) / max_v_samp;
+    let c_rows_this =
+        c_strip_height.min(chroma_height_total.saturating_sub(current_mcu_row * c_strip_height));
+    let cols_c = chroma_out_width.min(c_strip_width);
+
+    for py in 0..c_rows_this {
+        let src_off = py * c_strip_width;
+        let dst_off = (c_row_start + py) * chroma_out_width;
+        if dst_off + cols_c > cb_out.len() {
+            break;
+        }
+        cb_out[dst_off..dst_off + cols_c].copy_from_slice(&cb_strip[src_off..src_off + cols_c]);
+        cr_out[dst_off..dst_off + cols_c].copy_from_slice(&cr_strip[src_off..src_off + cols_c]);
+    }
 }
 
 /// Build Huffman table vectors from `ParsedScanData` for thread-safe parallel access.
