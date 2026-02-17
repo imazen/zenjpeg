@@ -1,0 +1,168 @@
+//! Lossy path: decode → resize → encode.
+//!
+//! Uses streaming decode + streaming resize + streaming encode for bounded memory.
+//! Works in sRGB u8 domain (RGB8) through zenresize.
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+use enough::Stop;
+use imgref::ImgRefMut;
+use zenresize::{PixelFormat, PixelLayout, ResizeConfig, StreamingResize};
+
+use crate::decode::{DecodeConfig, JpegInfo};
+use crate::encode::encoder_types::PixelLayout as EncPixelLayout;
+use crate::encode::exif::Exif;
+use crate::error::Result;
+
+use super::LayoutConfig;
+
+/// Execute the lossy decode → resize → encode path.
+///
+/// Decodes the JPEG to RGB8 via scanline reader, resizes using zenresize's
+/// streaming API for bounded memory, and re-encodes with the configured settings.
+pub(crate) fn execute_lossy(
+    jpeg_data: &[u8],
+    info: &JpegInfo,
+    config: &LayoutConfig,
+    target_w: u32,
+    target_h: u32,
+    stop: &dyn Stop,
+) -> Result<Vec<u8>> {
+    let src_w = info.dimensions.width;
+    let src_h = info.dimensions.height;
+
+    let needs_resize = target_w != src_w || target_h != src_h;
+
+    if needs_resize {
+        decode_resize_encode(jpeg_data, info, config, src_w, src_h, target_w, target_h, stop)
+    } else {
+        decode_reencode(jpeg_data, info, config, src_w, src_h, stop)
+    }
+}
+
+/// Decode → resize → encode with streaming for bounded memory.
+fn decode_resize_encode(
+    jpeg_data: &[u8],
+    info: &JpegInfo,
+    config: &LayoutConfig,
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    stop: &dyn Stop,
+) -> Result<Vec<u8>> {
+    let resize_config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
+        .filter(config.filter)
+        .format(PixelFormat::Srgb8(PixelLayout::Rgb))
+        .linear()
+        .build();
+
+    let mut resizer = StreamingResize::new(&resize_config);
+
+    // Build encoder with metadata from source
+    let encoder_config = config.build_encoder_config();
+    let mut request = encoder_config.request();
+    request = attach_metadata(request, info);
+    request = request.stop(stop);
+
+    let mut encoder = request.encode_from_bytes(dst_w, dst_h, EncPixelLayout::Rgb8Srgb)?;
+
+    // Streaming pipeline: decode rows → push to resizer → pull output → push to encoder
+    let decoder = DecodeConfig::new().fancy_upsampling(config.fancy_upsampling);
+    let mut reader = decoder.scanline_reader(jpeg_data)?;
+
+    let row_bytes = src_w as usize * 3;
+    let batch = 8usize;
+    let mut buf = vec![0u8; row_bytes * batch];
+
+    while !reader.is_finished() {
+        stop.check()?;
+
+        let img = ImgRefMut::new(&mut buf, src_w as usize * 3, batch);
+        let rows_read = reader.read_rows_rgb8(img)?;
+        if rows_read == 0 {
+            break;
+        }
+
+        let available =
+            resizer.push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32);
+        drain_resizer(&mut resizer, available, &mut encoder, stop)?;
+    }
+
+    // Flush remaining rows from resizer
+    let remaining = resizer.finish();
+    drain_resizer(&mut resizer, remaining, &mut encoder, stop)?;
+
+    encoder.finish()
+}
+
+/// Decode and re-encode without resize (for recompression or metadata update).
+fn decode_reencode(
+    jpeg_data: &[u8],
+    info: &JpegInfo,
+    config: &LayoutConfig,
+    width: u32,
+    height: u32,
+    stop: &dyn Stop,
+) -> Result<Vec<u8>> {
+    let encoder_config = config.build_encoder_config();
+    let mut request = encoder_config.request();
+    request = attach_metadata(request, info);
+    request = request.stop(stop);
+
+    let mut encoder = request.encode_from_bytes(width, height, EncPixelLayout::Rgb8Srgb)?;
+
+    let decoder = DecodeConfig::new().fancy_upsampling(config.fancy_upsampling);
+    let mut reader = decoder.scanline_reader(jpeg_data)?;
+
+    let row_bytes = width as usize * 3;
+    let batch = 8usize;
+    let mut buf = vec![0u8; row_bytes * batch];
+
+    while !reader.is_finished() {
+        stop.check()?;
+
+        let img = ImgRefMut::new(&mut buf, width as usize * 3, batch);
+        let rows_read = reader.read_rows_rgb8(img)?;
+        if rows_read == 0 {
+            break;
+        }
+
+        encoder.push_packed(&buf[..row_bytes * rows_read], stop)?;
+    }
+
+    encoder.finish()
+}
+
+/// Attach source metadata (ICC, EXIF, XMP) to the encode request.
+fn attach_metadata<'a>(
+    mut request: crate::encode::request::EncodeRequest<'a>,
+    info: &'a JpegInfo,
+) -> crate::encode::request::EncodeRequest<'a> {
+    if let Some(ref icc) = info.icc_profile {
+        request = request.icc_profile(icc);
+    }
+    if let Some(ref exif) = info.exif {
+        request = request.exif(Exif::Raw(exif.clone()));
+    }
+    if let Some(ref xmp) = info.xmp {
+        request = request.xmp(xmp.as_bytes());
+    }
+    request
+}
+
+/// Pull available output rows from the resizer and push them to the encoder.
+fn drain_resizer(
+    resizer: &mut StreamingResize,
+    available: u32,
+    encoder: &mut crate::encode::byte_encoders::BytesEncoder,
+    stop: &dyn Stop,
+) -> Result<()> {
+    for _ in 0..available {
+        if let Some(row) = resizer.next_output_row() {
+            encoder.push_packed(&row, stop)?;
+        }
+    }
+    Ok(())
+}
