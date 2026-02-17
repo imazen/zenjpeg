@@ -649,220 +649,96 @@ impl DeblockStrategy for CDEFDirection {
 struct CoeffSmooth;
 
 impl CoeffSmooth {
-    /// Forward DCT for a single 8x8 block (reference implementation).
-    /// Output is scaled to match zenjpeg's IDCT convention: forward_dct * 8 → inverse_dct = identity.
-    /// (The raw DCT produces 1/64 scale; IDCT expects 1/8 scale. The ×8 bridges this gap.)
-    fn forward_dct_8x8(input: &[f32; 64]) -> [f32; 64] {
-        // Separable 1D DCT: rows then columns
-        let mut temp = [0.0f32; 64];
-        let mut output = [0.0f32; 64];
-
-        // DCT on rows
-        for row in 0..8 {
-            for k in 0..8 {
-                let mut sum = 0.0f32;
-                for n in 0..8 {
-                    sum += input[row * 8 + n]
-                        * ((2 * n + 1) as f32 * k as f32 * std::f32::consts::PI / 16.0).cos();
-                }
-                let ck = if k == 0 { 1.0 / (2.0f32).sqrt() } else { 1.0 };
-                temp[row * 8 + k] = sum * ck * 0.5;
-            }
-        }
-
-        // DCT on columns
-        for col in 0..8 {
-            for k in 0..8 {
-                let mut sum = 0.0f32;
-                for n in 0..8 {
-                    sum += temp[n * 8 + col]
-                        * ((2 * n + 1) as f32 * k as f32 * std::f32::consts::PI / 16.0).cos();
-                }
-                let ck = if k == 0 { 1.0 / (2.0f32).sqrt() } else { 1.0 };
-                output[k * 8 + col] = sum * ck * 0.5;
-            }
-        }
-
-        // Scale ×8 to match IDCT convention (raw DCT is 1/64 scale, IDCT expects 1/8)
-        for v in &mut output {
-            *v *= 8.0;
-        }
-
-        output
-    }
-
-    /// Compute boundary cost: sum of squared differences at block boundary.
-    fn boundary_cost_h(
-        left_pixels: &[f32; 64], right_pixels: &[f32; 64],
-    ) -> f32 {
-        // Vertical boundary: compare column 7 of left with column 0 of right
-        let mut cost = 0.0f32;
-        for row in 0..8 {
-            let diff = left_pixels[row * 8 + 7] - right_pixels[row * 8];
-            cost += diff * diff;
-        }
-        cost
-    }
-
-    fn boundary_cost_v(
-        top_pixels: &[f32; 64], bottom_pixels: &[f32; 64],
-    ) -> f32 {
-        // Horizontal boundary: compare row 7 of top with row 0 of bottom
-        let mut cost = 0.0f32;
-        for col in 0..8 {
-            let diff = top_pixels[7 * 8 + col] - bottom_pixels[col];
-            cost += diff * diff;
-        }
-        cost
-    }
-
-    /// Adjust coefficients for a component to minimize boundary discontinuity.
-    fn smooth_component(
-        coeffs: &mut [i16],
+    /// Single-pass DCT-domain coefficient smoothing across ALL AC frequencies.
+    ///
+    /// Like CoeffRefineTV but smooths all frequencies (not just low ones).
+    /// Uses cardinal neighbor averaging with a single pass, small alpha.
+    /// More aggressive than CoeffRefineTV (touches HF) but single-pass (no
+    /// iteration), making it faster and less prone to over-smoothing.
+    fn process_component(
+        zigzag_coeffs: &[i16],
         blocks_wide: usize,
         blocks_high: usize,
         quant_table: &[u16; 64],
-    ) {
-        // Coefficients are stored in zigzag order. We adjust the first few zigzag
-        // positions (lowest frequencies) that most affect block boundaries.
-        // Zigzag positions 1-3 correspond to the 3 lowest-frequency AC coefficients.
-        // Conservative: only 3 positions to limit cascading modifications.
-        let ac_positions: [usize; 3] = [1, 2, 3];
+    ) -> Vec<f32> {
+        let num_blocks = blocks_wide * blocks_high;
 
-        // For each pair of horizontally adjacent blocks
-        for by in 0..blocks_high {
-            for bx in 0..blocks_wide.saturating_sub(1) {
-                let left_idx = by * blocks_wide + bx;
-                let right_idx = by * blocks_wide + bx + 1;
+        // Dequantize with interval tracking
+        let mut dequant = vec![[0.0f32; 64]; num_blocks];
+        let mut block_min = vec![[0.0f32; 64]; num_blocks];
+        let mut block_max = vec![[0.0f32; 64]; num_blocks];
 
-                // Get current pixels for both blocks
-                let left_arr: [i16; 64] = coeffs[left_idx * 64..(left_idx + 1) * 64]
-                    .try_into().unwrap();
-                let right_arr: [i16; 64] = coeffs[right_idx * 64..(right_idx + 1) * 64]
-                    .try_into().unwrap();
+        for bi in 0..num_blocks {
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
+                .try_into().unwrap();
+            for nat in 0..64 {
+                let zi = NATURAL_TO_ZIGZAG[nat];
+                let q = quant_table[nat] as f32;
+                let mid = block[zi] as f32 * q;
+                dequant[bi][nat] = mid;
+                block_min[bi][nat] = mid - q * 0.5;
+                block_max[bi][nat] = mid + q * 0.5;
+            }
+        }
 
-                let left_dq = dequantize_unzigzag(&left_arr, quant_table);
-                let right_dq = dequantize_unzigzag(&right_arr, quant_table);
+        let alpha = 0.10;
+        let snapshot = dequant.clone();
 
-                let mut left_pixels = zenjpeg::decode::idct::inverse_dct_8x8(&left_dq);
-                let mut right_pixels = zenjpeg::decode::idct::inverse_dct_8x8(&right_dq);
+        for bi in 0..num_blocks {
+            let by = bi / blocks_wide;
+            let bx = bi % blocks_wide;
 
-                // Level shift
-                for p in left_pixels.iter_mut() { *p += 128.0; }
-                for p in right_pixels.iter_mut() { *p += 128.0; }
+            // Smooth ALL AC coefficients (skip DC)
+            for nat in 1..64 {
+                let center = snapshot[bi][nat];
 
-                let mut current_cost = Self::boundary_cost_h(&left_pixels, &right_pixels);
-                if current_cost < 8.0 {
-                    continue; // Already smooth enough
+                let mut sum = 0.0f32;
+                let mut count = 0u32;
+
+                if by > 0 {
+                    sum += snapshot[(by - 1) * blocks_wide + bx][nat];
+                    count += 1;
+                }
+                if by + 1 < blocks_high {
+                    sum += snapshot[(by + 1) * blocks_wide + bx][nat];
+                    count += 1;
+                }
+                if bx > 0 {
+                    sum += snapshot[by * blocks_wide + bx - 1][nat];
+                    count += 1;
+                }
+                if bx + 1 < blocks_wide {
+                    sum += snapshot[by * blocks_wide + bx + 1][nat];
+                    count += 1;
                 }
 
-                // Try adjusting each AC coefficient by ±1 quantization step
-                for &ac_pos in &ac_positions {
-                    let q = quant_table[ac_pos];
-                    if q == 0 { continue; }
-
-                    // Try adjusting left block, then right block
-                    for side in 0..2 {
-                        let block_idx = if side == 0 { left_idx } else { right_idx };
-                        let orig_val = coeffs[block_idx * 64 + ac_pos];
-
-                        for delta in [-1i16, 1] {
-                            let new_val = orig_val + delta;
-
-                            coeffs[block_idx * 64 + ac_pos] = new_val;
-
-                            // Recompute pixels
-                            let l_arr: [i16; 64] = coeffs[left_idx * 64..(left_idx + 1) * 64]
-                                .try_into().unwrap();
-                            let r_arr: [i16; 64] = coeffs[right_idx * 64..(right_idx + 1) * 64]
-                                .try_into().unwrap();
-
-                            let l_dq = dequantize_unzigzag(&l_arr, quant_table);
-                            let r_dq = dequantize_unzigzag(&r_arr, quant_table);
-
-                            let mut lp = zenjpeg::decode::idct::inverse_dct_8x8(&l_dq);
-                            let mut rp = zenjpeg::decode::idct::inverse_dct_8x8(&r_dq);
-                            for p in lp.iter_mut() { *p += 128.0; }
-                            for p in rp.iter_mut() { *p += 128.0; }
-
-                            let new_cost = Self::boundary_cost_h(&lp, &rp);
-
-                            if new_cost < current_cost * 0.7 {
-                                // Keep the change — update cost baseline
-                                current_cost = new_cost;
-                                break;
-                            } else {
-                                coeffs[block_idx * 64 + ac_pos] = orig_val;
-                            }
-                        }
-                    }
+                if count > 0 {
+                    let avg = sum / count as f32;
+                    let new_val = center + alpha * (avg - center);
+                    dequant[bi][nat] = new_val.clamp(
+                        block_min[bi][nat], block_max[bi][nat],
+                    );
                 }
             }
         }
 
-        // Same for vertically adjacent blocks
-        for by in 0..blocks_high.saturating_sub(1) {
-            for bx in 0..blocks_wide {
-                let top_idx = by * blocks_wide + bx;
-                let bot_idx = (by + 1) * blocks_wide + bx;
-
-                let top_arr: [i16; 64] = coeffs[top_idx * 64..(top_idx + 1) * 64]
-                    .try_into().unwrap();
-                let bot_arr: [i16; 64] = coeffs[bot_idx * 64..(bot_idx + 1) * 64]
-                    .try_into().unwrap();
-
-                let top_dq = dequantize_unzigzag(&top_arr, quant_table);
-                let bot_dq = dequantize_unzigzag(&bot_arr, quant_table);
-
-                let mut top_pixels = zenjpeg::decode::idct::inverse_dct_8x8(&top_dq);
-                let mut bot_pixels = zenjpeg::decode::idct::inverse_dct_8x8(&bot_dq);
-                for p in top_pixels.iter_mut() { *p += 128.0; }
-                for p in bot_pixels.iter_mut() { *p += 128.0; }
-
-                let mut current_cost = Self::boundary_cost_v(&top_pixels, &bot_pixels);
-                if current_cost < 8.0 {
-                    continue;
-                }
-
-                for &ac_pos in &ac_positions {
-                    let q = quant_table[ac_pos];
-                    if q == 0 { continue; }
-
-                    for side in 0..2 {
-                        let block_idx = if side == 0 { top_idx } else { bot_idx };
-                        let orig_val = coeffs[block_idx * 64 + ac_pos];
-
-                        for delta in [-1i16, 1] {
-                            let new_val = orig_val + delta;
-                            coeffs[block_idx * 64 + ac_pos] = new_val;
-
-                            let t_arr: [i16; 64] = coeffs[top_idx * 64..(top_idx + 1) * 64]
-                                .try_into().unwrap();
-                            let b_arr: [i16; 64] = coeffs[bot_idx * 64..(bot_idx + 1) * 64]
-                                .try_into().unwrap();
-
-                            let t_dq = dequantize_unzigzag(&t_arr, quant_table);
-                            let b_dq = dequantize_unzigzag(&b_arr, quant_table);
-
-                            let mut tp = zenjpeg::decode::idct::inverse_dct_8x8(&t_dq);
-                            let mut bp = zenjpeg::decode::idct::inverse_dct_8x8(&b_dq);
-                            for p in tp.iter_mut() { *p += 128.0; }
-                            for p in bp.iter_mut() { *p += 128.0; }
-
-                            let new_cost = Self::boundary_cost_v(&tp, &bp);
-
-                            if new_cost < current_cost * 0.7 {
-                                // Keep the change — update cost baseline
-                                current_cost = new_cost;
-                                break;
-                            } else {
-                                coeffs[block_idx * 64 + ac_pos] = orig_val;
-                            }
-                        }
-                    }
+        // Final IDCT
+        let pw = blocks_wide * 8;
+        let ph = blocks_high * 8;
+        let mut output = vec![0.0f32; pw * ph];
+        for bi in 0..num_blocks {
+            let by = bi / blocks_wide;
+            let bx = bi % blocks_wide;
+            let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
+            for row in 0..8 {
+                for col in 0..8 {
+                    output[(by * 8 + row) * pw + bx * 8 + col] =
+                        pixels[row * 8 + col] + 128.0;
                 }
             }
         }
+
+        output
     }
 }
 
@@ -875,23 +751,10 @@ impl DeblockStrategy for CoeffSmooth {
         use enough::Unstoppable;
         use zenjpeg::decoder::Decoder;
 
-        let mut coeffs = Decoder::new()
+        let coeffs = Decoder::new()
             .decode_coefficients(jpeg_bytes, Unstoppable)
             .ok()?;
 
-        // Smooth each component
-        for ci in 0..coeffs.components.len().min(3) {
-            let qt_idx = coeffs.components[ci].quant_table_idx as usize;
-            let qt = *coeffs.quant_tables[qt_idx].as_ref()?;
-            let bw = coeffs.components[ci].blocks_wide;
-            let bh = coeffs.components[ci].blocks_high;
-            Self::smooth_component(
-                &mut coeffs.components[ci].coeffs,
-                bw, bh, &qt,
-            );
-        }
-
-        // Reconstruct from modified coefficients
         let w = coeffs.width as usize;
         let h = coeffs.height as usize;
 
@@ -905,27 +768,10 @@ impl DeblockStrategy for CoeffSmooth {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let mut plane = vec![0.0f32; pw * ph];
-            for by in 0..bh {
-                for bx in 0..bw {
-                    let block_zigzag = comp.block_at(bx, by);
-                    let block_arr: [i16; 64] = block_zigzag.try_into().unwrap();
-                    let dequant = dequantize_unzigzag(&block_arr, qt);
-                    let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant);
-                    for row in 0..8 {
-                        for col in 0..8 {
-                            let px = bx * 8 + col;
-                            let py = by * 8 + row;
-                            if px < pw && py < ph {
-                                plane[py * pw + px] = pixels[row * 8 + col] + 128.0;
-                            }
-                        }
-                    }
-                }
-            }
+            let plane_data = Self::process_component(&comp.coeffs, bw, bh, qt);
 
             planes.push(ComponentPlane {
-                data: plane,
+                data: plane_data,
                 width: pw,
                 height: ph,
                 blocks_wide: bw,
@@ -944,16 +790,18 @@ impl DeblockStrategy for CoeffSmooth {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy: Iterative coefficient refinement with TV regularization (POCS)
+// Strategy: Iterative low-frequency DCT coefficient smoothing
 // ---------------------------------------------------------------------------
 
-/// Iterative coefficient refinement within quantization intervals.
-/// Uses Projection Onto Convex Sets (POCS) approach:
-/// 1. Reconstruct pixels from coefficients
-/// 2. Apply total variation denoising to smooth block boundaries
-/// 3. Forward DCT the smoothed pixels
-/// 4. Project back onto quantization intervals (clamp each coefficient)
-/// 5. Repeat
+/// Iterative low-frequency DCT coefficient smoothing.
+///
+/// For each iteration, averages low-frequency AC coefficients with cardinal
+/// neighbors (4-connected: up/down/left/right blocks), clamping to quantization
+/// intervals. Only modifies coefficients where row+col < 4 in the DCT matrix
+/// (the lowest 10 frequencies), leaving high-frequency detail untouched.
+///
+/// Works purely in DCT domain — no forward DCT needed, avoiding numerical
+/// noise from FDCT/IDCT mismatch that destroyed the POCS approach.
 struct CoeffRefineTV {
     iterations: usize,
 }
@@ -963,180 +811,99 @@ impl CoeffRefineTV {
         Self { iterations }
     }
 
-    /// Project coefficients onto quantization intervals.
-    /// Each coefficient c must stay within [original*q - q/2, original*q + q/2]
-    /// in the dequantized domain. In the quantized domain, this means the
-    /// coefficient can only change by ±0 (it stays at the same quantized level).
-    /// But we allow fractional adjustment by working in the dequantized domain.
-    fn project_onto_intervals(
-        new_dct: &[f32; 64],
-        original_coeffs: &[i16; 64],
-        quant_table: &[u16; 64],
-    ) -> [f32; 64] {
-        // zigzag → natural order mapping
-        let zigzag_to_natural: [usize; 64] = [
-            0,  1,  8, 16,  9,  2,  3, 10,
-            17, 24, 32, 25, 18, 11,  4,  5,
-            12, 19, 26, 33, 40, 48, 41, 34,
-            27, 20, 13,  6,  7, 14, 21, 28,
-            35, 42, 49, 56, 57, 50, 43, 36,
-            29, 22, 15, 23, 30, 37, 44, 51,
-            58, 59, 52, 45, 38, 31, 39, 46,
-            53, 60, 61, 54, 47, 55, 62, 63,
-        ];
-
-        let mut projected = [0.0f32; 64];
-
-        for zi in 0..64 {
-            let ni = zigzag_to_natural[zi];
-            // quant_table is in NATURAL order (parser converts during DQT parsing)
-            let q = quant_table[ni] as f32;
-            let original_quantized = original_coeffs[zi] as f32;
-
-            // Quantization interval in dequantized domain:
-            // center = original_quantized * q
-            // valid range = [center - q/2, center + q/2]
-            let center = original_quantized * q;
-            let lo = center - q * 0.5;
-            let hi = center + q * 0.5;
-
-            // new_dct is in natural order — project onto interval
-            projected[ni] = new_dct[ni].clamp(lo, hi);
-        }
-
-        projected
-    }
-
-    /// Apply TV smoothing to boundary pixels only.
-    /// Returns smoothed plane (does not modify original).
-    fn tv_smooth_boundaries(plane: &[f32], w: usize, h: usize, lambda: f32) -> Vec<f32> {
-        let mut smoothed = plane.to_vec();
-
-        // Only smooth pixels immediately adjacent to block boundaries
-        for y in 0..h {
-            for x in 0..w {
-                let at_v = (x % 8) == 0 || (x % 8) == 7;
-                let at_h = (y % 8) == 0 || (y % 8) == 7;
-                if !at_v && !at_h {
-                    continue;
-                }
-
-                let center = plane[y * w + x];
-                let mut grad = 0.0f32;
-                let mut count = 0.0f32;
-
-                // 4-connected neighbors
-                if x > 0 {
-                    grad += plane[y * w + x - 1] - center;
-                    count += 1.0;
-                }
-                if x + 1 < w {
-                    grad += plane[y * w + x + 1] - center;
-                    count += 1.0;
-                }
-                if y > 0 {
-                    grad += plane[(y - 1) * w + x] - center;
-                    count += 1.0;
-                }
-                if y + 1 < h {
-                    grad += plane[(y + 1) * w + x] - center;
-                    count += 1.0;
-                }
-
-                if count > 0.0 {
-                    smoothed[y * w + x] = center + lambda * grad / count;
-                }
-            }
-        }
-
-        smoothed
-    }
-
-    /// Run POCS iteration on a single component.
-    fn refine_component(
-        coeffs: &[i16],
+    fn process_component(
+        zigzag_coeffs: &[i16],
         blocks_wide: usize,
         blocks_high: usize,
         quant_table: &[u16; 64],
         iterations: usize,
     ) -> Vec<f32> {
+        let num_blocks = blocks_wide * blocks_high;
+
+        // Dequantize with interval tracking
+        let mut dequant = vec![[0.0f32; 64]; num_blocks];
+        let mut block_min = vec![[0.0f32; 64]; num_blocks];
+        let mut block_max = vec![[0.0f32; 64]; num_blocks];
+
+        for bi in 0..num_blocks {
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
+                .try_into().unwrap();
+            for nat in 0..64 {
+                let zi = NATURAL_TO_ZIGZAG[nat];
+                let q = quant_table[nat] as f32;
+                let mid = block[zi] as f32 * q;
+                dequant[bi][nat] = mid;
+                block_min[bi][nat] = mid - q * 0.5;
+                block_max[bi][nat] = mid + q * 0.5;
+            }
+        }
+
+        for iter in 0..iterations {
+            let alpha = 0.15 / (1.0 + iter as f32);
+
+            let snapshot = dequant.clone();
+
+            for bi in 0..num_blocks {
+                let by = bi / blocks_wide;
+                let bx = bi % blocks_wide;
+
+                // Only smooth low-frequency AC coefficients (skip DC)
+                for nat in 1..64 {
+                    let row = nat / 8;
+                    let col = nat % 8;
+                    if row + col >= 4 { continue; }
+
+                    let center = snapshot[bi][nat];
+
+                    // Average with cardinal neighbors only
+                    let mut sum = 0.0f32;
+                    let mut count = 0u32;
+
+                    if by > 0 {
+                        sum += snapshot[(by - 1) * blocks_wide + bx][nat];
+                        count += 1;
+                    }
+                    if by + 1 < blocks_high {
+                        sum += snapshot[(by + 1) * blocks_wide + bx][nat];
+                        count += 1;
+                    }
+                    if bx > 0 {
+                        sum += snapshot[by * blocks_wide + bx - 1][nat];
+                        count += 1;
+                    }
+                    if bx + 1 < blocks_wide {
+                        sum += snapshot[by * blocks_wide + bx + 1][nat];
+                        count += 1;
+                    }
+
+                    if count > 0 {
+                        let avg = sum / count as f32;
+                        let new_val = center + alpha * (avg - center);
+                        dequant[bi][nat] = new_val.clamp(
+                            block_min[bi][nat], block_max[bi][nat],
+                        );
+                    }
+                }
+            }
+        }
+
+        // Final IDCT
         let pw = blocks_wide * 8;
         let ph = blocks_high * 8;
-
-        // Store original coefficients for projection
-        let num_blocks = blocks_wide * blocks_high;
-        let mut current_dequant = vec![[0.0f32; 64]; num_blocks];
-
-        // Initial dequantization + IDCT
+        let mut output = vec![0.0f32; pw * ph];
         for bi in 0..num_blocks {
-            let block_arr: [i16; 64] = coeffs[bi * 64..(bi + 1) * 64]
-                .try_into().unwrap();
-            current_dequant[bi] = dequantize_unzigzag(&block_arr, quant_table);
-        }
-
-        // Compute adaptive lambda from quant table — more quantization = more smoothing
-        let dc_quant = quant_table[0] as f32;
-        let lambda = (dc_quant / 40.0).clamp(0.02, 0.2);
-
-        for _iter in 0..iterations {
-            // 1. IDCT all blocks to pixel plane
-            let mut plane = vec![0.0f32; pw * ph];
-            for by in 0..blocks_high {
-                for bx in 0..blocks_wide {
-                    let bi = by * blocks_wide + bx;
-                    let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&current_dequant[bi]);
-                    for row in 0..8 {
-                        for col in 0..8 {
-                            plane[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
-                        }
-                    }
-                }
-            }
-
-            // 2. TV-smooth the boundary pixels
-            let smoothed = Self::tv_smooth_boundaries(&plane, pw, ph, lambda);
-
-            // 3. Forward DCT the smoothed blocks + project onto quantization intervals
-            for by in 0..blocks_high {
-                for bx in 0..blocks_wide {
-                    let bi = by * blocks_wide + bx;
-
-                    // Extract smoothed 8x8 block
-                    let mut block = [0.0f32; 64];
-                    for row in 0..8 {
-                        for col in 0..8 {
-                            block[row * 8 + col] = smoothed[(by * 8 + row) * pw + bx * 8 + col] - 128.0;
-                        }
-                    }
-
-                    // Forward DCT
-                    let new_dct = CoeffSmooth::forward_dct_8x8(&block);
-
-                    // Project onto quantization intervals
-                    let original_block: [i16; 64] = coeffs[bi * 64..(bi + 1) * 64]
-                        .try_into().unwrap();
-                    current_dequant[bi] = Self::project_onto_intervals(
-                        &new_dct, &original_block, quant_table,
-                    );
+            let by = bi / blocks_wide;
+            let bx = bi % blocks_wide;
+            let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
+            for row in 0..8 {
+                for col in 0..8 {
+                    output[(by * 8 + row) * pw + bx * 8 + col] =
+                        pixels[row * 8 + col] + 128.0;
                 }
             }
         }
 
-        // Final reconstruction
-        let mut plane = vec![0.0f32; pw * ph];
-        for by in 0..blocks_high {
-            for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx;
-                let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&current_dequant[bi]);
-                for row in 0..8 {
-                    for col in 0..8 {
-                        plane[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
-                    }
-                }
-            }
-        }
-
-        plane
+        output
     }
 }
 
@@ -1166,7 +933,7 @@ impl DeblockStrategy for CoeffRefineTV {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let plane_data = Self::refine_component(
+            let plane_data = Self::process_component(
                 &comp.coeffs, bw, bh, qt, self.iterations,
             );
 
@@ -1432,15 +1199,19 @@ impl DeblockStrategy for Knusperli {
 // Strategy: QuantSmooth bilateral (jpeg-quantsmooth low-quality mode)
 // ---------------------------------------------------------------------------
 
-/// Bilateral filter deblocking inspired by jpeg-quantsmooth's low-quality mode.
-/// For each pixel near block boundaries, compute a weighted average of neighbors
-/// where weight is inversely proportional to pixel difference (edge-preserving).
-/// Then forward DCT + clamp to quantization intervals.
+/// DCT-domain coefficient smoothing (jpeg-quantsmooth algorithm).
+///
+/// For each AC coefficient position, compute a bilateral-weighted average
+/// from the 3x3 block neighborhood (same coefficient in neighboring blocks).
+/// Clamp to quantization interval. Iterate.
+///
+/// This is fundamentally different from pixel-domain approaches: it smooths
+/// individual DCT frequencies across block boundaries using spatial coherence.
 struct QuantSmoothBilateral;
 
 impl QuantSmoothBilateral {
-    /// Apply bilateral filter to a pixel plane, then forward DCT + project
-    /// onto quantization intervals.
+    const ITERATIONS: usize = 4;
+
     fn process_component(
         zigzag_coeffs: &[i16],
         blocks_wide: usize,
@@ -1451,113 +1222,104 @@ impl QuantSmoothBilateral {
         let ph = blocks_high * 8;
         let num_blocks = blocks_wide * blocks_high;
 
-        // First: standard dequantize + IDCT to get pixel plane
-        let mut plane = vec![0.0f32; pw * ph];
-        let mut dequant_blocks = vec![[0.0f32; 64]; num_blocks];
+        // Dequantize all blocks with interval tracking
+        let mut dequant = vec![[0.0f32; 64]; num_blocks];
+        let mut block_min = vec![[0.0f32; 64]; num_blocks];
+        let mut block_max = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
             let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
                 .try_into().unwrap();
-            dequant_blocks[bi] = dequantize_unzigzag(&block, quant_table);
-
-            let by = bi / blocks_wide;
-            let bx = bi % blocks_wide;
-            let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant_blocks[bi]);
-            for row in 0..8 {
-                for col in 0..8 {
-                    plane[(by * 8 + row) * pw + bx * 8 + col] =
-                        pixels[row * 8 + col] + 128.0;
-                }
+            for nat in 0..64 {
+                let zi = NATURAL_TO_ZIGZAG[nat];
+                let q = quant_table[nat] as f32;
+                let mid = block[zi] as f32 * q;
+                dequant[bi][nat] = mid;
+                block_min[bi][nat] = mid - q * 0.5;
+                block_max[bi][nat] = mid + q * 0.5;
             }
         }
 
-        // Bilateral filter pass: for each pixel, compute edge-preserving smooth.
-        // Weight = max(0, range - |diff|)^2 where range = 2 * dc_quant
-        let dc_quant = quant_table[0] as f32;
-        let range = dc_quant * 2.0;
+        for iter in 0..Self::ITERATIONS {
+            // Decreasing blend strength — conservative to avoid
+            // over-smoothing at low quality where quant steps are large
+            let alpha = 0.25 / (1.0 + iter as f32 * 0.3);
 
-        let mut smoothed = plane.clone();
+            // Snapshot for bilateral weight computation (avoid read-write race)
+            let snapshot = dequant.clone();
 
-        for y in 0..ph {
-            for x in 0..pw {
-                let center = plane[y * pw + x];
-                let mut sum = 0.0f32;
-                let mut weight_sum = 0.0f32;
+            for bi in 0..num_blocks {
+                let by = bi / blocks_wide;
+                let bx = bi % blocks_wide;
 
-                // 8-connected neighbors
-                let neighbors: [(i32, i32, f32); 8] = [
-                    (-1, 0, 2.0), (1, 0, 2.0), (0, -1, 2.0), (0, 1, 2.0),
-                    (-1, -1, std::f32::consts::SQRT_2),
-                    (1, -1, std::f32::consts::SQRT_2),
-                    (-1, 1, std::f32::consts::SQRT_2),
-                    (1, 1, std::f32::consts::SQRT_2),
-                ];
-
-                for (dx, dy, c) in neighbors {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    if nx < 0 || nx >= pw as i32 || ny < 0 || ny >= ph as i32 {
-                        continue;
-                    }
-
-                    let neighbor = plane[ny as usize * pw + nx as usize];
-                    let diff = (center - neighbor).abs();
-                    let t = (range - diff).max(0.0);
-                    let w = t * t * c;
-                    sum += (neighbor - center) * w;
-                    weight_sum += w;
-                }
-
-                if weight_sum > 0.0 {
-                    smoothed[y * pw + x] = center + sum / weight_sum;
-                }
-            }
-        }
-
-        // Forward DCT + project onto quantization intervals
-        for by in 0..blocks_high {
-            for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx;
-
-                // Extract smoothed block, level-shift back
-                let mut block = [0.0f32; 64];
-                for row in 0..8 {
-                    for col in 0..8 {
-                        block[row * 8 + col] =
-                            smoothed[(by * 8 + row) * pw + bx * 8 + col] - 128.0;
-                    }
-                }
-
-                // Forward DCT
-                let new_dct = CoeffSmooth::forward_dct_8x8(&block);
-
-                // Project: clamp each coefficient to its quantization interval
-                let orig_block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                    .try_into().unwrap();
-
-                for nat in 0..64 {
-                    let zi = NATURAL_TO_ZIGZAG[nat];
+                // Only smooth mid/high-frequency AC coefficients.
+                // Low-frequency coefficients carry structural info and
+                // shouldn't be averaged across blocks.
+                for nat in 1..64 {
+                    let row = nat / 8;
+                    let col = nat % 8;
+                    if row + col < 2 { continue; } // skip DC and two lowest AC
                     let q = quant_table[nat] as f32;
-                    let orig_quantized = orig_block[zi] as f32;
-                    let center = orig_quantized * q;
-                    let lo = center - q * 0.5;
-                    let hi = center + q * 0.5;
-                    dequant_blocks[bi][nat] = new_dct[nat].clamp(lo, hi);
+                    if q < 1.0 { continue; }
+                    let center = snapshot[bi][nat];
+
+                    // Bilateral range = 2.0 * quant step for this coefficient
+                    let range = q * 2.0;
+
+                    // Weighted average from 3×3 block neighborhood
+                    let mut sum = 0.0f32;
+                    let mut weight_sum = 0.0f32;
+
+                    for dy in -1i32..=1 {
+                        for dx in -1i32..=1 {
+                            if dx == 0 && dy == 0 { continue; }
+                            let nx = bx as i32 + dx;
+                            let ny = by as i32 + dy;
+                            if nx < 0 || nx >= blocks_wide as i32
+                                || ny < 0 || ny >= blocks_high as i32
+                            {
+                                continue;
+                            }
+                            let ni = ny as usize * blocks_wide + nx as usize;
+                            let neighbor = snapshot[ni][nat];
+
+                            // Bilateral weight: high when neighbor is similar
+                            let diff = (center - neighbor).abs();
+                            let t = (range - diff).max(0.0);
+                            // Distance weight: cardinal=1.0, diagonal=0.707
+                            let dw = if dx == 0 || dy == 0 { 1.0 } else {
+                                1.0 / std::f32::consts::SQRT_2
+                            };
+                            let w = t * t * dw;
+
+                            sum += neighbor * w;
+                            weight_sum += w;
+                        }
+                    }
+
+                    if weight_sum > 0.0 {
+                        let smoothed = sum / weight_sum;
+                        // Blend toward smoothed value
+                        let new_val = center + alpha * (smoothed - center);
+                        // Clamp to quantization interval
+                        dequant[bi][nat] = new_val.clamp(
+                            block_min[bi][nat], block_max[bi][nat],
+                        );
+                    }
                 }
             }
         }
 
         // Final IDCT
         let mut output = vec![0.0f32; pw * ph];
-        for by in 0..blocks_high {
-            for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx;
-                let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant_blocks[bi]);
-                for row in 0..8 {
-                    for col in 0..8 {
-                        output[(by * 8 + row) * pw + bx * 8 + col] =
-                            pixels[row * 8 + col] + 128.0;
-                    }
+        for bi in 0..num_blocks {
+            let by = bi / blocks_wide;
+            let bx = bi % blocks_wide;
+            let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
+            for row in 0..8 {
+                for col in 0..8 {
+                    output[(by * 8 + row) * pw + bx * 8 + col] =
+                        pixels[row * 8 + col] + 128.0;
                 }
             }
         }
@@ -1642,7 +1404,7 @@ fn parse_args() -> Args {
             Box::new(Knusperli),
             Box::new(QuantSmoothBilateral),
             Box::new(CoeffSmooth),
-            Box::new(CoeffRefineTV::new(2)),
+            Box::new(CoeffRefineTV::new(4)),
         ],
         verbose: false,
     };
