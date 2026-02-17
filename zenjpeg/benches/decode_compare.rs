@@ -424,9 +424,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 b.iter(|| {
                     use imgref::ImgRefMut;
                     use zenjpeg::decode::Decoder;
-                    let decoder = Decoder::new()
-                        .fancy_upsampling(false)
-                        .num_threads(1); // Force sequential
+                    let decoder = Decoder::new().fancy_upsampling(false).num_threads(1); // Force sequential
                     let mut reader = decoder
                         .scanline_reader(black_box(data))
                         .expect("scanline_reader failed");

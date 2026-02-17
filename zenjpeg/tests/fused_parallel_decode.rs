@@ -505,7 +505,9 @@ fn decode_wave_scanline(jpeg: &[u8]) -> Vec<u8> {
             let remaining = height - rows_read;
             let slice = &mut pixels[rows_read * width * 3..];
             let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
-            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            let count = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
             assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
             rows_read += count;
         }
@@ -529,7 +531,9 @@ fn decode_sequential_scanline(jpeg: &[u8]) -> Vec<u8> {
         let remaining = height - rows_read;
         let slice = &mut pixels[rows_read * width * 3..];
         let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
-        let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+        let count = reader
+            .read_rows_rgb8(output)
+            .expect("read_rows_rgb8 failed");
         assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
         rows_read += count;
     }
@@ -599,11 +603,7 @@ fn test_wave_parallel_dri4() {
         let wave = decode_wave_scanline(&jpeg);
         let sequential = decode_sequential_scanline(&jpeg);
 
-        assert_pixels_equal(
-            &wave,
-            &sequential,
-            &format!("wave 4:2:0 box DRI=4 {w}x{h}"),
-        );
+        assert_pixels_equal(&wave, &sequential, &format!("wave 4:2:0 box DRI=4 {w}x{h}"));
     }
 }
 
@@ -631,7 +631,9 @@ fn test_wave_parallel_small_chunks() {
             // Read exactly 1 row at a time
             let slice = &mut all_pixels[rows_read * width * 3..];
             let output = imgref::ImgRefMut::new(slice, width * 3, 1);
-            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            let count = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
             assert_eq!(count, 1);
             rows_read += 1;
         }
