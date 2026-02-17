@@ -657,3 +657,191 @@ fn gain_map_preserve_raw_returns_none_for_regular_jpeg() {
         "Regular JPEG should have no gain map even with PreserveRaw"
     );
 }
+
+// ============================================================================
+// DecodePool + DecodeRequest API tests
+// ============================================================================
+
+#[test]
+fn request_decode_without_pool() {
+    let jpeg = create_output_target_jpeg();
+
+    // request() without pool should work identically to decode()
+    let result = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .request(&jpeg)
+        .decode()
+        .expect("decode");
+
+    let direct = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg, Unstoppable)
+        .expect("decode");
+
+    assert_eq!(result.width, direct.width);
+    assert_eq!(result.height, direct.height);
+    assert_eq!(
+        result.pixels_u8().unwrap(),
+        direct.pixels_u8().unwrap(),
+        "request().decode() must match decode() pixel-for-pixel"
+    );
+}
+
+#[test]
+fn request_decode_with_pool() {
+    use zenjpeg::decoder::DecodePool;
+
+    let jpeg = create_output_target_jpeg();
+    let pool = DecodePool::new().parallel_threshold(2);
+
+    // Decode with pool
+    let result = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .request(&jpeg)
+        .pool(&pool)
+        .decode()
+        .expect("decode");
+
+    // Should produce valid output
+    assert!(result.width > 0);
+    assert!(result.height > 0);
+    assert!(!result.pixels_u8().unwrap().is_empty());
+
+    // Pool active count should be back to 0
+    assert_eq!(pool.active_count(), 0);
+}
+
+#[test]
+fn request_decode_with_stop() {
+    let jpeg = create_output_target_jpeg();
+
+    let result = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .request(&jpeg)
+        .stop(Unstoppable)
+        .decode()
+        .expect("decode");
+
+    assert!(result.width > 0);
+    assert!(!result.pixels_u8().unwrap().is_empty());
+}
+
+#[test]
+fn request_decode_pool_releases_on_error() {
+    use zenjpeg::decoder::DecodePool;
+
+    let pool = DecodePool::new();
+    let bad_data = b"not a jpeg";
+
+    // Decode should fail, but pool count must still decrement
+    let result = Decoder::new()
+        .request(bad_data.as_slice())
+        .pool(&pool)
+        .decode();
+
+    assert!(result.is_err());
+    assert_eq!(pool.active_count(), 0, "pool must release slot on error");
+}
+
+#[test]
+fn request_scanline_reader_with_pool() {
+    use zenjpeg::decoder::DecodePool;
+
+    let jpeg = create_output_target_jpeg();
+    let pool = DecodePool::new().parallel_threshold(4);
+
+    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+
+    // Create scanline reader via request
+    let mut reader = decoder.request(&jpeg).pool(&pool).scanline_reader().expect("scanline_reader");
+
+    assert_eq!(pool.active_count(), 1, "pool slot held while reader alive");
+
+    let w = reader.width() as usize;
+    let h = reader.height() as usize;
+    let mut pixels = vec![0u8; w * h * 3];
+    let mut rows_read = 0;
+    while rows_read < h {
+        let remaining = h - rows_read;
+        let output =
+            imgref::ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
+        rows_read += reader.read_rows_rgb8(output).expect("read");
+    }
+
+    assert_eq!(rows_read, h);
+    assert!(!pixels.iter().all(|&p| p == 0), "pixels should not be all zero");
+
+    // Drop reader, pool slot should release
+    drop(reader);
+    assert_eq!(pool.active_count(), 0, "pool must release slot on reader drop");
+}
+
+#[test]
+fn request_scanline_reader_pool_releases_on_error() {
+    use zenjpeg::decoder::DecodePool;
+
+    let pool = DecodePool::new();
+    let bad_data = b"not a jpeg";
+    let decoder = Decoder::new();
+
+    let result = decoder
+        .request(bad_data.as_slice())
+        .pool(&pool)
+        .scanline_reader();
+
+    assert!(result.is_err());
+    assert_eq!(pool.active_count(), 0, "pool must release slot on scanline error");
+}
+
+#[test]
+fn pool_concurrent_threshold_behavior() {
+    use zenjpeg::decoder::DecodePool;
+
+    let jpeg = create_output_target_jpeg();
+    let pool = DecodePool::new().parallel_threshold(1);
+
+    // First decode: active=0 < threshold=1, should use parallel (num_threads=0)
+    let result1 = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .request(&jpeg)
+        .pool(&pool)
+        .decode()
+        .expect("first decode");
+
+    // Verify output is valid (testing the decode itself, not just the pool)
+    assert!(result1.width > 0);
+    assert_eq!(pool.active_count(), 0);
+
+    // Multiple sequential decodes should all succeed
+    for _ in 0..5 {
+        let result = Decoder::new()
+            .output_format(PixelFormat::Rgb)
+            .request(&jpeg)
+            .pool(&pool)
+            .decode()
+            .expect("sequential decode");
+        assert_eq!(result.width, result1.width);
+    }
+    assert_eq!(pool.active_count(), 0);
+}
+
+#[test]
+fn request_matches_direct_decode_pixels() {
+    // Encode a known test image and verify request path matches direct path exactly
+    let width = 128u32;
+    let height = 128;
+    let img = generate_gradient_d(width, height, 3);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let jpeg = encode_rgb(width, height, &img.pixels, &config).expect("encode");
+
+    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+
+    let direct = decoder.decode(&jpeg, Unstoppable).expect("direct");
+    let via_request = decoder.request(&jpeg).decode().expect("request");
+
+    assert_eq!(
+        direct.pixels_u8().unwrap(),
+        via_request.pixels_u8().unwrap(),
+        "request path must produce byte-identical output to direct path"
+    );
+}

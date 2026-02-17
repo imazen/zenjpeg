@@ -26,6 +26,7 @@
 
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
+use super::pool::PoolGuard;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
@@ -133,6 +134,10 @@ pub struct ScanlineReader<'a> {
     wave_row_count: usize,
     #[cfg(feature = "parallel")]
     wave_next_seg: usize,
+
+    // Pool guard for adaptive threading. When Some, the pool slot is held
+    // for the lifetime of this reader and released on drop.
+    pub(super) pool_guard: Option<PoolGuard<'a>>,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -210,6 +215,7 @@ impl<'a> ScanlineReader<'a> {
             wave_row_count: 0,
             #[cfg(feature = "parallel")]
             wave_next_seg: 0,
+            pool_guard: None,
         })
     }
 
@@ -265,6 +271,7 @@ impl<'a> ScanlineReader<'a> {
             wave_row_count: 0,
             #[cfg(feature = "parallel")]
             wave_next_seg: 0,
+            pool_guard: None,
         }
     }
 
@@ -371,6 +378,7 @@ impl<'a> ScanlineReader<'a> {
             wave_row_count: 0,
             #[cfg(feature = "parallel")]
             wave_next_seg: 0,
+            pool_guard: None,
         })
     }
 
@@ -437,6 +445,7 @@ impl<'a> ScanlineReader<'a> {
             wave_first_row: 0,
             wave_row_count: 0,
             wave_next_seg: 0,
+            pool_guard: None,
         }
     }
 
