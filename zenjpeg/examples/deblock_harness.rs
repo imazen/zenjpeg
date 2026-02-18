@@ -480,6 +480,148 @@ impl DeblockStrategy for Boundary4Tap {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy: Bilateral boundary filter (edge-preserving boundary_4tap)
+// ---------------------------------------------------------------------------
+
+/// Like Boundary4Tap but weights neighbors by intensity similarity.
+/// Preserves real edges that happen to fall on block boundaries while still
+/// smoothing blocking artifacts. sigma_r controls the range kernel width.
+struct BilateralBoundary {
+    sigma_r: f32,
+}
+
+impl BilateralBoundary {
+    fn new(sigma_r: f32) -> Self {
+        Self { sigma_r }
+    }
+
+    /// Bilateral filter at block boundaries. Instead of fixed [1,3,3,1]/8 weights,
+    /// the spatial weights are multiplied by range weights based on intensity difference.
+    fn filter_plane(plane: &mut [f32], w: usize, h: usize, strength: f32, sigma_r: f32) {
+        if strength < 0.5 {
+            return;
+        }
+
+        let thresh = strength * 0.4;
+        let inv_2sigma2 = 1.0 / (2.0 * sigma_r * sigma_r);
+
+        // Vertical boundaries (columns at 8, 16, 24, ...)
+        for y in 0..h {
+            for bx in 1..(w / 8) {
+                let col = bx * 8;
+                if col + 1 >= w || col < 2 {
+                    continue;
+                }
+
+                let p1 = plane[y * w + col - 2];
+                let p0 = plane[y * w + col - 1];
+                let q0 = plane[y * w + col];
+                let q1 = plane[y * w + col + 1];
+
+                let disc = (p0 - q0).abs();
+                if disc < thresh {
+                    continue;
+                }
+
+                // Reference value: midpoint of the boundary pair
+                let ref_val = (p0 + q0) * 0.5;
+
+                // Range weights: exp(-diff² / 2σ²)
+                let rw_p1 = (-(p1 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_p0 = (-(p0 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_q0 = (-(q0 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_q1 = (-(q1 - ref_val).powi(2) * inv_2sigma2).exp();
+
+                // Spatial weights [1, 3, 3, 1] × range weights
+                let w_p1 = 1.0 * rw_p1;
+                let w_p0 = 3.0 * rw_p0;
+                let w_q0 = 3.0 * rw_q0;
+                let w_q1 = 1.0 * rw_q1;
+                let w_sum = w_p1 + w_p0 + w_q0 + w_q1;
+
+                if w_sum < 1e-6 {
+                    continue;
+                }
+
+                let avg = (w_p1 * p1 + w_p0 * p0 + w_q0 * q0 + w_q1 * q1) / w_sum;
+                let delta_p = (avg - p0).clamp(-strength, strength);
+                let delta_q = (avg - q0).clamp(-strength, strength);
+
+                plane[y * w + col - 1] = (p0 + delta_p).clamp(0.0, 255.0);
+                plane[y * w + col] = (q0 + delta_q).clamp(0.0, 255.0);
+            }
+        }
+
+        // Horizontal boundaries (rows at 8, 16, 24, ...)
+        for x in 0..w {
+            for by in 1..(h / 8) {
+                let row = by * 8;
+                if row + 1 >= h || row < 2 {
+                    continue;
+                }
+
+                let p1 = plane[(row - 2) * w + x];
+                let p0 = plane[(row - 1) * w + x];
+                let q0 = plane[row * w + x];
+                let q1 = plane[(row + 1) * w + x];
+
+                let disc = (p0 - q0).abs();
+                if disc < thresh {
+                    continue;
+                }
+
+                let ref_val = (p0 + q0) * 0.5;
+
+                let rw_p1 = (-(p1 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_p0 = (-(p0 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_q0 = (-(q0 - ref_val).powi(2) * inv_2sigma2).exp();
+                let rw_q1 = (-(q1 - ref_val).powi(2) * inv_2sigma2).exp();
+
+                let w_p1 = 1.0 * rw_p1;
+                let w_p0 = 3.0 * rw_p0;
+                let w_q0 = 3.0 * rw_q0;
+                let w_q1 = 1.0 * rw_q1;
+                let w_sum = w_p1 + w_p0 + w_q0 + w_q1;
+
+                if w_sum < 1e-6 {
+                    continue;
+                }
+
+                let avg = (w_p1 * p1 + w_p0 * p0 + w_q0 * q0 + w_q1 * q1) / w_sum;
+                let delta_p = (avg - p0).clamp(-strength, strength);
+                let delta_q = (avg - q0).clamp(-strength, strength);
+
+                plane[(row - 1) * w + x] = (p0 + delta_p).clamp(0.0, 255.0);
+                plane[row * w + x] = (q0 + delta_q).clamp(0.0, 255.0);
+            }
+        }
+    }
+}
+
+impl DeblockStrategy for BilateralBoundary {
+    fn name(&self) -> &str {
+        "bilateral_bnd"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
+
+        for plane in &mut cp.planes {
+            let dc_quant = plane.quant_table[0] as f32;
+            let strength = (dc_quant * 0.25).min(12.0);
+            // Fixed sigma_r: doesn't scale with quant. Strength already controls
+            // how much correction is applied; sigma_r controls WHICH pixels get
+            // filtered. We want tight range kernel at all qualities.
+            Self::filter_plane(
+                &mut plane.data, plane.width, plane.height, strength, self.sigma_r,
+            );
+        }
+
+        Some(planes_to_rgb(&cp))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Strategy: CDEF-style directional filter
 // ---------------------------------------------------------------------------
 
@@ -633,6 +775,124 @@ impl DeblockStrategy for CDEFDirection {
             let strength = (dc_quant * 0.3).min(15.0);
             Self::filter_plane(
                 &mut plane.data, plane.width, plane.height, strength
+            );
+        }
+
+        Some(planes_to_rgb(&cp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strategy: SGR (Self-Guided Restoration) from AV1
+// ---------------------------------------------------------------------------
+
+/// AV1's self-guided restoration filter. Uses box filter to compute local
+/// means and variances, then blends original with filtered version.
+/// Edge-preserving: pixels in high-variance regions are less affected.
+/// AOM patent pledge makes this royalty-free.
+struct SGRFilter {
+    /// Radius for box filter (1 = 3x3, 2 = 5x5)
+    radius: usize,
+    /// Noise parameter (controls how much filtering). Higher = more filtering.
+    /// Typical range: 10-100 for JPEG deblocking.
+    eps: f32,
+    /// Blend strength (0.0 = no filter, 1.0 = full filter)
+    strength: f32,
+}
+
+impl SGRFilter {
+    fn new(radius: usize, eps: f32, strength: f32) -> Self {
+        Self { radius, eps, strength }
+    }
+
+    /// Box-filter SGR on a single plane. The algorithm:
+    /// 1. Compute local mean and variance in a (2r+1)×(2r+1) window
+    /// 2. Compute shrinkage weight: w = variance / (variance + eps)
+    /// 3. Guided output: out = w * original + (1 - w) * mean
+    /// 4. Final: blend = alpha * (out - original) + original
+    ///
+    /// High variance (texture/edges): w → 1, output ≈ original (preserved)
+    /// Low variance (smooth/blocking): w → 0, output ≈ local mean (smoothed)
+    fn filter_plane(plane: &mut [f32], w: usize, h: usize, radius: usize, eps: f32, alpha: f32) {
+        if alpha < 1e-6 || w < 3 || h < 3 {
+            return;
+        }
+
+        let r = radius as isize;
+        let orig = plane[..w * h].to_vec();
+
+        // Use integral images for O(1) box filter per pixel
+        // sum[y][x] = sum of values in [0..y, 0..x]
+        // sum_sq[y][x] = sum of squared values
+        let iw = w + 1;
+        let ih = h + 1;
+        let mut sum = vec![0.0f64; iw * ih];
+        let mut sum_sq = vec![0.0f64; iw * ih];
+
+        for y in 0..h {
+            for x in 0..w {
+                let v = orig[y * w + x] as f64;
+                sum[(y + 1) * iw + (x + 1)] =
+                    v + sum[y * iw + (x + 1)] + sum[(y + 1) * iw + x] - sum[y * iw + x];
+                sum_sq[(y + 1) * iw + (x + 1)] = v * v
+                    + sum_sq[y * iw + (x + 1)]
+                    + sum_sq[(y + 1) * iw + x]
+                    - sum_sq[y * iw + x];
+            }
+        }
+
+        let eps_d = eps as f64;
+
+        for y in 0..h {
+            let y0 = (y as isize - r).max(0) as usize;
+            let y1 = ((y as isize + r + 1) as usize).min(h);
+            for x in 0..w {
+                let x0 = (x as isize - r).max(0) as usize;
+                let x1 = ((x as isize + r + 1) as usize).min(w);
+
+                let count = ((y1 - y0) * (x1 - x0)) as f64;
+                let s = sum[y1 * iw + x1] - sum[y0 * iw + x1]
+                    - sum[y1 * iw + x0] + sum[y0 * iw + x0];
+                let sq = sum_sq[y1 * iw + x1] - sum_sq[y0 * iw + x1]
+                    - sum_sq[y1 * iw + x0] + sum_sq[y0 * iw + x0];
+
+                let mean = s / count;
+                let variance = (sq / count - mean * mean).max(0.0);
+
+                // Shrinkage: preserve high-variance regions, smooth low-variance
+                let shrinkage = variance / (variance + eps_d);
+
+                // Guided output
+                let original = orig[y * w + x] as f64;
+                let guided = shrinkage * original + (1.0 - shrinkage) * mean;
+
+                // Blend with strength
+                let result = original + alpha as f64 * (guided - original);
+                plane[y * w + x] = (result as f32).clamp(0.0, 255.0);
+            }
+        }
+    }
+}
+
+impl DeblockStrategy for SGRFilter {
+    fn name(&self) -> &str {
+        "sgr"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
+
+        for plane in &mut cp.planes {
+            let dc_quant = plane.quant_table[0] as f32;
+            // Scale eps with quantization: higher quant → more noise → more filtering
+            let eps = self.eps * dc_quant;
+            SGRFilter::filter_plane(
+                &mut plane.data,
+                plane.width,
+                plane.height,
+                self.radius,
+                eps,
+                self.strength,
             );
         }
 
@@ -1744,7 +2004,11 @@ fn parse_args() -> Args {
             Box::new(BaselineDecode),
             Box::new(DequantBiasDecode),
             Box::new(Boundary4Tap),
+            // Bilateral boundary: sigma_r=15.0 (range kernel, preserves edges >30 intensity diff)
+            Box::new(BilateralBoundary::new(15.0)),
             Box::new(CDEFDirection),
+            // SGR: radius=2 (5x5), eps=0.5, strength=0.8
+            Box::new(SGRFilter::new(2, 0.5, 0.8)),
             Box::new(Knusperli),
             Box::new(QuantSmoothBilateral),
             Box::new(CoeffSmooth),
@@ -2202,6 +2466,69 @@ fn boundary_discontinuity(img: &RgbImage) -> (f64, f64, f64) {
     (smooth_mean, edge_mean, overall)
 }
 
+/// Interior sharpness metric: Laplacian variance at pixels NOT adjacent to 8x8 boundaries.
+/// Higher = sharper. Measured on Y (luma) channel.
+/// Only considers pixels at least 2 pixels away from any 8x8 block boundary,
+/// so deblocking filters that only touch boundary pixels cannot affect this metric.
+fn interior_sharpness(img: &RgbImage) -> f64 {
+    let w = img.width();
+    let h = img.height();
+    if w < 4 || h < 4 {
+        return 0.0;
+    }
+    let buf = img.buf();
+
+    // Convert to Y channel (BT.601)
+    let mut y = vec![0f32; w * h];
+    for row in 0..h {
+        for col in 0..w {
+            let px = buf[row * img.stride() + col];
+            y[row * w + col] = 0.299 * px.r as f32 + 0.587 * px.g as f32 + 0.114 * px.b as f32;
+        }
+    }
+
+    // Compute Laplacian (discrete: center*4 - up - down - left - right) at interior pixels
+    // "Interior" = at least 2 pixels from any 8x8 block boundary
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut count = 0u64;
+
+    for row in 1..h - 1 {
+        // Skip rows adjacent to horizontal block boundaries (rows 0,1,6,7 of each block)
+        let row_in_block = row % 8;
+        if row_in_block <= 1 || row_in_block >= 6 {
+            continue;
+        }
+
+        for col in 1..w - 1 {
+            // Skip columns adjacent to vertical block boundaries
+            let col_in_block = col % 8;
+            if col_in_block <= 1 || col_in_block >= 6 {
+                continue;
+            }
+
+            let center = y[row * w + col];
+            let up = y[(row - 1) * w + col];
+            let down = y[(row + 1) * w + col];
+            let left = y[row * w + col - 1];
+            let right = y[row * w + col + 1];
+
+            let laplacian = 4.0 * center - up - down - left - right;
+            sum += laplacian as f64;
+            sum_sq += (laplacian * laplacian) as f64;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        return 0.0;
+    }
+
+    let mean = sum / count as f64;
+    // Variance of Laplacian = E[L^2] - E[L]^2
+    (sum_sq / count as f64) - mean * mean
+}
+
 #[derive(Debug)]
 struct Measurement {
     image: String,
@@ -2213,6 +2540,7 @@ struct Measurement {
     boundary_smooth: f64,
     boundary_edge: f64,
     boundary_overall: f64,
+    sharpness: f64,
     file_size: usize,
     detected_encoder: String,
     detected_quality: String,
@@ -2339,16 +2667,20 @@ fn run_measurements(
                 // Boundary discontinuity
                 let (bsmooth, bedge, boverall) = boundary_discontinuity(&decoded);
 
+                // Interior sharpness (Laplacian variance at non-boundary pixels)
+                let sharp = interior_sharpness(&decoded);
+
                 if verbose {
                     eprintln!(
-                        "  {:<20} {:>10} q{:<3} [{:<13}] SS2={:6.2} BA={:5.2} BD={:.2}",
+                        "  {:<20} {:>10} q{:<3} [{:<13}] SS2={:6.2} BA={:5.2} BD={:.2} SH={:.1}",
                         img.name,
                         job.encoder.display_name(),
                         job.quality,
                         strategy.name(),
                         ssim2,
                         ba,
-                        bsmooth
+                        bsmooth,
+                        sharp
                     );
                 }
 
@@ -2362,6 +2694,7 @@ fn run_measurements(
                     boundary_smooth: bsmooth,
                     boundary_edge: bedge,
                     boundary_overall: boverall,
+                    sharpness: sharp,
                     file_size: jpeg_bytes.len(),
                     detected_encoder: detected_encoder.clone(),
                     detected_quality: detected_quality.clone(),
@@ -2402,14 +2735,14 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
     writeln!(
         f,
         "image,encoder,quality,strategy,ssim2,butteraugli,bd_smooth,bd_edge,bd_overall,\
-         file_size,detected_encoder,detected_quality"
+         sharpness,file_size,detected_encoder,detected_quality"
     )
     .unwrap();
 
     for m in measurements {
         writeln!(
             f,
-            "{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{}",
+            "{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.2},{},{},{}",
             m.image,
             m.encoder.dir_name(),
             m.quality,
@@ -2419,6 +2752,7 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
             m.boundary_smooth,
             m.boundary_edge,
             m.boundary_overall,
+            m.sharpness,
             m.file_size,
             m.detected_encoder,
             m.detected_quality,
@@ -2429,14 +2763,14 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
 
 /// Print summary table: mean metrics per encoder × quality × strategy.
 fn print_summary(measurements: &[Measurement]) {
-    // Group by (strategy, encoder, quality) → collect metrics
-    let mut groups: BTreeMap<(String, Encoder, u8), Vec<(f64, f64, f64)>> = BTreeMap::new();
+    // Group by (strategy, encoder, quality) → collect metrics (ss2, ba, bd_smooth, sharpness)
+    let mut groups: BTreeMap<(String, Encoder, u8), Vec<(f64, f64, f64, f64)>> = BTreeMap::new();
 
     for m in measurements {
         groups
             .entry((m.strategy.clone(), m.encoder, m.quality))
             .or_default()
-            .push((m.ssim2, m.butteraugli, m.boundary_smooth));
+            .push((m.ssim2, m.butteraugli, m.boundary_smooth, m.sharpness));
     }
 
     // Get all strategies
@@ -2483,10 +2817,10 @@ fn print_summary(measurements: &[Measurement]) {
         for strategy in strategies.iter().filter(|s| *s != "baseline") {
             eprintln!("\n--- {} vs baseline ---", strategy);
             eprintln!(
-                "{:<14} {:>3}  {:>8} {:>8} {:>8}",
-                "Encoder", "Q", "dSS2", "dBA", "dBD_sm"
+                "{:<14} {:>3}  {:>8} {:>8} {:>8} {:>8}",
+                "Encoder", "Q", "dSS2", "dBA", "dBD_sm", "dSH"
             );
-            eprintln!("{}", "-".repeat(55));
+            eprintln!("{}", "-".repeat(65));
 
             for &enc in Encoder::all() {
                 for &q in &QUALITY_LEVELS {
@@ -2503,14 +2837,17 @@ fn print_summary(measurements: &[Measurement]) {
                             - base.iter().map(|v| v.1).sum::<f64>() / n as f64;
                         let d_bd = strat.iter().map(|v| v.2).sum::<f64>() / n as f64
                             - base.iter().map(|v| v.2).sum::<f64>() / n as f64;
+                        let d_sh = strat.iter().map(|v| v.3).sum::<f64>() / n as f64
+                            - base.iter().map(|v| v.3).sum::<f64>() / n as f64;
 
                         eprintln!(
-                            "{:<14} {:>3}  {:>+8.3} {:>+8.3} {:>+8.3}",
+                            "{:<14} {:>3}  {:>+8.3} {:>+8.3} {:>+8.3} {:>+8.3}",
                             enc.dir_name(),
                             q,
                             d_ss2,
                             d_ba,
                             d_bd,
+                            d_sh,
                         );
                     }
                 }
