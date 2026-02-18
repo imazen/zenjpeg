@@ -192,14 +192,23 @@ fn encode_turbo_444(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
     if !output.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("cjpeg 444 failed: {}", String::from_utf8_lossy(&output.stderr)),
+            format!(
+                "cjpeg 444 failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
         ));
     }
     Ok(output.stdout)
 }
 
 /// Encode with mozjpeg-rs (pure Rust, in-process).
-fn encode_mozjpeg(pixels: &[u8], w: usize, h: usize, quality: u8, sub_444: bool) -> Option<Vec<u8>> {
+fn encode_mozjpeg(
+    pixels: &[u8],
+    w: usize,
+    h: usize,
+    quality: u8,
+    sub_444: bool,
+) -> Option<Vec<u8>> {
     let sub = if sub_444 {
         mozjpeg_rs::Subsampling::S444
     } else {
@@ -214,10 +223,7 @@ fn encode_mozjpeg(pixels: &[u8], w: usize, h: usize, quality: u8, sub_444: bool)
 
 /// Encode with cjpegli CLI (4:4:4 default). Returns JPEG bytes.
 fn encode_cjpegli(png_path: &Path, quality: u8, tmp_dir: &Path) -> io::Result<Vec<u8>> {
-    let stem = png_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let stem = png_path.file_stem().unwrap_or_default().to_string_lossy();
     let tmp_out = tmp_dir.join(format!("cjpegli_{stem}_q{quality}.jpg"));
     let output = Command::new("cjpegli")
         .arg(png_path)
@@ -228,7 +234,10 @@ fn encode_cjpegli(png_path: &Path, quality: u8, tmp_dir: &Path) -> io::Result<Ve
     if !output.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("cjpegli failed: {}", String::from_utf8_lossy(&output.stderr)),
+            format!(
+                "cjpegli failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
         ));
     }
     let data = std::fs::read(&tmp_out)?;
@@ -487,8 +496,13 @@ fn process_resize(
         let resized_ref = bytes_to_rgb(&resized_ref_bytes, out_w as usize, out_h as usize);
 
         // Resize decoded source JPEG → smaller
-        let resized_dec_bytes =
-            resize_rgb(&decoded_bytes, decoded.width() as u32, decoded.height() as u32, out_w, out_h);
+        let resized_dec_bytes = resize_rgb(
+            &decoded_bytes,
+            decoded.width() as u32,
+            decoded.height() as u32,
+            out_w,
+            out_h,
+        );
 
         // Source BA for resized: compare resized decoded vs resized reference
         let resized_dec = bytes_to_rgb(&resized_dec_bytes, out_w as usize, out_h as usize);
@@ -543,13 +557,20 @@ fn process_image(
 
     // Sanity check: encode original PNG directly with zenjpeg at Q90
     if args.verbose {
-        if let Some(direct) =
-            encode_zen(&img.pixels, img.width, img.height, 90.0, ChromaSubsampling::Quarter)
-        {
+        if let Some(direct) = encode_zen(
+            &img.pixels,
+            img.width,
+            img.height,
+            90.0,
+            ChromaSubsampling::Quarter,
+        ) {
             if let Some((ba, ss2)) = measure_jpeg(&reference, &direct) {
                 eprintln!(
                     "  [sanity] {} direct zen Q90: BA={:.2}, SS2={:.2}, size={}",
-                    img.name, ba, ss2, direct.len()
+                    img.name,
+                    ba,
+                    ss2,
+                    direct.len()
                 );
             }
         }
@@ -570,7 +591,9 @@ fn process_image(
             let source_jpeg = match (src_cfg.encoder.as_str(), src_cfg.sub.as_str()) {
                 ("turbo", "420") => encode_turbo(&ppm_path, sq).ok(),
                 ("turbo", "444") => encode_turbo_444(&ppm_path, sq).ok(),
-                ("mozjpeg", sub) => encode_mozjpeg(&img.pixels, img.width, img.height, sq, sub == "444"),
+                ("mozjpeg", sub) => {
+                    encode_mozjpeg(&img.pixels, img.width, img.height, sq, sub == "444")
+                }
                 ("cjpegli", _) => encode_cjpegli(png_path, sq, tmp_dir).ok(),
                 _ => None,
             };
@@ -698,8 +721,7 @@ fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
 
         // Match: highest Q where ba_delta ≤ ba_tolerance AND size ≤ 1.0+tol
         for &(zq, bd, sr) in q_stats.iter().rev() {
-            if match_zen_q.is_none() && bd <= args.ba_tolerance && sr <= 1.0 + args.size_tolerance
-            {
+            if match_zen_q.is_none() && bd <= args.ba_tolerance && sr <= 1.0 + args.size_tolerance {
                 match_zen_q = Some(zq);
                 match_ba_delta = bd;
                 match_size_ratio = sr;
@@ -756,8 +778,7 @@ fn compute_resize_ceilings(results: &[RawResult]) -> Vec<ResizeCeiling> {
         // Compute (zen_q, mean_ba, mean_size_ratio) sorted by quality
         let mut q_points: Vec<(f32, f64, f64)> = Vec::new();
         for &zq in &RESIZE_QUALITIES {
-            let at_q: Vec<&&&RawResult> =
-                at_ratio.iter().filter(|r| r.zen_quality == zq).collect();
+            let at_q: Vec<&&&RawResult> = at_ratio.iter().filter(|r| r.zen_quality == zq).collect();
             if at_q.is_empty() {
                 continue;
             }
@@ -852,7 +873,10 @@ fn print_summary(results: &[RawResult], args: &Args) {
                 ),
                 None => "no Q achieves \u{0394}BA \u{2264} 0.3".to_string(),
             };
-            println!("    Q{:2} (BA ~{:.1}) \u{2192} {}", row.src_quality, row.mean_src_ba, rec_str);
+            println!(
+                "    Q{:2} (BA ~{:.1}) \u{2192} {}",
+                row.src_quality, row.mean_src_ba, rec_str
+            );
         }
     }
 
@@ -863,20 +887,26 @@ fn print_summary(results: &[RawResult], args: &Args) {
 
         println!("\n{}", "=".repeat(90));
         println!("\nResize Quality Ceilings (above ceiling, bytes wasted on imperceptible gain):");
-        println!("  {:>6}  {:>10}  {:>8}  {:>12}  {}", "ratio", "ceiling Q", "BA", "size vs src", "reason");
-        println!("  {:>6}  {:>10}  {:>8}  {:>12}  {}", "-----", "---------", "------", "-----------", "------");
+        println!(
+            "  {:>6}  {:>10}  {:>8}  {:>12}  {}",
+            "ratio", "ceiling Q", "BA", "size vs src", "reason"
+        );
+        println!(
+            "  {:>6}  {:>10}  {:>8}  {:>12}  {}",
+            "-----", "---------", "------", "-----------", "------"
+        );
 
         for c in &ceilings {
-            let q_str = c.ceiling_q.map_or("-".to_string(), |q| format!("Q{:.0}", q));
+            let q_str = c
+                .ceiling_q
+                .map_or("-".to_string(), |q| format!("Q{:.0}", q));
             let reason = if (c.next_ba - c.ceiling_ba).abs() < 0.001 {
                 "highest tested".to_string()
             } else {
                 let ba_gain = c.ceiling_ba - c.next_ba;
-                let size_cost = (c.next_size_ratio - c.ceiling_size_ratio) / c.ceiling_size_ratio * 100.0;
-                format!(
-                    "next step: {:.2} BA for +{:.0}% size",
-                    ba_gain, size_cost
-                )
+                let size_cost =
+                    (c.next_size_ratio - c.ceiling_size_ratio) / c.ceiling_size_ratio * 100.0;
+                format!("next step: {:.2} BA for +{:.0}% size", ba_gain, size_cost)
             };
             println!(
                 "  {:>5.1}x  {:>10}  {:>6.2}  {:>10.0}%  {}",
@@ -1031,11 +1061,14 @@ fn write_summary_csv(path: &Path, summary: &[SummaryRow]) {
             r.rec_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
             r.rec_ba_delta,
             r.rec_size_ratio,
-            r.match_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.match_zen_q
+                .map_or("-".to_string(), |q| format!("{:.0}", q)),
             r.match_ba_delta,
             r.match_size_ratio,
-            r.ci95_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
-            r.shrink_zen_q.map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.ci95_zen_q
+                .map_or("-".to_string(), |q| format!("{:.0}", q)),
+            r.shrink_zen_q
+                .map_or("-".to_string(), |q| format!("{:.0}", q)),
             r.shrink_size_ratio,
         )
         .ok();
@@ -1184,7 +1217,14 @@ fn main() {
     let all_results: Vec<Vec<RawResult>> = images
         .par_iter()
         .map(|(png_path, img)| {
-            let r = process_image(img, png_path, &tmp_dir, &source_configs, src_qualities, &args);
+            let r = process_image(
+                img,
+                png_path,
+                &tmp_dir,
+                &source_configs,
+                src_qualities,
+                &args,
+            );
             let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
             eprint!("\r  [{done}/{total}] {:<40}", img.name);
             io::stderr().flush().ok();

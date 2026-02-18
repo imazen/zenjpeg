@@ -64,10 +64,7 @@ fn count_dqt_tables(scan: &ScanResult) -> u8 {
 }
 
 /// 3 DQT tables → jpegli (YCbCr or XYB).
-fn identify_three_table(
-    scan: &ScanResult,
-    sof: &super::scanner::SofInfo,
-) -> EncoderFamily {
+fn identify_three_table(scan: &ScanResult, sof: &super::scanner::SofInfo) -> EncoderFamily {
     // Check component IDs for XYB: R=82, G=71, B=66
     if sof.num_components == 3 {
         let ids: Vec<u8> = sof.components.iter().map(|c| c.0).collect();
@@ -84,10 +81,7 @@ fn identify_three_table(
 }
 
 /// 2 DQT tables → IJG family or mozjpeg.
-fn identify_two_table(
-    scan: &ScanResult,
-    sof: &super::scanner::SofInfo,
-) -> EncoderFamily {
+fn identify_two_table(scan: &ScanResult, sof: &super::scanner::SofInfo) -> EncoderFamily {
     let table0 = match &scan.dqt_tables[0] {
         Some(t) => t,
         None => return EncoderFamily::Unknown,
@@ -120,10 +114,7 @@ fn identify_two_table(
 }
 
 /// 1 DQT table → grayscale image.
-fn identify_single_table(
-    scan: &ScanResult,
-    sof: &super::scanner::SofInfo,
-) -> EncoderFamily {
+fn identify_single_table(scan: &ScanResult, sof: &super::scanner::SofInfo) -> EncoderFamily {
     if sof.num_components != 1 {
         return EncoderFamily::Unknown;
     }
@@ -165,10 +156,7 @@ fn matches_ijg_luma_table(table: &[u16; 64]) -> bool {
 }
 
 /// Distinguish between IJG variants using Huffman table characteristics.
-fn identify_ijg_variant(
-    scan: &ScanResult,
-    _sof: &super::scanner::SofInfo,
-) -> EncoderFamily {
+fn identify_ijg_variant(scan: &ScanResult, _sof: &super::scanner::SofInfo) -> EncoderFamily {
     let uses_standard_huffman = scan.total_ac_symbols == STANDARD_AC_SYMBOLS_TOTAL;
 
     if uses_standard_huffman {
@@ -246,13 +234,16 @@ mod tests {
         // At Q75 (scale=50), base=16: (16*50+50)/100 = 8 (integer)
         // Float would give round(8.5) = 9
         let table = generate_ijg_table(75, false);
-        assert_eq!(table[0], 8, "Must use integer arithmetic, not float rounding");
+        assert_eq!(
+            table[0], 8,
+            "Must use integer arithmetic, not float rounding"
+        );
     }
 
     #[test]
     fn test_robidoux_luma_chroma_identical() {
         // Confirm mozjpeg's Robidoux default has identical luma/chroma
-        use crate::encode::tables::robidoux::{ROBIDOUX_LUMINANCE, ROBIDOUX_CHROMINANCE};
+        use crate::encode::tables::robidoux::{ROBIDOUX_CHROMINANCE, ROBIDOUX_LUMINANCE};
         assert_eq!(ROBIDOUX_LUMINANCE, ROBIDOUX_CHROMINANCE);
     }
 }
