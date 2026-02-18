@@ -308,3 +308,7 @@ required-features = ["ultrahdr"]
 [[example]]
 name = "bench_decode_matrix"
 required-features = ["parallel", "decoder"]
+
+[[example]]
+name = "layout_cli"
+required-features = ["layout"]
