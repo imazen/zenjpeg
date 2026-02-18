@@ -31,6 +31,7 @@ pub(crate) fn execute_lossy(
     target_w: u32,
     target_h: u32,
     reset_orientation: bool,
+    force_baseline: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let src_w = info.dimensions.width;
@@ -48,6 +49,7 @@ pub(crate) fn execute_lossy(
             target_w,
             target_h,
             reset_orientation,
+            force_baseline,
             stop,
         )
     } else {
@@ -58,6 +60,7 @@ pub(crate) fn execute_lossy(
             src_w,
             src_h,
             reset_orientation,
+            force_baseline,
             stop,
         )
     }
@@ -73,6 +76,7 @@ fn decode_resize_encode(
     dst_w: u32,
     dst_h: u32,
     reset_orientation: bool,
+    force_baseline: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let resize_config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
@@ -83,8 +87,13 @@ fn decode_resize_encode(
 
     let mut resizer = StreamingResize::new(&resize_config);
 
-    // Build encoder with metadata from source
-    let encoder_config = config.build_encoder_config();
+    // Build encoder with metadata from source.
+    // force_baseline overrides progressive AFTER auto_optimize (which enables progressive).
+    let encoder_config = if force_baseline {
+        config.build_encoder_config().progressive(false)
+    } else {
+        config.build_encoder_config()
+    };
     let mut request = encoder_config.request();
     request = attach_metadata(request, info, reset_orientation);
     request = request.stop(stop);
@@ -128,9 +137,14 @@ fn decode_reencode(
     width: u32,
     height: u32,
     reset_orientation: bool,
+    force_baseline: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
-    let encoder_config = config.build_encoder_config();
+    let encoder_config = if force_baseline {
+        config.build_encoder_config().progressive(false)
+    } else {
+        config.build_encoder_config()
+    };
     let mut request = encoder_config.request();
     request = attach_metadata(request, info, reset_orientation);
     request = request.stop(stop);

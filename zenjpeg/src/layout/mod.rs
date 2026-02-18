@@ -118,6 +118,7 @@ impl LayoutConfig {
             config: self,
             jpeg_data,
             commands: Vec::new(),
+            optimize_for_decode: false,
         }
     }
 
@@ -137,6 +138,7 @@ pub struct LayoutRequest<'a> {
     config: &'a LayoutConfig,
     jpeg_data: &'a [u8],
     commands: Vec<Command>,
+    optimize_for_decode: bool,
 }
 
 impl<'a> LayoutRequest<'a> {
@@ -218,6 +220,19 @@ impl<'a> LayoutRequest<'a> {
         self
     }
 
+    /// Optimize output for fast parallel decoding.
+    ///
+    /// Losslessly converts progressive JPEGs to baseline sequential and adds
+    /// restart markers (every 4 MCU rows) for parallel decode. On the lossy
+    /// path, forces baseline output with restart markers.
+    ///
+    /// Combined with orientation transforms, this is still lossless — the
+    /// restructure handles both the transform and scan conversion in one pass.
+    pub fn optimize_for_decode(mut self) -> Self {
+        self.optimize_for_decode = true;
+        self
+    }
+
     /// Execute the layout pipeline.
     ///
     /// Automatically selects the lossless DCT-domain path when only orientation
@@ -243,12 +258,23 @@ impl<'a> LayoutRequest<'a> {
 
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
-            let primary = lossless::execute_lossless(
-                self.jpeg_data,
-                transform,
-                self.config.edge_handling,
-                stop,
-            )?;
+            let primary = if self.optimize_for_decode {
+                // Use restructure: converts progressive→sequential, adds DRI,
+                // and optionally applies the spatial transform in one pass.
+                lossless::execute_restructure(
+                    self.jpeg_data,
+                    transform,
+                    self.config.edge_handling,
+                    stop,
+                )?
+            } else {
+                lossless::execute_lossless(
+                    self.jpeg_data,
+                    transform,
+                    self.config.edge_handling,
+                    stop,
+                )?
+            };
 
             // Compute output dimensions
             let (out_w, out_h) = if transform.swaps_dimensions() {
@@ -261,16 +287,22 @@ impl<'a> LayoutRequest<'a> {
             // Skip for identity (None) — the input already includes the gain map.
             let data = if transform != crate::lossless::LosslessTransform::None {
                 if let Some(gm_bytes) = gain_map_jpeg {
-                    let gm_transformed = lossless::execute_lossless(
-                        &gm_bytes,
-                        transform,
-                        self.config.edge_handling,
-                        stop,
-                    )?;
+                    let gm_fn = if self.optimize_for_decode {
+                        lossless::execute_restructure
+                    } else {
+                        lossless::execute_lossless
+                    };
+                    let gm_transformed =
+                        gm_fn(&gm_bytes, transform, self.config.edge_handling, stop)?;
                     gainmap::assemble_ultrahdr(primary, gm_transformed)
                 } else {
                     primary
                 }
+            } else if self.optimize_for_decode
+                && transform == crate::lossless::LosslessTransform::None
+            {
+                // Identity + optimize_for_decode: the restructure already ran above
+                primary
             } else {
                 primary
             };
@@ -301,6 +333,7 @@ impl<'a> LayoutRequest<'a> {
             target_w,
             target_h,
             has_orientation,
+            self.optimize_for_decode,
             stop,
         )?;
 
@@ -366,6 +399,7 @@ impl<'a> LayoutRequest<'a> {
             gm_dst_w,
             gm_dst_h,
             false,
+            false, // gain map doesn't need decode optimization
             stop,
         )?;
 

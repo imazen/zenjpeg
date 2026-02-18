@@ -96,6 +96,34 @@ pub(crate) fn execute_lossless(
     crate::lossless::transform(jpeg_data, &config, stop)
 }
 
+/// Execute lossless restructure: convert to baseline sequential with restart
+/// markers for fast parallel decoding. Optionally applies a spatial transform
+/// at the same time (one decode/encode pass for both).
+pub(crate) fn execute_restructure(
+    jpeg_data: &[u8],
+    transform: LosslessTransform,
+    edge_handling: EdgeHandling,
+    stop: &dyn enough::Stop,
+) -> crate::error::Result<Vec<u8>> {
+    use crate::lossless::{OutputMode, RestartInterval, RestructureConfig};
+
+    let transform_config = if transform == LosslessTransform::None {
+        None
+    } else {
+        Some(TransformConfig {
+            transform,
+            edge_handling,
+        })
+    };
+
+    let config = RestructureConfig {
+        output_mode: OutputMode::Sequential,
+        restart_interval: RestartInterval::EveryMcuRows(4),
+        transform: transform_config,
+    };
+    crate::lossless::restructure(jpeg_data, &config, stop)
+}
+
 /// Check if a constraint might cause a resize.
 /// Conservative: returns true unless we can prove it won't resize.
 fn constraint_may_resize(c: &Constraint) -> bool {

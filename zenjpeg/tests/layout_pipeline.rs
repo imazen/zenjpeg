@@ -1223,6 +1223,187 @@ fn upscale_via_fit() {
     Decoder::new().decode(&result.data, Unstoppable).unwrap();
 }
 
+// =============================================================================
+// optimize_for_decode tests
+// =============================================================================
+
+/// Check if JPEG bytes use baseline sequential (SOF0 marker = 0xFFC0).
+fn is_baseline_jpeg(jpeg_data: &[u8]) -> bool {
+    // Look for SOF markers: 0xFFC0 = baseline, 0xFFC2 = progressive
+    let mut i = 0;
+    while i + 1 < jpeg_data.len() {
+        if jpeg_data[i] == 0xFF {
+            match jpeg_data[i + 1] {
+                0xC0 => return true,  // SOF0 = baseline
+                0xC2 => return false, // SOF2 = progressive
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false // No SOF found
+}
+
+/// Check if JPEG bytes contain a DRI (Define Restart Interval) marker.
+fn has_dri_marker(jpeg_data: &[u8]) -> bool {
+    // DRI = 0xFFDD
+    jpeg_data.windows(2).any(|w| w[0] == 0xFF && w[1] == 0xDD)
+}
+
+/// Create a baseline sequential test JPEG.
+fn make_test_jpeg_baseline(width: u32, height: u32) -> Vec<u8> {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .restart_mcu_rows(0);
+    let pixels = make_noise_pixels(width, height, 0x9999_AAAA);
+
+    let mut encoder = config
+        .request()
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder.push_packed(&pixels, Unstoppable).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[test]
+fn decode_fast_lossless_identity_progressive_to_baseline() {
+    // Progressive input → optimize_for_decode → should output baseline with DRI
+    let jpeg = make_test_jpeg_progressive(64, 64);
+    assert!(!is_baseline_jpeg(&jpeg), "input should be progressive");
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless, "identity restructure is lossless");
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 64);
+    assert!(
+        is_baseline_jpeg(&result.data),
+        "optimize_for_decode should convert to baseline"
+    );
+    assert!(
+        has_dri_marker(&result.data),
+        "optimize_for_decode should add DRI markers"
+    );
+
+    // Verify output decodes correctly
+    let decoded = Decoder::new().decode(&result.data, Unstoppable).unwrap();
+    assert_eq!(decoded.width(), 64);
+    assert_eq!(decoded.height(), 64);
+}
+
+#[test]
+fn decode_fast_lossless_transform_progressive_to_baseline() {
+    // Progressive + rotate → optimize_for_decode → baseline with DRI + rotated
+    let jpeg = make_test_jpeg_progressive(64, 48);
+    assert!(!is_baseline_jpeg(&jpeg), "input should be progressive");
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .rotate_90()
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless, "rotate + restructure is lossless");
+    assert_eq!(result.width, 48, "rotate 90 swaps dimensions");
+    assert_eq!(result.height, 64);
+    assert!(
+        is_baseline_jpeg(&result.data),
+        "should be baseline after optimize_for_decode"
+    );
+    assert!(has_dri_marker(&result.data), "should have DRI markers");
+
+    let decoded = Decoder::new().decode(&result.data, Unstoppable).unwrap();
+    assert_eq!(decoded.width(), 48);
+    assert_eq!(decoded.height(), 64);
+}
+
+#[test]
+fn decode_fast_lossy_forces_baseline() {
+    // Lossy path + optimize_for_decode → should force baseline output
+    let jpeg = make_test_jpeg_progressive(128, 128);
+
+    let result = LayoutConfig::new(85.0)
+        .with_progressive(true) // Config says progressive, but decode_fast overrides
+        .request(&jpeg)
+        .fit(64, 64)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(!result.lossless);
+    assert_eq!(result.width, 64);
+    assert_eq!(result.height, 64);
+    assert!(
+        is_baseline_jpeg(&result.data),
+        "optimize_for_decode should force baseline on lossy path"
+    );
+    // Encoder defaults to restart_mcu_rows=4, so DRI should be present
+    assert!(
+        has_dri_marker(&result.data),
+        "lossy path with default config should have DRI"
+    );
+
+    Decoder::new().decode(&result.data, Unstoppable).unwrap();
+}
+
+#[test]
+fn decode_fast_baseline_input_adds_dri() {
+    // Already-baseline input without DRI → optimize_for_decode → should add DRI
+    let jpeg = make_test_jpeg_baseline(64, 64);
+    assert!(is_baseline_jpeg(&jpeg), "input should already be baseline");
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless, "identity restructure is lossless");
+    assert!(is_baseline_jpeg(&result.data));
+    assert!(
+        has_dri_marker(&result.data),
+        "optimize_for_decode should add DRI to baseline input"
+    );
+
+    Decoder::new().decode(&result.data, Unstoppable).unwrap();
+}
+
+#[test]
+fn decode_fast_pixel_identical_to_normal_lossless() {
+    // Restructure should be pixel-identical to normal decode
+    let jpeg = make_test_jpeg_progressive(64, 64);
+
+    let normal = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    let restructured = Decoder::new().decode(&result.data, Unstoppable).unwrap();
+
+    let normal_px = normal.into_pixels_u8().unwrap();
+    let restruct_px = restructured.into_pixels_u8().unwrap();
+    assert_eq!(normal_px.len(), restruct_px.len());
+
+    let max_diff: u8 = normal_px
+        .iter()
+        .zip(restruct_px.iter())
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        max_diff, 0,
+        "restructured output should be pixel-identical to original"
+    );
+}
+
 #[test]
 fn subsampling_field_populated() {
     // Verify the new subsampling field in JpegInfo works
