@@ -151,11 +151,17 @@ fn decode_reencode(
     encoder.finish()
 }
 
+/// The `Exif\0\0` prefix length in APP1 EXIF segment data.
+const EXIF_PREFIX_LEN: usize = 6;
+
 /// Attach source metadata (ICC, EXIF, XMP) to the encode request.
 ///
 /// When `reset_orientation` is true, clones the EXIF data and resets the
 /// orientation tag to 1 (Normal) before attaching. This prevents double-rotation
 /// when the pipeline has already oriented the pixels.
+///
+/// Note: `JpegInfo.exif` includes the `Exif\0\0` APP1 prefix, but `Exif::Raw()`
+/// expects raw TIFF bytes without it. We strip the prefix before passing through.
 fn attach_metadata<'a>(
     mut request: crate::encode::request::EncodeRequest<'a>,
     info: &'a JpegInfo,
@@ -165,12 +171,16 @@ fn attach_metadata<'a>(
         request = request.icc_profile(icc);
     }
     if let Some(ref exif) = info.exif {
-        if reset_orientation {
-            let mut exif_copy = exif.clone();
-            crate::lossless::set_exif_orientation(&mut exif_copy, 1);
-            request = request.exif(Exif::Raw(exif_copy));
-        } else {
-            request = request.exif(Exif::Raw(exif.clone()));
+        if exif.len() > EXIF_PREFIX_LEN && exif.starts_with(b"Exif\0\0") {
+            if reset_orientation {
+                let mut exif_copy = exif.clone();
+                crate::lossless::set_exif_orientation(&mut exif_copy, 1);
+                // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
+                request = request.exif(Exif::Raw(exif_copy[EXIF_PREFIX_LEN..].to_vec()));
+            } else {
+                // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
+                request = request.exif(Exif::Raw(exif[EXIF_PREFIX_LEN..].to_vec()));
+            }
         }
     }
     if let Some(ref xmp) = info.xmp {
