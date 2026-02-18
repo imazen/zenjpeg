@@ -105,10 +105,7 @@ pub fn process_component(
     blocks_high: usize,
     quant_table: &[u16; 64],
 ) -> alloc::vec::Vec<f32> {
-    debug_assert_eq!(
-        zigzag_coeffs.len(),
-        blocks_wide * blocks_high * 64
-    );
+    debug_assert_eq!(zigzag_coeffs.len(), blocks_wide * blocks_high * 64);
 
     if blocks_wide == 0 || blocks_high == 0 {
         return alloc::vec::Vec::new();
@@ -291,13 +288,7 @@ fn correct_v_between(
 /// Compute boundary discontinuity (delta) and HF energy penalty from two
 /// 8-element coefficient vectors (one row/column from each adjacent block).
 #[inline(always)]
-fn compute_delta_hf(
-    gi: f32x8,
-    gj: f32x8,
-    alpha: f32x8,
-    sign: f32x8,
-    idx_sq: f32x8,
-) -> (f32, f32) {
+fn compute_delta_hf(gi: f32x8, gj: f32x8, alpha: f32x8, sign: f32x8, idx_sq: f32x8) -> (f32, f32) {
     // delta = Σ α(k)√2 × (gj[k] - (-1)^k × gi[k])
     let delta_lanes = alpha * (gj - sign * gi);
     let delta = sum_f32x8(delta_lanes);
@@ -354,8 +345,7 @@ fn finalize_row(
         // Apply offsets with SIMD: corrected = mid + off × scale, clamped to [mid-q/2, mid+q/2]
         for k in (0..64).step_by(8) {
             let mid = f32x8::new(blocks[off + k..off + k + 8].try_into().unwrap());
-            let correction =
-                f32x8::new(offsets[off + k..off + k + 8].try_into().unwrap());
+            let correction = f32x8::new(offsets[off + k..off + k + 8].try_into().unwrap());
             let q = f32x8::new(quant_f32[k..k + 8].try_into().unwrap());
             let half_q = q * half;
 

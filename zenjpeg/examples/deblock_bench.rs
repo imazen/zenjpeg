@@ -19,8 +19,8 @@ fn make_noisy_coeffs(blocks_wide: usize, blocks_high: usize) -> (Vec<i16>, [u16;
         // DC: smooth gradient + noise
         let bx = bi % blocks_wide;
         let by = bi / blocks_wide;
-        let dc = (bx as f32 / blocks_wide as f32 * 30.0
-            + by as f32 / blocks_high as f32 * 20.0) as i16;
+        let dc =
+            (bx as f32 / blocks_wide as f32 * 30.0 + by as f32 / blocks_high as f32 * 20.0) as i16;
         coeffs[base] = dc;
 
         // Sparse AC: ~30% non-zero in low frequencies
@@ -91,9 +91,7 @@ fn bench_boundary(label: &str, width: usize, height: usize, iters: usize) {
     let mpix = (width * height) as f64 / 1e6;
     let mpix_per_sec = mpix / per_iter.as_secs_f64();
 
-    println!(
-        "  {label:<30} {per_iter:>8.1?}   ({mpix:.1} MP, {mpix_per_sec:.0} MP/s)"
-    );
+    println!("  {label:<30} {per_iter:>8.1?}   ({mpix:.1} MP, {mpix_per_sec:.0} MP/s)");
 }
 
 fn bench_knusperli(label: &str, blocks_wide: usize, blocks_high: usize, iters: usize) {
@@ -111,9 +109,7 @@ fn bench_knusperli(label: &str, blocks_wide: usize, blocks_high: usize, iters: u
     let mpix = (blocks_wide * blocks_high * 64) as f64 / 1e6;
     let mpix_per_sec = mpix / per_iter.as_secs_f64();
 
-    println!(
-        "  {label:<30} {per_iter:>8.1?}   ({mpix:.1} MP, {mpix_per_sec:.0} MP/s)"
-    );
+    println!("  {label:<30} {per_iter:>8.1?}   ({mpix:.1} MP, {mpix_per_sec:.0} MP/s)");
 }
 
 fn bench_boundary_3comp(label: &str, width: usize, height: usize, iters: usize) {
