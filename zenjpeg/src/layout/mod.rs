@@ -281,11 +281,11 @@ impl<'a> LayoutRequest<'a> {
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
             let primary = if self.optimize_for_decode {
-                // Early exit: if already baseline with DRI and no transform needed,
-                // skip the expensive decode+re-encode entirely.
+                // Early exit: if already baseline with fast-path-compatible DRI
+                // and no transform needed, skip the expensive decode+re-encode.
                 if transform == crate::lossless::LosslessTransform::None
                     && info.mode == crate::types::JpegMode::Baseline
-                    && lossless::has_dri(self.jpeg_data)
+                    && lossless::has_fast_dri(self.jpeg_data, &info)
                 {
                     self.jpeg_data.to_vec()
                 } else {

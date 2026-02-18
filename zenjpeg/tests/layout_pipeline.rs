@@ -1555,11 +1555,11 @@ fn decode_fast_does_not_duplicate_explicit_orient() {
 
 #[test]
 fn decode_fast_already_optimized_skips_restructure() {
-    // If the input is already baseline with DRI and no transform needed,
-    // optimize_for_decode should return the input unchanged (skip expensive restructure).
+    // If the input is already baseline with MCU-row-aligned DRI and no transform
+    // needed, optimize_for_decode should return the input unchanged.
     let jpeg = make_test_jpeg_progressive(64, 64);
 
-    // First pass: convert progressive → baseline+DRI
+    // First pass: convert progressive → baseline+DRI (EveryMcuRows(4))
     let first = LayoutConfig::new(85.0)
         .request(&jpeg)
         .optimize_for_decode()
@@ -1578,6 +1578,40 @@ fn decode_fast_already_optimized_skips_restructure() {
     assert_eq!(
         second.data, first.data,
         "already-optimized input should be returned unchanged"
+    );
+}
+
+#[test]
+fn decode_fast_restructures_bad_dri() {
+    // Baseline JPEG with DRI=1 (per-MCU, not per-row) should NOT early-exit —
+    // it must be restructured to get MCU-row-aligned DRI.
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .restart_mcu_rows(0); // No DRI initially
+    let pixels = make_noise_pixels(64, 64, 0xDEAD_1234);
+    let mut encoder = config
+        .request()
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder.push_packed(&pixels, Unstoppable).unwrap();
+    let baseline_no_dri = encoder.finish().unwrap();
+
+    assert!(is_baseline_jpeg(&baseline_no_dri));
+    assert!(!has_dri_marker(&baseline_no_dri), "should have no DRI");
+
+    // optimize_for_decode must restructure it (add DRI)
+    let result = LayoutConfig::new(85.0)
+        .request(&baseline_no_dri)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert!(is_baseline_jpeg(&result.data));
+    assert!(has_dri_marker(&result.data), "should now have DRI");
+    assert_ne!(
+        result.data, baseline_no_dri,
+        "baseline without DRI should be restructured, not returned as-is"
     );
 }
 
