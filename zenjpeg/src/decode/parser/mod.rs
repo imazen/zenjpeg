@@ -790,12 +790,15 @@ impl<'a> JpegParser<'a> {
             width: self.width,
             height: self.height,
         };
+        let subsampling = super::compute_subsampling(&self.components, self.num_components);
+
         JpegInfo {
             dimensions: dims,
             color_space,
             precision: self.precision,
             num_components: self.num_components,
             mode: self.mode,
+            subsampling,
             has_icc_profile: icc_profile.is_some(),
             is_xyb,
             icc_profile,

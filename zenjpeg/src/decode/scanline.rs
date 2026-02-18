@@ -26,6 +26,7 @@
 
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
+use super::pool::PoolGuard;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
@@ -120,6 +121,41 @@ pub struct ScanlineReader<'a> {
     crop: Option<ResolvedCrop>,
     // Whether skip_to_crop_start() has been called.
     crop_skip_done: bool,
+
+    // Wave-based parallel decode state.
+    // When Some, decode wave_size segments at a time via rayon instead of streaming.
+    #[cfg(feature = "parallel")]
+    wave_state: Option<super::fused_parallel::WaveParallelState>,
+    #[cfg(feature = "parallel")]
+    wave_buf: Vec<u8>,
+    #[cfg(feature = "parallel")]
+    wave_first_row: usize,
+    #[cfg(feature = "parallel")]
+    wave_row_count: usize,
+    #[cfg(feature = "parallel")]
+    wave_next_seg: usize,
+
+    // Wave planar decode buffers (lazy-allocated on first read_rows_planar_i16 call)
+    #[cfg(feature = "parallel")]
+    wave_y: Vec<i16>,
+    #[cfg(feature = "parallel")]
+    wave_cb: Vec<i16>,
+    #[cfg(feature = "parallel")]
+    wave_cr: Vec<i16>,
+    #[cfg(feature = "parallel")]
+    wave_planar_first_luma_row: usize,
+    #[cfg(feature = "parallel")]
+    wave_planar_luma_rows: usize,
+    #[cfg(feature = "parallel")]
+    wave_planar_first_chroma_row: usize,
+    #[cfg(feature = "parallel")]
+    wave_planar_chroma_rows: usize,
+    #[cfg(feature = "parallel")]
+    wave_planar_next_seg: usize,
+
+    // Pool guard for adaptive threading. When Some, the pool slot is held
+    // for the lifetime of this reader and released on drop.
+    pub(super) pool_guard: Option<PoolGuard<'a>>,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -187,6 +223,33 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
         })
     }
 
@@ -232,6 +295,33 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
         }
     }
 
@@ -328,6 +418,33 @@ impl<'a> ScanlineReader<'a> {
             next_mcu_preloaded: false,
             crop: None,
             crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
         })
     }
 
@@ -336,6 +453,95 @@ impl<'a> ScanlineReader<'a> {
     /// Must be called before reading any rows.
     pub(crate) fn set_crop(&mut self, crop: ResolvedCrop) {
         self.crop = Some(crop);
+    }
+
+    /// Creates a scanline reader in wave-parallel mode.
+    ///
+    /// Instead of decoding one MCU row at a time (streaming) or the full image
+    /// (buffered), this decodes `wave_size` restart segments at a time via rayon,
+    /// serving rows from a reusable buffer. Gives parallel speed with bounded
+    /// memory: `wave_size * pixel_rows_per_seg * width * 3` bytes.
+    ///
+    /// **Prototype scope**: Box filter 4:2:0 path only.
+    #[cfg(feature = "parallel")]
+    pub(super) fn new_wave_parallel(
+        data: &'a [u8],
+        wave_state: super::fused_parallel::WaveParallelState,
+    ) -> Self {
+        let width = wave_state.width as u32;
+        let height = wave_state.height as u32;
+
+        // Pre-allocate wave buffer for wave_size segments
+        let rgb_row_bytes = wave_state.width * 3;
+        let seg_rgb_bytes = wave_state.pixel_rows_per_seg * rgb_row_bytes;
+        let wave_buf_size = wave_state.wave_size * seg_rgb_bytes;
+        let wave_buf = vec![0u8; wave_buf_size];
+
+        Self {
+            data,
+            width,
+            height,
+            num_components: 3,
+            buffered_rgb: None,
+            strip: StripProcessor::new_dummy(Subsampling::S420),
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables: [None, None, None, None],
+            quant_indices: [0, 0, 0],
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb: false,
+            is_rgb: false,
+            stored_coeffs: None,
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            wave_state: Some(wave_state),
+            wave_buf,
+            wave_first_row: 0,
+            wave_row_count: 0,
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
+        }
+    }
+
+    /// Attach wave-parallel state to a sequential reader.
+    ///
+    /// This enables `read_rows_planar_i16` to use wave-parallel decode while
+    /// `read_rows_rgb8` and other interleaved outputs continue using the
+    /// sequential streaming path.
+    #[cfg(feature = "parallel")]
+    pub(super) fn attach_wave_state(
+        &mut self,
+        wave_state: super::fused_parallel::WaveParallelState,
+    ) {
+        self.wave_state = Some(wave_state);
     }
 
     /// Returns the output width (crop width if set, otherwise image width).
@@ -395,6 +601,81 @@ impl<'a> ScanlineReader<'a> {
     #[inline]
     pub fn num_components(&self) -> u8 {
         self.num_components
+    }
+
+    /// Returns the chroma plane width at native resolution (before upsampling).
+    ///
+    /// For 4:2:0 or 4:2:2: MCU-padded chroma width. For 4:4:4: same as luma. For grayscale: 0.
+    #[inline]
+    pub fn chroma_width(&self) -> u32 {
+        if self.num_components == 1 {
+            return 0;
+        }
+        // Wave-only readers have a dummy strip; use wave_state dimensions instead
+        #[cfg(feature = "parallel")]
+        if let Some(ref ws) = self.wave_state {
+            return ws.chroma_width() as u32;
+        }
+        self.strip.chroma_strip_width as u32
+    }
+
+    /// Returns the chroma plane height at native resolution (before upsampling).
+    ///
+    /// For 4:2:0 or 4:4:0: `(height + 1) / 2`. For 4:4:4 or 4:2:2: `height`. For grayscale: 0.
+    #[inline]
+    pub fn chroma_height(&self) -> u32 {
+        if self.num_components == 1 {
+            return 0;
+        }
+        // Wave-only readers have a dummy strip; derive from wave_state
+        #[cfg(feature = "parallel")]
+        if let Some(ref ws) = self.wave_state {
+            let v_scale = ws.max_v_samp;
+            let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
+            return if c_v < v_scale {
+                ((self.height as usize + v_scale - 1) / v_scale) as u32
+            } else {
+                self.height
+            };
+        }
+        let max_v = self.strip.v_samp[0]
+            .max(self.strip.v_samp[1])
+            .max(self.strip.v_samp[2]);
+        let c_v = self.strip.v_samp[1];
+        if c_v < max_v {
+            // Vertically subsampled
+            (self.height + 1) / 2
+        } else {
+            self.height
+        }
+    }
+
+    /// Returns the number of luma rows per MCU row.
+    ///
+    /// 16 for 4:2:0/4:4:0, 8 for 4:4:4/4:2:2/grayscale.
+    #[inline]
+    pub fn luma_rows_per_mcu(&self) -> usize {
+        #[cfg(feature = "parallel")]
+        if let Some(ref ws) = self.wave_state {
+            return ws.mcu_pixel_height;
+        }
+        self.strip.mcu_height
+    }
+
+    /// Returns the number of chroma rows per MCU row at native resolution.
+    ///
+    /// Always 8 for color images. 0 for grayscale.
+    #[inline]
+    pub fn chroma_rows_per_mcu(&self) -> usize {
+        if self.num_components == 1 {
+            return 0;
+        }
+        #[cfg(feature = "parallel")]
+        if let Some(ref ws) = self.wave_state {
+            let c_v = ws.comp_v_samps.get(1).copied().unwrap_or(1).max(1);
+            return c_v * 8;
+        }
+        self.strip.chroma_strip_height
     }
 
     /// Extract gain map JPEG bytes from an UltraHDR image, if present.
@@ -1042,6 +1323,12 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
+        // Wave-parallel mode: serve from wave buffer, decoding on demand
+        #[cfg(feature = "parallel")]
+        if self.wave_state.is_some() {
+            return self.read_rows_rgb8_wave(output);
+        }
+
         // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
@@ -1124,6 +1411,191 @@ impl<'a> ScanlineReader<'a> {
         }
 
         Ok(rows_written)
+    }
+
+    /// Wave-parallel: serve rows from wave buffer, triggering decode on demand.
+    #[cfg(feature = "parallel")]
+    fn read_rows_rgb8_wave(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
+        let max_rows = output.height();
+        let out_width = self.width() as usize;
+        let out_height = self.height() as usize;
+        let rgb_row_bytes = self.width as usize * 3;
+
+        let mut rows_written = 0;
+
+        while rows_written < max_rows && self.current_row < out_height {
+            // If current_row is beyond our wave buffer, decode next wave
+            if self.current_row >= self.wave_first_row + self.wave_row_count {
+                self.decode_next_wave()?;
+            }
+
+            // Copy row from wave buffer to output
+            let row_in_wave = self.current_row - self.wave_first_row;
+            let src_start = row_in_wave * rgb_row_bytes;
+            let src_end = src_start + out_width * 3;
+
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+            out_row[..out_width * 3].copy_from_slice(&self.wave_buf[src_start..src_end]);
+
+            rows_written += 1;
+            self.current_row += 1;
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Decode the next wave of segments into the wave buffer.
+    #[cfg(feature = "parallel")]
+    fn decode_next_wave(&mut self) -> Result<()> {
+        let state = self.wave_state.as_ref().unwrap();
+        let seg_start = self.wave_next_seg;
+        let seg_end = (seg_start + state.wave_size).min(state.num_segments);
+
+        if seg_start >= seg_end {
+            return Ok(());
+        }
+
+        let wave_count = seg_end - seg_start;
+        let _ = wave_count;
+
+        let row_count = state.decode_wave_box(self.data, seg_start, seg_end, &mut self.wave_buf)?;
+
+        self.wave_first_row = seg_start * state.pixel_rows_per_seg;
+        self.wave_row_count = row_count;
+        self.wave_next_seg = seg_end;
+        Ok(())
+    }
+
+    /// Wave-parallel: serve planar i16 rows from wave buffer, triggering decode on demand.
+    #[cfg(feature = "parallel")]
+    fn read_rows_planar_i16_wave(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        let state = self.wave_state.as_ref().unwrap();
+        let luma_width = state.width;
+        let chroma_width = state.chroma_width();
+        let luma_rows_per_mcu = state.mcu_pixel_height;
+        let chroma_rows_per_mcu = if chroma_width > 0 {
+            state.chroma_rows_per_seg() / (state.pixel_rows_per_seg / luma_rows_per_mcu).max(1)
+        } else {
+            0
+        };
+        let luma_rows_per_seg = state.pixel_rows_per_seg;
+        let chroma_rows_per_seg = state.chroma_rows_per_seg();
+        let out_height = state.height;
+        let chroma_height = if chroma_width > 0 {
+            (state.height + state.max_v_samp - 1) / state.max_v_samp
+        } else {
+            0
+        };
+        let total_mcu_rows = (out_height + luma_rows_per_mcu - 1) / luma_rows_per_mcu;
+
+        // Lazy allocate wave planar buffers
+        if self.wave_y.is_empty() {
+            let ws = state.wave_size;
+            let y_seg_samples = luma_rows_per_seg * luma_width;
+            let c_seg_samples = chroma_rows_per_seg * chroma_width;
+            self.wave_y = vec![0i16; ws * y_seg_samples];
+            if chroma_width > 0 {
+                self.wave_cb = vec![0i16; ws * c_seg_samples];
+                self.wave_cr = vec![0i16; ws * c_seg_samples];
+            }
+        }
+
+        let mut total_luma_rows = 0usize;
+        let mut total_chroma_rows = 0usize;
+
+        for _ in 0..max_mcu_rows {
+            if self.current_mcu_row >= total_mcu_rows {
+                break;
+            }
+
+            let luma_row_abs = self.current_mcu_row * luma_rows_per_mcu;
+            let chroma_row_abs = self.current_mcu_row * chroma_rows_per_mcu;
+
+            // Decode next wave if current MCU row is beyond what we have
+            if luma_row_abs >= self.wave_planar_first_luma_row + self.wave_planar_luma_rows {
+                self.decode_next_wave_planar()?;
+            }
+
+            // Luma rows for this MCU
+            let remaining_luma = out_height.saturating_sub(luma_row_abs);
+            let luma_rows_this = luma_rows_per_mcu.min(remaining_luma);
+
+            // Chroma rows for this MCU
+            let remaining_chroma = chroma_height.saturating_sub(chroma_row_abs);
+            let chroma_rows_this = if chroma_width > 0 {
+                chroma_rows_per_mcu.min(remaining_chroma)
+            } else {
+                0
+            };
+
+            // Copy luma rows from wave buffer
+            let y_wave_row = luma_row_abs - self.wave_planar_first_luma_row;
+            for row in 0..luma_rows_this {
+                let src_off = (y_wave_row + row) * luma_width;
+                let dst_off = (total_luma_rows + row) * y_stride;
+                y[dst_off..dst_off + luma_width]
+                    .copy_from_slice(&self.wave_y[src_off..src_off + luma_width]);
+            }
+
+            // Copy chroma rows from wave buffer
+            if chroma_width > 0 && chroma_rows_this > 0 {
+                let c_wave_row = chroma_row_abs - self.wave_planar_first_chroma_row;
+                for row in 0..chroma_rows_this {
+                    let src_off = (c_wave_row + row) * chroma_width;
+                    let dst_off = (total_chroma_rows + row) * c_stride;
+                    cb[dst_off..dst_off + chroma_width]
+                        .copy_from_slice(&self.wave_cb[src_off..src_off + chroma_width]);
+                    cr[dst_off..dst_off + chroma_width]
+                        .copy_from_slice(&self.wave_cr[src_off..src_off + chroma_width]);
+                }
+            }
+
+            total_luma_rows += luma_rows_this;
+            total_chroma_rows += chroma_rows_this;
+            self.current_row += luma_rows_this;
+            self.current_mcu_row += 1;
+        }
+
+        Ok((total_luma_rows, total_chroma_rows))
+    }
+
+    /// Decode the next wave of segments into planar i16 buffers.
+    #[cfg(feature = "parallel")]
+    fn decode_next_wave_planar(&mut self) -> Result<()> {
+        let state = self.wave_state.as_ref().unwrap();
+        let seg_start = self.wave_planar_next_seg;
+        let seg_end = (seg_start + state.wave_size).min(state.num_segments);
+
+        if seg_start >= seg_end {
+            return Ok(());
+        }
+
+        let luma_rows_per_seg = state.pixel_rows_per_seg;
+        let chroma_rows_per_seg = state.chroma_rows_per_seg();
+
+        let (luma_rows, chroma_rows) = state.decode_wave_planar(
+            self.data,
+            seg_start,
+            seg_end,
+            &mut self.wave_y,
+            &mut self.wave_cb,
+            &mut self.wave_cr,
+        )?;
+
+        self.wave_planar_first_luma_row = seg_start * luma_rows_per_seg;
+        self.wave_planar_luma_rows = luma_rows;
+        self.wave_planar_first_chroma_row = seg_start * chroma_rows_per_seg;
+        self.wave_planar_chroma_rows = chroma_rows;
+        self.wave_planar_next_seg = seg_end;
+        Ok(())
     }
 
     /// Read rows into an RGBX8 buffer (RGB with padding byte, X=255).
@@ -1578,6 +2050,123 @@ impl<'a> ScanlineReader<'a> {
         }
 
         Ok(rows_written)
+    }
+
+    /// Read planar i16 Y/Cb/Cr at native resolution (no upsampling, no color conversion).
+    ///
+    /// Outputs raw IDCT samples as i16 at the native resolution of each component:
+    /// - Y plane: full image resolution
+    /// - Cb/Cr planes: native chroma resolution (e.g., half width/height for 4:2:0)
+    ///
+    /// For grayscale images, `cb` and `cr` are unused (pass empty slices).
+    ///
+    /// # Arguments
+    /// - `y`, `y_stride`: Luma output buffer and stride (in i16 elements)
+    /// - `cb`, `cr`, `c_stride`: Chroma output buffers and stride (in i16 elements)
+    /// - `max_mcu_rows`: Maximum number of MCU rows to decode
+    ///
+    /// # Returns
+    /// `(luma_rows, chroma_rows)` — the number of rows written to each plane.
+    /// For 4:2:0: luma_rows = 2 * chroma_rows. For 4:4:4: luma_rows = chroma_rows.
+    pub fn read_rows_planar_i16(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        if self.crop.is_some() {
+            return Err(Error::internal(
+                "read_rows_planar_i16 does not support crop",
+            ));
+        }
+
+        // Wave-parallel mode
+        #[cfg(feature = "parallel")]
+        if self.wave_state.is_some() {
+            return self.read_rows_planar_i16_wave(y, y_stride, cb, cr, c_stride, max_mcu_rows);
+        }
+
+        self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
+    }
+
+    /// Sequential implementation of `read_rows_planar_i16`.
+    fn read_rows_planar_i16_seq(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        let luma_width = self.width as usize;
+        let chroma_width = self.strip.chroma_strip_width;
+        let luma_rows_per_mcu = self.strip.mcu_height;
+        let chroma_rows_per_mcu = self.strip.chroma_strip_height;
+        let out_height = self.height as usize;
+        let is_grayscale = self.num_components == 1;
+
+        let total_mcu_rows = (out_height + luma_rows_per_mcu - 1) / luma_rows_per_mcu;
+        let mut total_luma_rows = 0usize;
+        let mut total_chroma_rows = 0usize;
+
+        for _ in 0..max_mcu_rows {
+            if self.current_mcu_row >= total_mcu_rows {
+                break;
+            }
+
+            // Decode this MCU row (entropy + IDCT + upsample; we ignore the upsample result)
+            self.decode_mcu_row()?;
+
+            // How many luma pixel rows in this MCU row?
+            let remaining_luma =
+                out_height.saturating_sub(self.current_mcu_row * luma_rows_per_mcu);
+            let luma_rows_this = luma_rows_per_mcu.min(remaining_luma);
+
+            // How many chroma pixel rows in this MCU row?
+            let chroma_height_total = if is_grayscale {
+                0
+            } else {
+                self.chroma_height() as usize
+            };
+            let remaining_chroma =
+                chroma_height_total.saturating_sub(self.current_mcu_row * chroma_rows_per_mcu);
+            let chroma_rows_this = chroma_rows_per_mcu.min(remaining_chroma);
+
+            let strip_cols_y = luma_width.min(self.strip.strip_width);
+            let strip_cols_c = chroma_width.min(self.strip.chroma_strip_stride);
+
+            // Copy luma rows
+            for row in 0..luma_rows_this {
+                let src = self.strip.y_row(row, strip_cols_y);
+                let dst_off = (total_luma_rows + row) * y_stride;
+                y[dst_off..dst_off + luma_width.min(strip_cols_y)]
+                    .copy_from_slice(&src[..luma_width.min(strip_cols_y)]);
+            }
+
+            // Copy chroma rows
+            if !is_grayscale {
+                for row in 0..chroma_rows_this {
+                    let (cb_src, cr_src) = self.strip.chroma_row_native(row, strip_cols_c);
+                    let dst_off = (total_chroma_rows + row) * c_stride;
+                    let copy_width = chroma_width.min(strip_cols_c);
+                    cb[dst_off..dst_off + copy_width].copy_from_slice(&cb_src[..copy_width]);
+                    cr[dst_off..dst_off + copy_width].copy_from_slice(&cr_src[..copy_width]);
+                }
+            }
+
+            total_luma_rows += luma_rows_this;
+            total_chroma_rows += chroma_rows_this;
+
+            // Advance to next MCU row
+            self.current_row += luma_rows_this;
+            self.advance_mcu_row();
+        }
+
+        Ok((total_luma_rows, total_chroma_rows))
     }
 
     /// Read rows into a grayscale u8 buffer.

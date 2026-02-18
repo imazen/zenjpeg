@@ -35,6 +35,8 @@ mod fused_parallel;
 mod image;
 mod parser;
 mod pipeline;
+mod pool;
+mod request;
 mod row_slice;
 pub(crate) mod rst_scan;
 mod scanline;
@@ -60,6 +62,8 @@ pub use config::{
 pub type Decoder = DecodeConfig;
 use parser::JpegParser;
 
+pub use pool::DecodePool;
+pub use request::DecodeRequest;
 pub use row_slice::{RowSlice, RowSliceF32};
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
@@ -88,8 +92,17 @@ use crate::error::{Error, Result};
 use crate::foundation::consts::MAX_COMPONENTS;
 use imgref::ImgRefMut;
 
+/// Result of wave parallel eligibility check.
+#[cfg(feature = "parallel")]
+enum WaveResult<'a> {
+    /// Wave-only reader (4:2:0 + box filter): all output paths use wave decode.
+    WaveOnly(ScanlineReader<'a>),
+    /// Wave state only: caller creates sequential reader and attaches this for planar i16.
+    WaveState(fused_parallel::WaveParallelState),
+}
+
 /// Compute subsampling mode from component sampling factors.
-fn compute_subsampling(
+pub(crate) fn compute_subsampling(
     components: &[Component; MAX_COMPONENTS],
     num_components: u8,
 ) -> Subsampling {
@@ -140,6 +153,32 @@ impl DecodeConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a per-job decode request binding this config with JPEG data.
+    ///
+    /// The returned [`DecodeRequest`] can optionally attach a [`DecodePool`]
+    /// for adaptive threading and a cancellation token before decoding.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::decode::{Decoder, DecodePool};
+    ///
+    /// let decoder = Decoder::new().fancy_upsampling(false);
+    /// let pool = DecodePool::new();
+    ///
+    /// // With pool (server)
+    /// let result = decoder.request(&jpeg_data)
+    ///     .pool(&pool)
+    ///     .decode()?;
+    ///
+    /// // Without pool (standalone)
+    /// let result = decoder.request(&jpeg_data).decode()?;
+    /// ```
+    #[must_use]
+    pub fn request<'a>(&'a self, data: &'a [u8]) -> request::DecodeRequest<'a> {
+        request::DecodeRequest::new(self, data)
     }
 
     /// Sets the output pixel format.
@@ -661,10 +700,161 @@ impl DecodeConfig {
         let scan_data = parser.into_scan_data(is_grayscale)?;
         let width = scan_data.width;
         let height = scan_data.height;
+
+        // Try wave-parallel mode for images with DRI restart markers
+        #[cfg(feature = "parallel")]
+        if self.num_threads != 1 {
+            if let Some(result) = self.try_wave_parallel(&scan_data, mcu_height)? {
+                match result {
+                    WaveResult::WaveOnly(reader) => return Ok(reader),
+                    WaveResult::WaveState(wave_state) => {
+                        // Sequential reader with wave state for planar i16 only
+                        let mut reader = ScanlineReader::from_scan_data(
+                            scan_data,
+                            self.chroma_upsampling,
+                            self.output_target,
+                        )?;
+                        reader.attach_wave_state(wave_state);
+                        self.apply_crop(&mut reader, width, height, mcu_height)?;
+                        return Ok(reader);
+                    }
+                }
+            }
+        }
+
         let mut reader =
             ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
         Ok(reader)
+    }
+
+    /// Try to create a wave-parallel scanline reader.
+    ///
+    /// Returns `Ok(Some(reader))` if wave parallel is eligible and activated,
+    /// `Ok(None)` to fall through to the sequential streaming path.
+    ///
+    /// Eligibility: baseline 4:2:0, box filter, MCU-row-aligned DRI, enough segments.
+    #[cfg(feature = "parallel")]
+    fn try_wave_parallel<'a>(
+        &self,
+        scan_data: &parser::ParsedScanData<'a>,
+        mcu_height: usize,
+    ) -> Result<Option<WaveResult<'a>>> {
+        use fused_parallel::{build_huffman_tables_from_scan_data, WaveParallelState};
+        use rst_scan::{compute_segments, scan_rst_markers};
+
+        let num_comps = scan_data.num_components as usize;
+
+        let ri = scan_data.restart_interval as usize;
+        if ri == 0 {
+            return Ok(None);
+        }
+
+        let max_h = scan_data.h_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let max_v = scan_data.v_samp[..num_comps]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1) as usize;
+        let mcu_width = max_h * 8;
+        let mcu_cols = (scan_data.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (scan_data.height as usize + mcu_height - 1) / mcu_height;
+        let total_mcus = mcu_cols * mcu_rows;
+
+        // MCU-row alignment check
+        if ri % mcu_cols != 0 {
+            return Ok(None);
+        }
+
+        if total_mcus < 1024 {
+            return Ok(None);
+        }
+
+        // Scan for RST markers
+        let expected_markers = total_mcus / ri;
+        let entropy_data = &scan_data.data[scan_data.scan_data_start..];
+        let rst_result = scan_rst_markers(entropy_data, expected_markers);
+
+        if rst_result.markers.is_empty() {
+            return Ok(None);
+        }
+
+        let (seg_starts, seg_ends) = compute_segments(&rst_result.markers, rst_result.entropy_end);
+        let num_segments = seg_starts.len();
+
+        if num_segments < 4 {
+            return Ok(None);
+        }
+
+        // Build scan_comps from table_mapping
+        let scan_comps: Vec<(usize, u8, u8)> = (0..num_comps)
+            .map(|i| {
+                let (dc, ac) = scan_data.table_mapping[i];
+                (i, dc as u8, ac as u8)
+            })
+            .collect();
+
+        // Build Huffman tables
+        let (dc_tables, ac_tables) = build_huffman_tables_from_scan_data(scan_data, &scan_comps);
+
+        // Determine wave size: balance parallelism, load balancing, and memory
+        let num_threads = rayon::current_num_threads();
+        let width = scan_data.width as usize;
+        let mcu_w = max_h * 8;
+        let mcu_h = max_v * 8;
+        let mcu_cols_wave = (width + mcu_w - 1) / mcu_w;
+        let mcu_rows_per_ri = ri / mcu_cols_wave;
+        let pixel_rows_per_seg = mcu_rows_per_ri * mcu_h;
+        let seg_rgb_bytes = pixel_rows_per_seg * width * 3;
+
+        // Cap wave_buf at ~6 MB to reduce peak memory vs full-buffer decode.
+        const WAVE_BUF_TARGET_BYTES: usize = 6 * 1024 * 1024;
+        let max_wave_by_mem = if seg_rgb_bytes > 0 {
+            (WAVE_BUF_TARGET_BYTES / seg_rgb_bytes).max(1)
+        } else {
+            num_segments
+        };
+
+        // 2x oversubscription for load balancing, capped by memory budget
+        let wave_size = (num_threads * 2)
+            .max(4)
+            .min(num_segments)
+            .min(max_wave_by_mem);
+
+        let wave_state = WaveParallelState::new(
+            scan_data,
+            seg_starts,
+            seg_ends,
+            scan_comps,
+            dc_tables,
+            ac_tables,
+            self.strictness,
+            wave_size,
+        );
+
+        // Determine if we can use the wave-only RGB box path (original behavior)
+        let is_box_filter = matches!(self.chroma_upsampling, ChromaUpsampling::NearestNeighbor);
+        let is_subsampled_color = num_comps == 3
+            && (scan_data.h_samp[1] != scan_data.h_samp[0]
+                || scan_data.v_samp[1] != scan_data.v_samp[0]);
+        let supports_rgb_box = is_box_filter && is_subsampled_color;
+
+        let width = scan_data.width;
+        let height = scan_data.height;
+
+        if supports_rgb_box {
+            // Wave-only reader: both RGB and planar served from wave decode
+            let mut reader = ScanlineReader::new_wave_parallel(scan_data.data, wave_state);
+            self.apply_crop(&mut reader, width, height, mcu_height)?;
+            Ok(Some(WaveResult::WaveOnly(reader)))
+        } else {
+            // Return wave state for caller to attach to sequential reader
+            Ok(Some(WaveResult::WaveState(wave_state)))
+        }
     }
 
     /// Creates a scanline reader that applies a DCT-domain transform.

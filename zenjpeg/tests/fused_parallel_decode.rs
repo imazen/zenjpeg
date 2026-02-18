@@ -478,3 +478,485 @@ fn test_hashlock_multisize_444() {
         assert_pixels_equal(&fused, &sequential, &format!("4:4:4 {w}x{h}"));
     }
 }
+
+// ============================================================================
+// Wave parallel scanline reader tests
+//
+// Verify that the wave-parallel scanline reader produces identical output
+// to the sequential scanline reader for 4:2:0 + NearestNeighbor (box filter).
+// ============================================================================
+
+/// Decode via wave-parallel scanline reader (multi-threaded).
+fn decode_wave_scanline(jpeg: &[u8]) -> Vec<u8> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false) // box filter = NearestNeighbor
+            .scanline_reader(jpeg)
+            .expect("wave scanline_reader failed");
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let mut pixels = vec![0u8; width * height * 3];
+        let mut rows_read = 0;
+        while rows_read < height {
+            let remaining = height - rows_read;
+            let slice = &mut pixels[rows_read * width * 3..];
+            let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
+            let count = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
+            assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
+            rows_read += count;
+        }
+        assert!(reader.is_finished(), "reader should be finished");
+        pixels
+    })
+}
+
+/// Decode via sequential scanline reader (single-threaded).
+fn decode_sequential_scanline(jpeg: &[u8]) -> Vec<u8> {
+    let mut reader = Decoder::new()
+        .fancy_upsampling(false)
+        .num_threads(1)
+        .scanline_reader(jpeg)
+        .expect("sequential scanline_reader failed");
+    let width = reader.width() as usize;
+    let height = reader.height() as usize;
+    let mut pixels = vec![0u8; width * height * 3];
+    let mut rows_read = 0;
+    while rows_read < height {
+        let remaining = height - rows_read;
+        let slice = &mut pixels[rows_read * width * 3..];
+        let output = imgref::ImgRefMut::new(slice, width * 3, remaining);
+        let count = reader
+            .read_rows_rgb8(output)
+            .expect("read_rows_rgb8 failed");
+        assert!(count > 0, "read_rows_rgb8 returned 0 before completion");
+        rows_read += count;
+    }
+    pixels
+}
+
+#[test]
+fn test_wave_parallel_512x512() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 512x512 DRI=1");
+}
+
+#[test]
+fn test_wave_parallel_1024x768() {
+    let (w, h) = (1024, 768);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 1024x768 DRI=1");
+}
+
+#[test]
+fn test_wave_parallel_2048x2048() {
+    let (w, h) = (2048, 2048);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+    let wave = decode_wave_scanline(&jpeg);
+    let sequential = decode_sequential_scanline(&jpeg);
+
+    assert_pixels_equal(&wave, &sequential, "wave 4:2:0 box 2048x2048 DRI=4");
+}
+
+#[test]
+fn test_wave_parallel_non_aligned() {
+    // Non-MCU-aligned: 513 = 32*16 + 1
+    for (w, h) in [(513, 513), (1000, 1000), (300, 300)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+        let wave = decode_wave_scanline(&jpeg);
+        let sequential = decode_sequential_scanline(&jpeg);
+
+        assert_pixels_equal(
+            &wave,
+            &sequential,
+            &format!("wave 4:2:0 box {w}x{h} non-aligned"),
+        );
+    }
+}
+
+#[test]
+fn test_wave_parallel_dri4() {
+    for (w, h) in [(512, 512), (1024, 1024)] {
+        let pixels = generate_test_pixels(w, h);
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+        let wave = decode_wave_scanline(&jpeg);
+        let sequential = decode_sequential_scanline(&jpeg);
+
+        assert_pixels_equal(&wave, &sequential, &format!("wave 4:2:0 box DRI=4 {w}x{h}"));
+    }
+}
+
+#[test]
+fn test_wave_parallel_small_chunks() {
+    // Test reading just 1 row at a time to exercise wave buffer refill
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    let wave = pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false)
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let mut all_pixels = vec![0u8; width * height * 3];
+        let mut rows_read = 0;
+        while rows_read < height {
+            // Read exactly 1 row at a time
+            let slice = &mut all_pixels[rows_read * width * 3..];
+            let output = imgref::ImgRefMut::new(slice, width * 3, 1);
+            let count = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
+            assert_eq!(count, 1);
+            rows_read += 1;
+        }
+        all_pixels
+    });
+
+    let sequential = decode_sequential_scanline(&jpeg);
+    assert_pixels_equal(&wave, &sequential, "wave 1-row-at-a-time 512x512");
+}
+
+// ============================================================================
+// Tests: Planar i16 decode
+// ============================================================================
+
+/// Decode planar i16 via sequential path (forced single thread).
+fn decode_planar_i16_seq(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u32, u32, u32) {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false)
+            .num_threads(1)
+            .scanline_reader(jpeg)
+            .expect("scanline_reader failed");
+
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let cw = reader.chroma_width() as usize;
+        let ch = reader.chroma_height() as usize;
+        let luma_rows_per_mcu = reader.luma_rows_per_mcu();
+        let total_mcu_rows = (height + luma_rows_per_mcu - 1) / luma_rows_per_mcu;
+
+        let mut y_buf = vec![0i16; width * height];
+        let mut cb_buf = vec![0i16; cw * ch];
+        let mut cr_buf = vec![0i16; cw * ch];
+
+        let mut y_off = 0;
+        let mut c_off = 0;
+
+        for _ in 0..total_mcu_rows {
+            let (luma_rows, chroma_rows) = reader
+                .read_rows_planar_i16(
+                    &mut y_buf[y_off..],
+                    width,
+                    &mut cb_buf[c_off..],
+                    &mut cr_buf[c_off..],
+                    cw,
+                    1,
+                )
+                .expect("read_rows_planar_i16 failed");
+            y_off += luma_rows * width;
+            c_off += chroma_rows * cw;
+        }
+
+        assert!(reader.is_finished(), "reader should be finished");
+        (
+            y_buf,
+            cb_buf,
+            cr_buf,
+            width as u32,
+            height as u32,
+            cw as u32,
+            ch as u32,
+        )
+    })
+}
+
+/// Decode planar i16 via wave-parallel path (multi-thread).
+fn decode_planar_i16_wave(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u32, u32, u32) {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut reader = Decoder::new()
+            .fancy_upsampling(false)
+            .scanline_reader(jpeg)
+            .expect("scanline_reader failed");
+
+        let width = reader.width() as usize;
+        let height = reader.height() as usize;
+        let cw = reader.chroma_width() as usize;
+        let ch = reader.chroma_height() as usize;
+        let luma_rows_per_mcu = reader.luma_rows_per_mcu();
+        let total_mcu_rows = (height + luma_rows_per_mcu - 1) / luma_rows_per_mcu;
+
+        let mut y_buf = vec![0i16; width * height];
+        let mut cb_buf = vec![0i16; cw * ch];
+        let mut cr_buf = vec![0i16; cw * ch];
+
+        let mut y_off = 0;
+        let mut c_off = 0;
+
+        for _ in 0..total_mcu_rows {
+            let (luma_rows, chroma_rows) = reader
+                .read_rows_planar_i16(
+                    &mut y_buf[y_off..],
+                    width,
+                    &mut cb_buf[c_off..],
+                    &mut cr_buf[c_off..],
+                    cw,
+                    1,
+                )
+                .expect("read_rows_planar_i16 failed");
+            y_off += luma_rows * width;
+            c_off += chroma_rows * cw;
+        }
+
+        assert!(reader.is_finished(), "reader should be finished");
+        (
+            y_buf,
+            cb_buf,
+            cr_buf,
+            width as u32,
+            height as u32,
+            cw as u32,
+            ch as u32,
+        )
+    })
+}
+
+fn assert_i16_equal(a: &[i16], b: &[i16], label: &str) {
+    assert_eq!(a.len(), b.len(), "{}: buffer size mismatch", label);
+    let mut max_diff = 0i16;
+    let mut diff_count = 0usize;
+    for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
+        let d = (av - bv).abs();
+        if d > 0 {
+            diff_count += 1;
+            if d > max_diff {
+                max_diff = d;
+            }
+            if diff_count == 1 {
+                eprintln!("{}: first diff at index {}: {} vs {}", label, i, av, bv);
+            }
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "{}: {} differences (max_diff={})",
+        label, diff_count, max_diff
+    );
+}
+
+#[test]
+fn test_planar_i16_seq_420() {
+    let (w, h) = (256, 256);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+    let (y, cb, cr, width, height, cw, ch) = decode_planar_i16_seq(&jpeg);
+
+    assert_eq!(width, 256);
+    assert_eq!(height, 256);
+    assert_eq!(cw, 128, "chroma width should be half for 4:2:0");
+    assert_eq!(ch, 128, "chroma height should be half for 4:2:0");
+    assert_eq!(y.len(), 256 * 256);
+    assert_eq!(cb.len(), 128 * 128);
+    assert_eq!(cr.len(), 128 * 128);
+
+    // Verify Y values are in valid IDCT range (0-255 for 8-bit JPEG)
+    for &v in &y {
+        assert!(
+            (-128..=383).contains(&v),
+            "Y value {} out of expected IDCT range",
+            v
+        );
+    }
+}
+
+#[test]
+fn test_planar_i16_seq_444() {
+    let (w, h) = (256, 256);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 4);
+
+    let (y, cb, cr, width, height, cw, ch) = decode_planar_i16_seq(&jpeg);
+
+    assert_eq!(width, 256);
+    assert_eq!(height, 256);
+    assert_eq!(cw, 256, "chroma width should equal luma for 4:4:4");
+    assert_eq!(ch, 256, "chroma height should equal luma for 4:4:4");
+    assert_eq!(y.len(), 256 * 256);
+    assert_eq!(cb.len(), 256 * 256);
+    assert_eq!(cr.len(), 256 * 256);
+}
+
+#[test]
+fn test_planar_i16_wave_vs_seq_420() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+    let (y_seq, cb_seq, cr_seq, ..) = decode_planar_i16_seq(&jpeg);
+    let (y_wave, cb_wave, cr_wave, ..) = decode_planar_i16_wave(&jpeg);
+
+    assert_i16_equal(&y_seq, &y_wave, "Y plane wave vs seq 4:2:0");
+    assert_i16_equal(&cb_seq, &cb_wave, "Cb plane wave vs seq 4:2:0");
+    assert_i16_equal(&cr_seq, &cr_wave, "Cr plane wave vs seq 4:2:0");
+}
+
+#[test]
+fn test_planar_i16_wave_vs_seq_444() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 4);
+
+    let (y_seq, cb_seq, cr_seq, ..) = decode_planar_i16_seq(&jpeg);
+    let (y_wave, cb_wave, cr_wave, ..) = decode_planar_i16_wave(&jpeg);
+
+    assert_i16_equal(&y_seq, &y_wave, "Y plane wave vs seq 4:4:4");
+    assert_i16_equal(&cb_seq, &cb_wave, "Cb plane wave vs seq 4:4:4");
+    assert_i16_equal(&cr_seq, &cr_wave, "Cr plane wave vs seq 4:4:4");
+}
+
+#[test]
+fn test_planar_i16_non_mcu_aligned_dims() {
+    // Non-MCU-aligned dimensions exercise edge padding
+    let (w, h) = (300, 300);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 2);
+
+    let (y_seq, cb_seq, cr_seq, width, height, cw, ch) = decode_planar_i16_seq(&jpeg);
+    let (y_wave, cb_wave, cr_wave, ..) = decode_planar_i16_wave(&jpeg);
+
+    assert_eq!(width, 300);
+    assert_eq!(height, 300);
+    // Chroma width is MCU-padded: ceil(300/16) = 19 MCU cols, 19 * 8 = 152
+    assert_eq!(cw, 152, "chroma width for 300px 4:2:0 (MCU-padded)");
+    assert_eq!(ch, 150, "chroma height for 300px 4:2:0");
+
+    assert_i16_equal(&y_seq, &y_wave, "Y non-MCU-aligned wave vs seq");
+    assert_i16_equal(&cb_seq, &cb_wave, "Cb non-MCU-aligned wave vs seq");
+    assert_i16_equal(&cr_seq, &cr_wave, "Cr non-MCU-aligned wave vs seq");
+}
+
+/// Verify that planar Y + box-upsampled Cb/Cr → RGB matches read_rows_rgb8(box).
+#[test]
+fn test_planar_to_rgb_reconstruction_420() {
+    let (w, h) = (256, 256);
+    let pixels = generate_test_pixels(w, h);
+    let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
+
+    // Get planar data
+    let (y_buf, cb_buf, cr_buf, width, height, cw, _ch) = decode_planar_i16_seq(&jpeg);
+    let w = width as usize;
+    let h = height as usize;
+    let cw = cw as usize;
+
+    // Get RGB reference via box filter decode
+    let rgb_ref = {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            Decoder::new()
+                .fancy_upsampling(false)
+                .num_threads(1)
+                .output_format(PixelFormat::Rgb)
+                .decode(&jpeg, Unstoppable)
+                .expect("decode failed")
+                .into_pixels_u8()
+                .unwrap()
+        })
+    };
+
+    // Manually reconstruct RGB from planar YCbCr with box filter upsampling
+    let mut rgb_recon = vec![0u8; w * h * 3];
+    for row in 0..h {
+        for col in 0..w {
+            let y = y_buf[row * w + col] as i32;
+            // Box filter: nearest-neighbor chroma upsampling
+            let cr_row = row / 2;
+            let cr_col = col / 2;
+            let cb = cb_buf[cr_row * cw + cr_col] as i32 - 128;
+            let cr = cr_buf[cr_row * cw + cr_col] as i32 - 128;
+
+            // BT.601 YCbCr → RGB (fixed-point, matching zenjpeg's integer path)
+            let r = (y + ((cr * 91881 + 32768) >> 16)).clamp(0, 255) as u8;
+            let g = (y - ((cb * 22554 + cr * 46802 - 32768) >> 16)).clamp(0, 255) as u8;
+            let b = (y + ((cb * 116130 + 32768) >> 16)).clamp(0, 255) as u8;
+
+            let off = (row * w + col) * 3;
+            rgb_recon[off] = r;
+            rgb_recon[off + 1] = g;
+            rgb_recon[off + 2] = b;
+        }
+    }
+
+    // Allow ±2 difference: zenjpeg's fused AVX2 kernel uses f32 YCbCr→RGB
+    // while our manual reconstruction uses fixed-point. The internal tests
+    // already allow ±2 between the f32 and integer paths.
+    let mut max_diff = 0u8;
+    let mut diff_count = 0usize;
+    for (i, (&a, &b)) in rgb_ref.iter().zip(rgb_recon.iter()).enumerate() {
+        let d = a.abs_diff(b);
+        if d > 2 {
+            diff_count += 1;
+            if d > max_diff {
+                max_diff = d;
+            }
+            if diff_count <= 3 {
+                let pixel = i / 3;
+                let channel = ["R", "G", "B"][i % 3];
+                eprintln!(
+                    "Diff at pixel {} {}: ref={} recon={} (row={}, col={})",
+                    pixel,
+                    channel,
+                    a,
+                    b,
+                    pixel / w,
+                    pixel % w,
+                );
+            }
+        }
+    }
+    assert!(
+        max_diff <= 2,
+        "planar→RGB max diff {} > 2 ({} pixels differ by >2)",
+        max_diff,
+        diff_count
+    );
+}

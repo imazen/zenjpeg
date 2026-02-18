@@ -380,6 +380,68 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 });
             },
         );
+
+        // zenjpeg wave-parallel scanline reader (baseline 4:2:0, box filter)
+        // Uses the scanline_reader() API with parallel feature — wave decode
+        // activates automatically when DRI is present.
+        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        group.bench_with_input(
+            BenchmarkId::new("zenjpeg-wave-scanline-420", format!("{}x{}", width, height)),
+            &jpeg_baseline,
+            |b, data| {
+                b.iter(|| {
+                    use imgref::ImgRefMut;
+                    use zenjpeg::decode::Decoder;
+                    let decoder = Decoder::new().fancy_upsampling(false);
+                    let mut reader = decoder
+                        .scanline_reader(black_box(data))
+                        .expect("scanline_reader failed");
+                    let w = reader.width() as usize;
+                    let h = reader.height() as usize;
+                    let mut pixels = vec![0u8; w * h * 3];
+                    let mut rows_read = 0;
+                    while rows_read < h {
+                        let remaining = h - rows_read;
+                        let output =
+                            ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
+                        rows_read += reader.read_rows_rgb8(output).expect("read failed");
+                    }
+                    pixels
+                });
+            },
+        );
+
+        // zenjpeg sequential scanline reader (baseline 4:2:0, box filter, forced sequential)
+        // For comparing wave-parallel vs sequential scanline performance.
+        #[cfg(all(feature = "decoder", feature = "parallel"))]
+        group.bench_with_input(
+            BenchmarkId::new(
+                "zenjpeg-seq-scanline-box-420",
+                format!("{}x{}", width, height),
+            ),
+            &jpeg_baseline,
+            |b, data| {
+                b.iter(|| {
+                    use imgref::ImgRefMut;
+                    use zenjpeg::decode::Decoder;
+                    let decoder = Decoder::new().fancy_upsampling(false).num_threads(1); // Force sequential
+                    let mut reader = decoder
+                        .scanline_reader(black_box(data))
+                        .expect("scanline_reader failed");
+                    let w = reader.width() as usize;
+                    let h = reader.height() as usize;
+                    let mut pixels = vec![0u8; w * h * 3];
+                    let mut rows_read = 0;
+                    while rows_read < h {
+                        let remaining = h - rows_read;
+                        let output =
+                            ImgRefMut::new(&mut pixels[rows_read * w * 3..], w * 3, remaining);
+                        rows_read += reader.read_rows_rgb8(output).expect("read failed");
+                    }
+                    pixels
+                });
+            },
+        );
     }
 
     // Separate benchmark for 4:4:4 (scanline reader fast path)

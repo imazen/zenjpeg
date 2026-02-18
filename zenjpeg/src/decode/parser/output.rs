@@ -421,9 +421,12 @@ impl<'a> JpegParser<'a> {
 
         // Select upsampling function based on method
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let needs_full_upsample = !matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor)
-            || h_ratio != 2
+        let needs_full_upsample = !matches!(
+            chroma_upsampling,
+            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy
+        ) || h_ratio != 2
             || v_ratio != 2;
+        let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
 
         let (upsample_fn, _): (UpsampleFn, ()) = if needs_full_upsample {
             let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
@@ -441,7 +444,7 @@ impl<'a> JpegParser<'a> {
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
                 ),
-                ChromaUpsampling::NearestNeighbor => (
+                ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => (
                     upsample_h2v2_i16_nearest,
                     upsample_h2v1_i16_nearest,
                     upsample_h1v2_i16_nearest,
@@ -690,13 +693,23 @@ impl<'a> JpegParser<'a> {
                     let c_offset = (1 + c_row) * c_strip_width;
                     let rgb_offset = (y_start + row) * width * 3;
 
-                    fused_h2v2_box_ycbcr_to_rgb_u8(
-                        &y_strip[y_offset..y_offset + y_cols_this_image],
-                        &ext_cb_a[c_offset..c_offset + c_cols],
-                        &ext_cr_a[c_offset..c_offset + c_cols],
-                        &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                        y_cols_this_image,
-                    );
+                    if use_hfancy {
+                        crate::color::ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(
+                            &y_strip[y_offset..y_offset + y_cols_this_image],
+                            &ext_cb_a[c_offset..c_offset + c_cols],
+                            &ext_cr_a[c_offset..c_offset + c_cols],
+                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                            y_cols_this_image,
+                        );
+                    } else {
+                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                            &y_strip[y_offset..y_offset + y_cols_this_image],
+                            &ext_cb_a[c_offset..c_offset + c_cols],
+                            &ext_cr_a[c_offset..c_offset + c_cols],
+                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                            y_cols_this_image,
+                        );
+                    }
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
@@ -918,7 +931,8 @@ impl<'a> JpegParser<'a> {
                         scale_x,
                         scale_y,
                     ),
-                    super::super::ChromaUpsampling::NearestNeighbor => {
+                    super::super::ChromaUpsampling::NearestNeighbor
+                    | super::super::ChromaUpsampling::HorizontalFancy => {
                         let mut upsampled = vec![0.0f32; output_size];
                         upsample_nearest_f32(
                             comp_plane,
