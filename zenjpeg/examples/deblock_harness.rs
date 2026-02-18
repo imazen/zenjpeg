@@ -377,73 +377,7 @@ impl DeblockStrategy for ReconstructVerify {
 /// boundaries. Strength proportional to quantization step.
 struct Boundary4Tap;
 
-impl Boundary4Tap {
-    /// Apply boundary filter to a single plane.
-    /// `strength` controls maximum pixel adjustment (derived from quant step).
-    fn filter_plane(plane: &mut [f32], w: usize, h: usize, strength: f32) {
-        if strength < 0.5 {
-            return;
-        }
-
-        // Threshold: only filter if boundary discontinuity exceeds this
-        let thresh = strength * 0.4;
-
-        // Vertical boundaries (columns at 8, 16, 24, ...)
-        for y in 0..h {
-            for bx in 1..(w / 8) {
-                let col = bx * 8;
-                if col + 1 >= w || col < 2 {
-                    continue;
-                }
-
-                let p1 = plane[y * w + col - 2];
-                let p0 = plane[y * w + col - 1];
-                let q0 = plane[y * w + col];
-                let q1 = plane[y * w + col + 1];
-
-                let disc = (p0 - q0).abs();
-                if disc < thresh {
-                    continue;
-                }
-
-                // 4-tap: [1, 3, 3, 1] / 8 weighted average across boundary
-                let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
-                let delta_p = (avg - p0).clamp(-strength, strength);
-                let delta_q = (avg - q0).clamp(-strength, strength);
-
-                plane[y * w + col - 1] = (p0 + delta_p).clamp(0.0, 255.0);
-                plane[y * w + col] = (q0 + delta_q).clamp(0.0, 255.0);
-            }
-        }
-
-        // Horizontal boundaries (rows at 8, 16, 24, ...)
-        for x in 0..w {
-            for by in 1..(h / 8) {
-                let row = by * 8;
-                if row + 1 >= h || row < 2 {
-                    continue;
-                }
-
-                let p1 = plane[(row - 2) * w + x];
-                let p0 = plane[(row - 1) * w + x];
-                let q0 = plane[row * w + x];
-                let q1 = plane[(row + 1) * w + x];
-
-                let disc = (p0 - q0).abs();
-                if disc < thresh {
-                    continue;
-                }
-
-                let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
-                let delta_p = (avg - p0).clamp(-strength, strength);
-                let delta_q = (avg - q0).clamp(-strength, strength);
-
-                plane[(row - 1) * w + x] = (p0 + delta_p).clamp(0.0, 255.0);
-                plane[row * w + x] = (q0 + delta_q).clamp(0.0, 255.0);
-            }
-        }
-    }
-}
+// Boundary4Tap now uses library implementation: zenjpeg::deblock::boundary
 
 impl DeblockStrategy for Boundary4Tap {
     fn name(&self) -> &str {
@@ -453,12 +387,15 @@ impl DeblockStrategy for Boundary4Tap {
     fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
         let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
 
-        // Filter each component at its own block boundaries
+        // Use library implementation for each component plane
         for plane in &mut cp.planes {
-            // Strength = DC quant / 4, capped at 12.0
-            let dc_quant = plane.quant_table[0] as f32;
-            let strength = (dc_quant * 0.25).min(12.0);
-            Self::filter_plane(&mut plane.data, plane.width, plane.height, strength);
+            let strength = zenjpeg::deblock::BoundaryStrength::from_dc_quant(plane.quant_table[0]);
+            zenjpeg::deblock::filter_plane_boundary_4tap(
+                &mut plane.data,
+                plane.width,
+                plane.height,
+                strength,
+            );
         }
 
         Some(planes_to_rgb(&cp))
@@ -1568,188 +1505,8 @@ impl DeblockStrategy for CoeffPOCS {
 // Strategy: Knusperli (Google) — single-pass DCT-domain boundary correction
 // ---------------------------------------------------------------------------
 
-/// Knusperli-style deblocking. For each pair of adjacent 8x8 blocks, analytically
-/// computes the boundary discontinuity in DCT space, then applies a linear gradient
-/// correction to both blocks. The correction is accumulated in a separate buffer
-/// and applied once at the end, preventing cascading artifacts.
-///
-/// All arithmetic uses f32 (the original uses 10-bit fixed point integers).
-///
-/// Reference: google/knusperli output_image.cc:CopyFromJpegComponent()
+/// Knusperli-style deblocking. Now uses library: zenjpeg::deblock::knusperli
 struct Knusperli;
-
-impl Knusperli {
-    /// DCT representation of a linear ramp from 0 to 1 across 8 pixels.
-    /// Only the first 4 coefficients are non-zero — high-frequency corrections
-    /// would introduce ringing rather than smooth the boundary.
-    /// Original C++ uses 10-bit FP: [318, -285, 81, -32, 0, 0, 0, 0]
-    /// We use f32: [0.3105, -0.2783, 0.0791, -0.0313, 0, 0, 0, 0]
-    const LINEAR_GRADIENT: [f32; 8] = [
-        318.0 / 1024.0,  // 0.3105
-        -285.0 / 1024.0, // -0.2783
-        81.0 / 1024.0,   // 0.0791
-        -32.0 / 1024.0,  // -0.0313
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ];
-
-    /// Alpha coefficients: α(0) = 1/√2, α(k>0) = 1.0.
-    /// Multiplied by √2 to get: α(0)*√2 = 1.0, α(k>0)*√2 = √2.
-    const ALPHA_SQRT2: [f32; 8] = [
-        1.0,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-        std::f32::consts::SQRT_2,
-    ];
-
-    /// Process one component (Y, Cb, or Cr independently).
-    /// Coefficients are in zigzag order, quant table in natural order.
-    /// Returns dequantized natural-order coefficients with Knusperli correction.
-    fn process_component(
-        zigzag_coeffs: &[i16], // flat: num_blocks * 64, zigzag order
-        blocks_wide: usize,
-        blocks_high: usize,
-        quant_table: &[u16; 64],
-    ) -> Vec<f32> {
-        let num_blocks = blocks_wide * blocks_high;
-
-        // Dequantize all blocks to natural order
-        let mut blocks_mid = vec![[0.0f32; 64]; num_blocks];
-        let mut blocks_min = vec![[0.0f32; 64]; num_blocks];
-        let mut blocks_max = vec![[0.0f32; 64]; num_blocks];
-        let mut blocks_off = vec![[0.0f32; 64]; num_blocks];
-
-        for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
-            for nat in 0..64 {
-                let zi = NATURAL_TO_ZIGZAG[nat];
-                let q = quant_table[nat] as f32;
-                let coeff = block[zi] as f32;
-                let mid = coeff * q;
-                blocks_mid[bi][nat] = mid;
-                blocks_min[bi][nat] = mid - q * 0.5;
-                blocks_max[bi][nat] = mid + q * 0.5;
-                blocks_off[bi][nat] = 0.0;
-            }
-        }
-
-        // Horizontal pass: correct vertical boundaries between adjacent blocks.
-        // For each row v (0..4 = low frequencies only), compute the pixel
-        // discontinuity between the right edge of block_i and left edge of block_j.
-        for by in 0..blocks_high {
-            for bx in 0..(blocks_wide.saturating_sub(1)) {
-                let bi = by * blocks_wide + bx; // left block
-                let bj = by * blocks_wide + bx + 1; // right block
-
-                for v in 0..4 {
-                    // Compute boundary discontinuity delta_v.
-                    // Right edge of left block: sum_u α(u) * (-1)^u * coeff_i[v,u]
-                    // Left edge of right block: sum_u α(u) * coeff_j[v,u]
-                    // delta_v = left_edge_of_right - right_edge_of_left
-                    let mut delta_v = 0.0f32;
-                    let mut hf_penalty = 0.0f32;
-
-                    for u in 0..8 {
-                        let pos = v * 8 + u;
-                        let gi = blocks_mid[bi][pos];
-                        let gj = blocks_mid[bj][pos];
-                        let sign = if u % 2 == 0 { 1.0f32 } else { -1.0 };
-
-                        delta_v += Self::ALPHA_SQRT2[u] * (gj - sign * gi);
-                        hf_penalty += (u * u) as f32 * (gi * gi + gj * gj);
-                    }
-
-                    // Distribute correction using linear gradient basis.
-                    // The HF penalty halving is applied inside the inner loop
-                    // (matching C++ behavior — delta_v gets halved per-frequency).
-                    // The correction sign for the right block is OPPOSITE to the
-                    // delta sign: even u → -1, odd u → +1 (C++: u&1 ? 1 : -1).
-                    for u in 0..8 {
-                        if hf_penalty > 400.0 {
-                            delta_v *= 0.5;
-                        }
-                        let corr_sign = if u % 2 == 0 { -1.0f32 } else { 1.0 };
-                        let correction = delta_v * Self::LINEAR_GRADIENT[u];
-                        blocks_off[bi][v * 8 + u] += correction;
-                        blocks_off[bj][v * 8 + u] += correction * corr_sign;
-                    }
-                }
-            }
-        }
-
-        // Vertical pass: correct horizontal boundaries between adjacent blocks.
-        // Same logic but transposed: iterate u=0..4, sum over v=0..7.
-        for by in 0..(blocks_high.saturating_sub(1)) {
-            for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx; // top block
-                let bj = (by + 1) * blocks_wide + bx; // bottom block
-
-                for u in 0..4 {
-                    let mut delta_u = 0.0f32;
-                    let mut hf_penalty = 0.0f32;
-
-                    for v in 0..8 {
-                        let pos = v * 8 + u;
-                        let gi = blocks_mid[bi][pos];
-                        let gj = blocks_mid[bj][pos];
-                        let sign = if v % 2 == 0 { 1.0f32 } else { -1.0 };
-
-                        delta_u += Self::ALPHA_SQRT2[v] * (gj - sign * gi);
-                        hf_penalty += (v * v) as f32 * (gi * gi + gj * gj);
-                    }
-
-                    // Same as horizontal: HF penalty inside loop, opposite sign
-                    // for bottom block correction.
-                    for v in 0..8 {
-                        if hf_penalty > 400.0 {
-                            delta_u *= 0.5;
-                        }
-                        let corr_sign = if v % 2 == 0 { -1.0f32 } else { 1.0 };
-                        let correction = delta_u * Self::LINEAR_GRADIENT[v];
-                        blocks_off[bi][v * 8 + u] += correction;
-                        blocks_off[bj][v * 8 + u] += correction * corr_sign;
-                    }
-                }
-            }
-        }
-
-        // Apply offsets: scale by 1/(2√2) to balance H and V corrections,
-        // then clamp to quantization intervals.
-        let half_sqrt2_inv = 1.0 / (2.0 * std::f32::consts::SQRT_2);
-
-        for bi in 0..num_blocks {
-            for k in 0..64 {
-                blocks_mid[bi][k] += blocks_off[bi][k] * half_sqrt2_inv;
-                blocks_mid[bi][k] = blocks_mid[bi][k].clamp(blocks_min[bi][k], blocks_max[bi][k]);
-            }
-        }
-
-        // IDCT all blocks to pixel plane
-        let pw = blocks_wide * 8;
-        let ph = blocks_high * 8;
-        let mut plane = vec![0.0f32; pw * ph];
-
-        for by in 0..blocks_high {
-            for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx;
-                let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&blocks_mid[bi]);
-                for row in 0..8 {
-                    for col in 0..8 {
-                        plane[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
-                    }
-                }
-            }
-        }
-
-        plane
-    }
-}
 
 impl DeblockStrategy for Knusperli {
     fn name(&self) -> &str {
@@ -1777,7 +1534,9 @@ impl DeblockStrategy for Knusperli {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let plane_data = Self::process_component(&comp.coeffs, bw, bh, qt);
+            // Use library Knusperli implementation
+            let plane_data =
+                zenjpeg::deblock::knusperli::process_component(&comp.coeffs, bw, bh, qt);
 
             planes.push(ComponentPlane {
                 data: plane_data,
