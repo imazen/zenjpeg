@@ -2536,6 +2536,7 @@ struct Measurement {
     quality: u8,
     strategy: String,
     ssim2: f64,
+    dssim: f64,
     butteraugli: f64,
     boundary_smooth: f64,
     boundary_edge: f64,
@@ -2662,6 +2663,7 @@ fn run_measurements(
 
                 // Quality metrics vs source
                 let ssim2 = QualityMetrics::ssimulacra2(reference.as_ref(), decoded.as_ref());
+                let dssim_val = QualityMetrics::dssim(reference.as_ref(), decoded.as_ref());
                 let ba = QualityMetrics::butteraugli(reference.as_ref(), decoded.as_ref());
 
                 // Boundary discontinuity
@@ -2672,12 +2674,13 @@ fn run_measurements(
 
                 if verbose {
                     eprintln!(
-                        "  {:<20} {:>10} q{:<3} [{:<13}] SS2={:6.2} BA={:5.2} BD={:.2} SH={:.1}",
+                        "  {:<20} {:>10} q{:<3} [{:<13}] SS2={:6.2} DSSIM={:.5} BA={:5.2} BD={:.2} SH={:.1}",
                         img.name,
                         job.encoder.display_name(),
                         job.quality,
                         strategy.name(),
                         ssim2,
+                        dssim_val,
                         ba,
                         bsmooth,
                         sharp
@@ -2690,6 +2693,7 @@ fn run_measurements(
                     quality: job.quality,
                     strategy: strategy.name().to_string(),
                     ssim2,
+                    dssim: dssim_val,
                     butteraugli: ba,
                     boundary_smooth: bsmooth,
                     boundary_edge: bedge,
@@ -2734,7 +2738,7 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
     let mut f = std::fs::File::create(path).expect("cannot create CSV");
     writeln!(
         f,
-        "image,encoder,quality,strategy,ssim2,butteraugli,bd_smooth,bd_edge,bd_overall,\
+        "image,encoder,quality,strategy,ssim2,dssim,butteraugli,bd_smooth,bd_edge,bd_overall,\
          sharpness,file_size,detected_encoder,detected_quality"
     )
     .unwrap();
@@ -2742,12 +2746,13 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
     for m in measurements {
         writeln!(
             f,
-            "{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.2},{},{},{}",
+            "{},{},{},{},{:.4},{:.6},{:.4},{:.4},{:.4},{:.4},{:.2},{},{},{}",
             m.image,
             m.encoder.dir_name(),
             m.quality,
             m.strategy,
             m.ssim2,
+            m.dssim,
             m.butteraugli,
             m.boundary_smooth,
             m.boundary_edge,
@@ -2763,14 +2768,14 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
 
 /// Print summary table: mean metrics per encoder × quality × strategy.
 fn print_summary(measurements: &[Measurement]) {
-    // Group by (strategy, encoder, quality) → collect metrics (ss2, ba, bd_smooth, sharpness)
-    let mut groups: BTreeMap<(String, Encoder, u8), Vec<(f64, f64, f64, f64)>> = BTreeMap::new();
+    // Group by (strategy, encoder, quality) → collect metrics [ss2, dssim, ba, bd_smooth, sharpness]
+    let mut groups: BTreeMap<(String, Encoder, u8), Vec<[f64; 5]>> = BTreeMap::new();
 
     for m in measurements {
         groups
             .entry((m.strategy.clone(), m.encoder, m.quality))
             .or_default()
-            .push((m.ssim2, m.butteraugli, m.boundary_smooth, m.sharpness));
+            .push([m.ssim2, m.dssim, m.butteraugli, m.boundary_smooth, m.sharpness]);
     }
 
     // Get all strategies
@@ -2784,26 +2789,25 @@ fn print_summary(measurements: &[Measurement]) {
     for strategy in &strategies {
         eprintln!("\n=== Strategy: {} ===", strategy);
         eprintln!(
-            "{:<14} {:>3}  {:>7} {:>7} {:>7}  {:>3}",
-            "Encoder", "Q", "SS2", "BA", "BD_sm", "N"
+            "{:<14} {:>3}  {:>7} {:>8} {:>7} {:>7}  {:>3}",
+            "Encoder", "Q", "SS2", "DSSIM", "BA", "BD_sm", "N"
         );
-        eprintln!("{}", "-".repeat(52));
+        eprintln!("{}", "-".repeat(62));
 
         for &enc in Encoder::all() {
             for &q in &QUALITY_LEVELS {
                 if let Some(vals) = groups.get(&(strategy.clone(), enc, q)) {
                     let n = vals.len();
-                    let mean_ss2: f64 = vals.iter().map(|v| v.0).sum::<f64>() / n as f64;
-                    let mean_ba: f64 = vals.iter().map(|v| v.1).sum::<f64>() / n as f64;
-                    let mean_bd: f64 = vals.iter().map(|v| v.2).sum::<f64>() / n as f64;
+                    let mean = |i: usize| vals.iter().map(|v| v[i]).sum::<f64>() / n as f64;
 
                     eprintln!(
-                        "{:<14} {:>3}  {:>7.2} {:>7.2} {:>7.2}  {:>3}",
+                        "{:<14} {:>3}  {:>7.2} {:>8.5} {:>7.2} {:>7.2}  {:>3}",
                         enc.dir_name(),
                         q,
-                        mean_ss2,
-                        mean_ba,
-                        mean_bd,
+                        mean(0), // ss2
+                        mean(1), // dssim
+                        mean(2), // ba
+                        mean(3), // bd_smooth
                         n
                     );
                 }
@@ -2817,10 +2821,10 @@ fn print_summary(measurements: &[Measurement]) {
         for strategy in strategies.iter().filter(|s| *s != "baseline") {
             eprintln!("\n--- {} vs baseline ---", strategy);
             eprintln!(
-                "{:<14} {:>3}  {:>8} {:>8} {:>8} {:>8}",
-                "Encoder", "Q", "dSS2", "dBA", "dBD_sm", "dSH"
+                "{:<14} {:>3}  {:>8} {:>10} {:>8} {:>8} {:>8}",
+                "Encoder", "Q", "dSS2", "dDSSIM", "dBA", "dBD_sm", "dSH"
             );
-            eprintln!("{}", "-".repeat(65));
+            eprintln!("{}", "-".repeat(75));
 
             for &enc in Encoder::all() {
                 for &q in &QUALITY_LEVELS {
@@ -2831,23 +2835,20 @@ fn print_summary(measurements: &[Measurement]) {
                         (groups.get(&baseline_key), groups.get(&strategy_key))
                     {
                         let n = base.len().min(strat.len());
-                        let d_ss2 = strat.iter().map(|v| v.0).sum::<f64>() / n as f64
-                            - base.iter().map(|v| v.0).sum::<f64>() / n as f64;
-                        let d_ba = strat.iter().map(|v| v.1).sum::<f64>() / n as f64
-                            - base.iter().map(|v| v.1).sum::<f64>() / n as f64;
-                        let d_bd = strat.iter().map(|v| v.2).sum::<f64>() / n as f64
-                            - base.iter().map(|v| v.2).sum::<f64>() / n as f64;
-                        let d_sh = strat.iter().map(|v| v.3).sum::<f64>() / n as f64
-                            - base.iter().map(|v| v.3).sum::<f64>() / n as f64;
+                        let delta = |i: usize| {
+                            strat.iter().map(|v| v[i]).sum::<f64>() / n as f64
+                                - base.iter().map(|v| v[i]).sum::<f64>() / n as f64
+                        };
 
                         eprintln!(
-                            "{:<14} {:>3}  {:>+8.3} {:>+8.3} {:>+8.3} {:>+8.3}",
+                            "{:<14} {:>3}  {:>+8.3} {:>+10.6} {:>+8.3} {:>+8.3} {:>+8.3}",
                             enc.dir_name(),
                             q,
-                            d_ss2,
-                            d_ba,
-                            d_bd,
-                            d_sh,
+                            delta(0), // dSS2
+                            delta(1), // dDSSIM
+                            delta(2), // dBA
+                            delta(3), // dBD_sm
+                            delta(4), // dSH
                         );
                     }
                 }
