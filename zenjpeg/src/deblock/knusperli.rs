@@ -83,13 +83,7 @@ pub fn process_component(
     correct_vertical_boundaries(&blocks, &mut offsets, blocks_wide, blocks_high);
 
     // Apply offsets with clamping to quantization intervals, then IDCT
-    apply_offsets_and_idct(
-        &mut blocks,
-        &offsets,
-        quant_table,
-        blocks_wide,
-        blocks_high,
-    )
+    apply_offsets_and_idct(&mut blocks, &offsets, quant_table, blocks_wide, blocks_high)
 }
 
 /// Dequantize all blocks from zigzag i16 to natural-order f32.
@@ -134,8 +128,16 @@ fn correct_horizontal_boundaries(
                 // Compute boundary discontinuity and HF energy using SIMD.
                 // delta_v = Σ_u α(u)√2 × (coeff_j[v,u] - (-1)^u × coeff_i[v,u])
                 // hf_penalty = Σ_u u² × (coeff_i² + coeff_j²)
-                let gi = f32x8::new(blocks[bi_off + row_base..bi_off + row_base + 8].try_into().unwrap());
-                let gj = f32x8::new(blocks[bj_off + row_base..bj_off + row_base + 8].try_into().unwrap());
+                let gi = f32x8::new(
+                    blocks[bi_off + row_base..bi_off + row_base + 8]
+                        .try_into()
+                        .unwrap(),
+                );
+                let gj = f32x8::new(
+                    blocks[bj_off + row_base..bj_off + row_base + 8]
+                        .try_into()
+                        .unwrap(),
+                );
 
                 let alpha = f32x8::new(ALPHA_SQRT2);
                 let sign = f32x8::new(SIGN_ALT);
@@ -249,8 +251,16 @@ fn apply_offsets_and_idct(
         // Apply offsets scaled by 1/(2√2), clamp to quant intervals.
         // Process 8 coefficients at a time.
         for k_base in (0..64).step_by(8) {
-            let mid = f32x8::new(blocks[block_off + k_base..block_off + k_base + 8].try_into().unwrap());
-            let off = f32x8::new(offsets[block_off + k_base..block_off + k_base + 8].try_into().unwrap());
+            let mid = f32x8::new(
+                blocks[block_off + k_base..block_off + k_base + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let off = f32x8::new(
+                offsets[block_off + k_base..block_off + k_base + 8]
+                    .try_into()
+                    .unwrap(),
+            );
 
             // Recompute min/max from original coefficients (avoids storing 2 extra arrays)
             let mut q_arr = [0.0f32; 8];
@@ -335,7 +345,7 @@ mod tests {
         let blocks_high = 1;
 
         let mut zigzag = vec![0i16; 2 * 64];
-        zigzag[0] = 5;  // left block DC = 5
+        zigzag[0] = 5; // left block DC = 5
         zigzag[64] = 20; // right block DC = 20
 
         let quant = [8u16; 64];
