@@ -1405,6 +1405,155 @@ fn decode_fast_pixel_identical_to_normal_lossless() {
 }
 
 #[test]
+fn decode_fast_auto_orients_mcu_aligned() {
+    // MCU-aligned 4:2:0 (64x48, both divisible by 16) with EXIF 6 (Rotate90)
+    // optimize_for_decode should auto-apply orientation AND reset EXIF to 1
+    let jpeg = make_test_jpeg_with_exif(64, 48, 6);
+    assert_eq!(read_exif_orientation(&jpeg), Some(6));
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless, "orient-only should be lossless");
+    // EXIF 6 = Rotate90 → dimensions swapped
+    assert_eq!(result.width, 48, "should be rotated: width = old height");
+    assert_eq!(result.height, 64, "should be rotated: height = old width");
+    assert!(is_baseline_jpeg(&result.data), "should be baseline");
+    assert!(has_dri_marker(&result.data), "should have DRI");
+
+    // EXIF orientation should be reset to 1
+    let out_orient = read_exif_orientation(&result.data);
+    assert_eq!(
+        out_orient,
+        Some(1),
+        "EXIF should be reset to 1 after auto-orient, got {:?}",
+        out_orient
+    );
+}
+
+#[test]
+fn decode_fast_skips_orient_non_mcu_aligned() {
+    // Non-MCU-aligned 4:4:4 (70x50, not divisible by 8) with EXIF 6 (Rotate90)
+    // Rotate90 needs height % mcu_h == 0. For 4:4:4, mcu_h=8, 50%8=2 → NOT safe.
+    // optimize_for_decode should skip orientation but still restructure.
+    // Create a 4:4:4 JPEG with EXIF orientation 6
+    let config_444 = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None).progressive(true);
+    let pixels = make_noise_pixels(70, 50, 0xBBCC_DDEE);
+    let mut encoder = config_444
+        .request()
+        .exif(zenjpeg::encoder::Exif::build().orientation(zenjpeg::encoder::Orientation::Rotate90))
+        .encode_from_bytes(70, 50, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = encoder.finish().unwrap();
+
+    assert_eq!(read_exif_orientation(&jpeg), Some(6));
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(
+        result.lossless,
+        "should still use lossless path (no resize)"
+    );
+    // Dimensions should NOT be swapped — orientation was skipped
+    assert_eq!(result.width, 70, "should NOT be rotated (non-MCU-aligned)");
+    assert_eq!(result.height, 50);
+    assert!(is_baseline_jpeg(&result.data), "should still be baseline");
+    assert!(has_dri_marker(&result.data), "should still have DRI");
+
+    // EXIF should still be 6 (not reset, since orient wasn't applied)
+    let out_orient = read_exif_orientation(&result.data);
+    assert_eq!(
+        out_orient,
+        Some(6),
+        "EXIF should remain 6 when orient was skipped, got {:?}",
+        out_orient
+    );
+}
+
+#[test]
+fn decode_fast_auto_orient_flip_h_non_mcu_width() {
+    // EXIF 2 = FlipHorizontal. For 4:2:0 (MCU=16), width must be divisible by 16.
+    // 80x64: width=80 (80%16=0) → safe
+    let jpeg_aligned = make_test_jpeg_with_exif(80, 64, 2);
+    let result_aligned = LayoutConfig::new(85.0)
+        .request(&jpeg_aligned)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+    assert!(result_aligned.lossless);
+    // FlipH applied → EXIF should be 1
+    assert_eq!(read_exif_orientation(&result_aligned.data), Some(1));
+
+    // 72x64: width=72 (72%16=8) → NOT safe for flip_h
+    let jpeg_unaligned = make_test_jpeg_with_exif(72, 64, 2);
+    let result_unaligned = LayoutConfig::new(85.0)
+        .request(&jpeg_unaligned)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+    assert!(result_unaligned.lossless);
+    // FlipH skipped → EXIF should remain 2
+    assert_eq!(read_exif_orientation(&result_unaligned.data), Some(2));
+}
+
+#[test]
+fn decode_fast_auto_orient_transpose_always_safe() {
+    // EXIF 5 = Transpose. Transpose NEVER trims, so should always apply.
+    // Use non-MCU-aligned dimensions to prove it works
+    let config_444 = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None).progressive(true);
+    let pixels = make_noise_pixels(70, 50, 0x1122_3344);
+    let mut encoder = config_444
+        .request()
+        .exif(zenjpeg::encoder::Exif::build().orientation(zenjpeg::encoder::Orientation::Transpose))
+        .encode_from_bytes(70, 50, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = encoder.finish().unwrap();
+
+    assert_eq!(read_exif_orientation(&jpeg), Some(5));
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    // Transpose swaps dimensions
+    assert_eq!(result.width, 50);
+    assert_eq!(result.height, 70);
+    // EXIF should be reset
+    assert_eq!(read_exif_orientation(&result.data), Some(1));
+}
+
+#[test]
+fn decode_fast_does_not_duplicate_explicit_orient() {
+    // User explicitly calls .auto_orient(6) AND .optimize_for_decode()
+    // Should NOT inject a second orient command
+    let jpeg = make_test_jpeg_with_exif(64, 48, 6);
+
+    let result = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .auto_orient(6)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert_eq!(result.width, 48, "should be rotated");
+    assert_eq!(result.height, 64);
+    assert!(is_baseline_jpeg(&result.data));
+}
+
+#[test]
 fn subsampling_field_populated() {
     // Verify the new subsampling field in JpegInfo works
     let jpeg_420 = make_test_jpeg(64, 64);

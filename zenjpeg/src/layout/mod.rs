@@ -254,7 +254,29 @@ impl<'a> LayoutRequest<'a> {
         let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
 
         // Check EXIF for auto_orient commands that reference the source
-        let commands = self.resolve_auto_orient(&info);
+        let mut commands = self.resolve_auto_orient(&info);
+
+        // When optimizing for decode, auto-apply EXIF orientation if it can be
+        // done without trimming any pixels. Only inject if the user didn't
+        // already add an AutoOrient command.
+        let auto_oriented = if self.optimize_for_decode {
+            let has_explicit_orient = commands
+                .iter()
+                .any(|cmd| matches!(cmd, Command::AutoOrient(_)));
+            if !has_explicit_orient {
+                if let Some(exif_val) = lossless::safe_auto_orient(&info) {
+                    commands.insert(0, Command::AutoOrient(exif_val));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                // User explicitly requested orient — they handle EXIF reset
+                false
+            }
+        } else {
+            false
+        };
 
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
@@ -285,7 +307,7 @@ impl<'a> LayoutRequest<'a> {
 
             // Transform and reattach gain map if present.
             // Skip for identity (None) — the input already includes the gain map.
-            let data = if transform != crate::lossless::LosslessTransform::None {
+            let mut data = if transform != crate::lossless::LosslessTransform::None {
                 if let Some(gm_bytes) = gain_map_jpeg {
                     let gm_fn = if self.optimize_for_decode {
                         lossless::execute_restructure
@@ -298,14 +320,15 @@ impl<'a> LayoutRequest<'a> {
                 } else {
                     primary
                 }
-            } else if self.optimize_for_decode
-                && transform == crate::lossless::LosslessTransform::None
-            {
-                // Identity + optimize_for_decode: the restructure already ran above
-                primary
             } else {
                 primary
             };
+
+            // Reset EXIF orientation to 1 when we auto-applied it on the lossless path.
+            // The restructure preserves metadata as-is, so we patch the output.
+            if auto_oriented && transform != crate::lossless::LosslessTransform::None {
+                lossless::reset_exif_orientation_in_jpeg(&mut data);
+            }
 
             return Ok(LayoutResult {
                 data,
