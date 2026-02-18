@@ -102,7 +102,7 @@ enum WaveResult<'a> {
 }
 
 /// Compute subsampling mode from component sampling factors.
-fn compute_subsampling(
+pub(crate) fn compute_subsampling(
     components: &[Component; MAX_COMPONENTS],
     num_components: u8,
 ) -> Subsampling {
