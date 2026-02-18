@@ -1013,6 +1013,8 @@ pub struct JpegInfo {
     pub num_components: u8,
     /// Encoding mode
     pub mode: crate::types::JpegMode,
+    /// Chroma subsampling mode
+    pub subsampling: crate::types::Subsampling,
     /// Whether an ICC profile is embedded
     pub has_icc_profile: bool,
     /// Whether the ICC profile is an XYB profile
