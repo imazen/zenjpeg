@@ -79,6 +79,15 @@ pub(super) struct ParsedScanData<'a> {
     pub is_rgb: bool,
 }
 
+/// Controls which decode path the parser uses.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(super) enum DecodeMode {
+    /// Auto-select best path: fused parallel → streaming → coefficient buffering.
+    Auto,
+    /// Force coefficient buffering (needed for f32, dequant bias, transforms, YCbCr output).
+    Coefficient,
+}
+
 /// Internal JPEG parser state.
 pub(super) struct JpegParser<'a> {
     pub(super) data: &'a [u8],
@@ -111,8 +120,9 @@ pub(super) struct JpegParser<'a> {
 
     // Streaming decode result (used for baseline 4:4:4 JPEGs)
     pub(super) streaming_rgb: Option<Vec<u8>>,
-    // Whether to prefer streaming decode (set false for f32 output which needs coefficients)
-    pub(super) prefer_streaming: bool,
+    /// Decode mode: Auto tries streaming/fused paths first, Coefficient forces
+    /// coefficient storage (needed for f32 output, dequant bias, transforms, etc.).
+    pub(super) decode_mode: DecodeMode,
 
     /// Fused parallel decode result (entropy + IDCT in one pass).
     #[cfg(feature = "parallel")]
@@ -207,7 +217,7 @@ impl<'a> JpegParser<'a> {
             coeff_counts: Vec::new(),
             nonzero_bitmaps: Vec::new(),
             streaming_rgb: None,
-            prefer_streaming: true, // Default to streaming for RGB decode
+            decode_mode: DecodeMode::Auto,
             #[cfg(feature = "parallel")]
             fused_result: None,
             chroma_upsampling: super::ChromaUpsampling::default(),
