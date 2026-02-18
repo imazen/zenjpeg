@@ -223,23 +223,34 @@ pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut [u8]) -> bool {
     false
 }
 
-/// Check if the JPEG already has a DRI suitable for fast parallel decoding.
+/// Check if this baseline JPEG is already suitable for fast decoding.
 ///
-/// Returns true only when ALL of these hold:
-/// 1. A DRI marker (0xFFDD) is present with a non-zero restart interval
-/// 2. The interval is MCU-row-aligned (`ri % mcu_cols == 0`) — matching the
-///    fused parallel decoder gate in `fused_parallel.rs:124`
-/// 3. The MCU rows per restart segment is in [1, 8] — a reasonable range
-///    for parallel work distribution (our restructure uses 4)
-pub(crate) fn has_fast_dri(jpeg_data: &[u8], info: &crate::decode::JpegInfo) -> bool {
+/// Small images (< 512x512): baseline is enough — parallel decode doesn't
+/// help (fused_parallel.rs gates on `total_mcus < 1024`), so no DRI needed.
+///
+/// Larger images require MCU-row-aligned DRI matching our fast path:
+/// 1. DRI present with non-zero restart interval
+/// 2. Interval is MCU-row-aligned (`ri % mcu_cols == 0`) — same gate as
+///    `fused_parallel.rs:124`
+/// 3. MCU rows per segment in [1, 8] — reasonable for parallel work
+///    distribution (our restructure uses 4)
+pub(crate) fn is_decode_ready(jpeg_data: &[u8], info: &crate::decode::JpegInfo) -> bool {
+    let w = info.dimensions.width;
+    let h = info.dimensions.height;
+
+    // Small images: baseline alone is sufficient, no DRI needed
+    if w < 512 && h < 512 {
+        return true;
+    }
+
+    // Larger images: need MCU-row-aligned DRI for parallel decode
     let ri = match parse_dri(jpeg_data) {
         Some(ri) if ri > 0 => ri as usize,
         _ => return false,
     };
 
-    let (mcu_w, mcu_h) = mcu_dimensions(info.subsampling);
-    let mcu_cols = (info.dimensions.width as usize + mcu_w as usize - 1) / mcu_w as usize;
-    let _ = mcu_h; // Only horizontal MCU count matters for row alignment
+    let (mcu_w, _) = mcu_dimensions(info.subsampling);
+    let mcu_cols = (w as usize + mcu_w as usize - 1) / mcu_w as usize;
 
     if mcu_cols == 0 {
         return false;

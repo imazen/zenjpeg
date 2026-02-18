@@ -1353,9 +1353,11 @@ fn decode_fast_lossy_forces_baseline() {
 
 #[test]
 fn decode_fast_baseline_input_adds_dri() {
-    // Already-baseline input without DRI → optimize_for_decode → should add DRI
-    let jpeg = make_test_jpeg_baseline(64, 64);
+    // Large baseline without DRI → optimize_for_decode → should add DRI.
+    // Uses >= 512x512 since smaller images skip DRI (parallel doesn't help).
+    let jpeg = make_large_baseline_no_dri(512, 512);
     assert!(is_baseline_jpeg(&jpeg), "input should already be baseline");
+    assert!(!has_dri_marker(&jpeg), "input should have no DRI");
 
     let result = LayoutConfig::new(85.0)
         .request(&jpeg)
@@ -1367,7 +1369,7 @@ fn decode_fast_baseline_input_adds_dri() {
     assert!(is_baseline_jpeg(&result.data));
     assert!(
         has_dri_marker(&result.data),
-        "optimize_for_decode should add DRI to baseline input"
+        "optimize_for_decode should add DRI to large baseline input"
     );
 
     Decoder::new().decode(&result.data, Unstoppable).unwrap();
@@ -1582,12 +1584,12 @@ fn decode_fast_already_optimized_skips_restructure() {
 }
 
 #[test]
-fn decode_fast_restructures_bad_dri() {
-    // Baseline JPEG with DRI=1 (per-MCU, not per-row) should NOT early-exit —
-    // it must be restructured to get MCU-row-aligned DRI.
+fn decode_fast_small_baseline_no_dri_skips_restructure() {
+    // Small baseline JPEG (< 512x512) without DRI should early-exit —
+    // parallel decode doesn't help for small images.
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
         .progressive(false)
-        .restart_mcu_rows(0); // No DRI initially
+        .restart_mcu_rows(0);
     let pixels = make_noise_pixels(64, 64, 0xDEAD_1234);
     let mut encoder = config
         .request()
@@ -1597,9 +1599,44 @@ fn decode_fast_restructures_bad_dri() {
     let baseline_no_dri = encoder.finish().unwrap();
 
     assert!(is_baseline_jpeg(&baseline_no_dri));
-    assert!(!has_dri_marker(&baseline_no_dri), "should have no DRI");
+    assert!(!has_dri_marker(&baseline_no_dri));
 
-    // optimize_for_decode must restructure it (add DRI)
+    let result = LayoutConfig::new(85.0)
+        .request(&baseline_no_dri)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+
+    assert!(result.lossless);
+    assert_eq!(
+        result.data, baseline_no_dri,
+        "small baseline without DRI should be returned unchanged"
+    );
+}
+
+/// Create a large baseline JPEG without DRI for testing restructure on big images.
+fn make_large_baseline_no_dri(width: u32, height: u32) -> Vec<u8> {
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .restart_mcu_rows(0);
+    let pixels = make_noise_pixels(width, height, 0xBEEF_CAFE);
+    let mut encoder = config
+        .request()
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    encoder.push_packed(&pixels, Unstoppable).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[test]
+fn decode_fast_large_baseline_no_dri_restructures() {
+    // Large baseline JPEG (>= 512x512) without DRI must be restructured
+    // to add MCU-row-aligned DRI for parallel decode.
+    let baseline_no_dri = make_large_baseline_no_dri(512, 512);
+
+    assert!(is_baseline_jpeg(&baseline_no_dri));
+    assert!(!has_dri_marker(&baseline_no_dri));
+
     let result = LayoutConfig::new(85.0)
         .request(&baseline_no_dri)
         .optimize_for_decode()
@@ -1611,7 +1648,7 @@ fn decode_fast_restructures_bad_dri() {
     assert!(has_dri_marker(&result.data), "should now have DRI");
     assert_ne!(
         result.data, baseline_no_dri,
-        "baseline without DRI should be restructured, not returned as-is"
+        "large baseline without DRI should be restructured"
     );
 }
 
