@@ -121,7 +121,10 @@ mod tests {
     #[test]
     fn detect_exif_rotate90() {
         let commands = vec![Command::AutoOrient(6)]; // EXIF 6 = Rotate90
-        assert_eq!(detect_lossless(&commands), Some(LosslessTransform::Rotate90));
+        assert_eq!(
+            detect_lossless(&commands),
+            Some(LosslessTransform::Rotate90)
+        );
     }
 
     #[test]
@@ -148,7 +151,9 @@ mod tests {
 
     #[test]
     fn detect_crop_is_lossy() {
-        let commands = vec![Command::Crop(zenlayout::SourceCrop::pixels(10, 10, 100, 100))];
+        let commands = vec![Command::Crop(zenlayout::SourceCrop::pixels(
+            10, 10, 100, 100,
+        ))];
         assert_eq!(detect_lossless(&commands), None);
     }
 }

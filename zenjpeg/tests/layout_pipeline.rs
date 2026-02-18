@@ -1064,10 +1064,7 @@ fn lossless_all_exif_orientations() {
             .execute(&Unstoppable)
             .unwrap();
 
-        assert!(
-            result.lossless,
-            "EXIF {exif} should use lossless path"
-        );
+        assert!(result.lossless, "EXIF {exif} should use lossless path");
 
         // Orientations 5-8 swap dimensions (transpose-based)
         let swaps = matches!(exif, 5 | 6 | 7 | 8);

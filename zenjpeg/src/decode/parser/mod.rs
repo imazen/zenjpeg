@@ -790,8 +790,7 @@ impl<'a> JpegParser<'a> {
             width: self.width,
             height: self.height,
         };
-        let subsampling =
-            super::compute_subsampling(&self.components, self.num_components);
+        let subsampling = super::compute_subsampling(&self.components, self.num_components);
 
         JpegInfo {
             dimensions: dims,

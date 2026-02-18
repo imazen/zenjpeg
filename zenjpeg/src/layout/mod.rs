@@ -360,7 +360,13 @@ impl<'a> LayoutRequest<'a> {
         );
 
         let gm_transformed = lossy::execute_lossy(
-            gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, false, stop,
+            gm_bytes,
+            &gm_info,
+            self.config,
+            gm_dst_w,
+            gm_dst_h,
+            false,
+            stop,
         )?;
 
         Ok(Some(gm_transformed))
