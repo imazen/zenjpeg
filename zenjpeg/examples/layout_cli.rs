@@ -13,6 +13,9 @@
 //!   --fit-crop WxH     Fill and crop to exact dimensions
 //!   --no-progressive   Use baseline instead of progressive
 //!   --no-optimize      Disable auto_optimize (hybrid trellis)
+//!   --decode-fast      Optimize for fast parallel decoding
+//!                      (lossless: progressive→sequential + DRI markers;
+//!                       lossy: forces baseline + DRI markers)
 //!
 //! Examples:
 //!   # Auto-orient and fit within 800x600
@@ -47,6 +50,7 @@ fn main() {
     let mut fit: Option<(u32, u32)> = None;
     let mut within: Option<(u32, u32)> = None;
     let mut fit_crop: Option<(u32, u32)> = None;
+    let mut decode_fast = false;
 
     let mut positional = Vec::new();
     let mut i = 1;
@@ -88,6 +92,9 @@ fn main() {
             }
             "--no-optimize" => {
                 auto_optimize = false;
+            }
+            "--decode-fast" => {
+                decode_fast = true;
             }
             "--help" | "-h" => {
                 usage(&args[0]);
@@ -187,6 +194,10 @@ fn main() {
         request = request.fit_crop(w, h);
     }
 
+    if decode_fast {
+        request = request.optimize_for_decode();
+    }
+
     // Execute
     let result = match request.execute(&Unstoppable) {
         Ok(r) => r,
@@ -226,6 +237,7 @@ fn usage(program: &str) {
     eprintln!("  --fit-crop WxH     Fill and crop to exact dimensions");
     eprintln!("  --no-progressive   Use baseline instead of progressive");
     eprintln!("  --no-optimize      Disable auto_optimize (hybrid trellis)");
+    eprintln!("  --decode-fast      Optimize output for fast parallel decoding");
 }
 
 fn parse_or_exit<T: std::str::FromStr>(args: &[String], idx: usize, name: &str) -> T {
