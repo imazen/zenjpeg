@@ -139,14 +139,9 @@ impl DeblockStrategy for DequantBiasDecode {
 /// JPEG zigzag order: maps natural (raster) index → zigzag index.
 /// natural_to_zigzag[natural_pos] = zigzag_pos
 const NATURAL_TO_ZIGZAG: [usize; 64] = [
-     0,  1,  5,  6, 14, 15, 27, 28,
-     2,  4,  7, 13, 16, 26, 29, 42,
-     3,  8, 12, 17, 25, 30, 41, 43,
-     9, 11, 18, 24, 31, 40, 44, 53,
-    10, 19, 23, 32, 39, 45, 52, 54,
-    20, 22, 33, 38, 46, 51, 55, 60,
-    21, 34, 37, 47, 50, 56, 59, 61,
-    35, 36, 48, 49, 57, 58, 62, 63,
+    0, 1, 5, 6, 14, 15, 27, 28, 2, 4, 7, 13, 16, 26, 29, 42, 3, 8, 12, 17, 25, 30, 41, 43, 9, 11,
+    18, 24, 31, 40, 44, 53, 10, 19, 23, 32, 39, 45, 52, 54, 20, 22, 33, 38, 46, 51, 55, 60, 21, 34,
+    37, 47, 50, 56, 59, 61, 35, 36, 48, 49, 57, 58, 62, 63,
 ];
 
 /// Dequantize and unzigzag: takes zigzag-order coefficients and NATURAL-order quant table
@@ -155,10 +150,7 @@ const NATURAL_TO_ZIGZAG: [usize; 64] = [
 ///
 /// Note: the decoder parser converts quant tables from zigzag to natural order during
 /// DQT parsing (markers.rs:267-273), so quant_tables are always in natural order.
-fn dequantize_unzigzag(
-    zigzag_coeffs: &[i16; 64],
-    natural_quant: &[u16; 64],
-) -> [f32; 64] {
+fn dequantize_unzigzag(zigzag_coeffs: &[i16; 64], natural_quant: &[u16; 64]) -> [f32; 64] {
     let mut result = [0.0f32; 64];
     for nat in 0..64 {
         let zi = NATURAL_TO_ZIGZAG[nat];
@@ -186,9 +178,7 @@ fn get_luma_dc_quant(jpeg_bytes: &[u8]) -> Option<u16> {
 /// Decode JPEG to planar Y, Cb, Cr (each as Vec<f32> in 0-255 range).
 /// For 4:2:0: cb/cr are half-resolution.
 #[allow(clippy::type_complexity)]
-fn decode_to_coeff_planes(
-    jpeg_bytes: &[u8],
-) -> Option<CoeffPlanes> {
+fn decode_to_coeff_planes(jpeg_bytes: &[u8]) -> Option<CoeffPlanes> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
 
@@ -288,21 +278,17 @@ fn upsample_2x(src: &[f32], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<f
             let v01 = src[sy1 * sw + sx0];
             let v11 = src[sy1 * sw + sx1];
 
-            dst[dy * dw + dx] =
-                v00 * (1.0 - fx) * (1.0 - fy) +
-                v10 * fx * (1.0 - fy) +
-                v01 * (1.0 - fx) * fy +
-                v11 * fx * fy;
+            dst[dy * dw + dx] = v00 * (1.0 - fx) * (1.0 - fy)
+                + v10 * fx * (1.0 - fy)
+                + v01 * (1.0 - fx) * fy
+                + v11 * fx * fy;
         }
     }
     dst
 }
 
 /// Convert YCbCr planes (f32, 0-255 range) to RGB ImgVec.
-fn ycbcr_planes_to_rgb(
-    y: &[f32], cb: &[f32], cr: &[f32],
-    w: usize, h: usize,
-) -> RgbImage {
+fn ycbcr_planes_to_rgb(y: &[f32], cb: &[f32], cr: &[f32], w: usize, h: usize) -> RgbImage {
     use imgref::ImgVec;
     use rgb::RGB8;
 
@@ -312,7 +298,9 @@ fn ycbcr_planes_to_rgb(
         let cbv = cb[i] - 128.0;
         let crv = cr[i] - 128.0;
         let r = (yv + 1.402 * crv).round().clamp(0.0, 255.0) as u8;
-        let g = (yv - 0.344136 * cbv - 0.714136 * crv).round().clamp(0.0, 255.0) as u8;
+        let g = (yv - 0.344136 * cbv - 0.714136 * crv)
+            .round()
+            .clamp(0.0, 255.0) as u8;
         let b = (yv + 1.772 * cbv).round().clamp(0.0, 255.0) as u8;
         pixels[i] = RGB8 { r, g, b };
     }
@@ -470,9 +458,7 @@ impl DeblockStrategy for Boundary4Tap {
             // Strength = DC quant / 4, capped at 12.0
             let dc_quant = plane.quant_table[0] as f32;
             let strength = (dc_quant * 0.25).min(12.0);
-            Self::filter_plane(
-                &mut plane.data, plane.width, plane.height, strength
-            );
+            Self::filter_plane(&mut plane.data, plane.width, plane.height, strength);
         }
 
         Some(planes_to_rgb(&cp))
@@ -613,7 +599,11 @@ impl DeblockStrategy for BilateralBoundary {
             // how much correction is applied; sigma_r controls WHICH pixels get
             // filtered. We want tight range kernel at all qualities.
             Self::filter_plane(
-                &mut plane.data, plane.width, plane.height, strength, self.sigma_r,
+                &mut plane.data,
+                plane.width,
+                plane.height,
+                strength,
+                self.sigma_r,
             );
         }
 
@@ -677,7 +667,11 @@ impl CDEFDirection {
                 }
             }
 
-            let var = if count > 0 { sum_diff_sq / count as f32 } else { f32::MAX };
+            let var = if count > 0 {
+                sum_diff_sq / count as f32
+            } else {
+                f32::MAX
+            };
             if var < best_var {
                 best_var = var;
                 best_dir = dir;
@@ -747,7 +741,8 @@ impl CDEFDirection {
 
                                 if tx >= 0 && (tx as usize) < w && ty >= 0 && (ty as usize) < h {
                                     let tap = orig[ty as usize * w + tx as usize];
-                                    sum += Self::constrain(tap - center, strength, damping) * tap_weight;
+                                    sum += Self::constrain(tap - center, strength, damping)
+                                        * tap_weight;
                                 }
                             }
                         }
@@ -773,9 +768,7 @@ impl DeblockStrategy for CDEFDirection {
         for plane in &mut cp.planes {
             let dc_quant = plane.quant_table[0] as f32;
             let strength = (dc_quant * 0.3).min(15.0);
-            Self::filter_plane(
-                &mut plane.data, plane.width, plane.height, strength
-            );
+            Self::filter_plane(&mut plane.data, plane.width, plane.height, strength);
         }
 
         Some(planes_to_rgb(&cp))
@@ -802,7 +795,11 @@ struct SGRFilter {
 
 impl SGRFilter {
     fn new(radius: usize, eps: f32, strength: f32) -> Self {
-        Self { radius, eps, strength }
+        Self {
+            radius,
+            eps,
+            strength,
+        }
     }
 
     /// Box-filter SGR on a single plane. The algorithm:
@@ -834,10 +831,9 @@ impl SGRFilter {
                 let v = orig[y * w + x] as f64;
                 sum[(y + 1) * iw + (x + 1)] =
                     v + sum[y * iw + (x + 1)] + sum[(y + 1) * iw + x] - sum[y * iw + x];
-                sum_sq[(y + 1) * iw + (x + 1)] = v * v
-                    + sum_sq[y * iw + (x + 1)]
-                    + sum_sq[(y + 1) * iw + x]
-                    - sum_sq[y * iw + x];
+                sum_sq[(y + 1) * iw + (x + 1)] =
+                    v * v + sum_sq[y * iw + (x + 1)] + sum_sq[(y + 1) * iw + x]
+                        - sum_sq[y * iw + x];
             }
         }
 
@@ -851,10 +847,10 @@ impl SGRFilter {
                 let x1 = ((x as isize + r + 1) as usize).min(w);
 
                 let count = ((y1 - y0) * (x1 - x0)) as f64;
-                let s = sum[y1 * iw + x1] - sum[y0 * iw + x1]
-                    - sum[y1 * iw + x0] + sum[y0 * iw + x0];
-                let sq = sum_sq[y1 * iw + x1] - sum_sq[y0 * iw + x1]
-                    - sum_sq[y1 * iw + x0] + sum_sq[y0 * iw + x0];
+                let s =
+                    sum[y1 * iw + x1] - sum[y0 * iw + x1] - sum[y1 * iw + x0] + sum[y0 * iw + x0];
+                let sq = sum_sq[y1 * iw + x1] - sum_sq[y0 * iw + x1] - sum_sq[y1 * iw + x0]
+                    + sum_sq[y0 * iw + x0];
 
                 let mean = s / count;
                 let variance = (sq / count - mean * mean).max(0.0);
@@ -929,8 +925,7 @@ impl CoeffSmooth {
         let mut block_max = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                .try_into().unwrap();
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
             for nat in 0..64 {
                 let zi = NATURAL_TO_ZIGZAG[nat];
                 let q = quant_table[nat] as f32;
@@ -975,9 +970,7 @@ impl CoeffSmooth {
                 if count > 0 {
                     let avg = sum / count as f32;
                     let new_val = center + alpha * (avg - center);
-                    dequant[bi][nat] = new_val.clamp(
-                        block_min[bi][nat], block_max[bi][nat],
-                    );
+                    dequant[bi][nat] = new_val.clamp(block_min[bi][nat], block_max[bi][nat]);
                 }
             }
         }
@@ -992,8 +985,7 @@ impl CoeffSmooth {
             let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
             for row in 0..8 {
                 for col in 0..8 {
-                    output[(by * 8 + row) * pw + bx * 8 + col] =
-                        pixels[row * 8 + col] + 128.0;
+                    output[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
                 }
             }
         }
@@ -1086,8 +1078,7 @@ impl CoeffRefineTV {
         let mut block_max = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                .try_into().unwrap();
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
             for nat in 0..64 {
                 let zi = NATURAL_TO_ZIGZAG[nat];
                 let q = quant_table[nat] as f32;
@@ -1111,7 +1102,9 @@ impl CoeffRefineTV {
                 for nat in 1..64 {
                     let row = nat / 8;
                     let col = nat % 8;
-                    if row + col >= 4 { continue; }
+                    if row + col >= 4 {
+                        continue;
+                    }
 
                     let center = snapshot[bi][nat];
 
@@ -1139,9 +1132,7 @@ impl CoeffRefineTV {
                     if count > 0 {
                         let avg = sum / count as f32;
                         let new_val = center + alpha * (avg - center);
-                        dequant[bi][nat] = new_val.clamp(
-                            block_min[bi][nat], block_max[bi][nat],
-                        );
+                        dequant[bi][nat] = new_val.clamp(block_min[bi][nat], block_max[bi][nat]);
                     }
                 }
             }
@@ -1157,8 +1148,7 @@ impl CoeffRefineTV {
             let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
             for row in 0..8 {
                 for col in 0..8 {
-                    output[(by * 8 + row) * pw + bx * 8 + col] =
-                        pixels[row * 8 + col] + 128.0;
+                    output[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
                 }
             }
         }
@@ -1193,9 +1183,7 @@ impl DeblockStrategy for CoeffRefineTV {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let plane_data = Self::process_component(
-                &comp.coeffs, bw, bh, qt, self.iterations,
-            );
+            let plane_data = Self::process_component(&comp.coeffs, bw, bh, qt, self.iterations);
 
             planes.push(ComponentPlane {
                 data: plane_data,
@@ -1256,7 +1244,13 @@ impl CoeffPOCS {
         freq_cutoff: usize,
         label: &'static str,
     ) -> Self {
-        Self { iterations, correction, tc_mul, freq_cutoff, label }
+        Self {
+            iterations,
+            correction,
+            tc_mul,
+            freq_cutoff,
+            label,
+        }
     }
 
     /// Compute the 8x8 orthonormal DCT-II basis matrix.
@@ -1284,8 +1278,14 @@ impl CoeffPOCS {
         let mut output = [0.0f32; 8];
         for k in 0..8 {
             let b = &basis[k];
-            output[k] = b[0] * input[0] + b[1] * input[1] + b[2] * input[2] + b[3] * input[3]
-                + b[4] * input[4] + b[5] * input[5] + b[6] * input[6] + b[7] * input[7];
+            output[k] = b[0] * input[0]
+                + b[1] * input[1]
+                + b[2] * input[2]
+                + b[3] * input[3]
+                + b[4] * input[4]
+                + b[5] * input[5]
+                + b[6] * input[6]
+                + b[7] * input[7];
         }
         output
     }
@@ -1295,10 +1295,14 @@ impl CoeffPOCS {
     fn idct_1d(input: &[f32; 8], basis: &[[f32; 8]; 8]) -> [f32; 8] {
         let mut output = [0.0f32; 8];
         for n in 0..8 {
-            output[n] = basis[0][n] * input[0] + basis[1][n] * input[1]
-                + basis[2][n] * input[2] + basis[3][n] * input[3]
-                + basis[4][n] * input[4] + basis[5][n] * input[5]
-                + basis[6][n] * input[6] + basis[7][n] * input[7];
+            output[n] = basis[0][n] * input[0]
+                + basis[1][n] * input[1]
+                + basis[2][n] * input[2]
+                + basis[3][n] * input[3]
+                + basis[4][n] * input[4]
+                + basis[5][n] * input[5]
+                + basis[6][n] * input[6]
+                + basis[7][n] * input[7];
         }
         output
     }
@@ -1378,9 +1382,7 @@ impl CoeffPOCS {
         let mut coeff_max = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                .try_into()
-                .unwrap();
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
             for nat in 0..64 {
                 let zi = NATURAL_TO_ZIGZAG[nat];
                 let q = quant_table[nat] as f32;
@@ -1470,9 +1472,7 @@ impl CoeffPOCS {
             //   This prevents boundary smoothing from introducing parasitic HF noise
             //   that degrades interior pixels.
             for bi in 0..num_blocks {
-                let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                    .try_into()
-                    .unwrap();
+                let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
                 for nat in 0..64 {
                     let row = nat / 8;
                     let col = nat % 8;
@@ -1535,8 +1535,14 @@ impl DeblockStrategy for CoeffPOCS {
             let ph = bh * 8;
 
             let plane_data = Self::process_component(
-                &comp.coeffs, bw, bh, qt, self.iterations,
-                self.correction, self.tc_mul, self.freq_cutoff,
+                &comp.coeffs,
+                bw,
+                bh,
+                qt,
+                self.iterations,
+                self.correction,
+                self.tc_mul,
+                self.freq_cutoff,
             );
 
             planes.push(ComponentPlane {
@@ -1606,7 +1612,7 @@ impl Knusperli {
     /// Coefficients are in zigzag order, quant table in natural order.
     /// Returns dequantized natural-order coefficients with Knusperli correction.
     fn process_component(
-        zigzag_coeffs: &[i16],   // flat: num_blocks * 64, zigzag order
+        zigzag_coeffs: &[i16], // flat: num_blocks * 64, zigzag order
         blocks_wide: usize,
         blocks_high: usize,
         quant_table: &[u16; 64],
@@ -1620,8 +1626,7 @@ impl Knusperli {
         let mut blocks_off = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                .try_into().unwrap();
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
             for nat in 0..64 {
                 let zi = NATURAL_TO_ZIGZAG[nat];
                 let q = quant_table[nat] as f32;
@@ -1639,8 +1644,8 @@ impl Knusperli {
         // discontinuity between the right edge of block_i and left edge of block_j.
         for by in 0..blocks_high {
             for bx in 0..(blocks_wide.saturating_sub(1)) {
-                let bi = by * blocks_wide + bx;       // left block
-                let bj = by * blocks_wide + bx + 1;   // right block
+                let bi = by * blocks_wide + bx; // left block
+                let bj = by * blocks_wide + bx + 1; // right block
 
                 for v in 0..4 {
                     // Compute boundary discontinuity delta_v.
@@ -1682,7 +1687,7 @@ impl Knusperli {
         // Same logic but transposed: iterate u=0..4, sum over v=0..7.
         for by in 0..(blocks_high.saturating_sub(1)) {
             for bx in 0..blocks_wide {
-                let bi = by * blocks_wide + bx;       // top block
+                let bi = by * blocks_wide + bx; // top block
                 let bj = (by + 1) * blocks_wide + bx; // bottom block
 
                 for u in 0..4 {
@@ -1721,8 +1726,7 @@ impl Knusperli {
         for bi in 0..num_blocks {
             for k in 0..64 {
                 blocks_mid[bi][k] += blocks_off[bi][k] * half_sqrt2_inv;
-                blocks_mid[bi][k] = blocks_mid[bi][k]
-                    .clamp(blocks_min[bi][k], blocks_max[bi][k]);
+                blocks_mid[bi][k] = blocks_mid[bi][k].clamp(blocks_min[bi][k], blocks_max[bi][k]);
             }
         }
 
@@ -1737,8 +1741,7 @@ impl Knusperli {
                 let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&blocks_mid[bi]);
                 for row in 0..8 {
                     for col in 0..8 {
-                        plane[(by * 8 + row) * pw + bx * 8 + col] =
-                            pixels[row * 8 + col] + 128.0;
+                        plane[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
                     }
                 }
             }
@@ -1774,9 +1777,7 @@ impl DeblockStrategy for Knusperli {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let plane_data = Self::process_component(
-                &comp.coeffs, bw, bh, qt,
-            );
+            let plane_data = Self::process_component(&comp.coeffs, bw, bh, qt);
 
             planes.push(ComponentPlane {
                 data: plane_data,
@@ -1830,8 +1831,7 @@ impl QuantSmoothBilateral {
         let mut block_max = vec![[0.0f32; 64]; num_blocks];
 
         for bi in 0..num_blocks {
-            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64]
-                .try_into().unwrap();
+            let block: [i16; 64] = zigzag_coeffs[bi * 64..(bi + 1) * 64].try_into().unwrap();
             for nat in 0..64 {
                 let zi = NATURAL_TO_ZIGZAG[nat];
                 let q = quant_table[nat] as f32;
@@ -1860,9 +1860,13 @@ impl QuantSmoothBilateral {
                 for nat in 1..64 {
                     let row = nat / 8;
                     let col = nat % 8;
-                    if row + col < 2 { continue; } // skip DC and two lowest AC
+                    if row + col < 2 {
+                        continue;
+                    } // skip DC and two lowest AC
                     let q = quant_table[nat] as f32;
-                    if q < 1.0 { continue; }
+                    if q < 1.0 {
+                        continue;
+                    }
                     let center = snapshot[bi][nat];
 
                     // Bilateral range = 2.0 * quant step for this coefficient
@@ -1874,11 +1878,15 @@ impl QuantSmoothBilateral {
 
                     for dy in -1i32..=1 {
                         for dx in -1i32..=1 {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let nx = bx as i32 + dx;
                             let ny = by as i32 + dy;
-                            if nx < 0 || nx >= blocks_wide as i32
-                                || ny < 0 || ny >= blocks_high as i32
+                            if nx < 0
+                                || nx >= blocks_wide as i32
+                                || ny < 0
+                                || ny >= blocks_high as i32
                             {
                                 continue;
                             }
@@ -1889,7 +1897,9 @@ impl QuantSmoothBilateral {
                             let diff = (center - neighbor).abs();
                             let t = (range - diff).max(0.0);
                             // Distance weight: cardinal=1.0, diagonal=0.707
-                            let dw = if dx == 0 || dy == 0 { 1.0 } else {
+                            let dw = if dx == 0 || dy == 0 {
+                                1.0
+                            } else {
                                 1.0 / std::f32::consts::SQRT_2
                             };
                             let w = t * t * dw;
@@ -1904,9 +1914,7 @@ impl QuantSmoothBilateral {
                         // Blend toward smoothed value
                         let new_val = center + alpha * (smoothed - center);
                         // Clamp to quantization interval
-                        dequant[bi][nat] = new_val.clamp(
-                            block_min[bi][nat], block_max[bi][nat],
-                        );
+                        dequant[bi][nat] = new_val.clamp(block_min[bi][nat], block_max[bi][nat]);
                     }
                 }
             }
@@ -1920,8 +1928,7 @@ impl QuantSmoothBilateral {
             let pixels = zenjpeg::decode::idct::inverse_dct_8x8(&dequant[bi]);
             for row in 0..8 {
                 for col in 0..8 {
-                    output[(by * 8 + row) * pw + bx * 8 + col] =
-                        pixels[row * 8 + col] + 128.0;
+                    output[(by * 8 + row) * pw + bx * 8 + col] = pixels[row * 8 + col] + 128.0;
                 }
             }
         }
@@ -1956,9 +1963,7 @@ impl DeblockStrategy for QuantSmoothBilateral {
             let pw = bw * 8;
             let ph = bh * 8;
 
-            let plane_data = Self::process_component(
-                &comp.coeffs, bw, bh, qt,
-            );
+            let plane_data = Self::process_component(&comp.coeffs, bw, bh, qt);
 
             planes.push(ComponentPlane {
                 data: plane_data,
@@ -1976,6 +1981,60 @@ impl DeblockStrategy for QuantSmoothBilateral {
             image_height: h,
         };
         Some(planes_to_rgb(&cp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strategy: Adaptive (content-aware deblocking)
+// ---------------------------------------------------------------------------
+
+/// Content-aware adaptive deblocking. Classifies JPEG content as photo or
+/// screenshot using luma zero-AC-block fraction, then decides whether to
+/// apply boundary_4tap or skip deblocking entirely.
+///
+/// Decision rules:
+/// - cjpegli input: always apply boundary_4tap (always helps)
+/// - turbo/mozjpeg photo: always apply boundary_4tap
+/// - turbo/mozjpeg screenshot at Q10+: skip (deblocking hurts up to -36.7 SS2)
+/// - turbo/mozjpeg screenshot at Q5: apply boundary_4tap (marginal benefit)
+struct Adaptive;
+
+impl DeblockStrategy for Adaptive {
+    fn name(&self) -> &str {
+        "adaptive"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        use zenjpeg::detect::content;
+
+        // Probe encoder info from headers
+        let probe = detect::probe(jpeg_bytes).ok()?;
+
+        // Classify content from luma coefficients
+        let (content_type, zero_ac_frac) = {
+            use enough::Unstoppable;
+            use zenjpeg::decoder::Decoder;
+            let coeffs = Decoder::new()
+                .decode_coefficients(jpeg_bytes, Unstoppable)
+                .ok()?;
+            let luma = coeffs.components.first()?;
+            let num_blocks = luma.blocks_wide * luma.blocks_high;
+            content::classify_from_luma_coefficients(&luma.coeffs, num_blocks)
+        };
+
+        // Get recommendation
+        let rec = content::recommend_deblock(&probe, content_type, zero_ac_frac);
+
+        match rec.action {
+            content::DeblockAction::Skip => {
+                // Return baseline decode (no deblocking)
+                decode_jpeg_with_icc(jpeg_bytes).ok()
+            }
+            content::DeblockAction::Boundary4Tap => {
+                // Apply boundary_4tap
+                Boundary4Tap.decode(jpeg_bytes)
+            }
+        }
     }
 }
 
@@ -2015,6 +2074,8 @@ fn parse_args() -> Args {
             Box::new(CoeffRefineTV::new(4)),
             // POCS: 2 iterations, 15% correction, full interval clamping
             Box::new(CoeffPOCS::with_params(2, 0.15, 0.25, 0, "pocs")),
+            // Adaptive: content-aware dispatch (skip for screenshots, boundary_4tap for photos)
+            Box::new(Adaptive),
         ],
         verbose: false,
     };
@@ -2545,6 +2606,9 @@ struct Measurement {
     file_size: usize,
     detected_encoder: String,
     detected_quality: String,
+    /// Fraction of luma blocks with all-zero AC coefficients (0.0-1.0).
+    /// High values indicate screenshot/synthetic content.
+    zero_ac_frac: f64,
 }
 
 /// Run measurements for all cached JPEGs with all strategies.
@@ -2628,6 +2692,32 @@ fn run_measurements(
                 }
             }
 
+            // Compute zero-AC-block fraction for luma (content classification signal)
+            let zero_ac_frac = {
+                use enough::Unstoppable;
+                use zenjpeg::decoder::Decoder;
+                Decoder::new()
+                    .decode_coefficients(&jpeg_bytes, Unstoppable)
+                    .ok()
+                    .and_then(|coeffs| {
+                        let luma = coeffs.components.first()?;
+                        let num_blocks = luma.blocks_wide * luma.blocks_high;
+                        if num_blocks == 0 {
+                            return Some(0.0);
+                        }
+                        let mut zero_ac_count = 0u64;
+                        for bi in 0..num_blocks {
+                            let block = luma.block(bi);
+                            // Zigzag positions 1..64 are AC coefficients
+                            if block[1..64].iter().all(|&c| c == 0) {
+                                zero_ac_count += 1;
+                            }
+                        }
+                        Some(zero_ac_count as f64 / num_blocks as f64)
+                    })
+                    .unwrap_or(0.0)
+            };
+
             // Build reference RgbImage from source pixels
             let reference = {
                 use imgref::ImgVec;
@@ -2702,6 +2792,7 @@ fn run_measurements(
                     file_size: jpeg_bytes.len(),
                     detected_encoder: detected_encoder.clone(),
                     detected_quality: detected_quality.clone(),
+                    zero_ac_frac,
                 });
 
                 let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
@@ -2739,14 +2830,14 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
     writeln!(
         f,
         "image,encoder,quality,strategy,ssim2,dssim,butteraugli,bd_smooth,bd_edge,bd_overall,\
-         sharpness,file_size,detected_encoder,detected_quality"
+         sharpness,file_size,detected_encoder,detected_quality,zero_ac_frac"
     )
     .unwrap();
 
     for m in measurements {
         writeln!(
             f,
-            "{},{},{},{},{:.4},{:.6},{:.4},{:.4},{:.4},{:.4},{:.2},{},{},{}",
+            "{},{},{},{},{:.4},{:.6},{:.4},{:.4},{:.4},{:.4},{:.2},{},{},{},{:.4}",
             m.image,
             m.encoder.dir_name(),
             m.quality,
@@ -2761,6 +2852,7 @@ fn write_csv(measurements: &[Measurement], path: &Path) {
             m.file_size,
             m.detected_encoder,
             m.detected_quality,
+            m.zero_ac_frac,
         )
         .unwrap();
     }
@@ -2775,7 +2867,13 @@ fn print_summary(measurements: &[Measurement]) {
         groups
             .entry((m.strategy.clone(), m.encoder, m.quality))
             .or_default()
-            .push([m.ssim2, m.dssim, m.butteraugli, m.boundary_smooth, m.sharpness]);
+            .push([
+                m.ssim2,
+                m.dssim,
+                m.butteraugli,
+                m.boundary_smooth,
+                m.sharpness,
+            ]);
     }
 
     // Get all strategies
@@ -2989,8 +3087,11 @@ fn run_bench(strategies: &[Box<dyn DeblockStrategy>]) {
     // Print shared coeff decode cost
     println!(
         "{:<25} {:>8.1} {:>9.2} {:>10} {:>12}",
-        "(coeff decode+IDCT)", coeff_baseline_ms, coeff_baseline_ms / n_images as f64,
-        "", "(shared base)"
+        "(coeff decode+IDCT)",
+        coeff_baseline_ms,
+        coeff_baseline_ms / n_images as f64,
+        "",
+        "(shared base)"
     );
 
     for strategy in strategies {
@@ -3026,8 +3127,7 @@ fn run_bench(strategies: &[Box<dyn DeblockStrategy>]) {
             if enhancement_ms > 0.0 {
                 println!(
                     "{:<25} {:>8.1} {:>9.2} {:>9.1}x {:>+8.0}ms ({:>+.2}/img)",
-                    name, total, per_image, vs_i16,
-                    enhancement_ms, enhancement_per
+                    name, total, per_image, vs_i16, enhancement_ms, enhancement_per
                 );
             } else {
                 println!(
@@ -3042,7 +3142,10 @@ fn run_bench(strategies: &[Box<dyn DeblockStrategy>]) {
         "\n({} images x {} iters, {} warmup, turbo-420 Q{{20,50,85}})",
         n_images, ITERS, WARMUP
     );
-    eprintln!("All non-baseline strategies share coeff decode + f32 IDCT cost ({:.1}ms).", coeff_baseline_ms);
+    eprintln!(
+        "All non-baseline strategies share coeff decode + f32 IDCT cost ({:.1}ms).",
+        coeff_baseline_ms
+    );
     eprintln!("The last column shows additional cost beyond that shared base.");
 }
 

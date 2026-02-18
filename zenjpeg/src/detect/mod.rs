@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+#[doc(hidden)]
+pub mod content;
 mod fingerprint;
 mod quality;
 mod reencode;
