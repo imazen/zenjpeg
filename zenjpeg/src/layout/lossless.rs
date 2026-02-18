@@ -124,6 +124,105 @@ pub(crate) fn execute_restructure(
     crate::lossless::restructure(jpeg_data, &config, stop)
 }
 
+/// Check if EXIF auto-orient can be applied losslessly without trimming any pixels.
+///
+/// Uses per-transform trimming rules from `coeff_transform.rs`:
+/// - FlipHorizontal: trims if width not MCU-aligned
+/// - FlipVertical: trims if height not MCU-aligned
+/// - Rotate180: trims if either dimension not MCU-aligned
+/// - Rotate90: trims if height not MCU-aligned
+/// - Rotate270: trims if width not MCU-aligned
+/// - Transpose: NEVER trims
+/// - Transverse: trims if either dimension not MCU-aligned
+///
+/// Returns `Some(exif_value)` if orientation should be applied, `None` if it
+/// would require trimming or if orientation is already normal.
+pub(crate) fn safe_auto_orient(info: &crate::decode::JpegInfo) -> Option<u8> {
+    let exif_orient = info
+        .exif
+        .as_ref()
+        .and_then(|e| crate::lossless::parse_exif_orientation(e))?;
+
+    if exif_orient == 1 {
+        return None; // Already normal
+    }
+
+    let transform = LosslessTransform::from_exif_orientation(exif_orient)?;
+
+    // Compute MCU dimensions from subsampling
+    let (mcu_w, mcu_h) = mcu_dimensions(info.subsampling);
+    let w = info.dimensions.width;
+    let h = info.dimensions.height;
+
+    let w_aligned = w % mcu_w == 0;
+    let h_aligned = h % mcu_h == 0;
+
+    // Per-transform trimming rules (mirrors coeff_transform.rs logic)
+    let would_trim = match transform {
+        LosslessTransform::None => false,
+        LosslessTransform::FlipHorizontal => !w_aligned,
+        LosslessTransform::FlipVertical => !h_aligned,
+        LosslessTransform::Rotate180 => !w_aligned || !h_aligned,
+        LosslessTransform::Rotate90 => !h_aligned,
+        LosslessTransform::Rotate270 => !w_aligned,
+        LosslessTransform::Transpose => false, // Never trims
+        LosslessTransform::Transverse => !w_aligned || !h_aligned,
+    };
+
+    if would_trim {
+        None
+    } else {
+        Some(exif_orient)
+    }
+}
+
+/// Get MCU dimensions for a given subsampling mode.
+fn mcu_dimensions(subsampling: crate::types::Subsampling) -> (u32, u32) {
+    use crate::types::Subsampling;
+    match subsampling {
+        Subsampling::S444 => (8, 8),
+        Subsampling::S422 => (16, 8),
+        Subsampling::S420 => (16, 16),
+        Subsampling::S440 => (8, 16),
+    }
+}
+
+/// Reset EXIF orientation tag to 1 (Normal) in a JPEG byte stream.
+///
+/// Scans for the APP1 EXIF segment and modifies the orientation tag in-place.
+/// Returns true if the tag was found and reset.
+pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut Vec<u8>) -> bool {
+    // Find APP1 marker (0xFF 0xE1) with "Exif\0\0" prefix
+    let mut i = 0;
+    while i + 1 < jpeg_data.len() {
+        if jpeg_data[i] == 0xFF && jpeg_data[i + 1] == 0xE1 {
+            // APP1 found — read segment length
+            if i + 3 >= jpeg_data.len() {
+                break;
+            }
+            let seg_len = u16::from_be_bytes([jpeg_data[i + 2], jpeg_data[i + 3]]) as usize;
+            let seg_start = i + 2; // After 0xFF 0xE1
+            let seg_end = seg_start + seg_len;
+
+            if seg_end > jpeg_data.len() {
+                break;
+            }
+
+            // Check for "Exif\0\0" prefix (at offset +2 from segment length)
+            let data_start = i + 4; // After marker + length
+            if data_start + 6 <= jpeg_data.len()
+                && jpeg_data[data_start..data_start + 6] == *b"Exif\0\0"
+            {
+                // Modify the EXIF data in-place (including prefix)
+                crate::lossless::set_exif_orientation(&mut jpeg_data[data_start..seg_end], 1);
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Check if a constraint might cause a resize.
 /// Conservative: returns true unless we can prove it won't resize.
 fn constraint_may_resize(c: &Constraint) -> bool {
