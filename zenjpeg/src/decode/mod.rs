@@ -56,7 +56,7 @@ pub use image::{
 #[allow(unused_imports)]
 pub use config::{
     CropRegion, DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult,
-    OutputTarget,
+    OutputTarget, ParallelStrategy,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -471,6 +471,19 @@ impl DecodeConfig {
     #[must_use]
     pub fn num_threads(mut self, n: usize) -> Self {
         self.num_threads = n;
+        self
+    }
+
+    /// Sets the parallel decode strategy.
+    ///
+    /// Controls how restart segments are mapped to rayon tasks during parallel
+    /// decode. Only affects baseline images with MCU-row-aligned DRI when
+    /// compiled with `--features parallel`.
+    ///
+    /// See [`ParallelStrategy`](config::ParallelStrategy) for available options.
+    #[must_use]
+    pub fn parallel_strategy(mut self, strategy: config::ParallelStrategy) -> Self {
+        self.parallel_strategy = strategy;
         self
     }
 
@@ -1034,6 +1047,10 @@ impl DecodeConfig {
         }
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
         parser.decode(&stop)?;
 
         // Propagate force_f32_idct from config (set by tests for fair comparison)

@@ -59,6 +59,45 @@ pub enum ChromaUpsampling {
     HorizontalFancy,
 }
 
+/// Controls how restart segments are mapped to rayon tasks during parallel decode.
+///
+/// When DRI is MCU-row-aligned, the decoder can parallelize across restart
+/// segments. This enum controls the grouping strategy — how many segments
+/// each rayon task processes sequentially.
+///
+/// # Strategies
+///
+/// | Strategy | Tasks | Cache behavior |
+/// |----------|-------|----------------|
+/// | `PerSegment` | One per RST segment | High parallelism, scattered access |
+/// | `Grouped` | `threads × groups_per_thread` | Contiguous strips per thread |
+/// | `FixedStride(n)` | `ceil(segments / n)` | Explicit control for benchmarking |
+/// | `Auto` | Adaptive | PerSegment for small, Grouped for large |
+///
+/// Only affects baseline images with MCU-row-aligned DRI and `--features parallel`.
+/// Progressive images and sequential decode are unaffected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ParallelStrategy {
+    /// One rayon task per restart segment. Current/legacy behavior.
+    PerSegment,
+
+    /// Group segments so each thread gets contiguous vertical strips.
+    /// `groups_per_thread` controls oversubscription (2 = 2× tasks per thread).
+    Grouped {
+        /// Number of task groups per thread. Higher values give better load
+        /// balancing at the cost of more task overhead. Typical: 1–4.
+        groups_per_thread: usize,
+    },
+
+    /// Explicit segments per group (for benchmarking).
+    FixedStride(usize),
+
+    /// Auto-select: PerSegment for ≤16 segments, Grouped { groups_per_thread: 2 } otherwise.
+    #[default]
+    Auto,
+}
+
 /// Controls how the decoder handles non-fatal errors.
 ///
 /// The default is [`Strictness::Balanced`], which matches mozjpeg/libjpeg-turbo
@@ -678,6 +717,8 @@ pub struct DecodeConfig {
     /// Thread control for parallel decode paths.
     /// 0 = auto (default, uses rayon global pool), 1 = force sequential.
     pub(crate) num_threads: usize,
+    /// How restart segments are mapped to rayon tasks during parallel decode.
+    pub(crate) parallel_strategy: ParallelStrategy,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -697,6 +738,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("decode_transform", &self.decode_transform)
             .field("crop_region", &self.crop_region)
             .field("num_threads", &self.num_threads)
+            .field("parallel_strategy", &self.parallel_strategy)
             .finish()
     }
 }
@@ -720,6 +762,7 @@ impl Default for DecodeConfig {
             force_f32_idct: false,
             crop_region: None,
             num_threads: 0,
+            parallel_strategy: ParallelStrategy::default(),
         }
     }
 }

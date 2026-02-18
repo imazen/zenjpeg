@@ -11,7 +11,7 @@
 #![cfg(all(feature = "parallel", feature = "decoder"))]
 
 use enough::Unstoppable;
-use zenjpeg::decode::{ChromaUpsampling, Decoder};
+use zenjpeg::decode::{ChromaUpsampling, Decoder, ParallelStrategy};
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
@@ -465,6 +465,92 @@ fn test_hashlock_multisize_422_nearest() {
             &format!("4:2:2 NearestNeighbor {w}x{h}"),
         );
     }
+}
+
+/// Debug test: compare PerSegment (stride=1) vs FixedStride(2) output.
+#[test]
+fn test_debug_stride_comparison() {
+    let (w, h) = (512, 512);
+    let pixels = generate_test_pixels(w, h);
+    let mut any_failed = false;
+
+    for upsampling in [ChromaUpsampling::LibjpegCompat, ChromaUpsampling::Triangle] {
+        let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
+
+        // Use 1 thread to eliminate concurrency as a variable
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+
+        let stride1 = pool.install(|| {
+            Decoder::new()
+                .output_format(PixelFormat::Rgb)
+                .chroma_upsampling(upsampling)
+                .parallel_strategy(ParallelStrategy::PerSegment)
+                .decode(&jpeg, Unstoppable)
+                .expect("stride1 decode failed")
+                .into_pixels_u8()
+                .unwrap()
+        });
+
+        let stride2 = pool.install(|| {
+            Decoder::new()
+                .output_format(PixelFormat::Rgb)
+                .chroma_upsampling(upsampling)
+                .parallel_strategy(ParallelStrategy::FixedStride(2))
+                .decode(&jpeg, Unstoppable)
+                .expect("stride2 decode failed")
+                .into_pixels_u8()
+                .unwrap()
+        });
+
+        let rgb_row_bytes = w as usize * 3;
+        let mut diff_rows: Vec<(usize, u8, usize)> = Vec::new();
+        for row in 0..h as usize {
+            let start = row * rgb_row_bytes;
+            let end = start + rgb_row_bytes;
+            let mut max_diff = 0u8;
+            let mut count = 0usize;
+            for i in start..end {
+                let d = stride1[i].abs_diff(stride2[i]);
+                if d > 0 {
+                    count += 1;
+                    max_diff = max_diff.max(d);
+                }
+            }
+            if count > 0 {
+                diff_rows.push((row, max_diff, count));
+            }
+        }
+
+        if !diff_rows.is_empty() {
+            any_failed = true;
+            eprintln!(
+                "\n{:?} 512x512: {} rows differ ({} total diff pixels)",
+                upsampling,
+                diff_rows.len(),
+                diff_rows.iter().map(|r| r.2).sum::<usize>()
+            );
+            for &(row, max_diff, count) in diff_rows.iter().take(30) {
+                let mcu_row = row / 16;
+                let mcu_offset = row % 16;
+                eprintln!(
+                    "  row {row} (MCU row {mcu_row}, offset {mcu_offset}): max_diff={max_diff}, {count} diffs"
+                );
+            }
+            if diff_rows.len() > 30 {
+                eprintln!("  ... and {} more rows", diff_rows.len() - 30);
+            }
+        } else {
+            eprintln!("\n{:?} 512x512: IDENTICAL", upsampling);
+        }
+    }
+
+    assert!(
+        !any_failed,
+        "Some upsampling modes produced different output"
+    );
 }
 
 /// 4:4:4 multi-size parity.
