@@ -6,8 +6,8 @@
 use alloc::vec::Vec;
 
 use crate::foundation::consts::{
-    MARKER_APP0, MARKER_APP2, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
-    MARKER_SOF9, MARKER_SOF10, MARKER_SOI, MARKER_SOS, JPEG_NATURAL_ORDER,
+    JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP2, MARKER_DQT, MARKER_EOI, MARKER_SOF0, MARKER_SOF1,
+    MARKER_SOF10, MARKER_SOF2, MARKER_SOF9, MARKER_SOI, MARKER_SOS,
 };
 
 /// Raw data extracted from JPEG headers.
@@ -181,7 +181,10 @@ fn find_marker(data: &[u8], mut pos: usize) -> Option<usize> {
 
 /// Check if a marker byte is a SOF marker we care about.
 fn is_sof_marker(m: u8) -> bool {
-    matches!(m, MARKER_SOF0 | MARKER_SOF1 | MARKER_SOF2 | MARKER_SOF9 | MARKER_SOF10)
+    matches!(
+        m,
+        MARKER_SOF0 | MARKER_SOF1 | MARKER_SOF2 | MARKER_SOF9 | MARKER_SOF10
+    )
 }
 
 /// Parse DQT marker segment. Can contain multiple tables.

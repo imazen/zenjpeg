@@ -255,10 +255,7 @@ fn grid_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> Calibratio
     }
 }
 
-fn min_delta_for_encoder(
-    encoder: &EncoderFamily,
-    scale: &QualityScale,
-) -> &'static [(f32, f32)] {
+fn min_delta_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> &'static [(f32, f32)] {
     match encoder {
         EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => JPEGLI_MIN_DELTA,
         EncoderFamily::Mozjpeg => MOZ_MIN_DELTA,
@@ -322,12 +319,7 @@ fn bracket_tolerance(tol: f32) -> (usize, usize, f32) {
 }
 
 /// Interpolate source quality within a single tolerance row.
-fn interpolate_source(
-    src_qs: &[f32],
-    zen_qs: &[f32],
-    source_val: f32,
-    is_descending: bool,
-) -> f32 {
+fn interpolate_source(src_qs: &[f32], zen_qs: &[f32], source_val: f32, is_descending: bool) -> f32 {
     if is_descending {
         interpolate_source_descending(src_qs, zen_qs, source_val)
     } else {
@@ -789,9 +781,7 @@ mod tests {
                 best_effort,
             } => {
                 assert!(min_achievable > 0.2, "min_achievable={min_achievable}");
-                assert!(
-                    matches!(best_effort.quality, Quality::ApproxJpegli(q) if q == 97.0)
-                );
+                assert!(matches!(best_effort.quality, Quality::ApproxJpegli(q) if q == 97.0));
                 assert_eq!(best_effort.subsampling, ChromaSubsampling::Quarter);
             }
             _ => panic!("expected ToleranceTooTight, got {err:?}"),

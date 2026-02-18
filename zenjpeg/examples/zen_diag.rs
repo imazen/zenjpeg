@@ -38,8 +38,8 @@ fn main() {
         let mut dec = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(&zen_jpeg), opts);
         let pixels = dec.decode().unwrap();
         let info = dec.info().unwrap();
-        let mid = info.width as usize * (info.height as usize / 2) * 3
-            + (info.width as usize / 2) * 3;
+        let mid =
+            info.width as usize * (info.height as usize / 2) * 3 + (info.width as usize / 2) * 3;
         eprint!("[zune-jpeg] mid pixels: ");
         for &b in &pixels[mid..mid + 30] {
             eprint!("{:3} ", b);
@@ -77,10 +77,7 @@ fn main() {
             }
             eprintln!(" ({}x{})", w, h);
         } else {
-            eprintln!(
-                "[djpeg] FAILED: {}",
-                String::from_utf8_lossy(&djpeg.stderr)
-            );
+            eprintln!("[djpeg] FAILED: {}", String::from_utf8_lossy(&djpeg.stderr));
         }
     }
 
@@ -124,8 +121,7 @@ fn main() {
             use zune_jpeg::zune_core::colorspace::ColorSpace;
             use zune_jpeg::zune_core::options::DecoderOptions;
             let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-            let mut dec =
-                zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(&cpp_jpeg), opts);
+            let mut dec = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(&cpp_jpeg), opts);
             let pixels = dec.decode().unwrap();
             let info = dec.info().unwrap();
             let mid = info.width as usize * (info.height as usize / 2) * 3
