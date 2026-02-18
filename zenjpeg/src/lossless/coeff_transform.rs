@@ -41,6 +41,19 @@ impl LosslessTransform {
         )
     }
 
+    /// Returns the output dimensions after applying this transform.
+    ///
+    /// Equivalent to manually checking [`swaps_dimensions()`](Self::swaps_dimensions)
+    /// and swapping width/height, but less error-prone.
+    #[must_use]
+    pub fn output_dimensions(self, width: u32, height: u32) -> (u32, u32) {
+        if self.swaps_dimensions() {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    }
+
     /// All 8 elements of the D4 dihedral group, in enum order.
     pub const ALL: [Self; 8] = [
         Self::None,

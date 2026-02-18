@@ -33,6 +33,7 @@
 //! ```rust,ignore
 //! use zenjpeg::heuristics::{estimate_encode, estimate_decode};
 //! use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+//! use zenjpeg::decoder::PixelFormat;
 //!
 //! // Estimate encode resources for a 1920x1080 image
 //! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
@@ -41,12 +42,13 @@
 //! println!("Encode time: {:.0}ms (typical)", encode_est.time_ms);
 //!
 //! // Estimate decode resources
-//! let decode_est = estimate_decode(1920, 1080, 3);
+//! let decode_est = estimate_decode(1920, 1080, PixelFormat::Rgb);
 //! println!("Decode peak memory: {:.1} MB", decode_est.peak_memory_bytes as f64 / 1_000_000.0);
 //! println!("Decode time: {:.0}ms (typical)", decode_est.time_ms);
 //! ```
 
 use crate::encoder::EncoderConfig;
+use crate::types::PixelFormat;
 
 // =============================================================================
 // Encode throughput constants (estimated from typical jpegli performance)
@@ -275,20 +277,22 @@ pub fn estimate_encode_ceiling(width: u32, height: u32, config: &EncoderConfig) 
 ///
 /// * `width` - Image width in pixels
 /// * `height` - Image height in pixels
-/// * `output_bpp` - Bytes per pixel of output (3 for RGB, 4 for RGBA)
+/// * `format` - Output pixel format (determines bytes per pixel)
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// use zenjpeg::heuristics::estimate_decode;
+/// use zenjpeg::decoder::PixelFormat;
 ///
-/// let est = estimate_decode(1920, 1080, 3);
+/// let est = estimate_decode(1920, 1080, PixelFormat::Rgb);
 /// println!("Output buffer: {:.1} MB", est.output_bytes as f64 / 1_000_000.0);
 /// println!("Peak memory: {:.1} MB", est.peak_memory_bytes as f64 / 1_000_000.0);
 /// println!("Time: {:.0}ms (typical)", est.time_ms);
 /// ```
 #[must_use]
-pub fn estimate_decode(width: u32, height: u32, output_bpp: u8) -> DecodeEstimate {
+pub fn estimate_decode(width: u32, height: u32, format: PixelFormat) -> DecodeEstimate {
+    let output_bpp = format.bytes_per_pixel() as u8;
     let w = width as usize;
     let h = height as usize;
     let pixels = (width as u64) * (height as u64);
@@ -414,6 +418,7 @@ pub fn estimate_decode_streaming(width: u32, height: u32) -> DecodeEstimate {
 mod tests {
     use super::*;
     use crate::encoder::ChromaSubsampling;
+    use crate::types::PixelFormat;
 
     #[test]
     fn encode_estimate_scales_with_size() {
@@ -428,8 +433,8 @@ mod tests {
 
     #[test]
     fn decode_estimate_scales_with_size() {
-        let small = estimate_decode(256, 256, 3);
-        let large = estimate_decode(512, 512, 3);
+        let small = estimate_decode(256, 256, PixelFormat::Rgb);
+        let large = estimate_decode(512, 512, PixelFormat::Rgb);
 
         // 4x pixels should give roughly 4x memory
         let ratio = large.peak_memory_bytes as f64 / small.peak_memory_bytes as f64;
@@ -443,7 +448,7 @@ mod tests {
         assert!(enc.time_ms_min < enc.time_ms);
         assert!(enc.time_ms < enc.time_ms_max);
 
-        let dec = estimate_decode(1024, 1024, 3);
+        let dec = estimate_decode(1024, 1024, PixelFormat::Rgb);
         assert!(dec.time_ms_min < dec.time_ms);
         assert!(dec.time_ms < dec.time_ms_max);
     }
@@ -455,7 +460,7 @@ mod tests {
         assert!(enc.peak_memory_bytes_min <= enc.peak_memory_bytes);
         assert!(enc.peak_memory_bytes <= enc.peak_memory_bytes_max);
 
-        let dec = estimate_decode(1024, 1024, 3);
+        let dec = estimate_decode(1024, 1024, PixelFormat::Rgb);
         assert!(dec.peak_memory_bytes_min <= dec.peak_memory_bytes);
         assert!(dec.peak_memory_bytes <= dec.peak_memory_bytes_max);
     }
@@ -471,7 +476,7 @@ mod tests {
 
     #[test]
     fn streaming_decode_uses_less_memory() {
-        let full = estimate_decode(1024, 1024, 3);
+        let full = estimate_decode(1024, 1024, PixelFormat::Rgb);
         let streaming = estimate_decode_streaming(1024, 1024);
 
         // Streaming should use less memory (no coefficient storage)

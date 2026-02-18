@@ -135,7 +135,7 @@ pub struct ScanlineReader<'a> {
     #[cfg(feature = "parallel")]
     wave_next_seg: usize,
 
-    // Wave planar decode buffers (lazy-allocated on first read_rows_planar_i16 call)
+    // Wave planar decode buffers (lazy-allocated on first read_rows_ycbcr_native_i16 call)
     #[cfg(feature = "parallel")]
     wave_y: Vec<i16>,
     #[cfg(feature = "parallel")]
@@ -533,7 +533,7 @@ impl<'a> ScanlineReader<'a> {
 
     /// Attach wave-parallel state to a sequential reader.
     ///
-    /// This enables `read_rows_planar_i16` to use wave-parallel decode while
+    /// This enables `read_rows_ycbcr_native_i16` to use wave-parallel decode while
     /// `read_rows_rgb8` and other interleaved outputs continue using the
     /// sequential streaming path.
     #[cfg(feature = "parallel")]
@@ -1936,15 +1936,19 @@ impl<'a> ScanlineReader<'a> {
         Ok(rows_written)
     }
 
-    /// Read rows into separate YCbCr f32 planes.
+    /// Read rows into separate YCbCr f32 planes (upsampled to full resolution).
     ///
-    /// Each plane receives normalized values in range [0, 1] for Y, [-0.5, 0.5] for Cb/Cr.
-    /// Chroma values are upsampled to full resolution for subsampled images.
+    /// Each plane receives normalized values in range \[0, 1\] for Y, \[-0.5, 0.5\] for Cb/Cr.
+    /// Chroma values are upsampled to full resolution for subsampled images
+    /// (all three planes have the same dimensions).
     /// Returns the number of rows actually written.
+    ///
+    /// For native-resolution chroma output (no upsampling), use
+    /// [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16) instead.
     ///
     /// Note: For progressive JPEGs (buffered mode), this converts from RGB back to YCbCr
     /// using BT.601 coefficients, which may introduce small rounding differences.
-    pub fn read_rows_ycbcr_planes(
+    pub fn read_rows_ycbcr_f32(
         &mut self,
         y_plane: &mut [f32],
         cb_plane: &mut [f32],
@@ -2052,13 +2056,16 @@ impl<'a> ScanlineReader<'a> {
         Ok(rows_written)
     }
 
-    /// Read planar i16 Y/Cb/Cr at native resolution (no upsampling, no color conversion).
+    /// Read planar i16 Y/Cb/Cr at native chroma resolution (no upsampling, no color conversion).
     ///
     /// Outputs raw IDCT samples as i16 at the native resolution of each component:
     /// - Y plane: full image resolution
     /// - Cb/Cr planes: native chroma resolution (e.g., half width/height for 4:2:0)
     ///
     /// For grayscale images, `cb` and `cr` are unused (pass empty slices).
+    ///
+    /// For upsampled full-resolution f32 output, use
+    /// [`read_rows_ycbcr_f32()`](Self::read_rows_ycbcr_f32) instead.
     ///
     /// # Arguments
     /// - `y`, `y_stride`: Luma output buffer and stride (in i16 elements)
@@ -2068,7 +2075,7 @@ impl<'a> ScanlineReader<'a> {
     /// # Returns
     /// `(luma_rows, chroma_rows)` — the number of rows written to each plane.
     /// For 4:2:0: luma_rows = 2 * chroma_rows. For 4:4:4: luma_rows = chroma_rows.
-    pub fn read_rows_planar_i16(
+    pub fn read_rows_ycbcr_native_i16(
         &mut self,
         y: &mut [i16],
         y_stride: usize,
@@ -2079,7 +2086,7 @@ impl<'a> ScanlineReader<'a> {
     ) -> Result<(usize, usize)> {
         if self.crop.is_some() {
             return Err(Error::internal(
-                "read_rows_planar_i16 does not support crop",
+                "read_rows_ycbcr_native_i16 does not support crop",
             ));
         }
 
@@ -2092,7 +2099,34 @@ impl<'a> ScanlineReader<'a> {
         self.read_rows_planar_i16_seq(y, y_stride, cb, cr, c_stride, max_mcu_rows)
     }
 
-    /// Sequential implementation of `read_rows_planar_i16`.
+    /// Deprecated alias for [`read_rows_ycbcr_f32()`](Self::read_rows_ycbcr_f32).
+    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_f32")]
+    pub fn read_rows_ycbcr_planes(
+        &mut self,
+        y_plane: &mut [f32],
+        cb_plane: &mut [f32],
+        cr_plane: &mut [f32],
+        stride: usize,
+        max_rows: usize,
+    ) -> Result<usize> {
+        self.read_rows_ycbcr_f32(y_plane, cb_plane, cr_plane, stride, max_rows)
+    }
+
+    /// Deprecated alias for [`read_rows_ycbcr_native_i16()`](Self::read_rows_ycbcr_native_i16).
+    #[deprecated(since = "0.5.0", note = "renamed to read_rows_ycbcr_native_i16")]
+    pub fn read_rows_planar_i16(
+        &mut self,
+        y: &mut [i16],
+        y_stride: usize,
+        cb: &mut [i16],
+        cr: &mut [i16],
+        c_stride: usize,
+        max_mcu_rows: usize,
+    ) -> Result<(usize, usize)> {
+        self.read_rows_ycbcr_native_i16(y, y_stride, cb, cr, c_stride, max_mcu_rows)
+    }
+
+    /// Sequential implementation of `read_rows_ycbcr_native_i16`.
     fn read_rows_planar_i16_seq(
         &mut self,
         y: &mut [i16],
@@ -2893,7 +2927,7 @@ mod tests {
             let remaining = height as usize - total_rows;
             let offset = total_rows * width as usize;
             let rows = reader
-                .read_rows_ycbcr_planes(
+                .read_rows_ycbcr_f32(
                     &mut y_plane[offset..],
                     &mut cb_plane[offset..],
                     &mut cr_plane[offset..],
