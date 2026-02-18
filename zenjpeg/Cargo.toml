@@ -317,3 +317,7 @@ required-features = ["parallel", "decoder"]
 [[example]]
 name = "layout_cli"
 required-features = ["layout"]
+
+[[example]]
+name = "deblock_harness"
+required-features = ["decoder"]

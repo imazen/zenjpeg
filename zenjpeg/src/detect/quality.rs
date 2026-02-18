@@ -5,9 +5,7 @@
 //! - **mozjpeg**: Scale Robidoux base tables, find exact match.
 //! - **jpegli**: Call `quant_vals_to_distance()` to get butteraugli distance.
 
-use crate::encode::tables::robidoux::{
-    quality_to_scale_factor, scale_table, ROBIDOUX_LUMINANCE,
-};
+use crate::encode::tables::robidoux::{quality_to_scale_factor, scale_table, ROBIDOUX_LUMINANCE};
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 use super::fingerprint::{generate_ijg_table, EncoderFamily};
@@ -46,20 +44,15 @@ pub enum Confidence {
 }
 
 /// Estimate quality for the identified encoder family.
-pub(crate) fn estimate_quality(
-    scan: &ScanResult,
-    encoder: &EncoderFamily,
-) -> QualityEstimate {
+pub(crate) fn estimate_quality(scan: &ScanResult, encoder: &EncoderFamily) -> QualityEstimate {
     match encoder {
-        EncoderFamily::LibjpegTurbo
-        | EncoderFamily::ImageMagick
-        | EncoderFamily::IjgFamily => estimate_ijg_quality(scan),
+        EncoderFamily::LibjpegTurbo | EncoderFamily::ImageMagick | EncoderFamily::IjgFamily => {
+            estimate_ijg_quality(scan)
+        }
 
         EncoderFamily::Mozjpeg => estimate_mozjpeg_quality(scan),
 
-        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => {
-            estimate_jpegli_quality(scan)
-        }
+        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => estimate_jpegli_quality(scan),
 
         EncoderFamily::Unknown => estimate_ijg_quality_approximate(scan),
     }
@@ -243,10 +236,7 @@ fn estimate_jpegli_quality(scan: &ScanResult) -> QualityEstimate {
 }
 
 /// Convert natural-order values to a QuantTable (which stores in zigzag order).
-fn natural_to_quant_table(
-    natural: &[u16; 64],
-    precision: u8,
-) -> crate::types::QuantTable {
+fn natural_to_quant_table(natural: &[u16; 64], precision: u8) -> crate::types::QuantTable {
     use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
     let mut zigzag = [0u16; DCT_BLOCK_SIZE];
@@ -319,10 +309,7 @@ mod tests {
         let mut table = generate_ijg_table(75, false);
         table[0] += 1; // Modify DC value
 
-        let scan = mock_scan_two_tables(
-            &table,
-            &generate_ijg_table(75, true),
-        );
+        let scan = mock_scan_two_tables(&table, &generate_ijg_table(75, true));
         let estimate = estimate_ijg_quality(&scan);
 
         assert_eq!(estimate.confidence, Confidence::Approximate);
