@@ -41,8 +41,7 @@ use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
-    DequantBiasStats,
+    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, DequantBiasStats,
 };
 use crate::types::PixelFormat;
 use enough::Stop;
@@ -478,13 +477,61 @@ impl<'a> JpegParser<'a> {
         let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
 
         // IDCT strip 0 into ext_a
-        idct_chroma_into_ext(&mut ext_cb_a, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, 0, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
-        idct_chroma_into_ext(&mut ext_cr_a, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, 0, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+        idct_chroma_into_ext(
+            &mut ext_cb_a,
+            &self.coeffs[1],
+            &self.coeff_counts[1],
+            &comp_infos[1],
+            quant_cb,
+            0,
+            c_strip_width,
+            c_strip_height,
+            chroma_height_total,
+            idct_fn,
+            &mut dequant_i32,
+        );
+        idct_chroma_into_ext(
+            &mut ext_cr_a,
+            &self.coeffs[2],
+            &self.coeff_counts[2],
+            &comp_infos[2],
+            quant_cr,
+            0,
+            c_strip_width,
+            c_strip_height,
+            chroma_height_total,
+            idct_fn,
+            &mut dequant_i32,
+        );
 
         // IDCT strip 1 into ext_b (if exists)
         if mcu_rows > 1 {
-            idct_chroma_into_ext(&mut ext_cb_b, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, 1, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
-            idct_chroma_into_ext(&mut ext_cr_b, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, 1, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+            idct_chroma_into_ext(
+                &mut ext_cb_b,
+                &self.coeffs[1],
+                &self.coeff_counts[1],
+                &comp_infos[1],
+                quant_cb,
+                1,
+                c_strip_width,
+                c_strip_height,
+                chroma_height_total,
+                idct_fn,
+                &mut dequant_i32,
+            );
+            idct_chroma_into_ext(
+                &mut ext_cr_b,
+                &self.coeffs[2],
+                &self.coeff_counts[2],
+                &comp_infos[2],
+                quant_cr,
+                1,
+                c_strip_width,
+                c_strip_height,
+                chroma_height_total,
+                idct_fn,
+                &mut dequant_i32,
+            );
         }
 
         // Set above context for first strip: edge replication (copy first data row)
@@ -646,8 +693,32 @@ impl<'a> JpegParser<'a> {
 
                 // IDCT the strip after next into the now-free ext_b
                 if imcu_row + 2 < mcu_rows {
-                    idct_chroma_into_ext(&mut ext_cb_b, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, imcu_row + 2, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
-                    idct_chroma_into_ext(&mut ext_cr_b, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, imcu_row + 2, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+                    idct_chroma_into_ext(
+                        &mut ext_cb_b,
+                        &self.coeffs[1],
+                        &self.coeff_counts[1],
+                        &comp_infos[1],
+                        quant_cb,
+                        imcu_row + 2,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                        &mut dequant_i32,
+                    );
+                    idct_chroma_into_ext(
+                        &mut ext_cr_b,
+                        &self.coeffs[2],
+                        &self.coeff_counts[2],
+                        &comp_infos[2],
+                        quant_cr,
+                        imcu_row + 2,
+                        c_strip_width,
+                        c_strip_height,
+                        chroma_height_total,
+                        idct_fn,
+                        &mut dequant_i32,
+                    );
                 }
             }
         }
