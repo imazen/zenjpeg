@@ -223,10 +223,41 @@ pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut [u8]) -> bool {
     false
 }
 
-/// Check if the JPEG data contains a DRI (Define Restart Interval) marker
-/// with a non-zero interval. DRI is marker 0xFFDD followed by a 2-byte length
-/// (always 4) and a 2-byte restart interval value.
-pub(crate) fn has_dri(jpeg_data: &[u8]) -> bool {
+/// Check if the JPEG already has a DRI suitable for fast parallel decoding.
+///
+/// Returns true only when ALL of these hold:
+/// 1. A DRI marker (0xFFDD) is present with a non-zero restart interval
+/// 2. The interval is MCU-row-aligned (`ri % mcu_cols == 0`) — matching the
+///    fused parallel decoder gate in `fused_parallel.rs:124`
+/// 3. The MCU rows per restart segment is in [1, 8] — a reasonable range
+///    for parallel work distribution (our restructure uses 4)
+pub(crate) fn has_fast_dri(jpeg_data: &[u8], info: &crate::decode::JpegInfo) -> bool {
+    let ri = match parse_dri(jpeg_data) {
+        Some(ri) if ri > 0 => ri as usize,
+        _ => return false,
+    };
+
+    let (mcu_w, mcu_h) = mcu_dimensions(info.subsampling);
+    let mcu_cols = (info.dimensions.width as usize + mcu_w as usize - 1) / mcu_w as usize;
+    let _ = mcu_h; // Only horizontal MCU count matters for row alignment
+
+    if mcu_cols == 0 {
+        return false;
+    }
+
+    // Must be MCU-row-aligned (same gate as fused_parallel.rs:124)
+    if ri % mcu_cols != 0 {
+        return false;
+    }
+
+    // Check MCU rows per restart segment is in a reasonable range
+    let mcu_rows_per_segment = ri / mcu_cols;
+    (1..=8).contains(&mcu_rows_per_segment)
+}
+
+/// Parse the DRI restart interval value from JPEG bytes.
+/// Returns `Some(interval)` if a DRI marker is found, `None` otherwise.
+fn parse_dri(jpeg_data: &[u8]) -> Option<u16> {
     let mut i = 0;
     while i + 1 < jpeg_data.len() {
         if jpeg_data[i] != 0xFF {
@@ -235,20 +266,19 @@ pub(crate) fn has_dri(jpeg_data: &[u8]) -> bool {
         }
         let marker = jpeg_data[i + 1];
         if marker == 0xDD {
-            // DRI marker — read restart interval
+            // DRI marker: 0xFFDD + 2-byte length (always 4) + 2-byte interval
             if i + 5 < jpeg_data.len() {
-                let interval = u16::from_be_bytes([jpeg_data[i + 4], jpeg_data[i + 5]]);
-                return interval > 0;
+                return Some(u16::from_be_bytes([jpeg_data[i + 4], jpeg_data[i + 5]]));
             }
-            return false;
+            return None;
         }
-        // Skip past SOS (0xDA) — entropy data follows, no more markers to check
+        // Stop at SOS — entropy data follows, no more markers to find
         if marker == 0xDA {
             break;
         }
         i += 1;
     }
-    false
+    None
 }
 
 /// Check if a constraint might cause a resize.
@@ -310,5 +340,30 @@ mod tests {
             10, 10, 100, 100,
         ))];
         assert_eq!(detect_lossless(&commands), None);
+    }
+
+    #[test]
+    fn parse_dri_absent() {
+        // Minimal valid JPEG: SOI + SOS (no DRI)
+        let data = [0xFF, 0xD8, 0xFF, 0xDA];
+        assert_eq!(super::parse_dri(&data), None);
+    }
+
+    #[test]
+    fn parse_dri_present() {
+        // SOI + DRI(interval=16)
+        let data = [
+            0xFF, 0xD8, // SOI
+            0xFF, 0xDD, 0x00, 0x04, 0x00, 0x10, // DRI: length=4, interval=16
+            0xFF, 0xDA, // SOS
+        ];
+        assert_eq!(super::parse_dri(&data), Some(16));
+    }
+
+    #[test]
+    fn parse_dri_zero() {
+        // DRI with interval=0 (disabled)
+        let data = [0xFF, 0xD8, 0xFF, 0xDD, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xDA];
+        assert_eq!(super::parse_dri(&data), Some(0));
     }
 }
