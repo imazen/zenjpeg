@@ -191,7 +191,7 @@ fn mcu_dimensions(subsampling: crate::types::Subsampling) -> (u32, u32) {
 ///
 /// Scans for the APP1 EXIF segment and modifies the orientation tag in-place.
 /// Returns true if the tag was found and reset.
-pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut Vec<u8>) -> bool {
+pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut [u8]) -> bool {
     // Find APP1 marker (0xFF 0xE1) with "Exif\0\0" prefix
     let mut i = 0;
     while i + 1 < jpeg_data.len() {
@@ -217,6 +217,34 @@ pub(crate) fn reset_exif_orientation_in_jpeg(jpeg_data: &mut Vec<u8>) -> bool {
                 crate::lossless::set_exif_orientation(&mut jpeg_data[data_start..seg_end], 1);
                 return true;
             }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Check if the JPEG data contains a DRI (Define Restart Interval) marker
+/// with a non-zero interval. DRI is marker 0xFFDD followed by a 2-byte length
+/// (always 4) and a 2-byte restart interval value.
+pub(crate) fn has_dri(jpeg_data: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 1 < jpeg_data.len() {
+        if jpeg_data[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        let marker = jpeg_data[i + 1];
+        if marker == 0xDD {
+            // DRI marker — read restart interval
+            if i + 5 < jpeg_data.len() {
+                let interval = u16::from_be_bytes([jpeg_data[i + 4], jpeg_data[i + 5]]);
+                return interval > 0;
+            }
+            return false;
+        }
+        // Skip past SOS (0xDA) — entropy data follows, no more markers to check
+        if marker == 0xDA {
+            break;
         }
         i += 1;
     }

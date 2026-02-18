@@ -281,14 +281,23 @@ impl<'a> LayoutRequest<'a> {
         // Try lossless path first
         if let Some(transform) = lossless::detect_lossless(&commands) {
             let primary = if self.optimize_for_decode {
-                // Use restructure: converts progressive→sequential, adds DRI,
-                // and optionally applies the spatial transform in one pass.
-                lossless::execute_restructure(
-                    self.jpeg_data,
-                    transform,
-                    self.config.edge_handling,
-                    stop,
-                )?
+                // Early exit: if already baseline with DRI and no transform needed,
+                // skip the expensive decode+re-encode entirely.
+                if transform == crate::lossless::LosslessTransform::None
+                    && info.mode == crate::types::JpegMode::Baseline
+                    && lossless::has_dri(self.jpeg_data)
+                {
+                    self.jpeg_data.to_vec()
+                } else {
+                    // Use restructure: converts progressive→sequential, adds DRI,
+                    // and optionally applies the spatial transform in one pass.
+                    lossless::execute_restructure(
+                        self.jpeg_data,
+                        transform,
+                        self.config.edge_handling,
+                        stop,
+                    )?
+                }
             } else {
                 lossless::execute_lossless(
                     self.jpeg_data,

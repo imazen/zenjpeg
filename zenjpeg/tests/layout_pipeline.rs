@@ -1554,6 +1554,34 @@ fn decode_fast_does_not_duplicate_explicit_orient() {
 }
 
 #[test]
+fn decode_fast_already_optimized_skips_restructure() {
+    // If the input is already baseline with DRI and no transform needed,
+    // optimize_for_decode should return the input unchanged (skip expensive restructure).
+    let jpeg = make_test_jpeg_progressive(64, 64);
+
+    // First pass: convert progressive → baseline+DRI
+    let first = LayoutConfig::new(85.0)
+        .request(&jpeg)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+    assert!(is_baseline_jpeg(&first.data));
+    assert!(has_dri_marker(&first.data));
+
+    // Second pass: already baseline+DRI, no transform → should return byte-identical
+    let second = LayoutConfig::new(85.0)
+        .request(&first.data)
+        .optimize_for_decode()
+        .execute(&Unstoppable)
+        .unwrap();
+    assert!(second.lossless);
+    assert_eq!(
+        second.data, first.data,
+        "already-optimized input should be returned unchanged"
+    );
+}
+
+#[test]
 fn subsampling_field_populated() {
     // Verify the new subsampling field in JpegInfo works
     let jpeg_420 = make_test_jpeg(64, 64);
