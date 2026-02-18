@@ -119,7 +119,7 @@ impl<'a> JpegParser<'a> {
                 let used_fused = false;
 
                 if !used_fused {
-                    if self.prefer_streaming
+                    if self.decode_mode == super::DecodeMode::Auto
                         && self.can_use_streaming()
                         && self.streaming_rgb.is_none()
                     {
