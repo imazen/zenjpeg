@@ -14,13 +14,16 @@
 //! - `to_pixels_f32`: f32 output normalized to [0.0, 1.0]
 //! - `to_ycbcr_planes_f32`: Raw YCbCr planes for custom processing
 
+#[path = "output_helpers.rs"]
+mod output_helpers;
+
 #[cfg(feature = "parallel")]
 #[path = "output_parallel.rs"]
 mod output_parallel;
 
 use super::super::idct::inverse_dct_8x8;
 use super::super::idct_int::{
-    idct_int_auto, idct_int_dc_only, idct_int_libjpeg, idct_int_tiered, idct_int_tiered_libjpeg,
+    idct_int_auto, idct_int_libjpeg, idct_int_tiered, idct_int_tiered_libjpeg,
 };
 use super::super::upsample::{upsample_fancy, upsample_libjpeg_f32, upsample_nearest_f32};
 use crate::color::{
@@ -39,13 +42,14 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
-    dequantize_unzigzag_i32_into_partial, DequantBiasStats,
+    DequantBiasStats,
 };
 use crate::types::PixelFormat;
 use enough::Stop;
 
 use super::super::upsample::MAX_UPSAMPLE_SCRATCH;
 use super::{CompInfo, JpegParser};
+use output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 
 /// Returns true for formats that decode via the RGB u8 fast paths
 /// (i16 IDCT → direct u8 output), then optionally reformat.
@@ -250,67 +254,30 @@ impl<'a> JpegParser<'a> {
             // No need to clear strips - we write all pixels we'll read
 
             // IDCT all blocks in this MCU row for all 3 components
-            for comp_idx in 0..3 {
-                let info = &comp_infos[comp_idx];
-                let quant = self.quant_tables[info.quant_idx]
+            let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
+                super::super::ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
+                _ => idct_int_tiered,
+            };
+
+            for (comp_idx, strip) in [&mut y_strip, &mut cb_strip, &mut cr_strip]
+                .into_iter()
+                .enumerate()
+            {
+                let quant = self.quant_tables[comp_infos[comp_idx].quant_idx]
                     .as_ref()
                     .ok_or(Error::internal("missing quantization table"))?;
 
-                let strip = match comp_idx {
-                    0 => &mut y_strip,
-                    1 => &mut cb_strip,
-                    _ => &mut cr_strip,
-                };
-
-                for iy in 0..info.v_samp {
-                    let by = imcu_row * info.v_samp + iy;
-                    if by >= info.comp_blocks_v {
-                        continue;
-                    }
-
-                    let strip_row = iy * DCT_SIZE; // Row within the strip
-
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[comp_idx].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[comp_idx][block_idx];
-                        let coeff_count = self.coeff_counts[comp_idx][block_idx];
-                        let base_px = bx * DCT_SIZE;
-                        let dst_offset = strip_row * strip_width + base_px;
-
-                        if coeff_count <= 1 {
-                            let dc = coeffs[0] as i32 * quant[0] as i32;
-                            idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
-                        } else {
-                            dequantize_unzigzag_i32_into_partial(
-                                coeffs,
-                                quant,
-                                &mut dequant_i32,
-                                coeff_count,
-                            );
-                            match chroma_upsampling {
-                                super::super::ChromaUpsampling::LibjpegCompat => {
-                                    idct_int_tiered_libjpeg(
-                                        &mut dequant_i32,
-                                        &mut strip[dst_offset..],
-                                        strip_width,
-                                        coeff_count,
-                                    );
-                                }
-                                _ => {
-                                    idct_int_tiered(
-                                        &mut dequant_i32,
-                                        &mut strip[dst_offset..],
-                                        strip_width,
-                                        coeff_count,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+                idct_comp_mcu_row(
+                    &self.coeffs[comp_idx],
+                    &self.coeff_counts[comp_idx],
+                    &comp_infos[comp_idx],
+                    quant,
+                    imcu_row,
+                    strip,
+                    strip_width,
+                    idct_fn,
+                    &mut dequant_i32,
+                );
             }
 
             // Color convert this MCU row's strips directly to RGB output
@@ -507,89 +474,17 @@ impl<'a> JpegParser<'a> {
         // Total valid chroma rows for the whole image
         let chroma_height_total = (height + v_ratio - 1) / v_ratio;
 
-        // Helper: IDCT one chroma strip into rows 1..c_strip_height+1 of ext buffer.
-        // Then replicate the last valid chroma row to fill any remaining data rows
-        // (needed when the image ends before a full MCU row of chroma).
         // Reusable dequant buffer — avoids per-block [0i32; 64] zeroing
         let mut dequant_i32 = [0i32; DCT_BLOCK_SIZE];
 
-        let idct_chroma_strip =
-            |ext: &mut [i16],
-             comp_idx: usize,
-             imcu_row: usize,
-             quant: &[u16; 64],
-             dequant_buf: &mut [i32; DCT_BLOCK_SIZE]| {
-                let info = &comp_infos[comp_idx];
-                let data_offset = c_strip_width; // skip context row 0
-                let comp_coeffs = &self.coeffs[comp_idx];
-                let comp_counts = &self.coeff_counts[comp_idx];
-
-                for iy in 0..info.v_samp {
-                    let by = imcu_row * info.v_samp + iy;
-                    if by >= info.comp_blocks_v {
-                        continue;
-                    }
-                    let strip_row = iy * DCT_SIZE;
-
-                    // Pre-slice the row of blocks to eliminate per-block bounds checks
-                    let row_start = by * info.comp_blocks_h;
-                    let row_end = (row_start + info.comp_blocks_h).min(comp_coeffs.len());
-                    let row_coeffs = &comp_coeffs[row_start..row_end];
-                    let row_counts = &comp_counts[row_start..row_end];
-
-                    for (bx, (coeffs, &coeff_count)) in
-                        row_coeffs.iter().zip(row_counts).enumerate()
-                    {
-                        let base_px = bx * DCT_SIZE;
-                        let dst_offset = data_offset + strip_row * c_strip_width + base_px;
-
-                        if coeff_count <= 1 {
-                            let dc = coeffs[0] as i32 * quant[0] as i32;
-                            idct_int_dc_only(dc, &mut ext[dst_offset..], c_strip_width);
-                        } else {
-                            dequantize_unzigzag_i32_into_partial(
-                                coeffs,
-                                quant,
-                                dequant_buf,
-                                coeff_count,
-                            );
-                            idct_fn(
-                                dequant_buf,
-                                &mut ext[dst_offset..],
-                                c_strip_width,
-                                coeff_count,
-                            );
-                        }
-                    }
-                }
-
-                // Replicate last valid chroma row to fill padding rows.
-                // Valid chroma rows for this MCU row:
-                let c_row_start = imcu_row * c_strip_height;
-                let c_valid = chroma_height_total
-                    .saturating_sub(c_row_start)
-                    .min(c_strip_height);
-                if c_valid > 0 && c_valid < c_strip_height {
-                    let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
-                    for pad_row in c_valid..c_strip_height {
-                        let pad_start = data_offset + pad_row * c_strip_width;
-                        // copy_within from the last valid row
-                        ext.copy_within(
-                            last_valid_start..last_valid_start + c_strip_width,
-                            pad_start,
-                        );
-                    }
-                }
-            };
-
         // IDCT strip 0 into ext_a
-        idct_chroma_strip(&mut ext_cb_a, 1, 0, quant_cb, &mut dequant_i32);
-        idct_chroma_strip(&mut ext_cr_a, 2, 0, quant_cr, &mut dequant_i32);
+        idct_chroma_into_ext(&mut ext_cb_a, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, 0, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+        idct_chroma_into_ext(&mut ext_cr_a, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, 0, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
 
         // IDCT strip 1 into ext_b (if exists)
         if mcu_rows > 1 {
-            idct_chroma_strip(&mut ext_cb_b, 1, 1, quant_cb, &mut dequant_i32);
-            idct_chroma_strip(&mut ext_cr_b, 2, 1, quant_cr, &mut dequant_i32);
+            idct_chroma_into_ext(&mut ext_cb_b, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, 1, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+            idct_chroma_into_ext(&mut ext_cr_b, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, 1, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
         }
 
         // Set above context for first strip: edge replication (copy first data row)
@@ -631,50 +526,17 @@ impl<'a> JpegParser<'a> {
             }
 
             // IDCT Y blocks (full resolution)
-            {
-                let info = &comp_infos[0];
-                let y_coeffs = &self.coeffs[0];
-                let y_counts = &self.coeff_counts[0];
-
-                for iy in 0..info.v_samp {
-                    let by = imcu_row * info.v_samp + iy;
-                    if by >= info.comp_blocks_v {
-                        continue;
-                    }
-                    let strip_row = iy * DCT_SIZE;
-
-                    // Pre-slice the row of blocks to eliminate per-block bounds checks
-                    let row_start = by * info.comp_blocks_h;
-                    let row_end = (row_start + info.comp_blocks_h).min(y_coeffs.len());
-                    let row_coeffs = &y_coeffs[row_start..row_end];
-                    let row_counts = &y_counts[row_start..row_end];
-
-                    for (bx, (coeffs, &coeff_count)) in
-                        row_coeffs.iter().zip(row_counts).enumerate()
-                    {
-                        let base_px = bx * DCT_SIZE;
-                        let dst_offset = strip_row * y_strip_width + base_px;
-
-                        if coeff_count <= 1 {
-                            let dc = coeffs[0] as i32 * quant_y[0] as i32;
-                            idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
-                        } else {
-                            dequantize_unzigzag_i32_into_partial(
-                                coeffs,
-                                quant_y,
-                                &mut dequant_i32,
-                                coeff_count,
-                            );
-                            idct_fn(
-                                &mut dequant_i32,
-                                &mut y_strip[dst_offset..],
-                                y_strip_width,
-                                coeff_count,
-                            );
-                        }
-                    }
-                }
-            }
+            idct_comp_mcu_row(
+                &self.coeffs[0],
+                &self.coeff_counts[0],
+                &comp_infos[0],
+                quant_y,
+                imcu_row,
+                &mut y_strip,
+                y_strip_width,
+                idct_fn,
+                &mut dequant_i32,
+            );
 
             let y_rows_this_mcu = y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
             let y_start = imcu_row * mcu_height;
@@ -784,8 +646,8 @@ impl<'a> JpegParser<'a> {
 
                 // IDCT the strip after next into the now-free ext_b
                 if imcu_row + 2 < mcu_rows {
-                    idct_chroma_strip(&mut ext_cb_b, 1, imcu_row + 2, quant_cb, &mut dequant_i32);
-                    idct_chroma_strip(&mut ext_cr_b, 2, imcu_row + 2, quant_cr, &mut dequant_i32);
+                    idct_chroma_into_ext(&mut ext_cb_b, &self.coeffs[1], &self.coeff_counts[1], &comp_infos[1], quant_cb, imcu_row + 2, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
+                    idct_chroma_into_ext(&mut ext_cr_b, &self.coeffs[2], &self.coeff_counts[2], &comp_infos[2], quant_cr, imcu_row + 2, c_strip_width, c_strip_height, chroma_height_total, idct_fn, &mut dequant_i32);
                 }
             }
         }
@@ -970,8 +832,19 @@ impl<'a> JpegParser<'a> {
 
     /// Convert decoded coefficients to pixels in the requested format.
     ///
-    /// This is the main entry point for pixel output. It automatically selects
-    /// the fastest path based on the image characteristics.
+    /// This is the main entry point for pixel output. It selects the fastest
+    /// available path based on the image characteristics:
+    ///
+    /// 1. **Streaming result** (`streaming_rgb`): Already decoded during `parse_scan()`
+    ///    in a single entropy→IDCT→color pass. Zero-copy for RGB, reformat for others.
+    /// 2. **Fused parallel result** (`fused_result`): Entropy+IDCT+color per restart
+    ///    segment via rayon. Activated by `DecodeMode::Auto` + DRI + `parallel` feature.
+    /// 3. **i16 fast path** (`to_pixels_fast_i16`/`_subsampled`): Integer IDCT from
+    ///    buffered coefficients. Used for non-XYB, non-bias RGB output.
+    /// 4. **f32 generic path**: Full f32 pipeline with dequant bias, XYB support.
+    ///
+    /// Paths 1-2 produce results during entropy decode (no separate output pass).
+    /// Wave-parallel scanline decode is handled by `ScanlineReader`, not here.
     ///
     /// The `stop` parameter allows cancellation of long-running operations.
     #[allow(clippy::wrong_self_convention)] // Takes &mut self to take() internal buffer

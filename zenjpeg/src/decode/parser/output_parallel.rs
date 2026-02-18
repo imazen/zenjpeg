@@ -14,8 +14,7 @@
 //! - `to_pixels_fast_i16_subsampled_parallel`: 4:2:0/4:2:2/4:4:0 non-XYB images
 
 use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8};
-use crate::decode::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
-use crate::decode::parser::CompInfo;
+use crate::decode::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use crate::decode::upsample::{
     upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
     upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
@@ -25,10 +24,10 @@ use crate::decode::ChromaUpsampling;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
-use crate::quant::dequantize_unzigzag_i32_into_partial;
 use rayon::prelude::*;
 
 use crate::decode::parser::JpegParser;
+use super::output_helpers::{idct_block_into, idct_chroma_into_ext, idct_comp_mcu_row};
 
 /// Minimum MCU rows to justify parallel overhead.
 const MIN_MCU_ROWS_PARALLEL: usize = 8;
@@ -37,135 +36,6 @@ const MIN_MCU_ROWS_PARALLEL: usize = 8;
 /// 2M disables parallelism at 1024×1024 (1M) where rayon overhead exceeds
 /// the benefit, while keeping it for 2048×2048 (4.2M) and above.
 const MIN_PIXELS_PARALLEL: usize = 2_000_000;
-
-/// IDCT one block into a strip buffer at the given offset.
-#[inline]
-fn idct_block_into(
-    coeffs: &[i16; DCT_BLOCK_SIZE],
-    coeff_count: u8,
-    quant: &[u16; DCT_BLOCK_SIZE],
-    strip: &mut [i16],
-    dst_offset: usize,
-    strip_width: usize,
-    idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
-    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
-) {
-    if coeff_count <= 1 {
-        let dc = coeffs[0] as i32 * quant[0] as i32;
-        idct_int_dc_only(dc, &mut strip[dst_offset..], strip_width);
-    } else {
-        dequantize_unzigzag_i32_into_partial(coeffs, quant, dequant_buf, coeff_count);
-        idct_fn(
-            dequant_buf,
-            &mut strip[dst_offset..],
-            strip_width,
-            coeff_count,
-        );
-    }
-}
-
-/// IDCT all blocks for one component in one MCU row into a strip buffer.
-fn idct_comp_mcu_row(
-    coeffs: &[[i16; DCT_BLOCK_SIZE]],
-    coeff_counts: &[u8],
-    info: &CompInfo,
-    quant: &[u16; DCT_BLOCK_SIZE],
-    imcu_row: usize,
-    strip: &mut [i16],
-    strip_width: usize,
-    idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
-    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
-) {
-    for iy in 0..info.v_samp {
-        let by = imcu_row * info.v_samp + iy;
-        if by >= info.comp_blocks_v {
-            continue;
-        }
-        let strip_row = iy * DCT_SIZE;
-
-        for bx in 0..info.comp_blocks_h {
-            let block_idx = by * info.comp_blocks_h + bx;
-            if block_idx >= coeffs.len() {
-                continue;
-            }
-            let base_px = bx * DCT_SIZE;
-            let dst_offset = strip_row * strip_width + base_px;
-
-            idct_block_into(
-                &coeffs[block_idx],
-                coeff_counts[block_idx],
-                quant,
-                strip,
-                dst_offset,
-                strip_width,
-                idct_fn,
-                dequant_buf,
-            );
-        }
-    }
-}
-
-/// IDCT chroma blocks for one MCU row into extended buffer rows 1..c_strip_height+1.
-/// Then replicate the last valid row to fill any padding (partial MCU at image bottom).
-fn idct_chroma_into_ext(
-    ext: &mut [i16],
-    coeffs: &[[i16; DCT_BLOCK_SIZE]],
-    coeff_counts: &[u8],
-    info: &CompInfo,
-    quant: &[u16; DCT_BLOCK_SIZE],
-    imcu_row: usize,
-    c_strip_width: usize,
-    c_strip_height: usize,
-    chroma_height_total: usize,
-    idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
-    dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
-) {
-    let data_offset = c_strip_width; // skip context row 0
-
-    for iy in 0..info.v_samp {
-        let by = imcu_row * info.v_samp + iy;
-        if by >= info.comp_blocks_v {
-            continue;
-        }
-        let strip_row = iy * DCT_SIZE;
-
-        for bx in 0..info.comp_blocks_h {
-            let block_idx = by * info.comp_blocks_h + bx;
-            if block_idx >= coeffs.len() {
-                continue;
-            }
-            let base_px = bx * DCT_SIZE;
-            let dst_offset = data_offset + strip_row * c_strip_width + base_px;
-
-            idct_block_into(
-                &coeffs[block_idx],
-                coeff_counts[block_idx],
-                quant,
-                ext,
-                dst_offset,
-                c_strip_width,
-                idct_fn,
-                dequant_buf,
-            );
-        }
-    }
-
-    // Replicate last valid chroma row to fill padding rows
-    let c_row_start = imcu_row * c_strip_height;
-    let c_valid = chroma_height_total
-        .saturating_sub(c_row_start)
-        .min(c_strip_height);
-    if c_valid > 0 && c_valid < c_strip_height {
-        let last_valid_start = data_offset + (c_valid - 1) * c_strip_width;
-        for pad_row in c_valid..c_strip_height {
-            let pad_start = data_offset + pad_row * c_strip_width;
-            ext.copy_within(
-                last_valid_start..last_valid_start + c_strip_width,
-                pad_start,
-            );
-        }
-    }
-}
 
 /// Parallel output methods for JpegParser.
 impl<'a> JpegParser<'a> {
