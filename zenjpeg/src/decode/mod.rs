@@ -872,7 +872,7 @@ impl DecodeConfig {
         use crate::lossless::LosslessTransform;
 
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
-        parser.prefer_streaming = false; // Need coefficient storage
+        parser.decode_mode = parser::DecodeMode::Coefficient; // Need coefficient storage
         parser.chroma_upsampling = self.chroma_upsampling;
         parser.decode(&Unstoppable)?;
 
@@ -1029,7 +1029,7 @@ impl DecodeConfig {
                         | PixelFormat::Bgrx
                 );
             if needs_coefficients {
-                parser.prefer_streaming = false;
+                parser.decode_mode = parser::DecodeMode::Coefficient;
             }
         }
         parser.chroma_upsampling = self.chroma_upsampling;
@@ -1469,7 +1469,7 @@ impl DecodeConfig {
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         // Disable streaming - we need coefficients stored
-        parser.prefer_streaming = false;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
 
         // Extract coefficients from parser
@@ -1491,7 +1491,7 @@ impl DecodeConfig {
             Some(&self.preserve),
             self.strictness,
         )?;
-        parser.prefer_streaming = false;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
 
         let extras = parser.take_extras();
@@ -1544,7 +1544,7 @@ impl DecodeConfig {
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         // Disable streaming - f32 YCbCr decode needs coefficients
-        parser.prefer_streaming = false;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
 
         let info = parser.info();
