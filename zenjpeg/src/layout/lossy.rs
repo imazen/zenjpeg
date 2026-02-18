@@ -51,7 +51,15 @@ pub(crate) fn execute_lossy(
             stop,
         )
     } else {
-        decode_reencode(jpeg_data, info, config, src_w, src_h, reset_orientation, stop)
+        decode_reencode(
+            jpeg_data,
+            info,
+            config,
+            src_w,
+            src_h,
+            reset_orientation,
+            stop,
+        )
     }
 }
 
