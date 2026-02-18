@@ -474,6 +474,29 @@ TWICE with different feature flags. Both "baseline" and "baseline-parallel" grou
 use identical `Decoder::new()` code — fused parallel activates automatically when
 compiled with `--features parallel` and DRI is present.
 
+### Wave-Parallel Scanline Decode (2026-02-16, `--features parallel`)
+
+Wave-parallel decode: decode `wave_size` restart segments at a time via rayon into
+a reusable buffer, serve rows on demand, recycle. Activated automatically by
+`scanline_reader()` when compiled with `--features parallel`, DRI is present, and
+box filter is used (`fancy_upsampling(false)`). Uses a 6MB memory budget for the
+wave buffer (vs 48MB full-image for full-buffer parallel at 4096).
+
+**Wall-clock baseline 4:2:0 scanline paths (commit 3258bc2, Ryzen 9 7950X WSL2):**
+
+| Size | seq scanline box | wave parallel | full-buf par | wave speedup | wave mem | full-buf mem |
+|------|-----------------|--------------|-------------|-------------|---------|-------------|
+| 512 | 1.13ms | 616µs | 527µs | **1.8x** | 768KB | 768KB |
+| 1024 | 4.52ms | 1.50ms | 1.34ms | **3.0x** | 3MB | 3MB |
+| 2048 | 17.7ms | 4.48ms | 2.41ms | **3.9x** | 6MB | 12MB |
+| 4096 | 72.6ms | 19.7ms | 6.52ms | **3.7x** | 6MB | 48MB |
+
+wave speedup = seq scanline box / wave parallel. Wave buffer capped at 6MB; at
+4096 this is 8 segments (vs 64 total), giving 8x memory savings vs full-buffer.
+At 512/1024 all segments fit in 6MB so no cap applies. Wave is 1.1-3.0x slower
+than full-buffer parallel due to wave synchronization overhead and smaller
+per-wave parallelism, but uses streaming API (rows on demand) with bounded memory.
+
 ### Dequantization Bias (2026-02-06)
 
 `Decoder::new().dequant_bias(true)` enables Laplacian dequantization biases

@@ -46,6 +46,17 @@ pub enum ChromaUpsampling {
     ///
     /// Use this mode when you need pixel-exact match with `djpeg` or mozjpeg output.
     LibjpegCompat,
+
+    /// Horizontal-only triangle filter with vertical box (nearest-neighbor).
+    ///
+    /// Applies 3:1 bilinear interpolation horizontally, but duplicates rows
+    /// vertically. This eliminates vertical context dependencies, making
+    /// parallel decode trivially independent per MCU row (no boundary fixup),
+    /// while still smoothing horizontal chroma transitions.
+    ///
+    /// Quality is between `NearestNeighbor` and `Triangle` — horizontal edges
+    /// are smoothed but vertical edges are stairstepped.
+    HorizontalFancy,
 }
 
 /// Controls how the decoder handles non-fatal errors.
@@ -1002,6 +1013,8 @@ pub struct JpegInfo {
     pub num_components: u8,
     /// Encoding mode
     pub mode: crate::types::JpegMode,
+    /// Chroma subsampling mode
+    pub subsampling: crate::types::Subsampling,
     /// Whether an ICC profile is embedded
     pub has_icc_profile: bool,
     /// Whether the ICC profile is an XYB profile

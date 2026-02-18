@@ -312,9 +312,27 @@ pub mod test_utils;
 #[cfg(feature = "decoder")]
 pub mod lossless;
 
+// Layout pipeline: lossless transforms + lossy decode→resize→encode
+#[cfg(feature = "layout")]
+pub mod layout;
+
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
 // zencodec-types trait implementations
+#[cfg(feature = "zencodec")]
 mod zencodec;
-pub use zencodec::{JpegDecodeJob, JpegDecoding, JpegEncodeJob, JpegEncoding};
+#[cfg(feature = "zencodec")]
+pub use zencodec::{
+    JpegDecodeJob,
+    JpegDecoder,
+    JpegDecoderConfig,
+    // Backwards compat aliases
+    JpegDecoding,
+    JpegEncodeJob,
+    JpegEncoder,
+    JpegEncoderConfig,
+    JpegEncoding,
+    JpegFrameDecoder,
+    JpegFrameEncoder,
+};

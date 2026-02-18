@@ -99,6 +99,10 @@ img-parts = "0.4"
 # Our ultrahdr crate (for integration testing)
 ultrahdr-rs = { path = "/home/lilith/work/ultrahdr/ultrahdr" }
 
+# Layout + resize pipeline
+zenlayout = { path = "../zenlayout" }
+zenresize = { path = "../zenresize" }
+
 [profile.release]
 debug = true
 

@@ -1765,6 +1765,88 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
     }
 }
 
+/// Fused horizontal-fancy + vertical-box 4:2:0 upsample + YCbCr→RGB.
+///
+/// Vertical: box (duplicate rows). Horizontal: triangle (3:1 bilinear).
+/// This is the hybrid "h-fancy" mode — no vertical context needed, so
+/// each MCU row is independent (trivially parallelizable), but horizontal
+/// chroma transitions are smoothed instead of stairstepped.
+///
+/// Takes half-width chroma rows (already vertically duplicated by caller).
+pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
+    y_row: &[i16],
+    cb_row: &[i16],
+    cr_row: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+) {
+    debug_assert!(y_row.len() >= width);
+    debug_assert!(cb_row.len() >= (width + 1) / 2);
+    debug_assert!(cr_row.len() >= (width + 1) / 2);
+    debug_assert!(rgb.len() >= width * 3);
+
+    let chroma_width = (width + 1) / 2;
+
+    for cx in 0..chroma_width {
+        let curr_cb = i32::from(cb_row[cx]);
+        let curr_cr = i32::from(cr_row[cx]);
+
+        // Left output pixel: (3*curr + left_neighbor + 2) >> 2
+        let left_cb = if cx > 0 {
+            i32::from(cb_row[cx - 1])
+        } else {
+            curr_cb
+        };
+        let left_cr = if cx > 0 {
+            i32::from(cr_row[cx - 1])
+        } else {
+            curr_cr
+        };
+        let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
+        let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
+
+        let px0 = cx * 2;
+        if px0 < width {
+            let y_val = i32::from(y_row[px0]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
+            let idx = px0 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+
+        // Right output pixel: (3*curr + right_neighbor + 2) >> 2
+        let right_cb = if cx + 1 < chroma_width {
+            i32::from(cb_row[cx + 1])
+        } else {
+            curr_cb
+        };
+        let right_cr = if cx + 1 < chroma_width {
+            i32::from(cr_row[cx + 1])
+        } else {
+            curr_cr
+        };
+        let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
+        let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
+
+        let px1 = cx * 2 + 1;
+        if px1 < width {
+            let y_val = i32::from(y_row[px1]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
+            let idx = px1 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+    }
+}
+
 /// AVX2 fused box-filter 4:2:0 upsample + YCbCr→RGB.
 /// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
