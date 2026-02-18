@@ -49,6 +49,7 @@ pub struct LayoutConfig {
     quality: f32,
     subsampling: ChromaSubsampling,
     progressive: bool,
+    auto_optimize: bool,
     filter: zenresize::Filter,
     edge_handling: EdgeHandling,
     pub(crate) fancy_upsampling: bool,
@@ -64,6 +65,7 @@ impl LayoutConfig {
             quality: quality.into(),
             subsampling: ChromaSubsampling::Quarter,
             progressive: true,
+            auto_optimize: true,
             filter: zenresize::Filter::default(),
             edge_handling: EdgeHandling::TrimPartialBlocks,
             fancy_upsampling: true,
@@ -101,6 +103,15 @@ impl LayoutConfig {
         self
     }
 
+    /// Enable hybrid trellis auto-optimization (default: true).
+    ///
+    /// When enabled, uses `auto_optimize()` on the encoder config for
+    /// better rate-distortion tradeoffs at the cost of encode speed.
+    pub fn with_auto_optimize(mut self, enable: bool) -> Self {
+        self.auto_optimize = enable;
+        self
+    }
+
     /// Create a layout request for the given JPEG data.
     pub fn request<'a>(&'a self, jpeg_data: &'a [u8]) -> LayoutRequest<'a> {
         LayoutRequest {
@@ -112,7 +123,9 @@ impl LayoutConfig {
 
     /// Build an `EncoderConfig` from layout settings.
     pub(crate) fn build_encoder_config(&self) -> EncoderConfig {
-        EncoderConfig::ycbcr(self.quality, self.subsampling).progressive(self.progressive)
+        EncoderConfig::ycbcr(self.quality, self.subsampling)
+            .progressive(self.progressive)
+            .auto_optimize(self.auto_optimize)
     }
 }
 
@@ -171,22 +184,31 @@ impl<'a> LayoutRequest<'a> {
 
     /// Fit within the given dimensions (may upscale).
     pub fn fit(mut self, w: u32, h: u32) -> Self {
-        self.commands
-            .push(Command::Constrain(Constraint::new(ConstraintMode::Fit, w, h)));
+        self.commands.push(Command::Constrain(Constraint::new(
+            ConstraintMode::Fit,
+            w,
+            h,
+        )));
         self
     }
 
     /// Fit within the given dimensions (never upscale).
     pub fn within(mut self, w: u32, h: u32) -> Self {
-        self.commands
-            .push(Command::Constrain(Constraint::new(ConstraintMode::Within, w, h)));
+        self.commands.push(Command::Constrain(Constraint::new(
+            ConstraintMode::Within,
+            w,
+            h,
+        )));
         self
     }
 
     /// Fill and crop to exact dimensions (may upscale).
     pub fn fit_crop(mut self, w: u32, h: u32) -> Self {
-        self.commands
-            .push(Command::Constrain(Constraint::new(ConstraintMode::FitCrop, w, h)));
+        self.commands.push(Command::Constrain(Constraint::new(
+            ConstraintMode::FitCrop,
+            w,
+            h,
+        )));
         self
     }
 
@@ -264,20 +286,14 @@ impl<'a> LayoutRequest<'a> {
         // Lossy path: use zenlayout to compute target dimensions
         let (target_w, target_h) = self.compute_target_dimensions(&commands, src_w, src_h)?;
 
-        let primary = lossy::execute_lossy(
-            self.jpeg_data,
-            &info,
-            self.config,
-            target_w,
-            target_h,
-            stop,
-        )?;
+        let primary =
+            lossy::execute_lossy(self.jpeg_data, &info, self.config, target_w, target_h, stop)?;
 
         // Transform gain map proportionally if present
         let data = match gain_map_jpeg {
-            Some(gm_bytes) => match self.transform_gainmap_lossy(
-                &gm_bytes, src_w, src_h, target_w, target_h, stop,
-            )? {
+            Some(gm_bytes) => match self
+                .transform_gainmap_lossy(&gm_bytes, src_w, src_h, target_w, target_h, stop)?
+            {
                 Some(gm_transformed) => gainmap::assemble_ultrahdr(primary, gm_transformed),
                 None => primary,
             },
@@ -328,14 +344,8 @@ impl<'a> LayoutRequest<'a> {
             gm_src_h,
         );
 
-        let gm_transformed = lossy::execute_lossy(
-            gm_bytes,
-            &gm_info,
-            self.config,
-            gm_dst_w,
-            gm_dst_h,
-            stop,
-        )?;
+        let gm_transformed =
+            lossy::execute_lossy(gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, stop)?;
 
         Ok(Some(gm_transformed))
     }
@@ -367,8 +377,8 @@ impl<'a> LayoutRequest<'a> {
         src_w: u32,
         src_h: u32,
     ) -> Result<(u32, u32)> {
-        let (ideal, _request) = zenlayout::compute_layout(commands, src_w, src_h, None)
-            .map_err(|e| {
+        let (ideal, _request) =
+            zenlayout::compute_layout(commands, src_w, src_h, None).map_err(|e| {
                 crate::error::Error::invalid_config(alloc::format!("layout error: {e}"))
             })?;
 
