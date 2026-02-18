@@ -164,9 +164,7 @@ mod tests {
 
     #[test]
     fn detect_ultrahdr_xmp() {
-        assert!(is_ultrahdr_xmp(
-            r#"<rdf:Description hdrgm:Version="1.0"/>"#
-        ));
+        assert!(is_ultrahdr_xmp(r#"<rdf:Description hdrgm:Version="1.0"/>"#));
         assert!(is_ultrahdr_xmp(
             r#"<rdf:Description hdrgm:GainMapMax="4.0"/>"#
         ));
