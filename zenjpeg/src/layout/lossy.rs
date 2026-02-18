@@ -21,12 +21,16 @@ use super::LayoutConfig;
 ///
 /// Decodes the JPEG to RGB8 via scanline reader, resizes using zenresize's
 /// streaming API for bounded memory, and re-encodes with the configured settings.
+///
+/// When `reset_orientation` is true, the EXIF orientation tag is set to 1
+/// (normal) because the pixels have already been oriented by the pipeline.
 pub(crate) fn execute_lossy(
     jpeg_data: &[u8],
     info: &JpegInfo,
     config: &LayoutConfig,
     target_w: u32,
     target_h: u32,
+    reset_orientation: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let src_w = info.dimensions.width;
@@ -35,9 +39,19 @@ pub(crate) fn execute_lossy(
     let needs_resize = target_w != src_w || target_h != src_h;
 
     if needs_resize {
-        decode_resize_encode(jpeg_data, info, config, src_w, src_h, target_w, target_h, stop)
+        decode_resize_encode(
+            jpeg_data,
+            info,
+            config,
+            src_w,
+            src_h,
+            target_w,
+            target_h,
+            reset_orientation,
+            stop,
+        )
     } else {
-        decode_reencode(jpeg_data, info, config, src_w, src_h, stop)
+        decode_reencode(jpeg_data, info, config, src_w, src_h, reset_orientation, stop)
     }
 }
 
@@ -50,6 +64,7 @@ fn decode_resize_encode(
     src_h: u32,
     dst_w: u32,
     dst_h: u32,
+    reset_orientation: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let resize_config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
@@ -63,7 +78,7 @@ fn decode_resize_encode(
     // Build encoder with metadata from source
     let encoder_config = config.build_encoder_config();
     let mut request = encoder_config.request();
-    request = attach_metadata(request, info);
+    request = attach_metadata(request, info, reset_orientation);
     request = request.stop(stop);
 
     let mut encoder = request.encode_from_bytes(dst_w, dst_h, EncPixelLayout::Rgb8Srgb)?;
@@ -104,11 +119,12 @@ fn decode_reencode(
     config: &LayoutConfig,
     width: u32,
     height: u32,
+    reset_orientation: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let encoder_config = config.build_encoder_config();
     let mut request = encoder_config.request();
-    request = attach_metadata(request, info);
+    request = attach_metadata(request, info, reset_orientation);
     request = request.stop(stop);
 
     let mut encoder = request.encode_from_bytes(width, height, EncPixelLayout::Rgb8Srgb)?;
@@ -136,15 +152,26 @@ fn decode_reencode(
 }
 
 /// Attach source metadata (ICC, EXIF, XMP) to the encode request.
+///
+/// When `reset_orientation` is true, clones the EXIF data and resets the
+/// orientation tag to 1 (Normal) before attaching. This prevents double-rotation
+/// when the pipeline has already oriented the pixels.
 fn attach_metadata<'a>(
     mut request: crate::encode::request::EncodeRequest<'a>,
     info: &'a JpegInfo,
+    reset_orientation: bool,
 ) -> crate::encode::request::EncodeRequest<'a> {
     if let Some(ref icc) = info.icc_profile {
         request = request.icc_profile(icc);
     }
     if let Some(ref exif) = info.exif {
-        request = request.exif(Exif::Raw(exif.clone()));
+        if reset_orientation {
+            let mut exif_copy = exif.clone();
+            crate::lossless::set_exif_orientation(&mut exif_copy, 1);
+            request = request.exif(Exif::Raw(exif_copy));
+        } else {
+            request = request.exif(Exif::Raw(exif.clone()));
+        }
     }
     if let Some(ref xmp) = info.xmp {
         request = request.xmp(xmp.as_bytes());

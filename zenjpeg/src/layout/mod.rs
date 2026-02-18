@@ -286,8 +286,23 @@ impl<'a> LayoutRequest<'a> {
         // Lossy path: use zenlayout to compute target dimensions
         let (target_w, target_h) = self.compute_target_dimensions(&commands, src_w, src_h)?;
 
-        let primary =
-            lossy::execute_lossy(self.jpeg_data, &info, self.config, target_w, target_h, stop)?;
+        // Detect if any orientation commands are present (for EXIF orientation reset)
+        let has_orientation = commands.iter().any(|cmd| {
+            matches!(
+                cmd,
+                Command::AutoOrient(o) if *o != 1
+            ) || matches!(cmd, Command::Rotate(_) | Command::Flip(_))
+        });
+
+        let primary = lossy::execute_lossy(
+            self.jpeg_data,
+            &info,
+            self.config,
+            target_w,
+            target_h,
+            has_orientation,
+            stop,
+        )?;
 
         // Transform gain map proportionally if present
         let data = match gain_map_jpeg {
@@ -344,8 +359,9 @@ impl<'a> LayoutRequest<'a> {
             gm_src_h,
         );
 
-        let gm_transformed =
-            lossy::execute_lossy(gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, stop)?;
+        let gm_transformed = lossy::execute_lossy(
+            gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, false, stop,
+        )?;
 
         Ok(Some(gm_transformed))
     }
