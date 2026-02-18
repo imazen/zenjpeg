@@ -1,12 +1,17 @@
 //! Content-aware deblocking classification.
 //!
-//! Classifies JPEG content as photo, screenshot, or mixed to decide whether
-//! deblocking filters should be applied. Screenshots with flat UI regions
-//! are harmed by deblocking at Q10+, while photos always benefit.
+//! Classifies JPEG content as photo, screenshot, or mixed, then recommends
+//! a quality-adaptive deblocking strategy. Based on experiments across 75 images
+//! (66 photos, 9 screenshots), 3 encoders, and 17 quality levels.
 //!
 //! Two classification tiers:
-//! - **Header-only** (`classify_from_probe`): uses subsampling as a soft signal
+//! - **Header-only** (`classify_from_probe`): subsampling as soft signal
 //! - **Coefficient-level** (`classify_from_luma_coefficients`): zero-AC-block fraction
+//!
+//! Three-tier quality-adaptive dispatch:
+//! - **Low quality** (DC quant >= 27): Knusperli DCT-domain smoothing (+8.5 SS2 at Q5)
+//! - **Mid-high quality** (DC quant < 27): Boundary 4-tap filter (+0.9 SS2)
+//! - **Screenshots at Q10+**: Skip (deblocking causes up to -36.7 SS2 harm)
 
 use super::{EncoderFamily, JpegProbe};
 use crate::types::Subsampling;
@@ -27,8 +32,10 @@ pub enum ContentType {
 pub enum DeblockAction {
     /// Do not apply any deblocking filter.
     Skip,
-    /// Apply H.264-style 4-tap boundary filter.
+    /// Apply H.264-style 4-tap boundary filter (good at all quality levels).
     Boundary4Tap,
+    /// Apply Knusperli DCT-domain boundary correction (best at low quality).
+    Knusperli,
 }
 
 /// Deblocking recommendation based on content analysis.
@@ -45,21 +52,33 @@ pub struct DeblockRecommendation {
 /// Fraction of luma blocks with all-zero AC coefficients above which
 /// content is classified as screenshot.
 ///
-/// Calibration notes:
+/// Calibration (66 photos, 9 screenshots, turbo/mozjpeg/cjpegli Q5-Q97):
 /// - Photos at Q10+: typically <5% zero-AC blocks
 /// - Screenshots at Q10+: typically >15% zero-AC blocks
-/// - Threshold set conservatively to avoid false positives on photos.
-///   Better to accidentally deblock a screenshot (mild harm) than skip
-///   a photo (lost +9 SS2 at Q5).
+/// - Threshold biased toward false negatives: better to deblock a screenshot
+///   (mild harm at Q10-Q20) than skip a photo (lost +9 SS2 at Q5).
 const SCREENSHOT_ZERO_AC_THRESHOLD: f32 = 0.10;
+
+/// DC quant threshold for Knusperli vs Boundary4Tap on turbo/mozjpeg photos.
+///
+/// Calibration: knusperli beats boundary_4tap when DC quant >= 27 (roughly Q30-).
+/// At Q30 (DC quant=27), knusperli advantage is +0.3 SS2 (turbo) / +0.05 SS2 (mozjpeg).
+/// At Q40 (DC quant=20), boundary_4tap wins by -0.3 to -0.6 SS2.
+const KNUSPERLI_DC_QUANT_THRESHOLD_IJG: u16 = 27;
+
+/// DC quant threshold for Knusperli vs Boundary4Tap on cjpegli photos.
+///
+/// cjpegli crosses over earlier: knusperli wins at Q15 (DC quant=53) but loses
+/// at Q20 (DC quant=40). Use 40 as the threshold — at the crossover point
+/// knusperli's advantage is only -0.13 SS2, so boundary_4tap is fine there.
+const KNUSPERLI_DC_QUANT_THRESHOLD_CJPEGLI: u16 = 40;
 
 /// Classify content from header-only probe data.
 ///
-/// This is a weak signal: 4:4:4 subsampling in non-cjpegli encoders is a
-/// screenshot hint (photo encoders default to 4:2:0). Returns `Mixed` when
-/// uncertain.
+/// Weak signal: 4:4:4 subsampling in non-cjpegli encoders hints at screenshots
+/// (photo encoders default to 4:2:0). Returns `Mixed` when uncertain.
 pub fn classify_from_probe(probe: &JpegProbe) -> ContentType {
-    // cjpegli can use 4:4:4 for both photos and screenshots — not informative
+    // cjpegli uses 4:4:4 for both photos and screenshots — not informative
     if matches!(
         probe.encoder,
         EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb
@@ -67,7 +86,7 @@ pub fn classify_from_probe(probe: &JpegProbe) -> ContentType {
         return ContentType::Mixed;
     }
 
-    // Non-cjpegli 4:4:4 is a screenshot hint (turbo/mozjpeg default to 4:2:0 for photos)
+    // Non-cjpegli 4:4:4 is a screenshot hint
     if probe.subsampling == Subsampling::S444 {
         return ContentType::Screenshot;
     }
@@ -77,13 +96,12 @@ pub fn classify_from_probe(probe: &JpegProbe) -> ContentType {
 
 /// Classify content from luma DCT coefficients.
 ///
-/// Computes the fraction of luma blocks where all 63 AC coefficients are zero
-/// (pure DC blocks). Screenshots have many flat UI regions producing all-DC
-/// blocks; photos almost never do.
+/// Counts blocks where all 63 AC coefficients are zero (pure DC blocks).
+/// Screenshots have many flat UI regions producing all-DC blocks; photos don't.
 ///
 /// # Arguments
-/// - `luma_coeffs`: Luma component coefficients in zigzag order, 64 per block
-/// - `num_blocks`: Total number of luma blocks (blocks_wide * blocks_high)
+/// - `luma_coeffs`: Luma coefficients in zigzag order, 64 per block
+/// - `num_blocks`: Total number of luma blocks
 ///
 /// # Returns
 /// `(ContentType, zero_ac_fraction)`
@@ -100,8 +118,7 @@ pub fn classify_from_luma_coefficients(
     for bi in 0..num_blocks {
         let block = &luma_coeffs[bi * 64..(bi + 1) * 64];
         // Zigzag positions 1..64 are AC coefficients
-        let all_ac_zero = block[1..64].iter().all(|&c| c == 0);
-        if all_ac_zero {
+        if block[1..64].iter().all(|&c| c == 0) {
             zero_ac_count += 1;
         }
     }
@@ -116,17 +133,19 @@ pub fn classify_from_luma_coefficients(
     (content_type, frac)
 }
 
-/// Recommend deblocking action based on probe data and content classification.
+/// Recommend deblocking strategy based on content type, encoder, and quality.
 ///
-/// Decision rules (from experimental data on 75 images):
+/// Three-tier quality-adaptive dispatch (from 66-photo, 9-screenshot experiments):
 ///
 /// | Encoder | Content | Quality | Action |
 /// |---------|---------|---------|--------|
-/// | cjpegli | any | any | boundary_4tap (always helps) |
-/// | turbo/mozjpeg | photo | any | boundary_4tap |
-/// | turbo/mozjpeg | screenshot | Q5 | boundary_4tap (marginal) |
-/// | turbo/mozjpeg | screenshot | Q10+ | skip (severe harm) |
-/// | turbo/mozjpeg | mixed | any | boundary_4tap |
+/// | cjpegli | photo/mixed | DC quant >= 40 | knusperli |
+/// | cjpegli | photo/mixed | DC quant < 40 | boundary_4tap |
+/// | cjpegli | screenshot | any | boundary_4tap (always safe) |
+/// | turbo/moz | photo/mixed | DC quant >= 27 | knusperli |
+/// | turbo/moz | photo/mixed | DC quant < 27 | boundary_4tap |
+/// | turbo/moz | screenshot | Q5 (DC >= 25) | boundary_4tap |
+/// | turbo/moz | screenshot | Q10+ (DC < 25) | skip |
 pub fn recommend_deblock(
     probe: &JpegProbe,
     content: ContentType,
@@ -137,26 +156,12 @@ pub fn recommend_deblock(
         EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb
     );
 
-    // cjpegli input always benefits from deblocking
-    if is_cjpegli {
-        return DeblockRecommendation {
-            action: DeblockAction::Boundary4Tap,
-            content_type: content,
-            zero_ac_frac,
-        };
-    }
+    let dc_quant = luma_dc_quant(probe);
 
-    // For turbo/mozjpeg: skip deblocking on screenshots at Q10+
+    // --- Screenshots ---
     if content == ContentType::Screenshot {
-        // Estimate quality from DC quant value
-        let dc_quant = probe.dqt_tables.first().map(|t| t.values[0]).unwrap_or(1);
-
-        // DC quant <= 20 corresponds roughly to Q10+ (lower quant = higher quality)
-        // At Q5, DC quant is typically 32-40 for IJG encoders
-        let is_low_quality = dc_quant >= 25;
-
-        if is_low_quality {
-            // Q5 equivalent — marginal benefit, allow deblocking
+        // cjpegli screenshots: every spatial strategy is positive, use boundary_4tap
+        if is_cjpegli {
             return DeblockRecommendation {
                 action: DeblockAction::Boundary4Tap,
                 content_type: content,
@@ -164,7 +169,17 @@ pub fn recommend_deblock(
             };
         }
 
-        // Q10+ screenshot — skip deblocking (severe harm up to -36.7 SS2)
+        // turbo/mozjpeg screenshots: only safe at very low quality
+        if dc_quant >= 25 {
+            // Q5 territory — marginal benefit from deblocking
+            return DeblockRecommendation {
+                action: DeblockAction::Boundary4Tap,
+                content_type: content,
+                zero_ac_frac,
+            };
+        }
+
+        // Q10+ screenshot — skip (severe harm up to -36.7 SS2)
         return DeblockRecommendation {
             action: DeblockAction::Skip,
             content_type: content,
@@ -172,9 +187,24 @@ pub fn recommend_deblock(
         };
     }
 
-    // Photos and mixed content: always deblock
+    // --- Photos and mixed content ---
+    let knusperli_threshold = if is_cjpegli {
+        KNUSPERLI_DC_QUANT_THRESHOLD_CJPEGLI
+    } else {
+        KNUSPERLI_DC_QUANT_THRESHOLD_IJG
+    };
+
+    let action = if dc_quant >= knusperli_threshold {
+        // Low quality: knusperli's aggressive DCT-domain smoothing dominates
+        // turbo Q5: +14.5 vs +9.3 for boundary_4tap (+5.2 SS2 advantage)
+        DeblockAction::Knusperli
+    } else {
+        // Mid-high quality: boundary_4tap preserves detail better
+        DeblockAction::Boundary4Tap
+    };
+
     DeblockRecommendation {
-        action: DeblockAction::Boundary4Tap,
+        action,
         content_type: content,
         zero_ac_frac,
     }
@@ -185,14 +215,14 @@ pub fn recommend_deblock(
 /// Returns a value roughly proportional to expected blocking artifact strength.
 /// Higher values mean more severe blocking (lower quality).
 pub fn estimate_blocking_severity(probe: &JpegProbe) -> f32 {
-    let dc_quant = probe
-        .dqt_tables
-        .first()
-        .map(|t| t.values[0] as f32)
-        .unwrap_or(1.0);
-
+    let dc_quant = luma_dc_quant(probe) as f32;
     // Normalize: DC quant of 1 (Q100) → ~0, DC quant of 40 (Q5) → ~1.0
     (dc_quant / 40.0).min(1.0)
+}
+
+/// Extract luma DC quantization value from probe data.
+fn luma_dc_quant(probe: &JpegProbe) -> u16 {
+    probe.dqt_tables.first().map(|t| t.values[0]).unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -201,14 +231,11 @@ mod tests {
 
     #[test]
     fn test_zero_ac_classification_photo() {
-        // Simulate photo: few zero-AC blocks
         let num_blocks = 100;
         let mut coeffs = vec![0i16; num_blocks * 64];
-        // Fill most blocks with some AC content
         for bi in 0..95 {
-            coeffs[bi * 64 + 1] = 5; // At least one nonzero AC
+            coeffs[bi * 64 + 1] = 5;
         }
-        // 5 blocks all-zero AC
         let (ct, frac) = classify_from_luma_coefficients(&coeffs, num_blocks);
         assert_eq!(ct, ContentType::Photo);
         assert!((frac - 0.05).abs() < 0.001);
@@ -216,14 +243,11 @@ mod tests {
 
     #[test]
     fn test_zero_ac_classification_screenshot() {
-        // Simulate screenshot: many zero-AC blocks
         let num_blocks = 100;
         let mut coeffs = vec![0i16; num_blocks * 64];
-        // Only 10 blocks have AC content
         for bi in 0..10 {
             coeffs[bi * 64 + 1] = 5;
         }
-        // 90 blocks all-zero AC
         let (ct, frac) = classify_from_luma_coefficients(&coeffs, num_blocks);
         assert_eq!(ct, ContentType::Screenshot);
         assert!((frac - 0.90).abs() < 0.001);
@@ -232,8 +256,9 @@ mod tests {
     #[test]
     fn test_zero_ac_threshold_boundary() {
         let num_blocks = 100;
+
+        // 9% zero-AC (below threshold) → Photo
         let mut coeffs = vec![0i16; num_blocks * 64];
-        // 9 blocks zero-AC (below threshold)
         for bi in 0..91 {
             coeffs[bi * 64 + 1] = 1;
         }
@@ -241,7 +266,7 @@ mod tests {
         assert_eq!(ct, ContentType::Photo);
         assert!((frac - 0.09).abs() < 0.001);
 
-        // 10 blocks zero-AC (at threshold)
+        // 10% zero-AC (at threshold) → Screenshot
         coeffs = vec![0i16; num_blocks * 64];
         for bi in 0..90 {
             coeffs[bi * 64 + 1] = 1;

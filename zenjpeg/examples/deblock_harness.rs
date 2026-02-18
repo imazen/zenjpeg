@@ -1988,15 +1988,14 @@ impl DeblockStrategy for QuantSmoothBilateral {
 // Strategy: Adaptive (content-aware deblocking)
 // ---------------------------------------------------------------------------
 
-/// Content-aware adaptive deblocking. Classifies JPEG content as photo or
-/// screenshot using luma zero-AC-block fraction, then decides whether to
-/// apply boundary_4tap or skip deblocking entirely.
+/// Content-aware adaptive deblocking with quality-dependent strategy selection.
 ///
-/// Decision rules:
-/// - cjpegli input: always apply boundary_4tap (always helps)
-/// - turbo/mozjpeg photo: always apply boundary_4tap
-/// - turbo/mozjpeg screenshot at Q10+: skip (deblocking hurts up to -36.7 SS2)
-/// - turbo/mozjpeg screenshot at Q5: apply boundary_4tap (marginal benefit)
+/// Three-tier dispatch based on content type and quality:
+/// - **Low quality photos** (DC quant >= 27): Knusperli DCT-domain smoothing
+///   (+14.5 SS2 at Q5 turbo vs +9.3 for boundary_4tap)
+/// - **Mid-high quality photos** (DC quant < 27): Boundary 4-tap filter
+///   (+0.9 SS2 reliably at all quality levels)
+/// - **Screenshots at Q10+**: Skip entirely (up to -36.7 SS2 harm from deblocking)
 struct Adaptive;
 
 impl DeblockStrategy for Adaptive {
@@ -2030,10 +2029,8 @@ impl DeblockStrategy for Adaptive {
                 // Return baseline decode (no deblocking)
                 decode_jpeg_with_icc(jpeg_bytes).ok()
             }
-            content::DeblockAction::Boundary4Tap => {
-                // Apply boundary_4tap
-                Boundary4Tap.decode(jpeg_bytes)
-            }
+            content::DeblockAction::Boundary4Tap => Boundary4Tap.decode(jpeg_bytes),
+            content::DeblockAction::Knusperli => Knusperli.decode(jpeg_bytes),
         }
     }
 }
