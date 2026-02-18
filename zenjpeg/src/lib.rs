@@ -308,6 +308,10 @@ pub(crate) mod types;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
+// Post-decode deblocking filters (requires decoder for coefficient access)
+#[cfg(feature = "decoder")]
+pub mod deblock;
+
 // Lossless JPEG transforms (requires decoder for coefficient access)
 #[cfg(feature = "decoder")]
 pub mod lossless;
