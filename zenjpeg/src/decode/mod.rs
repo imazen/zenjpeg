@@ -55,8 +55,8 @@ pub use image::{
 // New unified types
 #[allow(unused_imports)]
 pub use config::{
-    CropRegion, DecodeConfig, DecodeInfo, DecodeResult, GainMapHandling, GainMapResult,
-    OutputTarget, ParallelStrategy,
+    CropRegion, DecodeConfig, DecodeInfo, DecodeResult, DecodedPixels, GainMapHandling,
+    GainMapResult, OutputTarget, OwnedDecodedPixels, ParallelStrategy,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -219,7 +219,18 @@ impl DecodeConfig {
         self
     }
 
-    /// Enables block smoothing.
+    /// Enables inter-block smoothing for progressive JPEGs.
+    ///
+    /// **Disabled by default.** When enabled, applies a cross-block smoothing
+    /// filter during progressive JPEG rendering to reduce blocking artifacts
+    /// in partially-received scans. This is the same as libjpeg's
+    /// `do_block_smoothing` option.
+    ///
+    /// Has no effect on baseline JPEGs or fully-received progressive JPEGs
+    /// (the final coefficients are already smooth). Most useful for progressive
+    /// display during download, where early scans have coarse quantization.
+    ///
+    /// Performance impact: negligible (only runs during progressive rendering).
     #[must_use]
     pub fn block_smoothing(mut self, enable: bool) -> Self {
         self.block_smoothing = enable;
@@ -381,17 +392,22 @@ impl DecodeConfig {
         self
     }
 
-    /// Enables automatic EXIF orientation correction during decode.
+    /// Controls automatic EXIF orientation correction during decode.
     ///
-    /// When enabled, the decoder reads the EXIF orientation tag and applies
-    /// the corresponding lossless transform in DCT-coefficient space before
-    /// IDCT. The output pixels will have the correct visual orientation.
+    /// **Enabled by default.** When enabled, the decoder reads the EXIF
+    /// orientation tag and applies the corresponding lossless transform in
+    /// DCT-coefficient space before IDCT. The output pixels will have the
+    /// correct visual orientation.
     ///
     /// If the image has no EXIF data or orientation is 1 (normal), this has
     /// no effect on the decode path.
     ///
     /// Can be combined with [`transform()`](Self::transform) — the EXIF
     /// correction is applied first, then the explicit transform.
+    ///
+    /// Pass `false` to disable and get raw pixel orientation (e.g., for
+    /// lossless re-encoding where you want to preserve the original
+    /// orientation tag).
     #[must_use]
     pub fn auto_orient(mut self, enable: bool) -> Self {
         self.auto_orient = enable;
@@ -1009,6 +1025,8 @@ impl DecodeConfig {
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
     pub fn decode(&self, data: &[u8], stop: impl Stop) -> Result<DecodeResult> {
+        // Track whether we force-preserved EXIF just for auto_orient
+        let forced_exif = self.auto_orient && !self.preserve.exif;
         let preserve = if self.auto_orient {
             // Ensure EXIF is preserved for orientation reading
             let mut p = self.preserve.clone();
@@ -1187,7 +1205,7 @@ impl DecodeConfig {
                 (visible_w, visible_h)
             };
 
-            let extras = parser.take_extras();
+            let extras = strip_forced_exif(parser.take_extras(), forced_exif);
             let warnings = parser.take_warnings();
             DecodeResult::new_f32(
                 out_w,
@@ -1270,7 +1288,7 @@ impl DecodeConfig {
                 (visible_w, visible_h)
             };
 
-            let extras = parser.take_extras();
+            let extras = strip_forced_exif(parser.take_extras(), forced_exif);
             let warnings = parser.take_warnings();
             DecodeResult::new_u8(
                 out_w,
@@ -1787,6 +1805,17 @@ fn find_exif_orientation(data: &[u8]) -> Option<u8> {
         pos = seg_end;
     }
     None
+}
+
+/// Strip EXIF segments from extras if we only preserved them for auto_orient
+/// but the user's preserve config had exif=false.
+fn strip_forced_exif(extras: Option<DecodedExtras>, forced_exif: bool) -> Option<DecodedExtras> {
+    if !forced_exif {
+        return extras;
+    }
+    let mut extras = extras?;
+    extras.remove_segments_by_type(SegmentType::Exif);
+    Some(extras)
 }
 
 #[cfg(test)]
