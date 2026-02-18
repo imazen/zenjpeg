@@ -330,25 +330,48 @@ impl DecodedYCbCr {
         self.width as usize * self.height as usize
     }
 
-    /// Converts Y plane to standard JPEG range [0, 255].
+    /// Shifts all planes in-place from centered range \[-128, 127\] to
+    /// standard JPEG range \[0, 255\] by adding 128 to every sample.
+    ///
+    /// After calling this, `y` is in \[0, 255\] and `cb`/`cr` are in \[0, 255\].
+    /// This avoids the three separate allocations of the per-plane methods.
+    pub fn shift_to_jpeg_range(&mut self) {
+        for v in &mut self.y {
+            *v += 128.0;
+        }
+        for v in &mut self.cb {
+            *v += 128.0;
+        }
+        for v in &mut self.cr {
+            *v += 128.0;
+        }
+    }
+
+    /// Converts Y plane to standard JPEG range \[0, 255\].
     ///
     /// Returns a new vector with values shifted by +128.
+    /// Prefer [`shift_to_jpeg_range()`](Self::shift_to_jpeg_range) to avoid
+    /// allocating three new vectors.
     #[must_use]
     pub fn y_to_jpeg_range(&self) -> Vec<f32> {
         self.y.iter().map(|&v| v + 128.0).collect()
     }
 
-    /// Converts Cb plane to standard JPEG range [0, 255].
+    /// Converts Cb plane to standard JPEG range \[0, 255\].
     ///
     /// Returns a new vector with values shifted by +128.
+    /// Prefer [`shift_to_jpeg_range()`](Self::shift_to_jpeg_range) to avoid
+    /// allocating three new vectors.
     #[must_use]
     pub fn cb_to_jpeg_range(&self) -> Vec<f32> {
         self.cb.iter().map(|&v| v + 128.0).collect()
     }
 
-    /// Converts Cr plane to standard JPEG range [0, 255].
+    /// Converts Cr plane to standard JPEG range \[0, 255\].
     ///
     /// Returns a new vector with values shifted by +128.
+    /// Prefer [`shift_to_jpeg_range()`](Self::shift_to_jpeg_range) to avoid
+    /// allocating three new vectors.
     #[must_use]
     pub fn cr_to_jpeg_range(&self) -> Vec<f32> {
         self.cr.iter().map(|&v| v + 128.0).collect()

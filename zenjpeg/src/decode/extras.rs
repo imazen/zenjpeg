@@ -414,6 +414,11 @@ impl DecodedExtras {
         self.segments.iter().filter(move |s| s.segment_type == typ)
     }
 
+    /// Remove all segments of a given type.
+    pub(crate) fn remove_segments_by_type(&mut self, typ: SegmentType) {
+        self.segments.retain(|s| s.segment_type != typ);
+    }
+
     /// Segments by marker.
     pub fn segments_by_marker(&self, marker: u8) -> impl Iterator<Item = &PreservedSegment> {
         self.segments.iter().filter(move |s| s.marker == marker)

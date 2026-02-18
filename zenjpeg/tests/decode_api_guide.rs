@@ -45,7 +45,7 @@
 //!             ├── .read_rows_gray8()
 //!             ├── .read_rows_gray_f32()
 //!             ├── .read_rows_gray_linear_f32()
-//!             └── .read_rows_ycbcr_planes()
+//!             └── .read_rows_ycbcr_f32()
 //! ```
 
 #[path = "../src/test_utils.rs"]
@@ -1233,7 +1233,7 @@ fn scanline_reader_gray_linear_f32() {
 // 20. Scanline reader — YCbCr planes
 // ============================================================================
 
-/// `read_rows_ycbcr_planes()` outputs separate Y, Cb, Cr f32 planes.
+/// `read_rows_ycbcr_f32()` outputs separate Y, Cb, Cr f32 planes.
 #[test]
 fn scanline_reader_ycbcr_planes() {
     let jpeg = test_jpeg_444();
@@ -1250,7 +1250,7 @@ fn scanline_reader_ycbcr_planes() {
         let remaining = h - rows_decoded;
         let offset = rows_decoded * w;
         let n = reader
-            .read_rows_ycbcr_planes(
+            .read_rows_ycbcr_f32(
                 &mut y_buf[offset..],
                 &mut cb_buf[offset..],
                 &mut cr_buf[offset..],

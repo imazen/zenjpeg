@@ -1577,8 +1577,11 @@ fn test_decode_composed_exif_plus_transform() {
         "composed transform should be identity"
     );
 
-    // Compare with plain decode (no transforms)
-    let plain = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
+    // Compare with plain decode (no transforms, no auto-orient to get raw pixels)
+    let plain = DecodeConfig::new()
+        .auto_orient(false)
+        .decode(&jpeg, Unstoppable)
+        .unwrap();
 
     // Both should produce identical pixel data
     assert_eq!(
@@ -2461,8 +2464,8 @@ fn test_composed_orientation_and_transform() {
     let (cw, ch, composed_pixels) = decode_test(&jpeg, &config);
     assert_eq!((cw, ch), (16, 16));
 
-    // The composed result should match decoding without any transform
-    let baseline = DecodeConfig::new();
+    // The composed result should match decoding without any transform (raw, no auto-orient)
+    let baseline = DecodeConfig::new().auto_orient(false);
     let (_, _, baseline_pixels) = decode_test(&jpeg, &baseline);
     assert_eq!(
         composed_pixels, baseline_pixels,

@@ -763,7 +763,7 @@ fn decode_planar_i16_seq(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u32
 
         for _ in 0..total_mcu_rows {
             let (luma_rows, chroma_rows) = reader
-                .read_rows_planar_i16(
+                .read_rows_ycbcr_native_i16(
                     &mut y_buf[y_off..],
                     width,
                     &mut cb_buf[c_off..],
@@ -771,7 +771,7 @@ fn decode_planar_i16_seq(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u32
                     cw,
                     1,
                 )
-                .expect("read_rows_planar_i16 failed");
+                .expect("read_rows_ycbcr_native_i16 failed");
             y_off += luma_rows * width;
             c_off += chroma_rows * cw;
         }
@@ -817,7 +817,7 @@ fn decode_planar_i16_wave(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u3
 
         for _ in 0..total_mcu_rows {
             let (luma_rows, chroma_rows) = reader
-                .read_rows_planar_i16(
+                .read_rows_ycbcr_native_i16(
                     &mut y_buf[y_off..],
                     width,
                     &mut cb_buf[c_off..],
@@ -825,7 +825,7 @@ fn decode_planar_i16_wave(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u3
                     cw,
                     1,
                 )
-                .expect("read_rows_planar_i16 failed");
+                .expect("read_rows_ycbcr_native_i16 failed");
             y_off += luma_rows * width;
             c_off += chroma_rows * cw;
         }

@@ -757,7 +757,7 @@ impl Default for DecodeConfig {
             max_memory: DEFAULT_MAX_MEMORY,
             preserve: PreserveConfig::default(),
             strictness: Strictness::default(),
-            auto_orient: false,
+            auto_orient: true,
             decode_transform: None,
             force_f32_idct: false,
             crop_region: None,
@@ -765,6 +765,42 @@ impl Default for DecodeConfig {
             parallel_strategy: ParallelStrategy::default(),
         }
     }
+}
+
+// ============================================================================
+// DecodedPixels — type-safe pixel access
+// ============================================================================
+
+/// Borrowed pixel data from a [`DecodeResult`], with format encoded in the variant.
+///
+/// Returned by [`DecodeResult::pixels()`]. Eliminates the need to call
+/// `pixels_u8()` / `pixels_f32()` and handle `Option` when you don't know
+/// the output target at compile time.
+///
+/// ```rust,ignore
+/// let result = decoder.decode(&jpeg_data, Unstoppable)?;
+/// match result.pixels() {
+///     DecodedPixels::U8(data) => process_u8(data),
+///     DecodedPixels::F32(data) => process_f32(data),
+/// }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub enum DecodedPixels<'a> {
+    /// 8-bit pixel data (from [`OutputTarget::Srgb8`]).
+    U8(&'a [u8]),
+    /// 32-bit float pixel data (from [`OutputTarget::SrgbF32`], [`OutputTarget::LinearF32`], etc.).
+    F32(&'a [f32]),
+}
+
+/// Owned pixel data from a [`DecodeResult`], with format encoded in the variant.
+///
+/// Returned by [`DecodeResult::into_pixels()`].
+#[derive(Debug, Clone)]
+pub enum OwnedDecodedPixels {
+    /// 8-bit pixel data.
+    U8(Vec<u8>),
+    /// 32-bit float pixel data.
+    F32(Vec<f32>),
 }
 
 // ============================================================================
@@ -913,6 +949,43 @@ impl DecodeResult {
     #[must_use]
     pub fn into_pixels_f32(self) -> Option<Vec<f32>> {
         self.pixels_f32
+    }
+
+    /// Returns the decoded pixel data as a [`DecodedPixels`] enum.
+    ///
+    /// This is the preferred way to access pixels when you don't know the
+    /// output target at compile time. The variant tells you whether the data
+    /// is u8 or f32.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the result contains no pixel data (should not happen for
+    /// successful decodes).
+    #[must_use]
+    pub fn pixels(&self) -> DecodedPixels<'_> {
+        if let Some(ref data) = self.pixels_u8 {
+            DecodedPixels::U8(data)
+        } else if let Some(ref data) = self.pixels_f32 {
+            DecodedPixels::F32(data)
+        } else {
+            panic!("DecodeResult contains no pixel data")
+        }
+    }
+
+    /// Takes ownership of the decoded pixel data as an [`OwnedDecodedPixels`] enum.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the result contains no pixel data.
+    #[must_use]
+    pub fn into_pixels(self) -> OwnedDecodedPixels {
+        if let Some(data) = self.pixels_u8 {
+            OwnedDecodedPixels::U8(data)
+        } else if let Some(data) = self.pixels_f32 {
+            OwnedDecodedPixels::F32(data)
+        } else {
+            panic!("DecodeResult contains no pixel data")
+        }
     }
 
     /// Number of bytes per pixel for this image's format (u8 path).
