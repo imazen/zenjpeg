@@ -27,9 +27,9 @@ pub fn run(args: InfoArgs) -> Result<()> {
 }
 
 fn show_info(path: &Path, args: &InfoArgs) -> Result<()> {
-    let data = std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
-    let probe = detect::probe(&data)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let data =
+        std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
+    let probe = detect::probe(&data).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if args.json {
         print_json(path, &probe);
@@ -44,7 +44,10 @@ fn print_human(path: &Path, probe: &JpegProbe, args: &InfoArgs) {
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
     println!("{}", path.display());
-    println!("  Dimensions:   {}x{}", probe.dimensions.width, probe.dimensions.height);
+    println!(
+        "  Dimensions:   {}x{}",
+        probe.dimensions.width, probe.dimensions.height
+    );
     println!("  Encoder:      {}", encoder_name(&probe.encoder));
     println!("  Quality:      {}", format_quality(probe));
     println!("  Mode:         {:?}", probe.mode);
@@ -79,7 +82,11 @@ fn print_human(path: &Path, probe: &JpegProbe, args: &InfoArgs) {
     if args.all || args.quant {
         println!("  Quant tables: {}", probe.dqt_tables.len());
         for table in &probe.dqt_tables {
-            println!("    Table {} ({}bit):", table.index, if table.precision > 0 { 16 } else { 8 });
+            println!(
+                "    Table {} ({}bit):",
+                table.index,
+                if table.precision > 0 { 16 } else { 8 }
+            );
             // Print 8x8 grid
             for row in 0..8 {
                 print!("      ");
@@ -105,14 +112,20 @@ fn print_json(path: &Path, probe: &JpegProbe) {
     println!("  \"encoder\": \"{}\",", encoder_name(&probe.encoder));
     println!("  \"quality_value\": {:.1},", probe.quality.value);
     println!("  \"quality_scale\": \"{:?}\",", probe.quality.scale);
-    println!("  \"quality_confidence\": \"{:?}\",", probe.quality.confidence);
+    println!(
+        "  \"quality_confidence\": \"{:?}\",",
+        probe.quality.confidence
+    );
     println!("  \"mode\": \"{:?}\",", probe.mode);
     println!("  \"subsampling\": \"{:?}\",", probe.subsampling);
     println!("  \"components\": {},", probe.num_components);
     println!("  \"scans\": {},", probe.scan_count);
     println!("  \"file_size\": {file_size},");
     println!("  \"content_type\": \"{}\",", content_name(content));
-    println!("  \"recommended_quality\": \"{}\"", format_quality_value(&rec));
+    println!(
+        "  \"recommended_quality\": \"{}\"",
+        format_quality_value(&rec)
+    );
     println!("}}");
 }
 

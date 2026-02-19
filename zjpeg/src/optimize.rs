@@ -2,11 +2,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
-use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig};
+use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, SegmentType, Subsampling};
 use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
 use zenjpeg::detect::{self, QualityScale};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Exif, PixelLayout, Quality};
-use zenjpeg::decoder::Subsampling;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 use crate::batch::{self, BatchSummary, FileResult};
 use crate::output::OutputConfig;
@@ -134,16 +133,15 @@ fn optimize_inner(
     // Step 2: Determine quality and subsampling
     let (quality, subsampling) = determine_encode_params(args, &probe)?;
 
-    // Step 3: Build encoder config
-    let config = build_encoder_config(args, quality, subsampling);
-
-    // Step 4: Decode
+    // Step 3: Decode
+    // f32 decode needed for: deblocking (operates on f32 planes) or XYB (needs linear input)
     let need_deblock = args.deblock || args.deblock_boundary;
-    let decode_to_f32 = need_deblock;
+    let decode_to_f32 = need_deblock || args.xyb;
 
     let mut decoder = DecodeConfig::new().preserve(PreserveConfig::all());
     if decode_to_f32 {
-        decoder.output_target = OutputTarget::SrgbF32;
+        // LinearF32 for correct encoder input (encoder expects linear for f32 paths)
+        decoder.output_target = OutputTarget::LinearF32;
     }
     if args.auto_orient {
         decoder = decoder.auto_orient(true);
@@ -156,40 +154,12 @@ fn optimize_inner(
     let width = result.width();
     let height = result.height();
 
-    // Extract metadata before consuming pixels
+    // Step 4: Extract metadata and build encoder config with segments
     let extras = result.take_extras();
-    let icc_data = if !args.strip_all && !args.strip_icc {
-        extras.as_ref().and_then(|e| e.icc_profile()).map(|b| b.to_vec())
-    } else {
-        None
-    };
-    let exif_data = if !args.strip_all && !args.strip_exif {
-        extras.as_ref().and_then(|e| e.exif()).map(|b| b.to_vec())
-    } else {
-        None
-    };
-    let xmp_data = if !args.strip_all {
-        extras
-            .as_ref()
-            .and_then(|e| e.xmp())
-            .map(|s| s.as_bytes().to_vec())
-    } else {
-        None
-    };
 
-    // Step 5: Build request with metadata
-    let mut req = config.request();
-    if let Some(ref icc) = icc_data {
-        req = req.icc_profile(icc);
-    }
-    if let Some(ref exif) = exif_data {
-        req = req.exif(Exif::raw(exif.clone()));
-    }
-    if let Some(ref xmp) = xmp_data {
-        req = req.xmp(xmp);
-    }
+    let config = build_encoder_config(args, quality, subsampling, &extras);
 
-    // Step 6: Encode (with optional deblocking)
+    // Step 5: Encode (with optional deblocking)
     let output_jpeg = if decode_to_f32 {
         let mut pixels_f32 = result
             .into_pixels_f32()
@@ -205,25 +175,26 @@ fn optimize_inner(
             );
         }
 
-        // Re-encode from f32 data — f32 pixels are in [0,1] sRGB range, 3 channels
         let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
-        req.encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
+        config
+            .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
             .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
     } else {
         let pixels_u8 = result.pixels_u8().context("expected u8 decode output")?;
-        req.encode_bytes(pixels_u8, width, height, PixelLayout::Rgb8Srgb)
+        config
+            .encode_bytes(pixels_u8, width, height, PixelLayout::Rgb8Srgb)
             .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
     };
 
     let output_size = output_jpeg.len() as u64;
     let input_size = data.len() as u64;
 
-    // Step 7: Skip if larger
+    // Step 6: Skip if larger
     if args.skip_if_larger && output_size >= input_size {
         return Ok((input_size, true));
     }
 
-    // Step 8: Write output
+    // Step 7: Write output
     let output_path = output_config.resolve(path, is_single)?;
     output_config.check_writable(&output_path, path)?;
 
@@ -305,20 +276,28 @@ fn convert_subsampling(sub: SubsamplingArg) -> ChromaSubsampling {
 fn clamp_quality(quality: Quality, min_q: f32, max_q: f32) -> Quality {
     match quality {
         Quality::ApproxJpegli(v) => Quality::ApproxJpegli(v.clamp(min_q, max_q)),
-        Quality::ApproxMozjpeg(v) => {
-            Quality::ApproxMozjpeg((v as f32).clamp(min_q, max_q) as u8)
-        }
+        Quality::ApproxMozjpeg(v) => Quality::ApproxMozjpeg((v as f32).clamp(min_q, max_q) as u8),
         // Don't clamp distance-based metrics
         _ => quality,
     }
 }
 
+/// Build encoder config with metadata segments attached.
+///
+/// Uses `EncoderConfig::with_segments()` to preserve all metadata including gain maps.
+/// Falls back to individual metadata when gain maps must be stripped (the segments API
+/// always includes secondary images).
 fn build_encoder_config(
     args: &OptimizeArgs,
     quality: Quality,
     subsampling: ChromaSubsampling,
+    extras: &Option<zenjpeg::decoder::DecodedExtras>,
 ) -> EncoderConfig {
-    let mut config = EncoderConfig::ycbcr(quality, subsampling);
+    let mut config = if args.xyb {
+        EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
+    } else {
+        EncoderConfig::ycbcr(quality, subsampling)
+    };
 
     // auto_optimize enables hybrid trellis (best R-D)
     if !args.no_optimize {
@@ -335,10 +314,89 @@ fn build_encoder_config(
         config = config.sharp_yuv(true);
     }
 
-    // Note: --trellis is a no-op when auto_optimize is enabled (which is the default).
-    // auto_optimize uses hybrid trellis internally, which is better than standalone trellis.
+    // Attach metadata via segments API for full preservation (including gain maps).
+    //
+    // When --strip-all or --strip-gainmaps is used, we fall back to individual metadata
+    // because to_encoder_segments() always includes secondary images (gain maps) and
+    // there's no public API to exclude them.
+    if let Some(ref extras) = extras {
+        if args.strip_all {
+            // Strip everything — no segments, no individual metadata
+        } else if args.strip_gainmaps {
+            // Can't use segments API (it always includes gain maps).
+            // Fall back to individual metadata methods on the config.
+            if !args.strip_icc {
+                if let Some(icc) = extras.icc_profile() {
+                    config = config.add_segment(0xE2, build_icc_segment(icc));
+                }
+            }
+            if !args.strip_exif {
+                if let Some(exif) = extras.exif() {
+                    config = config.add_segment(0xE1, build_exif_segment(exif));
+                }
+            }
+            if !args.strip_xmp {
+                if let Some(xmp) = extras.xmp() {
+                    config = config.add_segment(0xE1, build_xmp_segment(xmp));
+                }
+            }
+        } else if args.strip_exif || args.strip_icc || args.strip_xmp {
+            // Selective stripping — use filtered segments API (preserves gain maps)
+            let strip_exif = args.strip_exif;
+            let strip_icc = args.strip_icc;
+            let strip_xmp = args.strip_xmp;
+            let segments = extras.to_encoder_segments_filtered(|seg| {
+                if strip_exif && seg.segment_type == SegmentType::Exif {
+                    return false;
+                }
+                if strip_icc && seg.segment_type == SegmentType::Icc {
+                    return false;
+                }
+                if strip_xmp
+                    && (seg.segment_type == SegmentType::Xmp
+                        || seg.segment_type == SegmentType::XmpExtended)
+                {
+                    return false;
+                }
+                true
+            });
+            config = config.with_segments(segments);
+        } else {
+            // Default: preserve everything including gain maps
+            config = config.with_segments(extras.to_encoder_segments());
+        }
+    }
 
     config
+}
+
+/// Build an APP2 ICC profile segment (with "ICC_PROFILE\0" header).
+fn build_icc_segment(icc: &[u8]) -> Vec<u8> {
+    let header = b"ICC_PROFILE\0";
+    let mut seg = Vec::with_capacity(header.len() + 2 + icc.len());
+    seg.extend_from_slice(header);
+    seg.push(1); // chunk number
+    seg.push(1); // total chunks
+    seg.extend_from_slice(icc);
+    seg
+}
+
+/// Build an APP1 EXIF segment (with "Exif\0\0" header).
+fn build_exif_segment(exif: &[u8]) -> Vec<u8> {
+    let header = b"Exif\0\0";
+    let mut seg = Vec::with_capacity(header.len() + exif.len());
+    seg.extend_from_slice(header);
+    seg.extend_from_slice(exif);
+    seg
+}
+
+/// Build an APP1 XMP segment (with XMP namespace header).
+fn build_xmp_segment(xmp: &str) -> Vec<u8> {
+    let header = b"http://ns.adobe.com/xap/1.0/\0";
+    let mut seg = Vec::with_capacity(header.len() + xmp.len());
+    seg.extend_from_slice(header);
+    seg.extend_from_slice(xmp.as_bytes());
+    seg
 }
 
 fn apply_deblock(
@@ -362,11 +420,7 @@ fn apply_deblock(
         return;
     }
 
-    let dc_quant = probe
-        .dqt_tables
-        .first()
-        .map(|t| t.values[0])
-        .unwrap_or(1);
+    let dc_quant = probe.dqt_tables.first().map(|t| t.values[0]).unwrap_or(1);
 
     let strength = BoundaryStrength::from_dc_quant(dc_quant);
     let num_channels = 3; // RGB
@@ -396,4 +450,3 @@ fn estimate_zero_ac_frac(probe: &detect::JpegProbe) -> f32 {
     };
     (1.0 - q / 100.0).clamp(0.1, 0.9) * 0.8 + 0.1
 }
-
