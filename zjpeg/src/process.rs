@@ -961,7 +961,7 @@ fn offset_quality(quality: Quality, offset: f32) -> Quality {
         return quality;
     }
     match quality {
-        Quality::ApproxJpegli(q) => Quality::ApproxJpegli((q + offset).clamp(50.0, 97.0)),
+        Quality::ApproxJpegli(q) => Quality::ApproxJpegli((q + offset).clamp(20.0, 97.0)),
         other => other,
     }
 }
@@ -1002,8 +1002,8 @@ fn apply_quality_floor(quality: Quality, probe: &detect::JpegProbe) -> Quality {
         _ => 75.0,
     };
 
-    // Floor = source equivalent - 15, minimum 50
-    let floor = (source_equiv_q - 15.0).max(50.0);
+    // Floor = source equivalent - 15, minimum 20
+    let floor = (source_equiv_q - 15.0).max(20.0);
 
     if q < floor {
         eprintln!(

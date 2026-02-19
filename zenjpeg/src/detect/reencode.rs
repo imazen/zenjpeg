@@ -3,11 +3,11 @@
 //! Maps source encoder family + quality level + tolerance → recommended zenjpeg settings
 //! for re-encoding with configurable quality loss.
 //!
-//! Dense 2D calibration grid: 9 tolerance levels × 6 source qualities × 3 encoder families.
+//! Dense 2D calibration grid: 9 tolerance levels × 10 source qualities × 3 encoder families.
 //! Bilinear interpolation between calibration points for arbitrary (source_q, tolerance) pairs.
 //!
-//! Calibration data from 25-image sweep across libjpeg-turbo, mozjpeg, and cjpegli
-//! at Q50-Q90, measuring butteraugli delta and file size ratio.
+//! Calibration data from 10-image median sweep across libjpeg-turbo, mozjpeg, and cjpegli
+//! at Q10-Q90, measuring butteraugli delta and file size ratio.
 
 use super::fingerprint::EncoderFamily;
 use super::quality::QualityScale;
@@ -19,7 +19,7 @@ const DEFAULT_BA_TOLERANCE: f32 = 0.3;
 
 /// Minimum supported tolerance.
 const MIN_TOLERANCE: f32 = 0.1;
-/// Maximum supported tolerance (beyond this, Q50 everywhere).
+/// Maximum supported tolerance.
 const MAX_TOLERANCE: f32 = 2.0;
 
 /// Recommended settings for re-encoding a JPEG with zenjpeg.
@@ -116,105 +116,98 @@ pub(crate) fn quality_ceiling(downscale_ratio: f32) -> f32 {
 const TOLERANCES: &[f32] = &[0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0, 1.5, 2.0];
 
 // --- libjpeg-turbo / IJG family ---
-// Source quality points: IJG quality 50, 65, 75, 80, 85, 90
-const IJG_SRC_QS: &[f32] = &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
+// Source quality points: IJG quality 10, 20, 30, 40, 50, 65, 75, 80, 85, 90
+// Calibrated on 10 gb82 images (median-based, monotonicity-enforced).
+const IJG_SRC_QS: &[f32] = &[10.0, 20.0, 30.0, 40.0, 50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
 
 const IJG_GRID: &[&[f32]] = &[
-    // tol=0.1
-    &[88.0, 93.0, 97.0, 97.0, 97.0, 97.0],
-    // tol=0.2
-    &[70.0, 80.0, 90.0, 90.0, 97.0, 97.0],
-    // tol=0.3
-    &[65.0, 70.0, 85.0, 88.0, 90.0, 95.0],
-    // tol=0.4
-    &[60.0, 70.0, 80.0, 80.0, 85.0, 90.0],
-    // tol=0.5
-    &[55.0, 65.0, 75.0, 75.0, 80.0, 88.0],
-    // tol=0.7
-    &[50.0, 55.0, 70.0, 70.0, 75.0, 85.0],
-    // tol=1.0
-    &[50.0, 50.0, 60.0, 65.0, 70.0, 80.0],
-    // tol=1.5
-    &[50.0, 50.0, 50.0, 50.0, 55.0, 65.0],
-    // tol=2.0
-    &[50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+    //                        Q10   Q20   Q30   Q40   Q50   Q65   Q75   Q80   Q85   Q90
+    /* tol=0.1 */ &[20.0, 55.0, 80.0, 90.0, 93.0, 97.0, 97.0, 97.0, 97.0, 97.0],
+    /* tol=0.2 */ &[20.0, 55.0, 65.0, 65.0, 75.0, 80.0, 88.0, 88.0, 97.0, 97.0],
+    /* tol=0.3 */ &[20.0, 55.0, 55.0, 55.0, 65.0, 70.0, 88.0, 88.0, 88.0, 95.0],
+    /* tol=0.4 */ &[20.0, 25.0, 40.0, 55.0, 65.0, 70.0, 70.0, 80.0, 88.0, 95.0],
+    /* tol=0.5 */ &[20.0, 25.0, 30.0, 50.0, 65.0, 65.0, 70.0, 75.0, 80.0, 90.0],
+    /* tol=0.7 */ &[20.0, 25.0, 30.0, 50.0, 50.0, 55.0, 60.0, 70.0, 75.0, 85.0],
+    /* tol=1.0 */ &[20.0, 20.0, 25.0, 40.0, 40.0, 45.0, 50.0, 60.0, 70.0, 80.0],
+    /* tol=1.5 */ &[20.0, 20.0, 20.0, 20.0, 30.0, 30.0, 45.0, 50.0, 55.0, 60.0],
+    /* tol=2.0 */ &[20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 30.0, 30.0, 30.0, 50.0],
 ];
 
-/// Min achievable BA delta per IJG source quality (at Q97).
+/// Min achievable BA delta per IJG source quality (at Q97, median across 10 images).
 const IJG_MIN_DELTA: &[(f32, f32)] = &[
-    (50.0, 0.03),
-    (65.0, 0.08),
-    (75.0, 0.12),
-    (80.0, 0.15),
-    (85.0, 0.20),
-    (90.0, 0.25),
+    (10.0, 0.00),
+    (20.0, 0.00),
+    (30.0, 0.04),
+    (40.0, 0.02),
+    (50.0, 0.02),
+    (65.0, 0.11),
+    (75.0, 0.06),
+    (80.0, 0.07),
+    (85.0, 0.06),
+    (90.0, 0.55),
 ];
 
 // --- mozjpeg ---
-const MOZ_SRC_QS: &[f32] = &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
+// Calibrated on 10 gb82 images (median-based, monotonicity-enforced).
+const MOZ_SRC_QS: &[f32] = &[10.0, 20.0, 30.0, 40.0, 50.0, 65.0, 75.0, 80.0, 85.0, 90.0];
 
 const MOZ_GRID: &[&[f32]] = &[
-    // tol=0.1
-    &[95.0, 95.0, 97.0, 97.0, 97.0, 97.0],
-    // tol=0.2
-    &[75.0, 75.0, 85.0, 95.0, 97.0, 97.0],
-    // tol=0.3
-    &[55.0, 65.0, 80.0, 85.0, 88.0, 93.0],
-    // tol=0.4
-    &[55.0, 65.0, 70.0, 80.0, 85.0, 88.0],
-    // tol=0.5
-    &[50.0, 55.0, 70.0, 75.0, 80.0, 85.0],
-    // tol=0.7
-    &[50.0, 55.0, 60.0, 70.0, 75.0, 85.0],
-    // tol=1.0
-    &[50.0, 50.0, 55.0, 60.0, 70.0, 75.0],
-    // tol=1.5
-    &[50.0, 50.0, 50.0, 50.0, 55.0, 60.0],
-    // tol=2.0
-    &[50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+    //                        Q10   Q20   Q30   Q40   Q50   Q65   Q75   Q80   Q85   Q90
+    /* tol=0.1 */ &[25.0, 50.0, 97.0, 97.0, 97.0, 97.0, 97.0, 97.0, 97.0, 97.0],
+    /* tol=0.2 */ &[25.0, 25.0, 65.0, 75.0, 75.0, 75.0, 85.0, 90.0, 95.0, 97.0],
+    /* tol=0.3 */ &[20.0, 25.0, 60.0, 60.0, 60.0, 75.0, 80.0, 88.0, 88.0, 95.0],
+    /* tol=0.4 */ &[20.0, 25.0, 35.0, 40.0, 55.0, 65.0, 80.0, 80.0, 85.0, 88.0],
+    /* tol=0.5 */ &[20.0, 20.0, 30.0, 35.0, 40.0, 65.0, 70.0, 80.0, 80.0, 85.0],
+    /* tol=0.7 */ &[20.0, 20.0, 25.0, 25.0, 35.0, 55.0, 70.0, 70.0, 80.0, 85.0],
+    /* tol=1.0 */ &[20.0, 20.0, 20.0, 25.0, 35.0, 50.0, 60.0, 65.0, 75.0, 75.0],
+    /* tol=1.5 */ &[20.0, 20.0, 20.0, 25.0, 25.0, 30.0, 40.0, 40.0, 55.0, 60.0],
+    /* tol=2.0 */ &[20.0, 20.0, 20.0, 20.0, 25.0, 25.0, 25.0, 30.0, 35.0, 50.0],
 ];
 
+/// Min achievable BA delta per mozjpeg source quality (at Q97, median across 10 images).
 const MOZ_MIN_DELTA: &[(f32, f32)] = &[
-    (50.0, 0.08),
-    (65.0, 0.10),
-    (75.0, 0.14),
-    (80.0, 0.20),
-    (85.0, 0.21),
-    (90.0, 0.24),
+    (10.0, 0.00),
+    (20.0, 0.00),
+    (30.0, 0.04),
+    (40.0, 0.02),
+    (50.0, 0.05),
+    (65.0, 0.05),
+    (75.0, 0.27),
+    (80.0, 0.13),
+    (85.0, 0.16),
+    (90.0, 0.17),
 ];
 
 // --- cjpegli / zenjpeg ---
-// Source quality points: butteraugli distance (DESCENDING = higher quality)
-const JPEGLI_SRC_QS: &[f32] = &[3.4, 2.8, 2.4, 2.1, 1.8, 1.4];
+// Source quality points: butteraugli distance (DESCENDING = higher quality).
+// Calibrated on 10 gb82 images (median-based).
+const JPEGLI_SRC_QS: &[f32] = &[5.9, 4.5, 3.9, 3.5, 3.2, 2.8, 2.3, 2.0, 1.7, 1.3];
 
 const JPEGLI_GRID: &[&[f32]] = &[
-    // tol=0.1
-    &[75.0, 85.0, 90.0, 95.0, 97.0, 97.0],
-    // tol=0.2
-    &[65.0, 70.0, 80.0, 85.0, 88.0, 95.0],
-    // tol=0.3
-    &[55.0, 70.0, 75.0, 80.0, 85.0, 90.0],
-    // tol=0.4
-    &[50.0, 65.0, 75.0, 80.0, 85.0, 90.0],
-    // tol=0.5
-    &[50.0, 65.0, 70.0, 80.0, 85.0, 88.0],
-    // tol=0.7
-    &[50.0, 55.0, 70.0, 75.0, 80.0, 85.0],
-    // tol=1.0
-    &[50.0, 50.0, 60.0, 65.0, 75.0, 80.0],
-    // tol=1.5
-    &[50.0, 50.0, 50.0, 50.0, 60.0, 70.0],
-    // tol=2.0
-    &[50.0, 50.0, 50.0, 50.0, 50.0, 55.0],
+    //                      d=5.9 d=4.5 d=3.9 d=3.5 d=3.2 d=2.8 d=2.3 d=2.0 d=1.7 d=1.3
+    /* tol=0.1 */ &[40.0, 40.0, 40.0, 40.0, 50.0, 65.0, 75.0, 80.0, 85.0, 90.0],
+    /* tol=0.2 */ &[35.0, 35.0, 35.0, 40.0, 50.0, 65.0, 75.0, 80.0, 85.0, 90.0],
+    /* tol=0.3 */ &[25.0, 25.0, 30.0, 40.0, 45.0, 60.0, 75.0, 80.0, 85.0, 88.0],
+    /* tol=0.4 */ &[25.0, 25.0, 30.0, 40.0, 45.0, 60.0, 75.0, 80.0, 85.0, 88.0],
+    /* tol=0.5 */ &[20.0, 20.0, 30.0, 40.0, 45.0, 55.0, 70.0, 75.0, 80.0, 85.0],
+    /* tol=0.7 */ &[20.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 75.0, 85.0],
+    /* tol=1.0 */ &[20.0, 20.0, 25.0, 30.0, 30.0, 45.0, 55.0, 60.0, 65.0, 80.0],
+    /* tol=1.5 */ &[20.0, 20.0, 20.0, 25.0, 25.0, 25.0, 45.0, 50.0, 50.0, 60.0],
+    /* tol=2.0 */ &[20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 25.0, 30.0, 35.0, 50.0],
 ];
 
+/// Min achievable BA delta per jpegli source quality (at Q97, median across 10 images).
 const JPEGLI_MIN_DELTA: &[(f32, f32)] = &[
-    (3.4, 0.01),
-    (2.8, 0.05),
-    (2.4, 0.06),
-    (2.1, 0.08),
-    (1.8, 0.09),
-    (1.4, 0.15),
+    (5.9, 0.00),
+    (4.5, 0.00),
+    (3.9, 0.00),
+    (3.5, 0.00),
+    (3.2, 0.01),
+    (2.8, 0.00),
+    (2.3, 0.00),
+    (2.0, 0.01),
+    (1.7, 0.04),
+    (1.3, 0.02),
 ];
 
 // ============================================================================
@@ -574,11 +567,15 @@ mod tests {
     #[test]
     fn test_turbo_default_recommendations() {
         let cases = [
+            (10.0, 20.0),
+            (20.0, 55.0),
+            (30.0, 55.0),
+            (40.0, 55.0),
             (50.0, 65.0),
             (65.0, 70.0),
-            (75.0, 85.0),
+            (75.0, 88.0),
             (80.0, 88.0),
-            (85.0, 90.0),
+            (85.0, 88.0),
             (90.0, 95.0),
         ];
         for (src_q, expected) in cases {
@@ -599,12 +596,16 @@ mod tests {
     #[test]
     fn test_mozjpeg_default_recommendations() {
         let cases = [
-            (50.0, 55.0),
-            (65.0, 65.0),
+            (10.0, 20.0),
+            (20.0, 25.0),
+            (30.0, 60.0),
+            (40.0, 60.0),
+            (50.0, 60.0),
+            (65.0, 75.0),
             (75.0, 80.0),
-            (80.0, 85.0),
+            (80.0, 88.0),
             (85.0, 88.0),
-            (90.0, 93.0),
+            (90.0, 95.0),
         ];
         for (src_q, expected) in cases {
             let probe = mock_probe(
@@ -624,12 +625,16 @@ mod tests {
     #[test]
     fn test_jpegli_default_recommendations() {
         let cases = [
-            (3.4, 55.0),
-            (2.8, 70.0),
-            (2.4, 75.0),
-            (2.1, 80.0),
-            (1.8, 85.0),
-            (1.4, 90.0),
+            (5.9, 25.0),
+            (4.5, 25.0),
+            (3.9, 30.0),
+            (3.5, 40.0),
+            (3.2, 45.0),
+            (2.8, 60.0),
+            (2.3, 75.0),
+            (2.0, 80.0),
+            (1.7, 85.0),
+            (1.3, 88.0),
         ];
         for (src_dist, expected) in cases {
             let probe = mock_probe(
@@ -691,7 +696,7 @@ mod tests {
         let q10 = recommended_q_with_tolerance(&probe, 1.0);
 
         assert!((q01 - 97.0).abs() < 0.01, "tol=0.1: got {q01}");
-        assert!((q03 - 90.0).abs() < 0.01, "tol=0.3: got {q03}");
+        assert!((q03 - 88.0).abs() < 0.01, "tol=0.3: got {q03}");
         assert!((q05 - 80.0).abs() < 0.01, "tol=0.5: got {q05}");
         assert!((q10 - 70.0).abs() < 0.01, "tol=1.0: got {q10}");
     }
@@ -705,12 +710,12 @@ mod tests {
             Subsampling::S420,
         );
 
-        // tol=0.3→95, tol=0.4→90 (exact grid point), tol=0.5→88
-        // Interpolate between 0.3 and 0.4: midpoint at 0.35 → (95+90)/2 = 92.5
-        let q = recommended_q_with_tolerance(&probe, 0.35);
+        // tol=0.3→95, tol=0.4→95 (exact grid point), tol=0.5→90
+        // Interpolate between 0.4 and 0.5: midpoint at 0.45 → (95+90)/2 = 92.5
+        let q = recommended_q_with_tolerance(&probe, 0.45);
         assert!(
             (q - 92.5).abs() < 0.01,
-            "turbo Q90 tol=0.35: expected 92.5, got {q}"
+            "turbo Q90 tol=0.45: expected 92.5, got {q}"
         );
     }
 
@@ -726,7 +731,7 @@ mod tests {
         // At tol=0.3: Q50→65, Q65→70, midpoint=67.5
         let q = recommended_q_with_tolerance(&probe, 0.3);
         assert!(
-            (q - 67.5).abs() < 0.01,
+            (q - 67.5).abs() < 0.1,
             "turbo Q57.5 tol=0.3: expected 67.5, got {q}"
         );
     }
@@ -790,15 +795,15 @@ mod tests {
 
     #[test]
     fn test_reencode_settings_achievable_tolerance() {
-        // cjpegli Q50 (BA 3.4) has min_delta ~0.01 — even tight tolerance works
+        // cjpegli Q50 (BA ~3.2) has min_delta ~0.01 — even tight tolerance works
         let probe = mock_probe(
             EncoderFamily::CjpegliYcbcr,
-            3.4,
+            3.2,
             QualityScale::ButteraugliDistance,
             Subsampling::S444,
         );
         let settings = probe.reencode_settings(0.1).unwrap();
-        assert!(matches!(settings.quality, Quality::ApproxJpegli(q) if q > 50.0));
+        assert!(matches!(settings.quality, Quality::ApproxJpegli(q) if q > 20.0));
         assert_eq!(settings.subsampling, ChromaSubsampling::None);
     }
 
