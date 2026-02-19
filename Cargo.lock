@@ -146,17 +146,10 @@ dependencies = [
 [[package]]
 name = "archmage"
 version = "0.8.4"
-dependencies = [
- "archmage-macros 0.8.4",
-]
-
-[[package]]
-name = "archmage"
-version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fba21e64cb000b4890dc6348042557208486e5ea4e9f574b7f75f7a45e99e19d"
 dependencies = [
- "archmage-macros 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archmage-macros 0.8.4",
  "safe_unaligned_simd",
 ]
 
@@ -176,15 +169,6 @@ name = "archmage-macros"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f6d4d20f79dde36c8d0d7ddd4bd6ea2ebd4aafa3119fd3bd831e6b30af3f251"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "archmage-macros"
-version = "0.8.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1069,22 +1053,11 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.4.0"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d458e5e9228c58b8b1d49118eb26204f152ddc2b1ab6f451563ec647ccc76519"
+checksum = "7687eee4c424bdb5f360d5d975a52baa0f56c1ce15e3c5cbef4af7d39e148092"
 dependencies = [
- "bytemuck",
- "multiversed",
- "multiversion",
- "num-traits",
- "wide 1.1.1",
-]
-
-[[package]]
-name = "linear-srgb"
-version = "0.5.4"
-dependencies = [
- "archmage 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archmage 0.8.4",
  "bytemuck",
  "magetypes 0.8.4",
  "num-traits",
@@ -1127,7 +1100,7 @@ version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5963554492ae9c4248d5e761f734a97d79f5d7f07f4c81d708725be8a81f6819"
 dependencies = [
- "archmage 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archmage 0.8.4",
 ]
 
 [[package]]
@@ -2456,7 +2429,7 @@ dependencies = [
  "aligned-vec",
  "almost-enough",
  "approx",
- "archmage 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archmage 0.8.4",
  "bincode",
  "butteraugli",
  "bytemuck",
@@ -2475,7 +2448,7 @@ dependencies = [
  "jpegli-internals-sys",
  "kamadak-exif",
  "lcms2",
- "linear-srgb 0.4.0",
+ "linear-srgb",
  "magetypes 0.8.4",
  "moxcms 0.6.4",
  "mozjpeg-rs",
@@ -2539,7 +2512,7 @@ version = "0.1.0"
 dependencies = [
  "archmage 0.8.4",
  "imgref",
- "linear-srgb 0.5.4",
+ "linear-srgb",
  "rgb",
  "safe_unaligned_simd",
  "wide 1.1.1",
