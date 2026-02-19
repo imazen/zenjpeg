@@ -445,7 +445,7 @@ pub enum IccTargetArg {
     Rec2020,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum PresetArg {
     /// Jpegli tables + AQ, no trellis, baseline.
     Jpegli,

@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
 use zenjpeg::decoder::{
     DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Strictness, Subsampling,
@@ -871,6 +872,16 @@ fn determine_encode_params(
     // Per-preset quality offset: compensate for R-D efficiency differences.
     // The calibration grids were built with auto_optimize (hybrid-prog).
     let preset_offset = preset_quality_offset(args.preset);
+    if preset_offset >= 5.0 {
+        if let Some(preset) = args.preset {
+            let name = preset.to_possible_value().map(|v| v.get_name().to_string());
+            if let Some(name) = name {
+                eprintln!(
+                    "info: preset '{name}' needs +{preset_offset:.0} Q for equivalent quality"
+                );
+            }
+        }
+    }
 
     let (quality, sub) = match probe.reencode_settings(tolerance) {
         Ok(settings) => {
@@ -923,16 +934,24 @@ fn determine_encode_params(
 /// Offsets are conservative: better to produce slightly larger files than to
 /// risk visible quality degradation from under-quantizing.
 fn preset_quality_offset(preset: Option<crate::PresetArg>) -> f32 {
+    // Calibrated on 10 gb82 images × 3 encoder families × 6 source qualities.
+    // Offset = additional Q points needed to match auto_optimize butteraugli delta.
+    // See reencode_calibration --preset-offsets for methodology.
     use crate::PresetArg::*;
     match preset {
-        // auto_optimize (hybrid-prog) — calibrated baseline
+        // auto_optimize (hybrid-prog λ=14.5) — calibrated baseline
         None => 0.0,
-        // Hybrid = same efficiency as auto_optimize
-        Some(Hybrid | HybridProg | HybridMax) => 0.0,
-        // Jpegli = AQ but no trellis → slightly less efficient
-        Some(Jpegli | JpegliProg) => 1.0,
-        // Mozjpeg = trellis but no AQ, Robidoux tables → less perceptually optimized
-        Some(Mozjpeg | MozjpegProg | MozjpegMax) => 3.0,
+        // HybridMax ≈ auto_optimize (same tables+trellis, measured +0.1 at tol 0.5)
+        Some(HybridMax) => 0.0,
+        // Hybrid/HybridProg — very close to auto (measured +1.0 at tol 0.5)
+        Some(Hybrid | HybridProg) => 1.0,
+        // Jpegli — AQ but no trellis (measured +2.9 at tol 0.5, +2.5 at tol 1.0)
+        Some(Jpegli | JpegliProg) => 2.0,
+        // Mozjpeg — Robidoux tables, fundamentally different R-D curve
+        // (measured +10.5 at tol 0.5, +10.7 at tol 1.0)
+        Some(Mozjpeg | MozjpegProg) => 10.0,
+        // MozjpegMax — similar to mozjpeg (measured +7.7 at tol 0.5, +13.3 at tol 1.0)
+        Some(MozjpegMax) => 10.0,
     }
 }
 
