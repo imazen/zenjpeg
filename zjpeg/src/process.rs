@@ -405,14 +405,8 @@ fn run_lossy(
         // Resize
         if let Some(ref lr) = layout_result {
             if lr.needs_resize {
-                pixels_f32 = resize_f32(
-                    &pixels_f32,
-                    width as u32,
-                    height as u32,
-                    lr.target_w,
-                    lr.target_h,
-                    args,
-                )?;
+                pixels_f32 =
+                    resize_f32(&pixels_f32, width, height, lr.target_w, lr.target_h, args)?;
                 width = lr.target_w;
                 height = lr.target_h;
             }
@@ -469,14 +463,7 @@ fn run_lossy(
         // Resize
         if let Some(ref lr) = layout_result {
             if lr.needs_resize {
-                pixels_u8 = resize_u8(
-                    &pixels_u8,
-                    width as u32,
-                    height as u32,
-                    lr.target_w,
-                    lr.target_h,
-                    args,
-                )?;
+                pixels_u8 = resize_u8(&pixels_u8, width, height, lr.target_w, lr.target_h, args)?;
                 width = lr.target_w;
                 height = lr.target_h;
             }
