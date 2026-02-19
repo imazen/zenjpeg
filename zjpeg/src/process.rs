@@ -849,6 +849,7 @@ fn determine_encode_params(
     args: &ProcessArgs,
     probe: &detect::JpegProbe,
 ) -> Result<(Quality, ChromaSubsampling)> {
+    // Explicit quality/distance: pass through as-is (user knows what they want)
     if let Some(q) = args.quality {
         let sub = user_subsampling(args, probe);
         return Ok((Quality::ApproxJpegli(q), sub));
@@ -858,6 +859,7 @@ fn determine_encode_params(
         return Ok((Quality::ApproxButteraugli(d), sub));
     }
 
+    // Auto quality detection from source
     let tolerance = if let Some(t) = args.tolerance {
         t
     } else if let Some(crush) = args.crush {
@@ -866,23 +868,132 @@ fn determine_encode_params(
         0.3
     };
 
-    match probe.reencode_settings(tolerance) {
+    // Per-preset quality offset: compensate for R-D efficiency differences.
+    // The calibration grids were built with auto_optimize (hybrid-prog).
+    let preset_offset = preset_quality_offset(args.preset);
+
+    let (quality, sub) = match probe.reencode_settings(tolerance) {
         Ok(settings) => {
-            let quality = settings.quality;
+            let q = offset_quality(settings.quality, preset_offset);
             let sub = if let Some(user_sub) = args.subsampling {
                 convert_subsampling(user_sub)
             } else {
                 settings.subsampling
             };
-            let quality = clamp_quality(quality, args.min_quality, args.max_quality);
-            Ok((quality, sub))
+            (q, sub)
         }
-        Err(_) => {
-            let quality = probe.recommended_quality();
-            let sub = user_subsampling(args, probe);
-            let quality = clamp_quality(quality, args.min_quality, args.max_quality);
-            Ok((quality, sub))
+        Err(detect::ReencodeError::ToleranceTooTight { best_effort, .. }) => {
+            // Use best_effort (Q97 + matching subsampling) instead of falling
+            // back to a different tolerance that could produce worse quality.
+            let q = offset_quality(best_effort.quality, preset_offset);
+            let sub = if let Some(user_sub) = args.subsampling {
+                convert_subsampling(user_sub)
+            } else {
+                best_effort.subsampling
+            };
+            eprintln!(
+                "warning: tolerance {tolerance:.1} is tighter than achievable; using best effort"
+            );
+            (q, sub)
         }
+        Err(detect::ReencodeError::InvalidTolerance) => {
+            anyhow::bail!("invalid tolerance: {tolerance}");
+        }
+        Err(e) => {
+            anyhow::bail!("reencode settings error: {e}");
+        }
+    };
+
+    // Quality floor: prevent catastrophic generation loss.
+    let quality = apply_quality_floor(quality, probe);
+
+    let quality = clamp_quality(quality, args.min_quality, args.max_quality);
+    Ok((quality, sub))
+}
+
+/// Per-preset quality offset to compensate for R-D efficiency differences.
+///
+/// The calibration grids were built with auto_optimize (hybrid-prog). Other
+/// presets have different R-D efficiency at the same Q value:
+///
+/// - Hybrid: calibrated baseline, no offset needed
+/// - Jpegli (no trellis): slightly less efficient coding, +1 Q
+/// - Mozjpeg (no AQ, Robidoux tables): less perceptually optimized, +3 Q
+///
+/// Offsets are conservative: better to produce slightly larger files than to
+/// risk visible quality degradation from under-quantizing.
+fn preset_quality_offset(preset: Option<crate::PresetArg>) -> f32 {
+    use crate::PresetArg::*;
+    match preset {
+        // auto_optimize (hybrid-prog) — calibrated baseline
+        None => 0.0,
+        // Hybrid = same efficiency as auto_optimize
+        Some(Hybrid | HybridProg | HybridMax) => 0.0,
+        // Jpegli = AQ but no trellis → slightly less efficient
+        Some(Jpegli | JpegliProg) => 1.0,
+        // Mozjpeg = trellis but no AQ, Robidoux tables → less perceptually optimized
+        Some(Mozjpeg | MozjpegProg | MozjpegMax) => 3.0,
+    }
+}
+
+/// Apply a quality offset, clamping to valid range.
+fn offset_quality(quality: Quality, offset: f32) -> Quality {
+    if offset == 0.0 {
+        return quality;
+    }
+    match quality {
+        Quality::ApproxJpegli(q) => Quality::ApproxJpegli((q + offset).clamp(50.0, 97.0)),
+        other => other,
+    }
+}
+
+/// Quality floor based on detected source quality.
+///
+/// Prevents catastrophic generation loss when re-encoding without explicit
+/// quality. Never lets the recommended Q drop more than 15 points below the
+/// source's approximate equivalent zenjpeg Q.
+fn apply_quality_floor(quality: Quality, probe: &detect::JpegProbe) -> Quality {
+    let q = match quality {
+        Quality::ApproxJpegli(q) => q,
+        _ => return quality,
+    };
+
+    // Estimate source's equivalent zenjpeg Q
+    let source_equiv_q = match probe.quality.scale {
+        QualityScale::IjgQuality | QualityScale::MozjpegQuality => {
+            // IJG/mozjpeg Q maps approximately to zenjpeg Q
+            probe.quality.value
+        }
+        QualityScale::ButteraugliDistance => {
+            // Distance → approximate Q: d=1.0≈Q90, d=2.0≈Q80, d=3.0≈Q70
+            let d = probe.quality.value;
+            if d <= 0.5 {
+                97.0
+            } else if d <= 1.0 {
+                93.0 - (d - 0.5) * 6.0
+            } else if d <= 2.0 {
+                90.0 - (d - 1.0) * 10.0
+            } else if d <= 4.0 {
+                80.0 - (d - 2.0) * 5.0
+            } else {
+                60.0
+            }
+        }
+        // Unknown scale — assume moderate quality, conservative floor
+        _ => 75.0,
+    };
+
+    // Floor = source equivalent - 15, minimum 50
+    let floor = (source_equiv_q - 15.0).max(50.0);
+
+    if q < floor {
+        eprintln!(
+            "warning: raising quality from {q:.0} to {floor:.0} \
+             (source is ~Q{source_equiv_q:.0}, floor prevents generation loss)"
+        );
+        Quality::ApproxJpegli(floor)
+    } else {
+        quality
     }
 }
 
