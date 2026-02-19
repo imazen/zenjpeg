@@ -215,6 +215,10 @@ pub struct ProcessArgs {
     #[arg(long, value_parser = clap::value_parser!(u8).range(2..=3))]
     pub chroma_tables: Option<u8>,
 
+    /// Optimization preset (overrides --auto-optimize).
+    #[arg(long, value_enum)]
+    pub preset: Option<PresetArg>,
+
     /// Enable auto_optimize (hybrid trellis, default: on).
     #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
     pub auto_optimize: bool,
@@ -435,6 +439,26 @@ pub enum IccTargetArg {
     P3,
     /// Convert to BT.2020/Rec.2020 (wide gamut).
     Rec2020,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum PresetArg {
+    /// Jpegli tables + AQ, no trellis, baseline.
+    Jpegli,
+    /// Jpegli tables + AQ, no trellis, progressive.
+    JpegliProg,
+    /// Mozjpeg Robidoux tables + trellis, no AQ, baseline.
+    Mozjpeg,
+    /// Mozjpeg tables + trellis, no AQ, mozjpeg progressive script.
+    MozjpegProg,
+    /// Mozjpeg tables + trellis + scan search + deringing, no AQ.
+    MozjpegMax,
+    /// Jpegli tables + trellis + AQ, baseline.
+    Hybrid,
+    /// Jpegli tables + trellis + AQ, progressive (default).
+    HybridProg,
+    /// Jpegli tables + trellis + AQ + scan search + deringing.
+    HybridMax,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -768,6 +792,7 @@ fn main() -> Result<()> {
                     subsampling: None,
                     quant_tables: None,
                     chroma_tables: None,
+                    preset: None,
                     auto_optimize: true,
                     no_optimize: false,
                     sharp_yuv: false,
