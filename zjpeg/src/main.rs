@@ -295,6 +295,10 @@ pub struct ProcessArgs {
     pub sharpen: f32,
 
     // -- Output control ---------------------------------------------------
+    /// Error instead of re-encoding when lossy pipeline would be required.
+    #[arg(long)]
+    pub lossless_only: bool,
+
     /// Don't write output if it would be larger than input.
     #[arg(long)]
     pub skip_if_larger: bool,
@@ -811,6 +815,7 @@ fn main() -> Result<()> {
                     down_filter: None,
                     up_filter: None,
                     sharpen: 0.0,
+                    lossless_only: false,
                     skip_if_larger: false,
                     report: false,
                     csv: None,

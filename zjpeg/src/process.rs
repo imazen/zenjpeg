@@ -157,7 +157,16 @@ fn process_inner(
     let data =
         std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
 
-    match classify_pipeline(args) {
+    let pipeline = classify_pipeline(args);
+
+    if args.lossless_only && matches!(pipeline, PipelineKind::Lossy) {
+        anyhow::bail!(
+            "lossy re-encoding required for '{}' but --lossless-only is set",
+            path.display()
+        );
+    }
+
+    match pipeline {
         PipelineKind::Lossless => run_lossless(&data, path, args, output_config, is_single),
         PipelineKind::Restructure => run_restructure(&data, path, args, output_config, is_single),
         PipelineKind::Lossy => run_lossy(&data, path, args, output_config, is_single),
