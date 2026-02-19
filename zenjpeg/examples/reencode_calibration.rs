@@ -39,10 +39,11 @@ use zenjpeg_bench_utils::{
 
 const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/reencode_calibration";
 
-const SRC_QUALITIES: [u8; 6] = [50, 65, 75, 80, 85, 90];
-const SRC_QUALITIES_FULL: [u8; 10] = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const ZEN_QUALITIES: [f32; 13] = [
-    50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 88.0, 90.0, 93.0, 95.0, 97.0,
+const SRC_QUALITIES: [u8; 10] = [10, 20, 30, 40, 50, 65, 75, 80, 85, 90];
+const SRC_QUALITIES_FULL: [u8; 14] = [10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+const ZEN_QUALITIES: [f32; 19] = [
+    20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 88.0,
+    90.0, 93.0, 95.0, 97.0,
 ];
 const RESIZE_QUALITIES: [f32; 8] = [55.0, 65.0, 75.0, 80.0, 85.0, 88.0, 90.0, 95.0];
 const RESIZE_RATIOS: [f64; 4] = [1.5, 2.0, 3.0, 4.0];
