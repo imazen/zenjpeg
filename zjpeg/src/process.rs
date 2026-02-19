@@ -17,8 +17,8 @@ use zenjpeg::decoder::{
 use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
 use zenjpeg::detect::{self, QualityScale};
 use zenjpeg::encoder::{
-    ChromaSubsampling, EncoderConfig, PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig,
-    XybSubsampling,
+    ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, ProgressiveScanMode,
+    Quality, QuantTableConfig, XybSubsampling,
 };
 use zenjpeg::lossless::{
     self, LosslessTransform, OutputMode, RestartInterval, RestructureConfig, TransformConfig,
@@ -187,6 +187,7 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_subsampling = args.subsampling.is_some();
     let has_quant_tables = args.quant_tables.is_some();
     let has_chroma_tables = args.chroma_tables.is_some();
+    let has_preset = args.preset.is_some();
     // optimize_scans requires entropy re-encoding (scan search tries 64 candidates),
     // which currently goes through the lossy encoder. Could be lossless if the
     // restructure module gained scan search support on existing DCT coefficients.
@@ -206,6 +207,7 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
         || has_subsampling
         || has_quant_tables
         || has_chroma_tables
+        || has_preset
         || has_optimize_scans
         || has_riapi;
 
@@ -928,11 +930,23 @@ fn build_encoder_config(
         EncoderConfig::ycbcr(quality, subsampling)
     };
 
-    if args.effective_auto_optimize() {
+    // Preset sets the base optimization profile; individual flags override below.
+    if let Some(preset) = args.preset {
+        config = config.optimization(match preset {
+            crate::PresetArg::Jpegli => OptimizationPreset::JpegliBaseline,
+            crate::PresetArg::JpegliProg => OptimizationPreset::JpegliProgressive,
+            crate::PresetArg::Mozjpeg => OptimizationPreset::MozjpegBaseline,
+            crate::PresetArg::MozjpegProg => OptimizationPreset::MozjpegProgressive,
+            crate::PresetArg::MozjpegMax => OptimizationPreset::MozjpegMaxCompression,
+            crate::PresetArg::Hybrid => OptimizationPreset::HybridBaseline,
+            crate::PresetArg::HybridProg => OptimizationPreset::HybridProgressive,
+            crate::PresetArg::HybridMax => OptimizationPreset::HybridMaxCompression,
+        });
+    } else if args.effective_auto_optimize() {
         config = config.auto_optimize(true);
     }
 
-    // Quant tables (applied after auto_optimize so user can override)
+    // Quant tables override preset's table selection
     if let Some(qt) = args.quant_tables {
         config = config.quant_table_config(match qt {
             crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli,

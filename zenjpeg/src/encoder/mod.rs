@@ -148,8 +148,8 @@ pub use crate::error::{Error, Result};
 pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 pub use crate::encode::encoder_config::EncoderConfig;
 pub use crate::encode::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
-    ProgressiveScanMode, Quality, QuantTableConfig, XybSubsampling, YCbCrPlanes,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,
+    PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, XybSubsampling, YCbCrPlanes,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::request::EncodeRequest;
