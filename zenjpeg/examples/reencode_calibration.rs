@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use zenjpeg::detect;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
     bytes_to_rgb, decode_jpeg_to_rgb, decode_jpeg_with_icc, rgb_to_bytes, write_ppm, ImageData,
     QualityMetrics, RgbImage,
@@ -47,6 +47,18 @@ const ZEN_QUALITIES: [f32; 13] = [
 const RESIZE_QUALITIES: [f32; 8] = [55.0, 65.0, 75.0, 80.0, 85.0, 88.0, 90.0, 95.0];
 const RESIZE_RATIOS: [f64; 4] = [1.5, 2.0, 3.0, 4.0];
 
+/// Preset quality profiles for offset calibration.
+/// Progressive variants used since BA delta is identical to baseline counterparts.
+/// "auto" = auto_optimize(true) which is the calibrated baseline for the grids.
+const OFFSET_PRESETS: &[(&str, Option<OptimizationPreset>)] = &[
+    ("auto", None),
+    ("jpegli", Some(OptimizationPreset::JpegliProgressive)),
+    ("mozjpeg", Some(OptimizationPreset::MozjpegProgressive)),
+    ("moz-max", Some(OptimizationPreset::MozjpegMaxCompression)),
+    ("hybrid", Some(OptimizationPreset::HybridProgressive)),
+    ("hyb-max", Some(OptimizationPreset::HybridMaxCompression)),
+];
+
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
@@ -60,6 +72,7 @@ struct Args {
     size_tolerance: f64,
     full_sweep: bool,
     resize: bool,
+    preset_offsets: bool,
     no_turbo: bool,
     no_mozjpeg: bool,
     no_cjpegli: bool,
@@ -92,6 +105,7 @@ fn parse_args() -> Args {
         size_tolerance: 0.02,
         full_sweep: false,
         resize: false,
+        preset_offsets: false,
         no_turbo: false,
         no_mozjpeg: false,
         no_cjpegli: false,
@@ -124,6 +138,7 @@ fn parse_args() -> Args {
             }
             "--full-sweep" => args.full_sweep = true,
             "--resize" => args.resize = true,
+            "--preset-offsets" => args.preset_offsets = true,
             "--no-turbo" => args.no_turbo = true,
             "--no-mozjpeg" => args.no_mozjpeg = true,
             "--no-cjpegli" => args.no_cjpegli = true,
@@ -138,6 +153,7 @@ fn parse_args() -> Args {
                 eprintln!("  --size-tolerance <f>    Size ratio tolerance (default: 0.02)");
                 eprintln!("  --full-sweep            All quality+subsampling combos");
                 eprintln!("  --resize                Enable Phase 3 resize experiments");
+                eprintln!("  --preset-offsets        Measure quality offsets for all presets");
                 eprintln!("  --no-turbo              Skip libjpeg-turbo");
                 eprintln!("  --no-mozjpeg            Skip mozjpeg");
                 eprintln!("  --no-cjpegli            Skip cjpegli");
@@ -256,7 +272,22 @@ fn encode_zen(
     quality: f32,
     sub: ChromaSubsampling,
 ) -> Option<Vec<u8>> {
-    let config = EncoderConfig::ycbcr(quality, sub).auto_optimize(true);
+    encode_zen_preset(pixels, w, h, quality, sub, None)
+}
+
+fn encode_zen_preset(
+    pixels: &[u8],
+    w: usize,
+    h: usize,
+    quality: f32,
+    sub: ChromaSubsampling,
+    preset: Option<OptimizationPreset>,
+) -> Option<Vec<u8>> {
+    let config = EncoderConfig::ycbcr(quality, sub);
+    let config = match preset {
+        Some(p) => config.optimization(p),
+        None => config.auto_optimize(true),
+    };
     let mut e = config
         .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .ok()?;
@@ -334,6 +365,7 @@ struct RawResult {
     src_ss2: f64,
     src_size: usize,
     resize_ratio: f64,
+    zen_preset: String,
     zen_quality: f32,
     zen_sub: String,
     reenc_ba: f64,
@@ -394,6 +426,7 @@ fn process_source(
     src_quality: u8,
     src_sub: &str,
     zen_qualities: &[f32],
+    presets: &[(&str, Option<OptimizationPreset>)],
     verbose: bool,
 ) -> Vec<RawResult> {
     let mut results = Vec::new();
@@ -435,29 +468,34 @@ fn process_source(
         vec![("420", ChromaSubsampling::Quarter)]
     };
 
-    for &zen_q in zen_qualities {
-        for &(zen_sub_str, zen_sub) in &zen_subs {
-            if let Some(reenc) = encode_zen(&decoded_bytes, w, h, zen_q, zen_sub) {
-                if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
-                    let reenc_size = reenc.len();
-                    results.push(RawResult {
-                        image: img_name.to_string(),
-                        src_encoder: src_encoder.to_string(),
-                        src_quality,
-                        src_sub: src_sub.to_string(),
-                        src_ba,
-                        src_ss2,
-                        src_size,
-                        resize_ratio: 1.0,
-                        zen_quality: zen_q,
-                        zen_sub: zen_sub_str.to_string(),
-                        reenc_ba,
-                        reenc_ss2,
-                        reenc_size,
-                        ba_delta: reenc_ba - src_ba,
-                        ss2_delta: reenc_ss2 - src_ss2,
-                        size_ratio: reenc_size as f64 / src_size as f64,
-                    });
+    for &(preset_name, preset) in presets {
+        for &zen_q in zen_qualities {
+            for &(zen_sub_str, zen_sub) in &zen_subs {
+                if let Some(reenc) =
+                    encode_zen_preset(&decoded_bytes, w, h, zen_q, zen_sub, preset)
+                {
+                    if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
+                        let reenc_size = reenc.len();
+                        results.push(RawResult {
+                            image: img_name.to_string(),
+                            src_encoder: src_encoder.to_string(),
+                            src_quality,
+                            src_sub: src_sub.to_string(),
+                            src_ba,
+                            src_ss2,
+                            src_size,
+                            resize_ratio: 1.0,
+                            zen_preset: preset_name.to_string(),
+                            zen_quality: zen_q,
+                            zen_sub: zen_sub_str.to_string(),
+                            reenc_ba,
+                            reenc_ss2,
+                            reenc_size,
+                            ba_delta: reenc_ba - src_ba,
+                            ss2_delta: reenc_ss2 - src_ss2,
+                            size_ratio: reenc_size as f64 / src_size as f64,
+                        });
+                    }
                 }
             }
         }
@@ -527,6 +565,7 @@ fn process_resize(
                         src_ss2: rsrc_ss2,
                         src_size,
                         resize_ratio: ratio,
+                        zen_preset: "auto".to_string(),
                         zen_quality: zen_q,
                         zen_sub: "420".to_string(),
                         reenc_ba,
@@ -550,6 +589,7 @@ fn process_image(
     tmp_dir: &Path,
     source_configs: &[SourceConfig],
     src_qualities: &[u8],
+    presets: &[(&str, Option<OptimizationPreset>)],
     args: &Args,
 ) -> Vec<RawResult> {
     let reference = bytes_to_rgb(&img.pixels, img.width, img.height);
@@ -603,7 +643,7 @@ fn process_image(
                 _ => continue,
             };
 
-            // Phase 2: Re-encoding sweep
+            // Phase 2: Re-encoding sweep (all presets)
             results.extend(process_source(
                 &img.name,
                 &reference,
@@ -612,6 +652,7 @@ fn process_image(
                 sq,
                 &src_cfg.sub,
                 &ZEN_QUALITIES,
+                presets,
                 args.verbose,
             ));
 
@@ -642,8 +683,11 @@ fn process_image(
 // ---------------------------------------------------------------------------
 
 fn compute_summary(results: &[RawResult], args: &Args) -> Vec<SummaryRow> {
-    // Only non-resize results
-    let non_resize: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio == 1.0).collect();
+    // Only non-resize, auto-preset results (preserves existing behavior)
+    let non_resize: Vec<&RawResult> = results
+        .iter()
+        .filter(|r| r.resize_ratio == 1.0 && r.zen_preset == "auto")
+        .collect();
 
     // Group by (src_encoder, src_quality, src_sub)
     let mut groups: std::collections::BTreeMap<(String, u8, String), Vec<&RawResult>> =
@@ -1001,14 +1045,14 @@ fn write_raw_csv(path: &Path, results: &[RawResult]) {
     writeln!(
         f,
         "image,src_encoder,src_quality,src_sub,src_ba,src_ss2,src_size,\
-         resize_ratio,zen_quality,zen_sub,reenc_ba,reenc_ss2,reenc_size,\
+         resize_ratio,zen_preset,zen_quality,zen_sub,reenc_ba,reenc_ss2,reenc_size,\
          ba_delta,ss2_delta,size_ratio"
     )
     .ok();
     for r in results {
         writeln!(
             f,
-            "{},{},{},{},{:.4},{:.2},{},{:.1},{:.0},{},{:.4},{:.2},{},{:.4},{:.2},{:.4}",
+            "{},{},{},{},{:.4},{:.2},{},{:.1},{},{:.0},{},{:.4},{:.2},{},{:.4},{:.2},{:.4}",
             r.image,
             r.src_encoder,
             r.src_quality,
@@ -1017,6 +1061,7 @@ fn write_raw_csv(path: &Path, results: &[RawResult]) {
             r.src_ss2,
             r.src_size,
             r.resize_ratio,
+            r.zen_preset,
             r.zen_quality,
             r.zen_sub,
             r.reenc_ba,
@@ -1074,6 +1119,255 @@ fn write_summary_csv(path: &Path, summary: &[SummaryRow]) {
         .ok();
     }
     println!("  summary.csv: {} rows", summary.len());
+}
+
+// ---------------------------------------------------------------------------
+// Preset offset analysis
+// ---------------------------------------------------------------------------
+
+/// For each (preset, src_encoder, src_quality), find the recommended Q at the
+/// given BA tolerance. Returns (preset, family, src_q, rec_q) tuples.
+fn find_recommended_q_per_preset(
+    results: &[RawResult],
+    ba_tolerance: f64,
+) -> Vec<(String, String, u8, Option<f32>)> {
+    let non_resize: Vec<&RawResult> = results.iter().filter(|r| r.resize_ratio == 1.0).collect();
+
+    // Group by (zen_preset, src_encoder, src_quality, src_sub)
+    let mut groups: std::collections::BTreeMap<(String, String, u8, String), Vec<&RawResult>> =
+        std::collections::BTreeMap::new();
+    for r in &non_resize {
+        groups
+            .entry((
+                r.zen_preset.clone(),
+                r.src_encoder.clone(),
+                r.src_quality,
+                r.src_sub.clone(),
+            ))
+            .or_default()
+            .push(r);
+    }
+
+    let mut out = Vec::new();
+    for ((preset, enc, sq, sub), group) in &groups {
+        // Compute (zen_q → mean_ba_delta) for matching subsampling
+        let mut q_stats: Vec<(f32, f64)> = Vec::new();
+        for &zq in &ZEN_QUALITIES {
+            let matching: Vec<&&RawResult> = group
+                .iter()
+                .filter(|r| r.zen_quality == zq && r.zen_sub == *sub)
+                .collect();
+            if matching.is_empty() {
+                continue;
+            }
+            let n = matching.len() as f64;
+            let mean_bd = matching.iter().map(|r| r.ba_delta).sum::<f64>() / n;
+            q_stats.push((zq, mean_bd));
+        }
+
+        // Find lowest Q where mean ba_delta ≤ tolerance
+        let rec_q = q_stats
+            .iter()
+            .find(|&&(_, bd)| bd <= ba_tolerance)
+            .map(|&(q, _)| q);
+
+        out.push((preset.clone(), enc.clone(), sq.to_owned(), rec_q));
+    }
+
+    out
+}
+
+fn print_preset_offsets(results: &[RawResult]) {
+    let has_presets = results.iter().any(|r| r.zen_preset != "auto");
+    if !has_presets {
+        return;
+    }
+
+    // Collect preset names
+    let mut preset_names: Vec<String> = results
+        .iter()
+        .map(|r| r.zen_preset.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    preset_names.sort();
+
+    println!("\n{}", "=".repeat(100));
+    println!("\nPreset Quality Offsets (vs auto_optimize)");
+    println!("=========================================\n");
+
+    // For each BA tolerance, show the offset table
+    for &tol in &[0.3_f64, 0.5, 1.0] {
+        let recs = find_recommended_q_per_preset(results, tol);
+
+        // Build lookup: (preset, encoder, src_q) → rec_q
+        let mut lookup: std::collections::BTreeMap<(String, String, u8), Option<f32>> =
+            std::collections::BTreeMap::new();
+        for (preset, enc, sq, rec_q) in &recs {
+            lookup.insert((preset.clone(), enc.clone(), *sq), *rec_q);
+        }
+
+        // Get unique (encoder, src_q) pairs
+        let mut source_points: Vec<(String, u8)> = recs
+            .iter()
+            .map(|(_, enc, sq, _)| (enc.clone(), *sq))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        source_points.sort();
+
+        println!("  Tolerance {tol:.1} (BA delta ≤ {tol:.1}):");
+        println!();
+
+        // Header
+        print!("  {:>8} {:>5}", "encoder", "srcQ");
+        for p in &preset_names {
+            print!("  {:>8}", p);
+        }
+        println!("  {:>8}", "offset");
+        print!("  {:>8} {:>5}", "-------", "----");
+        for _ in &preset_names {
+            print!("  {:>8}", "-------");
+        }
+        println!("  {:>8}", "------");
+
+        // Per-source-point offset tracking
+        let mut all_offsets: std::collections::BTreeMap<String, Vec<f32>> =
+            std::collections::BTreeMap::new();
+
+        for (enc, sq) in &source_points {
+            let auto_q = lookup
+                .get(&("auto".to_string(), enc.clone(), *sq))
+                .and_then(|q| *q);
+
+            print!("  {:>8} {:>5}", enc, sq);
+            for p in &preset_names {
+                let q = lookup
+                    .get(&(p.clone(), enc.clone(), *sq))
+                    .and_then(|q| *q);
+                match q {
+                    Some(q) => print!("  {:>8.0}", q),
+                    None => print!("  {:>8}", "-"),
+                }
+            }
+
+            // Show offset vs auto for non-auto presets
+            if let Some(aq) = auto_q {
+                let offsets: Vec<String> = preset_names
+                    .iter()
+                    .filter(|p| *p != "auto")
+                    .filter_map(|p| {
+                        let q = lookup
+                            .get(&(p.clone(), enc.clone(), *sq))
+                            .and_then(|q| *q)?;
+                        let off = q - aq;
+                        all_offsets.entry(p.clone()).or_default().push(off);
+                        Some(format!("{off:+.0}"))
+                    })
+                    .collect();
+                print!("  {}", offsets.join("/"));
+            }
+            println!();
+        }
+
+        // Summary: mean offset per preset
+        println!();
+        print!("  {:>14}", "mean offset:");
+        // Skip auto column
+        print!("  {:>8}", "");
+        for p in &preset_names {
+            if p == "auto" {
+                continue;
+            }
+            if let Some(offsets) = all_offsets.get(p) {
+                if !offsets.is_empty() {
+                    let mean = offsets.iter().sum::<f32>() / offsets.len() as f32;
+                    print!("  {:>+8.1}", mean);
+                } else {
+                    print!("  {:>8}", "-");
+                }
+            } else {
+                print!("  {:>8}", "-");
+            }
+        }
+        println!("\n");
+    }
+
+    // Produce copy-paste Rust code
+    println!("  Copy-paste for process.rs (using tolerance=0.3 mean offsets):");
+    println!("  -------------------------------------------------------------");
+
+    let recs = find_recommended_q_per_preset(results, 0.3);
+    let mut lookup: std::collections::BTreeMap<(String, String, u8), Option<f32>> =
+        std::collections::BTreeMap::new();
+    for (preset, enc, sq, rec_q) in &recs {
+        lookup.insert((preset.clone(), enc.clone(), *sq), *rec_q);
+    }
+
+    // Compute mean offset per preset across all (encoder, src_q) pairs
+    let mut mean_offsets: std::collections::BTreeMap<String, f32> =
+        std::collections::BTreeMap::new();
+    for p in &preset_names {
+        if p == "auto" {
+            continue;
+        }
+        let mut offsets = Vec::new();
+        for (_, enc, sq, _) in recs.iter().filter(|(pr, _, _, _)| pr == p) {
+            let auto_q = lookup
+                .get(&("auto".to_string(), enc.clone(), *sq))
+                .and_then(|q| *q);
+            let preset_q = lookup
+                .get(&(p.clone(), enc.clone(), *sq))
+                .and_then(|q| *q);
+            if let (Some(aq), Some(pq)) = (auto_q, preset_q) {
+                offsets.push(pq - aq);
+            }
+        }
+        if !offsets.is_empty() {
+            mean_offsets.insert(
+                p.clone(),
+                offsets.iter().sum::<f32>() / offsets.len() as f32,
+            );
+        }
+    }
+
+    let jpegli_off = mean_offsets.get("jpegli").copied().unwrap_or(1.0);
+    let moz_off = mean_offsets.get("mozjpeg").copied().unwrap_or(3.0);
+    let moz_max_off = mean_offsets.get("moz-max").copied().unwrap_or(3.0);
+    let hyb_off = mean_offsets.get("hybrid").copied().unwrap_or(0.0);
+    let hyb_max_off = mean_offsets.get("hyb-max").copied().unwrap_or(0.0);
+
+    println!();
+    println!("  fn preset_quality_offset(preset: Option<crate::PresetArg>) -> f32 {{");
+    println!("      use crate::PresetArg::*;");
+    println!("      match preset {{");
+    println!("          None => 0.0,");
+    println!(
+        "          Some(Hybrid | HybridProg) => {:.1},",
+        hyb_off.max(0.0)
+    );
+    println!(
+        "          Some(HybridMax) => {:.1},",
+        hyb_max_off.max(0.0)
+    );
+    println!(
+        "          Some(Jpegli | JpegliProg) => {:.1},",
+        jpegli_off.max(0.0)
+    );
+    println!(
+        "          Some(Mozjpeg | MozjpegProg) => {:.1},",
+        moz_off.max(0.0)
+    );
+    println!(
+        "          Some(MozjpegMax) => {:.1},",
+        moz_max_off.max(0.0)
+    );
+    println!("      }}");
+    println!("  }}");
+    println!();
+
+    // Write offset CSV
+    println!("  (Offsets also written to preset_offsets.csv)");
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,10 +1473,17 @@ fn main() {
         &SRC_QUALITIES
     };
 
+    // Build preset list
+    let presets: Vec<(&str, Option<OptimizationPreset>)> = if args.preset_offsets {
+        OFFSET_PRESETS.to_vec()
+    } else {
+        vec![("auto", None)]
+    };
+
     // Estimate work
     let configs_per_img = source_configs.len() * src_qualities.len();
     let zen_combos = ZEN_QUALITIES.len() * 2; // rough max (some have 1 sub, some have 2)
-    let est_encodes = images.len() * configs_per_img * zen_combos;
+    let est_encodes = images.len() * configs_per_img * zen_combos * presets.len();
 
     // Print header
     println!("=== Re-encoding Calibration ===");
@@ -1204,6 +1505,12 @@ fn main() {
     );
     println!("Source qualities: {src_qualities:?}");
     println!("Zen qualities: {:?}", &ZEN_QUALITIES);
+    if args.preset_offsets {
+        println!(
+            "Presets: {}",
+            presets.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+        );
+    }
     if args.resize {
         println!("Resize ratios: {:?}", &RESIZE_RATIOS);
     }
@@ -1223,6 +1530,7 @@ fn main() {
                 &tmp_dir,
                 &source_configs,
                 src_qualities,
+                &presets,
                 &args,
             );
             let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1240,12 +1548,17 @@ fn main() {
     // Write raw CSV
     write_raw_csv(&args.output.join("raw_data.csv"), &results);
 
-    // Compute summary and write CSV
+    // Compute summary and write CSV (auto-preset only)
     let summary = compute_summary(&results, &args);
     write_summary_csv(&args.output.join("summary.csv"), &summary);
 
-    // Print summary to stdout
+    // Print summary to stdout (auto-preset only)
     print_summary(&results, &args);
+
+    // Print preset offset analysis if enabled
+    if args.preset_offsets {
+        print_preset_offsets(&results);
+    }
 
     // Cleanup tmp dir
     std::fs::remove_dir_all(&tmp_dir).ok();
