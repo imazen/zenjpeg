@@ -143,6 +143,9 @@ fn optimize_inner(
         // LinearF32 for correct encoder input (encoder expects linear for f32 paths)
         decoder.output_target = OutputTarget::LinearF32;
     }
+    // ICC profile application is on by default (moxcms feature enabled).
+    // --no-apply-icc disables it, passing through raw pixel values.
+    decoder.apply_icc = !args.no_apply_icc;
     if args.auto_orient {
         decoder = decoder.auto_orient(true);
     }
