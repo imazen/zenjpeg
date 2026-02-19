@@ -33,7 +33,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Unified JPEG processing: optimize, resize, crop, transform (default).
-    Process(ProcessArgs),
+    Process(Box<ProcessArgs>),
 
     /// Quick JPEG inspection and probe info.
     Info(InfoArgs),
@@ -664,7 +664,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Process(args)) => process::run(args),
+        Some(Command::Process(args)) => process::run(*args),
         Some(Command::Info(args)) => info::run(args),
         Some(Command::Optimize(args)) => {
             eprintln!("warning: `optimize` is deprecated, use `process` instead");

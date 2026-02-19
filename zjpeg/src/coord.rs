@@ -25,15 +25,18 @@ impl CoordValue {
         }
     }
 
+    #[cfg(test)]
     pub const fn pct(percent: f32) -> Self {
         Self { percent, pixels: 0 }
     }
 
+    #[cfg(test)]
     pub const fn pct_px(percent: f32, pixels: i32) -> Self {
         Self { percent, pixels }
     }
 
     /// Resolve against a source dimension.
+    #[cfg(test)]
     pub fn resolve(self, dim: u32) -> i32 {
         (self.percent * dim as f32).round() as i32 + self.pixels
     }
