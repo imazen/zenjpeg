@@ -147,10 +147,10 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub keep_all: bool,
 
-    /// Disable ICC profile application (pass through raw pixel values).
-    /// By default, embedded ICC profiles are applied to convert to sRGB.
-    #[arg(long)]
-    pub no_apply_icc: bool,
+    /// Apply embedded ICC profile, converting to the specified color space.
+    /// By default, ICC profiles are preserved without conversion.
+    #[arg(long, value_enum)]
+    pub apply_icc: Option<IccTargetArg>,
 
     /// Apply EXIF orientation and reset tag.
     #[arg(long)]
@@ -211,6 +211,16 @@ pub enum SubsamplingArg {
     /// 4:2:0 — quarter chroma.
     #[value(name = "420")]
     S420,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum IccTargetArg {
+    /// Convert to sRGB (standard web color space).
+    Srgb,
+    /// Convert to Display P3 (wide gamut).
+    P3,
+    /// Convert to BT.2020/Rec.2020 (wide gamut).
+    Rec2020,
 }
 
 // ============================================================================
@@ -370,7 +380,7 @@ fn main() -> Result<()> {
                     strip_xmp: false,
                     strip_gainmaps: false,
                     keep_all: false,
-                    no_apply_icc: false,
+                    apply_icc: None,
                     auto_orient: false,
                     skip_if_larger: false,
                     report: false,

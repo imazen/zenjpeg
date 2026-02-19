@@ -2,13 +2,16 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
-use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, SegmentType, Subsampling};
+use zenjpeg::decoder::{
+    DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Subsampling,
+};
 use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
 use zenjpeg::detect::{self, QualityScale};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 use crate::batch::{self, BatchSummary, FileResult};
 use crate::output::OutputConfig;
+use crate::IccTargetArg;
 use crate::OptimizeArgs;
 use crate::SubsamplingArg;
 
@@ -143,9 +146,13 @@ fn optimize_inner(
         // LinearF32 for correct encoder input (encoder expects linear for f32 paths)
         decoder.output_target = OutputTarget::LinearF32;
     }
-    // ICC profile application is on by default (moxcms feature enabled).
-    // --no-apply-icc disables it, passing through raw pixel values.
-    decoder.apply_icc = !args.no_apply_icc;
+    // ICC profile: preserve by default. Only convert when --apply-icc is specified.
+    if let Some(icc_target) = args.apply_icc {
+        decoder.apply_icc = true;
+        decoder.icc_target = convert_icc_target(icc_target);
+    } else {
+        decoder.apply_icc = false;
+    }
     if args.auto_orient {
         decoder = decoder.auto_orient(true);
     }
@@ -276,6 +283,14 @@ fn convert_subsampling(sub: SubsamplingArg) -> ChromaSubsampling {
     }
 }
 
+fn convert_icc_target(target: IccTargetArg) -> IccTarget {
+    match target {
+        IccTargetArg::Srgb => IccTarget::Srgb,
+        IccTargetArg::P3 => IccTarget::DisplayP3,
+        IccTargetArg::Rec2020 => IccTarget::Rec2020,
+    }
+}
+
 fn clamp_quality(quality: Quality, min_q: f32, max_q: f32) -> Quality {
     match quality {
         Quality::ApproxJpegli(v) => Quality::ApproxJpegli(v.clamp(min_q, max_q)),
@@ -290,6 +305,9 @@ fn clamp_quality(quality: Quality, min_q: f32, max_q: f32) -> Quality {
 /// Uses `EncoderConfig::with_segments()` to preserve all metadata including gain maps.
 /// Falls back to individual metadata when gain maps must be stripped (the segments API
 /// always includes secondary images).
+///
+/// When `--apply-icc` is used, the source ICC profile is stripped from output
+/// (pixels have been converted to the target color space).
 fn build_encoder_config(
     args: &OptimizeArgs,
     quality: Quality,
@@ -317,6 +335,10 @@ fn build_encoder_config(
         config = config.sharp_yuv(true);
     }
 
+    // When --apply-icc is used, the source ICC profile must be stripped because
+    // the pixels have been converted to the target color space.
+    let strip_icc_for_apply = args.apply_icc.is_some();
+
     // Attach metadata via segments API for full preservation (including gain maps).
     //
     // When --strip-all or --strip-gainmaps is used, we fall back to individual metadata
@@ -328,7 +350,7 @@ fn build_encoder_config(
         } else if args.strip_gainmaps {
             // Can't use segments API (it always includes gain maps).
             // Fall back to individual metadata methods on the config.
-            if !args.strip_icc {
+            if !args.strip_icc && !strip_icc_for_apply {
                 if let Some(icc) = extras.icc_profile() {
                     config = config.add_segment(0xE2, build_icc_segment(icc));
                 }
@@ -343,10 +365,10 @@ fn build_encoder_config(
                     config = config.add_segment(0xE1, build_xmp_segment(xmp));
                 }
             }
-        } else if args.strip_exif || args.strip_icc || args.strip_xmp {
+        } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
             // Selective stripping — use filtered segments API (preserves gain maps)
             let strip_exif = args.strip_exif;
-            let strip_icc = args.strip_icc;
+            let strip_icc = args.strip_icc || strip_icc_for_apply;
             let strip_xmp = args.strip_xmp;
             let segments = extras.to_encoder_segments_filtered(|seg| {
                 if strip_exif && seg.segment_type == SegmentType::Exif {

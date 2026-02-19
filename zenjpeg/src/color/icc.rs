@@ -26,6 +26,22 @@ use crate::error::{Error, Result};
 /// ICC profile signature in APP2 marker
 pub const ICC_PROFILE_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";
 
+/// Target color space for ICC profile conversion.
+///
+/// When [`DecodeConfig::apply_icc`](crate::decoder::DecodeConfig) is enabled,
+/// embedded ICC profiles are converted to this target color space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum IccTarget {
+    /// sRGB (IEC 61966-2-1). The universal web/display standard.
+    #[default]
+    Srgb,
+    /// Display P3 (DCI-P3 primaries, sRGB transfer function, D65 white point).
+    DisplayP3,
+    /// ITU-R BT.2020 (wide gamut, 2.4 gamma, D65 white point).
+    Rec2020,
+}
+
 /// XYB profile description substring for detection
 const XYB_PROFILE_MARKER: &[u8] = b"XYB";
 
@@ -121,27 +137,30 @@ pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
 
 /// Apply ICC profile transformation to RGB image data.
 ///
-/// Converts from the input profile's color space to sRGB.
+/// Converts from the input profile's color space to the specified target.
 #[cfg(feature = "cms-lcms2")]
 pub fn apply_icc_transform(
     rgb_data: &[u8],
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
+    _target: IccTarget,
 ) -> Result<Vec<u8>> {
     use lcms2::{Intent, PixelFormat, Profile, Transform};
 
     let input_profile =
         Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
 
-    let srgb = Profile::new_srgb();
+    // lcms2 only has new_srgb(); P3/Rec2020 would need custom ICC profile bytes.
+    // For now, always use sRGB target with lcms2 backend.
+    let output_profile = Profile::new_srgb();
 
     // Use RelativeColorimetric for best accuracy with XYB profiles
     // Testing showed Perceptual intent adds ~14% more error vs RelativeColorimetric
     let transform = Transform::new(
         &input_profile,
         PixelFormat::RGB_8,
-        &srgb,
+        &output_profile,
         PixelFormat::RGB_8,
         Intent::RelativeColorimetric,
     )
@@ -165,16 +184,22 @@ pub fn apply_icc_transform(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
+    target: IccTarget,
 ) -> Result<Vec<u8>> {
     use moxcms::{ColorProfile, Layout, TransformOptions};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
 
-    let srgb = ColorProfile::new_srgb();
+    let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_8bit(Layout::Rgb, &srgb, Layout::Rgb, TransformOptions::default())
+        .create_transform_8bit(
+            Layout::Rgb,
+            &output_profile,
+            Layout::Rgb,
+            TransformOptions::default(),
+        )
         .map_err(|e| Error::icc_error(format!("moxcms transform: {e:?}")))?;
 
     let mut output = vec![0u8; rgb_data.len()];
@@ -192,6 +217,7 @@ pub fn apply_icc_transform(
     _width: usize,
     _height: usize,
     _icc_profile: &[u8],
+    _target: IccTarget,
 ) -> Result<Vec<u8>> {
     // No CMS available - return data unchanged
     // User should enable cms-lcms2 or cms-moxcms feature for ICC support
@@ -205,25 +231,27 @@ pub fn apply_icc_transform(
 /// Apply ICC profile transformation to f32 RGB image data.
 ///
 /// Input and output are interleaved RGB f32 in [0.0, 1.0] range.
-/// Converts from the input profile's color space to sRGB.
+/// Converts from the input profile's color space to the specified target.
 #[cfg(feature = "cms-lcms2")]
 pub fn apply_icc_transform_f32(
     rgb_data: &[f32],
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
+    _target: IccTarget,
 ) -> Result<Vec<f32>> {
     use lcms2::{Intent, PixelFormat, Profile, Transform};
 
     let input_profile =
         Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
 
-    let srgb = Profile::new_srgb();
+    // lcms2 only has new_srgb(); P3/Rec2020 would need custom ICC profile bytes.
+    let output_profile = Profile::new_srgb();
 
     let transform = Transform::new(
         &input_profile,
         PixelFormat::RGB_FLT,
-        &srgb,
+        &output_profile,
         PixelFormat::RGB_FLT,
         Intent::RelativeColorimetric,
     )
@@ -247,16 +275,22 @@ pub fn apply_icc_transform_f32(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
+    target: IccTarget,
 ) -> Result<Vec<f32>> {
     use moxcms::{ColorProfile, Layout, TransformOptions};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
 
-    let srgb = ColorProfile::new_srgb();
+    let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_f32(Layout::Rgb, &srgb, Layout::Rgb, TransformOptions::default())
+        .create_transform_f32(
+            Layout::Rgb,
+            &output_profile,
+            Layout::Rgb,
+            TransformOptions::default(),
+        )
         .map_err(|e| Error::icc_error(format!("moxcms f32 transform: {e:?}")))?;
 
     let mut output = vec![0f32; rgb_data.len()];
@@ -274,8 +308,19 @@ pub fn apply_icc_transform_f32(
     _width: usize,
     _height: usize,
     _icc_profile: &[u8],
+    _target: IccTarget,
 ) -> Result<Vec<f32>> {
     Ok(rgb_data.to_vec())
+}
+
+/// Create a moxcms `ColorProfile` for the given target.
+#[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
+fn make_moxcms_target(target: IccTarget) -> moxcms::ColorProfile {
+    match target {
+        IccTarget::Srgb => moxcms::ColorProfile::new_srgb(),
+        IccTarget::DisplayP3 => moxcms::ColorProfile::new_display_p3(),
+        IccTarget::Rec2020 => moxcms::ColorProfile::new_bt2020(),
+    }
 }
 
 // ============================================================================
@@ -331,9 +376,9 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
         .dimensions()
         .ok_or_else(|| Error::decode_error("no image dimensions".to_string()))?;
 
-    // Apply ICC if present
+    // Apply ICC if present (default to sRGB target)
     let output = if let Some(ref profile) = icc_profile {
-        apply_icc_transform(&pixels, width, height, profile)?
+        apply_icc_transform(&pixels, width, height, profile, IccTarget::Srgb)?
     } else {
         pixels
     };
