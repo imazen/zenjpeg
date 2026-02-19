@@ -147,6 +147,11 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub keep_all: bool,
 
+    /// Disable ICC profile application (pass through raw pixel values).
+    /// By default, embedded ICC profiles are applied to convert to sRGB.
+    #[arg(long)]
+    pub no_apply_icc: bool,
+
     /// Apply EXIF orientation and reset tag.
     #[arg(long)]
     pub auto_orient: bool,
@@ -365,6 +370,7 @@ fn main() -> Result<()> {
                     strip_xmp: false,
                     strip_gainmaps: false,
                     keep_all: false,
+                    no_apply_icc: false,
                     auto_orient: false,
                     skip_if_larger: false,
                     report: false,
