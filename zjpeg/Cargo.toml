@@ -20,6 +20,8 @@ rgb = { workspace = true }
 enough = { workspace = true }
 glob = "0.3"
 bytemuck = { workspace = true }
+zenlayout = { workspace = true, features = ["riapi"] }
+zenresize = { workspace = true }
 
 [features]
 default = []
