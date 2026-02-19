@@ -149,7 +149,7 @@ pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPla
 pub use crate::encode::encoder_config::EncoderConfig;
 pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
-    ProgressiveScanMode, Quality, XybSubsampling, YCbCrPlanes,
+    ProgressiveScanMode, Quality, QuantTableConfig, XybSubsampling, YCbCrPlanes,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::request::EncodeRequest;

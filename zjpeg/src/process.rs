@@ -12,11 +12,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
 use zenjpeg::decoder::{
-    DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Subsampling,
+    DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Strictness, Subsampling,
 };
 use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
 use zenjpeg::detect::{self, QualityScale};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
+use zenjpeg::encoder::{
+    ChromaSubsampling, EncoderConfig, PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig,
+    XybSubsampling,
+};
 use zenjpeg::lossless::{
     self, LosslessTransform, OutputMode, RestartInterval, RestructureConfig, TransformConfig,
 };
@@ -182,6 +185,12 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_icc = args.apply_icc.is_some();
     let has_sharp_yuv = args.sharp_yuv;
     let has_subsampling = args.subsampling.is_some();
+    let has_quant_tables = args.quant_tables.is_some();
+    let has_chroma_tables = args.chroma_tables.is_some();
+    // optimize_scans requires entropy re-encoding (scan search tries 64 candidates),
+    // which currently goes through the lossy encoder. Could be lossless if the
+    // restructure module gained scan search support on existing DCT coefficients.
+    let has_optimize_scans = args.optimize_scans;
     let has_transform = args.rotate.is_some() || args.flip.is_some();
     let has_structure = args.progressive || args.baseline;
     let has_riapi = args.riapi.is_some();
@@ -195,6 +204,9 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
         || has_icc
         || has_sharp_yuv
         || has_subsampling
+        || has_quant_tables
+        || has_chroma_tables
+        || has_optimize_scans
         || has_riapi;
 
     if lossy_triggers {
@@ -368,6 +380,14 @@ fn run_lossy(
     }
     if args.effective_auto_orient() {
         decoder = decoder.auto_orient(true);
+    }
+    if let Some(s) = args.strictness {
+        decoder.strictness = match s {
+            crate::StrictnessArg::Strict => Strictness::Strict,
+            crate::StrictnessArg::Balanced => Strictness::Balanced,
+            crate::StrictnessArg::Lenient => Strictness::Lenient,
+            crate::StrictnessArg::Permissive => Strictness::Permissive,
+        };
     }
 
     let mut result = decoder
@@ -912,11 +932,27 @@ fn build_encoder_config(
         config = config.auto_optimize(true);
     }
 
+    // Quant tables (applied after auto_optimize so user can override)
+    if let Some(qt) = args.quant_tables {
+        config = config.quant_table_config(match qt {
+            crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli,
+            crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux,
+        });
+    }
+
+    // Chroma table layout (applied after quant_tables)
+    if let Some(n) = args.chroma_tables {
+        config = config.separate_chroma_tables(n == 3);
+    }
+
     if args.progressive {
         config = config.progressive(true);
     }
     if args.baseline {
         config = config.progressive(false);
+    }
+    if args.optimize_scans {
+        config = config.progressive(ProgressiveScanMode::ProgressiveSearch);
     }
     if args.sharp_yuv {
         config = config.sharp_yuv(true);

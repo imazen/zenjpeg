@@ -199,9 +199,21 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub baseline: bool,
 
+    /// Search 64 progressive scan scripts for smallest output (~2% smaller, ~2x slower).
+    #[arg(long)]
+    pub optimize_scans: bool,
+
     /// Force chroma subsampling.
     #[arg(long, value_enum)]
     pub subsampling: Option<SubsamplingArg>,
+
+    /// Quantization table family.
+    #[arg(long, value_enum)]
+    pub quant_tables: Option<QuantTablesArg>,
+
+    /// Number of chroma quantization tables: 3 (separate Cb/Cr, default) or 2 (shared).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(2..=3))]
+    pub chroma_tables: Option<u8>,
 
     /// Enable auto_optimize (hybrid trellis, default: on).
     #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
@@ -226,6 +238,11 @@ pub struct ProcessArgs {
     /// Force boundary 4-tap deblocking.
     #[arg(long)]
     pub deblock_boundary: bool,
+
+    // -- Decoding ---------------------------------------------------------
+    /// Decoder error tolerance for damaged/non-conformant JPEGs.
+    #[arg(long, value_enum)]
+    pub strictness: Option<StrictnessArg>,
 
     // -- Metadata ---------------------------------------------------------
     /// Strip all metadata.
@@ -418,6 +435,26 @@ pub enum IccTargetArg {
     P3,
     /// Convert to BT.2020/Rec.2020 (wide gamut).
     Rec2020,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum QuantTablesArg {
+    /// Jpegli perceptual tables (default).
+    Jpegli,
+    /// Mozjpeg Robidoux psychovisual tables.
+    Mozjpeg,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum StrictnessArg {
+    /// Fail on any spec violation.
+    Strict,
+    /// Match libjpeg-turbo error handling (default).
+    Balanced,
+    /// Recover from all errors when possible.
+    Lenient,
+    /// Maximum compatibility with damaged files.
+    Permissive,
 }
 
 // ============================================================================
@@ -727,13 +764,17 @@ fn main() -> Result<()> {
                     min_quality: 50.0,
                     progressive: false,
                     baseline: false,
+                    optimize_scans: false,
                     subsampling: None,
+                    quant_tables: None,
+                    chroma_tables: None,
                     auto_optimize: true,
                     no_optimize: false,
                     sharp_yuv: false,
                     xyb: false,
                     deblock: false,
                     deblock_boundary: false,
+                    strictness: None,
                     strip_all: false,
                     strip_exif: false,
                     strip_icc: false,
