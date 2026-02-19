@@ -1,0 +1,29 @@
+[package]
+name = "zjpeg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tool for smart JPEG optimization, lossless transforms, and inspection"
+
+[[bin]]
+name = "zjpeg"
+path = "src/main.rs"
+
+[dependencies]
+zenjpeg = { path = "../zenjpeg", features = ["std", "decoder", "trellis", "archmage-simd", "yuv"] }
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+rayon = { workspace = true }
+indicatif = "0.17"
+anyhow = "1"
+rgb = { workspace = true }
+enough = { workspace = true }
+glob = "0.3"
+bytemuck = { workspace = true }
+
+[features]
+default = []
+parallel = ["zenjpeg/parallel"]
+
+[lints]
+workspace = true
