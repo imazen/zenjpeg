@@ -143,6 +143,7 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 // Re-export config types (defined in config.rs, public API preserved)
 pub use config::{ChromaUpsampling, DecodeWarning, JpegInfo, Strictness};
 
+use crate::color::icc::IccTarget;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -248,6 +249,16 @@ impl DecodeConfig {
     #[must_use]
     pub fn apply_icc(mut self, enable: bool) -> Self {
         self.apply_icc = enable;
+        self
+    }
+
+    /// Sets the target color space for ICC profile conversion.
+    ///
+    /// Only used when [`apply_icc`](Self::apply_icc) is enabled.
+    /// Default is [`IccTarget::Srgb`].
+    #[must_use]
+    pub fn icc_target(mut self, target: IccTarget) -> Self {
+        self.icc_target = target;
         self
     }
 
@@ -1165,6 +1176,7 @@ impl DecodeConfig {
                         visible_w as usize,
                         visible_h as usize,
                         icc_profile,
+                        self.icc_target,
                     ) {
                         Ok(transformed) => pixels = transformed,
                         Err(_e) => {
@@ -1253,6 +1265,7 @@ impl DecodeConfig {
                         visible_w as usize,
                         visible_h as usize,
                         icc_profile,
+                        self.icc_target,
                     ) {
                         Ok(transformed) => pixels = transformed,
                         Err(_e) => {
