@@ -107,9 +107,9 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub no_optimize: bool,
 
-    /// Enable standalone trellis quantization.
+    /// Encode in XYB color space (perceptual, requires linear decode).
     #[arg(long)]
-    pub trellis: bool,
+    pub xyb: bool,
 
     /// Enable SharpYUV chroma downsampling.
     #[arg(long)]
@@ -134,6 +134,14 @@ pub struct OptimizeArgs {
     /// Strip ICC profile only.
     #[arg(long)]
     pub strip_icc: bool,
+
+    /// Strip XMP metadata only.
+    #[arg(long)]
+    pub strip_xmp: bool,
+
+    /// Strip gain maps (UltraHDR).
+    #[arg(long)]
+    pub strip_gainmaps: bool,
 
     /// Keep all metadata (default).
     #[arg(long)]
@@ -326,8 +334,11 @@ fn main() -> Result<()> {
                 Ok(())
             } else {
                 // Treat bare files as optimize
-                let input: Vec<String> =
-                    cli.files.into_iter().map(|p| p.display().to_string()).collect();
+                let input: Vec<String> = cli
+                    .files
+                    .into_iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
                 optimize::run(OptimizeArgs {
                     input,
                     output: None,
@@ -344,13 +355,15 @@ fn main() -> Result<()> {
                     baseline: false,
                     subsampling: None,
                     no_optimize: false,
-                    trellis: false,
+                    xyb: false,
                     sharp_yuv: false,
                     deblock: false,
                     deblock_boundary: false,
                     strip_all: false,
                     strip_exif: false,
                     strip_icc: false,
+                    strip_xmp: false,
+                    strip_gainmaps: false,
                     keep_all: false,
                     auto_orient: false,
                     skip_if_larger: false,

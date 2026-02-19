@@ -12,8 +12,8 @@ pub fn expand_inputs(inputs: &[String]) -> Result<Vec<PathBuf>> {
     for input in inputs {
         // Try as glob first
         if input.contains('*') || input.contains('?') || input.contains('[') {
-            let paths = glob::glob(input)
-                .with_context(|| format!("invalid glob pattern: {input}"))?;
+            let paths =
+                glob::glob(input).with_context(|| format!("invalid glob pattern: {input}"))?;
             for entry in paths {
                 let path = entry.with_context(|| format!("glob error for pattern: {input}"))?;
                 if path.is_file() && is_jpeg(&path) {
@@ -57,7 +57,10 @@ pub fn expand_inputs(inputs: &[String]) -> Result<Vec<PathBuf>> {
 /// Check if a path looks like a JPEG file.
 fn is_jpeg(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "jpe" | "jfif"),
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "jpg" | "jpeg" | "jpe" | "jfif"
+        ),
         None => false,
     }
 }
@@ -167,8 +170,7 @@ impl BatchSummary {
                 count_ok += 1;
                 total_output += out_size;
                 let change = if r.input_size > 0 {
-                    let pct =
-                        (out_size as f64 - r.input_size as f64) / r.input_size as f64 * 100.0;
+                    let pct = (out_size as f64 - r.input_size as f64) / r.input_size as f64 * 100.0;
                     format!("{pct:+.1}%")
                 } else {
                     "-".into()

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zenjpeg::lossless::{restructure, OutputMode, RestructureConfig, RestartInterval};
+use zenjpeg::lossless::{restructure, OutputMode, RestartInterval, RestructureConfig};
 
 use crate::batch;
 use crate::output::OutputConfig;

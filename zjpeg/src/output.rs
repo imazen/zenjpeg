@@ -71,9 +71,7 @@ impl OutputConfig {
         }
 
         if let Some(ref target_dir) = self.target_dir {
-            let filename = input
-                .file_name()
-                .context("input has no filename")?;
+            let filename = input.file_name().context("input has no filename")?;
             return Ok(target_dir.join(filename));
         }
 
@@ -126,8 +124,9 @@ impl OutputConfig {
     pub fn ensure_parent(path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create directory '{}'", parent.display())
+                })?;
             }
         }
         Ok(())
