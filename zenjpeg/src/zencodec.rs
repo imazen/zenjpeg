@@ -567,7 +567,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
     type Decoder = JpegDecoder<'a>;
     type FrameDecoder = JpegFrameDecoder;
-
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
         self
@@ -612,6 +611,7 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
             "JPEG does not support animation decoding",
         ))
     }
+
 }
 
 // ── Decoder ─────────────────────────────────────────────────────────────────
