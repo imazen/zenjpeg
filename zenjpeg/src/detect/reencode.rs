@@ -81,6 +81,45 @@ impl core::fmt::Display for ReencodeError {
 #[cfg(feature = "std")]
 impl std::error::Error for ReencodeError {}
 
+/// Estimated source butteraugli distance from detected quality.
+///
+/// For cjpegli, quality.value IS the BA distance. For IJG/mozjpeg, converts
+/// from IJG quality to approximate BA using calibration medians (10 gb82 images).
+pub(crate) fn estimated_source_ba(probe: &JpegProbe) -> f32 {
+    if probe.quality.scale == QualityScale::ButteraugliDistance {
+        return probe.quality.value;
+    }
+    // IJG Q → approximate BA (median across 10 gb82 images)
+    let table: &[(f32, f32)] = match probe.encoder {
+        EncoderFamily::Mozjpeg => &[
+            (10.0, 11.0),
+            (20.0, 7.2),
+            (30.0, 5.2),
+            (40.0, 4.1),
+            (50.0, 3.7),
+            (65.0, 3.1),
+            (75.0, 3.0),
+            (80.0, 2.5),
+            (85.0, 2.1),
+            (90.0, 2.0),
+        ],
+        _ => &[
+            // IJG/turbo/ImageMagick/Unknown
+            (10.0, 9.5),
+            (20.0, 5.5),
+            (30.0, 4.2),
+            (40.0, 3.7),
+            (50.0, 3.2),
+            (65.0, 3.4),
+            (75.0, 2.9),
+            (80.0, 2.3),
+            (85.0, 2.1),
+            (90.0, 1.7),
+        ],
+    };
+    interpolate_1d_ascending(table, probe.quality.value)
+}
+
 /// Recommended zenjpeg quality for re-encoding at the default tolerance (≤0.3 BA delta).
 pub(crate) fn recommended_q(probe: &JpegProbe) -> f32 {
     // Default tolerance always has valid data for all calibrated sources.
@@ -527,6 +566,16 @@ fn interpolate_1d_descending(table: &[(f32, f32)], val: f32) -> f32 {
 // ============================================================================
 
 impl JpegProbe {
+    /// Estimated source butteraugli distance.
+    ///
+    /// For cjpegli sources, returns the detected BA distance directly.
+    /// For IJG/mozjpeg sources, converts from IJG quality to approximate BA
+    /// using calibration medians.
+    #[must_use]
+    pub fn estimated_ba(&self) -> f32 {
+        estimated_source_ba(self)
+    }
+
     /// Recommended zenjpeg quality for re-encoding this JPEG.
     ///
     /// Returns the lowest quality level that keeps butteraugli delta ≤ 0.3
