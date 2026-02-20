@@ -29,6 +29,17 @@ pub struct ReencodeSettings {
     pub quality: Quality,
     /// Recommended chroma subsampling (matches source).
     pub subsampling: ChromaSubsampling,
+    /// Highest quality that still produces a smaller file than the source.
+    ///
+    /// `None` means no quality level can guarantee a smaller file — the source
+    /// encoder is too efficient at this quality level to beat without visible
+    /// quality loss. This is common for low-quality mozjpeg sources (Q10-Q30)
+    /// and very low-quality turbo/cjpegli sources (Q10).
+    ///
+    /// When present, capping quality at this value should produce output
+    /// ≤ source size for most images. Calibrated across 10 test images
+    /// (conservative: all images must shrink, not just median).
+    pub shrink_cap: Option<Quality>,
 }
 
 /// Errors from re-encoding quality estimation.
@@ -211,6 +222,53 @@ const JPEGLI_MIN_DELTA: &[(f32, f32)] = &[
 ];
 
 // ============================================================================
+// Shrink cap tables: highest Q where ALL test images produce smaller output
+// ============================================================================
+
+/// Highest zen Q producing smaller output than IJG source (0.0 = cannot shrink).
+/// Calibrated on 10 gb82 images, conservative (worst-case image must shrink).
+const IJG_SHRINK_CAP: &[(f32, f32)] = &[
+    (10.0, 0.0),
+    (20.0, 20.0),
+    (30.0, 30.0),
+    (40.0, 50.0),
+    (50.0, 60.0),
+    (65.0, 75.0),
+    (75.0, 80.0),
+    (80.0, 85.0),
+    (85.0, 90.0),
+    (90.0, 93.0),
+];
+
+/// Highest zen Q producing smaller output than mozjpeg source (0.0 = cannot shrink).
+const MOZ_SHRINK_CAP: &[(f32, f32)] = &[
+    (10.0, 0.0),
+    (20.0, 0.0),
+    (30.0, 0.0),
+    (40.0, 20.0),
+    (50.0, 25.0),
+    (65.0, 50.0),
+    (75.0, 70.0),
+    (80.0, 80.0),
+    (85.0, 85.0),
+    (90.0, 90.0),
+];
+
+/// Highest zen Q producing smaller output than cjpegli source (0.0 = cannot shrink).
+const JPEGLI_SHRINK_CAP: &[(f32, f32)] = &[
+    (5.9, 0.0),
+    (4.5, 0.0),
+    (3.9, 20.0),
+    (3.5, 25.0),
+    (3.2, 35.0),
+    (2.8, 55.0),
+    (2.3, 70.0),
+    (2.0, 75.0),
+    (1.7, 80.0),
+    (1.3, 88.0),
+];
+
+// ============================================================================
 // Grid selection and interpolation
 // ============================================================================
 
@@ -262,6 +320,40 @@ fn min_delta_for_encoder(encoder: &EncoderFamily, scale: &QualityScale) -> &'sta
                 IJG_MIN_DELTA
             }
         }
+    }
+}
+
+fn shrink_cap_for_encoder(
+    encoder: &EncoderFamily,
+    scale: &QualityScale,
+) -> &'static [(f32, f32)] {
+    match encoder {
+        EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => JPEGLI_SHRINK_CAP,
+        EncoderFamily::Mozjpeg => MOZ_SHRINK_CAP,
+        EncoderFamily::LibjpegTurbo
+        | EncoderFamily::ImageMagick
+        | EncoderFamily::IjgFamily
+        | EncoderFamily::Unknown => {
+            if *scale == QualityScale::ButteraugliDistance {
+                JPEGLI_SHRINK_CAP
+            } else {
+                IJG_SHRINK_CAP
+            }
+        }
+    }
+}
+
+/// Highest quality that still produces a smaller file than the source.
+///
+/// Returns `None` if no quality level can guarantee a smaller file.
+/// Returns `Some(q)` where q is the highest safe quality.
+fn shrink_cap_q(probe: &JpegProbe) -> Option<f32> {
+    let table = shrink_cap_for_encoder(&probe.encoder, &probe.quality.scale);
+    let cap = interpolate_1d(table, probe.quality.value, &probe.quality.scale);
+    if cap < 1.0 {
+        None
+    } else {
+        Some(cap)
     }
 }
 
@@ -489,6 +581,7 @@ impl JpegProbe {
         }
 
         let sub = ChromaSubsampling::from(self.subsampling);
+        let cap = shrink_cap_q(self).map(Quality::ApproxJpegli);
 
         // Check if tolerance is achievable
         let min_delta = min_achievable_delta(self);
@@ -498,6 +591,7 @@ impl JpegProbe {
                 best_effort: ReencodeSettings {
                     quality: Quality::ApproxJpegli(97.0),
                     subsampling: sub,
+                    shrink_cap: cap,
                 },
             });
         }
@@ -506,6 +600,7 @@ impl JpegProbe {
         Ok(ReencodeSettings {
             quality: Quality::ApproxJpegli(q),
             subsampling: sub,
+            shrink_cap: cap,
         })
     }
 
@@ -943,8 +1038,98 @@ mod tests {
             best_effort: ReencodeSettings {
                 quality: Quality::ApproxJpegli(97.0),
                 subsampling: ChromaSubsampling::Quarter,
+                shrink_cap: Some(Quality::ApproxJpegli(85.0)),
             },
         };
         assert!(err.to_string().contains("0.25"));
+    }
+
+    // =======================================================================
+    // Shrink cap tests
+    // =======================================================================
+
+    #[test]
+    fn test_shrink_cap_turbo() {
+        // turbo Q75 → cap should be 80.0
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            75.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert!(
+            matches!(settings.shrink_cap, Some(Quality::ApproxJpegli(q)) if (q - 80.0).abs() < 0.01),
+            "turbo Q75 shrink cap: expected 80.0, got {:?}",
+            settings.shrink_cap
+        );
+    }
+
+    #[test]
+    fn test_shrink_cap_turbo_low_q() {
+        // turbo Q10 → no shrink possible
+        let probe = mock_probe(
+            EncoderFamily::LibjpegTurbo,
+            10.0,
+            QualityScale::IjgQuality,
+            Subsampling::S420,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert!(
+            settings.shrink_cap.is_none(),
+            "turbo Q10 should have no shrink cap, got {:?}",
+            settings.shrink_cap
+        );
+    }
+
+    #[test]
+    fn test_shrink_cap_mozjpeg() {
+        // mozjpeg Q75 → cap should be 70.0
+        let probe = mock_probe(
+            EncoderFamily::Mozjpeg,
+            75.0,
+            QualityScale::MozjpegQuality,
+            Subsampling::S420,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert!(
+            matches!(settings.shrink_cap, Some(Quality::ApproxJpegli(q)) if (q - 70.0).abs() < 0.01),
+            "mozjpeg Q75 shrink cap: expected 70.0, got {:?}",
+            settings.shrink_cap
+        );
+    }
+
+    #[test]
+    fn test_shrink_cap_mozjpeg_low_q() {
+        // mozjpeg Q20 → no shrink possible
+        let probe = mock_probe(
+            EncoderFamily::Mozjpeg,
+            20.0,
+            QualityScale::MozjpegQuality,
+            Subsampling::S420,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert!(
+            settings.shrink_cap.is_none(),
+            "mozjpeg Q20 should have no shrink cap, got {:?}",
+            settings.shrink_cap
+        );
+    }
+
+    #[test]
+    fn test_shrink_cap_cjpegli() {
+        // cjpegli BA=2.0 → cap should be 75.0
+        let probe = mock_probe(
+            EncoderFamily::CjpegliYcbcr,
+            2.0,
+            QualityScale::ButteraugliDistance,
+            Subsampling::S444,
+        );
+        let settings = probe.reencode_settings(0.3).unwrap();
+        assert!(
+            matches!(settings.shrink_cap, Some(Quality::ApproxJpegli(q)) if (q - 75.0).abs() < 0.01),
+            "cjpegli BA=2.0 shrink cap: expected 75.0, got {:?}",
+            settings.shrink_cap
+        );
     }
 }

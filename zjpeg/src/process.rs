@@ -885,7 +885,14 @@ fn determine_encode_params(
 
     let (quality, sub) = match probe.reencode_settings(tolerance) {
         Ok(settings) => {
-            let q = offset_quality(settings.quality, preset_offset);
+            let mut q = offset_quality(settings.quality, preset_offset);
+
+            // When --skip-if-larger is set, cap quality at the shrink ceiling
+            // so we produce the best quality that still fits in the source size.
+            if args.skip_if_larger {
+                q = apply_shrink_cap(q, &settings);
+            }
+
             let sub = if let Some(user_sub) = args.subsampling {
                 convert_subsampling(user_sub)
             } else {
@@ -896,7 +903,12 @@ fn determine_encode_params(
         Err(detect::ReencodeError::ToleranceTooTight { best_effort, .. }) => {
             // Use best_effort (Q97 + matching subsampling) instead of falling
             // back to a different tolerance that could produce worse quality.
-            let q = offset_quality(best_effort.quality, preset_offset);
+            let mut q = offset_quality(best_effort.quality, preset_offset);
+
+            if args.skip_if_larger {
+                q = apply_shrink_cap(q, &best_effort);
+            }
+
             let sub = if let Some(user_sub) = args.subsampling {
                 convert_subsampling(user_sub)
             } else {
@@ -952,6 +964,38 @@ fn preset_quality_offset(preset: Option<crate::PresetArg>) -> f32 {
         Some(Mozjpeg | MozjpegProg) => 10.0,
         // MozjpegMax — similar to mozjpeg (measured +7.7 at tol 0.5, +13.3 at tol 1.0)
         Some(MozjpegMax) => 10.0,
+    }
+}
+
+/// Cap quality at the shrink ceiling from calibration data.
+///
+/// When `--skip-if-larger` is set, we prefer producing the best quality that
+/// still fits within the source file size rather than encoding at the
+/// tolerance-recommended Q and then skipping because the file grew.
+///
+/// If no quality level can guarantee a smaller file (e.g., very low-quality
+/// mozjpeg sources), the quality is left unchanged — the skip-if-larger check
+/// at output time will handle it.
+fn apply_shrink_cap(quality: Quality, settings: &detect::ReencodeSettings) -> Quality {
+    let q = match quality {
+        Quality::ApproxJpegli(q) => q,
+        _ => return quality,
+    };
+
+    match settings.shrink_cap {
+        Some(Quality::ApproxJpegli(cap)) if q > cap => {
+            eprintln!(
+                "info: capping quality {q:.0} → {cap:.0} for --skip-if-larger \
+                 (source encoder is efficient at this quality)"
+            );
+            Quality::ApproxJpegli(cap)
+        }
+        None => {
+            // No shrink cap means no Q produces smaller files.
+            // Leave quality unchanged; skip-if-larger will catch it at output.
+            quality
+        }
+        _ => quality,
     }
 }
 
