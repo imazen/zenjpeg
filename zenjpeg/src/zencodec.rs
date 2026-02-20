@@ -220,6 +220,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for JpegEncodeJob<'a> {
             config: self.config,
             stop: self.stop,
             metadata: self.metadata,
+            limits: self.limits,
             buffer: None,
         }
     }
@@ -240,6 +241,7 @@ pub struct JpegEncoder<'a> {
     config: &'a JpegEncoderConfig,
     stop: Option<&'a dyn Stop>,
     metadata: Option<&'a ImageMetadata<'a>>,
+    limits: ResourceLimits,
     /// Accumulated rows for push_rows path (None = not started, Some = buffering).
     buffer: Option<RowBuffer>,
 }
@@ -281,6 +283,20 @@ impl<'a> JpegEncoder<'a> {
         height: u32,
         layout: PixelLayout,
     ) -> Result<EncodeOutput, Error> {
+        // Pre-flight limit checks
+        self.limits
+            .check_dimensions(width, height)
+            .map_err(|_| {
+                Error::image_too_large(
+                    width as u64 * height as u64,
+                    self.limits.max_pixels.unwrap_or(0),
+                )
+            })?;
+        let estimated_mem = width as u64 * height as u64 * layout.bytes_per_pixel() as u64;
+        self.limits
+            .check_memory(estimated_mem)
+            .map_err(|_| Error::allocation_failed(estimated_mem as usize, "memory limit exceeded"))?;
+
         let req = self.build_request();
         let output = req.encode_bytes(data, width, height, layout)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
