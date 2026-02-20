@@ -860,13 +860,20 @@ fn determine_encode_params(
         return Ok((Quality::ApproxButteraugli(d), sub));
     }
 
-    // Auto quality detection from source
+    // Auto quality detection from source.
+    // Default tolerance is proportional to source BA: 15% of the source's
+    // butteraugli distance. This keeps perceptual impact constant regardless
+    // of source quality — a Q30 source (BA~4.2) gets tol=0.63, while a Q90
+    // source (BA~1.7) gets tol=0.26. Flat 0.3 was too aggressive for high-Q
+    // sources (23% relative degradation) and too conservative for low-Q
+    // sources (6% relative, forcing unnecessarily high Q and larger files).
     let tolerance = if let Some(t) = args.tolerance {
         t
     } else if let Some(crush) = args.crush {
         crush.tolerance()
     } else {
-        0.3
+        let src_ba = probe.estimated_ba();
+        (src_ba * 0.15).clamp(0.1, 2.0)
     };
 
     // Per-preset quality offset: compensate for R-D efficiency differences.
