@@ -809,7 +809,7 @@ impl<'a> zencodec_types::Decoder for JpegDecoder<'a> {
     fn decode_rows(
         self,
         data: &[u8],
-        sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<ImageInfo, Error> {
         #[cfg(feature = "decoder")]
         {
@@ -821,26 +821,21 @@ impl<'a> zencodec_types::Decoder for JpegDecoder<'a> {
 
             let mut reader = cfg.scanline_reader(data)?;
             let width = reader.width() as usize;
-            let mut row_buf = vec![0u8; width * 3];
-            let mut row_idx: u32 = 0;
+            let channels = if info_result.num_components == 1 { 1 } else { 3 };
+            let row_bytes = width * channels;
+            let mut y: u32 = 0;
 
             while !reader.is_finished() {
-                let out = ImgRefMut::new(&mut row_buf, width * 3, 1);
-                let count = reader.read_rows_rgb8(out)?;
+                let buf = sink.demand(y, 1, row_bytes);
+                let out = ImgRefMut::new(&mut buf[..row_bytes], row_bytes, 1);
+                let count = match channels {
+                    1 => reader.read_rows_gray8(out)?,
+                    _ => reader.read_rows_rgb8(out)?,
+                };
                 if count == 0 {
                     break;
                 }
-                // Create PixelSlice for this row
-                let slice = PixelSlice::new(
-                    &row_buf,
-                    width as u32,
-                    1,
-                    width * 3,
-                    PixelDescriptor::RGB8_SRGB,
-                )
-                .map_err(|_| Error::unsupported_feature("buffer error in decode_rows"))?;
-                sink(row_idx, slice);
-                row_idx += 1;
+                y += 1;
             }
             Ok(info)
         }
@@ -878,7 +873,7 @@ impl zencodec_types::FrameDecoder for JpegFrameDecoder {
 
     fn next_frame_rows(
         &mut self,
-        _sink: &mut dyn FnMut(u32, PixelSlice<'_>),
+        _sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<Option<ImageInfo>, Error> {
         Err(Error::unsupported_feature(
             "JPEG does not support animation",
@@ -1092,7 +1087,19 @@ mod tests {
 
     #[cfg(feature = "decoder")]
     #[test]
-    fn decode_rows_callback() {
+    fn decode_rows_sink() {
+        struct CountSink {
+            buf: Vec<u8>,
+            row_count: u32,
+        }
+        impl zencodec_types::DecodeRowSink for CountSink {
+            fn demand(&mut self, _y: u32, _height: u32, min_bytes: usize) -> &mut [u8] {
+                self.row_count += 1;
+                self.buf.resize(min_bytes, 0);
+                &mut self.buf
+            }
+        }
+
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels = vec![
             Rgb {
@@ -1106,16 +1113,17 @@ mod tests {
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = JpegDecoderConfig::new();
-        let mut row_count = 0u32;
+        let mut sink = CountSink {
+            buf: Vec::new(),
+            row_count: 0,
+        };
         let info = dec
             .job()
             .decoder()
-            .decode_rows(encoded.bytes(), &mut |_row_idx, _slice| {
-                row_count += 1;
-            })
+            .decode_rows(encoded.bytes(), &mut sink)
             .unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
-        assert_eq!(row_count, 8);
+        assert_eq!(sink.row_count, 8);
     }
 }
