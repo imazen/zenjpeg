@@ -8,7 +8,7 @@ use crate::decoder::Decoder;
 use crate::error::{Error, Result};
 use ultrahdr_core::{
     color::tonemap::AdaptiveTonemapper,
-    gainmap::{DecodeInput, HdrOutputFormat, RowDecoder},
+    gainmap::RowDecoder,
     metadata::xmp::parse_xmp,
     ColorGamut, GainMap, GainMapMetadata,
 };
@@ -60,8 +60,12 @@ impl UltraHdrExtras for DecodedExtras {
 
 /// Create a streaming HDR reconstructor for row-by-row processing.
 ///
-/// This is more memory-efficient than [`reconstruct_hdr`] for large images,
+/// This is more memory-efficient than full-image reconstruction for large images,
 /// as it processes rows in batches rather than loading the entire image.
+///
+/// The reconstructor accepts **linear f32 RGB** input and produces **linear f32 RGBA**
+/// output. The caller must convert sRGB u8 decoder output to linear f32 before
+/// calling `process_rows`.
 ///
 /// # Arguments
 ///
@@ -69,27 +73,26 @@ impl UltraHdrExtras for DecodedExtras {
 /// * `height` - Image height
 /// * `extras` - Decoded extras containing gain map and XMP metadata
 /// * `display_boost` - Target display capability (1.0=SDR, 4.0=typical HDR)
-/// * `output_format` - Desired HDR output format
 ///
 /// # Returns
 ///
-/// A [`RowDecoder`] that can process SDR rows into HDR rows.
+/// A [`RowDecoder`] that can process linear f32 SDR rows into linear f32 HDR rows.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use zenjpeg::ultrahdr::{create_hdr_reconstructor, HdrOutputFormat};
+/// use zenjpeg::ultrahdr::create_hdr_reconstructor;
 ///
-/// let reconstructor = create_hdr_reconstructor(
-///     width, height, extras, 4.0, HdrOutputFormat::LinearFloat,
+/// let mut reconstructor = create_hdr_reconstructor(
+///     width, height, extras, 4.0,
 /// )?;
 ///
-/// // Process rows in batches
+/// // Process rows in batches (input must be linear f32 RGB)
 /// for batch_start in (0..height).step_by(16) {
 ///     let batch_height = 16.min(height - batch_start);
-///     let sdr_batch = &sdr_pixels[batch_start as usize * row_stride..];
-///     let hdr_rows = reconstructor.process_rows(sdr_batch, batch_height)?;
-///     // Use hdr_rows...
+///     let sdr_batch = &sdr_linear_f32[batch_start as usize * row_stride..];
+///     let hdr_rows = reconstructor.process_rows(sdr_batch, batch_height as u32)?;
+///     // hdr_rows is linear f32 RGBA
 /// }
 /// ```
 pub fn create_hdr_reconstructor(
@@ -97,7 +100,6 @@ pub fn create_hdr_reconstructor(
     height: u32,
     extras: &DecodedExtras,
     display_boost: f32,
-    output_format: HdrOutputFormat,
 ) -> Result<RowDecoder> {
     // Parse metadata
     let (metadata, _) = extras
@@ -109,16 +111,14 @@ pub fn create_hdr_reconstructor(
         .decode_gainmap()
         .ok_or_else(|| Error::decode_error("No gain map found".to_string()))??;
 
-    // Create reconstructor with RGB8 input config (typical jpegli decoder output)
-    RowDecoder::with_input_config(
+    // Create reconstructor (expects linear f32 RGB input, outputs linear f32 RGBA)
+    RowDecoder::new(
         gainmap,
         metadata,
         width,
         height,
         display_boost,
-        output_format,
         ColorGamut::Bt709,
-        DecodeInput::rgb8(width),
     )
     .map_err(ultrahdr_to_jpegli_error)
 }

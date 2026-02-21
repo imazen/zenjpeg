@@ -37,19 +37,20 @@
 //! # Example: Decode and reconstruct HDR (streaming)
 //!
 //! ```rust,ignore
-//! use zenjpeg::ultrahdr::{create_hdr_reconstructor, HdrOutputFormat, UltraHdrExtras};
+//! use zenjpeg::ultrahdr::{create_hdr_reconstructor, UltraHdrExtras};
 //!
 //! // Use UltraHdrReader for streaming decode
 //! let mut reader = UltraHdrReader::new(&jpeg_data, config)?;
 //!
 //! // Or with separate decoder + reconstructor:
+//! // Note: streaming APIs now work with linear f32 RGB. The caller must convert
+//! // sRGB u8 to linear f32 before feeding rows to the reconstructor.
 //! let reconstructor = create_hdr_reconstructor(
-//!     width, height, &extras, 4.0, HdrOutputFormat::LinearFloat,
+//!     width, height, &extras, 4.0,
 //! )?;
 //!
-//! // Process rows
-//! let mut hdr_rows = vec![0f32; width as usize * 4 * batch_height];
-//! let hdr_batch = reconstructor.process_rows(&sdr_batch, batch_height as u32)?;
+//! // Process rows (input: linear f32 RGB, output: linear f32 RGBA)
+//! let hdr_batch = reconstructor.process_rows(&sdr_linear_f32, batch_height as u32)?;
 //! ```
 
 mod decode;
@@ -67,10 +68,10 @@ pub use ultrahdr_core::{
     color::tonemap::{AdaptiveTonemapper, FitConfig, FitMode, FitStats, ToneMapConfig},
     // Gainmap functions (full-image)
     gainmap::{apply_gainmap, compute_gainmap, GainMapConfig, HdrOutputFormat},
-    // Streaming APIs (low-memory processing)
+    // Streaming APIs (low-memory processing, linear f32 I/O)
     // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
     // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
-    gainmap::{DecodeInput, EncodeInput, RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
+    gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
     metadata::xmp::{generate_xmp, parse_xmp},
     // Color types (aliased to avoid collision with jpegli types)

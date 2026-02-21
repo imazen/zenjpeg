@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::{tonemap_to_sdr, AdaptiveTonemapper, ToneMapConfig},
-    gainmap::{compute_gainmap, EncodeInput, GainMapConfig, RowEncoder},
+    gainmap::{compute_gainmap, GainMapConfig, RowEncoder},
     metadata::xmp::generate_xmp,
     ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
 };
@@ -109,36 +109,36 @@ pub fn encode_ultrahdr_with_tonemapper(
 /// This is more memory-efficient than the full-image [`compute_gainmap`] for large images,
 /// as it processes rows in batches rather than loading the entire image.
 ///
+/// Input data must be **linear f32 RGB** for both HDR and SDR. The caller is
+/// responsible for converting encoded formats (sRGB, PQ, HLG) to linear f32
+/// before feeding rows to the encoder.
+///
 /// # Arguments
 ///
 /// * `width` - Image width
 /// * `height` - Image height
 /// * `config` - Gain map computation configuration
-/// * `hdr_format` - HDR pixel format
-/// * `hdr_transfer` - HDR transfer function
 /// * `hdr_gamut` - HDR color gamut
 ///
 /// # Returns
 ///
-/// A [`RowEncoder`] that can process HDR/SDR row pairs.
+/// A [`RowEncoder`] that can process HDR/SDR linear f32 row pairs.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use zenjpeg::ultrahdr::{create_gainmap_computer, GainMapConfig, UhdrPixelFormat, UhdrColorTransfer, UhdrColorGamut};
+/// use zenjpeg::ultrahdr::{create_gainmap_computer, GainMapConfig, UhdrColorGamut};
 ///
 /// let mut computer = create_gainmap_computer(
 ///     width, height,
 ///     &GainMapConfig::default(),
-///     UhdrPixelFormat::Rgba32F,
-///     UhdrColorTransfer::Linear,
 ///     UhdrColorGamut::Bt709,
 /// )?;
 ///
-/// // Process rows in batches
+/// // Process rows in batches (both HDR and SDR must be linear f32 RGB)
 /// for batch_start in (0..height).step_by(16) {
 ///     let batch_height = 16.min(height - batch_start);
-///     let gm_rows = computer.process_rows(&hdr_batch, &sdr_batch, batch_height)?;
+///     let gm_rows = computer.process_rows(&hdr_linear_f32, &sdr_linear_f32, batch_height)?;
 ///     // gm_rows contains completed gainmap rows (if any)
 /// }
 ///
@@ -149,23 +149,10 @@ pub fn create_gainmap_computer(
     width: u32,
     height: u32,
     config: &GainMapConfig,
-    hdr_format: UhdrPixelFormat,
-    hdr_transfer: ColorTransfer,
     hdr_gamut: ColorGamut,
 ) -> Result<RowEncoder> {
-    let hdr_bpp = hdr_format.bytes_per_pixel().unwrap_or(16);
-    let input_config = EncodeInput {
-        hdr_format,
-        hdr_stride: width * hdr_bpp as u32,
-        hdr_transfer,
-        hdr_gamut,
-        sdr_format: UhdrPixelFormat::Rgba8,
-        sdr_stride: width * 4,
-        sdr_gamut: ColorGamut::Bt709,
-        y_only: !config.multi_channel,
-    };
-
-    RowEncoder::new(width, height, config.clone(), input_config).map_err(ultrahdr_to_jpegli_error)
+    RowEncoder::new(width, height, config.clone(), hdr_gamut, ColorGamut::Bt709)
+        .map_err(ultrahdr_to_jpegli_error)
 }
 
 /// Encode SDR image with pre-computed gain map.

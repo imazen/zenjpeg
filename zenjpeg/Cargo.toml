@@ -64,7 +64,7 @@ safe_unaligned_simd = { workspace = true, optional = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # UltraHDR (HDR gain map) encoding/decoding support
-ultrahdr-core = { version = "0.1.0", optional = true }
+ultrahdr-core = { workspace = true, optional = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true }
@@ -122,7 +122,7 @@ codec-eval = { workspace = true }
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 # UltraHDR integration testing
-ultrahdr-core = { version = "0.1.0" }
+ultrahdr-core = { workspace = true }
 
 [features]
 default = ["std", "yuv", "archmage-simd", "trellis"]
