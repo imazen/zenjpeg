@@ -23,12 +23,11 @@
 //!
 //! ```rust,ignore
 //! use zenjpeg::decoder::Decoder;
-//! use zenjpeg::ultrahdr::{UltraHdrReaderConfig, UltraHdrMode, GainMapMemory, HdrOutputFormat};
+//! use zenjpeg::ultrahdr::{UltraHdrReaderConfig, UltraHdrMode, GainMapMemory};
 //!
 //! let config = UltraHdrReaderConfig::new()
 //!     .mode(UltraHdrMode::Hdr)
 //!     .display_boost(4.0)
-//!     .hdr_format(HdrOutputFormat::LinearFloat)
 //!     .memory_strategy(GainMapMemory::Streaming);
 //!
 //! let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
@@ -65,7 +64,7 @@ use crate::types::Dimensions;
 
 #[cfg(feature = "ultrahdr")]
 use ultrahdr_core::{
-    gainmap::{DecodeInput, HdrOutputFormat, RowDecoder, StreamDecoder},
+    gainmap::{RowDecoder, StreamDecoder},
     ColorGamut, GainMap, GainMapMetadata,
 };
 
@@ -131,9 +130,11 @@ pub enum GainMapMemory {
 /// ```rust,ignore
 /// let config = UltraHdrReaderConfig::new()
 ///     .mode(UltraHdrMode::Hdr)
-///     .display_boost(4.0)
-///     .hdr_format(HdrOutputFormat::LinearFloat);
+///     .display_boost(4.0);
 /// ```
+///
+/// HDR output is always linear f32 RGBA. The caller is responsible for
+/// converting to other formats (PQ, sRGB) if needed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct UltraHdrReaderConfig {
@@ -148,12 +149,6 @@ pub struct UltraHdrReaderConfig {
     ///
     /// Default: 1.0 (SDR display)
     pub display_boost: f32,
-
-    /// Output format for HDR pixels.
-    ///
-    /// Default: LinearFloat (RGBA f32 in linear light)
-    #[cfg(feature = "ultrahdr")]
-    pub hdr_format: HdrOutputFormat,
 
     /// Memory strategy for gain map handling.
     ///
@@ -174,8 +169,6 @@ impl Default for UltraHdrReaderConfig {
         Self {
             mode: UltraHdrMode::Hdr,
             display_boost: 1.0,
-            #[cfg(feature = "ultrahdr")]
-            hdr_format: HdrOutputFormat::LinearFloat,
             memory_strategy: GainMapMemory::Full,
             preserve_metadata: false,
         }
@@ -205,14 +198,6 @@ impl UltraHdrReaderConfig {
     #[must_use]
     pub fn display_boost(mut self, boost: f32) -> Self {
         self.display_boost = boost;
-        self
-    }
-
-    /// Set the HDR output format.
-    #[cfg(feature = "ultrahdr")]
-    #[must_use]
-    pub fn hdr_format(mut self, format: HdrOutputFormat) -> Self {
-        self.hdr_format = format;
         self
     }
 
@@ -362,15 +347,13 @@ impl<'a> UltraHdrReader<'a> {
                 let width = self.base_reader.width();
                 let height = self.base_reader.height();
 
-                let row_decoder = RowDecoder::with_input_config(
+                let row_decoder = RowDecoder::new(
                     gainmap,
                     metadata.clone(),
                     width,
                     height,
                     self.config.display_boost,
-                    self.config.hdr_format,
                     ColorGamut::Bt709,
-                    DecodeInput::rgb8(width),
                 )
                 .map_err(|e| Error::decode_error(e.to_string()))?;
 
@@ -395,7 +378,7 @@ impl<'a> UltraHdrReader<'a> {
                 let sdr_width = self.base_reader.width();
                 let sdr_height = self.base_reader.height();
 
-                let stream_decoder = StreamDecoder::with_input_config(
+                let stream_decoder = StreamDecoder::new(
                     metadata.clone(),
                     sdr_width,
                     sdr_height,
@@ -403,9 +386,7 @@ impl<'a> UltraHdrReader<'a> {
                     gm_height,
                     gm_channels,
                     self.config.display_boost,
-                    self.config.hdr_format,
                     ColorGamut::Bt709,
-                    DecodeInput::rgb8(sdr_width),
                 )
                 .map_err(|e| Error::decode_error(e.to_string()))?;
 
@@ -465,7 +446,7 @@ impl<'a> UltraHdrReader<'a> {
     ///
     /// * `rows` - Number of rows to read
     /// * `sdr_output` - Optional buffer for RGB8 SDR output (3 bytes per pixel per row)
-    /// * `hdr_output` - Optional buffer for HDR output (format depends on config)
+    /// * `hdr_output` - Optional buffer for linear f32 RGBA HDR output
     /// * `gainmap_output` - Optional buffer for raw gain map output (SdrAndGainMap mode only)
     ///
     /// # Returns
@@ -475,7 +456,7 @@ impl<'a> UltraHdrReader<'a> {
     /// # Buffer Sizes
     ///
     /// - `sdr_output`: `width * 3 * rows` bytes (RGB8)
-    /// - `hdr_output`: `width * 16 * rows` bytes for LinearFloat, `width * 4 * rows` for Pq1010102/Srgb8
+    /// - `hdr_output`: `width * 4 * rows` floats (linear f32 RGBA)
     /// - `gainmap_output`: `gainmap_width * gainmap_channels * rows_scaled` bytes
     pub fn read_rows(
         &mut self,
@@ -602,6 +583,9 @@ impl<'a> UltraHdrReader<'a> {
     }
 
     /// Apply HDR reconstruction to SDR data.
+    ///
+    /// Converts sRGB u8 input to linear f32, feeds to the gain map decoder,
+    /// and writes linear f32 RGBA output.
     fn apply_hdr_reconstruction(
         &mut self,
         sdr_data: &[u8],
@@ -614,15 +598,17 @@ impl<'a> UltraHdrReader<'a> {
             return Ok(());
         };
 
+        // Convert sRGB u8 to linear f32 RGB for the streaming API
+        let width = self.base_reader.width() as usize;
+        let sdr_linear = srgb_u8_to_linear_f32(sdr_data, width, rows);
+
         match hdr_state {
             HdrDecoderState::RowDecoder(decoder) => {
-                let hdr_bytes = decoder
-                    .process_rows(sdr_data, rows as u32)
+                let hdr_floats = decoder
+                    .process_rows(&sdr_linear, rows as u32)
                     .map_err(|e| Error::decode_error(e.to_string()))?;
 
-                // Copy to output (assuming LinearFloat format)
-                // hdr_bytes is raw bytes, need to reinterpret as f32
-                let hdr_floats: &[f32] = bytemuck::cast_slice(&hdr_bytes);
+                // Copy linear f32 RGBA output
                 let copy_len = hdr_output.len().min(hdr_floats.len());
                 hdr_output[..copy_len].copy_from_slice(&hdr_floats[..copy_len]);
             }
@@ -631,8 +617,8 @@ impl<'a> UltraHdrReader<'a> {
                 gainmap_reader,
                 ..
             } => {
-                // Feed gain map rows if needed
-                while let Some(_gm_row_needed) = decoder.next_gainmap_row_needed() {
+                // Feed gain map rows until we can process the SDR batch
+                while !decoder.can_process(rows as u32) {
                     // Read gain map row
                     let gm_width = gainmap_reader.width() as usize;
                     let gm_stride = gm_width * 3;
@@ -652,11 +638,10 @@ impl<'a> UltraHdrReader<'a> {
 
                 // Process SDR rows
                 if decoder.can_process(rows as u32) {
-                    let hdr_bytes = decoder
-                        .process_sdr_rows(sdr_data, rows as u32)
+                    let hdr_floats = decoder
+                        .process_sdr_rows(&sdr_linear, rows as u32)
                         .map_err(|e| Error::decode_error(e.to_string()))?;
 
-                    let hdr_floats: &[f32] = bytemuck::cast_slice(&hdr_bytes);
                     let copy_len = hdr_output.len().min(hdr_floats.len());
                     hdr_output[..copy_len].copy_from_slice(&hdr_floats[..copy_len]);
                 } else {
@@ -738,6 +723,22 @@ fn srgb_to_linear(srgb: u8) -> f32 {
     } else {
         ((s + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Convert a buffer of sRGB RGB8 pixels to linear f32 RGB.
+///
+/// Input: packed RGB8 (`[R, G, B, R, G, B, ...]`), 3 bytes per pixel.
+/// Output: packed linear f32 RGB (`[R, G, B, R, G, B, ...]`), 3 floats per pixel.
+#[cfg(feature = "ultrahdr")]
+fn srgb_u8_to_linear_f32(srgb_data: &[u8], width: usize, rows: usize) -> Vec<f32> {
+    let pixel_count = width * rows;
+    let mut linear = Vec::with_capacity(pixel_count * 3);
+    for pixel in srgb_data[..pixel_count * 3].chunks_exact(3) {
+        linear.push(srgb_to_linear(pixel[0]));
+        linear.push(srgb_to_linear(pixel[1]));
+        linear.push(srgb_to_linear(pixel[2]));
+    }
+    linear
 }
 
 /// Decode a gain map JPEG to GainMap struct.
