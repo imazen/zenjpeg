@@ -85,7 +85,8 @@ fn decode_resize_encode(
         .linear()
         .build();
 
-    let mut resizer = StreamingResize::new(&resize_config);
+    let batch = 8u32;
+    let mut resizer = StreamingResize::with_batch_hint(&resize_config, batch);
 
     // Build encoder with metadata from source.
     // force_baseline overrides progressive AFTER auto_optimize (which enables progressive).
@@ -105,7 +106,7 @@ fn decode_resize_encode(
     let mut reader = decoder.scanline_reader(jpeg_data)?;
 
     let row_bytes = src_w as usize * 3;
-    let batch = 8usize;
+    let batch = batch as usize;
     let mut buf = vec![0u8; row_bytes * batch];
 
     while !reader.is_finished() {
@@ -117,8 +118,15 @@ fn decode_resize_encode(
             break;
         }
 
-        let available =
-            resizer.push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32);
+        let available = resizer
+            .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
+            .map_err(|e| crate::error::Error::new(crate::error::ErrorKind::InternalError {
+                reason: match e {
+                    zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
+                    zenresize::StreamingError::InputTooShort => "resize: input row too short",
+                    zenresize::StreamingError::RingBufferOverflow => "resize: ring buffer overflow",
+                },
+            }))?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
 
