@@ -826,7 +826,7 @@ impl<'a> zencodec_types::Decoder for JpegDecoder<'a> {
             let mut y: u32 = 0;
 
             while !reader.is_finished() {
-                let buf = sink.demand(y, 1, row_bytes);
+                let (buf, _stride) = sink.demand(y, 1, width as u32, channels);
                 let out = ImgRefMut::new(&mut buf[..row_bytes], row_bytes, 1);
                 let count = match channels {
                     1 => reader.read_rows_gray8(out)?,
@@ -1093,10 +1093,11 @@ mod tests {
             row_count: u32,
         }
         impl zencodec_types::DecodeRowSink for CountSink {
-            fn demand(&mut self, _y: u32, _height: u32, min_bytes: usize) -> &mut [u8] {
+            fn demand(&mut self, _y: u32, _height: u32, width: u32, bpp: usize) -> (&mut [u8], usize) {
                 self.row_count += 1;
-                self.buf.resize(min_bytes, 0);
-                &mut self.buf
+                let stride = width as usize * bpp;
+                self.buf.resize(stride, 0);
+                (&mut self.buf, stride)
             }
         }
 
