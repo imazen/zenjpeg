@@ -1,7 +1,7 @@
 [package]
 name = "zenjpeg"
 version = "0.6.1"
-edition = "2021"
+edition = "2024"
 license = "AGPL-3.0-or-later"
 license-file = "../LICENSE"
 repository = "https://github.com/imazen/zenjpeg"
