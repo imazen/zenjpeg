@@ -870,15 +870,6 @@ impl zencodec_types::FrameDecoder for JpegFrameDecoder {
             "JPEG does not support animation",
         ))
     }
-
-    fn next_frame_rows(
-        &mut self,
-        _sink: &mut dyn zencodec_types::DecodeRowSink,
-    ) -> Result<Option<ImageInfo>, Error> {
-        Err(Error::unsupported_feature(
-            "JPEG does not support animation",
-        ))
-    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
