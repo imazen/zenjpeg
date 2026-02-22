@@ -160,7 +160,7 @@ impl<'a> JpegParser<'a> {
             // (For jpegli quant tables, the table is typically symmetric,
             // making this a no-op. But it's correct for asymmetric tables.)
             for table in &mut self.quant_tables {
-                if let Some(ref mut qt) = table {
+                if let Some(qt) = table {
                     let old = *qt;
                     for r in 0..8 {
                         for c in 0..8 {

@@ -535,7 +535,7 @@ opaque_struct!(jpeg_color_quantizer);
 // External function declarations (jpegli API - uses jpegli_* symbols)
 // ============================================================================
 
-extern "C" {
+unsafe extern "C" {
     // Error handling
     #[link_name = "jpegli_std_error"]
     pub fn jpeg_std_error(err: *mut jpeg_error_mgr) -> *mut jpeg_error_mgr;
@@ -747,7 +747,7 @@ pub const BUTTERAUGLI_ERROR_MEMORY: c_int = 1;
 pub const BUTTERAUGLI_ERROR_INVALID_INPUT: c_int = 2;
 pub const BUTTERAUGLI_ERROR_INTERNAL: c_int = 3;
 
-extern "C" {
+unsafe extern "C" {
     /// Compute butteraugli score between two linear RGB images.
     pub fn butteraugli_compare(
         rgb0: *const f32,
@@ -884,7 +884,7 @@ pub unsafe fn compute_butteraugli_cpp(
 // XYB Color Conversion FFI
 // ============================================================================
 
-extern "C" {
+unsafe extern "C" {
     /// Convert sRGB u8 to linear RGB float [0, 1]
     pub fn jpegli_srgb_to_linear(
         srgb: *const u8,

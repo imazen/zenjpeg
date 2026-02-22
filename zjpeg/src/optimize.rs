@@ -344,7 +344,7 @@ fn build_encoder_config(
     // When --strip-all or --strip-gainmaps is used, we fall back to individual metadata
     // because to_encoder_segments() always includes secondary images (gain maps) and
     // there's no public API to exclude them.
-    if let Some(ref extras) = extras {
+    if let Some(extras) = extras {
         if args.strip_all {
             // Strip everything — no segments, no individual metadata
         } else if args.strip_gainmaps {
