@@ -335,17 +335,6 @@ fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
     }
 }
 
-/// Collect contiguous pixel data from a (possibly strided) PixelSlice.
-fn collect_contiguous(pixels: &PixelSlice<'_>) -> Vec<u8> {
-    let bpp = pixels.descriptor().bytes_per_pixel();
-    let row_bytes = pixels.width() as usize * bpp;
-    let mut buf = Vec::with_capacity(row_bytes * pixels.rows() as usize);
-    for y in 0..pixels.rows() {
-        buf.extend_from_slice(pixels.row(y));
-    }
-    buf
-}
-
 impl<'a> zencodec_types::Encoder for JpegEncoder<'a> {
     type Error = Error;
 
@@ -354,8 +343,8 @@ impl<'a> zencodec_types::Encoder for JpegEncoder<'a> {
         let width = pixels.width();
         let height = pixels.rows();
 
-        // Collect contiguous bytes
-        let data = collect_contiguous(&pixels);
+        // Zero-copy when tightly packed, copies only if strided
+        let data = pixels.contiguous_bytes();
         self.encode_bytes_inner(&data, width, height, layout)
     }
 
@@ -365,13 +354,11 @@ impl<'a> zencodec_types::Encoder for JpegEncoder<'a> {
 
         match &mut self.buffer {
             None => {
-                // First push — initialize buffer
+                // First push — initialize buffer with contiguous row data
                 let bpp = desc.bytes_per_pixel();
                 let row_bytes = width as usize * bpp;
                 let mut data = Vec::with_capacity(row_bytes * rows.rows() as usize * 4); // estimate
-                for y in 0..rows.rows() {
-                    data.extend_from_slice(rows.row(y));
-                }
+                data.extend_from_slice(&rows.contiguous_bytes());
                 self.buffer = Some(RowBuffer {
                     data,
                     width,
@@ -386,9 +373,7 @@ impl<'a> zencodec_types::Encoder for JpegEncoder<'a> {
                         "push_rows: width or format changed between calls",
                     ));
                 }
-                for y in 0..rows.rows() {
-                    buf.data.extend_from_slice(rows.row(y));
-                }
+                buf.data.extend_from_slice(&rows.contiguous_bytes());
                 buf.total_rows += rows.rows();
             }
         }
