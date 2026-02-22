@@ -488,7 +488,7 @@ impl HuffmanDecodeTable {
     #[inline(always)]
     pub fn fast_ac_slice(&self) -> &[i16] {
         match &self.fast_ac {
-            Some(ref arr) => arr.as_slice(),
+            Some(arr) => arr.as_slice(),
             None => &[],
         }
     }

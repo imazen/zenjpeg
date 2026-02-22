@@ -861,20 +861,18 @@ fn determine_encode_params(
     }
 
     // Auto quality detection from source.
-    // Default tolerance is proportional to source BA: 15% of the source's
-    // butteraugli distance. This keeps perceptual impact constant regardless
-    // of source quality — a Q30 source (BA~4.2) gets tol=0.63, while a Q90
-    // source (BA~1.7) gets tol=0.26. Flat 0.3 was too aggressive for high-Q
-    // sources (23% relative degradation) and too conservative for low-Q
-    // sources (6% relative, forcing unnecessarily high Q and larger files).
-    let tolerance = if let Some(t) = args.tolerance {
-        t
-    } else if let Some(crush) = args.crush {
-        crush.tolerance()
-    } else {
-        let src_ba = probe.estimated_ba();
-        (src_ba * 0.15).clamp(0.1, 2.0)
-    };
+    //
+    // Two modes:
+    // 1. Explicit --tolerance: absolute BA delta, uses legacy absolute grid.
+    //    Also used by --crush presets which define fixed tolerances.
+    // 2. Default: proportional tolerance (factor=0.15), uses calibrated
+    //    proportional grid. Allow ba_delta ≤ src_ba × 0.15. This keeps
+    //    perceptual impact constant regardless of source quality — a Q30
+    //    source (BA~4.2) allows ~0.63 BA delta, while a Q90 source (BA~1.7)
+    //    allows ~0.26. The proportional grid was calibrated with per-image
+    //    adaptive thresholds (80% pass rate), making it more robust than
+    //    converting to absolute tolerance.
+    let use_absolute = args.tolerance.is_some() || args.crush.is_some();
 
     // Per-preset quality offset: compensate for R-D efficiency differences.
     // The calibration grids were built with auto_optimize (hybrid-prog).
@@ -890,7 +888,19 @@ fn determine_encode_params(
         }
     }
 
-    let (quality, sub) = match probe.reencode_settings(tolerance) {
+    let reencode_result = if use_absolute {
+        let tolerance = if let Some(t) = args.tolerance {
+            t
+        } else {
+            args.crush.unwrap().tolerance()
+        };
+        probe.reencode_settings(tolerance)
+    } else {
+        // Default: proportional factor 0.15 (15% of source BA)
+        probe.reencode_settings_proportional(0.15)
+    };
+
+    let (quality, sub) = match reencode_result {
         Ok(settings) => {
             let mut q = offset_quality(settings.quality, preset_offset);
 
@@ -922,12 +932,12 @@ fn determine_encode_params(
                 best_effort.subsampling
             };
             eprintln!(
-                "warning: tolerance {tolerance:.1} is tighter than achievable; using best effort"
+                "warning: tolerance is tighter than achievable; using best effort"
             );
             (q, sub)
         }
         Err(detect::ReencodeError::InvalidTolerance) => {
-            anyhow::bail!("invalid tolerance: {tolerance}");
+            anyhow::bail!("invalid tolerance");
         }
         Err(e) => {
             anyhow::bail!("reencode settings error: {e}");
@@ -1164,7 +1174,7 @@ fn build_encoder_config(
 
     let strip_icc_for_apply = args.apply_icc.is_some();
 
-    if let Some(ref extras) = extras {
+    if let Some(extras) = extras {
         if args.strip_all {
             // Strip everything
         } else if args.strip_gainmaps {
