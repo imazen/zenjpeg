@@ -243,6 +243,13 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub deblock_boundary: bool,
 
+    /// Pre-encode Gaussian blur sigma (0.0 = disabled).
+    ///
+    /// A mild blur (σ ≈ 0.4) before JPEG encoding reduces file size ~5%
+    /// with negligible perceptual quality loss.
+    #[arg(long, default_value = "0.0")]
+    pub blur: f32,
+
     // -- Decoding ---------------------------------------------------------
     /// Decoder error tolerance for damaged/non-conformant JPEGs.
     #[arg(long, value_enum)]
@@ -567,6 +574,10 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub deblock_boundary: bool,
 
+    /// Pre-encode Gaussian blur sigma (0.0 = disabled).
+    #[arg(long, default_value = "0.0")]
+    pub blur: f32,
+
     /// Strip all metadata.
     #[arg(long)]
     pub strip_all: bool,
@@ -803,6 +814,7 @@ fn main() -> Result<()> {
                     xyb: false,
                     deblock: false,
                     deblock_boundary: false,
+                    blur: 0.0,
                     strictness: None,
                     strip_all: false,
                     strip_exif: false,

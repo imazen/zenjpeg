@@ -240,6 +240,20 @@ impl BytesEncoder {
             return Err(Error::invalid_buffer_size(row_bytes, data.len()));
         }
 
+        // Apply pre-blur if configured and layout is compatible
+        if self.config.pre_blur > 0.0 {
+            let w = self.width as usize;
+            let h = rows;
+            match self.layout {
+                PixelLayout::Rgb8Srgb => {
+                    let blurred =
+                        crate::blur::gaussian_blur_rgb(data, w, h, self.config.pre_blur);
+                    return self.push(&blurred, rows, row_bytes, stop);
+                }
+                _ => {}
+            }
+        }
+
         self.push(data, rows, row_bytes, stop)
     }
 

@@ -1169,6 +1169,9 @@ fn build_encoder_config(
     if args.sharp_yuv {
         config = config.sharp_yuv(true);
     }
+    if args.blur > 0.0 {
+        config = config.pre_blur(args.blur);
+    }
 
     let strip_icc_for_apply = args.apply_icc.is_some();
 

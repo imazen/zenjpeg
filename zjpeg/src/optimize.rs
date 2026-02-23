@@ -334,6 +334,9 @@ fn build_encoder_config(
     if args.sharp_yuv {
         config = config.sharp_yuv(true);
     }
+    if args.blur > 0.0 {
+        config = config.pre_blur(args.blur);
+    }
 
     // When --apply-icc is used, the source ICC profile must be stripped because
     // the pixels have been converted to the target color space.
