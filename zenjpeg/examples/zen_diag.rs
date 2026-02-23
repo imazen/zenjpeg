@@ -1,7 +1,7 @@
 fn main() {
     use enough::Unstoppable;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
-    use zenjpeg_bench_utils::{bytes_to_rgb, ImageData, QualityMetrics};
+    use zenjpeg_bench_utils::{ImageData, QualityMetrics, bytes_to_rgb};
 
     let img = ImageData::from_path(std::path::Path::new(
         "/home/lilith/work/codec-eval/codec-corpus/gb82/baby-lossless.png",

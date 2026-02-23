@@ -22,15 +22,15 @@ use std::path::{Path, PathBuf};
 
 // zenjpeg internalized trellis
 use zenjpeg::encode::trellis::TrellisConfig;
-use zenjpeg::encode::trellis::{trellis_quantize_block, RateTable};
+use zenjpeg::encode::trellis::{RateTable, trellis_quantize_block};
 
 // mozjpeg-rs trellis (the original we ported from)
+use mozjpeg_rs::TrellisConfig as MozTrellisConfig;
 use mozjpeg_rs::consts::{
     AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE2,
 };
 use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
 use mozjpeg_rs::trellis::trellis_quantize_block as moz_trellis_quantize_block;
-use mozjpeg_rs::TrellisConfig as MozTrellisConfig;
 
 // ============================================================================
 // Huffman table builders (standard tables in both formats)
@@ -408,7 +408,7 @@ fn trellis_block_parity_edge_cases() {
 #[cfg(feature = "mozjpeg-tables")]
 mod full_encode {
     use super::*;
-    use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+    use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
     use zenjpeg::encoder::{
         ChromaSubsampling, EncoderConfig, MozjpegTables, PixelLayout, QuantTablePreset,
     };
@@ -522,8 +522,8 @@ mod full_encode {
     }
 
     fn decode_jpeg_to_rgb(jpeg: &[u8]) -> Vec<u8> {
-        use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
         let cursor = ZCursor::new(jpeg);
         let mut decoder = JpegDecoder::new(cursor);
         decoder.decode().expect("jpeg decode failed")

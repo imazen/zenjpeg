@@ -9,7 +9,7 @@
 //!
 //! Run with: cargo run --release --example xyb_vs_ycbcr_butteraugli
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{ButteraugliParams, compute_butteraugli};
 use enough::Unstoppable;
 use std::path::Path;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};

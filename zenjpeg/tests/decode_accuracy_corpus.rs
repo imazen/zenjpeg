@@ -301,7 +301,13 @@ impl PairStats {
         let mean_dssim = self.dssim_values.iter().sum::<f64>() / self.count as f64;
         format!(
             "n={:2} | max_pixel_diff: p50={} max={} | mean_abs_diff: {:.3} | DSSIM: mean={:.6} max={:.6} | skipped={}",
-            self.count, p50_diff, max_diff, mean_mad, mean_dssim, max_dssim, self.skipped.len()
+            self.count,
+            p50_diff,
+            max_diff,
+            mean_mad,
+            mean_dssim,
+            max_dssim,
+            self.skipped.len()
         )
     }
 }

@@ -8,7 +8,7 @@ use zenjpeg::foundation::consts::DCT_BLOCK_SIZE;
 use zenjpeg::huffman::HuffmanEncodeTable;
 
 #[cfg(feature = "parallel")]
-use zenjpeg::encode::parallel::{parallel_entropy_encode_444, ParallelEntropyConfig};
+use zenjpeg::encode::parallel::{ParallelEntropyConfig, parallel_entropy_encode_444};
 
 fn create_test_blocks(width: usize, height: usize) -> Vec<[i16; DCT_BLOCK_SIZE]> {
     let blocks_h = (width + 7) / 8;

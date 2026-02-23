@@ -7,8 +7,8 @@
 
 use crate::types::PixelFormat;
 
-use super::extras::DecodedExtras;
 use super::DecodeWarning;
+use super::extras::DecodedExtras;
 use wide::f32x8;
 
 /// A decoded image with dimensions and pixel data.

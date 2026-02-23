@@ -17,12 +17,12 @@
 //! ```
 
 use enough::Unstoppable;
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use zenjpeg::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
+use zenjpeg::decoder::{JpegMode, Subsampling, decode_jpeg_with_icc};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use zenjpeg::test_utils::find_cjpegli;
 
@@ -206,15 +206,15 @@ fn decode_jpeg(data: &[u8], color: ColorMode) -> Vec<u8> {
         ColorMode::Xyb => decode_jpeg_with_icc(data)
             .map(|(pixels, _, _)| pixels)
             .unwrap_or_else(|_| {
-                use zune_jpeg::zune_core::bytestream::ZCursor;
                 use zune_jpeg::JpegDecoder;
+                use zune_jpeg::zune_core::bytestream::ZCursor;
                 let cursor = ZCursor::new(data);
                 let mut decoder = JpegDecoder::new(cursor);
                 decoder.decode().expect("JPEG decode failed")
             }),
         ColorMode::YCbCr => {
-            use zune_jpeg::zune_core::bytestream::ZCursor;
             use zune_jpeg::JpegDecoder;
+            use zune_jpeg::zune_core::bytestream::ZCursor;
             let cursor = ZCursor::new(data);
             let mut decoder = JpegDecoder::new(cursor);
             decoder.decode().expect("JPEG decode failed")

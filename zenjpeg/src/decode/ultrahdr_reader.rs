@@ -64,8 +64,8 @@ use crate::types::Dimensions;
 
 #[cfg(feature = "ultrahdr")]
 use ultrahdr_core::{
-    gainmap::{RowDecoder, StreamDecoder},
     ColorGamut, GainMap, GainMapMetadata,
+    gainmap::{RowDecoder, StreamDecoder},
 };
 
 // ============================================================================

@@ -7,8 +7,8 @@ use enough::Unstoppable;
 mod test_utils;
 
 use test_utils::{
-    distance_rms, generate_checkerboard, generate_color_bars, generate_gradient_d,
-    generate_gradient_h, max_pixel_diff, thresholds, TestImage,
+    TestImage, distance_rms, generate_checkerboard, generate_color_bars, generate_gradient_d,
+    generate_gradient_h, max_pixel_diff, thresholds,
 };
 
 use test_case::test_case;
@@ -947,8 +947,8 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
             .unwrap_or_else(|_| panic!("encode {} failed", label));
 
         // Test with zune-jpeg
-        use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
         let cursor = ZCursor::new(&jpeg[..]);
         let mut decoder = JpegDecoder::new(cursor);
         let result = decoder.decode();

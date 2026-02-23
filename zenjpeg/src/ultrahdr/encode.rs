@@ -8,10 +8,10 @@ use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
-    color::tonemap::{tonemap_to_sdr, AdaptiveTonemapper, ToneMapConfig},
-    gainmap::{compute_gainmap, GainMapConfig, RowEncoder},
-    metadata::xmp::generate_xmp,
     ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
+    color::tonemap::{AdaptiveTonemapper, ToneMapConfig, tonemap_to_sdr},
+    gainmap::{GainMapConfig, RowEncoder, compute_gainmap},
+    metadata::xmp::generate_xmp,
 };
 
 /// Encode an HDR image as UltraHDR JPEG.
@@ -216,7 +216,7 @@ fn encode_sdr_base(
         _ => {
             return Err(Error::unsupported_feature(
                 "SDR image must be Rgba8 or Rgb8 for UltraHDR encoding",
-            ))
+            ));
         }
     };
 
@@ -242,7 +242,7 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
         _ => {
             return Err(Error::unsupported_feature(
                 "Unsupported HDR pixel format for tonemapping",
-            ))
+            ));
         }
     };
     let expected_size = (height * hdr.stride) as usize;
@@ -348,11 +348,7 @@ fn half_to_f32_safe(bytes: Option<&[u8]>) -> f32 {
             let e = (mant as f32).log2().floor() as i32;
             let m = ((mant as f32) / (1 << (e + 1)) as f32 - 0.5) * 2.0;
             let result = (1.0 + m) * 2.0f32.powi(-14 + e);
-            if sign == 1 {
-                -result
-            } else {
-                result
-            }
+            if sign == 1 { -result } else { result }
         }
     } else if exp == 31 {
         // Inf or NaN

@@ -14,8 +14,8 @@ use enough::Unstoppable;
 mod test_utils;
 
 use test_utils::{
-    generate_checkerboard, generate_color_bars, generate_gradient_d, generate_gradient_h,
-    generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb, TestImage,
+    TestImage, generate_checkerboard, generate_color_bars, generate_gradient_d,
+    generate_gradient_h, generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb,
 };
 use zenjpeg::{
     decoder::{ChromaUpsampling, Decoder, PixelFormat},

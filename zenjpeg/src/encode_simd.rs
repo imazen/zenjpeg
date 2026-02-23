@@ -27,7 +27,7 @@ use wide::f32x8;
 
 // AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, SimdToken};
+use archmage::{SimdToken, arcane};
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[allow(unused_imports)]
 use core::arch::x86_64::{

@@ -1149,9 +1149,9 @@ dependencies = [
 
 [[package]]
 name = "multiversed"
-version = "0.1.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31eede710ee60ecb1708685a9d948d25a67ee3940ee8a1096431590cb21eef7d"
+checksum = "9dabf9b113e96ba60fa3958fdaf4aba3d8ed9f9b67c14fbcb1b0e99708715ca8"
 dependencies = [
  "proc-macro2",
  "quote",

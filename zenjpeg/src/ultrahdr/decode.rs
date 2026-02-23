@@ -7,10 +7,8 @@ use crate::decode::DecodedExtras;
 use crate::decoder::Decoder;
 use crate::error::{Error, Result};
 use ultrahdr_core::{
-    color::tonemap::AdaptiveTonemapper,
-    gainmap::RowDecoder,
+    ColorGamut, GainMap, GainMapMetadata, color::tonemap::AdaptiveTonemapper, gainmap::RowDecoder,
     metadata::xmp::parse_xmp,
-    ColorGamut, GainMap, GainMapMetadata,
 };
 
 /// Extension trait for [`DecodedExtras`] to check for UltraHDR content.

@@ -470,7 +470,7 @@ impl EncodingTables {
         component: usize,
     ) -> crate::quant::QuantTable {
         use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
-        use crate::quant::{create_quant_table, DIST_THRESHOLD};
+        use crate::quant::{DIST_THRESHOLD, create_quant_table};
 
         let mut values = [0u16; 64];
         let mut scale_factor = global_scale;

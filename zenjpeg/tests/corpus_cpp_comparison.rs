@@ -201,7 +201,7 @@ fn load_png(path: &Path) -> Result<ImageData, codec_eval::Error> {
         _ => {
             return Err(codec_eval::Error::UnsupportedFormat(
                 "Unsupported PNG color type".into(),
-            ))
+            ));
         }
     };
 

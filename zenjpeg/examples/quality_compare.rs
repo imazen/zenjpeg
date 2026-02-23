@@ -34,8 +34,8 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 use zenjpeg_bench_utils::{
-    decode_jpeg_to_rgb, decode_jpeg_with_icc, ChromaSubsampling, ColorMode, EncoderConfig,
-    EncoderImpl, ImageData, QualityMetrics,
+    ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, QualityMetrics,
+    decode_jpeg_to_rgb, decode_jpeg_with_icc,
 };
 
 #[derive(Debug, Clone)]

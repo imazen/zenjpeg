@@ -16,8 +16,8 @@
 //! Falls back to scalar f32 conversion when disabled.
 
 use yuv::{
-    rgb_to_yuv420, rgb_to_yuv444, BufferStoreMut, YuvChromaSubsampling, YuvConversionMode,
-    YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+    BufferStoreMut, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
+    YuvStandardMatrix, rgb_to_yuv420, rgb_to_yuv444,
 };
 
 /// Convert RGB to YCbCr using fast SIMD integer math.

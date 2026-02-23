@@ -363,8 +363,8 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
     let icc_profile = extract_icc_profile(jpeg_data);
 
     // Decode JPEG using zune-jpeg
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
 
     let cursor = ZCursor::new(jpeg_data);
     let mut decoder = JpegDecoder::new(cursor);

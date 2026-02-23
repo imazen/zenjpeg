@@ -8,8 +8,8 @@ use enough::Unstoppable;
 mod test_utils;
 
 use test_utils::{
-    distance_rms, generate_color_bars, generate_gradient_d, max_pixel_diff, read_test_data,
-    TestImage,
+    TestImage, distance_rms, generate_color_bars, generate_gradient_d, max_pixel_diff,
+    read_test_data,
 };
 
 use zenjpeg::{

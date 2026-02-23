@@ -145,6 +145,7 @@ pub type EncodeResult<T> = core::result::Result<T, EncodeError>;
 pub use crate::error::{Error, Result};
 
 // === Main encoder types (from encode root modules) ===
+pub use crate::encode::Stop;
 pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 pub use crate::encode::encoder_config::EncoderConfig;
 pub use crate::encode::encoder_types::{
@@ -153,7 +154,6 @@ pub use crate::encode::encoder_types::{
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::request::EncodeRequest;
-pub use crate::encode::Stop;
 pub use crate::foundation::alloc::EncodeStats;
 pub use crate::types::Limits;
 

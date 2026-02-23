@@ -26,7 +26,7 @@
 
 use crate::encode::layout::LayoutParams;
 use crate::error::Result;
-use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
+use crate::foundation::aligned_alloc::{AlignedVec, try_alloc_zeroed};
 
 use super::autovec::compute_fuzzy_erosion_blocks_autovec;
 use super::quant_field_to_aq_strength;

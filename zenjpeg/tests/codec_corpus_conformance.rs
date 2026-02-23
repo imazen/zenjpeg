@@ -1003,8 +1003,8 @@ fn test_full_fuzz_corpus() {
 }
 
 fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode()

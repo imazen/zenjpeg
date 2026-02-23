@@ -10,11 +10,11 @@ use super::config::ComputedConfig;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
-use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::huffman::HuffmanEncodeTable;
+use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::types::Subsampling;
 use multiversed::multiversed;
-use wide::{i16x8, CmpEq};
+use wide::{CmpEq, i16x8};
 
 /// Frequency counts from an optimized Huffman encoding pass.
 ///
@@ -341,8 +341,8 @@ impl ComputedConfig {
                 64 // Default restart interval for parallel encoding
             };
             use super::parallel::{
-                parallel_entropy_encode_444, parallel_entropy_encode_subsampled,
-                ParallelEntropyConfig,
+                ParallelEntropyConfig, parallel_entropy_encode_444,
+                parallel_entropy_encode_subsampled,
             };
 
             let config = if let Some(tables) = tables {

@@ -929,7 +929,7 @@ impl YCbCrPlanarEncoder {
             _ => {
                 return Err(Error::invalid_config(
                     "YCbCrPlanarEncoder requires YCbCr color mode".into(),
-                ))
+                ));
             }
         };
 

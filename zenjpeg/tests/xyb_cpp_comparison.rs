@@ -139,7 +139,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 /// This test uses the actual C++ jpegli code to compute expected values.
 #[test]
 fn test_xyb_color_conversion_values() {
-    use zenjpeg::color::xyb::{srgb_to_scaled_xyb, SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+    use zenjpeg::color::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE, srgb_to_scaled_xyb};
 
     // Test colors: sRGB values
     let test_colors: &[(u8, u8, u8)] = &[

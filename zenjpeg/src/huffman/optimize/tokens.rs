@@ -230,8 +230,14 @@ impl ScanTokenInfo {
         if self.is_refinement() {
             eprintln!(
                 "=== Rust AC Refinement Scan {} ===\nSs={} Se={} Ah={} Al={}\nnum_blocks=? num_tokens={} num_refbits={} num_eobruns={}",
-                scan_index, self.ss, self.se, self.ah, self.al,
-                self.ref_tokens.len(), self.refbits.len(), self.eobruns.len()
+                scan_index,
+                self.ss,
+                self.se,
+                self.ah,
+                self.al,
+                self.ref_tokens.len(),
+                self.refbits.len(),
+                self.eobruns.len()
             );
             // Print first 20 tokens
             eprintln!("TOKENS:");

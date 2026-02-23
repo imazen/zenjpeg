@@ -43,7 +43,7 @@ use crate::encode::encoder_types::DownsamplingMethod;
 use crate::encode::layout::LayoutParams;
 use crate::error::Result;
 use crate::foundation::alloc::{
-    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, EncodeStats,
+    EncodeStats, try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked,
 };
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};

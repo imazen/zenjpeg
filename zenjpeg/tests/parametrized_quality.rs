@@ -8,7 +8,7 @@ use enough::Unstoppable;
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
+use test_utils::{TestPattern, distance_rms, generate_test_image, max_pixel_diff, thresholds};
 
 use test_case::test_case;
 use zenjpeg::{

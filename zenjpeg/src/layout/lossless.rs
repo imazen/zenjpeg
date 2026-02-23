@@ -169,11 +169,7 @@ pub(crate) fn safe_auto_orient(info: &crate::decode::JpegInfo) -> Option<u8> {
         LosslessTransform::Transverse => !w_aligned || !h_aligned,
     };
 
-    if would_trim {
-        None
-    } else {
-        Some(exif_orient)
-    }
+    if would_trim { None } else { Some(exif_orient) }
 }
 
 /// Get MCU dimensions for a given subsampling mode.

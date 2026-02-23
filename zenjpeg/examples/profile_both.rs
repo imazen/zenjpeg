@@ -30,9 +30,9 @@ fn main() {
 
     // Warmup
     for _ in 0..5 {
+        use zune_jpeg::JpegDecoder;
         use zune_jpeg::zune_core::colorspace::ColorSpace;
         use zune_jpeg::zune_core::options::DecoderOptions;
-        use zune_jpeg::JpegDecoder;
         let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
         let cursor = Cursor::new(jpeg.as_slice());
         let mut dec = JpegDecoder::new_with_options(cursor, options);
@@ -48,9 +48,9 @@ fn main() {
     eprintln!("=== Profiling zune-jpeg ({} iterations) ===", iterations);
     let start = Instant::now();
     for _ in 0..iterations {
+        use zune_jpeg::JpegDecoder;
         use zune_jpeg::zune_core::colorspace::ColorSpace;
         use zune_jpeg::zune_core::options::DecoderOptions;
-        use zune_jpeg::JpegDecoder;
         let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
         let cursor = Cursor::new(black_box(jpeg.as_slice()));
         let mut dec = JpegDecoder::new_with_options(cursor, options);

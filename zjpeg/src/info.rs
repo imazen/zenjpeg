@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zenjpeg::detect::content::{classify_from_probe, ContentType};
+use zenjpeg::detect::content::{ContentType, classify_from_probe};
 use zenjpeg::detect::{self, EncoderFamily, JpegProbe, QualityScale};
 
-use crate::batch;
 use crate::InfoArgs;
+use crate::batch;
 
 pub fn run(args: InfoArgs) -> Result<()> {
     let files = batch::expand_inputs(&args.input)?;

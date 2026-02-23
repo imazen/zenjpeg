@@ -35,11 +35,7 @@ pub(crate) const ROBIDOUX_CHROMINANCE: [u16; DCTSIZE2] = [
 pub(crate) fn quality_to_scale_factor(quality: u8) -> u32 {
     let q = quality.clamp(1, 100) as u32;
 
-    if q < 50 {
-        5000 / q
-    } else {
-        200 - q * 2
-    }
+    if q < 50 { 5000 / q } else { 200 - q * 2 }
 }
 
 /// Scale a base quantization table by a percentage factor.

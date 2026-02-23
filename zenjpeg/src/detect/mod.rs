@@ -311,7 +311,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, MARKER_DQT]);
         data.extend_from_slice(&[0x00, 0x43]); // Length = 67
         data.push(0x00); // Precision 0 (8-bit), table ID 0
-                         // JPEG_NATURAL_ORDER[z] maps zigzag position z → natural index
+        // JPEG_NATURAL_ORDER[z] maps zigzag position z → natural index
         for z in 0..64 {
             let natural_idx = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
             data.push(luma_natural[natural_idx] as u8);
@@ -339,7 +339,7 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x08]); // Height = 8
         data.extend_from_slice(&[0x00, 0x08]); // Width = 8
         data.push(0x03); // 3 components
-                         // Component 1 (Y): ID=1, H=1, V=1, QT=0
+        // Component 1 (Y): ID=1, H=1, V=1, QT=0
         data.extend_from_slice(&[0x01, 0x11, 0x00]);
         // Component 2 (Cb): ID=2, H=1, V=1, QT=1
         data.extend_from_slice(&[0x02, 0x11, 0x01]);
@@ -353,7 +353,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, MARKER_DHT]);
         data.extend_from_slice(&[0x00, 0x1F]); // Length = 31
         data.push(0x00); // DC table 0
-                         // Standard DC luminance bits
+        // Standard DC luminance bits
         data.extend_from_slice(&[
             0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00,
@@ -368,7 +368,7 @@ mod tests {
         // Length = 2 + 1 + 16 + 162 = 181
         data.extend_from_slice(&[0x00, 0xB5]);
         data.push(0x10); // AC table 0
-                         // Standard AC luminance bits (sum = 162)
+        // Standard AC luminance bits (sum = 162)
         data.extend_from_slice(&[
             0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
             0x01, 0x7D,
@@ -394,7 +394,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, MARKER_DHT]);
         data.extend_from_slice(&[0x00, 0xB5]); // Length = 181
         data.push(0x11); // AC table 1
-                         // Standard AC chrominance bits (sum = 162)
+        // Standard AC chrominance bits (sum = 162)
         data.extend_from_slice(&[
             0x00, 0x02, 0x01, 0x02, 0x04, 0x04, 0x03, 0x04, 0x07, 0x05, 0x04, 0x04, 0x00, 0x01,
             0x02, 0x77,
@@ -496,7 +496,7 @@ mod tests {
         data.push((ac_len >> 8) as u8);
         data.push((ac_len & 0xFF) as u8);
         data.push(0x10); // AC table 0
-                         // Bits array summing to 100
+        // Bits array summing to 100
         data.extend_from_slice(&[
             0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
             0x01, 0x3F,
@@ -520,7 +520,7 @@ mod tests {
         data.push((ac_len >> 8) as u8);
         data.push((ac_len & 0xFF) as u8);
         data.push(0x11); // AC table 1
-                         // Bits array summing to 100 (same as AC table 0)
+        // Bits array summing to 100 (same as AC table 0)
         data.extend_from_slice(&[
             0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
             0x01, 0x3F,

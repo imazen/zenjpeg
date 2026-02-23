@@ -308,7 +308,14 @@ mod bench {
 
                 eprintln!(
                     "{:>5}² {:>6.1}MB {:>8.0}MB/s {:>8.0}MB/s {:>8.0}MB/s {:>8.0}MB/s {:>7.2}x {:>7.2}ms",
-                    size, buf_mb, bw_1t, bw_8t, bw_nt_1t, bw_nt_8t, nt_ratio, t_8t * 1000.0
+                    size,
+                    buf_mb,
+                    bw_1t,
+                    bw_8t,
+                    bw_nt_1t,
+                    bw_nt_8t,
+                    nt_ratio,
+                    t_8t * 1000.0
                 );
             }
             #[cfg(not(target_arch = "x86_64"))]

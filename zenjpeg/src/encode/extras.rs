@@ -1152,7 +1152,7 @@ mod tests {
         assert_eq!(jfif_data[5], 1); // version major
         assert_eq!(jfif_data[6], 2); // version minor
         assert_eq!(jfif_data[7], 1); // units = pixels per inch
-                                     // x_density = 300 = 0x012C (big-endian)
+        // x_density = 300 = 0x012C (big-endian)
         assert_eq!(jfif_data[8], 0x01);
         assert_eq!(jfif_data[9], 0x2C);
         // y_density = 300

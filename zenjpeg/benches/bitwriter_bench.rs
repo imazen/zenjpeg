@@ -2,7 +2,7 @@
 //!
 //! Compares different 0xFF detection strategies.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 /// Original 4-byte comparison approach
 mod original {

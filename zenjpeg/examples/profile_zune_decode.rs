@@ -83,9 +83,9 @@ fn main() {
         jpeg.len() / 1024
     );
 
+    use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
-    use zune_jpeg::JpegDecoder;
 
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let cursor = std::io::Cursor::new(&jpeg);

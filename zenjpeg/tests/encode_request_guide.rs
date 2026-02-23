@@ -353,9 +353,10 @@ fn xmp_borrowed() {
         .unwrap();
 
     // XMP is in APP1 with Adobe namespace
-    assert!(jpeg
-        .windows(29)
-        .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice()));
+    assert!(
+        jpeg.windows(29)
+            .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice())
+    );
 }
 
 // ============================================================================
@@ -376,9 +377,10 @@ fn xmp_owned() {
         .encode_bytes(&raw, w, h, PixelLayout::Rgb8Srgb)
         .unwrap();
 
-    assert!(jpeg
-        .windows(29)
-        .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice()));
+    assert!(
+        jpeg.windows(29)
+            .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice())
+    );
 }
 
 // ============================================================================
@@ -404,9 +406,10 @@ fn all_metadata_combined() {
 
     assert!(jpeg.windows(12).any(|w| w == b"ICC_PROFILE\0".as_slice()));
     assert!(jpeg.windows(6).any(|w| w == b"Exif\0\0".as_slice()));
-    assert!(jpeg
-        .windows(29)
-        .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice()));
+    assert!(
+        jpeg.windows(29)
+            .any(|w| w == b"http://ns.adobe.com/xap/1.0/\0".as_slice())
+    );
 }
 
 // ============================================================================

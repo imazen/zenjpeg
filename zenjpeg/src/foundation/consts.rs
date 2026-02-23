@@ -364,11 +364,7 @@ pub mod dct {
     /// Compute DCT-II normalization factor for coefficient k.
     #[must_use]
     pub const fn alpha(k: usize) -> f32 {
-        if k == 0 {
-            ALPHA_DC
-        } else {
-            ALPHA_AC
-        }
+        if k == 0 { ALPHA_DC } else { ALPHA_AC }
     }
 
     // Precomputed cosine values for 8-point DCT

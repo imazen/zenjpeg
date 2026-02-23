@@ -387,12 +387,20 @@ fn main() {
         let rgb = &test_pixels[i];
         let cpp = cpp_results[i];
         let rust = rust_3iter(rgb[0], rgb[1], rgb[2]);
-        println!("RGB({:.2},{:.2},{:.2}): {:12.8} {:12.8} {:12.8} | {:12.8} {:12.8} {:12.8} | {:12.2e} {:12.2e} {:12.2e}",
-                 rgb[0], rgb[1], rgb[2],
-                 cpp[0], cpp[1], cpp[2],
-                 rust.0, rust.1, rust.2,
-                 (cpp[0] - rust.0).abs(),
-                 (cpp[1] - rust.1).abs(),
-                 (cpp[2] - rust.2).abs());
+        println!(
+            "RGB({:.2},{:.2},{:.2}): {:12.8} {:12.8} {:12.8} | {:12.8} {:12.8} {:12.8} | {:12.2e} {:12.2e} {:12.2e}",
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            cpp[0],
+            cpp[1],
+            cpp[2],
+            rust.0,
+            rust.1,
+            rust.2,
+            (cpp[0] - rust.0).abs(),
+            (cpp[1] - rust.1).abs(),
+            (cpp[2] - rust.2).abs()
+        );
     }
 }

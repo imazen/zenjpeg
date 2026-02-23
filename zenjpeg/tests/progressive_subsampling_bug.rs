@@ -51,8 +51,8 @@ fn test_progressive_subsampling_external_decoder_compat() {
             .unwrap_or_else(|e| panic!("Progressive {} encode failed: {:?}", name, e));
 
         // Test with zune-jpeg decoder
-        use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
         let zune_result = JpegDecoder::new(ZCursor::new(&jpeg)).decode();
 
         assert!(

@@ -13,7 +13,7 @@
 //! cargo bench --bench quick -- --baseline main
 //! ```
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use enough::Unstoppable;
 use std::time::Duration;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};

@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use zenjpeg::deblock::boundary::{filter_plane_boundary_4tap, BoundaryStrength};
+use zenjpeg::deblock::boundary::{BoundaryStrength, filter_plane_boundary_4tap};
 use zenjpeg::deblock::knusperli;
 use zenjpeg::foundation::consts::JPEG_ZIGZAG_ORDER;
 

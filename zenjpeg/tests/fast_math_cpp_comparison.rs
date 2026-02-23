@@ -410,7 +410,9 @@ fn test_ratio_of_derivatives_rust_vs_cpp() {
 
     println!("\n** RESULT **");
     println!("Rust and C++ implementations now match exactly!");
-    println!("The ratio_of_derivatives FFI has been fixed to use the same rational polynomial algorithm.");
+    println!(
+        "The ratio_of_derivatives FFI has been fixed to use the same rational polynomial algorithm."
+    );
 }
 
 /// Rust implementation of fast_pow2f matching C++ jpegli

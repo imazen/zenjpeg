@@ -3,7 +3,7 @@
 //! Compares both DSSIM and Butteraugli metrics
 use enough::Unstoppable;
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{ButteraugliParams, compute_butteraugli};
 use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;

@@ -41,7 +41,7 @@ use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER};
 use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, DequantBiasStats,
+    DequantBiasStats, dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
 };
 use crate::types::PixelFormat;
 use enough::Stop;

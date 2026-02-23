@@ -13,11 +13,11 @@ use crate::foundation::consts::{
     DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
     MARKER_SOF0, MARKER_SOI, MARKER_SOS,
 };
-use crate::huffman::encode::{build_code_lengths, lengths_to_bits_values, HuffmanEncodeTable};
+use crate::huffman::encode::{HuffmanEncodeTable, build_code_lengths, lengths_to_bits_values};
 use enough::Stop;
 
 use super::coeff_transform::{
-    transform_coefficients, LosslessTransform, TransformConfig, TransformedCoefficients,
+    LosslessTransform, TransformConfig, TransformedCoefficients, transform_coefficients,
 };
 use super::exif::{parse_exif_orientation, set_exif_orientation};
 
@@ -595,7 +595,7 @@ pub(super) fn write_quant_tables(
                 output.push((len >> 8) as u8);
                 output.push((len & 0xFF) as u8);
                 output.push(0x10 | idx as u8); // Pq=1 (16-bit), Tq=idx
-                                               // Write in JPEG zigzag order (quant_tables are stored in natural order)
+                // Write in JPEG zigzag order (quant_tables are stored in natural order)
                 for z in 0..64 {
                     let v = qt[JPEG_NATURAL_ORDER[z] as usize];
                     output.push((v >> 8) as u8);
@@ -606,7 +606,7 @@ pub(super) fn write_quant_tables(
                 output.push((len >> 8) as u8);
                 output.push((len & 0xFF) as u8);
                 output.push(idx as u8); // Pq=0 (8-bit), Tq=idx
-                                        // Write in JPEG zigzag order (quant_tables are stored in natural order)
+                // Write in JPEG zigzag order (quant_tables are stored in natural order)
                 for z in 0..64 {
                     let v = qt[JPEG_NATURAL_ORDER[z] as usize];
                     output.push(v as u8);

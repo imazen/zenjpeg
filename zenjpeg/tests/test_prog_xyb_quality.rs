@@ -81,8 +81,8 @@ fn test_progressive_xyb_non_aligned_dimensions() {
 
     // First try decoding with zune-jpeg to verify the JPEG is valid
     {
-        use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
 
         let cursor = ZCursor::new(&jpeg);
         let mut decoder = JpegDecoder::new(cursor);
@@ -141,8 +141,8 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
         println!("Q{}: encoded {} bytes", quality, jpeg.len());
 
         // Decode with zune-jpeg (doesn't need ICC)
-        use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
 
         let cursor = ZCursor::new(&jpeg);
         let mut decoder = JpegDecoder::new(cursor);

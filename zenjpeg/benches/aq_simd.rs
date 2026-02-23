@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench -p zenjpeg --bench aq_simd --features "archmage-simd,test-utils"
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 // Import production AQ functions (wide-based, multiversed)
 use zenjpeg::quant::aq::simd::{
@@ -13,7 +13,7 @@ use zenjpeg::quant::aq::simd::{
 use zenjpeg::quant::aq::simd::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, SimdToken, X64V3Token};
+use archmage::{SimdToken, X64V3Token, arcane};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;

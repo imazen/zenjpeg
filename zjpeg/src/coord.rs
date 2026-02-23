@@ -4,7 +4,7 @@
 //! (`50%+20`, `50pct-10`). Also provides CSS TRBL shorthand, crop rect,
 //! aspect ratio, position, and dimension parsers.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use zenlayout::{Gravity, RegionCoord};
 
 /// A coordinate value with optional percent and pixel components.

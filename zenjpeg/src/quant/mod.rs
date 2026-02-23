@@ -319,11 +319,7 @@ impl ZeroBiasParams {
     #[must_use]
     pub fn apply(&self, coeff: f32, k: usize, quant: f32) -> f32 {
         let threshold = (self.mul[k] + self.offset[k]) * quant;
-        if coeff.abs() < threshold {
-            0.0
-        } else {
-            coeff
-        }
+        if coeff.abs() < threshold { 0.0 } else { coeff }
     }
 }
 

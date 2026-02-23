@@ -6,7 +6,7 @@
 use dssim_core::Dssim;
 use enough::Unstoppable;
 use rgb::RGBA8;
-use zune_jpeg::{zune_core::bytestream::ZCursor, JpegDecoder};
+use zune_jpeg::{JpegDecoder, zune_core::bytestream::ZCursor};
 
 fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
     data.chunks(3)

@@ -35,10 +35,10 @@ fn main() {
     println!("Saved to /tmp/quick_parity_test.jpg");
 
     // Decode with zune-jpeg
+    use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
-    use zune_jpeg::JpegDecoder;
 
     let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
 

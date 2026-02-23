@@ -16,5 +16,5 @@
 pub mod boundary;
 pub mod knusperli;
 
-pub use boundary::{filter_plane_boundary_4tap, BoundaryStrength};
+pub use boundary::{BoundaryStrength, filter_plane_boundary_4tap};
 pub use knusperli::process_component;

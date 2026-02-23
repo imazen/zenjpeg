@@ -69,8 +69,8 @@ fn load_png(path: &std::path::Path) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 fn decode_jpeg_zune(jpeg_data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(jpeg_data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().expect("zune-jpeg decode")

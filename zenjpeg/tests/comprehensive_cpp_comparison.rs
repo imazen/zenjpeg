@@ -354,10 +354,19 @@ fn test_comprehensive_cpp_comparison() {
 
             println!(
                 "{:>4} | {:>10.0} {:>10.0} {:>+6.1}% | {:>8.2} {:>8.2} {:>+6.1}% | {:>8.6} {:>8.6} {:>+6.1}% | {:>8.4} {:>8.4} {:>+6.1}%",
-                q, avg_rust_size, avg_cpp_size, size_diff,
-                avg_rust_time, avg_cpp_time, time_diff,
-                avg_rust_dssim, avg_cpp_dssim, dssim_diff,
-                avg_rust_bfly, avg_cpp_bfly, bfly_diff
+                q,
+                avg_rust_size,
+                avg_cpp_size,
+                size_diff,
+                avg_rust_time,
+                avg_cpp_time,
+                time_diff,
+                avg_rust_dssim,
+                avg_cpp_dssim,
+                dssim_diff,
+                avg_rust_bfly,
+                avg_cpp_bfly,
+                bfly_diff
             );
         }
     }
@@ -405,8 +414,8 @@ fn test_comprehensive_cpp_comparison() {
 }
 
 fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode()

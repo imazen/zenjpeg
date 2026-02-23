@@ -30,8 +30,8 @@ mod tests;
 
 pub(crate) use coeff_transform::remap_block;
 pub use coeff_transform::{
-    transform_coefficients, BlockTransform, EdgeHandling, LosslessTransform, TransformConfig,
+    BlockTransform, EdgeHandling, LosslessTransform, TransformConfig, transform_coefficients,
 };
 pub use exif::{parse_exif_orientation, set_exif_orientation};
 pub use pipeline::{apply_exif_orientation, transform};
-pub use restructure::{restructure, OutputMode, RestartInterval, RestructureConfig};
+pub use restructure::{OutputMode, RestartInterval, RestructureConfig, restructure};

@@ -22,8 +22,8 @@ use zenjpeg::encoder::{
     PixelLayout, Quality,
 };
 use zenjpeg_bench_utils::{
-    create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
-    EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,
+    ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig, EncoderConfig, EncoderImpl,
+    ImageData, McuEdgeInfo, ScanMode, create_edge_test_image,
 };
 
 /// Convert quality (0-100) to butteraugli distance.
@@ -91,8 +91,8 @@ fn encode_cpp(image: &ImageData, distance: f32) -> Vec<u8> {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().expect("JPEG decode failed")
@@ -140,7 +140,9 @@ fn main() {
     let mode_arg = args.iter().find(|a| a.starts_with("--mode="));
 
     println!("=== Edge MCU Parity Test ===\n");
-    println!("Usage: edge_mcu_parity [--edge-width N] [--edge-height N] [--mode=right|bottom|both|auto]\n");
+    println!(
+        "Usage: edge_mcu_parity [--edge-width N] [--edge-height N] [--mode=right|bottom|both|auto]\n"
+    );
 
     // Load frymire
     let frymire_path = match find_frymire() {

@@ -11,11 +11,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
-use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
+use zenjpeg::deblock::{BoundaryStrength, filter_plane_boundary_4tap};
 use zenjpeg::decoder::{
     DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Strictness, Subsampling,
 };
-use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
+use zenjpeg::detect::content::{DeblockAction, classify_from_probe, recommend_deblock};
 use zenjpeg::detect::{self, QualityScale};
 use zenjpeg::encoder::{
     ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, ProgressiveScanMode,
@@ -931,9 +931,7 @@ fn determine_encode_params(
             } else {
                 best_effort.subsampling
             };
-            eprintln!(
-                "warning: tolerance is tighter than achievable; using best effort"
-            );
+            eprintln!("warning: tolerance is tighter than achievable; using best effort");
             (q, sub)
         }
         Err(detect::ReencodeError::InvalidTolerance) => {
