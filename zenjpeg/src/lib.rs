@@ -166,6 +166,13 @@ whereat::define_at_crate_info!(path = "zenjpeg/");
 // Public API Modules
 // ============================================================================
 
+/// Fast Gaussian blur preprocessing for improved JPEG compression.
+///
+/// Applying a mild blur (σ=0.4) before encoding reduces file size ~5% with
+/// negligible perceptual quality loss. This module provides zero-dependency
+/// blur optimized for this use case.
+pub mod blur;
+
 /// JPEG encoder - public API.
 ///
 /// Contains: `EncoderConfig`, `BytesEncoder`, `RgbEncoder`, `Error`, `Result`, etc.
