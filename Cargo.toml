@@ -70,9 +70,9 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 linear-srgb = "0.5.5"
 
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.8.4", features = ["macros", "avx512"] }
+archmage = { version = "0.8.6", features = ["macros", "avx512"] }
 safe_unaligned_simd = { version = "0.2.4", features = ["avx512"] }
-magetypes = "0.8.4"
+magetypes = "0.8.6"
 
 # Error tracing with location tracking
 whereat = "0.1.3"
