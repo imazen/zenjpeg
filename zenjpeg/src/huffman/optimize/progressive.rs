@@ -1268,7 +1268,7 @@ mod tests {
         let mut block = [0i16; 64];
         block[1] = 10; // Position 1
         block[5] = -5; // Position 5
-                       // Positions 2, 3, 4 are zeros (run of 3)
+        // Positions 2, 3, 4 are zeros (run of 3)
 
         let blocks = [block];
         buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0, 0);

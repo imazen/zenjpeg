@@ -20,16 +20,15 @@
 use enough::Unstoppable;
 use std::io::Write;
 use std::path::PathBuf;
-use zenjpeg::encode::search::ExpertConfig;
 #[cfg(feature = "optimized-tables")]
 use zenjpeg::encode::OptimizedTables;
+use zenjpeg::encode::search::ExpertConfig;
 use zenjpeg::encode::{
     ChromaSubsampling, ColorMode, EncoderConfig, OptimizationPreset, PixelLayout,
 };
 use zenjpeg_bench_utils::{
-    bytes_to_rgb, decode_jpeg_with_icc, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
-    EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, RgbImage,
-    ScanMode,
+    ChromaSubsampling as BenchSub, ColorMode as BenchColor, EncoderConfig as BenchEncoderConfig,
+    EncoderImpl, ImageData, QualityMetrics, RgbImage, ScanMode, bytes_to_rgb, decode_jpeg_with_icc,
 };
 
 fn default_corpus_dir() -> PathBuf {

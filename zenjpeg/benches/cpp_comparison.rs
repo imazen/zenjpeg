@@ -12,7 +12,7 @@
 //! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use zenjpeg::encoder::{
     ChromaSubsampling as RustSubsampling, EncoderConfig as RustConfig, PixelLayout, Quality,
@@ -361,8 +361,8 @@ fn verify_outputs_match(c: &mut Criterion) {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().expect("JPEG decode failed")

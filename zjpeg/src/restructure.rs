@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zenjpeg::lossless::{restructure, OutputMode, RestartInterval, RestructureConfig};
+use zenjpeg::lossless::{OutputMode, RestartInterval, RestructureConfig, restructure};
 
+use crate::RestructureArgs;
 use crate::batch;
 use crate::output::OutputConfig;
-use crate::RestructureArgs;
 
 pub fn run(args: RestructureArgs) -> Result<()> {
     let files = batch::expand_inputs(&args.input)?;

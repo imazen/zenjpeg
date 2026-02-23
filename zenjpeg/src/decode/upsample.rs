@@ -6,7 +6,7 @@
 use wide::f32x8;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, rite, SimdToken};
+use archmage::{SimdToken, arcane, rite};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;

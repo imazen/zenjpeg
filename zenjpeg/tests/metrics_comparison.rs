@@ -4,7 +4,7 @@
 //! consistent results that match C++ implementations.
 
 use dssim_core::Dssim;
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use rgb::RGBA8;
 use std::fs;
 use zenjpeg::encoder::ChromaSubsampling;

@@ -2587,9 +2587,14 @@ mod tests {
             let first_idx = first_diff_idx.unwrap();
             panic!(
                 "{}: slices differ - max_diff={}, diff_count={}/{} ({:.2}%), first_diff at idx {} (actual={}, expected={})",
-                context, max_diff, diff_count, actual.len(),
+                context,
+                max_diff,
+                diff_count,
+                actual.len(),
                 100.0 * diff_count as f64 / actual.len() as f64,
-                first_idx, actual[first_idx], expected[first_idx]
+                first_idx,
+                actual[first_idx],
+                expected[first_idx]
             );
         }
     }
@@ -2602,9 +2607,14 @@ mod tests {
             let first_idx = first_diff_idx.unwrap();
             panic!(
                 "{}: slices differ - max_diff={:.6}, diff_count={}/{} ({:.2}%), first_diff at idx {} (actual={:.6}, expected={:.6})",
-                context, max_diff, diff_count, actual.len(),
+                context,
+                max_diff,
+                diff_count,
+                actual.len(),
                 100.0 * diff_count as f64 / actual.len() as f64,
-                first_idx, actual[first_idx], expected[first_idx]
+                first_idx,
+                actual[first_idx],
+                expected[first_idx]
             );
         }
     }
@@ -2801,8 +2811,15 @@ mod tests {
             let total = (width * height * 3) as usize;
             panic!(
                 "test_scanline_reader_rgbx8: max_diff={}, diff_count={}/{} ({:.2}%), first_diff at ({},{}) {}={} expected={}",
-                max_diff, diff_count, total, 100.0 * diff_count as f64 / total as f64,
-                x, y, ch, actual, expected
+                max_diff,
+                diff_count,
+                total,
+                100.0 * diff_count as f64 / total as f64,
+                x,
+                y,
+                ch,
+                actual,
+                expected
             );
         }
     }
@@ -2893,8 +2910,15 @@ mod tests {
             let total = (width * height * 3) as usize;
             panic!(
                 "test_scanline_reader_rgba_f32: max_diff={:.6}, diff_count={}/{} ({:.2}%), first_diff at ({},{}) ch{}={:.6} expected={:.6}",
-                max_diff, diff_count, total, 100.0 * diff_count as f64 / total as f64,
-                x, y, c, actual, expected
+                max_diff,
+                diff_count,
+                total,
+                100.0 * diff_count as f64 / total as f64,
+                x,
+                y,
+                c,
+                actual,
+                expected
             );
         }
     }
@@ -3707,8 +3731,8 @@ mod tests {
         let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
         // Scanline crop decode
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
         let mut reader = DecodeConfig::new()
             .crop(CropRegion::pixels(cx, cy, cw, ch))
             .scanline_reader(&jpeg)
@@ -3762,8 +3786,8 @@ mod tests {
         // Use scanline reference (not decode()) so IDCT/upsampling matches
         let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
         let mut reader = DecodeConfig::new()
             .crop(CropRegion::pixels(cx, cy, cw, ch))
             .scanline_reader(&jpeg)
@@ -3808,8 +3832,8 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 95.0);
 
         // Center 50% crop → (25, 25, 50, 50) in pixels
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         let result = DecodeConfig::new()
             .crop(CropRegion::percent(0.25, 0.25, 0.5, 0.5))
@@ -3835,8 +3859,8 @@ mod tests {
         }
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         let full = DecodeConfig::new()
             .decode(&jpeg, enough::Unstoppable)
@@ -3859,8 +3883,8 @@ mod tests {
         let pixels = vec![128u8; (width * height * 3) as usize];
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         let mut reader = DecodeConfig::new()
             .crop(CropRegion::pixels(10, 20, 30, 15))
@@ -3908,8 +3932,8 @@ mod tests {
         let (cx, cy, cw, ch) = (8u32, 8u32, 32u32, 32u32);
         let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         // Test decode() path
         let result = DecodeConfig::new()
@@ -3958,8 +3982,8 @@ mod tests {
 
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         // Full decode + manual gray crop
         let full = DecodeConfig::new()
@@ -4003,8 +4027,8 @@ mod tests {
 
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         // Reference: full scanline decode, manually crop gray
         let mut full_reader = DecodeConfig::new().scanline_reader(&jpeg).unwrap();
@@ -4052,8 +4076,8 @@ mod tests {
     fn test_crop_validation_errors() {
         let jpeg = encode_rgb(64, 64, &vec![128u8; 64 * 64 * 3], 90.0);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         // Crop exceeds image bounds
         let err = DecodeConfig::new()
@@ -4108,8 +4132,8 @@ mod tests {
         // Use scanline reference so IDCT/upsampling matches
         let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::config::CropRegion;
         use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
 
         let mut reader = DecodeConfig::new()
             .crop(CropRegion::pixels(cx, cy, cw, ch))

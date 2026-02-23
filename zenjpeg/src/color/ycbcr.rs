@@ -22,7 +22,7 @@ use multiversed::multiversed;
 use wide::{f32x4, f32x8};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, SimdToken};
+use archmage::{SimdToken, arcane};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
@@ -2286,7 +2286,7 @@ mod tests {
         let cr = vec![128u8, 128, 128, 128];
         let rgb = ycbcr_planes_to_rgb(&y, &cb, &cr, 2, 2).unwrap();
         assert_eq!(rgb.len(), 12); // 4 pixels * 3 channels
-                                   // All pixels should be gray
+        // All pixels should be gray
         for i in 0..4 {
             assert!((rgb[i * 3] as i16 - 128).abs() <= 1);
         }

@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 
-use crate::encode::extras::{inject_encoder_segments, EncoderSegments, MpfImageType};
+use crate::encode::extras::{EncoderSegments, MpfImageType, inject_encoder_segments};
 
 /// Check if XMP indicates UltraHDR content (gain map metadata present).
 pub(crate) fn is_ultrahdr_xmp(xmp: &str) -> bool {

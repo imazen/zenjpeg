@@ -98,7 +98,7 @@ fn encode_with_all_metadata(
 
 mod native_metadata_tests {
     use super::*;
-    use img_parts::{jpeg::Jpeg, ImageEXIF, ImageICC};
+    use img_parts::{ImageEXIF, ImageICC, jpeg::Jpeg};
 
     /// Create minimal EXIF TIFF structure (without the Exif\0\0 prefix).
     fn create_minimal_exif_tiff() -> Vec<u8> {
@@ -107,7 +107,7 @@ mod native_metadata_tests {
         tiff.extend_from_slice(&[0x49, 0x49]); // II = little-endian
         tiff.extend_from_slice(&[0x2A, 0x00]); // Magic number
         tiff.extend_from_slice(&[0x08, 0x00, 0x00, 0x00]); // Offset to first IFD
-                                                           // Minimal IFD0 with 0 entries
+        // Minimal IFD0 with 0 entries
         tiff.extend_from_slice(&[0x00, 0x00]); // Number of entries
         tiff.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Offset to next IFD (none)
         tiff
@@ -559,7 +559,7 @@ mod kamadak_exif_tests {
 
 mod img_parts_tests {
     use super::*;
-    use img_parts::{jpeg::Jpeg, ImageEXIF, ImageICC};
+    use img_parts::{ImageEXIF, ImageICC, jpeg::Jpeg};
 
     #[test]
     fn jpegli_output_parseable_by_img_parts() {

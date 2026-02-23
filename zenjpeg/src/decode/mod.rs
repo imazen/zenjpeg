@@ -780,7 +780,7 @@ impl DecodeConfig {
         scan_data: &parser::ParsedScanData<'a>,
         mcu_height: usize,
     ) -> Result<Option<WaveResult<'a>>> {
-        use fused_parallel::{build_huffman_tables_from_scan_data, WaveParallelState};
+        use fused_parallel::{WaveParallelState, build_huffman_tables_from_scan_data};
         use rst_scan::{compute_segments, scan_rst_markers};
 
         let num_comps = scan_data.num_components as usize;

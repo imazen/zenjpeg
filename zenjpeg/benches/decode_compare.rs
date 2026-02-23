@@ -11,13 +11,13 @@
 //! cargo bench -p zenjpeg --bench decode_compare --features decoder
 //! ```
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use enough::Unstoppable;
 use std::io::Cursor;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
-use zune_jpeg::JpegDecoder;
 
 /// Decode JPEG data using C++ jpegli FFI (libjpeg-compatible API).
 /// Returns RGB pixel data.

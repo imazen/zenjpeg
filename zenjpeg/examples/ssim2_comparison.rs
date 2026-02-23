@@ -10,7 +10,7 @@
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
-use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
+use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
 use zenjpeg::encoder::{
     ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
     Quality,
@@ -97,8 +97,8 @@ fn encode_cpp_ffi(
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().expect("JPEG decode failed")

@@ -16,7 +16,7 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "wasm32"))]
 
-use archmage::{arcane, Wasm128Token};
+use archmage::{Wasm128Token, arcane};
 use core::arch::wasm32::*;
 use safe_unaligned_simd::wasm32 as safe_simd;
 

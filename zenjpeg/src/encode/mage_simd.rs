@@ -25,7 +25,7 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 
-use archmage::{arcane, X64V3Token, X64V4Token};
+use archmage::{X64V3Token, X64V4Token, arcane};
 use core::arch::x86_64::*;
 use safe_unaligned_simd::x86_64 as safe_simd;
 
@@ -1060,7 +1060,7 @@ fn mage_hsum_ps(_token: X64V3Token, v: __m256) -> f32 {
     // Sum pairs horizontally
     let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
     let sum2 = _mm256_hadd_ps(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
-                                           // Extract low and high 128-bit lanes
+    // Extract low and high 128-bit lanes
     let low = _mm256_castps256_ps128(sum2);
     let high = _mm256_extractf128_ps(sum2, 1);
     // Add them together
@@ -1526,11 +1526,7 @@ mod tests {
         let v2 = v * v;
         let num = v2.mul_add(K_NUM_MUL_RATIO, K_NUM_OFFSET_RATIO);
         let den = (v * K_DEN_MUL_RATIO).mul_add(v2, K_VOFFSET_RATIO);
-        if invert {
-            num / den
-        } else {
-            den / num
-        }
+        if invert { num / den } else { den / num }
     }
 
     /// Scalar reference for masking_sqrt

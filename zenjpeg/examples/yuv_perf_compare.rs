@@ -7,8 +7,8 @@
 use std::time::Instant;
 
 use yuv::{
-    rgb_to_yuv420, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
-    YuvStandardMatrix,
+    YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+    rgb_to_yuv420,
 };
 use zenjpeg::color::rgb_to_ycbcr_f32;
 

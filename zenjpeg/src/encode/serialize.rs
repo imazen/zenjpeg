@@ -8,7 +8,7 @@
 
 use crate::error::Result;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP14, MARKER_APP2,
+    DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP2, MARKER_APP14,
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI,
     MARKER_SOS, MAX_ICC_BYTES_PER_MARKER,
 };
@@ -16,8 +16,8 @@ use crate::huffman::optimize::{ContextConfig, HuffmanTableSet, OptimizedTable};
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};
 
-use super::config::ComputedConfig;
 use super::ProgressiveScan;
+use super::config::ComputedConfig;
 
 impl ComputedConfig {
     /// Writes the JPEG header (SOI only, no JFIF APP0).
@@ -279,8 +279,8 @@ impl ComputedConfig {
 
             output.push(3); // Component ID = 3 (Cr)
             output.push(0x11); // 1x1 sampling
-                               // Cr uses table 2 when separate_chroma_tables=true (jpegli_set_distance)
-                               // Cr uses table 1 when separate_chroma_tables=false (jpeg_set_quality)
+            // Cr uses table 2 when separate_chroma_tables=true (jpegli_set_distance)
+            // Cr uses table 1 when separate_chroma_tables=false (jpeg_set_quality)
             output.push(if self.separate_chroma_tables { 2 } else { 1 });
         }
 

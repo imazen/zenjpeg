@@ -10,7 +10,7 @@
 use std::env;
 use std::path::Path;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
+use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, decode_jpeg_to_rgb};
 
 fn main() {
     // Find test images
@@ -120,8 +120,17 @@ fn run_sweep(image_path: &str) {
         let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
         let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
 
-        println!("{:>8.1}  {:>8}  {:>8.3}  {:>10.5}  {:>8.2}  {:>8.3}  ({:+.1}% size, {:+.1}% dssim vs base)",
-            coupling, bytes, file_bpp, dssim, ssim2, butteraugli, size_vs_baseline, dssim_vs_baseline);
+        println!(
+            "{:>8.1}  {:>8}  {:>8.3}  {:>10.5}  {:>8.2}  {:>8.3}  ({:+.1}% size, {:+.1}% dssim vs base)",
+            coupling,
+            bytes,
+            file_bpp,
+            dssim,
+            ssim2,
+            butteraugli,
+            size_vs_baseline,
+            dssim_vs_baseline
+        );
 
         results.push((coupling, bytes, dssim, ssim2, butteraugli));
     }

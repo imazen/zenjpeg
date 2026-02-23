@@ -81,8 +81,8 @@ fn decode_jpegli(data: &[u8]) -> bool {
 
 /// Decode with zune-jpeg
 fn decode_zune_jpeg(data: &[u8]) -> bool {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().is_ok()

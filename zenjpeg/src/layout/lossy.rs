@@ -120,13 +120,17 @@ fn decode_resize_encode(
 
         let available = resizer
             .push_rows(&buf[..row_bytes * rows_read], row_bytes, rows_read as u32)
-            .map_err(|e| crate::error::Error::new(crate::error::ErrorKind::InternalError {
-                reason: match e {
-                    zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
-                    zenresize::StreamingError::InputTooShort => "resize: input row too short",
-                    zenresize::StreamingError::RingBufferOverflow => "resize: ring buffer overflow",
-                },
-            }))?;
+            .map_err(|e| {
+                crate::error::Error::new(crate::error::ErrorKind::InternalError {
+                    reason: match e {
+                        zenresize::StreamingError::AlreadyFinished => "resize: push after finish",
+                        zenresize::StreamingError::InputTooShort => "resize: input row too short",
+                        zenresize::StreamingError::RingBufferOverflow => {
+                            "resize: ring buffer overflow"
+                        }
+                    },
+                })
+            })?;
         drain_resizer(&mut resizer, available, &mut encoder, stop)?;
     }
 

@@ -5,9 +5,9 @@
 //! - Successive approximation (refinement scans)
 //! - Scan script generation
 
+use super::ProgressiveScan;
 use super::config::ComputedConfig;
 use super::encoder_types::ScanStrategy;
-use super::ProgressiveScan;
 use crate::entropy::EntropyEncoder;
 use crate::error::{Error, Result};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MARKER_EOI, XYB_ICC_PROFILE};
@@ -527,7 +527,7 @@ impl ComputedConfig {
             self.write_header_xyb(output)?;
             // Write APP14 Adobe marker for RGB colorspace (required by decoders)
             self.write_app14_adobe(output, 0)?; // 0 = RGB (no transform)
-                                                // Write XYB ICC profile so decoders can interpret the colors correctly
+            // Write XYB ICC profile so decoders can interpret the colors correctly
             self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
             self.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
             self.write_frame_header_xyb_progressive(output)?;

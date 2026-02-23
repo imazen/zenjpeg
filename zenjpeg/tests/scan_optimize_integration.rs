@@ -62,8 +62,8 @@ fn generate_test_image(width: u32, height: u32) -> Vec<u8> {
 
 /// Decode JPEG bytes to RGB pixels using zune-jpeg (standards-compliant reference decoder).
 fn decode_jpeg_zune(jpeg_data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
     let cursor = ZCursor::new(jpeg_data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().expect("zune-jpeg decode")

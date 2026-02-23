@@ -8,7 +8,7 @@
 //! cargo bench -p zenjpeg --bench decode_mozjpeg --features decoder
 //! ```
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use enough::Unstoppable;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 

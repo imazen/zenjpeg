@@ -852,6 +852,24 @@ sensitivity tables, and preset baselines.
      quality_compare.rs (line 261), xyb_dc_debug.rs, ycbcr_rust_vs_cpp_ssim2.rs,
      xyb_rust_vs_cpp_ssim2.rs — these use zune-jpeg and will show wrong metrics for zen output
 
+6. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)** -
+   `auto_optimize(true)` (hybrid trellis) with `ChromaSubsampling::Quarter` produces
+   catastrophically degraded output (BA 20-43, visually destroyed) for certain images at
+   specific quality levels. Neighboring quality levels are fine.
+   - Affected images: bulb, baby, girl (from gb82 corpus). Also city/flowers at some Q levels.
+   - Pattern: turbo Q90 source → zen Q75 (bulb: BA=32), Q97 (bulb: BA=43, baby: BA=32).
+     cjpegli Q90 source → zen Q93 4:2:0 (bulb: BA=43), but zen Q93 4:4:4 is fine (BA=0.09).
+   - The bug is quality-level-specific and non-monotonic: Q95 is fine but Q93 and Q97 are bad.
+   - 4:4:4 encoding at the same Q level is always fine — only 4:2:0 is affected.
+   - Impact: Contaminates reencode calibration grids (3/10 images have 16-42 BA deltas).
+     Min_delta tables showed 0.55 at turbo Q90 instead of correct ~0.03.
+   - Reproduction: `/mnt/v/output/zenjpeg/encoder_bug_420/` has source + re-encoded images.
+     Raw data: `/mnt/v/output/zenjpeg/reencode_calibration/raw_data.csv`
+   - Root cause: Unknown — suspected hybrid trellis interaction with chroma subsampling at
+     certain quant table configurations. The quant values at pathological Q levels may cause
+     the trellis to make catastrophic coefficient choices for chroma blocks.
+   - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
+
 ### Fixed Bugs (historical reference)
 
 - **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -

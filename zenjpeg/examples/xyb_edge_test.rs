@@ -1,7 +1,7 @@
 //! Test XYB mode edge handling with partial MCU dimensions
 
 use enough::Unstoppable;
-use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
+use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {

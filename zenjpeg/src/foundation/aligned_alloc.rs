@@ -78,7 +78,7 @@ pub fn try_alloc_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wide::{f32x8, AlignTo};
+    use wide::{AlignTo, f32x8};
 
     #[test]
     fn test_aligned_vec_is_32_byte_aligned() {

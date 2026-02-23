@@ -11,10 +11,10 @@
 use enough::Unstoppable;
 use std::env;
 use std::path::Path;
-use zenjpeg::encode::trellis::hybrid::{adaptive_config, detect_image_type, ImageType};
+use zenjpeg::encode::trellis::hybrid::{ImageType, adaptive_config, detect_image_type};
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zenjpeg::quant::aq::compute_aq_strength_map;
-use zenjpeg_bench_utils::{decode_jpeg_to_rgb, ImageData, QualityMetrics, RgbImage};
+use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, decode_jpeg_to_rgb};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

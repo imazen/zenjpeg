@@ -33,8 +33,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use zenjpeg::detect;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
-    bytes_to_rgb, decode_jpeg_to_rgb, decode_jpeg_with_icc, rgb_to_bytes, write_ppm, ImageData,
-    QualityMetrics, RgbImage,
+    ImageData, QualityMetrics, RgbImage, bytes_to_rgb, decode_jpeg_to_rgb, decode_jpeg_with_icc,
+    rgb_to_bytes, write_ppm,
 };
 
 const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/reencode_calibration";
@@ -42,8 +42,8 @@ const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/reencode_calibration";
 const SRC_QUALITIES: [u8; 10] = [10, 20, 30, 40, 50, 65, 75, 80, 85, 90];
 const SRC_QUALITIES_FULL: [u8; 14] = [10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
 const ZEN_QUALITIES: [f32; 19] = [
-    20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 88.0,
-    90.0, 93.0, 95.0, 97.0,
+    20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 88.0, 90.0,
+    93.0, 95.0, 97.0,
 ];
 const RESIZE_QUALITIES: [f32; 8] = [55.0, 65.0, 75.0, 80.0, 85.0, 88.0, 90.0, 95.0];
 const RESIZE_RATIOS: [f64; 4] = [1.5, 2.0, 3.0, 4.0];
@@ -472,8 +472,7 @@ fn process_source(
     for &(preset_name, preset) in presets {
         for &zen_q in zen_qualities {
             for &(zen_sub_str, zen_sub) in &zen_subs {
-                if let Some(reenc) =
-                    encode_zen_preset(&decoded_bytes, w, h, zen_q, zen_sub, preset)
+                if let Some(reenc) = encode_zen_preset(&decoded_bytes, w, h, zen_q, zen_sub, preset)
                 {
                     if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
                         let reenc_size = reenc.len();
@@ -1243,9 +1242,7 @@ fn print_preset_offsets(results: &[RawResult]) {
 
             print!("  {:>8} {:>5}", enc, sq);
             for p in &preset_names {
-                let q = lookup
-                    .get(&(p.clone(), enc.clone(), *sq))
-                    .and_then(|q| *q);
+                let q = lookup.get(&(p.clone(), enc.clone(), *sq)).and_then(|q| *q);
                 match q {
                     Some(q) => print!("  {:>8.0}", q),
                     None => print!("  {:>8}", "-"),
@@ -1317,9 +1314,7 @@ fn print_preset_offsets(results: &[RawResult]) {
             let auto_q = lookup
                 .get(&("auto".to_string(), enc.clone(), *sq))
                 .and_then(|q| *q);
-            let preset_q = lookup
-                .get(&(p.clone(), enc.clone(), *sq))
-                .and_then(|q| *q);
+            let preset_q = lookup.get(&(p.clone(), enc.clone(), *sq)).and_then(|q| *q);
             if let (Some(aq), Some(pq)) = (auto_q, preset_q) {
                 offsets.push(pq - aq);
             }
@@ -1347,10 +1342,7 @@ fn print_preset_offsets(results: &[RawResult]) {
         "          Some(Hybrid | HybridProg) => {:.1},",
         hyb_off.max(0.0)
     );
-    println!(
-        "          Some(HybridMax) => {:.1},",
-        hyb_max_off.max(0.0)
-    );
+    println!("          Some(HybridMax) => {:.1},", hyb_max_off.max(0.0));
     println!(
         "          Some(Jpegli | JpegliProg) => {:.1},",
         jpegli_off.max(0.0)
@@ -1359,10 +1351,7 @@ fn print_preset_offsets(results: &[RawResult]) {
         "          Some(Mozjpeg | MozjpegProg) => {:.1},",
         moz_off.max(0.0)
     );
-    println!(
-        "          Some(MozjpegMax) => {:.1},",
-        moz_max_off.max(0.0)
-    );
+    println!("          Some(MozjpegMax) => {:.1},", moz_max_off.max(0.0));
     println!("      }}");
     println!("  }}");
     println!();
@@ -1509,7 +1498,11 @@ fn main() {
     if args.preset_offsets {
         println!(
             "Presets: {}",
-            presets.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+            presets
+                .iter()
+                .map(|(n, _)| *n)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     if args.resize {

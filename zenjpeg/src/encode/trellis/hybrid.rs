@@ -11,7 +11,7 @@
 //! - `encode/hybrid.rs` - HybridQuantContext, encoder integration
 
 use super::compat::TrellisConfig;
-use super::{trellis_quantize_block, RateTable};
+use super::{RateTable, trellis_quantize_block};
 use crate::encode::config::ComputedConfig;
 use crate::encode::dct::forward_dct_8x8;
 use crate::encode::natural_to_zigzag_into;

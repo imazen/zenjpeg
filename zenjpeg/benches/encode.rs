@@ -1,6 +1,6 @@
 //! Encoding benchmarks for jpegli.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {

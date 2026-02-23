@@ -101,8 +101,10 @@ fn test_transpose_swaps_row_col() {
             let src_val = read_at(&block, row, col);
             // After transpose, value at (row, col) in source appears at (col, row) in dest
             let dst_val = read_at(&result, col, row);
-            assert_eq!(dst_val, src_val,
-                "Transpose: src({row},{col})={src_val} should appear at dst({col},{row}), got {dst_val}");
+            assert_eq!(
+                dst_val, src_val,
+                "Transpose: src({row},{col})={src_val} should appear at dst({col},{row}), got {dst_val}"
+            );
         }
     }
 }
@@ -556,7 +558,7 @@ fn test_transform_nonsquare_transpose() {
 
 mod pipeline_tests {
     use crate::decode::DecodeConfig;
-    use crate::lossless::{transform, EdgeHandling, LosslessTransform, TransformConfig};
+    use crate::lossless::{EdgeHandling, LosslessTransform, TransformConfig, transform};
     use enough::Unstoppable;
 
     /// Create a test JPEG from a known pixel pattern using zenjpeg encoder.
@@ -878,7 +880,7 @@ mod pipeline_tests {
 
 mod coefficient_roundtrip_tests {
     use crate::decode::DecodeConfig;
-    use crate::lossless::{transform, EdgeHandling, LosslessTransform, TransformConfig};
+    use crate::lossless::{EdgeHandling, LosslessTransform, TransformConfig, transform};
     use enough::Unstoppable;
 
     /// Create a test JPEG
@@ -1097,7 +1099,7 @@ mod exif_tests {
         // For big-endian SHORT, value is in first 2 bytes of the 4-byte field
         data.extend_from_slice(&(orientation as u16).to_be_bytes());
         data.extend_from_slice(&[0u8; 2]); // padding
-                                           // Next IFD offset = 0
+        // Next IFD offset = 0
         data.extend_from_slice(&0u32.to_be_bytes());
 
         data
@@ -3015,8 +3017,8 @@ fn test_15x17_all_pixels_lossless() {
 mod restructure_tests {
     use crate::decode::DecodeConfig;
     use crate::lossless::{
-        restructure, EdgeHandling, LosslessTransform, OutputMode, RestartInterval,
-        RestructureConfig, TransformConfig,
+        EdgeHandling, LosslessTransform, OutputMode, RestartInterval, RestructureConfig,
+        TransformConfig, restructure,
     };
     use enough::Unstoppable;
 

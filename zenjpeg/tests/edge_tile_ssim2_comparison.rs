@@ -233,7 +233,7 @@ fn encode_decode_cpp(
 
 /// Calculate SSIMULACRA2 between two RGB images
 fn calculate_ssim2(rgb1: &[u8], rgb2: &[u8], width: usize, height: usize) -> f64 {
-    use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
+    use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
 
     // Convert to linear RGB
     let src: Vec<[f32; 3]> = rgb1

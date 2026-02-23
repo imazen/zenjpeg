@@ -17,7 +17,7 @@ mod scan;
 mod transform;
 
 use super::extras::{
-    should_preserve_mpf_image, AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig,
+    AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
 };
 use super::{DecodeWarning, JpegInfo, Strictness};
 
@@ -300,7 +300,7 @@ impl<'a> JpegParser<'a> {
         Option<(usize, usize)>,
         Option<ultrahdr_core::GainMapMetadata>,
     )> {
-        use super::extras::{detect_segment_type, parse_mpf_directory, MpfDirectory, SegmentType};
+        use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
         use ultrahdr_core::metadata::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";

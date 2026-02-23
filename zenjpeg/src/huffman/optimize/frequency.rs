@@ -6,10 +6,10 @@
 #![allow(dead_code)]
 
 use crate::error::Result;
+use crate::huffman::HuffmanEncodeTable;
 use crate::huffman::classic::{
     depths_to_bits_values, generate_code_lengths, generate_optimal_table,
 };
-use crate::huffman::HuffmanEncodeTable;
 
 /// An optimized Huffman table with its DHT marker representation.
 ///

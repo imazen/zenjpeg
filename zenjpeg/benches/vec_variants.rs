@@ -4,7 +4,7 @@
 //! Pattern: small buffer (max 63 elements) reused across many iterations,
 //! cleared between uses, elements pushed one at a time.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use smallvec::SmallVec;
 use tinyvec::ArrayVec;
 

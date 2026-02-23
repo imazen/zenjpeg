@@ -6,7 +6,7 @@ use enough::Unstoppable;
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use test_utils::{generate_gradient_d, read_test_data, TestImage};
+use test_utils::{TestImage, generate_gradient_d, read_test_data};
 
 use test_case::test_case;
 use zenjpeg::{

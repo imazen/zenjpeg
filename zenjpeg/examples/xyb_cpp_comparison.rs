@@ -129,7 +129,7 @@ fn compute_butteraugli(original: &str, compressed: &str) -> f64 {
 }
 
 fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
-    use butteraugli::{compute_butteraugli, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, compute_butteraugli};
 
     // Load original
     let file = std::fs::File::open(original_path).expect("open original");

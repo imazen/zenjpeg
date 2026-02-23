@@ -646,9 +646,11 @@ fn get_bpp(pixel_format: PixelFormat) -> Result<usize> {
     match pixel_format {
         PixelFormat::Rgb => Ok(3),
         PixelFormat::Rgba => Ok(4),
-        PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => Err(Error::invalid_color_format(
-            "BGR/BGRA/BGRX not supported with gamma-aware downsampling; use box filter or convert to RGB first",
-        )),
+        PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => {
+            Err(Error::invalid_color_format(
+                "BGR/BGRA/BGRX not supported with gamma-aware downsampling; use box filter or convert to RGB first",
+            ))
+        }
         _ => Err(Error::invalid_color_format(
             "Unsupported pixel format for gamma-aware conversion",
         )),

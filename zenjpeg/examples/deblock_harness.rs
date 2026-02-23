@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use zenjpeg::detect::{self, EncoderFamily};
-use zenjpeg_bench_utils::{decode_jpeg_with_icc, ImageData, QualityMetrics, RgbImage};
+use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, decode_jpeg_with_icc};
 
 // ---------------------------------------------------------------------------
 // Configuration

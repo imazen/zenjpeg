@@ -1132,10 +1132,10 @@ pub struct QualityResult {
 ///
 /// Returns (pixels, width, height) or error.
 pub fn decode_jpeg(data: &[u8]) -> Result<(Vec<u8>, usize, usize), JpegDecodeError> {
+    use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
-    use zune_jpeg::JpegDecoder;
 
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut decoder = JpegDecoder::new_with_options(ZCursor::new(data), options);

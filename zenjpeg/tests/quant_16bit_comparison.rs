@@ -352,11 +352,7 @@ mod cpp_comparison {
     fn get_cjpegli_path() -> Option<std::path::PathBuf> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../internal/jpegli-cpp/build/tools/cjpegli");
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        if path.exists() { Some(path) } else { None }
     }
 
     /// Compare DQT tables between Rust and C++ at very low quality.

@@ -284,18 +284,16 @@ impl<'a> JpegEncoder<'a> {
         layout: PixelLayout,
     ) -> Result<EncodeOutput, Error> {
         // Pre-flight limit checks
-        self.limits
-            .check_dimensions(width, height)
-            .map_err(|_| {
-                Error::image_too_large(
-                    width as u64 * height as u64,
-                    self.limits.max_pixels.unwrap_or(0),
-                )
-            })?;
+        self.limits.check_dimensions(width, height).map_err(|_| {
+            Error::image_too_large(
+                width as u64 * height as u64,
+                self.limits.max_pixels.unwrap_or(0),
+            )
+        })?;
         let estimated_mem = width as u64 * height as u64 * layout.bytes_per_pixel() as u64;
-        self.limits
-            .check_memory(estimated_mem)
-            .map_err(|_| Error::allocation_failed(estimated_mem as usize, "memory limit exceeded"))?;
+        self.limits.check_memory(estimated_mem).map_err(|_| {
+            Error::allocation_failed(estimated_mem as usize, "memory limit exceeded")
+        })?;
 
         let req = self.build_request();
         let output = req.encode_bytes(data, width, height, layout)?;
@@ -596,7 +594,6 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
             "JPEG does not support animation decoding",
         ))
     }
-
 }
 
 // ── Decoder ─────────────────────────────────────────────────────────────────
@@ -806,7 +803,11 @@ impl<'a> zencodec_types::Decoder for JpegDecoder<'a> {
 
             let mut reader = cfg.scanline_reader(data)?;
             let width = reader.width() as usize;
-            let channels = if info_result.num_components == 1 { 1 } else { 3 };
+            let channels = if info_result.num_components == 1 {
+                1
+            } else {
+                3
+            };
             let row_bytes = width * channels;
             let mut y: u32 = 0;
 
@@ -1069,7 +1070,13 @@ mod tests {
             row_count: u32,
         }
         impl zencodec_types::DecodeRowSink for CountSink {
-            fn demand(&mut self, _y: u32, _height: u32, width: u32, bpp: usize) -> (&mut [u8], usize) {
+            fn demand(
+                &mut self,
+                _y: u32,
+                _height: u32,
+                width: u32,
+                bpp: usize,
+            ) -> (&mut [u8], usize) {
                 self.row_count += 1;
                 let stride = width as usize * bpp;
                 self.buf.resize(stride, 0);

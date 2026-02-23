@@ -1,19 +1,19 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use zenjpeg::deblock::{filter_plane_boundary_4tap, BoundaryStrength};
+use zenjpeg::deblock::{BoundaryStrength, filter_plane_boundary_4tap};
 use zenjpeg::decoder::{
     DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Subsampling,
 };
-use zenjpeg::detect::content::{classify_from_probe, recommend_deblock, DeblockAction};
+use zenjpeg::detect::content::{DeblockAction, classify_from_probe, recommend_deblock};
 use zenjpeg::detect::{self, QualityScale};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
-use crate::batch::{self, BatchSummary, FileResult};
-use crate::output::OutputConfig;
 use crate::IccTargetArg;
 use crate::OptimizeArgs;
 use crate::SubsamplingArg;
+use crate::batch::{self, BatchSummary, FileResult};
+use crate::output::OutputConfig;
 
 pub fn run(args: OptimizeArgs) -> Result<()> {
     let files = batch::expand_inputs(&args.input)?;

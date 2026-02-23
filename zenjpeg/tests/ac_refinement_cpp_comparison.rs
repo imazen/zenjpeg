@@ -414,7 +414,9 @@ fn test_progressive_filesize_comparison() {
 
     if !png_path.exists() {
         eprintln!("Test image not found: {:?}", png_path);
-        eprintln!("Generate it with: convert -size 32x32 xc: +noise Random PNG24:/path/to/test32_noise.png");
+        eprintln!(
+            "Generate it with: convert -size 32x32 xc: +noise Random PNG24:/path/to/test32_noise.png"
+        );
         return;
     }
 

@@ -18,7 +18,7 @@
 
 #![allow(dead_code)]
 
-use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
+use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};
 use multiversed::multiversed;
 use wide::f32x8;
 
@@ -999,11 +999,7 @@ fn gather_neighbor_circular(
     let vals: [f32; 8] = std::array::from_fn(|i| {
         let px = (base_cx[i] + nx).clamp(0, max_x) as usize;
         let idx = row_offset + px;
-        if idx < buffer.len() {
-            buffer[idx]
-        } else {
-            0.0
-        }
+        if idx < buffer.len() { buffer[idx] } else { 0.0 }
     });
     vals.into()
 }
@@ -1262,7 +1258,7 @@ fn sum_2x2_blocks_simd(
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub(crate) mod archmage_impl {
-    use archmage::{arcane, SimdToken, X64V3Token, X64V4Token};
+    use archmage::{SimdToken, X64V3Token, X64V4Token, arcane};
     use core::arch::x86_64::*;
     // Safe unaligned load/store (shadow the unsafe core::arch versions)
     #[allow(unused_imports)]
@@ -1724,7 +1720,7 @@ pub(crate) mod archmage_impl {
         // vhaddps ymm, ymm, ymm -> adds adjacent pairs
         let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
         let sum2 = _mm256_hadd_ps(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
-                                               // Extract high 128 and add to low 128
+        // Extract high 128 and add to low 128
         let hi = _mm256_extractf128_ps(sum2, 1);
         let lo = _mm256_castps256_ps128(sum2);
         let sum3 = _mm_add_ps(lo, hi);
@@ -3553,8 +3549,12 @@ mod tests {
                     assert!(
                         rel_diff < 1e-5,
                         "pe_w={} pe_y_base={} mismatch at bx={}: archmage={}, scalar={}, rel_diff={}",
-                        pe_w, pe_y_base, bx,
-                        output_archmage[bx], output_scalar[bx], rel_diff
+                        pe_w,
+                        pe_y_base,
+                        bx,
+                        output_archmage[bx],
+                        output_scalar[bx],
+                        rel_diff
                     );
                 }
             }

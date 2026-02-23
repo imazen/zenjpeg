@@ -1,8 +1,8 @@
 //! Check XYB quality metrics: Rust vs C++
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{ButteraugliParams, compute_butteraugli};
 use enough::Unstoppable;
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::fs;
 use std::io::Write;
 use std::process::Command;

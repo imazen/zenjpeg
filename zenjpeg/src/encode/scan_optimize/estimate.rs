@@ -17,8 +17,8 @@ use alloc::collections::BTreeMap;
 
 use super::generate::TrialScan;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
-use crate::huffman::optimize::cluster::cluster_histograms;
 use crate::huffman::optimize::FrequencyCounter;
+use crate::huffman::optimize::cluster::cluster_histograms;
 
 /// Key for cached scan histograms: `(component, ss, se, ah, al)`.
 ///
@@ -810,8 +810,8 @@ fn ac_category(abs_val: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::scan_optimize::generate::generate_search_scans;
     use crate::encode::scan_optimize::ScanSearchConfig;
+    use crate::encode::scan_optimize::generate::generate_search_scans;
 
     #[test]
     fn test_dc_category() {

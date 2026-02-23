@@ -17,7 +17,7 @@
 // cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
 // ```
 
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::path::PathBuf;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
@@ -527,8 +527,8 @@ fn encode_cpp(
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
 
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
@@ -1328,7 +1328,9 @@ fn benchmark_rust_vs_cpp() {
 #[cfg(not(feature = "ffi-tests"))]
 fn benchmark_rust_vs_cpp() {
     println!("Benchmark requires --features ffi-tests");
-    println!("Run: cargo test --release --test quality_matrix --features ffi-tests benchmark_rust_vs_cpp -- --nocapture --ignored");
+    println!(
+        "Run: cargo test --release --test quality_matrix --features ffi-tests benchmark_rust_vs_cpp -- --nocapture --ignored"
+    );
 }
 
 /// Quick test to verify FFI encoding produces valid JPEG output

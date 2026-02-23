@@ -7,10 +7,10 @@
 use crate::error::{Error, Result};
 use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
-use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;
+use crate::huffman::optimize::{ScanTokenInfo, Token};
 use multiversed::multiversed;
-use wide::{i16x8, CmpEq};
+use wide::{CmpEq, i16x8};
 
 use super::{additional_bits_with_cat, category};
 

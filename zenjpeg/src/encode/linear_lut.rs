@@ -103,7 +103,7 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 
 // Use inline variant from linear-srgb - no dispatch overhead, pure SIMD
 use linear_srgb::default::inline::linear_to_srgb_x8;
-use wide::{f32x8, CmpGt};
+use wide::{CmpGt, f32x8};
 
 /// Convert 8 linear f32 values [0,1] to sRGB [0, 255] using SIMD.
 ///

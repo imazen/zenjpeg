@@ -3,14 +3,14 @@
 //! This module handles parsing of JPEG marker segments during header reading.
 
 use crate::decode::extras::{
-    detect_segment_type, should_preserve_segment, AdobeColorTransform, SegmentType,
+    AdobeColorTransform, SegmentType, detect_segment_type, should_preserve_segment,
 };
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DAC,
-    MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF10,
-    MARKER_SOF2, MARKER_SOF9, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
+    MARKER_SOF9, MARKER_SOF10, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;

@@ -5,10 +5,10 @@
 //! - **mozjpeg**: Scale Robidoux base tables, find exact match.
 //! - **jpegli**: Call `quant_vals_to_distance()` to get butteraugli distance.
 
-use crate::encode::tables::robidoux::{quality_to_scale_factor, scale_table, ROBIDOUX_LUMINANCE};
+use crate::encode::tables::robidoux::{ROBIDOUX_LUMINANCE, quality_to_scale_factor, scale_table};
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 
-use super::fingerprint::{generate_ijg_table, EncoderFamily};
+use super::fingerprint::{EncoderFamily, generate_ijg_table};
 use super::scanner::ScanResult;
 
 /// Estimated quality for a JPEG file.

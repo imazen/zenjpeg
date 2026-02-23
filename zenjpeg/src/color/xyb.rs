@@ -279,11 +279,7 @@ fn cbrtf_fast(x: f32) -> f32 {
 #[inline]
 #[must_use]
 fn mixed_cube(v: f32) -> f32 {
-    if v < 0.0 {
-        -((-v).powi(3))
-    } else {
-        v.powi(3)
-    }
+    if v < 0.0 { -((-v).powi(3)) } else { v.powi(3) }
 }
 
 /// Converts linear RGB (0.0-1.0) to XYB color space.

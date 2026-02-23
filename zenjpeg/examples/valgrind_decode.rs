@@ -14,10 +14,10 @@ use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
+use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
-use zune_jpeg::JpegDecoder;
 
 fn create_test_jpeg(width: u32, height: u32, progressive: bool, no_dri: bool) -> Vec<u8> {
     // Deterministic noise+patches pattern matching decode_compare benchmark.

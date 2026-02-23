@@ -3,9 +3,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use zenjpeg::lossless::{self, LosslessTransform, TransformConfig};
 
+use crate::TransformArgs;
 use crate::batch;
 use crate::output::OutputConfig;
-use crate::TransformArgs;
 
 pub fn run(args: TransformArgs) -> Result<()> {
     let files = batch::expand_inputs(&args.input)?;
@@ -89,5 +89,7 @@ fn determine_transform(args: &TransformArgs) -> Result<LosslessTransform> {
         };
     }
 
-    anyhow::bail!("no transform specified; use --rotate, --flip-h, --flip-v, --transpose, --transverse, or --auto-orient")
+    anyhow::bail!(
+        "no transform specified; use --rotate, --flip-h, --flip-v, --transpose, --transverse, or --auto-orient"
+    )
 }

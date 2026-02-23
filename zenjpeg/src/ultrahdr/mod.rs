@@ -57,23 +57,13 @@ mod decode;
 mod encode;
 
 // Re-export the main workflow functions
-pub use decode::{create_hdr_reconstructor, tonemapper_from_ultrahdr, UltraHdrExtras};
+pub use decode::{UltraHdrExtras, create_hdr_reconstructor, tonemapper_from_ultrahdr};
 pub use encode::{
     create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_with_tonemapper, encode_with_gainmap,
 };
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions)
 pub use ultrahdr_core::{
-    // Tonemapping
-    color::tonemap::{AdaptiveTonemapper, FitConfig, FitMode, FitStats, ToneMapConfig},
-    // Gainmap functions (full-image)
-    gainmap::{apply_gainmap, compute_gainmap, GainMapConfig, HdrOutputFormat},
-    // Streaming APIs (low-memory processing, linear f32 I/O)
-    // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
-    // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
-    gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
-    // Metadata
-    metadata::xmp::{generate_xmp, parse_xmp},
     // Color types (aliased to avoid collision with jpegli types)
     ColorGamut as UhdrColorGamut,
     ColorTransfer as UhdrColorTransfer,
@@ -84,6 +74,16 @@ pub use ultrahdr_core::{
     RawImage as UhdrRawImage,
     // Cancellation
     Unstoppable,
+    // Tonemapping
+    color::tonemap::{AdaptiveTonemapper, FitConfig, FitMode, FitStats, ToneMapConfig},
+    // Gainmap functions (full-image)
+    gainmap::{GainMapConfig, HdrOutputFormat, apply_gainmap, compute_gainmap},
+    // Streaming APIs (low-memory processing, linear f32 I/O)
+    // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
+    // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
+    gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
+    // Metadata
+    metadata::xmp::{generate_xmp, parse_xmp},
 };
 
 // Re-export the Stop trait from enough (same one used by jpegli)

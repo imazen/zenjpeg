@@ -4,7 +4,7 @@
 //! transform before IDCT, enabling zero-quality-loss orientation correction
 //! during decode.
 
-use crate::lossless::{remap_block, BlockTransform, LosslessTransform};
+use crate::lossless::{BlockTransform, LosslessTransform, remap_block};
 
 use super::JpegParser;
 

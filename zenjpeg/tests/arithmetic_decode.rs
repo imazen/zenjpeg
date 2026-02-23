@@ -134,11 +134,7 @@ fn find_ppm_rgb_start(data: &[u8]) -> Option<usize> {
         }
         pos += 1;
     }
-    if newline_count == 3 {
-        Some(pos)
-    } else {
-        None
-    }
+    if newline_count == 3 { Some(pos) } else { None }
 }
 
 #[test]

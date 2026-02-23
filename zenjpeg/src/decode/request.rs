@@ -4,10 +4,10 @@
 //! a cancellation token and optional [`DecodePool`] for adaptive threading.
 //! Created via [`Decoder::request()`](super::DecodeConfig::request).
 
+use super::DecodeConfig;
 use super::config::DecodeResult;
 use super::pool::DecodePool;
 use super::scanline::ScanlineReader;
-use super::DecodeConfig;
 use crate::error::Result;
 use enough::{Stop, Unstoppable};
 

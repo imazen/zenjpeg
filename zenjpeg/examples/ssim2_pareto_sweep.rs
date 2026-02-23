@@ -27,8 +27,8 @@ use std::path::PathBuf;
 use zenjpeg::encode::search::ExpertConfig;
 use zenjpeg::encode::{ChromaSubsampling, ColorMode, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::{
-    bytes_to_rgb, decode_jpeg_to_rgb, ChromaSubsampling as BenchSub, ColorMode as BenchColor,
-    EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, QualityMetrics, ScanMode,
+    ChromaSubsampling as BenchSub, ColorMode as BenchColor, EncoderConfig as BenchEncoderConfig,
+    EncoderImpl, ImageData, QualityMetrics, ScanMode, bytes_to_rgb, decode_jpeg_to_rgb,
 };
 
 // --- Constants ---
@@ -560,7 +560,9 @@ fn analyze_angular_buckets(
         "\nKnee: bpp={:.4}, SSIM2={:.2}  |  {} images  |  Bins: {} × {:.0}°",
         knee.bpp, knee.quality, n_images, scheme.count, scheme.width
     );
-    println!("Negative angle = efficient compression (below knee), positive = diminishing returns (above knee)");
+    println!(
+        "Negative angle = efficient compression (below knee), positive = diminishing returns (above knee)"
+    );
 }
 
 fn write_summary_csv(

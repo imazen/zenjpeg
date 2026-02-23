@@ -13,8 +13,8 @@
 use zenjpeg::encoder::ChromaSubsampling;
 
 use yuv::{
-    rgb_to_sharp_yuv420, rgb_to_yuv420, SharpYuvGammaTransfer, YuvChromaSubsampling,
-    YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+    SharpYuvGammaTransfer, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
+    YuvStandardMatrix, rgb_to_sharp_yuv420, rgb_to_yuv420,
 };
 use zenjpeg::color::rgb_to_ycbcr_f32;
 
