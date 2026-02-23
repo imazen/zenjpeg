@@ -232,6 +232,10 @@ pub enum ErrorKind {
     TooManyRows { height: u32, pushed: u32 },
     /// Encoding finished without all rows pushed.
     IncompleteImage { height: u32, pushed: u32 },
+
+    // === Unsupported codec operation (from zencodec_types) ===
+    /// Unsupported codec operation.
+    UnsupportedOperation(zencodec_types::UnsupportedOperation),
 }
 
 impl ErrorKind {
@@ -373,6 +377,7 @@ impl fmt::Display for ErrorKind {
                     pushed, height
                 )
             }
+            Self::UnsupportedOperation(op) => write!(f, "unsupported operation: {}", op),
         }
     }
 }
@@ -683,6 +688,13 @@ impl From<enough::StopReason> for Error {
 }
 
 impl core::error::Error for Error {}
+
+impl From<zencodec_types::UnsupportedOperation> for Error {
+    #[track_caller]
+    fn from(op: zencodec_types::UnsupportedOperation) -> Self {
+        Self::new(ErrorKind::UnsupportedOperation(op))
+    }
+}
 
 // The blanket impl `impl<E: core::error::Error + Send + Sync> From<E> for Box<dyn Error + Send + Sync>`
 // handles this automatically now that Error implements core::error::Error.
