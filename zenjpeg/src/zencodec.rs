@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 
 use zencodec_types::{
     CodecCapabilities, DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo,
-    ImageMetadata, OutputInfo, PixelData, PixelDescriptor, PixelSlice, PixelSliceMut,
+    MetadataView, OutputInfo, PixelData, PixelDescriptor, PixelSlice, PixelSliceMut,
     ResourceLimits, Stop,
 };
 
@@ -191,7 +191,7 @@ impl zencodec_types::EncoderConfig for JpegEncoderConfig {
 pub struct JpegEncodeJob<'a> {
     config: &'a JpegEncoderConfig,
     stop: Option<&'a dyn Stop>,
-    metadata: Option<&'a ImageMetadata<'a>>,
+    metadata: Option<&'a MetadataView<'a>>,
     limits: ResourceLimits,
 }
 
@@ -205,7 +205,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
+    fn with_metadata(mut self, meta: &'a MetadataView<'a>) -> Self {
         self.metadata = Some(meta);
         self
     }
@@ -240,7 +240,7 @@ impl<'a> zencodec_types::EncodeJob<'a> for JpegEncodeJob<'a> {
 pub struct JpegEncoder<'a> {
     config: &'a JpegEncoderConfig,
     stop: Option<&'a dyn Stop>,
-    metadata: Option<&'a ImageMetadata<'a>>,
+    metadata: Option<&'a MetadataView<'a>>,
     limits: ResourceLimits,
     /// Accumulated rows for push_rows path (None = not started, Some = buffering).
     buffer: Option<RowBuffer>,
@@ -936,7 +936,7 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 4, 4);
 
         let icc = b"fake icc profile data";
-        let meta = ImageMetadata::default().with_icc(icc.as_slice());
+        let meta = MetadataView::default().with_icc(icc.as_slice());
         let output = enc
             .job()
             .with_metadata(&meta)
