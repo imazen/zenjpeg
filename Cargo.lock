@@ -136,11 +136,11 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.8.4"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fba21e64cb000b4890dc6348042557208486e5ea4e9f574b7f75f7a45e99e19d"
+checksum = "7b6d08808218c9a8bb39ac0490adc5d65a666cc38ddb730baf9ed57e32d803ee"
 dependencies = [
- "archmage-macros 0.8.4",
+ "archmage-macros 0.8.6",
  "safe_unaligned_simd",
 ]
 
@@ -157,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.8.4"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35c9306deb9d68bc48cd4fa5ab2281b31c82ff2831360419ffbaf2f701b19a5a"
+checksum = "4320e26657ff06e4cb353df04642c3faa5390cae53705e846b788b59d14bc52e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1037,7 +1037,7 @@ version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7687eee4c424bdb5f360d5d975a52baa0f56c1ce15e3c5cbef4af7d39e148092"
 dependencies = [
- "archmage 0.8.4",
+ "archmage 0.8.6",
  "bytemuck",
  "magetypes",
  "num-traits",
@@ -1058,11 +1058,11 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "magetypes"
-version = "0.8.4"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5963554492ae9c4248d5e761f734a97d79f5d7f07f4c81d708725be8a81f6819"
+checksum = "24774f4b337d505ed895826d95566cb7db35e373bdffdea1c7bf715c2a94f552"
 dependencies = [
- "archmage 0.8.4",
+ "archmage 0.8.6",
 ]
 
 [[package]]
@@ -1836,7 +1836,7 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 name = "ultrahdr-core"
 version = "0.2.0"
 dependencies = [
- "archmage 0.8.4",
+ "archmage 0.8.6",
  "bytemuck",
  "enough",
  "half",
@@ -2376,7 +2376,7 @@ dependencies = [
  "aligned-vec",
  "almost-enough",
  "approx",
- "archmage 0.8.4",
+ "archmage 0.8.6",
  "bincode",
  "butteraugli",
  "bytemuck",
@@ -2457,7 +2457,7 @@ version = "0.1.0"
 name = "zenresize"
 version = "0.1.0"
 dependencies = [
- "archmage 0.8.4",
+ "archmage 0.8.6",
  "imgref",
  "linear-srgb",
  "rgb",
