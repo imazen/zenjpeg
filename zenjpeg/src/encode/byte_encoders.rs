@@ -246,8 +246,7 @@ impl BytesEncoder {
             let h = rows;
             match self.layout {
                 PixelLayout::Rgb8Srgb => {
-                    let blurred =
-                        crate::blur::gaussian_blur_rgb(data, w, h, self.config.pre_blur);
+                    let blurred = crate::blur::gaussian_blur_rgb(data, w, h, self.config.pre_blur);
                     return self.push(&blurred, rows, row_bytes, stop);
                 }
                 _ => {}
