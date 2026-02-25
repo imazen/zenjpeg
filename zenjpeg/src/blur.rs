@@ -138,15 +138,13 @@ fn blur_plane_3tap(plane: &mut [u8], width: usize, height: usize, w0: u16, w1: u
         // Interior
         for x in 1..width - 1 {
             let i = row + x;
-            let val =
-                plane[i - 1] as u16 * w1 + plane[i] as u16 * w0 + plane[i + 1] as u16 * w1;
+            let val = plane[i - 1] as u16 * w1 + plane[i] as u16 * w0 + plane[i + 1] as u16 * w1;
             temp[i] = (val >> 8) as u8;
         }
 
         // Right edge: clamp
         let last = row + width - 1;
-        temp[last] =
-            ((plane[last - 1] as u16 * w1 + plane[last] as u16 * (w0 + w1)) >> 8) as u8;
+        temp[last] = ((plane[last - 1] as u16 * w1 + plane[last] as u16 * (w0 + w1)) >> 8) as u8;
     }
 
     // Vertical pass
@@ -173,8 +171,7 @@ fn blur_plane_3tap(plane: &mut [u8], width: usize, height: usize, w0: u16, w1: u
     let prev_row = (height - 2) * width;
     for x in 0..width {
         plane[last_row + x] =
-            ((temp[prev_row + x] as u16 * w1 + temp[last_row + x] as u16 * (w0 + w1)) >> 8)
-                as u8;
+            ((temp[prev_row + x] as u16 * w1 + temp[last_row + x] as u16 * (w0 + w1)) >> 8) as u8;
     }
 }
 
@@ -197,8 +194,8 @@ fn blur_plane_general(
         for x in 0..width {
             let mut acc = 0u32;
             for ki in 0..kernel_size {
-                let sx = (x as isize + ki as isize - radius as isize)
-                    .clamp(0, width as isize - 1) as usize;
+                let sx = (x as isize + ki as isize - radius as isize).clamp(0, width as isize - 1)
+                    as usize;
                 acc += plane[row + sx] as u32 * weights[ki];
             }
             temp[row + x] = (acc >> shift) as u16;
@@ -210,8 +207,8 @@ fn blur_plane_general(
         for x in 0..width {
             let mut acc = 0u32;
             for ki in 0..kernel_size {
-                let sy = (y as isize + ki as isize - radius as isize)
-                    .clamp(0, height as isize - 1) as usize;
+                let sy = (y as isize + ki as isize - radius as isize).clamp(0, height as isize - 1)
+                    as usize;
                 acc += temp[sy * width + x] as u32 * weights[ki];
             }
             plane[y * width + x] = ((acc >> shift) as u16).min(255) as u8;

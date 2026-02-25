@@ -2582,9 +2582,7 @@ impl WaveParallelState {
                             seg_first_pixel_row,
                         );
                         // Flush chroma
-                        if let (Some(ref mut cb_out), Some(ref mut cr_out)) =
-                            (&mut chunks.cb, &mut chunks.cr)
-                        {
+                        if let (Some(cb_out), Some(cr_out)) = (&mut chunks.cb, &mut chunks.cr) {
                             flush_planar_chroma(
                                 current_mcu_row,
                                 &cb_strip_buf,
@@ -2700,9 +2698,7 @@ impl WaveParallelState {
                     mcu_pixel_height,
                     seg_first_pixel_row,
                 );
-                if let (Some(ref mut cb_out), Some(ref mut cr_out)) =
-                    (&mut chunks.cb, &mut chunks.cr)
-                {
+                if let (Some(cb_out), Some(cr_out)) = (&mut chunks.cb, &mut chunks.cr) {
                     flush_planar_chroma(
                         current_mcu_row,
                         &cb_strip_buf,

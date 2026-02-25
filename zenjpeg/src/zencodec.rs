@@ -157,6 +157,8 @@ impl zencodec_types::EncoderConfig for JpegEncoderConfig {
             .with_encode_xmp(true)
             .with_encode_cancel(true)
             .with_native_gray(true)
+            .with_lossy(true)
+            .with_row_level_encode(true)
             .with_quality_range(0.0, 100.0);
         &CAPS
     }
@@ -506,7 +508,11 @@ impl zencodec_types::DecoderConfig for JpegDecoderConfig {
             .with_decode_xmp(true)
             .with_decode_cancel(true)
             .with_native_gray(true)
-            .with_cheap_probe(true);
+            .with_cheap_probe(true)
+            .with_enforces_max_pixels(true)
+            .with_enforces_max_memory(true)
+            .with_decode_into(true)
+            .with_row_level_decode(true);
         &CAPS
     }
 
@@ -515,6 +521,8 @@ impl zencodec_types::DecoderConfig for JpegDecoderConfig {
             config: self,
             stop: None,
             limits: ResourceLimits::none(),
+            crop_hint: None,
+            orientation_hint: None,
         }
     }
 
@@ -544,6 +552,8 @@ pub struct JpegDecodeJob<'a> {
     config: &'a JpegDecoderConfig,
     stop: Option<&'a dyn Stop>,
     limits: ResourceLimits,
+    crop_hint: Option<(u32, u32, u32, u32)>,
+    orientation_hint: Option<zencodec_types::Orientation>,
 }
 
 impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
@@ -560,6 +570,16 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
+    fn with_crop_hint(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
+        self.crop_hint = Some((x, y, width, height));
+        self
+    }
+
+    fn with_orientation_hint(mut self, orientation: zencodec_types::Orientation) -> Self {
+        self.orientation_hint = Some(orientation);
+        self
+    }
+
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {
         #[cfg(feature = "decoder")]
         {
@@ -568,11 +588,37 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
                 1 => PixelDescriptor::GRAY8_SRGB,
                 _ => PixelDescriptor::RGB8_SRGB,
             };
-            Ok(OutputInfo::full_decode(
-                info.dimensions.width,
-                info.dimensions.height,
-                native_format,
-            ))
+            let mut w = info.dimensions.width;
+            let mut h = info.dimensions.height;
+
+            let mut out = OutputInfo::full_decode(w, h, native_format);
+
+            // Report orientation that will be applied during decode.
+            // auto_orient is true by default, so we apply EXIF orientation
+            // unless the caller explicitly passed Normal to disable it.
+            let will_orient = match self.orientation_hint {
+                Some(o) if o.is_identity() => false,
+                _ => true, // default: auto_orient is on
+            };
+            if will_orient {
+                if let Some(ref exif) = info.exif {
+                    if let Some(orient_val) = crate::lossless::parse_exif_orientation(exif) {
+                        let orient = zencodec_types::Orientation::from_exif(orient_val as u16);
+                        if orient.swaps_dimensions() {
+                            core::mem::swap(&mut w, &mut h);
+                        }
+                        out = OutputInfo::full_decode(w, h, native_format)
+                            .with_orientation_applied(orient);
+                    }
+                }
+            }
+
+            // Report crop that will be applied (may be MCU-snapped by the decoder).
+            if let Some((x, y, cw, ch)) = self.crop_hint {
+                out = out.with_crop_applied([x, y, cw, ch]);
+            }
+
+            Ok(out)
         }
         #[cfg(not(feature = "decoder"))]
         {
@@ -586,6 +632,8 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
+            crop_hint: self.crop_hint,
+            orientation_hint: self.orientation_hint,
         }
     }
 
@@ -603,10 +651,12 @@ pub struct JpegDecoder<'a> {
     config: &'a JpegDecoderConfig,
     stop: Option<&'a dyn Stop>,
     limits: ResourceLimits,
+    crop_hint: Option<(u32, u32, u32, u32)>,
+    orientation_hint: Option<zencodec_types::Orientation>,
 }
 
 impl<'a> JpegDecoder<'a> {
-    /// Build a DecodeConfig with limit overrides applied.
+    /// Build a DecodeConfig with limit overrides and hints applied.
     #[cfg(feature = "decoder")]
     fn build_config(&self) -> crate::decode::DecodeConfig {
         let mut cfg = self.config.inner.clone();
@@ -615,6 +665,18 @@ impl<'a> JpegDecoder<'a> {
         }
         if let Some(bytes) = self.limits.max_memory_bytes {
             cfg = cfg.max_memory(bytes);
+        }
+        if let Some((x, y, w, h)) = self.crop_hint {
+            cfg = cfg.crop(crate::decode::CropRegion::pixels(x, y, w, h));
+        }
+        if let Some(orient) = self.orientation_hint {
+            // The hint says "please resolve this orientation during decode."
+            // auto_orient is already true by default — it reads EXIF and applies
+            // the matching lossless DCT transform. We only need to disable it
+            // if the caller explicitly passes Normal (identity).
+            if orient.is_identity() {
+                cfg = cfg.auto_orient(false);
+            }
         }
         cfg
     }
