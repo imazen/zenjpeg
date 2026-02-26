@@ -870,6 +870,19 @@ sensitivity tables, and preset baselines.
      the trellis to make catastrophic coefficient choices for chroma blocks.
    - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
 
+7. **XYB 4:2:0 decoder failures on own encoder output (2026-02-26)** - zenjpeg's decoder
+   fails on certain JPEGs produced by its own XYB 4:2:0 encoder (`zenjpeg-420-xyb-e2`).
+   Two error types:
+   - "invalid Huffman table 0: invalid code" — 512×512 at specific quality levels (q15, q50)
+   - "invalid JPEG data: expected 0xFF for restart marker" — 1024×1024 at q15, q20, q60
+   - Affects ~0.7% of source images (5/785 in synthetic training corpus, 10/149600 pairs)
+   - Only XYB colorspace encoding is affected; standard YCbCr 4:2:0 works fine
+   - Standard YCbCr 4:2:0 mode works fine for the same source images
+   - Reproduction: `cargo test --release -p zenjpeg --test decode_xyb_failures -- --ignored`
+   - Test fixtures: `zenjpeg/tests/testdata/decode_failures/` (5 JPEGs, 3-63KB)
+   - Source images from `/mnt/v/datasets/scraping/jpeg/` web corpus
+   - Impact: Contaminates synthetic training data (skipped during generation)
+
 ### Fixed Bugs (historical reference)
 
 - **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -

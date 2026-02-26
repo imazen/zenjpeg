@@ -800,6 +800,175 @@ mod avx2 {
         pack_store!(row4, row5);
         pack_store!(row6, row7);
     }
+
+    /// Unclamped AVX2 integer IDCT.
+    ///
+    /// Same butterfly as `idct_int_avx2` but outputs i16 values WITHOUT
+    /// clamping to [0, 255]. Values are level-shifted (+128) and saturated
+    /// to i16 range by `_mm256_packs_epi32`, but NOT clamped to [0, 255].
+    ///
+    /// This is critical for correct YCbCr→RGB conversion of wide-gamut images
+    /// where Cb/Cr values can legitimately exceed [0, 255] after IDCT.
+    #[arcane]
+    #[allow(unused_assignments)]
+    pub fn idct_int_avx2_unclamped(
+        _token: archmage::X64V3Token,
+        in_vector: &mut [i32; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+    ) {
+        assert!(out_vector.len() >= stride * 7 + 8);
+
+        // Load all 8 rows
+        let mut row0 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
+        let mut row1 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
+        let mut row2 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
+        let mut row3 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
+        let mut row4 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
+        let mut row5 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
+        let mut row6 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
+        let mut row7 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
+
+        // DC-only check
+        let ac_check =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[1..9]).unwrap());
+        let mut bitmap = _mm256_or_si256(row1, row2);
+        bitmap = _mm256_or_si256(bitmap, row3);
+        bitmap = _mm256_or_si256(bitmap, row4);
+        bitmap = _mm256_or_si256(bitmap, row5);
+        bitmap = _mm256_or_si256(bitmap, row6);
+        bitmap = _mm256_or_si256(bitmap, row7);
+        bitmap = _mm256_or_si256(bitmap, ac_check);
+
+        if _mm256_testz_si256(bitmap, bitmap) == 1 {
+            // DC-only: unclamped
+            let coeff = ((in_vector[0] + 4 + 1024) >> 3) as i16;
+            let idct_value = _mm_set1_epi16(coeff);
+            let mut pos = 0;
+            for _ in 0..8 {
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    idct_value,
+                );
+                pos += stride;
+            }
+            return;
+        }
+
+        // Constants
+        let c2217 = _mm256_set1_epi32(2217);
+        let c3135 = _mm256_set1_epi32(3135);
+        let cn7567 = _mm256_set1_epi32(-7567);
+        let c4816 = _mm256_set1_epi32(4816);
+        let c1223 = _mm256_set1_epi32(1223);
+        let c8410 = _mm256_set1_epi32(8410);
+        let c12586 = _mm256_set1_epi32(12586);
+        let c6149 = _mm256_set1_epi32(6149);
+        let cn3685 = _mm256_set1_epi32(-3685);
+        let cn10497 = _mm256_set1_epi32(-10497);
+        let cn8034 = _mm256_set1_epi32(-8034);
+        let cn1597 = _mm256_set1_epi32(-1597);
+        let c512 = _mm256_set1_epi32(512);
+        let cscale = _mm256_set1_epi32(SCALE_BITS);
+
+        macro_rules! dct_pass {
+            ($scale_bits:expr, $shift:expr) => {
+                let p1 = _mm256_mullo_epi32(_mm256_add_epi32(row2, row6), c2217);
+                let t2 = _mm256_add_epi32(p1, _mm256_mullo_epi32(row6, cn7567));
+                let t3 = _mm256_add_epi32(p1, _mm256_mullo_epi32(row2, c3135));
+
+                let t0 = _mm256_slli_epi32(_mm256_add_epi32(row0, row4), 12);
+                let t1 = _mm256_slli_epi32(_mm256_sub_epi32(row0, row4), 12);
+
+                let x0 = _mm256_add_epi32(_mm256_add_epi32(t0, t3), $scale_bits);
+                let x3 = _mm256_add_epi32(_mm256_sub_epi32(t0, t3), $scale_bits);
+                let x1 = _mm256_add_epi32(_mm256_add_epi32(t1, t2), $scale_bits);
+                let x2 = _mm256_add_epi32(_mm256_sub_epi32(t1, t2), $scale_bits);
+
+                let p3 = _mm256_add_epi32(row7, row3);
+                let p4 = _mm256_add_epi32(row5, row1);
+                let p1 = _mm256_add_epi32(row7, row1);
+                let p2 = _mm256_add_epi32(row5, row3);
+                let p5 = _mm256_mullo_epi32(_mm256_add_epi32(p3, p4), c4816);
+
+                let mut t0 = _mm256_mullo_epi32(row7, c1223);
+                let mut t1 = _mm256_mullo_epi32(row5, c8410);
+                let mut t2 = _mm256_mullo_epi32(row3, c12586);
+                let mut t3 = _mm256_mullo_epi32(row1, c6149);
+
+                let p1 = _mm256_add_epi32(p5, _mm256_mullo_epi32(p1, cn3685));
+                let p2 = _mm256_add_epi32(p5, _mm256_mullo_epi32(p2, cn10497));
+                let p3 = _mm256_mullo_epi32(p3, cn8034);
+                let p4 = _mm256_mullo_epi32(p4, cn1597);
+
+                t3 = _mm256_add_epi32(t3, _mm256_add_epi32(p1, p4));
+                t2 = _mm256_add_epi32(t2, _mm256_add_epi32(p2, p3));
+                t1 = _mm256_add_epi32(t1, _mm256_add_epi32(p2, p4));
+                t0 = _mm256_add_epi32(t0, _mm256_add_epi32(p1, p3));
+
+                row0 = _mm256_srai_epi32(_mm256_add_epi32(x0, t3), $shift);
+                row1 = _mm256_srai_epi32(_mm256_add_epi32(x1, t2), $shift);
+                row2 = _mm256_srai_epi32(_mm256_add_epi32(x2, t1), $shift);
+                row3 = _mm256_srai_epi32(_mm256_add_epi32(x3, t0), $shift);
+                row4 = _mm256_srai_epi32(_mm256_sub_epi32(x3, t0), $shift);
+                row5 = _mm256_srai_epi32(_mm256_sub_epi32(x2, t1), $shift);
+                row6 = _mm256_srai_epi32(_mm256_sub_epi32(x1, t2), $shift);
+                row7 = _mm256_srai_epi32(_mm256_sub_epi32(x0, t3), $shift);
+            };
+        }
+
+        // Column pass
+        dct_pass!(c512, 10);
+
+        // Transpose
+        transpose_8x8_i32(
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
+        );
+
+        // Row pass
+        dct_pass!(cscale, 17);
+
+        // Transpose back
+        transpose_8x8_i32(
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
+        );
+
+        // Pack and store WITHOUT clamping: packs_epi32 saturates to i16 range
+        // [-32768, 32767] which is sufficient for YCbCr→RGB.
+        let mut pos = 0;
+        macro_rules! pack_store_unclamped {
+            ($r0:expr, $r1:expr) => {
+                let packed = _mm256_packs_epi32($r0, $r1);
+                let reordered = _mm256_permute4x64_epi64(packed, shuffle(3, 1, 2, 0));
+
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<0>(reordered),
+                );
+                pos += stride;
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<1>(reordered),
+                );
+                pos += stride;
+            };
+        }
+
+        pack_store_unclamped!(row0, row1);
+        pack_store_unclamped!(row2, row3);
+        pack_store_unclamped!(row4, row5);
+        pack_store_unclamped!(row6, row7);
+    }
 }
 
 // =============================================================================
@@ -1278,6 +1447,18 @@ pub fn idct_int_libjpeg_unclamped(
     }
 }
 
+/// Unclamped full 8x8 IDCT dispatch (non-tiered, for f32 output paths).
+pub fn idct_int_auto_unclamped(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            avx2::idct_int_avx2_unclamped(token, coeffs, output, stride);
+            return;
+        }
+    }
+    idct_int_wide_unclamped(coeffs, output, stride);
+}
+
 /// Unclamped tiered IDCT dispatch (default upsampling mode).
 pub fn idct_int_tiered_unclamped(
     coeffs: &mut [i32; 64],
@@ -1288,10 +1469,13 @@ pub fn idct_int_tiered_unclamped(
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
-        // AVX2 path outputs clamped values via pack_store macro.
-        // For unclamped, use the wide SIMD path which we can easily modify.
-        // The performance difference is minimal since unclamped is only used
-        // for f32 output paths where IDCT is not the bottleneck.
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        {
+            if let Some(token) = archmage::X64V3Token::summon() {
+                avx2::idct_int_avx2_unclamped(token, coeffs, output, stride);
+                return;
+            }
+        }
         idct_int_wide_unclamped(coeffs, output, stride);
     }
 }
