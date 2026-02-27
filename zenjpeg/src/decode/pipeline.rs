@@ -157,10 +157,15 @@ impl StripProcessor {
             )
         };
 
+        // Determine subsampling by comparing chroma factors to luma factors.
+        // Using max factors alone is wrong: e.g. all components at (1,2) has
+        // max_v=2 but no actual subsampling — it's 4:4:4 with 8×16 MCUs.
         let subsampling = if is_grayscale {
             Subsampling::S444
         } else {
-            match (max_h_samp, max_v_samp) {
+            let h_ratio = h_samp[0] / h_samp[1].max(1);
+            let v_ratio = v_samp[0] / v_samp[1].max(1);
+            match (h_ratio, v_ratio) {
                 (1, 1) => Subsampling::S444,
                 (2, 1) => Subsampling::S422,
                 (2, 2) => Subsampling::S420,
@@ -178,14 +183,18 @@ impl StripProcessor {
         let strip_stride = align_up(strip_width, STRIP_ALIGNMENT);
         let y_strip_size = strip_stride * mcu_height;
 
-        // Chroma strip: at native (potentially subsampled) resolution
-        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * 8 };
+        // Chroma strip: at native (potentially subsampled) resolution.
+        // Use actual chroma sampling factors for dimensions, not hardcoded 1×8.
+        // For all-same-sampling (e.g. all components 1×2), chroma is full resolution.
+        let chroma_h = if is_grayscale { 0 } else { h_samp[1] as usize };
+        let chroma_v = if is_grayscale { 0 } else { v_samp[1] as usize };
+        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * chroma_h * 8 };
         let chroma_strip_stride = if is_grayscale {
             0
         } else {
             align_up(chroma_strip_width, STRIP_ALIGNMENT)
         };
-        let chroma_strip_height = if is_grayscale { 0 } else { 8 };
+        let chroma_strip_height = if is_grayscale { 0 } else { chroma_v * 8 };
         let chroma_strip_size = chroma_strip_stride * chroma_strip_height;
 
         // Allocate strip buffers
@@ -296,7 +305,9 @@ impl StripProcessor {
         coeff_count: u8,
         quant: &[u16; DCT_BLOCK_SIZE],
     ) {
-        // Calculate destination in strip buffer
+        // Calculate destination in strip buffer.
+        // Chroma offsets use per-component h_samp/v_samp to handle both subsampled
+        // and all-same-sampling cases (e.g. all components 1×2 = S444 with 8×16 MCUs).
         let (strip, stride) = match comp_idx {
             0 => {
                 let x_offset = mcu_x * self.max_h_samp as usize * 8 + h * 8;
@@ -304,12 +315,14 @@ impl StripProcessor {
                 (&mut self.y_strip[y_offset + x_offset..], self.strip_stride)
             }
             1 => {
-                let x_offset = mcu_x * 8;
-                (&mut self.cb_strip[x_offset..], self.chroma_strip_stride)
+                let x_offset = mcu_x * self.h_samp[1] as usize * 8 + h * 8;
+                let y_offset = v * 8 * self.chroma_strip_stride;
+                (&mut self.cb_strip[y_offset + x_offset..], self.chroma_strip_stride)
             }
             _ => {
-                let x_offset = mcu_x * 8;
-                (&mut self.cr_strip[x_offset..], self.chroma_strip_stride)
+                let x_offset = mcu_x * self.h_samp[2] as usize * 8 + h * 8;
+                let y_offset = v * 8 * self.chroma_strip_stride;
+                (&mut self.cr_strip[y_offset + x_offset..], self.chroma_strip_stride)
             }
         };
 
