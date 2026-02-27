@@ -7,9 +7,8 @@
 //! Run: cargo test --release -p zenjpeg --test diagnose_decoder_diff -- --nocapture --ignored
 
 use enough::Unstoppable;
-use zenjpeg::decode::idct_int::{idct_int_auto, idct_int_tiered, idct_int_dc_only};
+use zenjpeg::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 use zenjpeg::quant::{dequantize_block_i32, dequantize_unzigzag_i32_into_partial};
-use zenjpeg::foundation::consts::{JPEG_NATURAL_ORDER, DCT_BLOCK_SIZE};
 
 /// Test that both dequantization approaches produce identical output.
 /// If they differ, the streaming path's dequantization is the root cause.
@@ -483,4 +482,355 @@ fn compare_streaming_vs_coefficient_ycbcr() {
         let mean = sum_diff as f64 / (w * h) as f64;
         println!("  scanline {name} vs moz: max={max_diff} mean={mean:.3}");
     }
+}
+
+// =============================================================================
+// Non-standard sampling factor tests
+// =============================================================================
+
+/// Helper: compare zenjpeg decode() and scanline_reader RGB output against mozjpeg.
+/// Returns (decode_max, scanline_max) per channel.
+fn compare_all_paths_rgb(data: &[u8]) -> ([i32; 3], [i32; 3]) {
+    use imgref::ImgRefMut;
+
+    // Reference: mozjpeg
+    let (mw, mh, moz_rgb) = decode_mozjpeg_rgb(data);
+    let w = mw as usize;
+    let h = mh as usize;
+
+    // Path 1: decode() (coefficient-based for non-streaming cases)
+    let d = zenjpeg::decoder::Decoder::new();
+    let result = d.decode(data, Unstoppable).unwrap();
+    let dec_rgb = result.pixels_u8().unwrap();
+    assert_eq!(result.width() as usize, w);
+    assert_eq!(result.height() as usize, h);
+
+    // Path 2: scanline reader
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(data)
+        .unwrap();
+    assert_eq!(reader.width() as usize, w);
+    assert_eq!(reader.height() as usize, h);
+
+    let row_bytes = w * 3;
+    let mut scan_rgb = vec![0u8; h * row_bytes];
+    let mut rows_read = 0;
+    while rows_read < h {
+        let remaining = h - rows_read;
+        let batch = remaining.min(8);
+        let buf = &mut scan_rgb[rows_read * row_bytes..(rows_read + batch) * row_bytes];
+        let img = ImgRefMut::new(buf, row_bytes, batch);
+        let got = reader.read_rows_rgb8(img).unwrap();
+        if got == 0 {
+            break;
+        }
+        rows_read += got;
+    }
+
+    // Compute max diffs
+    let mut dec_max = [0i32; 3];
+    let mut scan_max = [0i32; 3];
+
+    for py in 0..h {
+        for px in 0..w {
+            let idx = (py * w + px) * 3;
+            for ch in 0..3 {
+                let moz = moz_rgb[idx + ch] as i32;
+                let d1 = (dec_rgb[idx + ch] as i32 - moz).abs();
+                let d2 = (scan_rgb[idx + ch] as i32 - moz).abs();
+                dec_max[ch] = dec_max[ch].max(d1);
+                scan_max[ch] = scan_max[ch].max(d2);
+            }
+        }
+    }
+
+    (dec_max, scan_max)
+}
+
+/// Test all non-standard sampling modes found in the jpegli test corpus.
+/// Verifies both decode() and scanline_reader produce correct output (max ≤ 4 vs mozjpeg).
+///
+/// Sampling modes tested:
+/// - 444_1x2: all components (1,2) — 4:4:4 with 8×16 MCUs (previously max=113 bug)
+/// - 440: Y(1,2) Cb(1,1) Cr(1,1) — vertical-only chroma subsampling
+/// - asymmetric: Y(2,2) Cb(2,1) Cr(1,2) — all different factors
+/// - luma_subsample: Y(1,1) Cb(2,2) Cr(2,2) — inverted subsampling (chroma > luma)
+/// - rgb_subsample_blue: R(2,2) G(2,2) B(1,1) — RGB mode with blue subsampled
+#[test]
+fn test_nonstandard_sampling_all_paths() {
+    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+    let test_cases: &[(&str, &str, i32)] = &[
+        // (label, filename, max_allowed_diff)
+        ("444_1x2", "flower.png.im_q85_444_1x2.jpg", 4),
+        ("440", "flower.png.im_q85_440.jpg", 4),
+        ("asymmetric", "flower.png.im_q85_asymmetric.jpg", 4),
+        ("luma_subsample", "flower.png.im_q85_luma_subsample.jpg", 4),
+        ("rgb_subsample_blue", "flower.png.im_q85_rgb_subsample_blue.jpg", 4),
+    ];
+
+    let mut all_passed = true;
+    for (label, filename, max_allowed) in test_cases {
+        let path = format!("{base}/{filename}");
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("  SKIP {label}: {path} not found");
+                continue;
+            }
+        };
+
+        let (dec_max, scan_max) = compare_all_paths_rgb(&data);
+        let dec_worst = *dec_max.iter().max().unwrap();
+        let scan_worst = *scan_max.iter().max().unwrap();
+
+        let dec_ok = dec_worst <= *max_allowed;
+        let scan_ok = scan_worst <= *max_allowed;
+        let status = if dec_ok && scan_ok { "OK" } else { "FAIL" };
+
+        println!(
+            "{label:>20}: decode max={dec_worst:>3}  scanline max={scan_worst:>3}  [{status}]"
+        );
+
+        if !dec_ok {
+            eprintln!(
+                "  FAIL: {label} decode() max={dec_worst} exceeds threshold {max_allowed} (R={} G={} B={})",
+                dec_max[0], dec_max[1], dec_max[2]
+            );
+            all_passed = false;
+        }
+        if !scan_ok {
+            eprintln!(
+                "  FAIL: {label} scanline max={scan_worst} exceeds threshold {max_allowed} (R={} G={} B={})",
+                scan_max[0], scan_max[1], scan_max[2]
+            );
+            all_passed = false;
+        }
+    }
+
+    assert!(all_passed, "Some non-standard sampling modes exceeded max diff threshold");
+}
+
+/// Test that decode() and scanline_reader produce consistent output for all standard
+/// AND non-standard sampling modes (internal consistency, no mozjpeg reference needed).
+#[test]
+fn test_decode_scanline_consistency() {
+    use imgref::ImgRefMut;
+
+    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+    let test_cases: &[(&str, &str)] = &[
+        // Standard modes
+        ("444", "flower.png.im_q85_444.jpg"),
+        ("420", "flower.png.im_q85_420.jpg"),
+        ("422", "flower.png.im_q85_422.jpg"),
+        // Non-standard same-sampling
+        ("444_1x2", "flower.png.im_q85_444_1x2.jpg"),
+        // Standard subsampled
+        ("440", "flower.png.im_q85_440.jpg"),
+        // Exotic
+        ("asymmetric", "flower.png.im_q85_asymmetric.jpg"),
+        ("luma_subsample", "flower.png.im_q85_luma_subsample.jpg"),
+    ];
+
+    let mut all_passed = true;
+    for (label, filename) in test_cases {
+        let path = format!("{base}/{filename}");
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("  SKIP {label}: not found");
+                continue;
+            }
+        };
+
+        // Path 1: decode()
+        let d = zenjpeg::decoder::Decoder::new();
+        let result = d.decode(&data, Unstoppable).unwrap();
+        let dec_rgb = result.pixels_u8().unwrap();
+        let w = result.width() as usize;
+        let h = result.height() as usize;
+
+        // Path 2: scanline reader
+        let mut reader = zenjpeg::decoder::Decoder::new()
+            .scanline_reader(&data)
+            .unwrap();
+        let row_bytes = w * 3;
+        let mut scan_rgb = vec![0u8; h * row_bytes];
+        let mut rows_read = 0;
+        while rows_read < h {
+            let remaining = h - rows_read;
+            let batch = remaining.min(8);
+            let buf = &mut scan_rgb[rows_read * row_bytes..(rows_read + batch) * row_bytes];
+            let img = ImgRefMut::new(buf, row_bytes, batch);
+            let got = reader.read_rows_rgb8(img).unwrap();
+            if got == 0 {
+                break;
+            }
+            rows_read += got;
+        }
+
+        // Compare
+        let mut max_diff = 0i32;
+        for i in 0..dec_rgb.len().min(scan_rgb.len()) {
+            let d = (dec_rgb[i] as i32 - scan_rgb[i] as i32).abs();
+            max_diff = max_diff.max(d);
+        }
+
+        // Allow ≤ 4 for upsampling filter differences between paths
+        let ok = max_diff <= 4;
+        let status = if ok { "OK" } else { "FAIL" };
+        println!("{label:>20}: decode↔scanline max_diff={max_diff:>3}  [{status}]");
+
+        if !ok {
+            eprintln!("  FAIL: {label} decode↔scanline max_diff={max_diff} exceeds threshold 4");
+            all_passed = false;
+        }
+    }
+
+    assert!(all_passed, "Some modes have inconsistent decode vs scanline output");
+}
+
+/// Regression test: 444_1x2 scanline reader must match mozjpeg within IDCT rounding (max ≤ 3).
+/// This was the original bug: scanline reader produced max=113 error for all-1x2 sampling
+/// because StripProcessor classified it as S440 with undersized chroma buffers.
+#[test]
+fn regression_444_1x2_scanline_accuracy() {
+    use imgref::ImgRefMut;
+
+    let path = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444_1x2.jpg";
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("SKIP: test image not found");
+            return;
+        }
+    };
+
+    let (mw, mh, moz_rgb) = decode_mozjpeg_rgb(&data);
+    let w = mw as usize;
+    let h = mh as usize;
+
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let row_bytes = w * 3;
+    let mut scan_rgb = vec![0u8; h * row_bytes];
+    let mut rows_read = 0;
+    while rows_read < h {
+        let remaining = h - rows_read;
+        let batch = remaining.min(8);
+        let buf = &mut scan_rgb[rows_read * row_bytes..(rows_read + batch) * row_bytes];
+        let img = ImgRefMut::new(buf, row_bytes, batch);
+        let got = reader.read_rows_rgb8(img).unwrap();
+        if got == 0 {
+            break;
+        }
+        rows_read += got;
+    }
+
+    let mut max_diff = 0i32;
+    for i in 0..moz_rgb.len().min(scan_rgb.len()) {
+        let d = (moz_rgb[i] as i32 - scan_rgb[i] as i32).abs();
+        max_diff = max_diff.max(d);
+    }
+
+    assert!(
+        max_diff <= 3,
+        "444_1x2 scanline reader regression: max_diff={max_diff} (expected ≤ 3, was 113 before fix)"
+    );
+}
+
+/// Test the native i16 YCbCr output path for non-standard sampling.
+/// Verifies that chroma planes have correct dimensions and plausible values.
+#[test]
+fn test_nonstandard_sampling_ycbcr_i16() {
+    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+
+    // 444_1x2: all components same sampling → chroma should be full resolution
+    let path = format!("{base}/flower.png.im_q85_444_1x2.jpg");
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("SKIP: 444_1x2 not found");
+            return;
+        }
+    };
+
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let w = reader.width() as usize;
+    let h = reader.height() as usize;
+
+    // For 444_1x2: chroma is same resolution as luma
+    let y_stride = (w + 31) & !31;
+    let c_stride = y_stride;
+    let mut y_buf = vec![0i16; y_stride * h];
+    let mut cb_buf = vec![0i16; c_stride * h];
+    let mut cr_buf = vec![0i16; c_stride * h];
+
+    let mut total_y_rows = 0;
+    let mut total_c_rows = 0;
+    while total_y_rows < h {
+        let remaining_mcu = ((h - total_y_rows) + 15) / 16; // MCU height = 16 for v_samp=2
+        let (y_rows, c_rows) = reader
+            .read_rows_ycbcr_native_i16(
+                &mut y_buf[total_y_rows * y_stride..],
+                y_stride,
+                &mut cb_buf[total_c_rows * c_stride..],
+                &mut cr_buf[total_c_rows * c_stride..],
+                c_stride,
+                remaining_mcu.min(2),
+            )
+            .unwrap();
+        if y_rows == 0 {
+            break;
+        }
+        total_y_rows += y_rows;
+        total_c_rows += c_rows;
+    }
+
+    // Chroma rows should match luma rows for 444_1x2 (no subsampling)
+    assert_eq!(
+        total_y_rows, total_c_rows,
+        "444_1x2: chroma rows ({total_c_rows}) should match luma rows ({total_y_rows})"
+    );
+    assert_eq!(total_y_rows, h, "Should decode all rows");
+
+    // Verify chroma values are in plausible range [0, 255]
+    // and not all zeros (which would indicate the buffer wasn't written)
+    let mut cb_nonzero = 0u64;
+    let mut cr_nonzero = 0u64;
+    for py in 0..h {
+        for px in 0..w {
+            let idx = py * c_stride + px;
+            let cb = cb_buf[idx];
+            let cr = cr_buf[idx];
+            assert!(
+                (0..=255).contains(&cb),
+                "Cb out of range at ({px},{py}): {cb}"
+            );
+            assert!(
+                (0..=255).contains(&cr),
+                "Cr out of range at ({px},{py}): {cr}"
+            );
+            if cb != 128 {
+                cb_nonzero += 1;
+            }
+            if cr != 128 {
+                cr_nonzero += 1;
+            }
+        }
+    }
+
+    let total = (w * h) as f64;
+    assert!(
+        cb_nonzero as f64 / total > 0.5,
+        "Cb is mostly 128 ({cb_nonzero}/{} non-128) — likely not written",
+        w * h
+    );
+    assert!(
+        cr_nonzero as f64 / total > 0.5,
+        "Cr is mostly 128 ({cr_nonzero}/{} non-128) — likely not written",
+        w * h
+    );
 }
