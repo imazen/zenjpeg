@@ -701,7 +701,28 @@ impl DecodeConfig {
             .max()
             .unwrap_or(1);
 
-        if max_h > 2 || max_v_samp > 2 {
+        // Detect exotic sampling that the strip processor cannot handle:
+        // - Factors > 2 in any dimension
+        // - Cb and Cr have different sampling factors (asymmetric chroma)
+        // - Chroma factors exceed luma (inverted subsampling)
+        // These are routed through the buffered decode path instead.
+        let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
+            max_h > 2 || max_v_samp > 2
+        } else {
+            let comps = &parser.components[..parser.num_components as usize];
+            let cb_h = comps[1].h_samp_factor;
+            let cb_v = comps[1].v_samp_factor;
+            let cr_h = comps[2].h_samp_factor;
+            let cr_v = comps[2].v_samp_factor;
+            max_h > 2
+                || max_v_samp > 2
+                || cb_h != cr_h
+                || cb_v != cr_v
+                || cb_h > comps[0].h_samp_factor
+                || cb_v > comps[0].v_samp_factor
+        };
+
+        if needs_buffered_sampling {
             let width = parser.width;
             let height = parser.height;
             let num_components = parser.num_components;

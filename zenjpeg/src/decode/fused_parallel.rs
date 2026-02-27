@@ -201,6 +201,18 @@ impl<'a> JpegParser<'a> {
             && (self.components[1].h_samp_factor != self.components[0].h_samp_factor
                 || self.components[1].v_samp_factor != self.components[0].v_samp_factor);
 
+        // decode_fused_444 assumes 1 block per component per MCU (8×8 MCUs).
+        // Bail out for non-standard same-sampling like all-1×2 or all-2×2 where
+        // MCUs contain multiple blocks per component. These are extremely rare;
+        // the sequential coefficient path handles them correctly.
+        let is_nonstandard_444 = !is_subsampled
+            && num_comps == 3
+            && (self.components[0].h_samp_factor != 1
+                || self.components[0].v_samp_factor != 1);
+        if is_nonstandard_444 {
+            return Ok(false);
+        }
+
         // Select fused path
         let chroma_upsampling = self.chroma_upsampling;
         let (result, any_ac, any_huff, first_trunc, any_pad, total_mcus) = if !is_subsampled {
