@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo, MetadataView, OutputInfo,
-    PixelData, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
+    PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
 };
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -953,7 +953,6 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
         {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
-            use imgref::ImgVec;
             use zencodec_types::ChannelType;
 
             // Check if caller wants f32 output
@@ -994,14 +993,17 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                 }
             }
 
-            let pixel_data = if wants_f32 {
+            let buf = if wants_f32 {
                 // f32 linear output path
                 let pixels_f32 = result.into_pixels_f32().unwrap_or_default();
                 match format {
                     PixelFormat::Gray => {
                         let gray: Vec<Gray<f32>> =
                             pixels_f32.iter().map(|&v| Gray::new(v)).collect();
-                        PixelData::GrayF32(ImgVec::new(gray, w as usize, h as usize))
+                        PixelBuffer::from_pixels(gray, w, h)
+                            .map_err(|_| Error::internal("pixel count mismatch"))?
+                            .with_descriptor(PixelDescriptor::GRAYF32_LINEAR)
+                            .into()
                     }
                     _ => {
                         let rgb: Vec<Rgb<f32>> = pixels_f32
@@ -1012,7 +1014,10 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                                 b: c[2],
                             })
                             .collect();
-                        PixelData::RgbF32(ImgVec::new(rgb, w as usize, h as usize))
+                        PixelBuffer::from_pixels(rgb, w, h)
+                            .map_err(|_| Error::internal("pixel count mismatch"))?
+                            .with_descriptor(PixelDescriptor::RGBF32_LINEAR)
+                            .into()
                     }
                 }
             } else {
@@ -1022,22 +1027,31 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                         let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                         let gray: Vec<Gray<u8>> =
                             pixels_u8.iter().map(|&v| Gray::new(v)).collect();
-                        PixelData::Gray8(ImgVec::new(gray, w as usize, h as usize))
+                        PixelBuffer::from_pixels(gray, w, h)
+                            .map_err(|_| Error::internal("pixel count mismatch"))?
+                            .with_descriptor(PixelDescriptor::GRAY8_SRGB)
+                            .into()
                     }
                     PixelFormat::Rgb => {
                         let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                         let rgb = bytes_to_rgb(&pixels_u8);
-                        PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
+                        PixelBuffer::from_pixels(rgb, w, h)
+                            .map_err(|_| Error::internal("pixel count mismatch"))?
+                            .with_descriptor(PixelDescriptor::RGB8_SRGB)
+                            .into()
                     }
                     _ => {
                         let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                         let rgb = bytes_to_rgb(&pixels_u8);
-                        PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
+                        PixelBuffer::from_pixels(rgb, w, h)
+                            .map_err(|_| Error::internal("pixel count mismatch"))?
+                            .with_descriptor(PixelDescriptor::RGB8_SRGB)
+                            .into()
                     }
                 }
             };
 
-            Ok(DecodeOutput::new(pixel_data, info))
+            Ok(DecodeOutput::new(buf, info))
         }
 
         #[cfg(not(feature = "decoder"))]
