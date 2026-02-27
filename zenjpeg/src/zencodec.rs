@@ -609,6 +609,8 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBF32_LINEAR,
+    PixelDescriptor::GRAYF32_LINEAR,
 ];
 
 impl zencodec_types::DecoderConfig for JpegDecoderConfig {
@@ -946,14 +948,25 @@ impl<'a> JpegDecoder<'a> {
 impl zencodec_types::Decode for JpegDecoder<'_> {
     type Error = Error;
 
-    fn decode(self, data: &[u8], _preferred: &[PixelDescriptor]) -> Result<DecodeOutput, Error> {
+    fn decode(self, data: &[u8], preferred: &[PixelDescriptor]) -> Result<DecodeOutput, Error> {
         #[cfg(feature = "decoder")]
         {
+            use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
             use imgref::ImgVec;
+            use zencodec_types::ChannelType;
+
+            // Check if caller wants f32 output
+            let wants_f32 = preferred
+                .iter()
+                .any(|d| d.channel_type == ChannelType::F32);
 
             let mut cfg = self.build_config();
             cfg = cfg.preserve_all();
+
+            if wants_f32 {
+                cfg = cfg.output_target(OutputTarget::LinearF32);
+            }
 
             let stop = self.stop.unwrap_or(&enough::Unstoppable);
             let result = cfg.decode(data, stop)?;
@@ -981,22 +994,46 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                 }
             }
 
-            let pixel_data = match format {
-                PixelFormat::Gray => {
-                    let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                    let gray: Vec<Gray<u8>> = pixels_u8.iter().map(|&v| Gray::new(v)).collect();
-                    PixelData::Gray8(ImgVec::new(gray, w as usize, h as usize))
+            let pixel_data = if wants_f32 {
+                // f32 linear output path
+                let pixels_f32 = result.into_pixels_f32().unwrap_or_default();
+                match format {
+                    PixelFormat::Gray => {
+                        let gray: Vec<Gray<f32>> =
+                            pixels_f32.iter().map(|&v| Gray::new(v)).collect();
+                        PixelData::GrayF32(ImgVec::new(gray, w as usize, h as usize))
+                    }
+                    _ => {
+                        let rgb: Vec<Rgb<f32>> = pixels_f32
+                            .chunks_exact(3)
+                            .map(|c| Rgb {
+                                r: c[0],
+                                g: c[1],
+                                b: c[2],
+                            })
+                            .collect();
+                        PixelData::RgbF32(ImgVec::new(rgb, w as usize, h as usize))
+                    }
                 }
-                PixelFormat::Rgb => {
-                    let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                    let rgb = bytes_to_rgb(&pixels_u8);
-                    PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
-                }
-                _ => {
-                    // For other formats, best effort — treat as RGB bytes
-                    let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                    let rgb = bytes_to_rgb(&pixels_u8);
-                    PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
+            } else {
+                // u8 sRGB output path (default — JPEG is 8-bit, so lossless)
+                match format {
+                    PixelFormat::Gray => {
+                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
+                        let gray: Vec<Gray<u8>> =
+                            pixels_u8.iter().map(|&v| Gray::new(v)).collect();
+                        PixelData::Gray8(ImgVec::new(gray, w as usize, h as usize))
+                    }
+                    PixelFormat::Rgb => {
+                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
+                        let rgb = bytes_to_rgb(&pixels_u8);
+                        PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
+                    }
+                    _ => {
+                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
+                        let rgb = bytes_to_rgb(&pixels_u8);
+                        PixelData::Rgb8(ImgVec::new(rgb, w as usize, h as usize))
+                    }
                 }
             };
 
@@ -1005,7 +1042,7 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
 
         #[cfg(not(feature = "decoder"))]
         {
-            let _ = (data, _preferred);
+            let _ = (data, preferred);
             Err(Error::unsupported_feature("decoder feature required"))
         }
     }
