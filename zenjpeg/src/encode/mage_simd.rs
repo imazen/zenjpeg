@@ -791,16 +791,10 @@ pub fn mage_forward_dct_8x8_wide_dual(
 // RGB to YCbCr Color Conversion
 // ============================================================================
 
-// BT.601 conversion constants
-const YCBCR_R_TO_Y: f32 = 0.299;
-const YCBCR_G_TO_Y: f32 = 0.587;
-const YCBCR_B_TO_Y: f32 = 0.114;
-const YCBCR_R_TO_CB: f32 = -0.168736;
-const YCBCR_G_TO_CB: f32 = -0.331264;
-const YCBCR_B_TO_CB: f32 = 0.5;
-const YCBCR_R_TO_CR: f32 = 0.5;
-const YCBCR_G_TO_CR: f32 = -0.418688;
-const YCBCR_B_TO_CR: f32 = -0.081312;
+use crate::foundation::consts::{
+    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
+    YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
+};
 
 /// Convert 8 RGB pixels to YCbCr using AVX2+FMA.
 ///

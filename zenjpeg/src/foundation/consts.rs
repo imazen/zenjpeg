@@ -389,34 +389,7 @@ pub mod dct {
 }
 
 // =============================================================================
-// Color Space Constants
-// =============================================================================
-
-/// BT.601 color space conversion constants (full range).
-pub mod bt601 {
-    /// RGB to YCbCr conversion matrix (row-major).
-    /// Y  =  0.299 * R + 0.587 * G + 0.114 * B
-    /// Cb = -0.169 * R - 0.331 * G + 0.500 * B + 128
-    /// Cr =  0.500 * R - 0.419 * G - 0.081 * B + 128
-    pub const RGB_TO_YCBCR: [[f32; 3]; 3] = [
-        [0.299, 0.587, 0.114],
-        [-0.168_736, -0.331_264, 0.5],
-        [0.5, -0.418_688, -0.081_312],
-    ];
-
-    /// YCbCr to RGB conversion matrix (row-major).
-    /// R = Y + 1.402 * (Cr - 128)
-    /// G = Y - 0.344 * (Cb - 128) - 0.714 * (Cr - 128)
-    /// B = Y + 1.772 * (Cb - 128)
-    pub const YCBCR_TO_RGB: [[f32; 3]; 3] = [
-        [1.0, 0.0, 1.402],
-        [1.0, -0.344_136, -0.714_136],
-        [1.0, 1.772, 0.0],
-    ];
-}
-
-// =============================================================================
-// YCbCr Color Conversion (individual constants for direct use)
+// YCbCr Color Conversion — BT.601 (the only standard used in JPEG)
 // =============================================================================
 
 // RGB to YCbCr conversion factors (BT.601)
