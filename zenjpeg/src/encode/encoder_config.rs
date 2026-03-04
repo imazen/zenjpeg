@@ -123,6 +123,9 @@ impl EncoderConfig {
             color_mode: ColorMode::Xyb {
                 subsampling: b_subsampling,
             },
+            // XYB requires extended sequential (SOF1) — DC categories can exceed
+            // the baseline limit of 11 due to XYB's wider dynamic range.
+            allow_16bit_quant_tables: true,
             ..Self::default_internal()
         }
     }
@@ -406,9 +409,9 @@ impl EncoderConfig {
             aq_enabled: preset.uses_aq(),
             #[cfg(feature = "trellis")]
             trellis,
-            // All presets force baseline quant tables (matching both cjpegli CLI
-            // and C mozjpeg behavior). 16-bit tables provide no quality benefit.
-            allow_16bit_quant_tables: false,
+            // Presets force baseline quant tables (matching cjpegli CLI and C
+            // mozjpeg behavior), unless XYB requires extended sequential.
+            allow_16bit_quant_tables: matches!(self.color_mode, ColorMode::Xyb { .. }),
             ..self
         }
     }
@@ -466,10 +469,22 @@ impl EncoderConfig {
     ///
     /// Most modern decoders support 16-bit quant tables. Only disable this
     /// for maximum compatibility with legacy software.
-    #[must_use]
-    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `enable` is `false` and the color mode is XYB.
+    /// XYB requires extended sequential (SOF1) because its wider dynamic range
+    /// produces DC categories that exceed the baseline limit of 11.
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Result<Self> {
+        if !enable && matches!(self.color_mode, ColorMode::Xyb { .. }) {
+            return Err(crate::error::Error::invalid_config(
+                "XYB color mode requires extended sequential (SOF1); \
+                 cannot disable 16-bit quant tables"
+                    .into(),
+            ));
+        }
         self.allow_16bit_quant_tables = enable;
-        self
+        Ok(self)
     }
 
     /// Use separate quantization tables for Cb and Cr components.
@@ -529,14 +544,18 @@ impl EncoderConfig {
     ///
     /// This is a convenience method equivalent to:
     /// ```ignore
-    /// config.progressive(false).allow_16bit_quant_tables(false)
+    /// config.progressive(false).allow_16bit_quant_tables(false)?
     /// ```
     ///
     /// Baseline JPEGs (SOF0) are the most compatible format, supported by
     /// all JPEG decoders. Use this when targeting legacy software or when
     /// maximum compatibility is required.
-    #[must_use]
-    pub fn force_baseline(self) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for XYB color mode, which requires extended sequential
+    /// (SOF1) due to DC categories that can exceed the baseline limit of 11.
+    pub fn force_baseline(self) -> Result<Self> {
         self.progressive(false).allow_16bit_quant_tables(false)
     }
 

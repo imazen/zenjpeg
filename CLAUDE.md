@@ -1117,6 +1117,11 @@ The `force_baseline` parameter:
 **zenjpeg behavior:**
 - `allow_16bit_quant_tables = true` (default): Matches `force_baseline = FALSE`
 - `allow_16bit_quant_tables = false`: Matches `force_baseline = TRUE` (cjpegli CLI)
+- **XYB always uses extended sequential (SOF1)**: `EncoderConfig::xyb()` sets
+  `allow_16bit_quant_tables = true`. Calling `allow_16bit_quant_tables(false)` or
+  `force_baseline()` on an XYB config returns `Err`. XYB's wider dynamic range
+  (scaling factors up to 23x) produces DC categories 12-15 that exceed baseline's
+  limit of 11.
 - Precision is auto-selected per-table: 8-bit if max ≤ 255, 16-bit if max > 255
 - We DO automatically use 8-bit when no coefficient exceeds 255
 
