@@ -870,20 +870,22 @@ sensitivity tables, and preset baselines.
      the trellis to make catastrophic coefficient choices for chroma blocks.
    - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
 
-7. **XYB 4:2:0 decoder failures on own encoder output (2026-02-26)** - zenjpeg's decoder
-   fails on certain JPEGs produced by its own XYB 4:2:0 encoder (`zenjpeg-420-xyb-e2`).
-   Two error types:
-   - "invalid Huffman table 0: invalid code" — 512×512 at specific quality levels (q15, q50)
-   - "invalid JPEG data: expected 0xFF for restart marker" — 1024×1024 at q15, q20, q60
-   - Affects ~0.7% of source images (5/785 in synthetic training corpus, 10/149600 pairs)
-   - Only XYB colorspace encoding is affected; standard YCbCr 4:2:0 works fine
-   - Standard YCbCr 4:2:0 mode works fine for the same source images
-   - Reproduction: `cargo test --release -p zenjpeg --test decode_xyb_failures -- --ignored`
-   - Test fixtures: `zenjpeg/tests/testdata/decode_failures/` (5 JPEGs, 3-63KB)
-   - Source images from `/mnt/v/datasets/scraping/jpeg/` web corpus
-   - Impact: Contaminates synthetic training data (skipped during generation)
-
 ### Fixed Bugs (historical reference)
+
+- **XYB 4:2:0 encoder producing undecodable JPEGs (FIXED 2026-03-04, commit b0cafce)** -
+  Frequency counter clamped DC categories to 11 (`.min(11)`) but encoder wrote unclamped
+  categories. XYB produces DC differences > ±2047 at low quality (categories 12+). Huffman
+  table lacked codes for those categories, writing (code=0, len=0) → corrupted bitstream.
+  Fix: remove `.min(11)` from `collect_block_frequencies_simd`. Previously-encoded files
+  in `testdata/decode_failures/` remain permanently corrupted (kept as ignored tests).
+  - Test: `cargo test --release -p zenjpeg --test xyb_roundtrip --features decoder`
+
+- **CMYK scanline transform panic (FIXED 2026-03-04, commit bde9f48)** -
+  `scanline_reader_with_transform()` had no CMYK check. Non-dimension-swapping transforms
+  (e.g., FlipHorizontal) fell through to `from_coefficients()` → `StripProcessor` with
+  `[u8; 3]` arrays → index-out-of-bounds at `h_samp[3]`. Fix: route CMYK to buffered
+  decode fallback, matching `scanline_reader()`.
+  - Test: `cargo test --release -p zenjpeg --test cmyk_transform --features decoder`
 
 - **False XYB ICC detection for cjpegli JPEGs (FIXED 2026-02-14, commit 744d38a)** -
   `is_xyb_profile()` checked for "jxl " CMM type (bytes 4-7) in ICC profiles, but cjpegli
