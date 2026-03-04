@@ -964,9 +964,13 @@ impl DecodeConfig {
 
         parser.apply_dct_transform(transform);
 
-        if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() {
-            // Crop needed or dimension-swapping transform (which uses f32 IDCT):
-            // fall back to full buffered decode + crop.
+        // CMYK (4-component) coefficient path not supported by StripProcessor
+        // (h_samp/v_samp are [u8; 3]), so always use buffered decode for CMYK.
+        let is_cmyk = parser.num_components == 4;
+
+        if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() || is_cmyk {
+            // Crop needed, dimension-swapping transform (which uses f32 IDCT),
+            // or CMYK (4-component): fall back to full buffered decode + crop.
             // This ensures the scanline path matches the buffered decode() path exactly.
             // Use a config without crop_region for decode — we apply crop on the reader.
             let mut config_no_crop = self.clone();
