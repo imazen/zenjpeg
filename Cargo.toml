@@ -96,8 +96,8 @@ kamadak-exif = "0.6"
 img-parts = "0.4"
 
 # Our ultrahdr crates
-ultrahdr-rs = { path = "/home/lilith/work/ultrahdr/ultrahdr" }
-ultrahdr-core = { path = "/home/lilith/work/ultrahdr/ultrahdr-core", version = "0.2.0" }
+ultrahdr-rs = { path = "../ultrahdr/ultrahdr" }
+ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.2.0" }
 
 # Layout + resize pipeline
 zenlayout = { path = "../zenlayout" }

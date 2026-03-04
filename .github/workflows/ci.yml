@@ -38,14 +38,23 @@ jobs:
       - name: Patch path deps to git refs
         shell: bash
         run: |
+          # Patch workspace root Cargo.toml
           sed \
             -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
             -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
             -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
             -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
-            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Test (zenjpeg)
         run: cargo test -p zenjpeg --release
@@ -69,14 +78,23 @@ jobs:
       - name: Patch path deps to git refs
         shell: bash
         run: |
+          # Patch workspace root Cargo.toml
           sed \
             -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
             -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
             -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
             -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
-            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Test (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu
@@ -96,14 +114,23 @@ jobs:
       - name: Patch path deps to git refs
         shell: bash
         run: |
+          # Patch workspace root Cargo.toml
           sed \
             -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
             -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
             -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
             -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
-            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Clippy
         run: cargo clippy -p zenjpeg -p zjpeg --all-targets -- -D warnings
@@ -134,14 +161,23 @@ jobs:
       - name: Patch path deps to git refs
         shell: bash
         run: |
+          # Patch workspace root Cargo.toml
           sed \
             -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
             -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
             -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
             -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
-            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Check MSRV
         run: cargo hack check -p zenjpeg --rust-version
@@ -160,14 +196,23 @@ jobs:
       - name: Patch path deps to git refs
         shell: bash
         run: |
+          # Patch workspace root Cargo.toml
           sed \
             -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
             -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
             -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
             -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
-            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Generate coverage
         run: cargo llvm-cov -p zenjpeg --lcov --output-path lcov.info
