@@ -45,6 +45,7 @@ multiversion = { workspace = true }
 multiversed = { workspace = true }
 enough = { workspace = true }
 zencodec-types = { workspace = true }
+zenpixels = { workspace = true }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
 whereat = { workspace = true }  # Error tracing with location tracking
