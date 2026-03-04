@@ -25,8 +25,9 @@ use alloc::vec::Vec;
 use rgb::{Gray, Rgb, Rgba};
 use zencodec_types::{
     DecodeFrame, DecodeOutput, EncodeOutput, ImageFormat, ImageInfo, MetadataView, OutputInfo,
-    PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut, ResourceLimits, Stop,
+    ResourceLimits, Stop,
 };
+use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
@@ -373,8 +374,8 @@ impl<'a> JpegEncoder<'a> {
 
 /// Map a PixelDescriptor to a zenjpeg PixelLayout.
 fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
-    use zencodec_types::{ChannelLayout, ChannelType, TransferFunction};
-    match (desc.channel_type, desc.layout, desc.transfer) {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    match (desc.channel_type(), desc.layout(), desc.transfer()) {
         (ChannelType::U8, ChannelLayout::Rgb, TransferFunction::Srgb) => Ok(PixelLayout::Rgb8Srgb),
         (ChannelType::U8, ChannelLayout::Rgba, TransferFunction::Srgb) => {
             Ok(PixelLayout::Rgba8Srgb)
@@ -581,7 +582,7 @@ impl JpegDecoderConfig {
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
         use zencodec_types::{Decode as _, DecodeJob as _, DecoderConfig as _};
-        self.job().decoder()?.decode(data, &[])
+        self.job().decoder(data, &[])?.decode()
     }
 
     /// Convenience: decode into a pre-allocated RGB8 buffer.
@@ -592,8 +593,8 @@ impl JpegDecoderConfig {
     ) -> Result<ImageInfo, Error> {
         use zencodec_types::{DecodeJob as _, DecoderConfig as _};
         self.job()
-            .decoder()?
-            .decode_into(data, PixelSliceMut::from(dst))
+            .decoder(data, &[])?
+            .decode_into(PixelSliceMut::from(dst))
     }
 }
 
@@ -653,6 +654,7 @@ pub struct JpegDecodeJob<'a> {
 impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
     type Dec = JpegDecoder<'a>;
+    type StreamDec = JpegNoStreaming;
     type FrameDec = JpegFrameDecoder;
 
     fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
@@ -732,17 +734,37 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
         }
     }
 
-    fn decoder(self) -> Result<Self::Dec, Self::Error> {
+    fn decoder(
+        self,
+        data: &'a [u8],
+        preferred: &[PixelDescriptor],
+    ) -> Result<Self::Dec, Self::Error> {
         Ok(JpegDecoder {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
             crop_hint: self.crop_hint,
             orientation: self.orientation,
+            data,
+            preferred: preferred.to_vec(),
         })
     }
 
-    fn frame_decoder(self, _data: &'a [u8]) -> Result<Self::FrameDec, Self::Error> {
+    fn streaming_decoder(
+        self,
+        _data: &'a [u8],
+        _preferred: &[PixelDescriptor],
+    ) -> Result<Self::StreamDec, Self::Error> {
+        Err(Error::unsupported_feature(
+            "JPEG does not support streaming decode",
+        ))
+    }
+
+    fn frame_decoder(
+        self,
+        _data: &'a [u8],
+        _preferred: &[PixelDescriptor],
+    ) -> Result<Self::FrameDec, Self::Error> {
         Err(Error::unsupported_feature(
             "JPEG does not support animation decoding",
         ))
@@ -769,6 +791,8 @@ pub struct JpegDecoder<'a> {
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec_types::OrientationHint,
+    data: &'a [u8],
+    preferred: Vec<PixelDescriptor>,
 }
 
 impl<'a> JpegDecoder<'a> {
@@ -796,14 +820,14 @@ impl<'a> JpegDecoder<'a> {
     /// Decode into a pre-allocated buffer.
     pub fn decode_into<P>(
         self,
-        data: &[u8],
         dst: PixelSliceMut<'_, P>,
     ) -> Result<ImageInfo, Error> {
+        let data = self.data;
         let mut dst = dst.erase();
         #[cfg(feature = "decoder")]
         {
             use imgref::ImgRefMut;
-            use zencodec_types::{ChannelLayout, ChannelType};
+            use zenpixels::{ChannelLayout, ChannelType};
 
             let cfg = self.build_config();
             let info_result = self.config.inner.read_info(data)?;
@@ -813,7 +837,7 @@ impl<'a> JpegDecoder<'a> {
             let width = reader.width() as usize;
 
             let desc = dst.descriptor();
-            match (desc.channel_type, desc.layout) {
+            match (desc.channel_type(), desc.layout()) {
                 (ChannelType::U8, ChannelLayout::Rgb) => {
                     for y in 0..dst.rows() {
                         if reader.is_finished() {
@@ -902,9 +926,9 @@ impl<'a> JpegDecoder<'a> {
     /// Decode rows into a sink (streaming decode).
     pub fn decode_rows(
         self,
-        data: &[u8],
         sink: &mut dyn zencodec_types::DecodeRowSink,
     ) -> Result<ImageInfo, Error> {
+        let data = self.data;
         #[cfg(feature = "decoder")]
         {
             use imgref::ImgRefMut;
@@ -915,16 +939,18 @@ impl<'a> JpegDecoder<'a> {
 
             let mut reader = cfg.scanline_reader(data)?;
             let width = reader.width() as usize;
-            let channels = if info_result.num_components == 1 {
-                1
+            let descriptor = if info_result.num_components == 1 {
+                PixelDescriptor::GRAY8_SRGB
             } else {
-                3
+                PixelDescriptor::RGB8_SRGB
             };
+            let channels = descriptor.bytes_per_pixel();
             let row_bytes = width * channels;
             let mut y: u32 = 0;
 
             while !reader.is_finished() {
-                let (buf, _stride) = sink.demand(y, 1, width as u32, channels);
+                let mut ps = sink.demand(y, 1, width as u32, descriptor);
+                let buf = ps.row_mut(0);
                 let out = ImgRefMut::new(&mut buf[..row_bytes], row_bytes, 1);
                 let count = match channels {
                     1 => reader.read_rows_gray8(out)?,
@@ -948,17 +974,20 @@ impl<'a> JpegDecoder<'a> {
 impl zencodec_types::Decode for JpegDecoder<'_> {
     type Error = Error;
 
-    fn decode(self, data: &[u8], preferred: &[PixelDescriptor]) -> Result<DecodeOutput, Error> {
+    fn decode(self) -> Result<DecodeOutput, Error> {
         #[cfg(feature = "decoder")]
         {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
-            use zencodec_types::ChannelType;
+            use zenpixels::ChannelType;
+
+            let data = self.data;
+            let preferred = &self.preferred;
 
             // Check if caller wants f32 output
             let wants_f32 = preferred
                 .iter()
-                .any(|d| d.channel_type == ChannelType::F32);
+                .any(|d| d.channel_type() == ChannelType::F32);
 
             let mut cfg = self.build_config();
             cfg = cfg.preserve_all();
@@ -1025,8 +1054,7 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                 match format {
                     PixelFormat::Gray => {
                         let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                        let gray: Vec<Gray<u8>> =
-                            pixels_u8.iter().map(|&v| Gray::new(v)).collect();
+                        let gray: Vec<Gray<u8>> = pixels_u8.iter().map(|&v| Gray::new(v)).collect();
                         PixelBuffer::from_pixels(gray, w, h)
                             .map_err(|_| Error::internal("pixel count mismatch"))?
                             .with_descriptor(PixelDescriptor::GRAY8_SRGB)
@@ -1056,9 +1084,25 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
 
         #[cfg(not(feature = "decoder"))]
         {
-            let _ = (data, preferred);
             Err(Error::unsupported_feature("decoder feature required"))
         }
+    }
+}
+
+// ── StreamingDecode (unsupported for JPEG) ──────────────────────────────────
+
+/// JPEG streaming decoder stub — JPEG does not support streaming decode.
+pub struct JpegNoStreaming;
+
+impl zencodec_types::StreamingDecode for JpegNoStreaming {
+    type Error = Error;
+
+    fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Self::Error> {
+        unreachable!("JPEG does not support streaming decode")
+    }
+
+    fn info(&self) -> &ImageInfo {
+        unreachable!("JPEG does not support streaming decode")
     }
 }
 
@@ -1070,7 +1114,7 @@ pub struct JpegFrameDecoder;
 impl zencodec_types::FrameDecode for JpegFrameDecoder {
     type Error = Error;
 
-    fn next_frame(&mut self, _preferred: &[PixelDescriptor]) -> Result<Option<DecodeFrame>, Error> {
+    fn next_frame(&mut self) -> Result<Option<DecodeFrame>, Error> {
         Err(Error::unsupported_feature(
             "JPEG does not support animation",
         ))
@@ -1290,14 +1334,17 @@ mod tests {
             fn demand(
                 &mut self,
                 _y: u32,
-                _height: u32,
+                height: u32,
                 width: u32,
-                bpp: usize,
-            ) -> (&mut [u8], usize) {
+                descriptor: PixelDescriptor,
+            ) -> PixelSliceMut<'_> {
                 self.row_count += 1;
+                let bpp = descriptor.bytes_per_pixel();
                 let stride = width as usize * bpp;
-                self.buf.resize(stride, 0);
-                (&mut self.buf, stride)
+                let needed = height as usize * stride;
+                self.buf.resize(needed, 0);
+                PixelSliceMut::new(&mut self.buf, width, height, stride, descriptor)
+                    .expect("buffer sized correctly")
             }
         }
 
@@ -1320,9 +1367,9 @@ mod tests {
         };
         let info = dec
             .job()
-            .decoder()
+            .decoder(encoded.bytes(), &[])
             .unwrap()
-            .decode_rows(encoded.bytes(), &mut sink)
+            .decode_rows(&mut sink)
             .unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
