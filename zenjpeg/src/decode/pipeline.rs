@@ -188,7 +188,11 @@ impl StripProcessor {
         // For all-same-sampling (e.g. all components 1×2), chroma is full resolution.
         let chroma_h = if is_grayscale { 0 } else { h_samp[1] as usize };
         let chroma_v = if is_grayscale { 0 } else { v_samp[1] as usize };
-        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * chroma_h * 8 };
+        let chroma_strip_width = if is_grayscale {
+            0
+        } else {
+            mcu_cols * chroma_h * 8
+        };
         let chroma_strip_stride = if is_grayscale {
             0
         } else {
@@ -317,12 +321,18 @@ impl StripProcessor {
             1 => {
                 let x_offset = mcu_x * self.h_samp[1] as usize * 8 + h * 8;
                 let y_offset = v * 8 * self.chroma_strip_stride;
-                (&mut self.cb_strip[y_offset + x_offset..], self.chroma_strip_stride)
+                (
+                    &mut self.cb_strip[y_offset + x_offset..],
+                    self.chroma_strip_stride,
+                )
             }
             _ => {
                 let x_offset = mcu_x * self.h_samp[2] as usize * 8 + h * 8;
                 let y_offset = v * 8 * self.chroma_strip_stride;
-                (&mut self.cr_strip[y_offset + x_offset..], self.chroma_strip_stride)
+                (
+                    &mut self.cr_strip[y_offset + x_offset..],
+                    self.chroma_strip_stride,
+                )
             }
         };
 

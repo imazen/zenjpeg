@@ -207,8 +207,7 @@ impl<'a> JpegParser<'a> {
         // the sequential coefficient path handles them correctly.
         let is_nonstandard_444 = !is_subsampled
             && num_comps == 3
-            && (self.components[0].h_samp_factor != 1
-                || self.components[0].v_samp_factor != 1);
+            && (self.components[0].h_samp_factor != 1 || self.components[0].v_samp_factor != 1);
         if is_nonstandard_444 {
             return Ok(false);
         }

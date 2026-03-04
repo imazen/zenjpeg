@@ -9,7 +9,9 @@ fn make_test_coeffs(seed: u64, magnitude: i32) -> [i32; 64] {
     let mut coeffs = [0i32; 64];
     let mut state = seed;
     for c in coeffs.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *c = ((state >> 33) as i32 % (magnitude * 2 + 1)) - magnitude;
     }
     coeffs
@@ -52,8 +54,11 @@ fn compare_idct_algorithms() {
     // Also check: what is the actual dequantized coefficient range for these files?
     println!("\n=== Note ===");
     println!("JPEG standard requires IDCT conformance for coefficients in [-2048, 2047].");
-    println!("The zune IDCT uses 12-bit fixed-point (4096 scale), which overflows for larger values.");
+    println!(
+        "The zune IDCT uses 12-bit fixed-point (4096 scale), which overflows for larger values."
+    );
     println!("libjpeg-turbo uses 13-bit fixed-point (8192 scale), which handles wider range.");
-    println!("Wide-gamut images with high chroma saturation can produce larger dequantized values.");
+    println!(
+        "Wide-gamut images with high chroma saturation can produce larger dequantized values."
+    );
 }
-

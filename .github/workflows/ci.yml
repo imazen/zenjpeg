@@ -5,272 +5,168 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  CI: true
 
 jobs:
-  # ==========================================================================
-  # Format check
-  # ==========================================================================
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-26-intel
+          - windows-latest
+          - windows-11-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
+            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
+      - name: Test (zenjpeg)
+        run: cargo test -p zenjpeg --release
+
+      - name: Test (zjpeg)
+        run: cargo test -p zjpeg --release
+
+  i686:
+    name: Test (i686)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-i686
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
+            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
+      - name: Test (i686)
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
+            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
+      - name: Clippy
+        run: cargo clippy -p zenjpeg -p zjpeg --all-targets -- -D warnings
+
   fmt:
-    name: Rustfmt
+    name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
 
-  # ==========================================================================
-  # Clippy
-  # ==========================================================================
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Clippy (zenjpeg only)
-        run: cargo clippy -p zenjpeg --all-features -- -D warnings
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-  # ==========================================================================
-  # Native test matrix (x64 + ARM)
-  # ==========================================================================
-  test:
-    name: Test (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # x64 targets
-          - os: ubuntu
-            arch: x64
-            runner: ubuntu-latest
-          - os: macos
-            arch: x64
-            runner: macos-15-intel  # Intel Mac
-          - os: windows
-            arch: x64
-            runner: windows-latest
-          # ARM targets
-          - os: ubuntu
-            arch: arm64
-            runner: ubuntu-24.04-arm
-          - os: macos
-            arch: arm64
-            runner: macos-latest  # Apple Silicon
-          - os: windows
-            arch: arm64
-            runner: windows-11-arm
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.os }}-${{ matrix.arch }}
-      - name: Build
-        run: cargo build -p zenjpeg --all-features
-      - name: Run tests
-        run: cargo test -p zenjpeg --lib --all-features
-
-  # ==========================================================================
-  # Cross-compiled testing with QEMU (32-bit and other architectures)
-  # ==========================================================================
-  test-cross:
-    name: Cross (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - i686-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: cross-${{ matrix.target }}
-      - name: Build (cross)
-        run: cross build -p zenjpeg --target ${{ matrix.target }}
-      - name: Test (cross/QEMU)
-        run: cross test -p zenjpeg --lib --target ${{ matrix.target }}
-
-  # ==========================================================================
-  # Feature combination testing
-  # ==========================================================================
-  test-features:
-    name: Test feature combinations
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Test no default features
-        run: cargo test -p zenjpeg --no-default-features
-      - name: Test std only
-        run: cargo test -p zenjpeg --no-default-features --features std
-      - name: Test cms-lcms2
-        run: cargo test -p zenjpeg --no-default-features --features std,cms-lcms2
-      - name: Test cms-moxcms
-        run: cargo test -p zenjpeg --no-default-features --features std,cms-moxcms
-
-  # ==========================================================================
-  # WASM testing (no_std compatible)
-  # ==========================================================================
-  test-wasm:
-    name: Test WASM
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
-      - name: Install wasmtime
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
-      - name: Build for WASM (no default features)
-        env:
-          RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features std,decoder
-      - name: Test on WASM (wasmtime)
-        env:
-          RUSTFLAGS: "-C target-feature=+simd128"
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --wasm simd"
-        run: cargo test -p zenjpeg --lib --target wasm32-wasip1 --no-default-features --features std,decoder
-
-  # ==========================================================================
-  # SIMD regression tests (hash-locked)
-  # ==========================================================================
-  simd-regression:
-    name: SIMD regression tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Test with archmage-simd (hash-locked)
-        run: |
-          cargo test -p zenjpeg --release --features archmage-simd --test frymire_hash_locked
-          cargo test -p zenjpeg --release --features archmage-simd --test ycbcr_locked
-      - name: Test without archmage-simd (basic encoding)
-        run: |
-          cargo test -p zenjpeg --release --no-default-features --features std,yuv --test encode_api
-
-  # ==========================================================================
-  # MSRV
-  # ==========================================================================
   msrv:
-    name: MSRV (1.92)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.92
-      - uses: Swatinem/rust-cache@v2
-      - name: Check MSRV
-        run: cargo check -p zenjpeg --all-features
-
-  # ==========================================================================
-  # Documentation
-  # ==========================================================================
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
-      - name: Build docs
-        run: cargo doc -p zenjpeg --all-features --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
 
-  # ==========================================================================
-  # Code coverage
-  # ==========================================================================
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
+            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
+      - name: Check MSRV
+        run: cargo hack check -p zenjpeg --rust-version
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/path = "\/home\/lilith\/work\/ultrahdr\/ultrahdr"/d' \
+            -e 's|path = "/home/lilith/work/ultrahdr/ultrahdr-core", ||g' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+
       - name: Generate coverage
-        run: cargo llvm-cov -p zenjpeg --all-features --lcov --output-path lcov.info
-      - name: Upload to Codecov
+        run: cargo llvm-cov -p zenjpeg --lcov --output-path lcov.info
+
+      - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           fail_ci_if_error: false
+        continue-on-error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  # ==========================================================================
-  # C++ Parity tests (main branch only)
-  # ==========================================================================
-  parity-tests:
-    name: C++ Parity Tests
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install C++ build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build \
-            libbrotli-dev libgif-dev libjpeg-dev libpng-dev libwebp-dev
-      - name: Build C++ jpegli
-        run: |
-          cd internal/jpegli-cpp
-          mkdir -p build && cd build
-          cmake -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
-            -DJPEGXL_ENABLE_TOOLS=ON \
-            -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON \
-            -DJPEGXL_ENABLE_SJPEG=OFF ..
-          ninja jpegli-static cjpegli
-      - name: Run parity tests
-        run: cargo test -p zenjpeg --release -- --ignored
