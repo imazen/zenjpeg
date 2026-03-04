@@ -73,7 +73,8 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     // Disable 16-bit quant tables (C++ cjpegli uses 8-bit by default)
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None)
         .deringing(false)
-        .allow_16bit_quant_tables(false);
+        .allow_16bit_quant_tables(false)
+        .expect("ycbcr supports baseline");
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");

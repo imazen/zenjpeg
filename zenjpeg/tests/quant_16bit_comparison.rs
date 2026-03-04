@@ -211,7 +211,9 @@ fn encode_test_image(pixels: &[u8], width: u32, height: u32, quality: f32) -> Ve
 /// Helper to encode with 16-bit tables enabled
 fn encode_test_image_16bit(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config =
-        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).allow_16bit_quant_tables(true);
+        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
+            .allow_16bit_quant_tables(true)
+            .expect("enabling 16-bit always succeeds");
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
