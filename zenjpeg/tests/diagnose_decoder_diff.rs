@@ -19,23 +19,18 @@ fn test_dequant_equivalence() {
     // DC coefficient
     zigzag_coeffs[0] = -50;
     // Some AC coefficients at various zigzag positions
-    zigzag_coeffs[1] = 30;  // zigzag pos 1
+    zigzag_coeffs[1] = 30; // zigzag pos 1
     zigzag_coeffs[2] = -20; // zigzag pos 2
-    zigzag_coeffs[3] = 15;  // zigzag pos 3
+    zigzag_coeffs[3] = 15; // zigzag pos 3
     zigzag_coeffs[10] = -8; // zigzag pos 10
-    zigzag_coeffs[20] = 5;  // zigzag pos 20
+    zigzag_coeffs[20] = 5; // zigzag pos 20
     zigzag_coeffs[30] = -3; // zigzag pos 30
 
     // Create a quant table in natural order (typical values)
     let quant_natural: [u16; 64] = [
-        16, 11, 10, 16, 24, 40, 51, 61,
-        12, 12, 14, 19, 26, 58, 60, 55,
-        14, 13, 16, 24, 40, 57, 69, 56,
-        14, 17, 22, 29, 51, 87, 80, 62,
-        18, 22, 37, 56, 68, 109, 103, 77,
-        24, 35, 55, 64, 81, 104, 113, 92,
-        49, 64, 78, 87, 103, 121, 120, 101,
-        72, 92, 95, 98, 112, 100, 103, 99,
+        16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69,
+        56, 14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81,
+        104, 113, 92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
     ];
     let coeff_count = 31u8;
 
@@ -62,8 +57,10 @@ fn test_dequant_equivalence() {
     for i in 0..64 {
         let diff = (dequant_f32_path[i] - dequant_streaming[i]).abs();
         if diff > 0 {
-            println!("  pos {i}: f32_path={}, streaming={}, diff={diff}",
-                dequant_f32_path[i], dequant_streaming[i]);
+            println!(
+                "  pos {i}: f32_path={}, streaming={}, diff={diff}",
+                dequant_f32_path[i], dequant_streaming[i]
+            );
             diff_count += 1;
         }
         max_diff = max_diff.max(diff);
@@ -101,8 +98,10 @@ fn test_dequant_equivalence() {
     for i in 0..64 {
         let diff = (dequant_f32_full[i] - dequant_stream_full[i]).abs();
         if diff > 0 {
-            println!("  FULL pos {i}: f32_path={}, streaming={}, diff={diff}",
-                dequant_f32_full[i], dequant_stream_full[i]);
+            println!(
+                "  FULL pos {i}: f32_path={}, streaming={}, diff={diff}",
+                dequant_f32_full[i], dequant_stream_full[i]
+            );
         }
         max_diff_full = max_diff_full.max(diff);
     }
@@ -124,10 +123,22 @@ fn compare_decode_vs_scanline_rgb() {
     use imgref::ImgRefMut;
 
     let test_files = [
-        ("444", "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444.jpg"),
-        ("420", "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_420.jpg"),
-        ("422", "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_422.jpg"),
-        ("444_1x2", "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444_1x2.jpg"),
+        (
+            "444",
+            "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444.jpg",
+        ),
+        (
+            "420",
+            "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_420.jpg",
+        ),
+        (
+            "422",
+            "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_422.jpg",
+        ),
+        (
+            "444_1x2",
+            "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444_1x2.jpg",
+        ),
     ];
 
     for (label, rel_path) in &test_files {
@@ -165,7 +176,9 @@ fn compare_decode_vs_scanline_rgb() {
             let buf = &mut rgb2[rows_read * row_bytes..(rows_read + batch) * row_bytes];
             let img = ImgRefMut::new(buf, row_bytes, batch);
             let got = reader.read_rows_rgb8(img).unwrap();
-            if got == 0 { break; }
+            if got == 0 {
+                break;
+            }
             rows_read += got;
         }
 
@@ -198,8 +211,10 @@ fn compare_decode_vs_scanline_rgb() {
             let mean = sum_diff[ch] as f64 / total;
             if max_diff[ch] > 1 {
                 any_diff = true;
-                println!("  {}: max={} mean={:.4} worst@({},{})",
-                    ch_names[ch], max_diff[ch], mean, worst_pos[ch].0, worst_pos[ch].1);
+                println!(
+                    "  {}: max={} mean={:.4} worst@({},{})",
+                    ch_names[ch], max_diff[ch], mean, worst_pos[ch].0, worst_pos[ch].1
+                );
             }
         }
         if !any_diff {
@@ -213,12 +228,18 @@ fn compare_decode_vs_scanline_rgb() {
                 for px in 0..w {
                     let idx = (py * w + px) * 3;
                     let dr = (rgb1[idx] as i32 - rgb2[idx] as i32).abs();
-                    let dg = (rgb1[idx+1] as i32 - rgb2[idx+1] as i32).abs();
-                    let db = (rgb1[idx+2] as i32 - rgb2[idx+2] as i32).abs();
+                    let dg = (rgb1[idx + 1] as i32 - rgb2[idx + 1] as i32).abs();
+                    let db = (rgb1[idx + 2] as i32 - rgb2[idx + 2] as i32).abs();
                     if dr > 5 || dg > 5 || db > 5 {
-                        println!("  First big diff at ({px},{py}): decode=({},{},{}) scanline=({},{},{})",
-                            rgb1[idx], rgb1[idx+1], rgb1[idx+2],
-                            rgb2[idx], rgb2[idx+1], rgb2[idx+2]);
+                        println!(
+                            "  First big diff at ({px},{py}): decode=({},{},{}) scanline=({},{},{})",
+                            rgb1[idx],
+                            rgb1[idx + 1],
+                            rgb1[idx + 2],
+                            rgb2[idx],
+                            rgb2[idx + 1],
+                            rgb2[idx + 2]
+                        );
                         break 'outer;
                     }
                 }
@@ -293,7 +314,9 @@ fn compare_444_1x2_all_decoders() {
         let buf = &mut scan_rgb[rows_read * row_bytes..(rows_read + batch) * row_bytes];
         let img = ImgRefMut::new(buf, row_bytes, batch);
         let got = reader.read_rows_rgb8(img).unwrap();
-        if got == 0 { break; }
+        if got == 0 {
+            break;
+        }
         rows_read += got;
     }
 
@@ -310,8 +333,10 @@ fn compare_444_1x2_all_decoders() {
                 }
             }
         }
-        println!("{name} vs mozjpeg: R_max={} G_max={} B_max={}",
-            max_diff[0], max_diff[1], max_diff[2]);
+        println!(
+            "{name} vs mozjpeg: R_max={} G_max={} B_max={}",
+            max_diff[0], max_diff[1], max_diff[2]
+        );
     }
 }
 
@@ -387,15 +412,19 @@ fn compare_streaming_vs_coefficient_ycbcr() {
     let mut total_y_rows = 0;
     while total_y_rows < sh {
         let remaining = (sh - total_y_rows + 7) / 8;
-        let (y_rows, _c_rows) = reader.read_rows_ycbcr_native_i16(
-            &mut y_buf[total_y_rows * y_stride..],
-            y_stride,
-            &mut cb_buf[total_y_rows * c_stride..],
-            &mut cr_buf[total_y_rows * c_stride..],
-            c_stride,
-            remaining.min(4),
-        ).unwrap();
-        if y_rows == 0 { break; }
+        let (y_rows, _c_rows) = reader
+            .read_rows_ycbcr_native_i16(
+                &mut y_buf[total_y_rows * y_stride..],
+                y_stride,
+                &mut cb_buf[total_y_rows * c_stride..],
+                &mut cr_buf[total_y_rows * c_stride..],
+                c_stride,
+                remaining.min(4),
+            )
+            .unwrap();
+        if y_rows == 0 {
+            break;
+        }
         total_y_rows += y_rows;
     }
 
@@ -419,7 +448,9 @@ fn compare_streaming_vs_coefficient_ycbcr() {
                 let i16_val = i16_buf[i16_idx] as f32;
                 let d = (f32_val - i16_val).abs();
                 sum_diff += d as f64;
-                if d > 0.5 { diff_count += 1; }
+                if d > 0.5 {
+                    diff_count += 1;
+                }
                 if d > max_diff {
                     max_diff = d;
                     worst_pos = (px, py);
@@ -427,8 +458,12 @@ fn compare_streaming_vs_coefficient_ycbcr() {
             }
         }
 
-        println!("{name}: max_diff={max_diff:.1} mean_diff={:.3} diff_pixels={diff_count} worst@({},{})",
-            sum_diff / total, worst_pos.0, worst_pos.1);
+        println!(
+            "{name}: max_diff={max_diff:.1} mean_diff={:.3} diff_pixels={diff_count} worst@({},{})",
+            sum_diff / total,
+            worst_pos.0,
+            worst_pos.1
+        );
 
         // Dump the worst block if diff > 2
         if max_diff > 2.0 {
@@ -437,11 +472,15 @@ fn compare_streaming_vs_coefficient_ycbcr() {
             println!("  Worst block ({bx},{by}):");
             for row in 0..8 {
                 let py = by * 8 + row;
-                if py >= h { break; }
+                if py >= h {
+                    break;
+                }
                 print!("    ");
                 for col in 0..8 {
                     let px = bx * 8 + col;
-                    if px >= w { break; }
+                    if px >= w {
+                        break;
+                    }
                     let f32_idx = py * w + px;
                     let i16_idx = py * stride + px;
                     let fv = f32_plane[f32_idx];
@@ -565,7 +604,11 @@ fn test_nonstandard_sampling_all_paths() {
         ("440", "flower.png.im_q85_440.jpg", 4),
         ("asymmetric", "flower.png.im_q85_asymmetric.jpg", 4),
         ("luma_subsample", "flower.png.im_q85_luma_subsample.jpg", 4),
-        ("rgb_subsample_blue", "flower.png.im_q85_rgb_subsample_blue.jpg", 4),
+        (
+            "rgb_subsample_blue",
+            "flower.png.im_q85_rgb_subsample_blue.jpg",
+            4,
+        ),
     ];
 
     let mut all_passed = true;
@@ -607,7 +650,10 @@ fn test_nonstandard_sampling_all_paths() {
         }
     }
 
-    assert!(all_passed, "Some non-standard sampling modes exceeded max diff threshold");
+    assert!(
+        all_passed,
+        "Some non-standard sampling modes exceeded max diff threshold"
+    );
 }
 
 /// Test that decode() and scanline_reader produce consistent output for all standard
@@ -686,7 +732,10 @@ fn test_decode_scanline_consistency() {
         }
     }
 
-    assert!(all_passed, "Some modes have inconsistent decode vs scanline output");
+    assert!(
+        all_passed,
+        "Some modes have inconsistent decode vs scanline output"
+    );
 }
 
 /// Regression test: 444_1x2 scanline reader must match mozjpeg within IDCT rounding (max ≤ 3).

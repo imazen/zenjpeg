@@ -48,9 +48,9 @@ fn decode_mozjpeg(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 fn decode_zune(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::options::DecoderOptions;
-    use zune_jpeg::JpegDecoder;
     let mut d = JpegDecoder::new_with_options(ZCursor::new(data), DecoderOptions::new_fast());
     d.decode_headers().ok()?;
     let info = d.info()?;
