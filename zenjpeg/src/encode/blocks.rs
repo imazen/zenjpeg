@@ -505,9 +505,13 @@ fn collect_block_frequencies_simd(
     dc_freq: &mut FrequencyCounter,
     ac_freq: &mut FrequencyCounter,
 ) {
-    // DC coefficient - limit category to 11 for 8-bit JPEG compatibility
+    // DC coefficient - must match the unclamped category used in actual encoding
+    // (entropy/mod.rs:172, entropy/encoder.rs:64,247,382). XYB can produce DC
+    // differences > ±2047 (category 12+) at low quality. If we clamp here but
+    // not during encoding, the Huffman table won't have codes for categories
+    // 12+, causing (code=0, len=0) writes that corrupt the bitstream.
     let dc_diff = coeffs[0] - prev_dc;
-    let dc_category = entropy::category(dc_diff).min(11);
+    let dc_category = entropy::category(dc_diff);
     dc_freq.count(dc_category);
 
     // Build 64-bit mask of non-zero coefficients using SIMD
