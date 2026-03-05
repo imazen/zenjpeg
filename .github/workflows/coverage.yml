@@ -5,7 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Allow manual trigger
   workflow_dispatch:
 
 env:
@@ -31,35 +30,33 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Patch path deps to git refs
+      - name: Clone sibling repos
         shell: bash
         run: |
-          # Patch workspace root Cargo.toml
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zenlayout.git
+          git clone --depth 1 https://github.com/imazen/zenresize.git
+          git clone --depth 1 https://github.com/imazen/ultrahdr.git
+          git clone --depth 1 https://github.com/imazen/linear-srgb.git
+          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+
+      - name: Remove non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
-            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
-            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
-            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
-            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/ultrahdr-rs/d' \
-            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
-          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
-          sed \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/jpegli-internals-sys/d' \
+            -e '/ultrahdr-rs.*workspace/d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
-          # Run lib tests with coverage
           cargo llvm-cov --no-report -p zenjpeg --lib --all-features
-          # Run integration tests (non-ignored only - these don't need C++ build)
           cargo llvm-cov --no-report -p zenjpeg --tests --all-features -- --skip ignored
-          # Generate combined report
           cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
@@ -81,7 +78,6 @@ jobs:
           path: coverage-html/
           retention-days: 30
 
-  # Separate job for encode/decode path coverage summary
   codec-coverage:
     name: Codec Path Coverage
     runs-on: ubuntu-latest
@@ -100,24 +96,25 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Patch path deps to git refs
+      - name: Clone sibling repos
         shell: bash
         run: |
-          # Patch workspace root Cargo.toml
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zenlayout.git
+          git clone --depth 1 https://github.com/imazen/zenresize.git
+          git clone --depth 1 https://github.com/imazen/ultrahdr.git
+          git clone --depth 1 https://github.com/imazen/linear-srgb.git
+          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+
+      - name: Remove non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
-            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
-            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
-            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
-            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            -e '/ultrahdr-rs/d' \
-            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e '/"internal\/jpegli-internals-sys"/d' \
-            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
-          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
-          sed \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/jpegli-internals-sys/d' \
+            -e '/ultrahdr-rs.*workspace/d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
@@ -130,10 +127,4 @@ jobs:
       - name: Check encode/decode coverage
         run: |
           echo "=== Codec Coverage Summary ==="
-          # Extract coverage percentages for encode.rs and decode.rs
-          if command -v jq &> /dev/null; then
-            echo "Coverage JSON generated at codec-coverage.json"
-            # Note: Detailed parsing would require more complex jq queries
-            # For now, we just verify the test runs successfully
-          fi
           echo "Codec coverage tests completed successfully"
