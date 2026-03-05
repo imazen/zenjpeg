@@ -15,7 +15,7 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "aarch64"))]
 
-use archmage::{NeonToken, arcane};
+use archmage::{NeonToken, arcane, rite};
 use core::arch::aarch64::*;
 use safe_unaligned_simd::aarch64 as safe_simd;
 
@@ -44,7 +44,7 @@ const SQRT2: f32 = 1.41421356237;
 /// - Phase 2: Zip the results (creates transposed 4x4)
 ///
 /// This is the building block for 8x8 transposes.
-#[arcane]
+#[rite]
 #[inline]
 fn neon_transpose_4x4_inplace_inner(_token: NeonToken, r: &mut [float32x4_t; 4]) {
     // Phase 1: Interleave pairs
@@ -96,7 +96,7 @@ pub fn neon_transpose_4x4_inplace(token: NeonToken, r: &mut [float32x4_t; 4]) {
 /// - Bottom-right 4x4 block (rows 4-7, cols 4-7)
 ///
 /// Then transpose each 4x4 independently and reassemble.
-#[arcane]
+#[rite]
 #[inline]
 fn neon_transpose_8x8_inplace_inner(token: NeonToken, data: &mut [f32; 64]) {
     // Load 8 rows as 16 float32x4_t registers (2 per row)
@@ -168,7 +168,7 @@ pub fn neon_transpose_8x8(token: NeonToken, data: &mut [f32; 64]) {
 /// 2-point DCT butterfly using NEON FMA.
 ///
 /// Implements: (m0 + m1, m0 - m1)
-#[arcane]
+#[rite]
 #[inline]
 fn neon_dct1d_2_inner(_token: NeonToken, m0: &mut float32x4_t, m1: &mut float32x4_t) {
     let sum = vaddq_f32(*m0, *m1);
@@ -180,7 +180,7 @@ fn neon_dct1d_2_inner(_token: NeonToken, m0: &mut float32x4_t, m1: &mut float32x
 /// 4-point DCT butterfly using NEON FMA.
 ///
 /// Implements the standard 4-point DCT transform with FMA optimizations.
-#[arcane]
+#[rite]
 #[inline]
 fn neon_dct1d_4_inner(token: NeonToken, m: &mut [float32x4_t; 4]) {
     // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
@@ -207,7 +207,7 @@ fn neon_dct1d_4_inner(token: NeonToken, m: &mut [float32x4_t; 4]) {
 /// 8-point DCT butterfly using NEON FMA (processes 4 blocks in parallel).
 ///
 /// This is the core 1D DCT-II transform applied to 4 parallel streams.
-#[arcane]
+#[rite]
 #[inline]
 fn neon_dct1d_8_inner(token: NeonToken, m: &mut [float32x4_t; 8]) {
     // First layer: butterfly on opposite ends

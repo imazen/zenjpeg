@@ -16,7 +16,7 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "wasm32"))]
 
-use archmage::{Wasm128Token, arcane};
+use archmage::{Wasm128Token, arcane, rite};
 use core::arch::wasm32::*;
 use safe_unaligned_simd::wasm32 as safe_simd;
 
@@ -79,7 +79,7 @@ const SQRT2: f32 = 1.41421356237;
 /// so we reinterpret as i32, shuffle, and reinterpret back.
 ///
 /// This is the building block for 8x8 transposes.
-#[arcane]
+#[rite]
 #[inline]
 fn wasm_transpose_4x4_inplace_inner(_token: Wasm128Token, r: &mut [v128; 4]) {
     // Phase 1: Interleave pairs (low and high 64-bit halves)
@@ -113,7 +113,7 @@ pub fn wasm_transpose_4x4_inplace(token: Wasm128Token, r: &mut [v128; 4]) {
 ///
 /// Since WASM SIMD128 is 4-wide, we split the 8x8 into four 4x4 blocks
 /// and transpose each independently.
-#[arcane]
+#[rite]
 #[inline]
 fn wasm_transpose_8x8_inplace_inner(token: Wasm128Token, data: &mut [f32; 64]) {
     // Load 8 rows as 16 v128 registers (2 per row)
@@ -183,7 +183,7 @@ pub fn wasm_transpose_8x8(token: Wasm128Token, data: &mut [f32; 64]) {
 ///
 /// Implements: (m0 + m1, m0 - m1)
 /// Note: WASM doesn't have FMA, so we use separate add/sub operations.
-#[arcane]
+#[rite]
 #[inline]
 fn wasm_dct1d_2_inner(_token: Wasm128Token, m0: &mut v128, m1: &mut v128) {
     let sum = f32x4_add(*m0, *m1);
@@ -196,7 +196,7 @@ fn wasm_dct1d_2_inner(_token: Wasm128Token, m0: &mut v128, m1: &mut v128) {
 ///
 /// Implements the standard 4-point DCT transform.
 /// No FMA available, so uses separate mul/add operations.
-#[arcane]
+#[rite]
 #[inline]
 fn wasm_dct1d_4_inner(token: Wasm128Token, m: &mut [v128; 4]) {
     // First layer: (m0+m3, m1+m2, m1-m2, m0-m3)
@@ -224,7 +224,7 @@ fn wasm_dct1d_4_inner(token: Wasm128Token, m: &mut [v128; 4]) {
 ///
 /// This is the core 1D DCT-II transform applied to 4 parallel streams.
 /// No FMA, so uses separate mul/add operations (2x the ops vs ARM NEON).
-#[arcane]
+#[rite]
 #[inline]
 fn wasm_dct1d_8_inner(token: Wasm128Token, m: &mut [v128; 8]) {
     // First layer: butterfly on opposite ends
