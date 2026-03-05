@@ -4,46 +4,15 @@
 
 #![allow(dead_code)]
 
+use crate::encode::build_nonzero_mask;
 use crate::error::{Error, Result};
 use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanEncodeTable;
 use crate::huffman::optimize::{ScanTokenInfo, Token};
 use multiversed::multiversed;
-use wide::{CmpEq, i16x8};
 
 use super::{additional_bits_with_cat, category};
-
-/// Build a 64-bit mask of non-zero coefficients using SIMD.
-/// Each bit i is set if coeffs[i] != 0.
-#[inline(always)]
-fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
-    let zero = i16x8::ZERO;
-    let mut nonzero_mask: u64 = 0;
-
-    // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
-    for chunk in 0..8 {
-        let start = chunk * 8;
-        let v = i16x8::new([
-            coeffs[start],
-            coeffs[start + 1],
-            coeffs[start + 2],
-            coeffs[start + 3],
-            coeffs[start + 4],
-            coeffs[start + 5],
-            coeffs[start + 6],
-            coeffs[start + 7],
-        ]);
-        // simd_eq returns all 1s (-1) for equal, 0 for not equal
-        let is_zero = v.simd_eq(zero);
-        // to_bitmask extracts the high bit of each lane
-        let zero_bits = is_zero.to_bitmask() as u8;
-        let nonzero_bits = !zero_bits;
-        nonzero_mask |= (nonzero_bits as u64) << start;
-    }
-
-    nonzero_mask
-}
 
 /// Inner implementation of block encoding with SIMD optimizations.
 /// This is a free function so it can be multiversed for different CPU targets.
