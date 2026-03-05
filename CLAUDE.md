@@ -190,8 +190,7 @@ while !decoder.is_finished() {
 **You may lose context at any time.** Always record findings immediately:
 
 1. **Suspected bugs** → Add to "Known Bugs" section below with file:line references
-2. **Code analysis/details** → Save to `CODE.md` with:
-   - Relevant code snippets
+2. **Code analysis/details** → Add to "Investigation Notes" section below with:
    - Root cause analysis
    - Proposed fixes
    - C++ reference behavior
@@ -919,11 +918,12 @@ sensitivity tables, and preset baselines.
 
 ## Planned Features / TODO
 
-### Make archmage-simd mandatory (not a feature flag)
+### ~~Make archmage-simd mandatory (not a feature flag)~~ DONE
 
-Move `archmage`, `magetypes`, and `safe_unaligned_simd` from optional to required dependencies.
-Remove the `archmage-simd` feature flag and all `#[cfg(feature = "archmage-simd")]` gates.
-SIMD should always be compiled in — there's no reason to support a non-SIMD build.
+Completed: archmage, magetypes, safe_unaligned_simd are now mandatory dependencies.
+`archmage-simd` feature flag is empty (kept for backwards compatibility).
+All `#[cfg(feature = "archmage-simd")]` gates replaced with `#[cfg(target_arch = "...")]`.
+DCT, transpose, and nonzero mask functions dispatch to archmage intrinsics at runtime.
 
 ### Needs Heavy Analysis: CMA-ES auto_optimize() (2026-02-04)
 
@@ -1045,7 +1045,7 @@ via autocomplete. No breaking changes - existing paths still work.
 
 **Status:** Deferred - requires careful consideration of public API surface.
 
-Reference: api-feedback.md issue #2
+Reference: docs/api-feedback.md issue #2
 
 ### Resource Estimation API (docs/API_DESIGN.md)
 
@@ -1403,7 +1403,7 @@ default = ["std", "yuv", "archmage-simd", "trellis"]
 trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-archmage-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]  # Token-based SIMD (~10-20% faster)
+archmage-simd = []  # Legacy flag — archmage/magetypes are now mandatory dependencies.
 cms = ["cms-lcms2"]       # Color management
 ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
 ffi-tests = []            # C++ parity tests (requires jpegli-sys)
@@ -1414,9 +1414,9 @@ test-utils = []           # Testing utilities
 **Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
 API will have breaking changes.
 
-**SIMD options:**
-- Default: `wide` crate (portable, safe) - always enabled
-- `archmage-simd` (default): Token-based safe intrinsics via archmage + magetypes - **~10-20% faster** on x86_64
+**SIMD:** archmage + magetypes are mandatory dependencies (token-based safe intrinsics).
+`wide` crate provides portable fallback. On x86_64, archmage dispatches to AVX2/FMA/AVX-512
+at runtime via `X64V3Token::summon()` / `X64V4Token::summon()`.
 
 ## Key Files for Debugging
 
