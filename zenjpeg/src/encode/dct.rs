@@ -237,7 +237,7 @@ pub(crate) mod simd {
 
     // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
     #[cfg(target_arch = "x86_64")]
-    use archmage::SimdToken;
+    use archmage::{SimdToken, arcane};
     #[cfg(target_arch = "x86_64")]
     use magetypes::simd::f32x8 as mf32x8;
 
@@ -391,21 +391,24 @@ pub(crate) mod simd {
         f32x8::transpose(*input)
     }
 
-    /// SIMD-optimized 8x8 transpose with compile-time dispatch via multiversion.
+    /// SIMD-optimized 8x8 transpose with archmage runtime dispatch.
     /// Uses magetypes AVX2 intrinsics when available, falls back to wide.
-    #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-        {
-            let mut rows = mf32x8::load_8x8(input);
-            mf32x8::transpose_8x8(&mut rows);
-            mf32x8::store_8x8(&rows, output);
-            return;
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return mage_transpose_8x8(token, input, output);
         }
 
-        // Use wide's built-in transpose (AVX-accelerated when available)
-        #[allow(unreachable_code)]
         transpose_8x8_wide(input, output);
+    }
+
+    /// AVX2 transpose using magetypes intrinsics (load → transpose → store).
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn mage_transpose_8x8(_token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+        let mut rows = mf32x8::load_8x8(input);
+        mf32x8::transpose_8x8(&mut rows);
+        mf32x8::store_8x8(&rows, output);
     }
 
     /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).

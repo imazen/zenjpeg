@@ -10,14 +10,12 @@ use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanEncodeTable;
 use crate::huffman::optimize::{ScanTokenInfo, Token};
-use multiversed::multiversed;
 
 use super::{additional_bits_with_cat, category};
 
-/// Inner implementation of block encoding with SIMD optimizations.
-/// This is a free function so it can be multiversed for different CPU targets.
-/// All inner functions are force-inlined for maximum performance.
-#[multiversed]
+/// Inner implementation of block encoding.
+/// Uses `build_nonzero_mask` (which has its own archmage SIMD dispatch) to
+/// skip zero coefficients. No floating-point SIMD here — pure integer bit ops.
 #[inline]
 fn encode_block_simd_impl(
     coeffs: &[i16; DCT_BLOCK_SIZE],
