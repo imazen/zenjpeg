@@ -1350,4 +1350,45 @@ mod tests {
             );
         }
     }
+
+    /// Test that forward_dct_8x8 produces identical results across all
+    /// SIMD dispatch tiers (AVX2+FMA mage path vs wide SSE2 fallback).
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_dct_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Multiple test patterns: DC-only, gradient, mixed frequencies
+        let patterns: Vec<[f32; 64]> = vec![
+            [42.0; 64],
+            core::array::from_fn(|i| i as f32),
+            core::array::from_fn(|i| ((i % 8) as f32 - 3.5) * 20.0),
+            core::array::from_fn(|i| {
+                let r = i / 8;
+                let c = i % 8;
+                ((r * 7 + c * 13) % 256) as f32 - 128.0
+            }),
+        ];
+
+        for (idx, input) in patterns.iter().enumerate() {
+            let reference = forward_dct_8x8(input);
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let result = forward_dct_8x8(input);
+                for k in 0..64 {
+                    let diff = (result[k] - reference[k]).abs();
+                    assert!(
+                        diff < 1e-4,
+                        "DCT pattern {idx} coeff {k}: ref={} got={} diff={diff} at {perm}",
+                        reference[k], result[k]
+                    );
+                }
+            });
+
+            if idx == 0 {
+                eprintln!("dct_dispatch: {report}");
+                assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+            }
+        }
+    }
 }

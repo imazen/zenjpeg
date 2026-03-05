@@ -633,6 +633,107 @@ fn quantize_block(
 mod tests {
     use super::*;
 
+    /// Build realistic test data for quantize dispatch testing.
+    /// Returns (block, quant_table, zero_bias, aq_strength).
+    fn quantize_test_data() -> (Block8x8f, QuantTableSimd, ZeroBiasSimd, f32) {
+        // Simulate DCT coefficients: DC large, AC coefficients decaying
+        let mut coeffs = [0.0f32; 64];
+        for i in 0..64 {
+            let row = i / 8;
+            let col = i % 8;
+            let freq = (row + col) as f32;
+            // Mix of positive, negative, near-zero values
+            coeffs[i] = (100.0 - freq * 8.0) * if i % 3 == 0 { -1.0 } else { 1.0 };
+        }
+        let block = Block8x8f::from_array(&coeffs);
+
+        // Typical Q85 quant table values
+        let mut qvals = [1u16; 64];
+        for i in 0..64 {
+            qvals[i] = ((i as u16 / 4) + 2).min(255);
+        }
+        let quant = QuantTableSimd::from_values(&qvals);
+
+        // Realistic zero-bias params
+        let mut bias_params = crate::quant::ZeroBiasParams {
+            offset: [0.0; 64],
+            mul: [0.0; 64],
+        };
+        for i in 0..64 {
+            bias_params.offset[i] = 0.5;
+            bias_params.mul[i] = 0.15;
+        }
+        let zero_bias = ZeroBiasSimd::from_params(&bias_params);
+
+        (block, quant, zero_bias, 1.0)
+    }
+
+    /// Test that quantize_block_zigzag produces identical results across all
+    /// SIMD dispatch tiers (AVX2+FMA, SSE2 fallback, scalar).
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_quantize_zigzag_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let (block, quant, zero_bias, aq) = quantize_test_data();
+
+        // Get the reference result with all SIMD enabled
+        let reference = quantize_block_zigzag(&quant.mul_rows, &block, &zero_bias, aq);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let result = quantize_block_zigzag(&quant.mul_rows, &block, &zero_bias, aq);
+            assert_eq!(
+                result, reference,
+                "quantize_block_zigzag mismatch at permutation: {perm}"
+            );
+        });
+        eprintln!("quantize_zigzag: {report}");
+        assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+    }
+
+    /// Test that quantize_block (natural order) produces identical results
+    /// across all SIMD dispatch tiers.
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_quantize_natural_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let (block, quant, zero_bias, aq) = quantize_test_data();
+
+        let reference = quantize_block(&quant.mul_rows, &block, &zero_bias, aq);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let result = quantize_block(&quant.mul_rows, &block, &zero_bias, aq);
+            assert_eq!(
+                result, reference,
+                "quantize_block mismatch at permutation: {perm}"
+            );
+        });
+        eprintln!("quantize_natural: {report}");
+        assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+    }
+
+    /// Test that the public quantize_with_zero_bias_zigzag API works across
+    /// all tiers (exercises the full dispatch chain through QuantTableSimd).
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_quantize_api_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let (block, quant, zero_bias, aq) = quantize_test_data();
+
+        let ref_zigzag = quant.quantize_with_zero_bias_zigzag(&block, &zero_bias, aq);
+        let ref_natural = quant.quantize_with_zero_bias(&block, &zero_bias, aq);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let zigzag = quant.quantize_with_zero_bias_zigzag(&block, &zero_bias, aq);
+            let natural = quant.quantize_with_zero_bias(&block, &zero_bias, aq);
+            assert_eq!(zigzag, ref_zigzag, "zigzag API mismatch at: {perm}");
+            assert_eq!(natural, ref_natural, "natural API mismatch at: {perm}");
+        });
+        eprintln!("quantize_api: {report}");
+    }
+
     #[test]
     fn test_block8x8f_roundtrip() {
         let mut arr = [0.0f32; 64];

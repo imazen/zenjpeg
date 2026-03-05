@@ -1654,13 +1654,19 @@ mod tests {
         }
     }
 
+    /// Safe wrapper for calling #[rite] mage_hsum_ps from test code.
+    #[arcane]
+    fn call_hsum_ps(_token: Desktop64, v: __m256) -> f32 {
+        mage_hsum_ps(_token, v)
+    }
+
     #[test]
     fn test_mage_hsum_ps() {
         if let Some(token) = Desktop64::summon() {
             let inputs = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
             let input_vec = load_f32x8(token, &inputs);
 
-            let result = mage_hsum_ps(token, input_vec);
+            let result = call_hsum_ps(token, input_vec);
             let expected: f32 = inputs.iter().sum();
 
             assert!(
@@ -1818,6 +1824,12 @@ mod tests {
         }
     }
 
+    /// Safe wrapper for calling #[rite] mage_transpose_8x8_dual_inner from test code.
+    #[arcane]
+    fn call_transpose_dual(_token: archmage::X64V4Token, r: &mut [__m512; 8]) {
+        mage_transpose_8x8_dual_inner(_token, r);
+    }
+
     #[test]
     fn test_mage_transpose_8x8_dual() {
         use archmage::X64V4Token;
@@ -1831,7 +1843,7 @@ mod tests {
             let mut reg = load_dual_blocks_avx512(token, &original_a, &original_b);
 
             // Transpose
-            mage_transpose_8x8_dual_inner(token, &mut reg);
+            call_transpose_dual(token, &mut reg);
 
             // Store back — safe via #[arcane]
             let mut result_a = [0.0f32; 64];
