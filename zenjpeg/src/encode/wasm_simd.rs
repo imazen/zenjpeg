@@ -14,7 +14,7 @@
 //! WASM SIMD128 is 128-bit (4-wide for f32), same as NEON.
 //! 8x8 DCT operations are implemented as two 4x4 blocks.
 
-#![cfg(all(feature = "archmage-simd", target_arch = "wasm32"))]
+#![cfg(target_arch = "wasm32")]
 
 use archmage::{Wasm128Token, arcane, rite};
 use core::arch::wasm32::*;

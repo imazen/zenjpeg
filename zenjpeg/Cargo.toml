@@ -56,12 +56,12 @@ zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 yuv = { workspace = true, optional = true }
-# Token-based safe SIMD intrinsics
-archmage = { workspace = true, optional = true }
+# Token-based safe SIMD intrinsics (mandatory — always compiled in)
+archmage = { workspace = true }
 # Token-gated SIMD types (wraps archmage tokens)
-magetypes = { workspace = true, optional = true }
+magetypes = { workspace = true }
 # Safe unaligned SIMD load/store wrappers (eliminates unsafe for memory ops)
-safe_unaligned_simd = { workspace = true, optional = true }
+safe_unaligned_simd = { workspace = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # UltraHDR (HDR gain map) encoding/decoding support
@@ -126,7 +126,7 @@ img-parts = { workspace = true }
 ultrahdr-core = { workspace = true }
 
 [features]
-default = ["std", "yuv", "archmage-simd", "trellis"]
+default = ["std", "yuv", "trellis"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -134,9 +134,9 @@ std = []
 # When disabled, no decoder types or functions are available in the public API.
 decoder = []
 parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
-# Token-based safe SIMD using archmage + magetypes (f32x4, i32x4 etc. with capability tokens)
-# Provides ~10-20% speedup on x86_64. Without this, all SIMD uses safe `wide` crate.
-archmage-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
+# Legacy feature flag — archmage/magetypes are now mandatory dependencies.
+# Kept for backwards compatibility with downstream Cargo.toml files.
+archmage-simd = []
 # Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
 # with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
 # When disabled, the encoder uses standard zero-bias quantization.
@@ -230,7 +230,6 @@ harness = false
 [[bench]]
 name = "mage_simd"
 harness = false
-required-features = ["archmage-simd"]
 
 [[bench]]
 name = "vec_variants"

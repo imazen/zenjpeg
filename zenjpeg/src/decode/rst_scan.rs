@@ -36,7 +36,7 @@ pub(crate) struct RstScanResult {
 /// This function handles JPEG byte stuffing: 0xFF 0x00 is a stuffed byte
 /// (not a marker), while 0xFF 0xD0-0xD7 are restart markers.
 pub(crate) fn scan_rst_markers(scan_data: &[u8], capacity_hint: usize) -> RstScanResult {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -86,7 +86,7 @@ fn scan_rst_markers_scalar(data: &[u8], capacity_hint: usize) -> RstScanResult {
 ///
 /// Uses `_mm256_cmpeq_epi8` to find all 0xFF bytes in 32-byte chunks,
 /// then checks the byte after each 0xFF for RST marker range 0xD0-0xD7.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn scan_rst_markers_avx2(
     _token: archmage::X64V3Token,
@@ -308,7 +308,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_avx2_matches_scalar() {
         // Build data with markers at various positions including crossing

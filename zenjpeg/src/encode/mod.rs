@@ -49,15 +49,15 @@ pub mod config;
 pub(crate) mod linear_lut;
 
 // Archmage-based SIMD (token-based safe intrinsics)
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod mage_simd;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "aarch64"))]
+#[cfg(target_arch = "aarch64")]
 #[doc(hidden)]
 pub mod arm_simd;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub mod wasm_simd;
 

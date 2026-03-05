@@ -168,10 +168,10 @@ pub(crate) fn extract_block_from_strip_wide(
 
 /// Performs forward DCT on a block, dispatching to archmage SIMD when available.
 ///
-/// When the `archmage-simd` feature is enabled and a token is provided,
+/// When an archmage token is available (x86_64 with AVX2),
 /// uses the token-based archmage implementation. Otherwise falls back to the
 /// portable wide crate implementation.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn forward_dct_dispatch(
     token: Option<crate::encode::mage_simd::Desktop64>,
@@ -185,7 +185,7 @@ fn forward_dct_dispatch(
 
 /// Performs forward DCT on a block (non-archmage fallback).
 /// The `_token` parameter is ignored but accepted for API consistency.
-#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
     crate::encode::dct::simd::forward_dct_8x8_wide(block)
@@ -426,7 +426,7 @@ pub struct StripProcessor {
     // === Archmage SIMD token (feature-gated) ===
     /// Desktop64 token for zero-dispatch SIMD operations.
     /// Obtained once at construction, reused for all blocks.
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     simd_token: Option<crate::encode::mage_simd::Desktop64>,
 
     // === Reusable u8 buffers for yuv crate (yuv feature) ===
@@ -613,7 +613,7 @@ impl StripProcessor {
             hybrid_ctx: None,
 
             // Archmage SIMD token (obtained once, reused for all blocks)
-            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             simd_token: {
                 use archmage::SimdToken;
                 crate::encode::mage_simd::Desktop64::summon()
@@ -674,7 +674,7 @@ impl StripProcessor {
     ///
     /// The token is obtained once at construction and can be reused for all blocks
     /// with zero per-call dispatch overhead.
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[inline]
     #[must_use]
     pub fn simd_token(&self) -> Option<crate::encode::mage_simd::Desktop64> {
@@ -978,9 +978,9 @@ impl StripProcessor {
         let padded_width = self.layout.padded_width;
 
         // Extract SIMD token once for all blocks in this strip
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         let simd_token = self.simd_token;
-        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+        #[cfg(not(target_arch = "x86_64"))]
         let simd_token = ();
 
         // y_strip is in padded layout, so use padded_width for sizing

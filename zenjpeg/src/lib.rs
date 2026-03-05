@@ -20,7 +20,7 @@
 //! **Available features:**
 //! - `decoder` - Enable JPEG decoding (required for `zenjpeg::decoder` module)
 //! - `parallel` - Multi-threaded encoding via rayon
-//! - `archmage-simd` - Safe SIMD acceleration (default, ~10-20% faster)
+
 //! - `cms-lcms2` - ICC color management via lcms2 (default)
 //! - `ultrahdr` - UltraHDR gain map support
 //!
@@ -116,7 +116,6 @@
 //! |---------|---------|-------------|-------------|
 //! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
 //! | `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
-//! | `archmage-simd` | ✅ Yes | Safe SIMD via archmage (~10-20% faster) | Keep enabled for best performance |
 //! | `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, wide-gamut images |
 //! | `cms-moxcms` | ❌ No | Pure Rust color management (alternative to lcms2) | `no_std` or avoid C dependencies |
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |

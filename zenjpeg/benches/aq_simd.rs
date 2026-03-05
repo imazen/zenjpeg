@@ -1,6 +1,6 @@
 //! Benchmark comparing wide vs archmage for outer-level AQ functions
 //!
-//! Run with: cargo bench -p zenjpeg --bench aq_simd --features "archmage-simd,test-utils"
+//! Run with: cargo bench -p zenjpeg --bench aq_simd --features "archmage,test-utils"
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
@@ -9,23 +9,23 @@ use zenjpeg::quant::aq::simd::{
     per_block_modulations_row, pre_erosion_row, pre_erosion_row_padded,
 };
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use zenjpeg::quant::aq::simd::mage_pre_erosion_row_padded;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token, arcane};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use zenjpeg::encode::mage_simd::mage_pre_erosion_pixel_x8;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 /// Archmage version of pre_erosion_row - mirrors production loop structure
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn mage_pre_erosion_row(
     token: X64V3Token,
@@ -101,7 +101,7 @@ fn bench_pre_erosion_row(c: &mut Criterion) {
             })
         });
 
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         if let Some(token) = X64V3Token::try_new() {
             let mut output_mage = vec![0.0f32; width];
             group.bench_function("archmage loop", |b| {
@@ -165,7 +165,7 @@ fn bench_pre_erosion_row_padded(c: &mut Criterion) {
             })
         });
 
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         if let Some(token) = X64V3Token::try_new() {
             let mut output_mage = vec![0.0f32; width];
             group.bench_function("archmage padded", |b| {

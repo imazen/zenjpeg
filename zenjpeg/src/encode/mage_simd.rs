@@ -23,7 +23,7 @@
 //! }
 //! ```
 
-#![cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#![cfg(target_arch = "x86_64")]
 
 use archmage::{X64V3Token, X64V4Token, arcane, rite};
 use core::arch::x86_64::*;

@@ -18,9 +18,9 @@
 
 #![allow(dead_code)]
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Rounding and level-shift constants.
@@ -536,10 +536,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // AVX2 SIMD Implementation
 // =============================================================================
 
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod avx2 {
     use super::*;
     use archmage::{arcane, rite};
@@ -1120,7 +1117,7 @@ mod wide_simd {
 /// * `stride` - Stride between output rows
 #[inline]
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             avx2::idct_int_avx2(token, coeffs, output, stride);
@@ -1136,10 +1133,7 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// This is the legacy implementation kept for comparison. In most cases,
 /// `idct_int_auto` (which uses `wide`) should be preferred as it's portable
 /// and has similar performance.
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
 pub fn idct_int_avx2_raw(
     token: archmage::X64V3Token,
@@ -1173,7 +1167,7 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
     } else {
         // Full 8x8 IDCT with SIMD (AVX2 on x86_64, wide otherwise)
         // Note: AVX2 IDCT with DC-only check is faster than tiered 4x4 scalar
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         {
             if let Some(token) = archmage::X64V3Token::summon() {
                 avx2::idct_int_avx2(token, coeffs, output, stride);
@@ -1449,7 +1443,7 @@ pub fn idct_int_libjpeg_unclamped(
 
 /// Unclamped full 8x8 IDCT dispatch (non-tiered, for f32 output paths).
 pub fn idct_int_auto_unclamped(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             avx2::idct_int_avx2_unclamped(token, coeffs, output, stride);
@@ -1469,7 +1463,7 @@ pub fn idct_int_tiered_unclamped(
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         {
             if let Some(token) = archmage::X64V3Token::summon() {
                 avx2::idct_int_avx2_unclamped(token, coeffs, output, stride);
@@ -1562,10 +1556,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(
-        feature = "archmage-simd",
-        any(target_arch = "x86", target_arch = "x86_64")
-    ))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn test_avx2_matches_scalar() {
         let Some(token) = archmage::X64V3Token::summon() else {

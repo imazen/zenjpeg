@@ -5,10 +5,10 @@
 
 use wide::f32x8;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, arcane, rite};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Max chroma strip width for stack-allocated scratch in triangle upsampling.
@@ -212,8 +212,8 @@ pub fn upsample_h2v2_i16_fancy(
         return;
     }
 
-    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    // Try AVX2 SIMD path on x86_64
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             upsample_h2v2_i16_fancy_avx2(
@@ -246,8 +246,8 @@ pub fn upsample_h2v2_i16_fancy_reuse_scratch(
         return;
     }
 
-    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    // Try AVX2 SIMD path on x86_64
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             upsample_h2v2_i16_fancy_avx2_with_scratch(
@@ -280,8 +280,8 @@ pub fn upsample_h2v2_i16_fancy_strided(
         return;
     }
 
-    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    // Try AVX2 SIMD path on x86_64
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             upsample_h2v2_i16_fancy_strided_avx2(
@@ -328,7 +328,7 @@ fn upsample_h2v2_i16_fancy_strided_scalar(
 }
 
 /// AVX2 SIMD implementation of strided bilinear upsampling
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn upsample_h2v2_i16_fancy_strided_avx2(
     token: archmage::X64V3Token,
@@ -379,7 +379,7 @@ fn upsample_h2v2_i16_fancy_strided_avx2(
 }
 
 /// Vertical upsampling helper (AVX2) - processes one row
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn upsample_vertical_row_strided_avx2(
     _token: archmage::X64V3Token,
@@ -428,7 +428,7 @@ fn upsample_vertical_row_strided_avx2(
 }
 
 /// Horizontal upsampling helper (AVX2) - expands one row to 2x width
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn upsample_horizontal_row_strided_avx2(
     _token: archmage::X64V3Token,
@@ -569,7 +569,7 @@ fn upsample_h2v2_i16_fancy_scalar(
 
 /// AVX2 SIMD implementation of bilinear upsampling
 /// Uses separable vertical + horizontal passes for efficiency
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn upsample_h2v2_i16_fancy_avx2(
     _token: archmage::X64V3Token,
@@ -748,7 +748,7 @@ fn upsample_h2v2_i16_fancy_avx2(
 /// zeroing a `[0i16; 4096]` stack array on each call. The scratch buffer is
 /// written by the vertical pass before the horizontal pass reads it, so it
 /// does not need zeroing between calls.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn upsample_h2v2_i16_fancy_avx2_with_scratch(
     _token: archmage::X64V3Token,
@@ -1131,10 +1131,7 @@ pub fn upsample_h1v2_i16_fancy_strided(
 /// NOTE: This is an alternative implementation kept for reference.
 /// The active implementation is `upsample_h2v2_i16_fancy_avx2`.
 #[allow(dead_code)]
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn upsample_h2v2_i16_fancy_simd(
     input: &[i16],
     in_width: usize,
@@ -1192,10 +1189,7 @@ pub fn upsample_h2v2_i16_fancy_simd(
 
 /// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
 #[allow(dead_code)]
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[arcane]
 fn upsample_vertical_row_avx2(
     _token: archmage::X64V3Token,
@@ -1250,10 +1244,7 @@ fn upsample_vertical_row_avx2(
 /// Horizontal upsampling of a single row: 1x width → 2x width with interleaving
 /// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
 #[allow(dead_code)]
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[arcane]
 fn upsample_horizontal_row_avx2(_token: archmage::X64V3Token, input: &[i16], output: &mut [i16]) {
     #[cfg(target_arch = "x86")]
@@ -2080,10 +2071,7 @@ fn upsample_h2v2_f32_libjpeg(
 
 /// Scalar fallback for horizontal upsampling
 #[allow(dead_code)]
-#[cfg(all(
-    feature = "archmage-simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
     let in_width = input.len();
     let out_width = output.len();

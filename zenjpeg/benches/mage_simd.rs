@@ -1,22 +1,22 @@
-//! Benchmark comparing wide crate vs archmage-simd implementations
+//! Benchmark comparing wide crate vs archmage implementations
 //!
-//! Run with: cargo bench -p zenjpeg --bench mage_simd --features "archmage-simd"
+//! Run with: cargo bench -p zenjpeg --bench mage_simd --features "archmage"
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use zenjpeg::encode::mage_simd::{
     mage_box_filter_2x2, mage_forward_dct_8x8, mage_gather_even_odd_x8, mage_rgb_to_ycbcr_8px,
     mage_transpose_8x8_inplace,
 };
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::__m256;
 
 fn bench_dct(c: &mut Criterion) {
@@ -34,10 +34,10 @@ fn bench_dct(c: &mut Criterion) {
         })
     });
 
-    // Benchmark archmage-simd version
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    // Benchmark archmage version
+    #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
-        group.bench_function("archmage-simd", |b| {
+        group.bench_function("archmage", |b| {
             b.iter(|| {
                 let mut output = [0.0f32; 64];
                 mage_forward_dct_8x8(token, black_box(&input), &mut output);
@@ -55,9 +55,9 @@ fn bench_gather_even_odd(c: &mut Criterion) {
 
     let data: [f32; 16] = std::array::from_fn(|i| i as f32);
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
-        group.bench_function("archmage-simd", |b| {
+        group.bench_function("archmage", |b| {
             b.iter(|| {
                 let (evens, odds) = mage_gather_even_odd_x8(token, black_box(&data));
                 black_box((evens, odds))
@@ -90,9 +90,9 @@ fn bench_rgb_to_ycbcr(c: &mut Criterion) {
     let g_in = [128.0f32; 8];
     let b_in = [128.0f32; 8];
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
-        group.bench_function("archmage-simd", |bencher| {
+        group.bench_function("archmage", |bencher| {
             bencher.iter(|| {
                 let mut y = [0.0f32; 8];
                 let mut cb = [0.0f32; 8];
@@ -136,11 +136,11 @@ fn bench_transpose(c: &mut Criterion) {
     let mut group = c.benchmark_group("Transpose 8x8");
     group.throughput(Throughput::Elements(64));
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
         let data: [f32; 64] = std::array::from_fn(|i| i as f32);
 
-        group.bench_function("archmage-simd", |b| {
+        group.bench_function("archmage", |b| {
             b.iter(|| {
                 // SAFETY: X64V3Token guarantees AVX2 is available
                 let mut reg: [__m256; 8] = unsafe {
@@ -182,12 +182,12 @@ fn bench_box_filter(c: &mut Criterion) {
     let mut group = c.benchmark_group("Box Filter 2x2");
     group.throughput(Throughput::Elements(8));
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     if let Some(token) = X64V3Token::try_new() {
         let row0: [f32; 16] = std::array::from_fn(|i| i as f32);
         let row1: [f32; 16] = std::array::from_fn(|i| (i + 16) as f32);
 
-        group.bench_function("archmage-simd", |b| {
+        group.bench_function("archmage", |b| {
             b.iter(|| {
                 // SAFETY: X64V3Token guarantees AVX2 is available
                 let (row0_evens, row0_odds, row1_evens, row1_odds) = unsafe {

@@ -5,7 +5,7 @@
 //! CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
 //! RUSTFLAGS="-C target-feature=+simd128" \
 //! cargo run --release -p zenjpeg --example wasm_magetypes_bench \
-//!     --target wasm32-wasip1 --no-default-features --features "std,archmage-simd"
+//!     --target wasm32-wasip1 --no-default-features --features "std"
 //! ```
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]

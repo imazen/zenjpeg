@@ -31,27 +31,27 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 // =============================================================================
 
 /// SHA-256 hash of normalized values_archmage.csv (LF line endings, no trailing whitespace).
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 const VALUES_FILE_HASH: &str = "b1d92b4f9a80de4ed1b234d534656f8f86a4fa8fc3bb9ce712144ae586954738";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
-#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+#[cfg(not(target_arch = "x86_64"))]
 const VALUES_FILE_HASH: &str = "b2c873a783605e2df49023f08e531668145fa7e28e3f84196f2b14f38633807e";
 
 // =============================================================================
 // CSV FILE (compile-time inclusion based on SIMD variant)
 // =============================================================================
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 const VALUES_CSV: &str = include_str!("locked_values/values_archmage.csv");
 
-#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+#[cfg(not(target_arch = "x86_64"))]
 const VALUES_CSV: &str = include_str!("locked_values/values_wide.csv");
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 const SIMD_VARIANT: &str = "archmage";
 
-#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+#[cfg(not(target_arch = "x86_64"))]
 const SIMD_VARIANT: &str = "wide";
 
 // =============================================================================

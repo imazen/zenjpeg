@@ -32,21 +32,21 @@ use super::autovec::compute_fuzzy_erosion_blocks_autovec;
 use super::quant_field_to_aq_strength;
 use super::simd::per_block_modulations_row;
 
-// Use autovec pre_erosion as fallback (no archmage-simd feature)
-#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+// Use autovec pre_erosion as fallback (non-x86_64 targets)
+#[cfg(not(target_arch = "x86_64"))]
 use super::autovec::pre_erosion_row_autovec_iter as pre_erosion_row_padded;
 
 // AVX-512/AVX2 version - handles its own dispatch (tries V4 first, falls back to V3)
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use super::simd::mage_pre_erosion_row_padded_v4;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use super::simd::mage_per_block_modulations_row;
 
 // Note: mage_compute_fuzzy_erosion_row exists but is not used - it's 3x slower
 // than scalar due to function call overhead. Would need true SIMD partial sort.
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token};
 
 /// Streaming AQ with rolling buffers - low memory, high performance.
@@ -155,7 +155,7 @@ pub struct StreamingAQ {
     pending_imcu_row: Option<usize>,
 
     // Archmage token for optimized SIMD (when feature enabled)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     archmage_token: Option<X64V3Token>,
 }
 
@@ -242,7 +242,7 @@ impl StreamingAQ {
             total_imcu_rows,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
-            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             archmage_token: X64V3Token::summon(),
         })
     }
@@ -292,7 +292,7 @@ impl StreamingAQ {
             total_imcu_rows,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
-            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             archmage_token: None,
         })
     }
@@ -329,7 +329,7 @@ impl StreamingAQ {
             total_imcu_rows: 0,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
-            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             archmage_token: None,
         }
     }
@@ -751,7 +751,7 @@ impl StreamingAQ {
         self.pre_erosion_temp.fill(0.0);
 
         // Use archmage SIMD when available - V4 (AVX-512) preferred, falls back to V3 (AVX2)
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         {
             // V4 version handles its own dispatch - tries AVX-512 first, falls back to AVX2
             mage_pre_erosion_row_padded_v4(
@@ -763,7 +763,7 @@ impl StreamingAQ {
             );
         }
 
-        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+        #[cfg(not(target_arch = "x86_64"))]
         pre_erosion_row_padded(
             row_curr,
             row_above,
@@ -786,7 +786,7 @@ impl StreamingAQ {
         self.pre_erosion_temp.fill(0.0);
 
         // Use archmage SIMD when available - V4 (AVX-512) preferred, falls back to V3 (AVX2)
-        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         {
             // V4 version handles its own dispatch - tries AVX-512 first, falls back to AVX2
             mage_pre_erosion_row_padded_v4(
@@ -798,7 +798,7 @@ impl StreamingAQ {
             );
         }
 
-        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+        #[cfg(not(target_arch = "x86_64"))]
         pre_erosion_row_padded(
             row_curr,
             row_above,
@@ -880,7 +880,7 @@ impl StreamingAQ {
             // Per-block modulations with padded buffer
             // Use y_buffer_stride (padded_width + 1) to allow reading 9 elements for HF modulation
             // Use archmage SIMD when available (fused HF+gamma, ~2x faster)
-            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            #[cfg(target_arch = "x86_64")]
             if let Some(token) = self.archmage_token {
                 mage_per_block_modulations_row(
                     token,
@@ -906,7 +906,7 @@ impl StreamingAQ {
                 );
             }
 
-            #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+            #[cfg(not(target_arch = "x86_64"))]
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
                 self.y_buffer_stride,
