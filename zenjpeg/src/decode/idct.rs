@@ -3,7 +3,10 @@
 //! This module provides 8x8 IDCT-III transform used for JPEG decoding.
 //! Uses the recursive splitting algorithm from jpegli for exact compatibility.
 //!
-//! SIMD optimization via the `wide` crate is always enabled.
+//! # SIMD Architecture
+//!
+//! - **archmage path** (x86_64): AVX2+FMA via `archmage_idct::mage_inverse_dct_8x8`
+//! - **wide path** (fallback): Portable SIMD via `wide::f32x8` with `#[multiversed]`
 
 #![allow(dead_code)]
 
@@ -312,23 +315,10 @@ mod archmage_idct {
     #[allow(unused_imports)]
     use core::arch::x86_64::*;
 
-    /// IDCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
-    #[rite]
-    fn mage_idct1d_2(
-        _token: archmage::X64V3Token,
-        m0: &mut __m256,
-        m1: &mut __m256,
-    ) {
-        let in0 = *m0;
-        let in1 = *m1;
-        *m0 = _mm256_add_ps(in0, in1);
-        *m1 = _mm256_sub_ps(in0, in1);
-    }
-
     /// IDCT for N=4: ForwardEvenOdd → IDCT<2> on even → BTranspose<2> on odd
     /// → IDCT<2> on odd → MultiplyAndAdd<4>
     #[rite]
-    fn mage_idct1d_4(token: archmage::X64V3Token, m: &mut [__m256; 4]) {
+    fn mage_idct1d_4(_token: archmage::X64V3Token, m: &mut [__m256; 4]) {
         let wc4_0 = _mm256_set1_ps(WC4[0]);
         let wc4_1 = _mm256_set1_ps(WC4[1]);
         let sqrt2 = _mm256_set1_ps(SQRT2);
