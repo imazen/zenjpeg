@@ -1785,6 +1785,14 @@ pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
     debug_assert!(cr_row.len() >= (width + 1) / 2);
     debug_assert!(rgb.len() >= width * 3);
 
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            fused_h2v2_hfancy_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
+            return;
+        }
+    }
+
     let chroma_width = (width + 1) / 2;
 
     for cx in 0..chroma_width {
@@ -1819,6 +1827,280 @@ pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
         }
 
         // Right output pixel: (3*curr + right_neighbor + 2) >> 2
+        let right_cb = if cx + 1 < chroma_width {
+            i32::from(cb_row[cx + 1])
+        } else {
+            curr_cb
+        };
+        let right_cr = if cx + 1 < chroma_width {
+            i32::from(cr_row[cx + 1])
+        } else {
+            curr_cr
+        };
+        let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
+        let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
+
+        let px1 = cx * 2 + 1;
+        if px1 < width {
+            let y_val = i32::from(y_row[px1]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
+            let idx = px1 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+    }
+}
+
+/// AVX2 fused h-fancy 4:2:0 upsample + YCbCr→RGB.
+/// Horizontal: triangle filter (3:1 bilinear). Vertical: box (caller duplicates).
+/// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_avx2(
+    _token: archmage::X64V3Token,
+    y_row: &[i16],
+    cb_row: &[i16],
+    cr_row: &[i16],
+    rgb: &mut [u8],
+    width: usize,
+) {
+    use core::arch::x86_64::*;
+
+    let chroma_width = (width + 1) / 2;
+    let chunks = width / 16; // 16 output pixels = 8 chroma samples per chunk
+
+    // Preload constants
+    let bias = _mm256_set1_epi16(128);
+    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
+    let rounding = _mm256_set1_epi32(YUV_ROUND);
+    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
+    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
+    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
+    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let zero = _mm256_setzero_si256();
+    let three = _mm_set1_epi16(3);
+    let round2 = _mm_set1_epi16(2);
+
+    // RGB interleave masks
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
+        9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15,
+    );
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0,
+    );
+
+    // Track the last chroma value from the previous chunk for left-neighbor lookback
+    let mut prev_cb = cb_row[0]; // Edge replication for first chunk
+    let mut prev_cr = cr_row[0];
+
+    for chunk in 0..chunks {
+        let c_offset = chunk * 8;
+        let y_offset = chunk * 16;
+        let out_offset = chunk * 48;
+
+        // Load 16 Y values
+        let y_vec = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&y_row[y_offset..y_offset + 16]).unwrap(),
+        );
+
+        // Load 8 chroma values
+        let cb_curr = safe_simd::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&cb_row[c_offset..c_offset + 8]).unwrap(),
+        );
+        let cr_curr = safe_simd::_mm_loadu_si128(
+            <&[i16; 8]>::try_from(&cr_row[c_offset..c_offset + 8]).unwrap(),
+        );
+
+        // Create left-neighbor vector: [prev_last, c0, c1, c2, c3, c4, c5, c6]
+        let cb_left = _mm_insert_epi16::<0>(_mm_slli_si128::<2>(cb_curr), prev_cb as i32);
+        let cr_left = _mm_insert_epi16::<0>(_mm_slli_si128::<2>(cr_curr), prev_cr as i32);
+
+        // Create right-neighbor vector: [c1, c2, c3, c4, c5, c6, c7, next_first]
+        let next_cb = if c_offset + 8 < chroma_width {
+            cb_row[c_offset + 8]
+        } else {
+            cb_row[c_offset + 7] // Edge replication
+        };
+        let next_cr = if c_offset + 8 < chroma_width {
+            cr_row[c_offset + 8]
+        } else {
+            cr_row[c_offset + 7]
+        };
+        let cb_right = _mm_insert_epi16::<7>(_mm_srli_si128::<2>(cb_curr), next_cb as i32);
+        let cr_right = _mm_insert_epi16::<7>(_mm_srli_si128::<2>(cr_curr), next_cr as i32);
+
+        // Save last value for next chunk's left neighbor
+        prev_cb = cb_row[c_offset + 7];
+        prev_cr = cr_row[c_offset + 7];
+
+        // Compute bilinear interpolation:
+        // interp_left = (3*curr + left + 2) >> 2  (for even output pixels)
+        // interp_right = (3*curr + right + 2) >> 2 (for odd output pixels)
+        let three_cb = _mm_mullo_epi16(cb_curr, three);
+        let three_cr = _mm_mullo_epi16(cr_curr, three);
+
+        let cb_interp_l =
+            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cb, cb_left), round2));
+        let cr_interp_l =
+            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cr, cr_left), round2));
+        let cb_interp_r =
+            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cb, cb_right), round2));
+        let cr_interp_r =
+            _mm_srai_epi16::<2>(_mm_add_epi16(_mm_add_epi16(three_cr, cr_right), round2));
+
+        // Interleave left and right: [L0, R0, L1, R1, ...] → 16 chroma values
+        let cb_lo = _mm_unpacklo_epi16(cb_interp_l, cb_interp_r);
+        let cb_hi = _mm_unpackhi_epi16(cb_interp_l, cb_interp_r);
+        let cb_vec = _mm256_set_m128i(cb_hi, cb_lo);
+
+        let cr_lo = _mm_unpacklo_epi16(cr_interp_l, cr_interp_r);
+        let cr_hi = _mm_unpackhi_epi16(cr_interp_l, cr_interp_r);
+        let cr_vec = _mm256_set_m128i(cr_hi, cr_lo);
+
+        // Subtract 128 from Cb and Cr
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+        // Zero-extend Y to 32-bit
+        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+
+        // y_scaled = y * Y_CF + rounding
+        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+        // Sign-extend Cb/Cr to 32-bit
+        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
+        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+        let cb_lo32 = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+        let cb_hi32 = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+        let cr_lo32 = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+        let cr_hi32 = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+        // R = (y_scaled + cr * CR_TO_R) >> 14
+        let r_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo32, cr_to_r)),
+            14,
+        );
+        let r_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi32, cr_to_r)),
+            14,
+        );
+
+        // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
+        let g_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_lo,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_lo32, cr_to_g),
+                    _mm256_mullo_epi32(cb_lo32, cb_to_g),
+                ),
+            ),
+            14,
+        );
+        let g_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_hi,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_hi32, cr_to_g),
+                    _mm256_mullo_epi32(cb_hi32, cb_to_g),
+                ),
+            ),
+            14,
+        );
+
+        // B = (y_scaled + cb * CB_TO_B) >> 14
+        let b_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo32, cb_to_b)),
+            14,
+        );
+        let b_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi32, cb_to_b)),
+            14,
+        );
+
+        // Pack i32 -> i16 -> u8
+        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
+        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
+        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
+
+        // Interleave RGB
+        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+        // Store 48 bytes (16 pixels * 3 channels)
+        safe_simd::_mm256_storeu_si256(
+            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
+            rgb0,
+        );
+        safe_simd::_mm_storeu_si128(
+            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
+            _mm256_castsi256_si128(rgb1),
+        );
+    }
+
+    // Handle remainder with scalar
+    let c_remainder_start = chunks * 8;
+    for cx in c_remainder_start..chroma_width {
+        let curr_cb = i32::from(cb_row[cx]);
+        let curr_cr = i32::from(cr_row[cx]);
+
+        let left_cb = if cx > 0 {
+            i32::from(cb_row[cx - 1])
+        } else {
+            curr_cb
+        };
+        let left_cr = if cx > 0 {
+            i32::from(cr_row[cx - 1])
+        } else {
+            curr_cr
+        };
+        let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
+        let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
+
+        let px0 = cx * 2;
+        if px0 < width {
+            let y_val = i32::from(y_row[px0]);
+            let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+            let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
+            let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
+            let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
+            let idx = px0 * 3;
+            rgb[idx] = r.clamp(0, 255) as u8;
+            rgb[idx + 1] = g.clamp(0, 255) as u8;
+            rgb[idx + 2] = b.clamp(0, 255) as u8;
+        }
+
         let right_cb = if cx + 1 < chroma_width {
             i32::from(cb_row[cx + 1])
         } else {
@@ -2484,6 +2766,96 @@ mod tests {
                 i,
                 rgb[i * 3 + 2],
                 b_ref
+            );
+        }
+    }
+
+    #[test]
+    fn test_fused_hfancy_avx2_matches_scalar() {
+        // Test that AVX2 h-fancy kernel produces identical output to scalar.
+        // Use widths that exercise: full AVX2 chunks, remainder, edge cases.
+        for width in [16, 32, 48, 64, 100, 128, 255, 256, 300, 512] {
+            let chroma_width = (width + 1) / 2;
+            // Varied chroma values to exercise interpolation
+            let y_row: Vec<i16> = (0..width).map(|i| 16 + (i as i16 * 7) % 220).collect();
+            let cb_row: Vec<i16> = (0..chroma_width)
+                .map(|i| 30 + (i as i16 * 13) % 200)
+                .collect();
+            let cr_row: Vec<i16> = (0..chroma_width)
+                .map(|i| 50 + (i as i16 * 11) % 180)
+                .collect();
+
+            // Scalar reference
+            let mut rgb_scalar = vec![0u8; width * 3];
+            {
+                for cx in 0..chroma_width {
+                    let curr_cb = i32::from(cb_row[cx]);
+                    let curr_cr = i32::from(cr_row[cx]);
+                    let left_cb = if cx > 0 {
+                        i32::from(cb_row[cx - 1])
+                    } else {
+                        curr_cb
+                    };
+                    let left_cr = if cx > 0 {
+                        i32::from(cr_row[cx - 1])
+                    } else {
+                        curr_cr
+                    };
+                    let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
+                    let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
+                    let px0 = cx * 2;
+                    if px0 < width {
+                        let y_val = i32::from(y_row[px0]);
+                        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+                        let r = (y_scaled + cr_l * CR_TO_R_INT) >> 14;
+                        let g = (y_scaled + cr_l * CR_TO_G_INT + cb_l * CB_TO_G_INT) >> 14;
+                        let b = (y_scaled + cb_l * CB_TO_B_INT) >> 14;
+                        let idx = px0 * 3;
+                        rgb_scalar[idx] = r.clamp(0, 255) as u8;
+                        rgb_scalar[idx + 1] = g.clamp(0, 255) as u8;
+                        rgb_scalar[idx + 2] = b.clamp(0, 255) as u8;
+                    }
+                    let right_cb = if cx + 1 < chroma_width {
+                        i32::from(cb_row[cx + 1])
+                    } else {
+                        curr_cb
+                    };
+                    let right_cr = if cx + 1 < chroma_width {
+                        i32::from(cr_row[cx + 1])
+                    } else {
+                        curr_cr
+                    };
+                    let cb_r = ((3 * curr_cb + right_cb + 2) >> 2) - 128;
+                    let cr_r = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
+                    let px1 = cx * 2 + 1;
+                    if px1 < width {
+                        let y_val = i32::from(y_row[px1]);
+                        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+                        let r = (y_scaled + cr_r * CR_TO_R_INT) >> 14;
+                        let g = (y_scaled + cr_r * CR_TO_G_INT + cb_r * CB_TO_G_INT) >> 14;
+                        let b = (y_scaled + cb_r * CB_TO_B_INT) >> 14;
+                        let idx = px1 * 3;
+                        rgb_scalar[idx] = r.clamp(0, 255) as u8;
+                        rgb_scalar[idx + 1] = g.clamp(0, 255) as u8;
+                        rgb_scalar[idx + 2] = b.clamp(0, 255) as u8;
+                    }
+                }
+            }
+
+            // Fused function (dispatches to AVX2 on x86_64)
+            let mut rgb_fused = vec![0u8; width * 3];
+            fused_h2v2_hfancy_ycbcr_to_rgb_u8(&y_row, &cb_row, &cr_row, &mut rgb_fused, width);
+
+            assert_eq!(
+                rgb_scalar,
+                rgb_fused,
+                "Mismatch at width={width}: first diff at pixel {}",
+                rgb_scalar
+                    .iter()
+                    .zip(rgb_fused.iter())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0)
+                    / 3
             );
         }
     }
