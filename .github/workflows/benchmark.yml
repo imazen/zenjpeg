@@ -41,6 +41,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -49,6 +51,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: bench-${{ matrix.arch }}
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          # Patch workspace root Cargo.toml
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       # WASM: Install wasmtime
       - name: Install wasmtime
@@ -158,7 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v6
         with:
           pattern: benchmark-*
           merge-multiple: false
