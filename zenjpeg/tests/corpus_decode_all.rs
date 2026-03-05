@@ -15,7 +15,9 @@ use enough::Unstoppable;
 use rayon::prelude::*;
 use zenjpeg::decoder::Decoder;
 
-const CORPUS_DIR: &str = "/mnt/v/output/corpus-builder";
+fn corpus_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::corpus_builder_dir()
+}
 
 /// Directories to skip (source code repos, not image files).
 const SKIP_DIRS: &[&str] = &["repro-images", "cc-index"];
@@ -57,7 +59,8 @@ fn is_jpeg_by_magic(data: &[u8]) -> bool {
 
 /// Get a short relative path for display.
 fn short_path(path: &Path) -> String {
-    path.strip_prefix(CORPUS_DIR)
+    let base = corpus_dir();
+    path.strip_prefix(&base)
         .unwrap_or(path)
         .display()
         .to_string()
@@ -124,19 +127,20 @@ fn process_file(path: &Path) -> DecodeResult {
 }
 
 #[test]
-#[ignore = "requires corpus at /mnt/v/output/corpus-builder"]
+#[ignore = "requires corpus-builder corpus"]
 fn decode_all_corpus_files() {
-    let corpus = Path::new(CORPUS_DIR);
+    let corpus = corpus_dir();
     if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
+        println!("Corpus not found at {}, skipping", corpus.display());
         return;
     }
 
     println!(
-        "Collecting files from {CORPUS_DIR} (skipping {:?})...",
+        "Collecting files from {} (skipping {:?})...",
+        corpus.display(),
         SKIP_DIRS
     );
-    let files = collect_files(corpus);
+    let files = collect_files(&corpus);
     println!(
         "Found {} files, decoding with {} threads...",
         files.len(),

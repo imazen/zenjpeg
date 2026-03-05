@@ -3,7 +3,13 @@ use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling, ChromaDownsampli
 use jpegli::decode::Decoder;
 
 fn main() {
-    let png_data = std::fs::read("/home/lilith/work/zenjpeg/zenjpeg/tests/images/1.png").expect("read png");
+    let workspace = std::env::var("ZENJPEG_WORKSPACE")
+        .or_else(|_| std::env::var("CARGO_MANIFEST_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
+    let png_data = std::fs::read(
+        std::path::Path::new(&workspace).join("zenjpeg/tests/images/1.png"),
+    )
+    .expect("read png");
     let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];

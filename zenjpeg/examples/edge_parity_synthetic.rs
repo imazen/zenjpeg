@@ -73,8 +73,14 @@ fn main() {
     let pixels = create_gradient_image(width, height);
 
     // Save source
-    save_png("/mnt/v/gradient_source.png", &pixels, width, height);
-    println!("Saved source to /mnt/v/gradient_source.png");
+    let scratch = zenjpeg_bench_utils::scratch_dir();
+    save_png(
+        &scratch.join("gradient_source.png").display().to_string(),
+        &pixels,
+        width,
+        height,
+    );
+    println!("Saved source to {}/gradient_source.png", scratch.display());
 
     // Test at different quality levels with baseline mode
     println!("\n{:>7} | {:>10} | {:>10}", "Quality", "Size", "PSNR");
@@ -102,12 +108,28 @@ fn main() {
 
         // Save q75 and q90
         if quality == 75 {
-            fs::write("/mnt/v/gradient_q75.jpg", &jpeg).ok();
-            save_png("/mnt/v/gradient_decoded_q75.png", &decoded, width, height);
+            fs::write(scratch.join("gradient_q75.jpg"), &jpeg).ok();
+            save_png(
+                &scratch
+                    .join("gradient_decoded_q75.png")
+                    .display()
+                    .to_string(),
+                &decoded,
+                width,
+                height,
+            );
         }
         if quality == 90 {
-            fs::write("/mnt/v/gradient_q90.jpg", &jpeg).ok();
-            save_png("/mnt/v/gradient_decoded_q90.png", &decoded, width, height);
+            fs::write(scratch.join("gradient_q90.jpg"), &jpeg).ok();
+            save_png(
+                &scratch
+                    .join("gradient_decoded_q90.png")
+                    .display()
+                    .to_string(),
+                &decoded,
+                width,
+                height,
+            );
         }
     }
 
@@ -160,5 +182,5 @@ fn main() {
         );
     }
 
-    println!("\nImages saved to /mnt/v/");
+    println!("\nImages saved to {}/", scratch.display());
 }

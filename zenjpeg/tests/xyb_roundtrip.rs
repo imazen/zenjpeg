@@ -100,14 +100,15 @@ fn xyb_420_roundtrip_all_qualities() {
 #[test]
 fn xyb_rejects_baseline() {
     // force_baseline() must error for XYB
-    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter)
-        .force_baseline();
+    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter).force_baseline();
     assert!(err.is_err(), "force_baseline() should fail for XYB");
 
     // allow_16bit_quant_tables(false) must error for XYB
-    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter)
-        .allow_16bit_quant_tables(false);
-    assert!(err.is_err(), "disabling 16-bit quant tables should fail for XYB");
+    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter).allow_16bit_quant_tables(false);
+    assert!(
+        err.is_err(),
+        "disabling 16-bit quant tables should fail for XYB"
+    );
 
     // allow_16bit_quant_tables(true) is fine for XYB
     let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter)

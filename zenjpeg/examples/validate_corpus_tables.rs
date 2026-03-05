@@ -28,7 +28,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
     Ok(codec_corpus::Corpus::new()?)
 }
-const FREQ_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
+fn freq_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("huffman-freq")
+}
 
 /// Validation quality tiers (subset for speed).
 const VALIDATION_QUALITIES: &[u8] = &[50, 75, 85, 90, 95];
@@ -164,19 +166,16 @@ fn main() -> Result<()> {
         println!("==============================\n");
 
         // Load aggregated frequency tables for this mode
+        let freq = freq_dir();
         let agg_tables = load_tables_for_mode(
-            &PathBuf::from(FREQ_DIR)
-                .join("aggregated")
-                .join(mode.dir_name()),
+            &freq.join("aggregated").join(mode.dir_name()),
             VALIDATION_QUALITIES,
         )?;
 
         // Load per-corpus frequency tables
         let mut corpus_tables: BTreeMap<String, BTreeMap<u8, HuffmanTableSet>> = BTreeMap::new();
         for (corpus, _) in &corpus_images {
-            let dir = PathBuf::from(FREQ_DIR)
-                .join(corpus.name)
-                .join(mode.dir_name());
+            let dir = freq.join(corpus.name).join(mode.dir_name());
             if dir.exists() {
                 corpus_tables.insert(
                     corpus.name.to_string(),

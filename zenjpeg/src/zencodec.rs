@@ -818,10 +818,7 @@ impl<'a> JpegDecoder<'a> {
     }
 
     /// Decode into a pre-allocated buffer.
-    pub fn decode_into<P>(
-        self,
-        dst: PixelSliceMut<'_, P>,
-    ) -> Result<ImageInfo, Error> {
+    pub fn decode_into<P>(self, dst: PixelSliceMut<'_, P>) -> Result<ImageInfo, Error> {
         let data = self.data;
         let mut dst = dst.erase();
         #[cfg(feature = "decoder")]

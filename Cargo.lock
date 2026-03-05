@@ -2688,6 +2688,7 @@ dependencies = [
  "archmage 0.8.9",
  "imgref",
  "linear-srgb 0.5.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "magetypes",
  "rgb",
  "safe_unaligned_simd",
  "wide 1.1.1",

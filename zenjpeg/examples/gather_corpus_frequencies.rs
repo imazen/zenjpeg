@@ -25,7 +25,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
     Ok(codec_corpus::Corpus::new()?)
 }
-const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
+fn output_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("huffman-freq")
+}
 
 // Q0-Q85 step 5, Q89-Q100 step 1
 const QUALITY_TIERS: &[u8] = &[
@@ -147,6 +149,7 @@ struct ModeResult {
 
 fn main() -> Result<()> {
     let start = Instant::now();
+    let output_dir = output_dir();
 
     // Initialize corpus
     let cc = match corpus_crate() {
@@ -184,14 +187,14 @@ fn main() -> Result<()> {
     println!("Quality tiers: {}", QUALITY_TIERS.len());
     println!("Modes: {}", Mode::ALL.len());
     println!("Total encodes: {total_encodes}");
-    println!("Output: {OUTPUT_DIR}\n");
+    println!("Output: {}\n", output_dir.display());
 
     for (corpus, images) in &corpus_images {
         println!("  {:<25} {:>4} images", corpus.name, images.len());
     }
     println!();
 
-    fs::create_dir_all(OUTPUT_DIR)?;
+    fs::create_dir_all(&output_dir)?;
 
     // Per-mode aggregated frequencies (across all corpora)
     let mut aggregated: Vec<Option<Vec<QualityFrequencies>>> =
@@ -206,9 +209,7 @@ fn main() -> Result<()> {
             let mode_result = process_corpus_mode(images, mode, &mut encodes_done)?;
 
             // Save per-corpus frequencies
-            let corpus_dir = PathBuf::from(OUTPUT_DIR)
-                .join(corpus.name)
-                .join(mode.dir_name());
+            let corpus_dir = output_dir.join(corpus.name).join(mode.dir_name());
             fs::create_dir_all(&corpus_dir)?;
             save_frequencies_json(
                 &corpus_dir.join("raw_frequencies.json"),
@@ -228,9 +229,7 @@ fn main() -> Result<()> {
     println!("--- Saving aggregated frequencies ---\n");
     for (mode_idx, &mode) in Mode::ALL.iter().enumerate() {
         if let Some(ref agg) = aggregated[mode_idx] {
-            let agg_dir = PathBuf::from(OUTPUT_DIR)
-                .join("aggregated")
-                .join(mode.dir_name());
+            let agg_dir = output_dir.join("aggregated").join(mode.dir_name());
             fs::create_dir_all(&agg_dir)?;
             save_frequencies_json(
                 &agg_dir.join("raw_frequencies.json"),
@@ -260,7 +259,7 @@ fn main() -> Result<()> {
         "elapsed_seconds": start.elapsed().as_secs_f64(),
     });
     fs::write(
-        PathBuf::from(OUTPUT_DIR).join("manifest.json"),
+        output_dir.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
     )?;
 

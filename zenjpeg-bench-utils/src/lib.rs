@@ -35,6 +35,156 @@ use rgb::{RGB8, RGBA8};
 use std::path::PathBuf;
 
 // ============================================================================
+// Path Helpers — resolve directories and tool binaries via env vars
+// ============================================================================
+
+/// Return the workspace root directory.
+///
+/// Checks `ZENJPEG_WORKSPACE` env var first, then falls back to
+/// `CARGO_MANIFEST_DIR/../` (works from any crate in the workspace).
+#[must_use]
+pub fn workspace_root() -> PathBuf {
+    if let Ok(p) = std::env::var("ZENJPEG_WORKSPACE") {
+        return PathBuf::from(p);
+    }
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let p = PathBuf::from(manifest);
+        // If we're in a sub-crate (zenjpeg/, zenjpeg-bench-utils/, etc.),
+        // go up one level to the workspace root.
+        if let Some(parent) = p.parent() {
+            if parent.join("Cargo.toml").exists() {
+                return parent.to_path_buf();
+            }
+        }
+        return p;
+    }
+    PathBuf::from(".")
+}
+
+/// Return the path to the C++ jpegli testdata directory.
+///
+/// Resolves to `{workspace}/internal/jpegli-cpp/testdata`.
+#[must_use]
+pub fn jpegli_testdata_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("JPEGLI_TESTDATA") {
+        return PathBuf::from(p);
+    }
+    workspace_root().join("internal/jpegli-cpp/testdata")
+}
+
+/// Return the path to the `cjpegli` binary.
+///
+/// Checks `CJPEGLI_PATH` env var, then falls back to
+/// `{workspace}/internal/jpegli-cpp/build/tools/cjpegli`.
+#[must_use]
+pub fn cjpegli_path() -> PathBuf {
+    if let Ok(p) = std::env::var("CJPEGLI_PATH") {
+        return PathBuf::from(p);
+    }
+    workspace_root().join("internal/jpegli-cpp/build/tools/cjpegli")
+}
+
+/// Return the path to the `djpegli` binary.
+///
+/// Checks `DJPEGLI_PATH` env var, then falls back to
+/// `{workspace}/internal/jpegli-cpp/build/tools/djpegli`.
+#[must_use]
+pub fn djpegli_path() -> PathBuf {
+    if let Ok(p) = std::env::var("DJPEGLI_PATH") {
+        return PathBuf::from(p);
+    }
+    workspace_root().join("internal/jpegli-cpp/build/tools/djpegli")
+}
+
+/// Return the path to mozjpeg's `cjpeg` binary.
+///
+/// Checks `MOZJPEG_CJPEG` env var. Returns `None` if unset (no default).
+#[must_use]
+pub fn mozjpeg_cjpeg_path() -> Option<PathBuf> {
+    std::env::var("MOZJPEG_CJPEG").ok().map(PathBuf::from)
+}
+
+/// Return the codec-corpus root directory.
+///
+/// Checks `CODEC_CORPUS_DIR` env var, then tries common locations relative
+/// to the workspace root.
+#[must_use]
+pub fn codec_corpus_dir() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("CODEC_CORPUS_DIR") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    let root = workspace_root();
+    let candidates = [
+        root.join("../codec-eval/codec-corpus"),
+        root.join("../codec-corpus"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+/// Return the corpus-builder output directory.
+///
+/// Checks `CORPUS_BUILDER_DIR` env var, then falls back to
+/// `/mnt/v/output/corpus-builder`.
+#[must_use]
+pub fn corpus_builder_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("CORPUS_BUILDER_DIR") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("/mnt/v/output/corpus-builder")
+}
+
+/// Return the zenjpeg output root directory.
+///
+/// Checks `ZENJPEG_OUTPUT_DIR` env var, then falls back to
+/// `/mnt/v/output/zenjpeg`.
+#[must_use]
+pub fn zenjpeg_output_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("ZENJPEG_OUTPUT_DIR") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("/mnt/v/output/zenjpeg")
+}
+
+/// Return the CID22-512 corpus directory.
+///
+/// Checks `CID22_512_DIR` env var, then falls back to
+/// `/mnt/v/work/corpus/CID22-512`.
+#[must_use]
+pub fn cid22_512_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("CID22_512_DIR") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("/mnt/v/work/corpus/CID22-512")
+}
+
+/// Return the path to the UltraHDR test image.
+///
+/// Checks `ULTRAHDR_TEST_IMAGE` env var, then falls back to
+/// `/mnt/v/gen-dress.jpg`.
+#[must_use]
+pub fn ultrahdr_test_image() -> PathBuf {
+    if let Ok(p) = std::env::var("ULTRAHDR_TEST_IMAGE") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("/mnt/v/gen-dress.jpg")
+}
+
+/// Return the scratch output directory for examples that save images/data.
+///
+/// Checks `ZENJPEG_SCRATCH_DIR` env var, then falls back to
+/// `/mnt/v`.
+#[must_use]
+pub fn scratch_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("ZENJPEG_SCRATCH_DIR") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("/mnt/v")
+}
+
+// ============================================================================
 // Type Aliases for Consistency
 // ============================================================================
 
@@ -729,8 +879,8 @@ impl TestImages {
     ///
     /// Checks these locations in order:
     /// 1. `FRYMIRE_PATH` environment variable
-    /// 2. `/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png`
-    /// 3. `../codec-corpus/imageflow/test_inputs/frymire.png` (relative to manifest)
+    /// 2. `CODEC_CORPUS_DIR` / `imageflow/test_inputs/frymire.png`
+    /// 3. Common relative locations from workspace root
     #[must_use]
     pub fn frymire_path() -> Option<PathBuf> {
         if let Ok(path) = std::env::var("FRYMIRE_PATH") {
@@ -740,16 +890,14 @@ impl TestImages {
             }
         }
 
-        let candidates = [
-            PathBuf::from("/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png"),
-            // Relative to cargo manifest
-            std::env::var("CARGO_MANIFEST_DIR")
-                .ok()
-                .map(|m| PathBuf::from(m).join("../codec-corpus/imageflow/test_inputs/frymire.png"))
-                .unwrap_or_default(),
-        ];
+        if let Some(corpus) = codec_corpus_dir() {
+            let p = corpus.join("imageflow/test_inputs/frymire.png");
+            if p.exists() {
+                return Some(p);
+            }
+        }
 
-        candidates.into_iter().find(|p| p.exists())
+        None
     }
 
     /// Load frymire.png if available.

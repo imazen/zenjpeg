@@ -664,7 +664,7 @@ mod bench {
         }
 
         // Write CSV
-        let csv_dir = std::path::PathBuf::from("/mnt/v/output/zenjpeg/decode-matrix");
+        let csv_dir = zenjpeg_bench_utils::zenjpeg_output_dir().join("decode-matrix");
         if let Err(e) = std::fs::create_dir_all(&csv_dir) {
             eprintln!("\nWARNING: Could not create CSV dir {:?}: {}", csv_dir, e);
             eprintln!("Writing CSV to current directory instead.");

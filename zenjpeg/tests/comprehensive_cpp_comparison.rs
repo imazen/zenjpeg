@@ -209,7 +209,7 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
     }
 
     // Try CID22-512
-    if let Ok(entries) = fs::read_dir("/mnt/v/work/corpus/CID22-512") {
+    if let Ok(entries) = fs::read_dir(zenjpeg_bench_utils::cid22_512_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {

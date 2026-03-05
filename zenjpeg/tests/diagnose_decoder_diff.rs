@@ -143,7 +143,10 @@ fn compare_decode_vs_scanline_rgb() {
 
     for (label, rel_path) in &test_files {
         // Try to find the file relative to project root
-        let path = format!("/home/lilith/work/zenjpeg/{rel_path}");
+        let path = zenjpeg_bench_utils::workspace_root()
+            .join(rel_path)
+            .display()
+            .to_string();
         let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => {
@@ -282,11 +285,12 @@ fn decode_mozjpeg_rgb(data: &[u8]) -> (u32, u32, Vec<u8>) {
 fn compare_444_1x2_all_decoders() {
     use imgref::ImgRefMut;
 
-    let path = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444_1x2.jpg";
-    let data = match std::fs::read(path) {
+    let path =
+        zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower/flower.png.im_q85_444_1x2.jpg");
+    let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Cannot read {path}: {e}");
+            eprintln!("Cannot read {}: {e}", path.display());
             return;
         }
     };
@@ -374,7 +378,9 @@ fn decode_mozjpeg_ycbcr(data: &[u8]) -> (u32, u32, Vec<u8>) {
 #[test]
 #[ignore = "requires corpus"]
 fn compare_streaming_vs_coefficient_ycbcr() {
-    let path = "/mnt/v/output/corpus-builder/wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg";
+    let path = zenjpeg_bench_utils::corpus_builder_dir()
+        .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
+    let path = path.to_str().unwrap();
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
@@ -597,7 +603,7 @@ fn compare_all_paths_rgb(data: &[u8]) -> ([i32; 3], [i32; 3]) {
 /// - rgb_subsample_blue: R(2,2) G(2,2) B(1,1) — RGB mode with blue subsampled
 #[test]
 fn test_nonstandard_sampling_all_paths() {
-    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+    let base = zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower");
     let test_cases: &[(&str, &str, i32)] = &[
         // (label, filename, max_allowed_diff)
         ("444_1x2", "flower.png.im_q85_444_1x2.jpg", 4),
@@ -613,7 +619,7 @@ fn test_nonstandard_sampling_all_paths() {
 
     let mut all_passed = true;
     for (label, filename, max_allowed) in test_cases {
-        let path = format!("{base}/{filename}");
+        let path = base.join(filename).display().to_string();
         let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => {
@@ -662,7 +668,7 @@ fn test_nonstandard_sampling_all_paths() {
 fn test_decode_scanline_consistency() {
     use imgref::ImgRefMut;
 
-    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+    let base = zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower");
     let test_cases: &[(&str, &str)] = &[
         // Standard modes
         ("444", "flower.png.im_q85_444.jpg"),
@@ -679,7 +685,7 @@ fn test_decode_scanline_consistency() {
 
     let mut all_passed = true;
     for (label, filename) in test_cases {
-        let path = format!("{base}/{filename}");
+        let path = base.join(filename);
         let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => {
@@ -745,8 +751,9 @@ fn test_decode_scanline_consistency() {
 fn regression_444_1x2_scanline_accuracy() {
     use imgref::ImgRefMut;
 
-    let path = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444_1x2.jpg";
-    let data = match std::fs::read(path) {
+    let path =
+        zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower/flower.png.im_q85_444_1x2.jpg");
+    let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(_) => {
             eprintln!("SKIP: test image not found");
@@ -792,10 +799,13 @@ fn regression_444_1x2_scanline_accuracy() {
 /// Verifies that chroma planes have correct dimensions and plausible values.
 #[test]
 fn test_nonstandard_sampling_ycbcr_i16() {
-    let base = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/testdata/jxl/flower";
+    let base = zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower");
 
     // 444_1x2: all components same sampling → chroma should be full resolution
-    let path = format!("{base}/flower.png.im_q85_444_1x2.jpg");
+    let path = base
+        .join("flower.png.im_q85_444_1x2.jpg")
+        .display()
+        .to_string();
     let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(_) => {

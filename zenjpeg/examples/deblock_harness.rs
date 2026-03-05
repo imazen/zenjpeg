@@ -39,8 +39,12 @@ use zenjpeg_bench_utils::{ImageData, QualityMetrics, RgbImage, decode_jpeg_with_
 // Configuration
 // ---------------------------------------------------------------------------
 
-const CACHE_DIR: &str = "/mnt/v/output/zenjpeg/deblock";
-const RESULTS_DIR: &str = "/mnt/v/output/zenjpeg/deblock/results";
+fn cache_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("deblock")
+}
+fn results_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("deblock/results")
+}
 
 const QUALITY_LEVELS: [u8; 17] = [
     5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 75, 80, 85, 90, 93, 95, 97,
@@ -1987,7 +1991,7 @@ fn write_ppm(path: &Path, pixels: &[u8], w: usize, h: usize) -> std::io::Result<
 
 /// Cache key: encoder/image_name_qXX.jpg
 fn cache_path(encoder: Encoder, image_name: &str, quality: u8) -> PathBuf {
-    Path::new(CACHE_DIR)
+    cache_dir()
         .join("sources")
         .join(encoder.dir_name())
         .join(format!("{image_name}_q{quality}.jpg"))
@@ -1995,7 +1999,7 @@ fn cache_path(encoder: Encoder, image_name: &str, quality: u8) -> PathBuf {
 
 /// Generate all cached encoded JPEGs. Skips files that already exist.
 fn generate_cache(images: &[ImageData]) {
-    let sources_dir = Path::new(CACHE_DIR).join("sources");
+    let sources_dir = cache_dir().join("sources");
 
     // Create directories
     for enc in Encoder::all() {
@@ -2003,7 +2007,7 @@ fn generate_cache(images: &[ImageData]) {
         std::fs::create_dir_all(&dir).expect("cannot create cache dir");
     }
 
-    let tmp_dir = Path::new(CACHE_DIR).join("tmp");
+    let tmp_dir = cache_dir().join("tmp");
     std::fs::create_dir_all(&tmp_dir).expect("cannot create tmp dir");
 
     // Count what needs encoding
@@ -2373,7 +2377,7 @@ fn run_measurements(
     strategies: &[Box<dyn DeblockStrategy>],
     verbose: bool,
 ) -> Vec<Measurement> {
-    let results_dir = Path::new(RESULTS_DIR);
+    let results_dir = results_dir();
     std::fs::create_dir_all(results_dir).expect("cannot create results dir");
 
     // Build work items: (image_idx, encoder, quality)
@@ -2763,9 +2767,7 @@ fn run_bench(strategies: &[Box<dyn DeblockStrategy>]) {
     let encoder = Encoder::Turbo420;
 
     // Collect all available cached files for this encoder
-    let cache_dir = Path::new(CACHE_DIR)
-        .join("sources")
-        .join(encoder.dir_name());
+    let cache_dir = cache_dir().join("sources").join(encoder.dir_name());
 
     // Find image names from Q50 files
     let mut image_names: Vec<String> = Vec::new();
@@ -2941,7 +2943,7 @@ fn main() {
         }
 
         // Write CSV
-        let csv_path = Path::new(RESULTS_DIR).join("baseline.csv");
+        let csv_path = results_dir().join("baseline.csv");
         write_csv(&measurements, &csv_path);
         eprintln!("\nCSV written to: {}", csv_path.display());
 

@@ -37,7 +37,9 @@ use zenjpeg_bench_utils::{
     rgb_to_bytes, write_ppm,
 };
 
-const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/reencode_calibration";
+fn default_output_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("reencode_calibration")
+}
 
 const SRC_QUALITIES: [u8; 10] = [10, 20, 30, 40, 50, 65, 75, 80, 85, 90];
 const SRC_QUALITIES_FULL: [u8; 14] = [10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
@@ -99,7 +101,7 @@ fn expand_tilde(s: &str) -> PathBuf {
 fn parse_args() -> Args {
     let mut args = Args {
         corpus: default_corpus_dir(),
-        output: PathBuf::from(DEFAULT_OUTPUT_DIR),
+        output: default_output_dir(),
         max_images: 10,
         ba_tolerance: 0.0,
         shrink_tolerance: 0.5,
@@ -147,7 +149,10 @@ fn parse_args() -> Args {
             "--help" | "-h" => {
                 eprintln!("Usage: reencode_calibration [OPTIONS]");
                 eprintln!("  --corpus <dir>          Image directory (default: gb82)");
-                eprintln!("  --output <dir>          Output dir (default: {DEFAULT_OUTPUT_DIR})");
+                eprintln!(
+                    "  --output <dir>          Output dir (default: {})",
+                    default_output_dir().display()
+                );
                 eprintln!("  --images <N>            Max images (default: 10)");
                 eprintln!("  --ba-tolerance <f>      Match BA tolerance (default: 0.0)");
                 eprintln!("  --shrink-tolerance <f>  Shrink BA tolerance (default: 0.5)");

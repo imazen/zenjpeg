@@ -25,7 +25,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn corpus_crate() -> std::result::Result<codec_corpus::Corpus, Box<dyn std::error::Error>> {
     Ok(codec_corpus::Corpus::new()?)
 }
-const FREQ_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
+fn freq_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("huffman-freq")
+}
 
 const VALIDATION_QUALITIES: &[u8] = &[50, 75, 85, 90, 95];
 
@@ -145,9 +147,7 @@ fn main() -> Result<()> {
         println!("================================================================\n");
 
         // Load aggregated frequencies for both algorithms
-        let agg_dir = PathBuf::from(FREQ_DIR)
-            .join("aggregated")
-            .join(mode.dir_name());
+        let agg_dir = freq_dir().join("aggregated").join(mode.dir_name());
         let agg_tables_jpegli = load_tables_for_mode(
             &agg_dir,
             VALIDATION_QUALITIES,

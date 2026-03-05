@@ -3,10 +3,9 @@ fn main() {
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use zenjpeg_bench_utils::{ImageData, QualityMetrics, bytes_to_rgb};
 
-    let img = ImageData::from_path(std::path::Path::new(
-        "/home/lilith/work/codec-eval/codec-corpus/gb82/baby-lossless.png",
-    ))
-    .unwrap();
+    let corpus = zenjpeg_bench_utils::codec_corpus_dir()
+        .expect("CODEC_CORPUS_DIR not set and corpus not found in common locations");
+    let img = ImageData::from_path(&corpus.join("gb82/baby-lossless.png")).unwrap();
     let reference = bytes_to_rgb(&img.pixels, img.width, img.height);
     eprintln!(
         "Image: {}x{}, pixels={}",
@@ -108,7 +107,7 @@ fn main() {
     // === Also try encoding with cjpegli CLI for comparison ===
     {
         let status = std::process::Command::new("cjpegli")
-            .arg("/home/lilith/work/codec-eval/codec-corpus/gb82/baby-lossless.png")
+            .arg(corpus.join("gb82/baby-lossless.png"))
             .arg("/tmp/zen_diag_cjpegli_q90.jpg")
             .arg("-q")
             .arg("90")
