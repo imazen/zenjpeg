@@ -13,6 +13,8 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanEncodeTable;
 use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::types::Subsampling;
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use archmage::SimdToken;
 use multiversed::multiversed;
 use wide::{CmpEq, i16x8};
 
@@ -515,7 +517,7 @@ fn collect_block_frequencies_simd(
     dc_freq.count(dc_category);
 
     // Build 64-bit mask of non-zero coefficients using SIMD
-    let nonzero_mask = build_nonzero_mask_for_freq(coeffs);
+    let nonzero_mask = build_nonzero_mask(coeffs);
 
     // Clear DC bit (bit 0), keep only AC bits (1-63)
     let ac_mask = nonzero_mask & !1u64;
@@ -561,13 +563,52 @@ fn collect_block_frequencies_simd(
 }
 
 /// Build a 64-bit mask of non-zero coefficients using SIMD.
-#[multiversed]
+///
+/// Archmage AVX2 path processes 16 coefficients per iteration (4 iterations total).
+/// Scalar fallback processes 8 per iteration (8 iterations).
 #[inline]
-fn build_nonzero_mask_for_freq(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
-    let zero = i16x8::ZERO;
+pub(crate) fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return mage_build_nonzero_mask(token, coeffs);
+        }
+    }
+    scalar_build_nonzero_mask(coeffs)
+}
+
+/// AVX2 nonzero mask: 8 coefficients per iteration via magetypes i16x8.
+///
+/// Uses i16x8 (128-bit) instead of i16x16 (256-bit) because the i16x16
+/// bitmask() implementation has lane-crossing issues with _mm256_packs_epi16
+/// that produce incorrect results.
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn mage_build_nonzero_mask(_token: archmage::X64V3Token, coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
+    use magetypes::simd::i16x8 as mi16x8;
+    let token = _token;
+    let zero = mi16x8::zero(token);
     let mut nonzero_mask: u64 = 0;
 
     // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
+    for chunk in 0..8 {
+        let start = chunk * 8;
+        let v = mi16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
+        let is_zero = v.simd_eq(zero);
+        let zero_bits = is_zero.bitmask() as u8;
+        let nonzero_bits = !zero_bits;
+        nonzero_mask |= (nonzero_bits as u64) << start;
+    }
+
+    nonzero_mask
+}
+
+/// Scalar fallback: 8 coefficients per iteration via wide i16x8.
+#[inline]
+fn scalar_build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
+    let zero = i16x8::ZERO;
+    let mut nonzero_mask: u64 = 0;
+
     for chunk in 0..8 {
         let start = chunk * 8;
         let v = i16x8::new([
@@ -580,9 +621,7 @@ fn build_nonzero_mask_for_freq(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
             coeffs[start + 6],
             coeffs[start + 7],
         ]);
-        // simd_eq returns all 1s (-1) for equal, 0 for not equal
         let is_zero = v.simd_eq(zero);
-        // to_bitmask extracts the high bit of each lane
         let zero_bits = is_zero.to_bitmask() as u8;
         let nonzero_bits = !zero_bits;
         nonzero_mask |= (nonzero_bits as u64) << start;
@@ -984,5 +1023,94 @@ impl ComputedConfig {
         }
 
         Ok(encoder.finish())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reference_mask(coeffs: &[i16; 64]) -> u64 {
+        let mut mask = 0u64;
+        for i in 0..64 {
+            if coeffs[i] != 0 {
+                mask |= 1u64 << i;
+            }
+        }
+        mask
+    }
+
+    #[test]
+    fn test_build_nonzero_mask_all_positions() {
+        // Single nonzero at each of 64 positions
+        for pos in 0..64 {
+            let mut b = [0i16; 64];
+            b[pos] = 1;
+            let expected = 1u64 << pos;
+            let got = build_nonzero_mask(&b);
+            assert_eq!(
+                got, expected,
+                "pos {pos}: expected {expected:#066b}, got {got:#066b}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_nonzero_mask_patterns() {
+        // All zeros
+        assert_eq!(build_nonzero_mask(&[0i16; 64]), 0);
+
+        // All nonzero
+        let mut all = [0i16; 64];
+        for i in 0..64 {
+            all[i] = (i as i16) + 1;
+        }
+        assert_eq!(build_nonzero_mask(&all), u64::MAX);
+
+        // Alternating
+        let mut alt = [0i16; 64];
+        for i in (0..64).step_by(2) {
+            alt[i] = 42;
+        }
+        assert_eq!(build_nonzero_mask(&alt), reference_mask(&alt));
+
+        // Negative values
+        let mut neg = [0i16; 64];
+        for i in 8..16 {
+            neg[i] = -1;
+        }
+        assert_eq!(build_nonzero_mask(&neg), reference_mask(&neg));
+    }
+
+    #[test]
+    fn test_build_nonzero_mask_scalar_matches_dispatch() {
+        // Verify scalar fallback matches dispatcher on multiple patterns
+        let patterns: &[[i16; 64]] = &[
+            [0i16; 64],
+            {
+                let mut b = [0i16; 64];
+                b[0] = 100;
+                b[1] = -50;
+                b[8] = 20;
+                b[63] = 5;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                for i in 0..64 {
+                    b[i] = if i % 3 == 0 { (i as i16) - 20 } else { 0 };
+                }
+                b
+            },
+        ];
+
+        for (idx, block) in patterns.iter().enumerate() {
+            let scalar = scalar_build_nonzero_mask(block);
+            let dispatch = build_nonzero_mask(block);
+            assert_eq!(
+                scalar, dispatch,
+                "pattern {idx}: scalar and dispatch disagree"
+            );
+        }
     }
 }
