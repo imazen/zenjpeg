@@ -1,19 +1,22 @@
 zenjpeg
 =======
 
-This Rust port is licensed under the GNU Affero General Public License v3.0 or later.
-A commercial license is available from https://imageresizing.net/pricing
+Copyright (c) 2024-2026 Lilith River / Imazen
 
-This software is based on jpegli from the JPEG XL project, which is licensed under
-the BSD 3-Clause License. The original copyright notice is preserved below.
+A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
-The original C++ jpegli code is Copyright (c) the JPEG XL Project Authors and is
-used under the BSD 3-Clause License. This Rust port was written independently but
-follows the same algorithms and design principles.
+Licensed under the GNU Affero General Public License v3.0 or later.
+A commercial license is available from https://www.imazen.io/pricing
 
 
-ORIGINAL JPEGLI LICENSE (BSD 3-Clause)
-======================================
+HERITAGE
+========
+
+This project started as a study of jpegli from the JPEG XL project by Google.
+After six rewrites it has diverged into an independent project that shares ideas
+(adaptive quantization, XYB color space, perceptual quantization tables) but
+little code with the original. The jpegli BSD-3-Clause notice is preserved
+below for attribution.
 
 Copyright (c) the JPEG XL Project Authors.
 All rights reserved.
@@ -44,8 +47,8 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-RUST PORT LICENSE (AGPL-3.0-or-later)
-=====================================
+LICENSE (AGPL-3.0-or-later)
+===========================
 
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
