@@ -10,7 +10,9 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-const CORPUS_DIR: &str = "/mnt/v/output/corpus-builder";
+fn corpus_dir_path() -> std::path::PathBuf {
+    zenjpeg_bench_utils::corpus_builder_dir()
+}
 const SKIP_DIRS: &[&str] = &["repro-images", "cc-index"];
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 
@@ -145,7 +147,8 @@ fn collect_inner(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn short_path(path: &Path) -> String {
-    path.strip_prefix(CORPUS_DIR)
+    let base = corpus_dir_path();
+    path.strip_prefix(&base)
         .unwrap_or(path)
         .display()
         .to_string()
@@ -240,16 +243,16 @@ fn process_file(path: &Path) -> Option<CompareResult> {
 }
 
 #[test]
-#[ignore = "requires corpus at /mnt/v/output/corpus-builder"]
+#[ignore = "requires corpus-builder corpus"]
 fn compare_decoders_on_corpus() {
-    let corpus = Path::new(CORPUS_DIR);
+    let corpus = corpus_dir_path();
     if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
+        println!("Corpus not found at {}, skipping", corpus.display());
         return;
     }
 
     println!("Collecting files...");
-    let files = collect_files(corpus);
+    let files = collect_files(&corpus);
     println!(
         "Found {} files, comparing with {} threads...",
         files.len(),

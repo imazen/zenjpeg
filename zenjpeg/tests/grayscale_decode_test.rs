@@ -15,7 +15,9 @@ const GRAY_TEST_IMAGE: &str = "internal/jpegli-cpp/testdata/jxl/flower/flower.pn
 
 /// Path to UltraHDR test image (may not exist on all systems)
 #[allow(dead_code)]
-const ULTRAHDR_TEST_IMAGE: &str = "/mnt/v/gen-dress.jpg";
+fn ultrahdr_test_image_path() -> std::path::PathBuf {
+    zenjpeg_bench_utils::ultrahdr_test_image()
+}
 
 fn load_test_image(path: &str) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
@@ -133,8 +135,9 @@ fn test_grayscale_scanline_reader() {
 #[test]
 #[cfg(feature = "ultrahdr")]
 fn test_ultrahdr_gainmap_extraction() {
-    let Some(data) = load_test_image(ULTRAHDR_TEST_IMAGE) else {
-        eprintln!("Skipping test: {} not found", ULTRAHDR_TEST_IMAGE);
+    let ultrahdr_path = ultrahdr_test_image_path();
+    let Some(data) = load_test_image(ultrahdr_path.to_str().unwrap()) else {
+        eprintln!("Skipping test: {} not found", ultrahdr_path.display());
         return;
     };
 
@@ -193,8 +196,9 @@ fn test_ultrahdr_gainmap_extraction() {
 #[test]
 #[cfg(feature = "ultrahdr")]
 fn test_gainmap_grayscale_decode_streaming() {
-    let Some(data) = load_test_image(ULTRAHDR_TEST_IMAGE) else {
-        eprintln!("Skipping test: {} not found", ULTRAHDR_TEST_IMAGE);
+    let ultrahdr_path = ultrahdr_test_image_path();
+    let Some(data) = load_test_image(ultrahdr_path.to_str().unwrap()) else {
+        eprintln!("Skipping test: {} not found", ultrahdr_path.display());
         return;
     };
 

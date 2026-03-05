@@ -765,7 +765,10 @@ mod full_encode {
     // Three-way comparison: zenjpeg vs C mozjpeg (libmozjpeg) vs mozjpeg-rs
     // ========================================================================
 
-    const C_CJPEG_PATH: &str = "/home/lilith/work/mozjpeg/build/cjpeg";
+    fn c_cjpeg_path() -> std::path::PathBuf {
+        zenjpeg_bench_utils::mozjpeg_cjpeg_path()
+            .unwrap_or_else(|| std::path::PathBuf::from("cjpeg"))
+    }
 
     fn write_ppm(path: &Path, rgb: &[u8], width: u32, height: u32) -> std::io::Result<()> {
         use std::io::Write;
@@ -787,12 +790,12 @@ mod full_encode {
         baseline: bool,
         trellis_speed: Option<u8>, // None = disabled, Some(n) = -trellis-speed n
     ) -> Option<Vec<u8>> {
-        let cjpeg = Path::new(C_CJPEG_PATH);
+        let cjpeg = c_cjpeg_path();
         if !cjpeg.exists() {
             return None;
         }
         let out_path = PathBuf::from(format!("/tmp/c_moz_cmp_{}.jpg", std::process::id()));
-        let mut cmd = std::process::Command::new(cjpeg);
+        let mut cmd = std::process::Command::new(&cjpeg);
         cmd.args(["-quality", &quality.to_string()]);
         cmd.args(["-quant-table", "3"]); // Robidoux (ImageMagick)
         cmd.args(["-sample", sample]);
@@ -901,9 +904,9 @@ mod full_encode {
     #[test]
     #[ignore] // Requires CID22 corpus + C cjpeg binary + mozjpeg-tables feature
     fn c_mozjpeg_robidoux_comparison() {
-        let cjpeg = Path::new(C_CJPEG_PATH);
+        let cjpeg = c_cjpeg_path();
         if !cjpeg.exists() {
-            eprintln!("C cjpeg not found at {C_CJPEG_PATH}, skipping");
+            eprintln!("C cjpeg not found at {}, skipping", cjpeg.display());
             return;
         }
 

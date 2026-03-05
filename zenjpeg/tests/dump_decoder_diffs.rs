@@ -7,7 +7,9 @@
 
 use enough::Unstoppable;
 
-const OUT_DIR: &str = "/mnt/v/output/zenjpeg/decoder_diff";
+fn out_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("decoder_diff")
+}
 
 fn decode_zenjpeg(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let d = zenjpeg::decoder::Decoder::new();
@@ -114,30 +116,26 @@ fn print_diff(label: &str, a: &Option<(u32, u32, Vec<u8>)>, b: &Option<(u32, u32
 #[test]
 #[ignore = "requires corpus + output dir"]
 fn dump_diffs() {
+    let corpus = zenjpeg_bench_utils::corpus_builder_dir();
+    let out = out_dir();
     let files = [
         (
             "prophoto",
-            "/mnt/v/output/corpus-builder/wide-gamut/prophoto-rgb/reddit_36d104c8b6b9e5dd.jpg",
+            corpus.join("wide-gamut/prophoto-rgb/reddit_36d104c8b6b9e5dd.jpg"),
         ),
         (
             "adobe1",
-            "/mnt/v/output/corpus-builder/wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg",
+            corpus.join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg"),
         ),
-        (
-            "src_da76",
-            "/mnt/v/output/corpus-builder/source_jpegs/da76cd8775e67305.jpg",
-        ),
+        ("src_da76", corpus.join("source_jpegs/da76cd8775e67305.jpg")),
         (
             "adobe2",
-            "/mnt/v/output/corpus-builder/wide-gamut/adobe-rgb/flickr_5e9c282e096363d7.jpg",
+            corpus.join("wide-gamut/adobe-rgb/flickr_5e9c282e096363d7.jpg"),
         ),
-        (
-            "src_2fe0",
-            "/mnt/v/output/corpus-builder/source_jpegs/2fe0acf8200b556b.jpg",
-        ),
+        ("src_2fe0", corpus.join("source_jpegs/2fe0acf8200b556b.jpg")),
     ];
 
-    let _ = std::fs::create_dir_all(OUT_DIR);
+    let _ = std::fs::create_dir_all(&out);
 
     for (name, path) in &files {
         let data = match std::fs::read(path) {
@@ -158,7 +156,7 @@ fn dump_diffs() {
         for (label, result) in [("zen", &zen), ("moz", &moz), ("zune", &zune), ("jpd", &jpd)] {
             if let Some((w, h, px)) = result {
                 println!("  {label:<5} {w}x{h}, {} bytes", px.len());
-                write_ppm(&format!("{OUT_DIR}/{name}_{label}.ppm"), *w, *h, px);
+                write_ppm(&format!("{}/{name}_{label}.ppm", out.display()), *w, *h, px);
             } else {
                 println!("  {label:<5} FAILED");
             }
@@ -173,5 +171,5 @@ fn dump_diffs() {
         print_diff("moz-jpd:", &moz, &jpd);
         print_diff("zune-jpd:", &zune, &jpd);
     }
-    println!("\nPPM files written to {OUT_DIR}/");
+    println!("\nPPM files written to {}/", out.display());
 }

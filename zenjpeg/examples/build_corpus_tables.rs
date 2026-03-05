@@ -34,7 +34,9 @@ const QUALITY_TIERS: &[u8] = &[
     95, 96, 97, 98, 99, 100,
 ];
 
-const DEFAULT_OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/corpus_tables";
+fn default_output_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("corpus_tables")
+}
 
 fn main() -> Result<()> {
     let args = parse_args()?;
@@ -175,7 +177,7 @@ fn parse_args() -> Result<Args> {
     let mut training_dirs = Vec::new();
     let mut validation_dirs = Vec::new();
     let mut qualities = Vec::new();
-    let mut output_dir = DEFAULT_OUTPUT_DIR.to_string();
+    let mut output_dir = default_output_dir().display().to_string();
 
     let mut i = 1;
     while i < args.len() {

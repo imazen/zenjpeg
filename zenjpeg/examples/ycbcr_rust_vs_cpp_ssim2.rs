@@ -27,7 +27,7 @@ fn encode_rust_ycbcr(pixels: &[u8], width: u32, height: u32, quality: f32) -> Ve
 
 fn encode_cpp_ycbcr(src_path: &str, quality: u32) -> Vec<u8> {
     let out_path = format!("/tmp/cpp_ycbcr_ssim2_{}.jpg", quality);
-    Command::new("/home/lilith/work/zenjpeg/internal/jpegli-cpp/build/tools/cjpegli")
+    Command::new(zenjpeg_bench_utils::cjpegli_path())
         .args([src_path, &out_path, "-q", &quality.to_string()])
         .output()
         .expect("cjpegli failed");
@@ -38,7 +38,7 @@ fn decode_jpeg_to_rgb(jpeg: &[u8], label: &str) -> (Vec<u8>, u32, u32) {
     let tmp_jpg = format!("/tmp/ycbcr_decode_test_{}.jpg", label);
     let tmp_png = format!("/tmp/ycbcr_decode_test_{}.png", label);
     std::fs::write(&tmp_jpg, jpeg).expect("write temp jpg");
-    Command::new("/home/lilith/work/zenjpeg/internal/jpegli-cpp/build/tools/djpegli")
+    Command::new(zenjpeg_bench_utils::djpegli_path())
         .args([&tmp_jpg, &tmp_png])
         .output()
         .expect("djpegli decode failed");

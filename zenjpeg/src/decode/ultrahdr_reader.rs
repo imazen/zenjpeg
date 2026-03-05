@@ -814,11 +814,17 @@ mod tests {
         assert!(edit.preserve_metadata);
     }
 
+    fn ultrahdr_test_path() -> std::path::PathBuf {
+        std::env::var("ULTRAHDR_TEST_IMAGE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/v/gen-dress.jpg"))
+    }
+
     /// Test with a real UltraHDR image if available.
     #[test]
-    #[ignore = "requires test file at /mnt/v/gen-dress.jpg"]
+    #[ignore = "requires UltraHDR test image (set ULTRAHDR_TEST_IMAGE)"]
     fn test_real_ultrahdr_sdr_decode() {
-        let path = std::path::Path::new("/mnt/v/gen-dress.jpg");
+        let path = ultrahdr_test_path();
         if !path.exists() {
             return;
         }
@@ -853,9 +859,9 @@ mod tests {
 
     /// Test HDR decode with Full memory strategy.
     #[test]
-    #[ignore = "requires test file at /mnt/v/gen-dress.jpg"]
+    #[ignore = "requires UltraHDR test image (set ULTRAHDR_TEST_IMAGE)"]
     fn test_real_ultrahdr_hdr_decode() {
-        let path = std::path::Path::new("/mnt/v/gen-dress.jpg");
+        let path = ultrahdr_test_path();
         if !path.exists() {
             return;
         }

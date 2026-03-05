@@ -17,8 +17,12 @@ use zenjpeg::huffman::optimize::{FrequencyCounter, HuffmanTableSet, OptimizedTab
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const FREQ_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq/aggregated";
-const OUTPUT_FILE: &str = "/mnt/v/output/zenjpeg/huffman-freq/corpus_tables.rs";
+fn freq_dir() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("huffman-freq/aggregated")
+}
+fn output_file() -> std::path::PathBuf {
+    zenjpeg_bench_utils::zenjpeg_output_dir().join("huffman-freq/corpus_tables.rs")
+}
 
 const QUALITY_TIERS: &[u8] = &[
     0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 89, 90, 91, 92, 93, 94,
@@ -33,7 +37,9 @@ const FAMILIES: &[(&str, &str)] = &[
 ];
 
 fn main() -> Result<()> {
-    let mut out = fs::File::create(OUTPUT_FILE)?;
+    let freq_dir = freq_dir();
+    let output_file = output_file();
+    let mut out = fs::File::create(&output_file)?;
 
     writeln!(
         out,
@@ -107,9 +113,7 @@ fn main() -> Result<()> {
 
     // Generate each family
     for &(rust_name, dir_name) in FAMILIES {
-        let freq_path = Path::new(FREQ_DIR)
-            .join(dir_name)
-            .join("raw_frequencies.json");
+        let freq_path = freq_dir.join(dir_name).join("raw_frequencies.json");
         let data: serde_json::Value = serde_json::from_str(&fs::read_to_string(&freq_path)?)?;
 
         let is_xyb = rust_name == "xyb";
@@ -166,19 +170,17 @@ fn main() -> Result<()> {
     }
 
     drop(out);
-    println!("Generated: {OUTPUT_FILE}");
+    println!("Generated: {}", output_file.display());
 
     // Print size stats
-    let contents = fs::read_to_string(OUTPUT_FILE)?;
+    let contents = fs::read_to_string(&output_file)?;
     let lines = contents.lines().count();
     let bytes = contents.len();
     println!("  {lines} lines, {bytes} bytes");
 
     // Verify: build every table set and ensure they produce valid tables
     for &(rust_name, dir_name) in FAMILIES {
-        let freq_path = Path::new(FREQ_DIR)
-            .join(dir_name)
-            .join("raw_frequencies.json");
+        let freq_path = freq_dir.join(dir_name).join("raw_frequencies.json");
         let data: serde_json::Value = serde_json::from_str(&fs::read_to_string(&freq_path)?)?;
         for &q in QUALITY_TIERS {
             let key = format!("q{q}");
