@@ -2,7 +2,7 @@ name: Coverage
 
 on:
   push:
-    branches: [main, stepbystep2]
+    branches: [main]
   pull_request:
     branches: [main]
   # Allow manual trigger
@@ -17,7 +17,9 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -28,6 +30,27 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          # Patch workspace root Cargo.toml
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Generate coverage (lib + integration tests)
         run: |
@@ -40,7 +63,7 @@ jobs:
           cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           fail_ci_if_error: false
@@ -63,7 +86,9 @@ jobs:
     name: Codec Path Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -74,6 +99,27 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Patch path deps to git refs
+        shell: bash
+        run: |
+          # Patch workspace root Cargo.toml
+          sed \
+            -e 's|path = "\.\./zencodec-types"|git = "https://github.com/imazen/zencodec-types"|g' \
+            -e 's|path = "\.\./zenpixels/zenpixels"|git = "https://github.com/imazen/zenpixels"|g' \
+            -e 's|path = "\.\./zenlayout"|git = "https://github.com/imazen/zenlayout"|g' \
+            -e 's|path = "\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
+            -e '/ultrahdr-rs/d' \
+            -e 's|path = "\.\./ultrahdr/ultrahdr-core", ||g' \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          printf '\n[patch.crates-io]\nzenpixels = { git = "https://github.com/imazen/zenpixels" }\nzenpixels-convert = { git = "https://github.com/imazen/zenpixels" }\n' >> Cargo.toml
+          # Patch zenjpeg member: remove dev-deps with missing workspace entries or local paths
+          sed \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/jpegli-internals-sys/d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
 
       - name: Run codec coverage tests
         run: |
