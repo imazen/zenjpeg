@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 #![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
 use wide::{CmpGe, f32x8, i16x8, i32x8};
 
@@ -415,7 +415,7 @@ impl Default for Block8x8i32 {
 }
 
 /// Archmage AVX2+FMA quantize with zigzag output. True 256-bit operations.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn mage_quantize_block_zigzag(
     _token: archmage::X64V3Token,
@@ -469,7 +469,7 @@ fn mage_quantize_block_zigzag(
 }
 
 /// Archmage AVX2+FMA quantize, natural order output. True 256-bit operations.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn mage_quantize_block(
     _token: archmage::X64V3Token,
@@ -603,7 +603,7 @@ fn quantize_block_zigzag(
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return mage_quantize_block_zigzag(token, block, mul_rows, zero_bias, aq_strength);
@@ -620,7 +620,7 @@ fn quantize_block(
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return mage_quantize_block(token, block, mul_rows, zero_bias, aq_strength);
@@ -670,7 +670,7 @@ mod tests {
 
     /// Test that quantize_block_zigzag produces identical results across all
     /// SIMD dispatch tiers (AVX2+FMA, SSE2 fallback, scalar).
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_quantize_zigzag_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
@@ -688,12 +688,15 @@ mod tests {
             );
         });
         eprintln!("quantize_zigzag: {report}");
-        assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+        assert!(
+            report.permutations_run >= 2,
+            "expected at least 2 permutations"
+        );
     }
 
     /// Test that quantize_block (natural order) produces identical results
     /// across all SIMD dispatch tiers.
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_quantize_natural_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
@@ -710,12 +713,15 @@ mod tests {
             );
         });
         eprintln!("quantize_natural: {report}");
-        assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+        assert!(
+            report.permutations_run >= 2,
+            "expected at least 2 permutations"
+        );
     }
 
     /// Test that the public quantize_with_zero_bias_zigzag API works across
     /// all tiers (exercises the full dispatch chain through QuantTableSimd).
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_quantize_api_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};

@@ -1256,7 +1256,7 @@ fn sum_2x2_blocks_simd(
 // Archmage SIMD implementations (token-based safe intrinsics)
 // ============================================================================
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod archmage_impl {
     use archmage::{SimdToken, X64V3Token, X64V4Token, arcane, rite};
     use core::arch::x86_64::*;
@@ -2614,10 +2614,10 @@ pub(crate) mod archmage_impl {
     }
 }
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub use archmage_impl::mage_pre_erosion_row_padded_v4;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub use archmage_impl::mage_per_block_modulations_row;
 
 // Note: mage_compute_fuzzy_erosion_row doesn't need archmage token - it's pure inlined Rust
@@ -3363,7 +3363,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_archmage_pre_erosion_matches_wide() {
         use archmage::SimdToken;
@@ -3435,7 +3435,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_archmage_fuzzy_erosion_matches_scalar() {
         use archmage::{SimdToken, X64V3Token};

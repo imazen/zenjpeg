@@ -1,7 +1,7 @@
 //! Quick benchmark: AVX-512 dual-block vs AVX2 single-block DCT
 
 fn main() {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         use archmage::{Desktop64, SimdToken, X64V4Token};
         use std::time::Instant;
@@ -82,6 +82,6 @@ fn main() {
         }
     }
 
-    #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
-    println!("Requires archmage-simd feature on x86_64");
+    #[cfg(not(target_arch = "x86_64"))]
+    println!("Requires archmage feature on x86_64");
 }

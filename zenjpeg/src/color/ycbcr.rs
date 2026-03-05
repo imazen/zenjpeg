@@ -21,10 +21,10 @@ use crate::types::PixelFormat;
 use multiversed::multiversed;
 use wide::{f32x4, f32x8};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, arcane};
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Converts a single RGB pixel to YCbCr.
@@ -1050,7 +1050,7 @@ pub fn ycbcr_to_rgb_i16_x16(
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             ycbcr_to_rgb_i16_x16_avx2(token, y, cb, cr, rgb, offset);
@@ -1092,7 +1092,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn ycbcr_to_rgb_i16_x16_avx2(
     _token: archmage::X64V3Token,
@@ -1330,7 +1330,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     let len = y_plane.len();
 
     // Use AVX-512 path when available (16 pixels with wider intermediates, fewer instructions)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V4Token::summon() {
             ycbcr_planes_i16_to_rgb_u8_avx512(token, y_plane, cb_plane, cr_plane, rgb);
@@ -1339,7 +1339,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     }
 
     // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             ycbcr_planes_i16_to_rgb_u8_avx2(token, y_plane, cb_plane, cr_plane, rgb);
@@ -1368,7 +1368,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
 /// AVX2 batch conversion of YCbCr planes to interleaved RGB.
 /// Processes 16 pixels at a time with direct pointer loads.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn ycbcr_planes_i16_to_rgb_u8_avx2(
     _token: archmage::X64V3Token,
@@ -1546,7 +1546,7 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
 /// - `_mm512_cvtepi16_epi32` widens 16 i16→i32 in one instruction (vs manual unpack)
 /// - Single `_mm512_mullo_epi32` per multiply (vs lo+hi halves)
 /// - `_mm512_cvtsepi32_epi16` packs cleanly without permute fixup
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn ycbcr_planes_i16_to_rgb_u8_avx512(
     _token: archmage::X64V4Token,
@@ -1721,7 +1721,7 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
     debug_assert!(cr_row.len() >= (width + 1) / 2);
     debug_assert!(rgb.len() >= width * 3);
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             fused_h2v2_box_ycbcr_to_rgb_u8_avx2(token, y_row, cb_row, cr_row, rgb, width);
@@ -1849,7 +1849,7 @@ pub fn fused_h2v2_hfancy_ycbcr_to_rgb_u8(
 
 /// AVX2 fused box-filter 4:2:0 upsample + YCbCr→RGB.
 /// Processes 16 output pixels per iteration (8 chroma pixels → 16 output pixels).
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn fused_h2v2_box_ycbcr_to_rgb_u8_avx2(
     _token: archmage::X64V3Token,

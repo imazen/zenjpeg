@@ -13,7 +13,7 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanEncodeTable;
 use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::types::Subsampling;
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
 use multiversed::multiversed;
 use wide::{CmpEq, i16x8};
@@ -568,7 +568,7 @@ fn collect_block_frequencies_simd(
 /// Scalar fallback processes 8 per iteration (8 iterations).
 #[inline]
 pub(crate) fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
             return mage_build_nonzero_mask(token, coeffs);
@@ -582,7 +582,7 @@ pub(crate) fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
 /// Uses i16x8 (128-bit) instead of i16x16 (256-bit) because the i16x16
 /// bitmask() implementation has lane-crossing issues with _mm256_packs_epi16
 /// that produce incorrect results.
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn mage_build_nonzero_mask(_token: archmage::X64V3Token, coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     use magetypes::simd::i16x8 as mi16x8;

@@ -11,13 +11,13 @@
 //! # SIMD Architecture
 //!
 //! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
-//! - **magetypes path** (`archmage-simd` feature): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
+//! - **magetypes path** : Token-gated AVX2+FMA via `magetypes::simd::f32x8`
 //! - **wide path** (default fallback): Portable SIMD via `wide::f32x8`
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::SimdToken;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
+#[cfg(target_arch = "x86_64")]
+use archmage::SimdToken;
 use multiversed::multiversed;
 use wide::f32x8;
 
@@ -236,9 +236,9 @@ pub(crate) mod simd {
     use super::*;
 
     // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     use archmage::SimdToken;
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     use magetypes::simd::f32x8 as mf32x8;
 
     // SIMD versions of WC constants for parallel DCT
@@ -395,11 +395,7 @@ pub(crate) mod simd {
     /// Uses magetypes AVX2 intrinsics when available, falls back to wide.
     #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        #[cfg(all(
-            feature = "archmage-simd",
-            target_arch = "x86_64",
-            target_feature = "avx2"
-        ))]
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
         {
             let mut rows = mf32x8::load_8x8(input);
             mf32x8::transpose_8x8(&mut rows);
@@ -413,7 +409,7 @@ pub(crate) mod simd {
     }
 
     /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).
-    /// (Safe fallback when archmage-simd feature is disabled)
+    /// (Safe fallback for non-x86_64 targets)
     #[allow(dead_code)]
     #[inline]
     fn transpose_8x8_wide(input: &[f32; 64], output: &mut [f32; 64]) {
@@ -610,7 +606,7 @@ pub(crate) mod simd {
     // ========================================================================
 
     /// DCT for N=4 on magetypes f32x8 vectors with FMA.
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     fn dct1d_4_mage(m: &mut [mf32x8; 4], wc4_0: mf32x8, wc4_1: mf32x8, sqrt2: mf32x8) {
         // AddReverse<2>
@@ -644,7 +640,7 @@ pub(crate) mod simd {
     }
 
     /// DCT for N=8 on magetypes f32x8 vectors with FMA.
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::X64V3Token) {
         let wc4_0 = mf32x8::splat(token, 0.541196100146197);
@@ -701,7 +697,7 @@ pub(crate) mod simd {
     /// Safe wrapper around intrinsics via token-gated types.
     ///
     /// Algorithm: load → transpose → row DCT → scale → transpose → col DCT → scale → store
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
         let token = archmage::X64V3Token::summon().unwrap();
@@ -765,7 +761,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 #[must_use]
 #[inline]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if archmage::X64V3Token::summon().is_some() {
             let mut output = [0.0f32; 64];
@@ -1183,7 +1179,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_mage_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
@@ -1233,9 +1229,9 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
-    #[ignore] // Run with: cargo test --release --features archmage-simd bench_mage_dct -- --ignored --nocapture
+    #[ignore] // Run with: cargo test --release bench_mage_dct -- --ignored --nocapture
     fn bench_mage_dct_vs_scalar() {
         use std::hint::black_box;
         use std::time::Instant;
@@ -1353,7 +1349,7 @@ mod tests {
 
     /// Test that forward_dct_8x8 produces identical results across all
     /// SIMD dispatch tiers (AVX2+FMA mage path vs wide SSE2 fallback).
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_dct_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
@@ -1380,14 +1376,18 @@ mod tests {
                     assert!(
                         diff < 1e-4,
                         "DCT pattern {idx} coeff {k}: ref={} got={} diff={diff} at {perm}",
-                        reference[k], result[k]
+                        reference[k],
+                        result[k]
                     );
                 }
             });
 
             if idx == 0 {
                 eprintln!("dct_dispatch: {report}");
-                assert!(report.permutations_run >= 2, "expected at least 2 permutations");
+                assert!(
+                    report.permutations_run >= 2,
+                    "expected at least 2 permutations"
+                );
             }
         }
     }

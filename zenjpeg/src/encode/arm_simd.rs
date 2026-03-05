@@ -13,7 +13,7 @@
 //! NEON is 128-bit (4-wide for f32), compared to AVX2's 256-bit (8-wide).
 //! 8x8 DCT operations are implemented as two 4x4 blocks.
 
-#![cfg(all(feature = "archmage-simd", target_arch = "aarch64"))]
+#![cfg(target_arch = "aarch64")]
 
 use archmage::{NeonToken, arcane, rite};
 use core::arch::aarch64::*;
