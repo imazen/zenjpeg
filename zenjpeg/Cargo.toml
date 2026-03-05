@@ -47,7 +47,7 @@ enough = { workspace = true }
 zencodec-types = { workspace = true }
 zenpixels = { workspace = true }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
-linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
+# linear-srgb = { workspace = true }  # Disabled: incompatible with archmage 0.9 (not used in lib)
 whereat = { workspace = true }  # Error tracing with location tracking
 thiserror = { workspace = true }  # Error derive macros
 lcms2 = { workspace = true, optional = true }
@@ -57,7 +57,7 @@ rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 yuv = { workspace = true, optional = true }
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.9", workspace = true, optional = true }
+archmage = { workspace = true, optional = true }
 # Token-gated SIMD types (wraps archmage tokens)
 magetypes = { workspace = true, optional = true }
 # Safe unaligned SIMD load/store wrappers (eliminates unsafe for memory ops)

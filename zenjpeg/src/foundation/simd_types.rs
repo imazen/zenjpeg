@@ -6,7 +6,8 @@
 #![allow(dead_code)]
 #![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
 
-use multiversed::multiversed;
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use archmage::SimdToken;
 use wide::{CmpGe, f32x8, i16x8, i32x8};
 
 /// An 8x8 block stored as 8 rows of f32x8 for SIMD-native access.
@@ -413,13 +414,117 @@ impl Default for Block8x8i32 {
     }
 }
 
-/// Standalone multiversion quantize function with zigzag output.
-/// Uses runtime CPU feature detection for AVX2/FMA optimization.
-#[multiversed]
-#[inline]
-fn quantize_block_zigzag(
-    mul_rows: &[f32x8; 8],
+/// Archmage AVX2+FMA quantize with zigzag output. True 256-bit operations.
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn mage_quantize_block_zigzag(
+    _token: archmage::X64V3Token,
     block: &Block8x8f,
+    mul_rows: &[f32x8; 8],
+    zero_bias: &ZeroBiasSimd,
+    aq_strength: f32,
+) -> [i16; 64] {
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
+    use magetypes::simd::f32x8 as mf32x8;
+    use magetypes::simd::i32x8 as mi32x8;
+
+    let token = _token;
+    let aq_m = mf32x8::splat(token, aq_strength);
+    let zero_i32 = mi32x8::zero(token);
+    let mut result = [0i16; 64];
+
+    for row in 0..8 {
+        let block_arr: [f32; 8] = block.rows[row].into();
+        let mul_arr: [f32; 8] = mul_rows[row].into();
+        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
+        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
+
+        let block_m = mf32x8::from_array(token, block_arr);
+        let mul_m = mf32x8::from_array(token, mul_arr);
+        let offset_m = mf32x8::from_array(token, offset_arr);
+        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+
+        let qval = block_m * mul_m;
+        let threshold = bias_mul_m.mul_add(aq_m, offset_m);
+        let abs_qval = qval.abs();
+        let mask = abs_qval.simd_ge(threshold);
+        let rounded = qval.to_i32_round();
+        let mask_i32 = mask.bitcast_to_i32();
+        let blended = mi32x8::blend(mask_i32, rounded, zero_i32);
+
+        let arr = blended.to_array();
+        let k = row * 8;
+
+        result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
+    }
+
+    result
+}
+
+/// Archmage AVX2+FMA quantize, natural order output. True 256-bit operations.
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[archmage::arcane]
+fn mage_quantize_block(
+    _token: archmage::X64V3Token,
+    block: &Block8x8f,
+    mul_rows: &[f32x8; 8],
+    zero_bias: &ZeroBiasSimd,
+    aq_strength: f32,
+) -> [i16; 64] {
+    use magetypes::simd::f32x8 as mf32x8;
+    use magetypes::simd::i32x8 as mi32x8;
+
+    let token = _token;
+    let aq_m = mf32x8::splat(token, aq_strength);
+    let zero_i32 = mi32x8::zero(token);
+    let mut result = [0i16; 64];
+
+    for row in 0..8 {
+        let block_arr: [f32; 8] = block.rows[row].into();
+        let mul_arr: [f32; 8] = mul_rows[row].into();
+        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
+        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
+
+        let block_m = mf32x8::from_array(token, block_arr);
+        let mul_m = mf32x8::from_array(token, mul_arr);
+        let offset_m = mf32x8::from_array(token, offset_arr);
+        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+
+        let qval = block_m * mul_m;
+        let threshold = bias_mul_m.mul_add(aq_m, offset_m);
+        let abs_qval = qval.abs();
+        let mask = abs_qval.simd_ge(threshold);
+        let rounded = qval.to_i32_round();
+        let mask_i32 = mask.bitcast_to_i32();
+        let blended = mi32x8::blend(mask_i32, rounded, zero_i32);
+
+        let arr = blended.to_array();
+        let k = row * 8;
+
+        result[k] = arr[0] as i16;
+        result[k + 1] = arr[1] as i16;
+        result[k + 2] = arr[2] as i16;
+        result[k + 3] = arr[3] as i16;
+        result[k + 4] = arr[4] as i16;
+        result[k + 5] = arr[5] as i16;
+        result[k + 6] = arr[6] as i16;
+        result[k + 7] = arr[7] as i16;
+    }
+
+    result
+}
+
+/// Scalar fallback quantize with zigzag output (wide crate, 2× SSE2).
+fn scalar_quantize_block_zigzag(
+    block: &Block8x8f,
+    mul_rows: &[f32x8; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -454,13 +559,10 @@ fn quantize_block_zigzag(
     result
 }
 
-/// Standalone multiversion quantize function (natural order output).
-/// Uses runtime CPU feature detection for AVX2/FMA optimization.
-#[multiversed]
-#[inline]
-fn quantize_block(
-    mul_rows: &[f32x8; 8],
+/// Scalar fallback quantize, natural order output (wide crate, 2× SSE2).
+fn scalar_quantize_block(
     block: &Block8x8f,
+    mul_rows: &[f32x8; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -491,6 +593,40 @@ fn quantize_block(
     }
 
     result
+}
+
+/// Dispatching quantize with zigzag — tries archmage AVX2, falls back to scalar.
+#[inline]
+fn quantize_block_zigzag(
+    mul_rows: &[f32x8; 8],
+    block: &Block8x8f,
+    zero_bias: &ZeroBiasSimd,
+    aq_strength: f32,
+) -> [i16; 64] {
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return mage_quantize_block_zigzag(token, block, mul_rows, zero_bias, aq_strength);
+        }
+    }
+    scalar_quantize_block_zigzag(block, mul_rows, zero_bias, aq_strength)
+}
+
+/// Dispatching quantize natural order — tries archmage AVX2, falls back to scalar.
+#[inline]
+fn quantize_block(
+    mul_rows: &[f32x8; 8],
+    block: &Block8x8f,
+    zero_bias: &ZeroBiasSimd,
+    aq_strength: f32,
+) -> [i16; 64] {
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return mage_quantize_block(token, block, mul_rows, zero_bias, aq_strength);
+        }
+    }
+    scalar_quantize_block(block, mul_rows, zero_bias, aq_strength)
 }
 
 #[cfg(test)]

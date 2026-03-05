@@ -14,6 +14,8 @@
 //! - **magetypes path** (`archmage-simd` feature): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
 //! - **wide path** (default fallback): Portable SIMD via `wide::f32x8`
 
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use archmage::SimdToken;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
 use multiversed::multiversed;
@@ -759,34 +761,19 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// 8x8 block of DCT coefficients
 /// Performs an 8x8 forward DCT with automatic CPU dispatch.
 ///
-/// Uses multiversion for one-time dispatch at load (not per-call).
-/// Inside each version, `cfg(target_feature)` provides zero-cost branching.
-#[multiversed]
+/// Tries archmage AVX2+FMA first (runtime check), falls back to wide crate SIMD.
 #[must_use]
+#[inline]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // Use magetypes AVX2+FMA when available (safe, token-gated intrinsics)
-    #[cfg(all(
-        feature = "archmage-simd",
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
-    ))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        let mut output = [0.0f32; 64];
-        simd::forward_dct_8x8_mage(input, &mut output);
-        return output;
+        if archmage::X64V3Token::summon().is_some() {
+            let mut output = [0.0f32; 64];
+            simd::forward_dct_8x8_mage(input, &mut output);
+            return output;
+        }
     }
-
-    // Safe fallback using wide crate SIMD (portable to all platforms)
-    #[cfg(not(all(
-        feature = "archmage-simd",
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
-    )))]
-    {
-        forward_dct_8x8_scalar(input)
-    }
+    forward_dct_8x8_scalar(input)
 }
 
 /// Fallback for forward DCT using wide crate SIMD (portable to all platforms).
