@@ -534,12 +534,24 @@ pub(crate) mod simd {
         [r0, r2_final, r1, r3]
     }
 
-    /// Full SIMD-optimized 2D forward DCT with f32x8 chaining.
-    /// Keeps data in SIMD registers throughout the pipeline.
-    /// Uses only 2 transposes instead of multiple gather/scatter cycles.
-    #[multiversed]
+    /// Full SIMD-optimized 2D forward DCT with register chaining.
+    ///
+    /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8` which uses
+    /// native AVX2 intrinsics + FMA. Falls back to `wide::f32x8` path otherwise.
     pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
-        // Load input as rows (each f32x8 is one row of the 8x8 block)
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            let mut output = [0.0f32; 64];
+            crate::encode::mage_simd::mage_forward_dct_8x8(token, input, &mut output);
+            return output;
+        }
+
+        forward_dct_8x8_simd_chained_fallback(input)
+    }
+
+    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by multiversion).
+    #[multiversed]
+    fn forward_dct_8x8_simd_chained_fallback(input: &[f32; 64]) -> [f32; 64] {
         let rows = [
             f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
             f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
@@ -551,23 +563,12 @@ pub(crate) mod simd {
             f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
         ];
 
-        // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
-        // This layout allows dct_1d_vec to process 8 rows in parallel
         let cols = transpose_vec(rows);
-
-        // Row DCT with 1/8 scaling (first pass)
         let cols_after_row = scale_vec(dct_1d_vec(cols));
-
-        // Transpose back to row layout (also correct layout for column DCT)
         let rows_for_col = transpose_vec(cols_after_row);
-
-        // Column DCT with 1/8 scaling (second pass)
-        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
         let final_rows = scale_vec(dct_1d_vec(rows_for_col));
 
-        // Store results (scaling already applied)
         let mut output = [0.0f32; 64];
-
         output[0..8].copy_from_slice(&final_rows[0].to_array());
         output[8..16].copy_from_slice(&final_rows[1].to_array());
         output[16..24].copy_from_slice(&final_rows[2].to_array());
@@ -584,22 +585,27 @@ pub(crate) mod simd {
     ///
     /// This eliminates all conversion overhead when data is already in wide format.
     /// Use this in hot paths where blocks are stored as Block8x8f.
-    #[multiversed]
+    ///
+    /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8_wide` which uses
+    /// native AVX2 intrinsics + FMA. Falls back to `wide::f32x8` path otherwise.
     #[inline]
     pub fn forward_dct_8x8_wide(input: &Block8x8f) -> Block8x8f {
-        // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
+        #[cfg(target_arch = "x86_64")]
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return crate::encode::mage_simd::mage_forward_dct_8x8_wide(token, input);
+        }
+
+        forward_dct_8x8_wide_fallback(input)
+    }
+
+    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by multiversion).
+    #[multiversed]
+    #[inline]
+    fn forward_dct_8x8_wide_fallback(input: &Block8x8f) -> Block8x8f {
         let cols = transpose_vec(input.rows);
-
-        // Row DCT with 1/8 scaling (first pass)
         let cols_after_row = scale_vec(dct_1d_vec(cols));
-
-        // Transpose back to row layout
         let rows_for_col = transpose_vec(cols_after_row);
-
-        // Column DCT with 1/8 scaling (second pass)
-        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
         let final_rows = scale_vec(dct_1d_vec(rows_for_col));
-
         Block8x8f { rows: final_rows }
     }
 
