@@ -15,7 +15,7 @@ use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::types::Subsampling;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-use multiversed::multiversed;
+
 use wide::{CmpEq, i16x8};
 
 /// Frequency counts from an optimized Huffman encoding pass.
@@ -499,7 +499,8 @@ impl ComputedConfig {
 }
 
 /// SIMD-accelerated frequency collection using nonzero mask.
-#[multiversed]
+/// Uses `build_nonzero_mask` (with archmage dispatch) for SIMD — no need for
+/// `#[multiversed]` since this function is pure integer bit manipulation.
 #[inline]
 fn collect_block_frequencies_simd(
     coeffs: &[i16; DCT_BLOCK_SIZE],
