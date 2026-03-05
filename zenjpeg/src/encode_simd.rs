@@ -27,7 +27,7 @@ use wide::f32x8;
 
 // AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{SimdToken, arcane};
+use archmage::{SimdToken, arcane, rite};
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[allow(unused_imports)]
 use core::arch::x86_64::{
@@ -363,7 +363,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 /// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
+#[rite]
 #[inline]
 fn extract_r_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
@@ -374,7 +374,7 @@ fn extract_r_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 
 /// Extract 4 G values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
+#[rite]
 #[inline]
 fn extract_g_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
@@ -385,7 +385,7 @@ fn extract_g_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 
 /// Extract 4 B values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
+#[rite]
 #[inline]
 fn extract_b_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
@@ -397,7 +397,7 @@ fn extract_b_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 /// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
 /// Uses _mm_cvtepu8_epi32 which requires SSE4.1.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-#[arcane]
+#[rite]
 #[inline]
 fn u8x4_to_f32x4_sse41(_token: archmage::X64V3Token, v: __m128i) -> __m128 {
     use core::arch::x86_64::_mm_cvtepi32_ps;

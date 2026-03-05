@@ -25,7 +25,7 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 
-use archmage::{X64V3Token, X64V4Token, arcane};
+use archmage::{X64V3Token, X64V4Token, arcane, rite};
 use core::arch::x86_64::*;
 use safe_unaligned_simd::x86_64 as safe_simd;
 
@@ -56,7 +56,7 @@ const SQRT2: f32 = 1.41421356237;
 ///
 /// After transpose, `r[i]` contains column i from all 8 original rows.
 /// Uses the 3-phase unpack/shuffle/permute pattern.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_transpose_8x8_inplace_inner(_token: X64V3Token, r: &mut [__m256; 8]) {
     // Phase 1: Interleave pairs (unpack)
@@ -91,6 +91,7 @@ fn mage_transpose_8x8_inplace_inner(_token: X64V3Token, r: &mut [__m256; 8]) {
 }
 
 /// Public wrapper for in-place transpose. Token proves AVX is available.
+#[arcane]
 #[inline]
 pub fn mage_transpose_8x8_inplace(token: X64V3Token, r: &mut [__m256; 8]) {
     mage_transpose_8x8_inplace_inner(token, r);
@@ -103,7 +104,7 @@ pub fn mage_transpose_8x8_inplace(token: X64V3Token, r: &mut [__m256; 8]) {
 /// DCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
 ///
 /// This is pure AVX (add/sub), no FMA needed.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_2_inner(_token: X64V3Token, m0: &mut __m256, m1: &mut __m256) {
     let in0 = *m0;
@@ -113,7 +114,7 @@ fn mage_dct1d_2_inner(_token: X64V3Token, m0: &mut __m256, m1: &mut __m256) {
 }
 
 /// DCT for N=4 using FMA for the weighted operations.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_4_inner(token: X64V3Token, m: &mut [__m256; 4]) {
     let wc4_0 = _mm256_set1_ps(WC4_0);
@@ -152,7 +153,7 @@ fn mage_dct1d_4_inner(token: X64V3Token, m: &mut [__m256; 4]) {
 }
 
 /// DCT for N=8 using FMA. Processes 8 independent 8-point DCTs in parallel.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_8_inner(token: X64V3Token, m: &mut [__m256; 8]) {
     let wc8_0 = _mm256_set1_ps(WC8_0);
@@ -377,7 +378,7 @@ pub fn mage_forward_dct_8x8_wide(
 ///
 /// Uses extract/insert to process each 256-bit half with the AVX2 transpose pattern,
 /// then recombines. This is correct because it keeps block A and B data separate.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_transpose_8x8_dual_inner(token: X64V4Token, r: &mut [__m512; 8]) {
     // Extract low (block A) and high (block B) halves
@@ -474,7 +475,7 @@ fn mage_transpose_8x8_dual_inner(token: X64V4Token, r: &mut [__m512; 8]) {
 }
 
 /// AVX-512 DCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_2_avx512_inner(_token: X64V4Token, m0: &mut __m512, m1: &mut __m512) {
     let in0 = *m0;
@@ -484,7 +485,7 @@ fn mage_dct1d_2_avx512_inner(_token: X64V4Token, m0: &mut __m512, m1: &mut __m51
 }
 
 /// AVX-512 DCT for N=4 using FMA
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_4_avx512_inner(token: X64V4Token, m: &mut [__m512; 4]) {
     let wc4_0 = _mm512_set1_ps(WC4_0);
@@ -524,7 +525,7 @@ fn mage_dct1d_4_avx512_inner(token: X64V4Token, m: &mut [__m512; 4]) {
 
 /// AVX-512 DCT for N=8 using FMA. Processes 16 independent 8-point DCTs in parallel
 /// (8 from block A, 8 from block B).
-#[arcane]
+#[rite]
 #[inline]
 fn mage_dct1d_8_avx512_inner(token: X64V4Token, m: &mut [__m512; 8]) {
     let wc8_0 = _mm512_set1_ps(WC8_0);
@@ -1048,7 +1049,7 @@ pub fn mage_pre_erosion_pixel_x8(
 /// Horizontal sum of 8 f32s in a __m256 register.
 ///
 /// Uses efficient reduction: hadd + extract + add.
-#[arcane]
+#[rite]
 #[inline]
 fn mage_hsum_ps(_token: X64V3Token, v: __m256) -> f32 {
     // Sum pairs horizontally
