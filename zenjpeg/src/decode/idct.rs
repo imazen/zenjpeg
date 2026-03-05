@@ -8,6 +8,8 @@
 #![allow(dead_code)]
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
+#[cfg(target_arch = "x86_64")]
+use archmage::SimdToken;
 
 use wide::f32x8;
 
@@ -297,6 +299,230 @@ mod simd {
     }
 }
 
+// ============================================================================
+// Archmage AVX2+FMA inverse DCT (x86_64 only)
+// ============================================================================
+
+#[cfg(target_arch = "x86_64")]
+mod archmage_idct {
+    use archmage::{arcane, rite};
+    use safe_unaligned_simd::x86_64 as safe_simd;
+
+    use super::{SQRT2, WC4, WC8};
+    #[allow(unused_imports)]
+    use core::arch::x86_64::*;
+
+    /// IDCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
+    #[rite]
+    fn mage_idct1d_2(
+        _token: archmage::X64V3Token,
+        m0: &mut __m256,
+        m1: &mut __m256,
+    ) {
+        let in0 = *m0;
+        let in1 = *m1;
+        *m0 = _mm256_add_ps(in0, in1);
+        *m1 = _mm256_sub_ps(in0, in1);
+    }
+
+    /// IDCT for N=4: ForwardEvenOdd → IDCT<2> on even → BTranspose<2> on odd
+    /// → IDCT<2> on odd → MultiplyAndAdd<4>
+    #[rite]
+    fn mage_idct1d_4(token: archmage::X64V3Token, m: &mut [__m256; 4]) {
+        let wc4_0 = _mm256_set1_ps(WC4[0]);
+        let wc4_1 = _mm256_set1_ps(WC4[1]);
+        let sqrt2 = _mm256_set1_ps(SQRT2);
+
+        // ForwardEvenOdd<4>: de-interleave
+        // even = [m[0], m[2]], odd = [m[1], m[3]]
+        let e0 = m[0];
+        let e1 = m[2];
+        let o0 = m[1];
+        let o1 = m[3];
+
+        // IDCT1D<2> on even part
+        let e00 = _mm256_add_ps(e0, e1);
+        let e01 = _mm256_sub_ps(e0, e1);
+
+        // BTranspose<2> on odd part: o1 += o0, o0 *= sqrt2
+        let o1b = _mm256_add_ps(o1, o0);
+        let o0b = _mm256_mul_ps(o0, sqrt2);
+
+        // IDCT1D<2> on odd part
+        let o00 = _mm256_add_ps(o0b, o1b);
+        let o01 = _mm256_sub_ps(o0b, o1b);
+
+        // MultiplyAndAdd<4>: combine with WC4
+        let prod0 = _mm256_mul_ps(wc4_0, o00);
+        let prod1 = _mm256_mul_ps(wc4_1, o01);
+
+        m[0] = _mm256_add_ps(e00, prod0);
+        m[1] = _mm256_add_ps(e01, prod1);
+        m[2] = _mm256_sub_ps(e01, prod1);
+        m[3] = _mm256_sub_ps(e00, prod0);
+    }
+
+    /// IDCT for N=8: ForwardEvenOdd → IDCT<4> on even → BTranspose<4> on odd
+    /// → IDCT<4> on odd → MultiplyAndAdd<8>
+    #[rite]
+    fn mage_idct1d_8(token: archmage::X64V3Token, m: &mut [__m256; 8]) {
+        let sqrt2 = _mm256_set1_ps(SQRT2);
+
+        // ForwardEvenOdd<8>: de-interleave
+        let t0 = m[0]; // even[0]
+        let t1 = m[2]; // even[1]
+        let t2 = m[4]; // even[2]
+        let t3 = m[6]; // even[3]
+        let t4 = m[1]; // odd[0]
+        let t5 = m[3]; // odd[1]
+        let t6 = m[5]; // odd[2]
+        let t7 = m[7]; // odd[3]
+
+        // IDCT1D<4> on even part [t0, t1, t2, t3]
+        let mut even = [t0, t1, t2, t3];
+        mage_idct1d_4(token, &mut even);
+
+        // BTranspose<4> on odd part [t4, t5, t6, t7]
+        // Cumulative sum from end to start: t7 += t6, t6 += t5, t5 += t4
+        let t7b = _mm256_add_ps(t7, t6);
+        let t6b = _mm256_add_ps(t6, t5);
+        let t5b = _mm256_add_ps(t5, t4);
+        // t4 *= sqrt2
+        let t4b = _mm256_mul_ps(t4, sqrt2);
+
+        // IDCT1D<4> on odd part
+        let mut odd = [t4b, t5b, t6b, t7b];
+        mage_idct1d_4(token, &mut odd);
+
+        // MultiplyAndAdd<8>: combine with WC8
+        let wc8 = [
+            _mm256_set1_ps(WC8[0]),
+            _mm256_set1_ps(WC8[1]),
+            _mm256_set1_ps(WC8[2]),
+            _mm256_set1_ps(WC8[3]),
+        ];
+
+        let prod0 = _mm256_mul_ps(wc8[0], odd[0]);
+        let prod1 = _mm256_mul_ps(wc8[1], odd[1]);
+        let prod2 = _mm256_mul_ps(wc8[2], odd[2]);
+        let prod3 = _mm256_mul_ps(wc8[3], odd[3]);
+
+        m[0] = _mm256_add_ps(even[0], prod0);
+        m[1] = _mm256_add_ps(even[1], prod1);
+        m[2] = _mm256_add_ps(even[2], prod2);
+        m[3] = _mm256_add_ps(even[3], prod3);
+        m[4] = _mm256_sub_ps(even[3], prod3);
+        m[5] = _mm256_sub_ps(even[2], prod2);
+        m[6] = _mm256_sub_ps(even[1], prod1);
+        m[7] = _mm256_sub_ps(even[0], prod0);
+    }
+
+    /// In-place 8x8 transpose using AVX unpack/shuffle/permute.
+    #[rite]
+    fn mage_transpose_8x8_inplace(_token: archmage::X64V3Token, r: &mut [__m256; 8]) {
+        // Phase 1: Interleave pairs (unpack)
+        let q0 = _mm256_unpacklo_ps(r[0], r[2]);
+        let q1 = _mm256_unpacklo_ps(r[1], r[3]);
+        let q2 = _mm256_unpackhi_ps(r[0], r[2]);
+        let q3 = _mm256_unpackhi_ps(r[1], r[3]);
+        let q4 = _mm256_unpacklo_ps(r[4], r[6]);
+        let q5 = _mm256_unpacklo_ps(r[5], r[7]);
+        let q6 = _mm256_unpackhi_ps(r[4], r[6]);
+        let q7 = _mm256_unpackhi_ps(r[5], r[7]);
+
+        // Phase 2: Another round of unpack
+        let s0 = _mm256_unpacklo_ps(q0, q1);
+        let s1 = _mm256_unpackhi_ps(q0, q1);
+        let s2 = _mm256_unpacklo_ps(q2, q3);
+        let s3 = _mm256_unpackhi_ps(q2, q3);
+        let s4 = _mm256_unpacklo_ps(q4, q5);
+        let s5 = _mm256_unpackhi_ps(q4, q5);
+        let s6 = _mm256_unpacklo_ps(q6, q7);
+        let s7 = _mm256_unpackhi_ps(q6, q7);
+
+        // Phase 3: Exchange 128-bit halves
+        r[0] = _mm256_permute2f128_ps::<0x20>(s0, s4);
+        r[1] = _mm256_permute2f128_ps::<0x20>(s1, s5);
+        r[2] = _mm256_permute2f128_ps::<0x20>(s2, s6);
+        r[3] = _mm256_permute2f128_ps::<0x20>(s3, s7);
+        r[4] = _mm256_permute2f128_ps::<0x31>(s0, s4);
+        r[5] = _mm256_permute2f128_ps::<0x31>(s1, s5);
+        r[6] = _mm256_permute2f128_ps::<0x31>(s2, s6);
+        r[7] = _mm256_permute2f128_ps::<0x31>(s3, s7);
+    }
+
+    /// Full 8x8 inverse DCT using AVX2+FMA intrinsics.
+    ///
+    /// Algorithm: load → transpose → row IDCT → transpose → col IDCT → scale → store
+    #[arcane]
+    #[inline]
+    pub fn mage_inverse_dct_8x8(
+        token: archmage::X64V3Token,
+        input: &[f32; 64],
+        output: &mut [f32; 64],
+    ) {
+        let scale = _mm256_set1_ps(1.0 / 8.0);
+
+        // Load 8 rows
+        let mut reg = [
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[0..8]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[8..16]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[16..24]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[24..32]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[32..40]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[40..48]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[48..56]).unwrap()),
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&input[56..64]).unwrap()),
+        ];
+
+        // Transpose: reg[i] = column i
+        mage_transpose_8x8_inplace(token, &mut reg);
+
+        // Row IDCT: all 8 rows processed in parallel
+        mage_idct1d_8(token, &mut reg);
+
+        // Transpose back
+        mage_transpose_8x8_inplace(token, &mut reg);
+
+        // Column IDCT
+        mage_idct1d_8(token, &mut reg);
+
+        // Scale by 1/8 and store
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[0..8]).unwrap(),
+            _mm256_mul_ps(reg[0], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[8..16]).unwrap(),
+            _mm256_mul_ps(reg[1], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[16..24]).unwrap(),
+            _mm256_mul_ps(reg[2], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[24..32]).unwrap(),
+            _mm256_mul_ps(reg[3], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[32..40]).unwrap(),
+            _mm256_mul_ps(reg[4], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[40..48]).unwrap(),
+            _mm256_mul_ps(reg[5], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[48..56]).unwrap(),
+            _mm256_mul_ps(reg[6], scale),
+        );
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[56..64]).unwrap(),
+            _mm256_mul_ps(reg[7], scale),
+        );
+    }
+}
+
 /// ForwardEvenOdd: De-interleave even/odd parts (opposite of InverseEvenOdd)
 /// out[i] = in[2*i] for i in 0..N/2
 /// out[N/2+i] = in[2*i+1] for i in 0..N/2
@@ -464,7 +690,15 @@ pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         return [dc_value; DCT_BLOCK_SIZE];
     }
 
-    // Use SIMD-optimized version (always available via wide crate)
+    // Archmage AVX2+FMA path (x86_64 with runtime detection)
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        let mut output = [0.0f32; DCT_BLOCK_SIZE];
+        archmage_idct::mage_inverse_dct_8x8(token, input, &mut output);
+        return output;
+    }
+
+    // Fallback: portable SIMD via wide crate
     simd::inverse_dct_8x8_simd(input)
 }
 
@@ -889,6 +1123,42 @@ mod tests {
                 scalar_result[i],
                 simd_result[i]
             );
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_archmage_idct_matches_wide() {
+        use archmage::SimdToken;
+
+        let Some(token) = archmage::X64V3Token::summon() else {
+            return; // No AVX2+FMA support
+        };
+
+        // Test with multiple patterns
+        for seed in 0..10 {
+            let mut input = [0.0f32; 64];
+            for i in 0..64 {
+                input[i] = ((i * 17 + seed * 31) as f32).sin() * 50.0;
+            }
+
+            // Wide path
+            let wide_result = simd::inverse_dct_8x8_simd(&input);
+
+            // Archmage path
+            let mut mage_result = [0.0f32; 64];
+            archmage_idct::mage_inverse_dct_8x8(token, &input, &mut mage_result);
+
+            for i in 0..64 {
+                assert!(
+                    (wide_result[i] - mage_result[i]).abs() < 1e-5,
+                    "archmage/wide mismatch at [{}] seed {}: {} vs {}",
+                    i,
+                    seed,
+                    wide_result[i],
+                    mage_result[i]
+                );
+            }
         }
     }
 }
