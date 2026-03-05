@@ -45,7 +45,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
@@ -87,7 +87,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
@@ -124,7 +124,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
@@ -147,6 +147,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+
+      - name: Remove non-CI workspace members
+        shell: bash
+        run: |
+          sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -172,7 +177,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
@@ -208,7 +213,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/imazen/colorutils-rs.git
+          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
