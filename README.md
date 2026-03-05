@@ -1,6 +1,6 @@
 # zenjpeg
 
-Pure Rust JPEG encoder/decoder with perceptual optimizations. Port of Google's jpegli from the JPEG XL project.
+Pure Rust JPEG encoder and decoder with perceptual optimizations.
 
 ## License
 
