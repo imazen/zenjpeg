@@ -364,7 +364,6 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[rite]
-#[inline]
 fn extract_r_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
@@ -375,7 +374,6 @@ fn extract_r_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 /// Extract 4 G values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[rite]
-#[inline]
 fn extract_g_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
@@ -386,7 +384,6 @@ fn extract_g_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 /// Extract 4 B values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[rite]
-#[inline]
 fn extract_b_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
@@ -398,7 +395,6 @@ fn extract_b_ssse3(_token: archmage::X64V3Token, rgb: __m128i) -> __m128i {
 /// Uses _mm_cvtepu8_epi32 which requires SSE4.1.
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[rite]
-#[inline]
 fn u8x4_to_f32x4_sse41(_token: archmage::X64V3Token, v: __m128i) -> __m128 {
     use core::arch::x86_64::_mm_cvtepi32_ps;
     // Zero-extend u8 to i32, then convert to f32

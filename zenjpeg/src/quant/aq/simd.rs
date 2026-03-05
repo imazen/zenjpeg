@@ -1274,7 +1274,6 @@ pub(crate) mod archmage_impl {
     /// Archmage-based ratio_of_derivatives (non-inverted) using direct intrinsics.
     /// Uses FMA for all multiply-add operations.
     #[rite]
-    #[inline]
     fn mage_ratio_of_derivatives_x8(_token: X64V3Token, vals: __m256) -> __m256 {
         let zero = _mm256_setzero_ps();
 
@@ -1302,7 +1301,6 @@ pub(crate) mod archmage_impl {
 
     /// Archmage-based masking_sqrt using direct intrinsics.
     #[rite]
-    #[inline]
     fn mage_masking_sqrt_x8(_token: X64V3Token, v: __m256) -> __m256 {
         let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
         let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
@@ -1319,7 +1317,6 @@ pub(crate) mod archmage_impl {
     /// Archmage-based pre_erosion computation for 8 pixels.
     /// All operations use direct intrinsics with FMA.
     #[rite]
-    #[inline]
     fn mage_pre_erosion_pixel_x8(
         token: X64V3Token,
         pixels: __m256,
@@ -1715,7 +1712,6 @@ pub(crate) mod archmage_impl {
 
     /// Horizontal sum of __m256 (8 floats) to scalar
     #[rite]
-    #[inline]
     fn hsum_ps(_token: X64V3Token, v: __m256) -> f32 {
         // vhaddps ymm, ymm, ymm -> adds adjacent pairs
         let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
@@ -1729,7 +1725,6 @@ pub(crate) mod archmage_impl {
 
     /// Ratio of derivatives (inverted form for gamma modulation)
     #[rite]
-    #[inline]
     fn mage_ratio_of_derivatives_inv_x8(
         _token: X64V3Token,
         vals: __m256,
@@ -1753,7 +1748,6 @@ pub(crate) mod archmage_impl {
     ///
     /// This fuses two loops into one, halving memory traffic.
     #[rite]
-    #[inline]
     fn mage_hf_gamma_sum_8x8(
         token: X64V3Token,
         block: &[f32],
