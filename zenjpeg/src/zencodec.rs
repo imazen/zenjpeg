@@ -361,9 +361,12 @@ impl<'a> JpegEncoder<'a> {
         self.encode_bytes_inner(&buf.data, buf.width, buf.total_rows, layout)
     }
 
-    /// Type-erased single-shot encode (for backwards compat).
-    pub fn encode<P>(self, pixels: PixelSlice<'_, P>) -> Result<EncodeOutput, Error> {
-        let pixels = pixels.erase();
+}
+
+impl zencodec_types::Encoder for JpegEncoder<'_> {
+    type Error = Error;
+
+    fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
         let layout = descriptor_to_layout(pixels.descriptor())?;
         let width = pixels.width();
         let height = pixels.rows();
@@ -707,17 +710,15 @@ impl<'a> zencodec_types::DecodeJob<'a> for JpegDecodeJob<'a> {
 
             // Determine if orientation correction should be applied.
             let will_orient = will_auto_orient(self.orientation);
-            if will_orient {
-                if let Some(ref exif) = info.exif {
-                    if let Some(orient_val) = crate::lossless::parse_exif_orientation(exif) {
-                        let orient = zencodec_types::Orientation::from_exif(orient_val as u16);
-                        if orient.swaps_dimensions() {
-                            core::mem::swap(&mut w, &mut h);
-                        }
-                        out = OutputInfo::full_decode(w, h, native_format)
-                            .with_orientation_applied(orient);
-                    }
+            if will_orient
+                && let Some(ref exif) = info.exif
+                && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
+            {
+                let orient = zencodec_types::Orientation::from_exif(orient_val as u16);
+                if orient.swaps_dimensions() {
+                    core::mem::swap(&mut w, &mut h);
                 }
+                out = OutputInfo::full_decode(w, h, native_format).with_orientation_applied(orient);
             }
 
             // Report crop that will be applied (may be MCU-snapped by the decoder).
@@ -1165,7 +1166,9 @@ mod tests {
     use super::*;
     use imgref::{Img, ImgExt};
     use rgb::{Gray, Rgb, Rgba};
-    use zencodec_types::{DecodeJob as _, DecoderConfig as _, EncodeJob as _, EncoderConfig as _};
+    use zencodec_types::{
+        DecodeJob as _, DecoderConfig as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
+    };
 
     #[test]
     fn encoding_default_roundtrip() {
@@ -1180,10 +1183,10 @@ mod tests {
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
         let output = enc.encode_rgb8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
         // Verify it starts with JPEG SOI marker
-        assert_eq!(&output.bytes()[0..2], &[0xFF, 0xD8]);
+        assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
     }
 
     #[test]
@@ -1199,9 +1202,9 @@ mod tests {
             .with_metadata(&meta)
             .encoder()
             .unwrap()
-            .encode(PixelSlice::from(img.as_ref()))
+            .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
     }
 
     #[test]
@@ -1210,7 +1213,7 @@ mod tests {
         let pixels = vec![Gray::new(128u8); 64];
         let img = Img::new(pixels.as_slice(), 8, 8);
         let output = enc.encode_gray8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
     }
 
@@ -1228,7 +1231,7 @@ mod tests {
         ];
         let img = Img::new(pixels.as_slice(), 8, 8);
         let output = enc.encode_rgba8(img.as_ref()).unwrap();
-        assert!(!output.bytes().is_empty());
+        assert!(!output.data().is_empty());
     }
 
     #[test]
@@ -1252,8 +1255,8 @@ mod tests {
         encoder.push_rows(top).unwrap();
         encoder.push_rows(bottom).unwrap();
         let output = encoder.finish().unwrap();
-        assert!(!output.bytes().is_empty());
-        assert_eq!(&output.bytes()[0..2], &[0xFF, 0xD8]);
+        assert!(!output.data().is_empty());
+        assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
     }
 
     #[cfg(feature = "decoder")]
@@ -1274,7 +1277,7 @@ mod tests {
 
         // Decode
         let dec = JpegDecoderConfig::new();
-        let output = dec.decode(encoded.bytes()).unwrap();
+        let output = dec.decode(encoded.data()).unwrap();
         assert_eq!(output.info().width, 8);
         assert_eq!(output.info().height, 8);
         assert_eq!(output.info().format, ImageFormat::Jpeg);
@@ -1289,7 +1292,7 @@ mod tests {
         let encoded = enc.encode_rgb8(img.as_ref()).unwrap();
 
         let dec = JpegDecoderConfig::new();
-        let info = dec.probe_header(encoded.bytes()).unwrap();
+        let info = dec.probe_header(encoded.data()).unwrap();
         assert_eq!(info.width, 10);
         assert_eq!(info.height, 10);
         assert_eq!(info.format, ImageFormat::Jpeg);
@@ -1314,7 +1317,7 @@ mod tests {
         let dst = vec![Rgb { r: 0u8, g: 0, b: 0 }; 64];
         let mut dst_img = imgref::ImgVec::new(dst, 8, 8);
         let info = dec
-            .decode_into_rgb8(encoded.bytes(), dst_img.as_mut())
+            .decode_into_rgb8(encoded.data(), dst_img.as_mut())
             .unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
@@ -1364,12 +1367,151 @@ mod tests {
         };
         let info = dec
             .job()
-            .decoder(encoded.bytes(), &[])
+            .decoder(encoded.data(), &[])
             .unwrap()
             .decode_rows(&mut sink)
             .unwrap();
         assert_eq!(info.width, 8);
         assert_eq!(info.height, 8);
         assert_eq!(sink.row_count, 8);
+    }
+
+    // ── Encoder trait roundtrip tests ────────────────────────────────
+
+    /// Helper: encode via the type-erased Encoder trait, verify output is valid JPEG.
+    fn encoder_trait_roundtrip(pixels: zenpixels::PixelSlice<'_>) {
+        use zencodec_types::Encoder;
+        let config = JpegEncoderConfig::new().with_calibrated_quality(75.0);
+        let encoder = config.job().encoder().unwrap();
+        let output = encoder.encode(pixels).unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Jpeg);
+        assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn encoder_trait_rgb8() {
+        let pixels: Vec<Rgb<u8>> = (0..16 * 16)
+            .map(|i| Rgb {
+                r: (i % 256) as u8,
+                g: ((i * 3) % 256) as u8,
+                b: ((i * 7) % 256) as u8,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_rgba8() {
+        let pixels: Vec<Rgba<u8>> = (0..16 * 16)
+            .map(|i| Rgba {
+                r: (i % 256) as u8,
+                g: 128,
+                b: 64,
+                a: 255,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_gray8() {
+        let pixels: Vec<Gray<u8>> = (0..16 * 16).map(|i| Gray((i % 256) as u8)).collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_rgb16() {
+        let pixels: Vec<Rgb<u16>> = (0..16 * 16)
+            .map(|i| Rgb {
+                r: (i * 256) as u16,
+                g: ((i * 3 * 256) % 65536) as u16,
+                b: 0,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_rgba16() {
+        let pixels: Vec<Rgba<u16>> = (0..16 * 16)
+            .map(|i| Rgba {
+                r: (i * 256) as u16,
+                g: 32768,
+                b: 16384,
+                a: 65535,
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_gray16() {
+        let pixels: Vec<Gray<u16>> = (0..16 * 16).map(|i| Gray((i * 256) as u16)).collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_rgb_f32() {
+        let pixels: Vec<Rgb<f32>> = (0..16 * 16)
+            .map(|i| {
+                let t = i as f32 / 255.0;
+                Rgb {
+                    r: t,
+                    g: t * 0.5,
+                    b: t * 0.25,
+                }
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_rgba_f32() {
+        let pixels: Vec<Rgba<f32>> = (0..16 * 16)
+            .map(|i| {
+                let t = i as f32 / 255.0;
+                Rgba {
+                    r: t,
+                    g: t * 0.5,
+                    b: t * 0.25,
+                    a: 1.0,
+                }
+            })
+            .collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_gray_f32() {
+        let pixels: Vec<Gray<f32>> = (0..16 * 16).map(|i| Gray(i as f32 / 255.0)).collect();
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        encoder_trait_roundtrip(zenpixels::PixelSlice::from(img.as_ref()).into());
+    }
+
+    #[test]
+    fn encoder_trait_dyn_encoder() {
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 100,
+                g: 150,
+                b: 200,
+            };
+            32 * 32
+        ];
+        let img = Img::new(pixels.as_slice(), 32, 32);
+        let config = JpegEncoderConfig::new().with_calibrated_quality(80.0);
+        let dyn_enc = config.job().dyn_encoder().unwrap();
+        let output = dyn_enc(zenpixels::PixelSlice::from(img.as_ref()).into()).unwrap();
+        assert!(!output.is_empty());
+        assert_eq!(output.format(), ImageFormat::Jpeg);
     }
 }
