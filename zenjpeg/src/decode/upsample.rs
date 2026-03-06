@@ -2101,3 +2101,190 @@ fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
         output[out_x] = result as i16;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn h2v1_identity_at_edges() {
+        let input = [10.0, 20.0, 30.0, 40.0];
+        let output = upsample_h2v1(&input, 4, 1, 8, 1);
+        assert_eq!(output.len(), 8);
+        // First pixel: edge replication → (3*10 + 10) / 4 = 10
+        assert!((output[0] - 10.0).abs() < 0.01);
+        // Second pixel: (3*10 + 20) / 4 = 12.5
+        assert!((output[1] - 12.5).abs() < 0.01);
+        // Last pixel: edge replication → (3*40 + 40) / 4 = 40
+        assert!((output[7] - 40.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn h2v1_constant_input() {
+        let input = [50.0f32; 8];
+        let output = upsample_h2v1(&input, 8, 1, 16, 1);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 50.0).abs() < 0.01, "pixel {i}: {v} != 50.0");
+        }
+    }
+
+    #[test]
+    fn h1v2_identity_at_edges() {
+        let input = [10.0, 20.0, 30.0, 40.0];
+        let output = upsample_h1v2(&input, 1, 4, 1, 8);
+        assert_eq!(output.len(), 8);
+        assert!((output[0] - 10.0).abs() < 0.01);
+        assert!((output[7] - 40.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn h1v2_constant_input() {
+        let input = [75.0f32; 16];
+        let output = upsample_h1v2(&input, 4, 4, 4, 8);
+        assert_eq!(output.len(), 32);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 75.0).abs() < 0.01, "pixel {i}: {v} != 75.0");
+        }
+    }
+
+    #[test]
+    fn h2v2_constant_input() {
+        let input = [100.0f32; 16];
+        let output = upsample_h2v2(&input, 4, 4, 8, 8);
+        assert_eq!(output.len(), 64);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 100.0).abs() < 0.01, "pixel {i}: {v} != 100.0");
+        }
+    }
+
+    #[test]
+    fn h2v2_output_dimensions() {
+        let input = [0.0f32; 32 * 32];
+        let output = upsample_h2v2(&input, 32, 32, 64, 64);
+        assert_eq!(output.len(), 64 * 64);
+    }
+
+    #[test]
+    fn h2v2_small_1x1_to_2x2() {
+        let input = [128.0f32];
+        let output = upsample_h2v2(&input, 1, 1, 2, 2);
+        assert_eq!(output.len(), 4);
+        for &v in &output {
+            assert!((v - 128.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn fancy_dispatch_1x1() {
+        let input = [42.0f32; 16];
+        let output = upsample_fancy(&input, 4, 4, 4, 4, 1, 1);
+        assert_eq!(output.len(), 16);
+        for &v in &output {
+            assert!((v - 42.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn fancy_dispatch_routes_correctly() {
+        // Verify each dispatch produces correctly-sized output
+        let input = [50.0f32; 4];
+        assert_eq!(upsample_fancy(&input, 4, 1, 8, 1, 2, 1).len(), 8);
+        assert_eq!(upsample_fancy(&input, 1, 4, 1, 8, 1, 2).len(), 8);
+        assert_eq!(upsample_fancy(&input, 2, 2, 4, 4, 2, 2).len(), 16);
+    }
+
+    #[test]
+    fn fancy_fallback_unusual_scale() {
+        let input = [25.0f32; 4];
+        let output = upsample_fancy(&input, 2, 2, 8, 4, 4, 2);
+        assert_eq!(output.len(), 32);
+        for &v in &output {
+            assert!((v - 25.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn fancy_crop_smaller_output() {
+        let input = [1.0f32; 100];
+        let output = upsample_fancy(&input, 10, 10, 5, 5, 1, 1);
+        assert_eq!(output.len(), 25);
+    }
+
+    #[test]
+    fn h2v2_i16_fancy_basic() {
+        let input: Vec<i16> = vec![1000; 4 * 4];
+        let mut output = vec![0i16; 8 * 8];
+        upsample_h2v2_i16_fancy(&input, 4, 4, &mut output, 8, 8);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 1000).abs() <= 1, "i16 h2v2 pixel {i}: {v} != ~1000");
+        }
+    }
+
+    #[test]
+    fn h2v1_i16_fancy_basic() {
+        let input: Vec<i16> = vec![500; 8];
+        let mut output = vec![0i16; 16];
+        upsample_h2v1_i16_fancy(&input, 8, 1, &mut output, 16, 1);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 500).abs() <= 1, "i16 h2v1 pixel {i}: {v} != ~500");
+        }
+    }
+
+    #[test]
+    fn h1v2_i16_fancy_basic() {
+        let input: Vec<i16> = vec![1000; 8 * 4];
+        let mut output = vec![0i16; 8 * 8];
+        upsample_h1v2_i16_fancy(&input, 8, 4, &mut output, 8, 8);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 1000).abs() <= 1, "i16 h1v2 pixel {i}: {v} != ~1000");
+        }
+    }
+
+    #[test]
+    fn h2v2_i16_nearest_basic() {
+        let input: Vec<i16> = vec![750; 4 * 4];
+        let mut output = vec![0i16; 8 * 8];
+        upsample_h2v2_i16_nearest(&input, 4, 4, &mut output, 8, 8);
+        for &v in &output {
+            assert_eq!(v, 750);
+        }
+    }
+
+    #[test]
+    fn h2v1_i16_nearest_basic() {
+        let input: Vec<i16> = vec![300; 4];
+        let mut output = vec![0i16; 8];
+        upsample_h2v1_i16_nearest(&input, 4, 1, &mut output, 8, 1);
+        for &v in &output {
+            assert_eq!(v, 300);
+        }
+    }
+
+    #[test]
+    fn h1v2_i16_nearest_basic() {
+        let input: Vec<i16> = vec![200; 4 * 4];
+        let mut output = vec![0i16; 4 * 8];
+        upsample_h1v2_i16_nearest(&input, 4, 4, &mut output, 4, 8);
+        for &v in &output {
+            assert_eq!(v, 200);
+        }
+    }
+
+    #[test]
+    fn h2v1_i16_libjpeg_basic() {
+        let input: Vec<i16> = vec![400; 8];
+        let mut output = vec![0i16; 16];
+        upsample_h2v1_i16_libjpeg(&input, 8, 1, &mut output, 16, 1);
+        for (i, &v) in output.iter().enumerate() {
+            assert!((v - 400).abs() <= 1, "libjpeg h2v1 pixel {i}: {v} != ~400");
+        }
+    }
+
+    #[test]
+    fn h2v2_multirow() {
+        // Test with multiple rows — verifies vertical interpolation
+        let input: Vec<f32> = (0..12).map(|i| i as f32 * 10.0).collect();
+        let output = upsample_h2v1(&input, 4, 3, 8, 3);
+        assert_eq!(output.len(), 24);
+    }
+}
