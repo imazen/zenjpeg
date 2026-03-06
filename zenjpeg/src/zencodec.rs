@@ -995,7 +995,7 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
             }
 
             let stop = self.stop.unwrap_or(&enough::Unstoppable);
-            let result = cfg.decode(data, stop)?;
+            let mut result = cfg.decode(data, stop)?;
 
             let w = result.width();
             let h = result.height();
@@ -1019,6 +1019,9 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                     info = info.with_xmp(xmp.as_bytes().to_vec());
                 }
             }
+
+            // Take extras before consuming result for pixels
+            let jpeg_extras = result.take_extras();
 
             let buf = if wants_f32 {
                 // f32 linear output path
@@ -1077,7 +1080,11 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                 }
             };
 
-            Ok(DecodeOutput::new(buf, info))
+            let mut output = DecodeOutput::new(buf, info);
+            if let Some(extras) = jpeg_extras {
+                output = output.with_extras(extras);
+            }
+            Ok(output)
         }
 
         #[cfg(not(feature = "decoder"))]
