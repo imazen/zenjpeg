@@ -27,45 +27,12 @@ fn try_encode_image(
     enc.finish().map_err(|e| format!("finish: {}", e))
 }
 
-fn load_png(path: &std::path::Path) -> Option<(u32, u32, Vec<u8>)> {
-    let data = std::fs::read(path).ok()?;
-    let decoder = png::Decoder::new(std::io::Cursor::new(&data));
-    let mut reader = decoder.read_info().ok()?;
-    let info = reader.info().clone();
-
-    if info.color_type != png::ColorType::Rgb && info.color_type != png::ColorType::Rgba {
-        eprintln!(
-            "  Skipping {} (color type {:?})",
-            path.file_name().unwrap().to_string_lossy(),
-            info.color_type
-        );
-        return None;
-    }
-    if info.bit_depth != png::BitDepth::Eight {
-        eprintln!(
-            "  Skipping {} (bit depth {:?})",
-            path.file_name().unwrap().to_string_lossy(),
-            info.bit_depth
-        );
-        return None;
-    }
-
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let frame = reader.next_frame(&mut buf).ok()?;
-    let raw = &buf[..frame.buffer_size()];
-
-    let width = info.width;
-    let height = info.height;
-
-    let rgb = if info.color_type == png::ColorType::Rgba {
-        raw.chunks_exact(4)
-            .flat_map(|px| [px[0], px[1], px[2]])
-            .collect()
-    } else {
-        raw.to_vec()
-    };
-
-    Some((width, height, rgb))
+fn load_png_rgb(path: &std::path::Path) -> Option<(u32, u32, Vec<u8>)> {
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let w = img.width() as u32;
+    let h = img.height() as u32;
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((w, h, bytes))
 }
 
 fn decode_jpeg_zune(jpeg_data: &[u8]) -> Vec<u8> {
@@ -131,7 +98,7 @@ fn main() {
             let name = path.file_name().unwrap().to_string_lossy();
             let short_name: String = name.chars().take(10).collect();
 
-            let (width, height, pixels) = match load_png(&path) {
+            let (width, height, pixels) = match load_png_rgb(&path) {
                 Some(v) => v,
                 None => continue,
             };

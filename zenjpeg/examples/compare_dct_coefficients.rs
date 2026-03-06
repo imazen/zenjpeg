@@ -18,26 +18,10 @@ use zenjpeg_bench_utils::{
 };
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
-    let file = std::fs::File::open(path).expect("open");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("decode");
-
-    // Convert to RGB if needed
-    let pixels = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        _ => panic!("unsupported color type"),
-    };
-    (pixels, info.width, info.height)
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
+        .expect("Failed to load PNG");
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, img.width() as u32, img.height() as u32)
 }
 
 /// Encode using Rust jpegli with Butteraugli distance.

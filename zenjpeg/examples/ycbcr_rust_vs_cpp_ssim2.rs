@@ -5,13 +5,10 @@ use std::process::Command;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
-    let file = std::fs::File::open(path).expect("open");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("decode");
-    let pixels = buf[..info.buffer_size()].to_vec();
-    (pixels, info.width, info.height)
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
+        .expect("Failed to load PNG");
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, img.width() as u32, img.height() as u32)
 }
 
 fn encode_rust_ycbcr(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
@@ -42,13 +39,10 @@ fn decode_jpeg_to_rgb(jpeg: &[u8], label: &str) -> (Vec<u8>, u32, u32) {
         .args([&tmp_jpg, &tmp_png])
         .output()
         .expect("djpegli decode failed");
-    let file = std::fs::File::open(&tmp_png).expect("open decoded png");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("decode");
-    let pixels = buf[..info.buffer_size()].to_vec();
-    (pixels, info.width, info.height)
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(&tmp_png))
+        .expect("Failed to load decoded PNG");
+    let pixels: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (pixels, img.width() as u32, img.height() as u32)
 }
 
 fn compute_mean_diff(img1: &[u8], img2: &[u8]) -> (f64, f64, f64) {

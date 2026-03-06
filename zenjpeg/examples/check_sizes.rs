@@ -286,8 +286,8 @@ with open('/tmp/dj_cjpegli_prog_512.ppm', 'rb') as f:
             .unwrap();
         eprintln!("zune vs zenjpeg max diff: {}", zune_vs_zen);
 
-        if let Some(ref dj_pixels) = dj_out {
-            if dj_pixels.len() == zen_cj.len() {
+        if let Some(ref dj_pixels) = dj_out
+            && dj_pixels.len() == zen_cj.len() {
                 let dj_vs_zen: u8 = dj_pixels
                     .iter()
                     .zip(zen_cj.iter())
@@ -303,6 +303,5 @@ with open('/tmp/dj_cjpegli_prog_512.ppm', 'rb') as f:
                 eprintln!("djpegli vs zenjpeg max diff: {}", dj_vs_zen);
                 eprintln!("djpegli vs zune max diff: {}", dj_vs_zune);
             }
-        }
     }
 }

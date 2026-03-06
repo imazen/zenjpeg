@@ -35,14 +35,12 @@ fn main() {
             .to_string_lossy();
 
         // Load image once
-        let file = std::fs::File::open(img_path).expect("open");
-        let decoder = png::Decoder::new(file);
-        let mut reader = decoder.read_info().expect("info");
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).expect("decode");
-        let pixels = &buf[..info.buffer_size()];
-        let width = info.width;
-        let height = info.height;
+        let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(img_path))
+            .expect("Failed to load PNG");
+        let pixel_bytes: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let pixels = &pixel_bytes[..];
+        let width = loaded.width() as u32;
+        let height = loaded.height() as u32;
 
         for &q in &qualities {
             // C jpegli XYB

@@ -26,20 +26,12 @@ fn main() {
         .expect("Usage: xyb_vs_ycbcr_butteraugli <image.png> or set up codec-corpus");
 
     // Load image
-    let file = std::fs::File::open(&image_path).expect("Failed to open image");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
-
-    if info.color_type != png::ColorType::Rgb {
-        eprintln!("Image must be RGB");
-        return;
-    }
-
-    let pixels = &buf[..info.buffer_size()];
-    let width = info.width as usize;
-    let height = info.height as usize;
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(&image_path))
+        .expect("Failed to load PNG");
+    let pixel_bytes: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let pixels = &pixel_bytes[..];
+    let width = loaded.width();
+    let height = loaded.height();
 
     let img_name = Path::new(&image_path)
         .file_name()

@@ -271,7 +271,7 @@ fn validate_images(
     let mut std_bytes = 0usize;
 
     for path in images {
-        let (w, h, pixels) = load_png(path)?;
+        let (w, h, pixels) = load_png_rgb(path)?;
 
         // Optimal (two-pass)
         let (opt_len, _) = encode_optimal(w, h, &pixels, mode, quality)?;
@@ -401,30 +401,11 @@ fn load_image_list(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn load_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
-    let mut decoder = png::Decoder::new(fs::File::open(path)?);
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf)?;
-
-    let (w, h) = (info.width, info.height);
-    let pixels = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
-            .chunks(2)
-            .flat_map(|c| [c[0], c[0], c[0]])
-            .collect(),
-        other => return Err(format!("Unsupported color type: {other:?}").into()),
-    };
-
-    Ok((w, h, pixels))
+fn load_png_rgb(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+    let img = zenjpeg_bench_utils::load_png(path)
+        .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
+    let w = img.width() as u32;
+    let h = img.height() as u32;
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Ok((w, h, bytes))
 }

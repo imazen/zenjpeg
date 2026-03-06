@@ -32,34 +32,9 @@ mod bench {
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
-    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
-        let data = std::fs::read(path).unwrap();
-        let decoder = png::Decoder::new(std::io::Cursor::new(&data));
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        buf.truncate(info.buffer_size());
-
-        let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
-            png::ColorType::Rgb => buf
-                .chunks_exact(3)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            png::ColorType::Rgba => buf
-                .chunks_exact(4)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            _ => panic!("Unsupported: {:?}", info.color_type),
-        };
-        (pixels, info.width, info.height)
+    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+        let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
+        (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
 
     fn tile_to_size(
@@ -250,7 +225,7 @@ mod bench {
         for entry in &selected {
             let path = entry.path();
             let name = path.file_stem().unwrap().to_string_lossy();
-            let (pixels, w, h) = load_png(&path);
+            let (pixels, w, h) = load_png_rgb(&path);
             eprintln!("  {}... ({}x{})", &name[..8], w, h);
             source_images.push((pixels, w, h));
         }
@@ -384,7 +359,7 @@ mod bench {
 
             let mut times_per_thread: Vec<f64> = Vec::new();
 
-            for &(n, ref pool) in &pools {
+            for (_n, pool) in &pools {
                 let mut avg = 0.0;
                 for jpeg in &this_jpegs {
                     let decoder = Decoder::new().output_format(PixelFormat::Rgb);
@@ -559,7 +534,7 @@ mod bench {
 
             let mut dri4_8t = 0.0f64; // baseline for comparison
 
-            for (dri, ref jpegs) in &dri_jpegs {
+            for (dri, jpegs) in &dri_jpegs {
                 // Count restart segments by checking file
                 let decoder_probe = Decoder::new().output_format(PixelFormat::Rgb);
                 let _probe = decoder_probe.decode(&jpegs[0], Unstoppable).unwrap();

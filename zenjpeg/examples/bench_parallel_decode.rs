@@ -25,48 +25,9 @@ mod bench {
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
-    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
-        let data = std::fs::read(path).unwrap();
-        let decoder = png::Decoder::new(std::io::Cursor::new(&data));
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        buf.truncate(info.buffer_size());
-        let width = info.width;
-        let height = info.height;
-
-        let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
-            png::ColorType::Rgb => buf
-                .chunks_exact(3)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            png::ColorType::Rgba => buf
-                .chunks_exact(4)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            png::ColorType::Grayscale => {
-                buf.iter().map(|&v| rgb::RGB { r: v, g: v, b: v }).collect()
-            }
-            png::ColorType::GrayscaleAlpha => buf
-                .chunks_exact(2)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[0],
-                    b: c[0],
-                })
-                .collect(),
-            _ => panic!("Unsupported color type: {:?}", info.color_type),
-        };
-
-        (pixels, width, height)
+    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+        let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
+        (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
 
     fn encode_jpeg(
@@ -150,7 +111,7 @@ mod bench {
             clic_files.sort_by_key(|e| e.file_name());
             for entry in clic_files.iter().step_by(5).take(6) {
                 let path = entry.path();
-                let (pixels, w, h) = load_png(&path);
+                let (pixels, w, h) = load_png_rgb(&path);
                 let name = path.file_stem().unwrap().to_string_lossy();
                 source_images.push((format!("clic_{}", &name[..8]), pixels, w, h));
             }
@@ -162,7 +123,7 @@ mod bench {
             for name in &["imac_dark", "codec_wiki", "windows"] {
                 let path = sc_dir.join(format!("{}.png", name));
                 if path.exists() {
-                    let (pixels, w, h) = load_png(&path);
+                    let (pixels, w, h) = load_png_rgb(&path);
                     source_images.push((format!("sc_{}", name), pixels, w, h));
                 }
             }
@@ -174,7 +135,7 @@ mod bench {
             for name in &["baby", "city", "flowers"] {
                 let path = gb82_dir.join(format!("{}-lossless.png", name));
                 if path.exists() {
-                    let (pixels, w, h) = load_png(&path);
+                    let (pixels, w, h) = load_png_rgb(&path);
                     source_images.push((format!("gb82_{}", name), pixels, w, h));
                 }
             }

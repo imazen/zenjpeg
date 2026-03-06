@@ -123,7 +123,7 @@ fn main() {
     } else {
         let size: u32 = arg2.parse().unwrap_or(512);
         let progressive = extra.iter().any(|s| s.starts_with("prog"));
-        let no_dri = extra.iter().any(|s| *s == "nodri");
+        let no_dri = extra.contains(&"nodri");
         eprintln!(
             "Creating {}x{} {}{} test JPEG...",
             size,

@@ -90,11 +90,10 @@ fn default_corpus_dir() -> PathBuf {
 }
 
 fn expand_tilde(s: &str) -> PathBuf {
-    if s.starts_with('~') {
-        if let Some(home) = std::env::var_os("HOME") {
+    if s.starts_with('~')
+        && let Some(home) = std::env::var_os("HOME") {
             return PathBuf::from(home).join(&s[2..]);
         }
-    }
     PathBuf::from(s)
 }
 
@@ -194,8 +193,7 @@ fn encode_turbo(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
         .arg(ppm_path)
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             format!("cjpeg failed: {}", String::from_utf8_lossy(&output.stderr)),
         ));
     }
@@ -212,8 +210,7 @@ fn encode_turbo_444(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
         .arg(ppm_path)
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             format!(
                 "cjpeg 444 failed: {}",
                 String::from_utf8_lossy(&output.stderr)
@@ -254,8 +251,7 @@ fn encode_cjpegli(png_path: &Path, quality: u8, tmp_dir: &Path) -> io::Result<Ve
         .arg(quality.to_string())
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             format!(
                 "cjpegli failed: {}",
                 String::from_utf8_lossy(&output.stderr)
@@ -438,14 +434,13 @@ fn process_source(
     let mut results = Vec::new();
 
     // Validate with probe
-    if verbose {
-        if let Ok(probe) = detect::probe(source_jpeg) {
+    if verbose
+        && let Ok(probe) = detect::probe(source_jpeg) {
             eprintln!(
                 "    {} Q{}: detected {:?} Q{:.0} {:?}",
                 src_encoder, src_quality, probe.encoder, probe.quality.value, probe.subsampling
             );
         }
-    }
 
     // Decode source JPEG
     let decoded = match decode_jpeg_to_rgb(source_jpeg) {
@@ -478,8 +473,7 @@ fn process_source(
         for &zen_q in zen_qualities {
             for &(zen_sub_str, zen_sub) in &zen_subs {
                 if let Some(reenc) = encode_zen_preset(&decoded_bytes, w, h, zen_q, zen_sub, preset)
-                {
-                    if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
+                    && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
                         let reenc_size = reenc.len();
                         results.push(RawResult {
                             image: img_name.to_string(),
@@ -501,7 +495,6 @@ fn process_source(
                             size_ratio: reenc_size as f64 / src_size as f64,
                         });
                     }
-                }
             }
         }
     }
@@ -558,8 +551,8 @@ fn process_resize(
                 out_h as usize,
                 zen_q,
                 ChromaSubsampling::Quarter,
-            ) {
-                if let Some((reenc_ba, reenc_ss2)) = measure_jpeg(&resized_ref, &reenc) {
+            )
+                && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(&resized_ref, &reenc) {
                     let reenc_size = reenc.len();
                     results.push(RawResult {
                         image: img.name.clone(),
@@ -581,7 +574,6 @@ fn process_resize(
                         size_ratio: reenc_size as f64 / src_size as f64,
                     });
                 }
-            }
         }
     }
 
@@ -601,15 +593,15 @@ fn process_image(
     let mut results = Vec::new();
 
     // Sanity check: encode original PNG directly with zenjpeg at Q90
-    if args.verbose {
-        if let Some(direct) = encode_zen(
+    if args.verbose
+        && let Some(direct) = encode_zen(
             &img.pixels,
             img.width,
             img.height,
             90.0,
             ChromaSubsampling::Quarter,
-        ) {
-            if let Some((ba, ss2)) = measure_jpeg(&reference, &direct) {
+        )
+            && let Some((ba, ss2)) = measure_jpeg(&reference, &direct) {
                 eprintln!(
                     "  [sanity] {} direct zen Q90: BA={:.2}, SS2={:.2}, size={}",
                     img.name,
@@ -618,17 +610,14 @@ fn process_image(
                     direct.len()
                 );
             }
-        }
-    }
 
     // Write PPM for turbo (once per image)
     let ppm_path = tmp_dir.join(format!("{}.ppm", img.name));
     let has_turbo = source_configs.iter().any(|c| c.encoder == "turbo");
-    if has_turbo {
-        if let Err(e) = write_ppm(&ppm_path, reference.as_ref()) {
+    if has_turbo
+        && let Err(e) = write_ppm(&ppm_path, reference.as_ref()) {
             eprintln!("  warning: cannot write PPM for {}: {e}", img.name);
         }
-    }
 
     for src_cfg in source_configs {
         for &sq in src_qualities {
@@ -867,15 +856,14 @@ fn compute_resize_ceilings(results: &[RawResult]) -> Vec<ResizeCeiling> {
         }
 
         // If no ceiling found (all steps are efficient), ceiling is the highest Q
-        if ceiling_q.is_none() {
-            if let Some(&(q, ba, sr)) = q_points.last() {
+        if ceiling_q.is_none()
+            && let Some(&(q, ba, sr)) = q_points.last() {
                 ceiling_q = Some(q);
                 ceiling_ba = ba;
                 ceiling_sr = sr;
                 next_ba = ba;
                 next_sr = sr;
             }
-        }
 
         ceilings.push(ResizeCeiling {
             ratio,
@@ -937,12 +925,12 @@ fn print_summary(results: &[RawResult], args: &Args) {
         println!("\n{}", "=".repeat(90));
         println!("\nResize Quality Ceilings (above ceiling, bytes wasted on imperceptible gain):");
         println!(
-            "  {:>6}  {:>10}  {:>8}  {:>12}  {}",
-            "ratio", "ceiling Q", "BA", "size vs src", "reason"
+            "  {:>6}  {:>10}  {:>8}  {:>12}  reason",
+            "ratio", "ceiling Q", "BA", "size vs src"
         );
         println!(
-            "  {:>6}  {:>10}  {:>8}  {:>12}  {}",
-            "-----", "---------", "------", "-----------", "------"
+            "  {:>6}  {:>10}  {:>8}  {:>12}  ------",
+            "-----", "---------", "------", "-----------"
         );
 
         for c in &ceilings {

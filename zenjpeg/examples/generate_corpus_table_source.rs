@@ -10,7 +10,6 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
 
 use zenjpeg::encode::HuffmanSymbolFrequencies;
 use zenjpeg::huffman::optimize::{FrequencyCounter, HuffmanTableSet, OptimizedTable};

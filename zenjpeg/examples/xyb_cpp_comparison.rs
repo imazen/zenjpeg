@@ -17,20 +17,12 @@ fn main() {
         .expect("Usage: xyb_cpp_comparison <image.png> or set up codec-corpus");
 
     // Load image
-    let file = std::fs::File::open(&image_path).expect("Failed to open image");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
-
-    if info.color_type != png::ColorType::Rgb {
-        eprintln!("Image must be RGB");
-        return;
-    }
-
-    let pixels = &buf[..info.buffer_size()];
-    let width = info.width as u32;
-    let height = info.height as u32;
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(&image_path))
+        .expect("Failed to load PNG");
+    let pixel_bytes: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let pixels = &pixel_bytes[..];
+    let width = loaded.width() as u32;
+    let height = loaded.height() as u32;
 
     println!("Comparing XYB encoding: Rust vs C jpegli");
     println!("Image: {} ({}x{})", image_path, width, height);
@@ -112,17 +104,15 @@ fn compute_butteraugli(original: &str, compressed: &str) -> f64 {
         .args([original, compressed])
         .output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
+    if let Ok(output) = output
+        && output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // Parse butteraugli output (format: "distance")
-            if let Some(line) = stdout.lines().next() {
-                if let Ok(val) = line.trim().parse::<f64>() {
+            if let Some(line) = stdout.lines().next()
+                && let Ok(val) = line.trim().parse::<f64>() {
                     return val;
                 }
-            }
         }
-    }
 
     // Fall back to Rust butteraugli
     compute_butteraugli_rust(original, compressed)
@@ -132,14 +122,12 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
     use butteraugli::{ButteraugliParams, compute_butteraugli};
 
     // Load original
-    let file = std::fs::File::open(original_path).expect("open original");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("read info");
-    let mut orig_buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut orig_buf).expect("decode");
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let orig_pixels = &orig_buf[..info.buffer_size()];
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(original_path))
+        .expect("Failed to load original PNG");
+    let width = loaded.width();
+    let height = loaded.height();
+    let orig_bytes: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let orig_pixels = &orig_bytes[..];
 
     // Load compressed (JPEG) with ICC support for XYB
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");

@@ -6,7 +6,6 @@ use std::time::Instant;
 
 use zenjpeg::deblock::boundary::{BoundaryStrength, filter_plane_boundary_4tap};
 use zenjpeg::deblock::knusperli;
-use zenjpeg::foundation::consts::JPEG_ZIGZAG_ORDER;
 
 fn make_noisy_coeffs(blocks_wide: usize, blocks_high: usize) -> (Vec<i16>, [u16; 64]) {
     let num_blocks = blocks_wide * blocks_high;
@@ -146,7 +145,7 @@ fn bench_boundary_3comp(label: &str, width: usize, height: usize, iters: usize) 
     );
 
     // Parallel (rayon)
-    use rayon::prelude::*;
+    
     let start = Instant::now();
     for _ in 0..iters {
         y.copy_from_slice(&template_y);
@@ -194,7 +193,7 @@ fn bench_knusperli_3comp(label: &str, luma_bw: usize, luma_bh: usize, iters: usi
     );
 
     // Parallel
-    use rayon::prelude::*;
+    
     let start = Instant::now();
     for _ in 0..iters {
         rayon::join(

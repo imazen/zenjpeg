@@ -19,29 +19,10 @@ fn load_or_generate_test_image(width: usize, height: usize) -> (Vec<u8>, usize, 
     // Try to load frymire.png
     let test_path = Path::new("internal/jpegli-cpp/testdata/frymire.png");
     if test_path.exists() {
-        let decoder = png::Decoder::new(std::fs::File::open(test_path).unwrap());
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-
-        let w = info.width as usize;
-        let h = info.height as usize;
-
-        // Convert to RGB if needed
-        let rgb = match info.color_type {
-            png::ColorType::Rgb => buf[..w * h * 3].to_vec(),
-            png::ColorType::Rgba => {
-                let mut rgb = vec![0u8; w * h * 3];
-                for i in 0..(w * h) {
-                    rgb[i * 3] = buf[i * 4];
-                    rgb[i * 3 + 1] = buf[i * 4 + 1];
-                    rgb[i * 3 + 2] = buf[i * 4 + 2];
-                }
-                rgb
-            }
-            _ => panic!("Unsupported color type"),
-        };
-
+        let img = zenjpeg_bench_utils::load_png(test_path).expect("Failed to load PNG");
+        let w = img.width();
+        let h = img.height();
+        let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
         println!("Loaded frymire.png: {}x{}", w, h);
         return (rgb, w, h);
     }

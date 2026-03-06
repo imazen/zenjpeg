@@ -3,18 +3,12 @@
 //! Run with:
 //!   cargo run --release --example real_alloc_profile --features alloc-instrument
 
-use std::fs::File;
-use std::io::BufReader;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
-    let file = File::open(path).ok()?;
-    let decoder = png::Decoder::new(BufReader::new(file));
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-    Some((buf, info.width, info.height))
+fn load_png_rgb(path: &str) -> Option<(Vec<u8>, u32, u32)> {
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path)).ok()?;
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((bytes, img.width() as u32, img.height() as u32))
 }
 
 fn encode_and_report(pixels: &[u8], width: u32, height: u32, quality: u8) {
@@ -71,7 +65,7 @@ fn main() {
                     .to_string()
             })
             .unwrap_or_default();
-        if let Some((pixels, width, height)) = load_png(&path) {
+        if let Some((pixels, width, height)) = load_png_rgb(&path) {
             let short_hash = &img_hash[..8];
             eprintln!("=== CLIC {}.. ({}x{}) ===", short_hash, width, height);
             for quality in [75, 90] {

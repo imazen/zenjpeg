@@ -62,24 +62,10 @@ fn get_cjpegli_version(cjpegli_path: &str) -> String {
         .to_string()
 }
 
-fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-
-    // Convert to RGB if needed
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf,
-        png::ColorType::Rgba => buf.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
-        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|c| [c[0], c[0], c[0]]).collect(),
-        _ => return None,
-    };
-
-    Some((rgb, info.width, info.height))
+fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((bytes, img.width() as u32, img.height() as u32))
 }
 
 fn encode_with_cjpegli(cjpegli_path: &str, input_path: &Path, quality: u8) -> Option<Vec<u8>> {
@@ -290,7 +276,7 @@ fn main() {
         eprint!("[{}/{}] {} ... ", idx + 1, png_files.len(), name);
         std::io::stderr().flush().unwrap();
 
-        let Some((orig_rgb, width, height)) = load_png(png_path) else {
+        let Some((orig_rgb, width, height)) = load_png_rgb(png_path) else {
             eprintln!("SKIP (failed to load)");
             continue;
         };

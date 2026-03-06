@@ -5,38 +5,26 @@
 //! Run with: cargo run --release --example comprehensive_bench [image.png]
 
 use enough::Unstoppable;
-use png::Decoder;
-use std::fs::File;
-use std::io::BufReader;
+use std::path::Path;
 use std::time::Instant;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Load a PNG and resize it to target dimensions using simple box filter
 fn load_and_resize(path: &str, target_w: usize, target_h: usize) -> Vec<u8> {
-    let file = File::open(path).expect("open file");
-    let decoder = Decoder::new(BufReader::new(file));
-    let mut reader = decoder.read_info().expect("read info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("decode");
-
-    let src_w = info.width as usize;
-    let src_h = info.height as usize;
-    let channels = match info.color_type {
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        _ => panic!("Unsupported color type: {:?}", info.color_type),
-    };
+    let img = zenjpeg_bench_utils::load_png(Path::new(path)).expect("load png");
+    let src_w = img.width();
+    let src_h = img.height();
 
     let mut result = vec![0u8; target_w * target_h * 3];
     for ty in 0..target_h {
         for tx in 0..target_w {
             let sx = (tx * src_w) / target_w;
             let sy = (ty * src_h) / target_h;
-            let src_idx = (sy * src_w + sx) * channels;
+            let p = img.buf()[sy * src_w + sx];
             let dst_idx = (ty * target_w + tx) * 3;
-            result[dst_idx] = buf[src_idx];
-            result[dst_idx + 1] = buf[src_idx + 1];
-            result[dst_idx + 2] = buf[src_idx + 2];
+            result[dst_idx] = p.r;
+            result[dst_idx + 1] = p.g;
+            result[dst_idx + 2] = p.b;
         }
     }
     result

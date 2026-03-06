@@ -150,49 +150,24 @@ fn main() {
     let load_start = Instant::now();
 
     // Load and decode image once
-    let file = std::fs::File::open(&args.input).expect("Failed to open file");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let color_type = info.color_type;
-
-    // Handle different color types
-    let (pixels, layout) = match color_type {
-        png::ColorType::Rgb => (buf[..width * height * 3].to_vec(), PixelLayout::Rgb8Srgb),
-        png::ColorType::Rgba => {
-            // Strip alpha channel
-            let mut rgb = Vec::with_capacity(width * height * 3);
-            for chunk in buf[..width * height * 4].chunks_exact(4) {
-                rgb.extend_from_slice(&chunk[..3]);
-            }
-            (rgb, PixelLayout::Rgb8Srgb)
-        }
-        png::ColorType::Grayscale => (buf[..width * height].to_vec(), PixelLayout::Gray8Srgb),
-        png::ColorType::GrayscaleAlpha => {
-            // Strip alpha channel
-            let mut gray = Vec::with_capacity(width * height);
-            for chunk in buf[..width * height * 2].chunks_exact(2) {
-                gray.push(chunk[0]);
-            }
-            (gray, PixelLayout::Gray8Srgb)
-        }
-        _ => panic!("Unsupported color type: {:?}", color_type),
-    };
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(&args.input))
+        .expect("Failed to load PNG");
+    let width = loaded.width();
+    let height = loaded.height();
+    let color_type_str = "RGB";
+    let pixels: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let layout = PixelLayout::Rgb8Srgb;
 
     let load_time = load_start.elapsed();
     let megapixels = (width * height) as f64 / 1_000_000.0;
 
     if !args.quiet {
         eprintln!(
-            "Loaded {}x{} ({:.2} MP) {:?} in {:.1}ms",
+            "Loaded {}x{} ({:.2} MP) {} in {:.1}ms",
             width,
             height,
             megapixels,
-            color_type,
+            color_type_str,
             load_time.as_secs_f64() * 1000.0
         );
     }
@@ -270,14 +245,13 @@ fn main() {
     let bpp = jpeg_bytes.len() as f64 * 8.0 / (width * height) as f64;
 
     // Write output file if specified
-    if let Some(ref output_path) = args.output {
-        if !args.disable_output {
+    if let Some(ref output_path) = args.output
+        && !args.disable_output {
             std::fs::write(output_path, &jpeg_bytes).expect("Failed to write output file");
             if !args.quiet {
                 eprintln!("Wrote {} bytes to {}", jpeg_bytes.len(), output_path);
             }
         }
-    }
 
     if !args.quiet {
         eprintln!();

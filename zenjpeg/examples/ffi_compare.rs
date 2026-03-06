@@ -4,7 +4,6 @@
 //! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
-use std::fs;
 use zenjpeg_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode,
 };
@@ -30,33 +29,20 @@ fn main() {
     let distance = quality_to_distance(quality as f32);
 
     // Load PNG
-    let file = fs::File::open(png_path).expect("open png");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("read png info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("read frame");
-
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        _ => panic!("unsupported color type"),
-    };
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
+        .expect("Failed to load PNG");
+    let width = loaded.width();
+    let height = loaded.height();
+    let rgb: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     let img = ImageData {
         name: "test".to_string(),
-        width: info.width as usize,
-        height: info.height as usize,
+        width,
+        height,
         pixels: rgb,
     };
 
-    println!("Image: {}x{}", info.width, info.height);
+    println!("Image: {}x{}", width, height);
     println!("Quality: {} (distance: {:.2})\n", quality, distance);
 
     // Test baseline mode

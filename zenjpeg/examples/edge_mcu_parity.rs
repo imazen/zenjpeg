@@ -15,7 +15,6 @@
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
-use std::fs;
 use std::path::PathBuf;
 use zenjpeg::encoder::{
     ChromaSubsampling as JpegliChromaSubsampling, EncoderConfig as JpegliEncoderConfig,
@@ -38,33 +37,9 @@ fn quality_to_distance(q: f32) -> f32 {
     }
 }
 
-fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    let width = info.width;
-    let height = info.height;
-
-    let rgb: Vec<rgb::RGB8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()]
-            .chunks(3)
-            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
-            .iter()
-            .map(|&g| rgb::RGB8::new(g, g, g))
-            .collect(),
-        _ => return None,
-    };
-
-    Some((rgb, width, height))
+fn load_png_rgb8(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    Some((img.buf().to_vec(), img.width() as u32, img.height() as u32))
 }
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32) -> Vec<u8> {
@@ -153,7 +128,7 @@ fn main() {
         }
     };
 
-    let (rgb_pixels, width, height) = match load_png(&frymire_path) {
+    let (rgb_pixels, width, height) = match load_png_rgb8(&frymire_path) {
         Some(data) => data,
         None => {
             eprintln!("Failed to load frymire.png");

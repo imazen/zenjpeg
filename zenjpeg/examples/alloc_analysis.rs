@@ -6,18 +6,13 @@
 //!
 //! Uses CID22 high-resolution images from codec-corpus for realistic allocation patterns.
 
-use std::fs::File;
-use std::io::BufReader;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-fn load_png(path: &str) -> (Vec<u8>, u32, u32) {
-    let file = File::open(path).expect("Failed to open PNG");
-    let decoder = png::Decoder::new(BufReader::new(file));
-    let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
-    buf.truncate(info.buffer_size());
-    (buf, info.width, info.height)
+fn load_png_rgb(path: &str) -> (Vec<u8>, u32, u32) {
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
+        .expect("Failed to load PNG");
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, img.width() as u32, img.height() as u32)
 }
 
 fn main() {
@@ -38,10 +33,10 @@ fn main() {
 
     let (pixels, width, height) = if std::path::Path::new(&cid22_path).exists() {
         eprintln!("Loading: {}", cid22_path);
-        load_png(&cid22_path)
+        load_png_rgb(&cid22_path)
     } else if std::path::Path::new(&kodak_path).exists() {
         eprintln!("Loading: {}", kodak_path);
-        load_png(&kodak_path)
+        load_png_rgb(&kodak_path)
     } else {
         eprintln!("Corpus not found, using synthetic 1080p image");
         let width = 1920u32;

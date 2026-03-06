@@ -95,20 +95,11 @@ fn main() {
     }
 
     // Load PNG
-    let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let bytes = &buf[..info.buffer_size()];
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => bytes.to_vec(),
-        png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        _ => panic!("Unsupported"),
-    };
-
-    let width = info.width as usize;
-    let height = info.height as usize;
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
+        .expect("Failed to load PNG");
+    let rgb: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let width = loaded.width();
+    let height = loaded.height();
     let pixels = width * height;
 
     println!("Image: {}x{} ({} pixels)", width, height, pixels);

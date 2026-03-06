@@ -95,21 +95,9 @@ fn main() {
     println!("=== Image Conversion Test ===\n");
 
     let image_path = zenjpeg::test_utils::require_flower_small_path();
-    let file = std::fs::File::open(&image_path).unwrap();
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    let (width, height) = (info.width as usize, info.height as usize);
-
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..width * height * 3].to_vec(),
-        png::ColorType::Rgba => buf[..width * height * 4]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unexpected color type"),
-    };
+    let loaded = zenjpeg_bench_utils::load_png(&image_path).unwrap();
+    let (width, height) = (loaded.width(), loaded.height());
+    let rgb: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     // Convert entire image with both implementations
     let mut rust_xyb = vec![0.0f32; width * height * 3];

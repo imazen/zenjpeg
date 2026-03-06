@@ -43,48 +43,9 @@ mod bench {
 
     // --- Image loading and preparation ---
 
-    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
-        let data = std::fs::read(path).unwrap();
-        let decoder = png::Decoder::new(std::io::Cursor::new(&data));
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        buf.truncate(info.buffer_size());
-        let width = info.width;
-        let height = info.height;
-
-        let pixels: Vec<rgb::RGB<u8>> = match info.color_type {
-            png::ColorType::Rgb => buf
-                .chunks_exact(3)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            png::ColorType::Rgba => buf
-                .chunks_exact(4)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[1],
-                    b: c[2],
-                })
-                .collect(),
-            png::ColorType::Grayscale => {
-                buf.iter().map(|&v| rgb::RGB { r: v, g: v, b: v }).collect()
-            }
-            png::ColorType::GrayscaleAlpha => buf
-                .chunks_exact(2)
-                .map(|c| rgb::RGB {
-                    r: c[0],
-                    g: c[0],
-                    b: c[0],
-                })
-                .collect(),
-            _ => panic!("Unsupported color type: {:?}", info.color_type),
-        };
-
-        (pixels, width, height)
+    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+        let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
+        (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
 
     fn center_crop(
@@ -204,35 +165,37 @@ mod bench {
         use mozjpeg_sys::*;
         use std::mem;
 
-        let mut err: jpeg_error_mgr = mem::zeroed();
-        jpeg_std_error(&mut err);
+        unsafe {
+            let mut err: jpeg_error_mgr = mem::zeroed();
+            jpeg_std_error(&mut err);
 
-        let mut cinfo: jpeg_decompress_struct = mem::zeroed();
-        cinfo.common.err = &mut err;
-        jpeg_create_decompress(&mut cinfo);
+            let mut cinfo: jpeg_decompress_struct = mem::zeroed();
+            cinfo.common.err = &mut err;
+            jpeg_create_decompress(&mut cinfo);
 
-        jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
-        jpeg_read_header(&mut cinfo, true as boolean);
-        cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
-        jpeg_start_decompress(&mut cinfo);
+            jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
+            jpeg_read_header(&mut cinfo, true as boolean);
+            cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
+            jpeg_start_decompress(&mut cinfo);
 
-        let width = cinfo.output_width as usize;
-        let height = cinfo.output_height as usize;
-        let components = cinfo.output_components as usize;
-        let row_stride = width * components;
+            let width = cinfo.output_width as usize;
+            let height = cinfo.output_height as usize;
+            let components = cinfo.output_components as usize;
+            let row_stride = width * components;
 
-        let mut output = vec![0u8; height * row_stride];
+            let mut output = vec![0u8; height * row_stride];
 
-        while (cinfo.output_scanline as usize) < height {
-            let offset = cinfo.output_scanline as usize * row_stride;
-            let mut row_ptr = output[offset..].as_mut_ptr();
-            jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
+            while (cinfo.output_scanline as usize) < height {
+                let offset = cinfo.output_scanline as usize * row_stride;
+                let mut row_ptr = output[offset..].as_mut_ptr();
+                jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
+            }
+
+            jpeg_finish_decompress(&mut cinfo);
+            jpeg_destroy_decompress(&mut cinfo);
+
+            output
         }
-
-        jpeg_finish_decompress(&mut cinfo);
-        jpeg_destroy_decompress(&mut cinfo);
-
-        output
     }
 
     fn decode_with_zune(data: &[u8]) -> Vec<u8> {
@@ -367,7 +330,7 @@ mod bench {
             let path = entry.path();
             let name = path.file_stem().unwrap().to_string_lossy();
             let short_name = format!("clic_{}", &name[..8]);
-            let (pixels, w, h) = load_png(&path);
+            let (pixels, w, h) = load_png_rgb(&path);
             eprintln!("  {} ({}x{})", short_name, w, h);
             source_images.push((short_name, pixels, w, h));
         }

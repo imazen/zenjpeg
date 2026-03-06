@@ -15,13 +15,12 @@ fn main() {
     let png_path = "../internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     // Load PNG
-    let decoder = png::Decoder::new(std::fs::File::open(png_path).unwrap());
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    let rgb = &buf[..info.buffer_size()];
-    let width = info.width as usize;
-    let height = info.height as usize;
+    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
+        .expect("Failed to load PNG");
+    let rgb_vec: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    let rgb = &rgb_vec[..];
+    let width = loaded.width();
+    let height = loaded.height();
 
     println!("Image: {}x{}\n", width, height);
 

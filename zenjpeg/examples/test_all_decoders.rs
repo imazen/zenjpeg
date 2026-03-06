@@ -73,8 +73,8 @@ fn main() {
         zune.len(),
         dj.len()
     );
-    compare(&zen, &dj, "zenjpeg vs djpegli");
-    compare(&zune, &dj, "zune    vs djpegli");
+    compare(&zen, dj, "zenjpeg vs djpegli");
+    compare(&zune, dj, "zune    vs djpegli");
     compare(&zen, &zune, "zenjpeg vs zune   ");
 
     // Show first 4 pixels from each

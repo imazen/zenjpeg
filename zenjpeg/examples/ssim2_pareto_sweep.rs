@@ -525,10 +525,10 @@ fn analyze_angular_buckets(
             let cpp_bi = &cpp_image_bpp[bi];
             cpp_bi
                 .iter()
-                .filter(|(&img_idx, &cpp_bpp)| {
+                .filter(|(img_idx, cpp_bpp)| {
                     zen_bi
-                        .get(&img_idx)
-                        .is_some_and(|&zen_bpp| zen_bpp < cpp_bpp)
+                        .get(img_idx)
+                        .is_some_and(|zen_bpp| zen_bpp < *cpp_bpp)
                 })
                 .count()
         } else {

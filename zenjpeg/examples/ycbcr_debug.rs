@@ -11,7 +11,7 @@ fn main() {
 
     let (rgb, width, height, png_path) = if args.len() > 1 {
         let path = &args[1];
-        let (rgb, w, h) = load_png(path);
+        let (rgb, w, h) = load_png_rgb(path);
         (rgb, w, h, path.to_string())
     } else {
         eprintln!("Usage: ycbcr_debug <image.png>");
@@ -64,8 +64,8 @@ fn main() {
     decode_with_djpegli(rust_path, rust_decoded_path);
     decode_with_djpegli(cpp_path, cpp_decoded_path);
 
-    let rust_decoded = load_png(rust_decoded_path).0;
-    let cpp_decoded = load_png(cpp_decoded_path).0;
+    let rust_decoded = load_png_rgb(rust_decoded_path).0;
+    let cpp_decoded = load_png_rgb(cpp_decoded_path).0;
 
     // Summary stats
     let pixels = (width * height) as f64;
@@ -98,17 +98,11 @@ fn main() {
     println!("Max  |diff|: R={}, G={}, B={}", max_r, max_g, max_b);
 }
 
-fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
-    let file = std::fs::File::open(path).expect("open file");
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().expect("read info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("decode");
-    (
-        buf[..info.buffer_size()].to_vec(),
-        info.width as usize,
-        info.height as usize,
-    )
+fn load_png_rgb(path: &str) -> (Vec<u8>, usize, usize) {
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
+        .expect("Failed to load PNG");
+    let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (bytes, img.width(), img.height())
 }
 
 fn decode_with_djpegli(jpeg_path: &str, png_path: &str) {
