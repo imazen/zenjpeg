@@ -570,6 +570,19 @@ impl JpegDecoderConfig {
         }
     }
 
+    /// Access the underlying [`DecodeConfig`](crate::decode::DecodeConfig).
+    #[cfg(feature = "decoder")]
+    #[must_use]
+    pub fn inner(&self) -> &crate::decode::DecodeConfig {
+        &self.inner
+    }
+
+    /// Mutable access to the underlying [`DecodeConfig`](crate::decode::DecodeConfig).
+    #[cfg(feature = "decoder")]
+    pub fn inner_mut(&mut self) -> &mut crate::decode::DecodeConfig {
+        &mut self.inner
+    }
+
     /// Convenience: probe image header with this config.
     pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Error> {
         use zencodec_types::{DecodeJob as _, DecoderConfig as _};
