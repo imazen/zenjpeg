@@ -840,8 +840,10 @@ impl<'a> JpegDecoder<'a> {
             use imgref::ImgRefMut;
             use zenpixels::{ChannelLayout, ChannelType};
 
+            let limits = self.limits;
             let cfg = self.build_config();
             let info_result = self.config.inner.read_info(data)?;
+            limits.check_dimensions(info_result.dimensions.width, info_result.dimensions.height)?;
             let info = to_image_info(&info_result);
 
             let mut reader = cfg.scanline_reader(data)?;
@@ -1000,11 +1002,18 @@ impl zencodec_types::Decode for JpegDecoder<'_> {
                 .iter()
                 .any(|d| d.channel_type() == ChannelType::F32);
 
+            let limits = self.limits;
             let mut cfg = self.build_config();
             cfg = cfg.preserve_all();
 
             if wants_f32 {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
+            }
+
+            // Check max_width/max_height before full decode (header parse is cheap)
+            if limits.max_width.is_some() || limits.max_height.is_some() {
+                let header = cfg.read_info(data)?;
+                limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
             }
 
             let stop = self.stop.unwrap_or(&enough::Unstoppable);
@@ -1187,7 +1196,8 @@ mod tests {
     use imgref::{Img, ImgExt};
     use rgb::{Gray, Rgb, Rgba};
     use zencodec_types::{
-        DecodeJob as _, DecoderConfig as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
+        Decode as _, DecodeJob as _, DecoderConfig as _, EncodeJob as _, Encoder as _,
+        EncoderConfig as _,
     };
 
     #[test]
@@ -1533,5 +1543,58 @@ mod tests {
         let output = dyn_enc(zenpixels::PixelSlice::from(img.as_ref()).into()).unwrap();
         assert!(!output.is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
+    }
+
+    #[test]
+    fn decode_trait_max_width_enforced() {
+        // Encode a 32x32 test image
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 128, g: 64, b: 32 }; 32 * 32];
+        let img = Img::new(pixels.as_slice(), 32, 32);
+        let encoded = JpegEncoderConfig::new().encode_rgb8(img.as_ref()).unwrap();
+
+        // Decode with max_width=10 should fail
+        let dec = JpegDecoderConfig::new();
+        let limits = ResourceLimits::none().with_max_width(10);
+        let result = dec
+            .job()
+            .with_limits(limits)
+            .decoder(encoded.data(), &[])
+            .unwrap()
+            .decode();
+        assert!(result.is_err(), "should reject image wider than max_width");
+    }
+
+    #[test]
+    fn decode_trait_max_height_enforced() {
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 128, g: 64, b: 32 }; 32 * 32];
+        let img = Img::new(pixels.as_slice(), 32, 32);
+        let encoded = JpegEncoderConfig::new().encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = JpegDecoderConfig::new();
+        let limits = ResourceLimits::none().with_max_height(10);
+        let result = dec
+            .job()
+            .with_limits(limits)
+            .decoder(encoded.data(), &[])
+            .unwrap()
+            .decode();
+        assert!(result.is_err(), "should reject image taller than max_height");
+    }
+
+    #[test]
+    fn decode_trait_generous_dimensions_ok() {
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 128, g: 64, b: 32 }; 32 * 32];
+        let img = Img::new(pixels.as_slice(), 32, 32);
+        let encoded = JpegEncoderConfig::new().encode_rgb8(img.as_ref()).unwrap();
+
+        let dec = JpegDecoderConfig::new();
+        let limits = ResourceLimits::none().with_max_width(1000).with_max_height(1000);
+        let result = dec
+            .job()
+            .with_limits(limits)
+            .decoder(encoded.data(), &[])
+            .unwrap()
+            .decode();
+        assert!(result.is_ok(), "generous limits should not reject 32x32 image");
     }
 }

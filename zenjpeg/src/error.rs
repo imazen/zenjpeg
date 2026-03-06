@@ -689,6 +689,31 @@ impl From<enough::StopReason> for Error {
 
 impl core::error::Error for Error {}
 
+impl From<zencodec_types::LimitExceeded> for Error {
+    #[track_caller]
+    fn from(err: zencodec_types::LimitExceeded) -> Self {
+        use zencodec_types::LimitExceeded;
+        match err {
+            LimitExceeded::Width { actual, .. } => {
+                Self::invalid_dimensions(actual, 0, "width exceeds limit")
+            }
+            LimitExceeded::Height { actual, .. } => {
+                Self::invalid_dimensions(0, actual, "height exceeds limit")
+            }
+            LimitExceeded::Pixels { actual, max } => Self::image_too_large(actual, max),
+            LimitExceeded::Memory { actual, max } => Self::new(ErrorKind::AllocationFailed {
+                bytes: actual as usize,
+                context: if max > 0 {
+                    "memory limit exceeded"
+                } else {
+                    "allocation failed"
+                },
+            }),
+            _ => Self::decode_error(format!("{err}")),
+        }
+    }
+}
+
 impl From<zencodec_types::UnsupportedOperation> for Error {
     #[track_caller]
     fn from(op: zencodec_types::UnsupportedOperation) -> Self {
