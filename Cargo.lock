@@ -255,6 +255,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "butteraugli"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96131e7190d4a5d2433b6820ccbe26efa420a873169131eadf24e8524c03ab27"
+dependencies = [
+ "archmage 0.9.3",
+ "imgref",
+ "magetypes",
+ "rgb",
+]
+
+[[package]]
 name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -417,7 +429,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0172394d0b08a25a5916122265af791022a81b1c131efa4089da1f4ecf2b0e2c"
 dependencies = [
- "butteraugli",
+ "butteraugli 0.4.0",
  "chrono",
  "codec-corpus",
  "csv",
@@ -2584,7 +2596,7 @@ dependencies = [
  "approx",
  "archmage 0.9.3",
  "bincode",
- "butteraugli",
+ "butteraugli 0.8.0",
  "bytemuck",
  "chrono",
  "codec-corpus",
@@ -2642,7 +2654,7 @@ dependencies = [
 name = "zenjpeg-bench-utils"
 version = "0.1.0"
 dependencies = [
- "butteraugli",
+ "butteraugli 0.8.0",
  "dssim-core",
  "enough",
  "fast-ssim2",

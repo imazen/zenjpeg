@@ -88,7 +88,7 @@ zencodec-types = { path = "../zencodec-types" }
 zenpixels = { path = "../zenpixels/zenpixels", default-features = false, features = ["buffer"] }
 
 # Published crates
-butteraugli = "0.4"
+butteraugli = "0.8"
 mozjpeg-rs = "0.5.3"
 mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
 
