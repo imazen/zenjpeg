@@ -85,7 +85,7 @@ thiserror = { version = "2.0", default-features = false }
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
 zencodec-types = { path = "../zencodec-types" }
-zenpixels = { path = "../zenpixels/zenpixels", default-features = false, features = ["buffer"] }
+zenpixels = { version = "0.1", default-features = false, features = ["buffer"] }
 
 # Published crates
 butteraugli = "0.8"

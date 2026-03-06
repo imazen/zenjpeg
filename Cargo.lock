@@ -2682,6 +2682,8 @@ checksum = "1e136195598f6c1dc769200888ad1f9071f99d54ac3a91b80be6ba0b164e6b5b"
 [[package]]
 name = "zenpixels"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a5034cd8276387929cdc53b7cc8b391e140e7769183664dc76c0fc2a04891be"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -2691,6 +2693,8 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb9b620ebbacfdeb7ef943212c9ac4cbfa7d9f3e2ea1bdcc03d3ec7e1db3471"
 dependencies = [
  "bytemuck",
  "linear-srgb 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
