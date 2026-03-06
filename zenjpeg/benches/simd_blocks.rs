@@ -2,7 +2,8 @@
 //!
 //! Tests the new Block8x8f and QuantTableSimd types.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use wide::f32x8;
 use zenjpeg::foundation::simd_types::{Block8x8f, QuantTableSimd};
 

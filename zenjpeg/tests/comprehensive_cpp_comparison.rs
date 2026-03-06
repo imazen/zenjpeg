@@ -62,34 +62,19 @@ fn encode_cpp_ffi_progressive(width: u32, height: u32, data: &[u8], distance: f3
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    let width = info.width;
-    let height = info.height;
-
-    // Convert to RGB if needed
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
-            .chunks(2)
-            .flat_map(|c| [c[0], c[0], c[0]])
-            .collect(),
-        _ => return None,
-    };
-
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((rgb, width, height))
+}
+
+fn rgb_to_imgvec(data: &[u8], width: usize, height: usize) -> imgref::ImgVec<rgb::RGB8> {
+    let pixels: Vec<rgb::RGB8> = data
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    imgref::ImgVec::new(pixels, width, height)
 }
 
 fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
@@ -145,15 +130,12 @@ fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<Com
 
     // Rust butteraugli
     let bfly_params = butteraugli::ButteraugliParams::default();
-    let rust_butteraugli = butteraugli::compute_butteraugli(
-        rgb,
-        &rust_decoded,
-        width as usize,
-        height as usize,
-        &bfly_params,
-    )
-    .expect("butteraugli")
-    .score;
+    let orig_img = rgb_to_imgvec(rgb, width as usize, height as usize);
+    let rust_dec_img = rgb_to_imgvec(&rust_decoded, width as usize, height as usize);
+    let rust_butteraugli =
+        butteraugli::butteraugli(orig_img.as_ref(), rust_dec_img.as_ref(), &bfly_params)
+            .expect("butteraugli")
+            .score;
 
     // C++ encoding via FFI with timing (using same distance)
     let cpp_start = Instant::now();
@@ -166,15 +148,11 @@ fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<Com
     let cpp_dssim = compute_dssim(rgb, &cpp_decoded, width as usize, height as usize);
 
     // C++ butteraugli
-    let cpp_butteraugli = butteraugli::compute_butteraugli(
-        rgb,
-        &cpp_decoded,
-        width as usize,
-        height as usize,
-        &bfly_params,
-    )
-    .expect("butteraugli")
-    .score;
+    let cpp_dec_img = rgb_to_imgvec(&cpp_decoded, width as usize, height as usize);
+    let cpp_butteraugli =
+        butteraugli::butteraugli(orig_img.as_ref(), cpp_dec_img.as_ref(), &bfly_params)
+            .expect("butteraugli")
+            .score;
 
     Some(ComparisonResult {
         quality,

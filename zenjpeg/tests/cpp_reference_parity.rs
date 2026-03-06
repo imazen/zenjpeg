@@ -51,32 +51,21 @@ fn load_reference_data() -> Option<CppReferenceData> {
     ];
 
     for path in paths {
-        if let Ok(data) = fs::read_to_string(path) {
-            if let Ok(reference) = serde_json::from_str(&data) {
-                return Some(reference);
-            }
+        if let Ok(data) = fs::read_to_string(path)
+            && let Ok(reference) = serde_json::from_str(&data)
+        {
+            return Some(reference);
         }
     }
     None
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf,
-        png::ColorType::Rgba => buf.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
-        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|c| [c[0], c[0], c[0]]).collect(),
-        _ => return None,
-    };
-
-    Some((rgb, info.width, info.height))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((rgb, width, height))
 }
 
 fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
@@ -149,10 +138,21 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
 
 #[allow(dead_code)] // Available for quality metric comparisons when needed
 fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use butteraugli::{ButteraugliParams, compute_butteraugli};
+    use butteraugli::ButteraugliParams;
+    use imgref::ImgVec;
+    use rgb::RGB8;
 
+    let to_img = |data: &[u8]| -> ImgVec<RGB8> {
+        let pixels: Vec<RGB8> = data
+            .chunks_exact(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        ImgVec::new(pixels, width, height)
+    };
+    let orig_img = to_img(orig);
+    let comp_img = to_img(comp);
     let params = ButteraugliParams::default();
-    match compute_butteraugli(orig, comp, width, height, &params) {
+    match butteraugli::butteraugli(orig_img.as_ref(), comp_img.as_ref(), &params) {
         Ok(result) => result.score,
         Err(_) => f64::NAN,
     }

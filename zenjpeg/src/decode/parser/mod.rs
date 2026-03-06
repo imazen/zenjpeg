@@ -366,10 +366,9 @@ impl<'a> JpegParser<'a> {
                     if detect_segment_type(marker, seg_data) == SegmentType::Xmp
                         && seg_data.starts_with(XMP_NS)
                         && xmp_data.is_none()
+                        && let Ok(s) = core::str::from_utf8(&seg_data[XMP_NS.len()..])
                     {
-                        if let Ok(s) = core::str::from_utf8(&seg_data[XMP_NS.len()..]) {
-                            xmp_data = Some(s.to_string());
-                        }
+                        xmp_data = Some(s.to_string());
                     }
                 }
                 0xE2 => {
@@ -574,7 +573,6 @@ impl<'a> JpegParser<'a> {
                             if self.strictness != Strictness::Strict
                                 && matches!(e.kind(), ErrorKind::TruncatedData { .. })
                             {
-                                scans_decoded += 1;
                                 self.warnings.push(DecodeWarning::TruncatedScan {
                                     blocks_decoded: 0,
                                     blocks_expected: 0,

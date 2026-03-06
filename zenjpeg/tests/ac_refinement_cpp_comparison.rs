@@ -59,38 +59,37 @@ fn parse_cpp_dump(content: &str) -> Vec<CppScanInfo> {
             if let Some(idx_str) = line
                 .strip_prefix("=== AC Refinement Scan ")
                 .and_then(|s| s.strip_suffix(" ==="))
+                && let Ok(idx) = idx_str.parse::<u32>()
             {
-                if let Ok(idx) = idx_str.parse::<u32>() {
-                    current_scan = Some(CppScanInfo {
-                        scan_index: idx,
-                        ss: 0,
-                        se: 0,
-                        ah: 0,
-                        al: 0,
-                        num_blocks: 0,
-                        num_tokens: 0,
-                        num_refbits: 0,
-                        num_eobruns: 0,
-                        tokens: Vec::new(),
-                        refbits: Vec::new(),
-                        eobruns: Vec::new(),
-                    });
-                    in_tokens = false;
-                    in_refbits = false;
-                    in_eobruns = false;
-                    refbit_str.clear();
-                }
+                current_scan = Some(CppScanInfo {
+                    scan_index: idx,
+                    ss: 0,
+                    se: 0,
+                    ah: 0,
+                    al: 0,
+                    num_blocks: 0,
+                    num_tokens: 0,
+                    num_refbits: 0,
+                    num_eobruns: 0,
+                    tokens: Vec::new(),
+                    refbits: Vec::new(),
+                    eobruns: Vec::new(),
+                });
+                in_tokens = false;
+                in_refbits = false;
+                in_eobruns = false;
+                refbit_str.clear();
             }
         } else if line.starts_with("=== End AC Refinement Scan") {
             // Finalize refbits parsing
-            if !refbit_str.is_empty() {
-                if let Some(ref mut scan) = current_scan {
-                    for c in refbit_str.chars() {
-                        if c == '0' {
-                            scan.refbits.push(0);
-                        } else if c == '1' {
-                            scan.refbits.push(1);
-                        }
+            if !refbit_str.is_empty()
+                && let Some(ref mut scan) = current_scan
+            {
+                for c in refbit_str.chars() {
+                    if c == '0' {
+                        scan.refbits.push(0);
+                    } else if c == '1' {
+                        scan.refbits.push(1);
                     }
                 }
             }
@@ -421,24 +420,17 @@ fn test_progressive_filesize_comparison() {
     }
 
     // Load PNG
-    let decoder = png::Decoder::new(fs::File::open(&png_path).unwrap());
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let bytes = &buf[..info.buffer_size()];
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => bytes.to_vec(),
-        png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    let img = zenjpeg_bench_utils::load_png(&png_path).expect("Failed to load PNG");
+    let img_width = img.width() as u32;
+    let img_height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     // Save as PPM for C++
     let ppm_path = "/tmp/test_noise32.ppm";
-    write_ppm(ppm_path, &rgb, info.width as usize, info.height as usize).unwrap();
+    write_ppm(ppm_path, &rgb, img_width as usize, img_height as usize).unwrap();
 
     println!("\n=== Progressive Encoding File Size Comparison ===\n");
-    println!("Image: {}x{}", info.width, info.height);
+    println!("Image: {}x{}", img_width, img_height);
 
     // Find cjpegli
     let cjpegli_path = match zenjpeg::test_utils::find_cjpegli() {
@@ -475,23 +467,19 @@ fn test_progressive_filesize_comparison() {
         }
 
         // Load PNG
-        let decoder = png::Decoder::new(fs::File::open(img_path).unwrap());
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-
-        let bytes = &buf[..info.buffer_size()];
-        let rgb: Vec<u8> = match info.color_type {
-            png::ColorType::Rgb => bytes.to_vec(),
-            png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-            _ => continue,
+        let img = match zenjpeg_bench_utils::load_png(img_path) {
+            Ok(img) => img,
+            Err(_) => continue,
         };
+        let img_w = img.width() as u32;
+        let img_h = img.height() as u32;
+        let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
         // Save as PPM for C++
         let ppm_path = format!("/tmp/test_{}.ppm", img_name);
-        write_ppm(&ppm_path, &rgb, info.width as usize, info.height as usize).unwrap();
+        write_ppm(&ppm_path, &rgb, img_w as usize, img_h as usize).unwrap();
 
-        println!("\n=== {} ({}x{}) ===", img_name, info.width, info.height);
+        println!("\n=== {} ({}x{}) ===", img_name, img_w, img_h);
 
         for quality in [90, 80] {
             println!("\nQuality {}:", quality);
@@ -523,7 +511,7 @@ fn test_progressive_filesize_comparison() {
                 let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                     .quality(quality as f32)
                     .progressive(is_progressive);
-                let rust_jpeg = encode_rgb(info.width, info.height, &rgb, &config);
+                let rust_jpeg = encode_rgb(img_w, img_h, &rgb, &config);
 
                 // Verify the JPEG is actually progressive by checking for SOF2 marker
                 let is_progressive_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]);

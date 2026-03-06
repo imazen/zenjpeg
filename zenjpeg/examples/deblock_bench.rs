@@ -145,7 +145,7 @@ fn bench_boundary_3comp(label: &str, width: usize, height: usize, iters: usize) 
     );
 
     // Parallel (rayon)
-    
+
     let start = Instant::now();
     for _ in 0..iters {
         y.copy_from_slice(&template_y);
@@ -193,7 +193,7 @@ fn bench_knusperli_3comp(label: &str, luma_bw: usize, luma_bh: usize, iters: usi
     );
 
     // Parallel
-    
+
     let start = Instant::now();
     for _ in 0..iters {
         rayon::join(

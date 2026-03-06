@@ -461,20 +461,20 @@ impl<'a> JpegParser<'a> {
         }
 
         // Check if we should preserve this segment
-        if let (Some(config), Some(extras)) = (&self.preserve_config, &mut self.extras) {
-            if self.position + data_len <= self.data.len() {
-                let data = &self.data[self.position..self.position + data_len];
-                let segment_type = detect_segment_type(marker, data);
+        if let (Some(config), Some(extras)) = (&self.preserve_config, &mut self.extras)
+            && self.position + data_len <= self.data.len()
+        {
+            let data = &self.data[self.position..self.position + data_len];
+            let segment_type = detect_segment_type(marker, data);
 
-                // Record MPF header position for secondary image extraction
-                // MPF offsets are relative to the TIFF header (after "MPF\0")
-                if segment_type == SegmentType::Mpf && self.mpf_header_pos == 0 {
-                    self.mpf_header_pos = self.position + 4; // Skip "MPF\0" to get TIFF header pos
-                }
+            // Record MPF header position for secondary image extraction
+            // MPF offsets are relative to the TIFF header (after "MPF\0")
+            if segment_type == SegmentType::Mpf && self.mpf_header_pos == 0 {
+                self.mpf_header_pos = self.position + 4; // Skip "MPF\0" to get TIFF header pos
+            }
 
-                if should_preserve_segment(config, segment_type) {
-                    extras.add_segment(marker, data.to_vec(), segment_type);
-                }
+            if should_preserve_segment(config, segment_type) {
+                extras.add_segment(marker, data.to_vec(), segment_type);
             }
         }
 

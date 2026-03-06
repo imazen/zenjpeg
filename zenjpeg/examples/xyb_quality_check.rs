@@ -1,6 +1,6 @@
 //! Check XYB quality metrics: Rust vs C++
 
-use butteraugli::{ButteraugliParams, compute_butteraugli};
+use butteraugli::ButteraugliParams;
 use enough::Unstoppable;
 use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::fs;
@@ -15,8 +15,8 @@ fn main() {
     let png_path = "../internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     // Load PNG
-    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
-        .expect("Failed to load PNG");
+    let loaded =
+        zenjpeg_bench_utils::load_png(std::path::Path::new(png_path)).expect("Failed to load PNG");
     let rgb_vec: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     let rgb = &rgb_vec[..];
     let width = loaded.width();
@@ -169,24 +169,38 @@ fn main() {
 
         // Butteraugli (should be used for XYB but we're comparing raw data)
         let params = ButteraugliParams::default();
-        let rust_bfly = compute_butteraugli(
-            rgb,
-            rust_decoded.pixels_u8().unwrap(),
-            width,
-            height,
-            &params,
-        )
-        .unwrap()
-        .score;
-        let cpp_bfly = compute_butteraugli(
-            rgb,
-            cpp_decoded.pixels_u8().unwrap(),
-            width,
-            height,
-            &params,
-        )
-        .unwrap()
-        .score;
+        let orig_pixels: Vec<rgb::RGB8> = rgb
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+
+        let rust_pixels: Vec<rgb::RGB8> = rust_decoded
+            .pixels_u8()
+            .unwrap()
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let rust_img = imgref::Img::new(&rust_pixels[..], width, height);
+        let rust_bfly = butteraugli::butteraugli(orig_img, rust_img, &params)
+            .unwrap()
+            .score;
+
+        let orig_pixels2: Vec<rgb::RGB8> = rgb
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img2 = imgref::Img::new(&orig_pixels2[..], width, height);
+        let cpp_pixels: Vec<rgb::RGB8> = cpp_decoded
+            .pixels_u8()
+            .unwrap()
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let cpp_img = imgref::Img::new(&cpp_pixels[..], width, height);
+        let cpp_bfly = butteraugli::butteraugli(orig_img2, cpp_img, &params)
+            .unwrap()
+            .score;
 
         println!("\nButteraugli (raw XYB treated as sRGB - NOT correct!):");
         println!("  Rust XYB: {:.3}", rust_bfly);

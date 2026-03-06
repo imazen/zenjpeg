@@ -36,32 +36,11 @@ fn load_png(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
         return None;
     }
 
-    let decoder = png::Decoder::new(std::fs::File::open(&path).ok()?);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    // Convert to RGB if needed
-    let pixels = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
-            // Strip alpha
-            buf[..info.buffer_size()]
-                .chunks(4)
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect()
-        }
-        png::ColorType::Grayscale => {
-            // Expand to RGB
-            buf[..info.buffer_size()]
-                .iter()
-                .flat_map(|&g| [g, g, g])
-                .collect()
-        }
-        _ => return None,
-    };
-
-    Some((info.width, info.height, pixels))
+    let img = zenjpeg_bench_utils::load_png(&path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let pixels: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((width, height, pixels))
 }
 
 /// Decode a JPEG from testdata.

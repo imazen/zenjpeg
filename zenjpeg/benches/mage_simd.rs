@@ -2,7 +2,8 @@
 //!
 //! Run with: cargo bench -p zenjpeg --bench mage_simd --features "archmage"
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 #[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token};

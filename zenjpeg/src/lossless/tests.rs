@@ -375,8 +375,8 @@ fn make_test_coefficients() -> DecodedCoefficients {
 
     // Set DC values to identify each block
     // Block (0,0) DC=10, Block (1,0) DC=20, Block (0,1) DC=30, Block (1,1) DC=40
-    coeffs[0 * 64] = 10; // block 0 = (bx=0, by=0)
-    coeffs[1 * 64] = 20; // block 1 = (bx=1, by=0)
+    coeffs[0] = 10; // block 0 = (bx=0, by=0)
+    coeffs[64] = 20; // block 1 = (bx=1, by=0)
     coeffs[2 * 64] = 30; // block 2 = (bx=0, by=1)
     coeffs[3 * 64] = 40; // block 3 = (bx=1, by=1)
 
@@ -1097,7 +1097,7 @@ mod exif_tests {
         data.extend_from_slice(&3u16.to_be_bytes());
         data.extend_from_slice(&1u32.to_be_bytes());
         // For big-endian SHORT, value is in first 2 bytes of the 4-byte field
-        data.extend_from_slice(&(orientation as u16).to_be_bytes());
+        data.extend_from_slice(&orientation.to_be_bytes());
         data.extend_from_slice(&[0u8; 2]); // padding
         // Next IFD offset = 0
         data.extend_from_slice(&0u32.to_be_bytes());

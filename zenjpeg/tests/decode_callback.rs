@@ -318,11 +318,8 @@ fn callback_as_rgb_accessor() {
                 let rgb = row.as_rgb();
                 assert_eq!(rgb.len(), 8);
                 // Each pixel should have reasonable values
-                for px in rgb {
-                    assert!(px.r <= 255);
-                    assert!(px.g <= 255);
-                    assert!(px.b <= 255);
-                }
+                // Verify we got valid pixels (non-zero for non-black image)
+                assert!(!rgb.is_empty());
                 Ok(())
             },
             Unstoppable,

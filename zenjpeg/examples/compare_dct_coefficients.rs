@@ -18,8 +18,8 @@ use zenjpeg_bench_utils::{
 };
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
-    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
-        .expect("Failed to load PNG");
+    let img =
+        zenjpeg_bench_utils::load_png(std::path::Path::new(path)).expect("Failed to load PNG");
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     (bytes, img.width() as u32, img.height() as u32)
 }

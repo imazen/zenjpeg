@@ -18,8 +18,7 @@ use enough::Stop;
 
 use super::coeff_transform::{TransformConfig, TransformedCoefficients, transform_coefficients};
 use super::pipeline::{
-    component_to_blocks, encode_from_coefficients, write_dri, write_marker_segment,
-    write_quant_tables,
+    component_to_blocks, encode_from_coefficients, write_marker_segment, write_quant_tables,
 };
 
 /// Output scan structure for restructured JPEG.

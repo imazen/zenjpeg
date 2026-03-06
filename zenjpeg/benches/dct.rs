@@ -6,7 +6,8 @@
 //! cargo bench --bench dct
 //! ```
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 use zenjpeg::encode::dct::{aan_forward_dct_8x8, forward_dct_8x8};
 

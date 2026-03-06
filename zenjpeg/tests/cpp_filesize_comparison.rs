@@ -163,23 +163,16 @@ fn test_filesize_comparison_photo() {
     }
 
     // Load PNG
-    let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let bytes = &buf[..info.buffer_size()];
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => bytes.to_vec(),
-        png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    let img = zenjpeg_bench_utils::load_png(&png_path).expect("Failed to load PNG");
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     // Save as PPM for C++
     let ppm_path = "/tmp/test_flower.ppm";
-    write_ppm(ppm_path, &rgb, info.width as usize, info.height as usize).unwrap();
+    write_ppm(ppm_path, &rgb, width as usize, height as usize).unwrap();
 
-    println!("Image: {}x{}", info.width, info.height);
+    println!("Image: {}x{}", width, height);
 
     for quality in [90, 80, 70, 60] {
         let cpp_jpeg = match encode_cpp(ppm_path, quality) {
@@ -190,7 +183,7 @@ fn test_filesize_comparison_photo() {
             }
         };
 
-        let rust_jpeg = encode_rust(&rgb, info.width, info.height, quality as f32);
+        let rust_jpeg = encode_rust(&rgb, width, height, quality as f32);
 
         let cpp_size = cpp_jpeg.len();
         let rust_size = rust_jpeg.len();

@@ -7,8 +7,9 @@
 //!
 //! No I/O or decode operations - pure encode timing.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use enough::Unstoppable;
+use std::hint::black_box;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Create a test image with realistic pixel patterns.

@@ -217,25 +217,16 @@ use hashes::*;
 
 fn load_frymire() -> (Vec<u8>, u32, u32) {
     let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/frymire.png");
-    let png_data = std::fs::read(png_path).expect("Failed to read frymire.png");
-    let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
+    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
+        .expect("Failed to load frymire.png");
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    assert_eq!(width, 1118, "frymire.png width mismatch");
+    assert_eq!(height, 1105, "frymire.png height mismatch");
 
-    assert_eq!(info.width, 1118, "frymire.png width mismatch");
-    assert_eq!(info.height, 1105, "frymire.png height mismatch");
-
-    (rgb, info.width, info.height)
+    (rgb, width, height)
 }
 
 fn encode_jpeg(

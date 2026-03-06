@@ -110,6 +110,7 @@ approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
 png = { workspace = true }
+zenpng = { workspace = true }
 dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }

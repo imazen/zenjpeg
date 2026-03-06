@@ -796,6 +796,7 @@ mod avx2 {
         pack_store!(row2, row3);
         pack_store!(row4, row5);
         pack_store!(row6, row7);
+        let _ = pos;
     }
 
     /// Unclamped AVX2 integer IDCT.
@@ -965,6 +966,7 @@ mod avx2 {
         pack_store_unclamped!(row2, row3);
         pack_store_unclamped!(row4, row5);
         pack_store_unclamped!(row6, row7);
+        let _ = pos;
     }
 }
 

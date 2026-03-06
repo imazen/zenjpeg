@@ -147,16 +147,16 @@ pub fn dc_trellis_optimize_indexed(
             dc_candidate[k][bi] = (candidate_val as i16) * sign;
 
             // Take into account DC differences with row above
-            if delta_dc_weight > 0.0 {
-                if let Some((raw_dc_above, quantized_dc_above)) = above_row_data {
-                    let dc_above_orig = raw_dc_above[bi];
-                    let dc_above_recon = quantized_dc_above[bi] as i32 * q;
-                    let dc_orig = raw_dct_blocks[block_idx][0];
-                    let dc_recon = dc_candidate[k][bi] as i32 * q;
-                    let vdelta = (dc_above_orig - dc_orig) - (dc_above_recon - dc_recon);
-                    let vertical_dist = (vdelta as f32).powi(2) * lambda_dc;
-                    candidate_dist += delta_dc_weight * (vertical_dist - candidate_dist);
-                }
+            if delta_dc_weight > 0.0
+                && let Some((raw_dc_above, quantized_dc_above)) = above_row_data
+            {
+                let dc_above_orig = raw_dc_above[bi];
+                let dc_above_recon = quantized_dc_above[bi] as i32 * q;
+                let dc_orig = raw_dct_blocks[block_idx][0];
+                let dc_recon = dc_candidate[k][bi] as i32 * q;
+                let vdelta = (dc_above_orig - dc_orig) - (dc_above_recon - dc_recon);
+                let vertical_dist = (vdelta as f32).powi(2) * lambda_dc;
+                candidate_dist += delta_dc_weight * (vertical_dist - candidate_dist);
             }
 
             if bi == 0 {

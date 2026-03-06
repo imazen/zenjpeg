@@ -7,7 +7,7 @@
 //! Run: cargo test --release -p zenjpeg --test diagnose_decoder_diff -- --nocapture --ignored
 
 use enough::Unstoppable;
-use zenjpeg::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
+use zenjpeg::foundation::consts::JPEG_NATURAL_ORDER;
 use zenjpeg::quant::{dequantize_block_i32, dequantize_unzigzag_i32_into_partial};
 
 /// Test that both dequantization approaches produce identical output.
@@ -327,7 +327,6 @@ fn compare_444_1x2_all_decoders() {
     // Compare each decoder with mozjpeg
     for (name, test_rgb) in [("decode()", zen_rgb), ("scanline", &scan_rgb)] {
         let mut max_diff = [0i32; 3];
-        let ch_names = ["R", "G", "B"];
         for py in 0..h {
             for px in 0..w {
                 let idx = (py * w + px) * 3;
@@ -410,7 +409,6 @@ fn compare_streaming_vs_coefficient_ycbcr() {
     // Read all rows using scanline reader's native i16 output
     let y_stride = (sw + 15) & !15;
     let c_stride = y_stride; // 4:4:4
-    let mcu_rows = (sh + 7) / 8;
     let mut y_buf = vec![0i16; y_stride * sh];
     let mut cb_buf = vec![0i16; c_stride * sh];
     let mut cr_buf = vec![0i16; c_stride * sh];

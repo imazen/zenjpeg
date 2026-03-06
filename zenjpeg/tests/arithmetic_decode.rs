@@ -96,29 +96,28 @@ fn test_arithmetic_jpeg_reference_comparison() {
         .args(["-pnm", TESTIMGARI_PATH])
         .output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
-            // Parse PPM output
-            let ppm_data = output.stdout;
-            // Skip PPM header to get raw RGB data
-            if let Some(rgb_start) = find_ppm_rgb_start(&ppm_data) {
-                let ref_rgb = &ppm_data[rgb_start..];
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        // Parse PPM output
+        let ppm_data = output.stdout;
+        // Skip PPM header to get raw RGB data
+        if let Some(rgb_start) = find_ppm_rgb_start(&ppm_data) {
+            let ref_rgb = &ppm_data[rgb_start..];
 
-                // Compare
-                if ref_rgb.len() == decoded.pixels_u8().unwrap().len() {
-                    let mut max_diff = 0u8;
-                    for (ours, reference) in decoded.pixels_u8().unwrap().iter().zip(ref_rgb.iter())
-                    {
-                        let diff = (*ours as i16 - *reference as i16).unsigned_abs() as u8;
-                        max_diff = max_diff.max(diff);
-                    }
-                    // Allow small differences due to rounding
-                    assert!(
-                        max_diff <= 2,
-                        "max pixel difference from reference: {}",
-                        max_diff
-                    );
+            // Compare
+            if ref_rgb.len() == decoded.pixels_u8().unwrap().len() {
+                let mut max_diff = 0u8;
+                for (ours, reference) in decoded.pixels_u8().unwrap().iter().zip(ref_rgb.iter()) {
+                    let diff = (*ours as i16 - *reference as i16).unsigned_abs() as u8;
+                    max_diff = max_diff.max(diff);
                 }
+                // Allow small differences due to rounding
+                assert!(
+                    max_diff <= 2,
+                    "max pixel difference from reference: {}",
+                    max_diff
+                );
             }
         }
     }

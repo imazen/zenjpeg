@@ -105,29 +105,35 @@ fn compute_butteraugli(original: &str, compressed: &str) -> f64 {
         .output();
 
     if let Ok(output) = output
-        && output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Parse butteraugli output (format: "distance")
-            if let Some(line) = stdout.lines().next()
-                && let Ok(val) = line.trim().parse::<f64>() {
-                    return val;
-                }
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse butteraugli output (format: "distance")
+        if let Some(line) = stdout.lines().next()
+            && let Ok(val) = line.trim().parse::<f64>()
+        {
+            return val;
         }
+    }
 
     // Fall back to Rust butteraugli
     compute_butteraugli_rust(original, compressed)
 }
 
 fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
-    use butteraugli::{ButteraugliParams, compute_butteraugli};
+    use butteraugli::ButteraugliParams;
 
     // Load original
     let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(original_path))
         .expect("Failed to load original PNG");
     let width = loaded.width();
     let height = loaded.height();
-    let orig_bytes: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
-    let orig_pixels = &orig_bytes[..];
+    let orig_pixels: Vec<rgb::RGB8> = loaded
+        .buf()
+        .iter()
+        .map(|p| rgb::RGB8::new(p.r, p.g, p.b))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
 
     // Load compressed (JPEG) with ICC support for XYB
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");
@@ -136,14 +142,16 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
         .decode(&jpeg_data, Unstoppable)
         .expect("decode jpeg");
 
+    let dec_pixels: Vec<rgb::RGB8> = decoded
+        .pixels_u8()
+        .unwrap()
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_img = imgref::Img::new(&dec_pixels[..], width, height);
+
     let params = ButteraugliParams::default();
-    match compute_butteraugli(
-        orig_pixels,
-        decoded.pixels_u8().unwrap(),
-        width,
-        height,
-        &params,
-    ) {
+    match butteraugli::butteraugli(orig_img, dec_img, &params) {
         Ok(result) => result.score,
         Err(_) => 999.0,
     }

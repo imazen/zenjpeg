@@ -77,6 +77,7 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
 type LatencyUs = u64;
 
 struct LatencyStats {
+    #[allow(dead_code)]
     count: usize,
     p50: f64,
     p95: f64,

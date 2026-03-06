@@ -6,7 +6,6 @@
 use dssim_core::Dssim;
 use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use rgb::RGBA8;
-use std::fs;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
@@ -222,23 +221,10 @@ fn test_metrics_encoder_quality() {
         return;
     }
 
-    let png_data = fs::read(path).expect("read file");
-    let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().expect("png info");
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).expect("png frame");
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..width * height * 3].to_vec(),
-        png::ColorType::Rgba => buf[..width * height * 4]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    let img = zenjpeg_bench_utils::load_png(&path).expect("Failed to load PNG");
+    let width = img.width();
+    let height = img.height();
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     println!("\n=== jpegli Quality Metrics (flower_small.rgb.png) ===");
     println!(
@@ -277,21 +263,10 @@ fn test_ssimulacra2_score_ranges() {
 
     // Use a real test image — synthetic images produce degenerate SSIMULACRA2 scores
     let png_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/1.png");
-    let png_data = fs::read(&png_path).expect("Failed to read 1.png");
-    let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    let img = zenjpeg_bench_utils::load_png(&png_path).expect("Failed to load 1.png");
+    let width = img.width();
+    let height = img.height();
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     let jpeg_data = encode_jpegli(&rgb, width as u32, height as u32, 95);
     let decoded = decode_jpeg(&jpeg_data);

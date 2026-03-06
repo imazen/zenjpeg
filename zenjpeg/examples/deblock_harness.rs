@@ -165,6 +165,7 @@ fn dequantize_unzigzag(zigzag_coeffs: &[i16; 64], natural_quant: &[u16; 64]) -> 
 
 /// Get the DC quantization step for the luma component.
 /// Used to scale filter strength — larger quant step = more blocking = stronger filter.
+#[allow(dead_code)]
 fn get_luma_dc_quant(jpeg_bytes: &[u8]) -> Option<u16> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
@@ -251,7 +252,9 @@ struct ComponentPlane {
     data: Vec<f32>,
     width: usize,
     height: usize,
+    #[allow(dead_code)]
     blocks_wide: usize,
+    #[allow(dead_code)]
     blocks_high: usize,
     quant_table: [u16; 64],
 }
@@ -360,6 +363,7 @@ fn planes_to_rgb(cp: &CoeffPlanes) -> RgbImage {
 /// Verification: coefficient decode → IDCT → color convert, NO filtering.
 /// This should produce results very close to baseline. If it doesn't,
 /// the reconstruction pipeline is broken.
+#[allow(dead_code)]
 struct ReconstructVerify;
 
 impl DeblockStrategy for ReconstructVerify {

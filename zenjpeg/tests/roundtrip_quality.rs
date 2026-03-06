@@ -5,7 +5,6 @@
 
 use dssim_core::Dssim;
 use rgb::RGBA8;
-use std::fs;
 use std::path::Path;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
@@ -28,32 +27,10 @@ fn encode_rgb(
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    let (width, height) = (info.width as usize, info.height as usize);
-
-    // Convert to RGB
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..width * height * 3].to_vec(),
-        png::ColorType::Rgba => buf[..width * height * 4]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..width * height]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf[..width * height * 2]
-            .chunks(2)
-            .flat_map(|c| [c[0], c[0], c[0]])
-            .collect(),
-        _ => return None,
-    };
-
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width();
+    let height = img.height();
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((rgb, width, height))
 }
 

@@ -9,7 +9,7 @@
 //!
 //! Run with: cargo run --release --example xyb_vs_ycbcr_butteraugli
 
-use butteraugli::{ButteraugliParams, compute_butteraugli};
+use butteraugli::ButteraugliParams;
 use enough::Unstoppable;
 use std::path::Path;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
@@ -109,8 +109,18 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    let orig_pixels: Vec<rgb::RGB8> = original
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_pixels: Vec<rgb::RGB8> = decoded
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+    let dec_img = imgref::Img::new(&dec_pixels[..], width, height);
     let params = ButteraugliParams::default();
-    match compute_butteraugli(original, decoded, width, height, &params) {
+    match butteraugli::butteraugli(orig_img, dec_img, &params) {
         Ok(result) => result.score,
         Err(_) => f64::NAN,
     }

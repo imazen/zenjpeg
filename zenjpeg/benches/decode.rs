@@ -1,8 +1,9 @@
 //! Decoding benchmarks for zenjpeg.
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use enough::Unstoppable;
 use imgref::ImgRefMut;
+use std::hint::black_box;
 use zenjpeg::decode::Decoder;
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};

@@ -51,11 +51,11 @@ const MAY_DECODE: &[&str] = &[
 // Everything else is must_reject (invalid data, MUST error, MUST NOT panic).
 
 fn is_should_decode(filename: &str) -> bool {
-    SHOULD_DECODE.iter().any(|&f| f == filename)
+    SHOULD_DECODE.contains(&filename)
 }
 
 fn is_may_decode(filename: &str) -> bool {
-    MAY_DECODE.iter().any(|&f| f == filename)
+    MAY_DECODE.contains(&filename)
 }
 
 // ============================================================================

@@ -71,11 +71,11 @@ fn decode_huffman_symbol_lenient(
     }
 
     // Slow path: peek 16 bits and use pre-shifted maxcode for fast comparison
-    if let Some(bits16) = reader.peek_bits_refill(16) {
-        if let Some((symbol, len)) = table.decode_slow(bits16 as i32) {
-            reader.skip_bits_fast(len);
-            return Ok(HuffmanResult::Symbol(symbol));
-        }
+    if let Some(bits16) = reader.peek_bits_refill(16)
+        && let Some((symbol, len)) = table.decode_slow(bits16 as i32)
+    {
+        reader.skip_bits_fast(len);
+        return Ok(HuffmanResult::Symbol(symbol));
     }
 
     // Edge case: near end of scan, can't peek 16 bits.
@@ -228,11 +228,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         // Slow path: peek 16 bits and use pre-shifted maxcode for fast comparison.
         // This replaces the bit-by-bit loop with a single peek + table scan.
-        if let Some(bits16) = self.reader.peek_bits_refill(16) {
-            if let Some((symbol, len)) = table.decode_slow(bits16 as i32) {
-                self.reader.skip_bits_fast(len);
-                return Ok(ScanRead::Value(symbol));
-            }
+        if let Some(bits16) = self.reader.peek_bits_refill(16)
+            && let Some((symbol, len)) = table.decode_slow(bits16 as i32)
+        {
+            self.reader.skip_bits_fast(len);
+            return Ok(ScanRead::Value(symbol));
         }
 
         // Edge case: near end of scan, can't peek 16 bits.
@@ -1441,15 +1441,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 k += 1;
             }
 
-            if let Some(val) = new_val {
-                if k <= se_usize {
-                    // Place newly-nonzero coefficient and update bitmap.
-                    // Don't add to nz_remaining — this coefficient was just placed
-                    // and doesn't need refinement bits in this scan.
-                    coeffs[k] = val;
-                    *bitmap |= 1u64 << (k & 63);
-                    k += 1; // Move past the placed coefficient
-                }
+            if let Some(val) = new_val
+                && k <= se_usize
+            {
+                // Place newly-nonzero coefficient and update bitmap.
+                // Don't add to nz_remaining — this coefficient was just placed
+                // and doesn't need refinement bits in this scan.
+                coeffs[k] = val;
+                *bitmap |= 1u64 << (k & 63);
+                k += 1; // Move past the placed coefficient
             }
             // For ZRL (size==0), k already points past the zeros we skipped
         }
@@ -1583,23 +1583,21 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     };
 
                     // Try fast_ac combined lookup first (9-bit → symbol + value)
-                    if !partial_peek {
-                        if let Some(fast_ac_arr) = fast_ac {
-                            let entry = fast_ac_arr[bits9 as usize];
-                            if entry != 0 {
-                                let value = (entry >> 8) as i16;
-                                let run = ((entry >> 4) & 0xF) as usize;
-                                let total_bits = (entry & 0xF) as u8;
-                                self.reader.skip_bits_fast(total_bits);
-                                k += run;
-                                if k > se_usize {
-                                    break 'block;
-                                }
-                                block[k] = value << al;
-                                *bitmap |= 1u64 << (k & 63);
-                                k += 1;
-                                continue 'block;
+                    if !partial_peek && let Some(fast_ac_arr) = fast_ac {
+                        let entry = fast_ac_arr[bits9 as usize];
+                        if entry != 0 {
+                            let value = entry >> 8;
+                            let run = ((entry >> 4) & 0xF) as usize;
+                            let total_bits = (entry & 0xF) as u8;
+                            self.reader.skip_bits_fast(total_bits);
+                            k += run;
+                            if k > se_usize {
+                                break 'block;
                             }
+                            block[k] = value << al;
+                            *bitmap |= 1u64 << (k & 63);
+                            k += 1;
+                            continue 'block;
                         }
                     }
 

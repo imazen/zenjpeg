@@ -56,7 +56,7 @@ mod bench {
         out
     }
 
-    fn median_of(times: &mut Vec<f64>) -> f64 {
+    fn median_of(times: &mut [f64]) -> f64 {
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         times[times.len() / 2]
     }

@@ -287,21 +287,22 @@ with open('/tmp/dj_cjpegli_prog_512.ppm', 'rb') as f:
         eprintln!("zune vs zenjpeg max diff: {}", zune_vs_zen);
 
         if let Some(ref dj_pixels) = dj_out
-            && dj_pixels.len() == zen_cj.len() {
-                let dj_vs_zen: u8 = dj_pixels
-                    .iter()
-                    .zip(zen_cj.iter())
-                    .map(|(a, b)| a.abs_diff(*b))
-                    .max()
-                    .unwrap();
-                let dj_vs_zune: u8 = dj_pixels
-                    .iter()
-                    .zip(zune_cj.iter())
-                    .map(|(a, b)| a.abs_diff(*b))
-                    .max()
-                    .unwrap();
-                eprintln!("djpegli vs zenjpeg max diff: {}", dj_vs_zen);
-                eprintln!("djpegli vs zune max diff: {}", dj_vs_zune);
-            }
+            && dj_pixels.len() == zen_cj.len()
+        {
+            let dj_vs_zen: u8 = dj_pixels
+                .iter()
+                .zip(zen_cj.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            let dj_vs_zune: u8 = dj_pixels
+                .iter()
+                .zip(zune_cj.iter())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            eprintln!("djpegli vs zenjpeg max diff: {}", dj_vs_zen);
+            eprintln!("djpegli vs zune max diff: {}", dj_vs_zune);
+        }
     }
 }

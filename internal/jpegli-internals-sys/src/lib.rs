@@ -860,18 +860,22 @@ pub unsafe fn compute_butteraugli_cpp(
     let mut linear0 = vec![0.0f32; num_pixels * 3];
     let mut linear1 = vec![0.0f32; num_pixels * 3];
 
-    butteraugli_srgb_to_linear(srgb0.as_ptr(), width, height, linear0.as_mut_ptr());
-    butteraugli_srgb_to_linear(srgb1.as_ptr(), width, height, linear1.as_mut_ptr());
+    unsafe {
+        butteraugli_srgb_to_linear(srgb0.as_ptr(), width, height, linear0.as_mut_ptr());
+        butteraugli_srgb_to_linear(srgb1.as_ptr(), width, height, linear1.as_mut_ptr());
+    }
 
     let mut score = 0.0f64;
-    let result = butteraugli_compare(
-        linear0.as_ptr(),
-        linear1.as_ptr(),
-        width,
-        height,
-        intensity_target,
-        &mut score,
-    );
+    let result = unsafe {
+        butteraugli_compare(
+            linear0.as_ptr(),
+            linear1.as_ptr(),
+            width,
+            height,
+            intensity_target,
+            &mut score,
+        )
+    };
 
     if result == BUTTERAUGLI_OK {
         Ok(score)

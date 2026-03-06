@@ -44,10 +44,12 @@ fn collect_jpeg_files(dir: &Path) -> Vec<PathBuf> {
                 } else if ext.is_empty() || ext.len() == 40 {
                     // Fuzz corpus files have no extension (hash names)
                     // Check magic bytes
-                    if let Ok(data) = fs::read(&path) {
-                        if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
-                            files.push(path);
-                        }
+                    if let Ok(data) = fs::read(&path)
+                        && data.len() >= 2
+                        && data[0] == 0xFF
+                        && data[1] == 0xD8
+                    {
+                        files.push(path);
                     }
                 }
             }
@@ -204,10 +206,10 @@ fn test_zune_progressive() {
         println!("{}: {:?}", filename, result.is_ok());
 
         // Progressive grayscale should decode
-        if filename.contains("grayscale") {
-            if let Ok(img) = result {
-                assert!(img.width > 0 && img.height > 0);
-            }
+        if filename.contains("grayscale")
+            && let Ok(img) = result
+        {
+            assert!(img.width > 0 && img.height > 0);
         }
     }
 }
@@ -260,10 +262,10 @@ fn test_zune_sampling_factors() {
         );
 
         // Large images may be skipped to avoid OOM in tests
-        if !filename.contains("7680") {
-            if let Ok(img) = result {
-                assert!(img.width > 0 && img.height > 0);
-            }
+        if !filename.contains("7680")
+            && let Ok(img) = result
+        {
+            assert!(img.width > 0 && img.height > 0);
         }
     }
 }

@@ -17,8 +17,9 @@
 //! samply record ./target/profiling/deps/profile_ycbcr-* --bench "ycbcr-420" --profile-time 10
 //! ```
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use enough::Unstoppable;
+use std::hint::black_box;
 use std::time::Duration;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 

@@ -1067,7 +1067,7 @@ fn lossless_all_exif_orientations() {
         assert!(result.lossless, "EXIF {exif} should use lossless path");
 
         // Orientations 5-8 swap dimensions (transpose-based)
-        let swaps = matches!(exif, 5 | 6 | 7 | 8);
+        let swaps = matches!(exif, 5..=8);
         let (expected_w, expected_h) = if swaps { (48, 64) } else { (64, 48) };
 
         assert_eq!(
@@ -1251,6 +1251,7 @@ fn has_dri_marker(jpeg_data: &[u8]) -> bool {
 }
 
 /// Create a baseline sequential test JPEG.
+#[allow(dead_code)]
 fn make_test_jpeg_baseline(width: u32, height: u32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
         .progressive(false)

@@ -32,7 +32,7 @@ fn check_ac_in_first_blocks() {
         let nonzero: Vec<(usize, i16)> = block
             .iter()
             .enumerate()
-            .filter(|(_, &v)| v != 0)
+            .filter(|&(_, &v)| v != 0)
             .map(|(i, &v)| (i, v))
             .collect();
         println!("  Block {}: {:?}", blk, nonzero);
@@ -45,7 +45,7 @@ fn check_ac_in_first_blocks() {
         let nonzero: Vec<(usize, i16)> = block
             .iter()
             .enumerate()
-            .filter(|(_, &v)| v != 0)
+            .filter(|&(_, &v)| v != 0)
             .map(|(i, &v)| (i, v))
             .collect();
         println!("  Block {}: {:?}", blk, nonzero);
@@ -57,7 +57,7 @@ fn check_ac_in_first_blocks() {
         let nonzero: Vec<(usize, i16)> = block
             .iter()
             .enumerate()
-            .filter(|(_, &v)| v != 0)
+            .filter(|&(_, &v)| v != 0)
             .map(|(i, &v)| (i, v))
             .collect();
         println!("  Block {}: {:?}", blk, nonzero);

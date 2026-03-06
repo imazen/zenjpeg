@@ -418,22 +418,11 @@ mod full_encode {
     use mozjpeg_rs::Subsampling as MozSubsampling;
 
     fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-        let file = std::fs::File::open(path).ok()?;
-        let decoder = png::Decoder::new(file);
-        let mut reader = decoder.read_info().ok()?;
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).ok()?;
-        buf.truncate(info.buffer_size());
-
-        let (rgb, w, h) = match info.color_type {
-            png::ColorType::Rgb => (buf, info.width, info.height),
-            png::ColorType::Rgba => {
-                let rgb: Vec<u8> = buf.chunks(4).flat_map(|c| &c[..3]).copied().collect();
-                (rgb, info.width, info.height)
-            }
-            _ => return None,
-        };
-        Some((rgb, w, h))
+        let img = zenjpeg_bench_utils::load_png(path).ok()?;
+        let width = img.width() as u32;
+        let height = img.height() as u32;
+        let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        Some((rgb, width, height))
     }
 
     fn find_cid22_dir() -> Option<PathBuf> {

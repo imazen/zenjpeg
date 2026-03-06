@@ -38,6 +38,7 @@ mod pipeline;
 mod pool;
 mod request;
 mod row_slice;
+#[cfg(feature = "parallel")]
 pub(crate) mod rst_scan;
 mod scanline;
 mod upsample;
@@ -94,6 +95,7 @@ use imgref::ImgRefMut;
 
 /// Result of wave parallel eligibility check.
 #[cfg(feature = "parallel")]
+#[allow(clippy::large_enum_variant)]
 enum WaveResult<'a> {
     /// Wave-only reader (4:2:0 + box filter): all output paths use wave decode.
     WaveOnly(ScanlineReader<'a>),
@@ -764,21 +766,21 @@ impl DecodeConfig {
 
         // Try wave-parallel mode for images with DRI restart markers
         #[cfg(feature = "parallel")]
-        if self.num_threads != 1 {
-            if let Some(result) = self.try_wave_parallel(&scan_data, mcu_height)? {
-                match result {
-                    WaveResult::WaveOnly(reader) => return Ok(reader),
-                    WaveResult::WaveState(wave_state) => {
-                        // Sequential reader with wave state for planar i16 only
-                        let mut reader = ScanlineReader::from_scan_data(
-                            scan_data,
-                            self.chroma_upsampling,
-                            self.output_target,
-                        )?;
-                        reader.attach_wave_state(wave_state);
-                        self.apply_crop(&mut reader, width, height, mcu_height)?;
-                        return Ok(reader);
-                    }
+        if self.num_threads != 1
+            && let Some(result) = self.try_wave_parallel(&scan_data, mcu_height)?
+        {
+            match result {
+                WaveResult::WaveOnly(reader) => return Ok(reader),
+                WaveResult::WaveState(wave_state) => {
+                    // Sequential reader with wave state for planar i16 only
+                    let mut reader = ScanlineReader::from_scan_data(
+                        scan_data,
+                        self.chroma_upsampling,
+                        self.output_target,
+                    )?;
+                    reader.attach_wave_state(wave_state);
+                    self.apply_crop(&mut reader, width, height, mcu_height)?;
+                    return Ok(reader);
                 }
             }
         }
@@ -1194,22 +1196,23 @@ impl DecodeConfig {
 
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-            if self.apply_icc && output_format == PixelFormat::Rgb {
-                if let Some(ref icc_profile) = parser.icc_profile {
-                    match apply_icc_transform_f32(
-                        &pixels,
-                        visible_w as usize,
-                        visible_h as usize,
-                        icc_profile,
-                        self.icc_target,
-                    ) {
-                        Ok(transformed) => pixels = transformed,
-                        Err(_e) => {
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "Warning: ICC f32 transform failed, using original colors: {_e:?}"
-                            );
-                        }
+            if self.apply_icc
+                && output_format == PixelFormat::Rgb
+                && let Some(ref icc_profile) = parser.icc_profile
+            {
+                match apply_icc_transform_f32(
+                    &pixels,
+                    visible_w as usize,
+                    visible_h as usize,
+                    icc_profile,
+                    self.icc_target,
+                ) {
+                    Ok(transformed) => pixels = transformed,
+                    Err(_e) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Warning: ICC f32 transform failed, using original colors: {_e:?}"
+                        );
                     }
                 }
             }
@@ -1283,22 +1286,23 @@ impl DecodeConfig {
 
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-            if self.apply_icc && output_format == PixelFormat::Rgb {
-                if let Some(ref icc_profile) = parser.icc_profile {
-                    match apply_icc_transform(
-                        &pixels,
-                        visible_w as usize,
-                        visible_h as usize,
-                        icc_profile,
-                        self.icc_target,
-                    ) {
-                        Ok(transformed) => pixels = transformed,
-                        Err(_e) => {
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "Warning: ICC profile transform failed, using original colors: {_e:?}"
-                            );
-                        }
+            if self.apply_icc
+                && output_format == PixelFormat::Rgb
+                && let Some(ref icc_profile) = parser.icc_profile
+            {
+                match apply_icc_transform(
+                    &pixels,
+                    visible_w as usize,
+                    visible_h as usize,
+                    icc_profile,
+                    self.icc_target,
+                ) {
+                    Ok(transformed) => pixels = transformed,
+                    Err(_e) => {
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "Warning: ICC profile transform failed, using original colors: {_e:?}"
+                        );
                     }
                 }
             }
@@ -1833,10 +1837,10 @@ fn find_exif_orientation(data: &[u8]) -> Option<u8> {
         // APP1 (0xE1) with EXIF prefix
         if marker == 0xE1 && seg_end - seg_start >= EXIF_PREFIX.len() {
             let seg_data = &data[seg_start..seg_end];
-            if seg_data.starts_with(EXIF_PREFIX) {
-                if let Some(orientation) = crate::lossless::parse_exif_orientation(seg_data) {
-                    return Some(orientation);
-                }
+            if seg_data.starts_with(EXIF_PREFIX)
+                && let Some(orientation) = crate::lossless::parse_exif_orientation(seg_data)
+            {
+                return Some(orientation);
             }
         }
 

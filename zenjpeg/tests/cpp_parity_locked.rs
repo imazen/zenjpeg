@@ -20,7 +20,6 @@ use enough::Unstoppable;
 use butteraugli::ButteraugliParams;
 use dssim_core::Dssim;
 use rgb::RGBA8;
-use std::fs;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
@@ -264,22 +263,11 @@ const BUTTERAUGLI_REGRESSION_TOLERANCE: f64 = 0.25;
 
 fn load_test_image() -> (Vec<u8>, u32, u32) {
     let png_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/1.png");
-    let png_data = fs::read(&png_path).expect("Failed to read test image");
-    let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unsupported color type"),
-    };
-
-    (rgb, info.width, info.height)
+    let img = zenjpeg_bench_utils::load_png(&png_path).expect("Failed to load test image");
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    (rgb, width, height)
 }
 
 fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
@@ -305,8 +293,17 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
 }
 
 fn compute_butteraugli(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    let to_img = |data: &[u8]| -> imgref::ImgVec<rgb::RGB8> {
+        let pixels: Vec<rgb::RGB8> = data
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        imgref::ImgVec::new(pixels, width, height)
+    };
+    let orig_img = to_img(original);
+    let dec_img = to_img(decoded);
     let params = ButteraugliParams::default();
-    butteraugli::compute_butteraugli(original, decoded, width, height, &params)
+    butteraugli::butteraugli(orig_img.as_ref(), dec_img.as_ref(), &params)
         .expect("butteraugli computation failed")
         .score
 }
@@ -761,15 +758,25 @@ fn print_current_values() {
                 .unwrap();
             let (dssim_val, _) = dssim.compare(&orig_img, dec_img);
 
-            let bfly = butteraugli::compute_butteraugli(
-                &rgb,
-                decoded.pixels_u8().unwrap(),
-                width as usize,
-                height as usize,
-                &bfly_params,
-            )
-            .expect("butteraugli")
-            .score;
+            let orig_img = {
+                let pixels: Vec<rgb::RGB8> = rgb
+                    .chunks_exact(3)
+                    .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+                    .collect();
+                imgref::ImgVec::new(pixels, width as usize, height as usize)
+            };
+            let dec_img = {
+                let pixels: Vec<rgb::RGB8> = decoded
+                    .pixels_u8()
+                    .unwrap()
+                    .chunks_exact(3)
+                    .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+                    .collect();
+                imgref::ImgVec::new(pixels, width as usize, height as usize)
+            };
+            let bfly = butteraugli::butteraugli(orig_img.as_ref(), dec_img.as_ref(), &bfly_params)
+                .expect("butteraugli")
+                .score;
 
             println!(
                 "    ({}, {}, {:.6}, {:.8}),",

@@ -352,10 +352,10 @@ impl<'data> ArithmeticDecoder<'data> {
     }
 
     pub fn process_restart(&mut self) -> Result<()> {
-        if let Some(marker) = self.state.unread_marker.take() {
-            if !(0xD0..=0xD7).contains(&marker) {
-                return Err(Error::invalid_jpeg_data("expected restart marker"));
-            }
+        if let Some(marker) = self.state.unread_marker.take()
+            && !(0xD0..=0xD7).contains(&marker)
+        {
+            return Err(Error::invalid_jpeg_data("expected restart marker"));
         }
 
         for tbl in &mut self.dc_stats {

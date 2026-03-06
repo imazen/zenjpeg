@@ -470,25 +470,21 @@ fn test_ac_refinement_real_images() {
         }
 
         // Load PNG
-        let decoder = png::Decoder::new(fs::File::open(path).unwrap());
-        let mut reader = decoder.read_info().unwrap();
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-
-        let bytes = &buf[..info.buffer_size()];
-        let rgb: Vec<u8> = match info.color_type {
-            png::ColorType::Rgb => bytes.to_vec(),
-            png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-            _ => {
-                println!("{}: Unsupported color type", name);
+        let img = match zenjpeg_bench_utils::load_png(path) {
+            Ok(img) => img,
+            Err(e) => {
+                println!("{}: Failed to load PNG: {}", name, e);
                 continue;
             }
         };
+        let img_w = img.width() as u32;
+        let img_h = img.height() as u32;
+        let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
         let ppm_path = format!("/tmp/test_{}.ppm", name);
-        write_ppm(&ppm_path, &rgb, info.width as usize, info.height as usize).unwrap();
+        write_ppm(&ppm_path, &rgb, img_w as usize, img_h as usize).unwrap();
 
-        println!("{} ({}x{}):", name, info.width, info.height);
+        println!("{} ({}x{}):", name, img_w, img_h);
 
         for quality in [90, 80, 70, 60] {
             let cpp_jpeg = match encode_cpp_progressive(&ppm_path, quality) {
@@ -496,7 +492,7 @@ fn test_ac_refinement_real_images() {
                 None => continue,
             };
 
-            let rust_jpeg = encode_rgb_progressive(info.width, info.height, &rgb, quality as f32);
+            let rust_jpeg = encode_rgb_progressive(img_w, img_h, &rgb, quality as f32);
 
             let diff_pct =
                 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;

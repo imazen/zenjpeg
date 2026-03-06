@@ -5,7 +5,8 @@
 //!
 //! Run with: cargo bench --bench simd_load
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use wide::f32x8;
 
 // Test buffer size - large enough to be realistic, small enough to fit in L2 cache

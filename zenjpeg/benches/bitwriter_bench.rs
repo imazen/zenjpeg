@@ -2,7 +2,8 @@
 //!
 //! Compares different 0xFF detection strategies.
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 /// Original 4-byte comparison approach
 mod original {
@@ -193,13 +194,15 @@ mod unsafe_ptr {
         /// Uses direct pointer write to avoid Vec overhead
         #[inline(always)]
         unsafe fn emit_8_bytes_fast(&mut self, word: u64) {
-            // Ensure we have space for 8 bytes
-            self.buffer.reserve(8);
-            let len = self.buffer.len();
-            let ptr = self.buffer.as_mut_ptr().add(len);
-            // Write big-endian 8 bytes
-            std::ptr::write_unaligned(ptr as *mut u64, word.to_be());
-            self.buffer.set_len(len + 8);
+            unsafe {
+                // Ensure we have space for 8 bytes
+                self.buffer.reserve(8);
+                let len = self.buffer.len();
+                let ptr = self.buffer.as_mut_ptr().add(len);
+                // Write big-endian 8 bytes
+                std::ptr::write_unaligned(ptr as *mut u64, word.to_be());
+                self.buffer.set_len(len + 8);
+            }
         }
 
         #[inline(always)]

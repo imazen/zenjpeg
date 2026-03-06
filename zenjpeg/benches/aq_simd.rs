@@ -2,7 +2,8 @@
 //!
 //! Run with: cargo bench -p zenjpeg --bench aq_simd --features "archmage,test-utils"
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 // Import production AQ functions (wide-based, multiversed)
 use zenjpeg::quant::aq::simd::{

@@ -154,13 +154,13 @@ fn sweep_zen(
         let mut bas = Vec::new();
         let mut bytess = Vec::new();
         for img in images {
-            if let Some(jpeg) = encode_zen(cfg, img) {
-                if let Some(m) = compute_metrics(img, &jpeg) {
-                    bpps.push(m.bpp);
-                    ssim2s.push(m.ssim2);
-                    bas.push(m.ba);
-                    bytess.push(m.bytes as f64);
-                }
+            if let Some(jpeg) = encode_zen(cfg, img)
+                && let Some(m) = compute_metrics(img, &jpeg)
+            {
+                bpps.push(m.bpp);
+                ssim2s.push(m.ssim2);
+                bas.push(m.ba);
+                bytess.push(m.bytes as f64);
             }
         }
         let n = bpps.len();
@@ -234,13 +234,13 @@ fn main() {
             let mut bas = Vec::new();
             let mut bytess = Vec::new();
             for img in &images {
-                if let Some(jpeg) = encode_cpp(dist, img) {
-                    if let Some(m) = compute_metrics(img, &jpeg) {
-                        bpps.push(m.bpp);
-                        ssim2s.push(m.ssim2);
-                        bas.push(m.ba);
-                        bytess.push(m.bytes as f64);
-                    }
+                if let Some(jpeg) = encode_cpp(dist, img)
+                    && let Some(m) = compute_metrics(img, &jpeg)
+                {
+                    bpps.push(m.bpp);
+                    ssim2s.push(m.ssim2);
+                    bas.push(m.ba);
+                    bytess.push(m.bytes as f64);
                 }
             }
             let n = bpps.len();

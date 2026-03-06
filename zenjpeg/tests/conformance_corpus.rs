@@ -16,12 +16,11 @@ fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "jpg" || ext == "jpeg" {
-                        files.push(path);
-                    }
-                }
+            if path.is_file()
+                && let Some(ext) = path.extension()
+                && (ext == "jpg" || ext == "jpeg")
+            {
+                files.push(path);
             } else if path.is_dir() {
                 files.extend(collect_jpgs(&path));
             }

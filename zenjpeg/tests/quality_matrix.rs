@@ -18,7 +18,7 @@
 // ```
 
 use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // Re-use old types for FFI compatibility
@@ -166,24 +166,11 @@ fn get_frymire_path() -> PathBuf {
         .join("frymire.png")
 }
 
-fn load_png(path: &PathBuf) -> Option<(Vec<u8>, usize, usize)> {
-    let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    buf.truncate(info.buffer_size());
-
-    // Convert to RGB if necessary
-    let (rgb, width, height) = match info.color_type {
-        png::ColorType::Rgb => (buf, info.width as usize, info.height as usize),
-        png::ColorType::Rgba => {
-            let rgb: Vec<u8> = buf.chunks(4).flat_map(|c| &c[..3]).copied().collect();
-            (rgb, info.width as usize, info.height as usize)
-        }
-        _ => return None,
-    };
-
+fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width();
+    let height = img.height();
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((rgb, width, height))
 }
 

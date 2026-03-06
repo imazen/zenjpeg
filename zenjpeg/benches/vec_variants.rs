@@ -4,8 +4,9 @@
 //! Pattern: small buffer (max 63 elements) reused across many iterations,
 //! cleared between uses, elements pushed one at a time.
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use smallvec::SmallVec;
+use std::hint::black_box;
 use tinyvec::ArrayVec;
 
 const NUM_BLOCKS: usize = 10_000;

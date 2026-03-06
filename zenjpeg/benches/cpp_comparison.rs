@@ -12,7 +12,8 @@
 //! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 use zenjpeg::encoder::{
     ChromaSubsampling as RustSubsampling, EncoderConfig as RustConfig, PixelLayout, Quality,

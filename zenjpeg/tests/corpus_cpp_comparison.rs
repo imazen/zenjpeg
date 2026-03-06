@@ -159,52 +159,13 @@ fn register_cpp_jpegli(session: &mut EvalSession) {
 
 /// Load PNG image as ImageData
 fn load_png(path: &Path) -> Result<ImageData, codec_eval::Error> {
-    let file = std::fs::File::open(path)?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().map_err(|e| codec_eval::Error::Codec {
+    let img = zenjpeg_bench_utils::load_png(path).map_err(|e| codec_eval::Error::Codec {
         codec: "png".to_string(),
-        message: format!("PNG decode error: {}", e),
+        message: format!("PNG load error: {}", e),
     })?;
-
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| codec_eval::Error::Codec {
-            codec: "png".to_string(),
-            message: format!("PNG frame error: {}", e),
-        })?;
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-
-    // Convert to RGB if needed
-    let rgb_data = match info.color_type {
-        png::ColorType::Rgb => buf[..width * height * 3].to_vec(),
-        png::ColorType::Rgba => {
-            let mut rgb = Vec::with_capacity(width * height * 3);
-            for chunk in buf[..width * height * 4].chunks_exact(4) {
-                rgb.push(chunk[0]);
-                rgb.push(chunk[1]);
-                rgb.push(chunk[2]);
-            }
-            rgb
-        }
-        png::ColorType::Grayscale => {
-            let mut rgb = Vec::with_capacity(width * height * 3);
-            for &g in &buf[..width * height] {
-                rgb.push(g);
-                rgb.push(g);
-                rgb.push(g);
-            }
-            rgb
-        }
-        _ => {
-            return Err(codec_eval::Error::UnsupportedFormat(
-                "Unsupported PNG color type".into(),
-            ));
-        }
-    };
-
+    let width = img.width();
+    let height = img.height();
+    let rgb_data: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Ok(ImageData::RgbSlice {
         data: rgb_data,
         width,
@@ -371,6 +332,7 @@ fn test_corpus_comparison() {
 #[test]
 #[ignore = "requires C++ cjpegli build and CID22-512 corpus"]
 fn test_corpus_quick() {
-    std::env::set_var("MAX_IMAGES", "10");
+    // SAFETY: This test is single-threaded and no other thread reads MAX_IMAGES.
+    unsafe { std::env::set_var("MAX_IMAGES", "10") };
     test_corpus_comparison();
 }

@@ -183,11 +183,11 @@ fn compute_cpp_knee(cpp_points: &[DataPoint], images: &[ImageData]) -> Option<RD
             .iter()
             .filter(|p| p.image_idx == pt.image_idx)
             .collect();
-        if let Some(di) = points_per_image.iter().position(|p| std::ptr::eq(*p, pt)) {
-            if di < n_distances {
-                dist_bpp[di].push(pt.bpp);
-                dist_ssim2[di].push(pt.ssim2);
-            }
+        if let Some(di) = points_per_image.iter().position(|p| std::ptr::eq(*p, pt))
+            && di < n_distances
+        {
+            dist_bpp[di].push(pt.bpp);
+            dist_ssim2[di].push(pt.ssim2);
         }
     }
 
@@ -285,18 +285,18 @@ fn main() {
     for (img_idx, img) in images.iter().enumerate() {
         let px = pixels_for(img);
         for &dist in &CPP_DISTANCES {
-            if let Some(jpeg) = encode_cpp(dist, img) {
-                if let Some(ssim2) = compute_ssim2(img, &jpeg) {
-                    let bpp = jpeg.len() as f64 * 8.0 / px as f64;
-                    cpp_points.push(DataPoint {
-                        config_name: "cjpegli".to_string(),
-                        image_idx: img_idx,
-                        ssim2,
-                        bytes: jpeg.len(),
-                        bpp,
-                        angle: 0.0, // filled in after knee computation
-                    });
-                }
+            if let Some(jpeg) = encode_cpp(dist, img)
+                && let Some(ssim2) = compute_ssim2(img, &jpeg)
+            {
+                let bpp = jpeg.len() as f64 * 8.0 / px as f64;
+                cpp_points.push(DataPoint {
+                    config_name: "cjpegli".to_string(),
+                    image_idx: img_idx,
+                    ssim2,
+                    bytes: jpeg.len(),
+                    bpp,
+                    angle: 0.0, // filled in after knee computation
+                });
             }
         }
         if args.verbose {
@@ -377,19 +377,19 @@ fn main() {
     for (img_idx, img) in images.iter().enumerate() {
         let px = pixels_for(img);
         for (cfg_name, expert) in &config_list {
-            if let Some(jpeg) = encode_expert(expert, color_mode, img) {
-                if let Some(ssim2) = compute_ssim2(img, &jpeg) {
-                    let bpp = jpeg.len() as f64 * 8.0 / px as f64;
-                    let angle = FixedFrame::WEB.s2_angle(bpp, ssim2);
-                    zen_points.push(DataPoint {
-                        config_name: cfg_name.clone(),
-                        image_idx: img_idx,
-                        ssim2,
-                        bytes: jpeg.len(),
-                        bpp,
-                        angle,
-                    });
-                }
+            if let Some(jpeg) = encode_expert(expert, color_mode, img)
+                && let Some(ssim2) = compute_ssim2(img, &jpeg)
+            {
+                let bpp = jpeg.len() as f64 * 8.0 / px as f64;
+                let angle = FixedFrame::WEB.s2_angle(bpp, ssim2);
+                zen_points.push(DataPoint {
+                    config_name: cfg_name.clone(),
+                    image_idx: img_idx,
+                    ssim2,
+                    bytes: jpeg.len(),
+                    bpp,
+                    angle,
+                });
             }
             encode_count += 1;
             if encode_count % report_interval == 0 {

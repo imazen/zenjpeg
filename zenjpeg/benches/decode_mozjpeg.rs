@@ -8,53 +8,56 @@
 //! cargo bench -p zenjpeg --bench decode_mozjpeg --features decoder
 //! ```
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use enough::Unstoppable;
+use std::hint::black_box;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Decode JPEG data using mozjpeg (libjpeg-turbo with NASM SIMD).
 /// Returns RGB pixel data.
 unsafe fn decode_with_mozjpeg(data: &[u8]) -> Vec<u8> {
-    use mozjpeg_sys::*;
-    use std::mem;
+    unsafe {
+        use mozjpeg_sys::*;
+        use std::mem;
 
-    let mut err: jpeg_error_mgr = mem::zeroed();
-    jpeg_std_error(&mut err);
+        let mut err: jpeg_error_mgr = mem::zeroed();
+        jpeg_std_error(&mut err);
 
-    let mut cinfo: jpeg_decompress_struct = mem::zeroed();
-    cinfo.common.err = &mut err;
-    jpeg_create_decompress(&mut cinfo);
+        let mut cinfo: jpeg_decompress_struct = mem::zeroed();
+        cinfo.common.err = &mut err;
+        jpeg_create_decompress(&mut cinfo);
 
-    // Set memory source
-    jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
+        // Set memory source
+        jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
 
-    // Read header
-    jpeg_read_header(&mut cinfo, true as boolean);
+        // Read header
+        jpeg_read_header(&mut cinfo, true as boolean);
 
-    // Request RGB output
-    cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
+        // Request RGB output
+        cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
 
-    // Start decompression
-    jpeg_start_decompress(&mut cinfo);
+        // Start decompression
+        jpeg_start_decompress(&mut cinfo);
 
-    let width = cinfo.output_width as usize;
-    let height = cinfo.output_height as usize;
-    let components = cinfo.output_components as usize;
-    let row_stride = width * components;
+        let width = cinfo.output_width as usize;
+        let height = cinfo.output_height as usize;
+        let components = cinfo.output_components as usize;
+        let row_stride = width * components;
 
-    let mut output = vec![0u8; height * row_stride];
+        let mut output = vec![0u8; height * row_stride];
 
-    // Read scanlines
-    while (cinfo.output_scanline as usize) < height {
-        let offset = cinfo.output_scanline as usize * row_stride;
-        let mut row_ptr = output[offset..].as_mut_ptr();
-        jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
+        // Read scanlines
+        while (cinfo.output_scanline as usize) < height {
+            let offset = cinfo.output_scanline as usize * row_stride;
+            let mut row_ptr = output[offset..].as_mut_ptr();
+            jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
+        }
+
+        jpeg_finish_decompress(&mut cinfo);
+        jpeg_destroy_decompress(&mut cinfo);
+
+        output
     }
-
-    jpeg_finish_decompress(&mut cinfo);
-    jpeg_destroy_decompress(&mut cinfo);
-
-    output
 }
 
 fn create_test_jpeg(

@@ -1255,10 +1255,10 @@ mod tests {
         );
         // Extreme tolerance
         let q = recommended_q_with_tolerance(&probe, 10.0);
-        assert!(q >= 1.0 && q <= 100.0, "extreme tol: Q={q}");
+        assert!((1.0..=100.0).contains(&q), "extreme tol: Q={q}");
         // Very tight tolerance
         let q = recommended_q_with_tolerance(&probe, 0.05);
-        assert!(q >= 1.0 && q <= 100.0, "tight tol: Q={q}");
+        assert!((1.0..=100.0).contains(&q), "tight tol: Q={q}");
     }
 
     #[test]

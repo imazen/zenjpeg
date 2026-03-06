@@ -933,20 +933,23 @@ impl<'a> JpegParser<'a> {
 
         // If streaming decode was used, return its result directly (zero-copy for Rgb,
         // reformat for Bgr/Rgba/Bgra/Bgrx)
-        if is_rgb_family_u8(format) && !is_xyb {
-            if let Some(rgb) = self.streaming_rgb.take() {
-                return reformat_rgb_output(rgb, format, width, height);
-            }
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && let Some(rgb) = self.streaming_rgb.take()
+        {
+            return reformat_rgb_output(rgb, format, width, height);
         }
 
         // If fused parallel decode was used, return its result
         #[cfg(feature = "parallel")]
-        if is_rgb_family_u8(format) && !is_xyb && !dequant_bias {
-            if let Some(fused) = self.fused_result.take() {
-                use super::super::fused_parallel::FusedResult;
-                let FusedResult(rgb) = fused;
-                return reformat_rgb_output(rgb, format, width, height);
-            }
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && !dequant_bias
+            && let Some(fused) = self.fused_result.take()
+        {
+            use super::super::fused_parallel::FusedResult;
+            let FusedResult(rgb) = fused;
+            return reformat_rgb_output(rgb, format, width, height);
         }
 
         if self.coeffs.is_empty() {
@@ -955,19 +958,20 @@ impl<'a> JpegParser<'a> {
 
         // Try parallel fast integer paths first (fall through to sequential if image too small)
         #[cfg(feature = "parallel")]
-        if self.num_threads != 1 && !dequant_bias && self.can_use_fast_i16_path(format, is_xyb) {
-            if let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)? {
-                return reformat_rgb_output(rgb, format, width, height);
-            }
+        if self.num_threads != 1
+            && !dequant_bias
+            && self.can_use_fast_i16_path(format, is_xyb)
+            && let Some(rgb) = self.to_pixels_fast_i16_parallel(chroma_upsampling)?
+        {
+            return reformat_rgb_output(rgb, format, width, height);
         }
         #[cfg(feature = "parallel")]
         if self.num_threads != 1
             && !dequant_bias
             && self.can_use_fast_i16_subsampled(format, is_xyb)
+            && let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)?
         {
-            if let Some(rgb) = self.to_pixels_fast_i16_subsampled_parallel(chroma_upsampling)? {
-                return reformat_rgb_output(rgb, format, width, height);
-            }
+            return reformat_rgb_output(rgb, format, width, height);
         }
 
         // Try fast integer path for non-XYB 4:4:4 images

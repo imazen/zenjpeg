@@ -99,8 +99,8 @@ fn main() {
 }
 
 fn load_png_rgb(path: &str) -> (Vec<u8>, usize, usize) {
-    let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path))
-        .expect("Failed to load PNG");
+    let img =
+        zenjpeg_bench_utils::load_png(std::path::Path::new(path)).expect("Failed to load PNG");
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     (bytes, img.width(), img.height())
 }

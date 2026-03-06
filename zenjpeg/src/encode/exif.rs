@@ -232,10 +232,8 @@ fn build_exif_tiff(orientation: Option<Orientation>, copyright: Option<&str>) ->
     exif.extend_from_slice(&0u32.to_le_bytes());
 
     // === Values that didn't fit inline ===
-    if !copyright_inline {
-        if let Some(bytes) = copyright_bytes {
-            exif.extend_from_slice(&bytes);
-        }
+    if !copyright_inline && let Some(bytes) = copyright_bytes {
+        exif.extend_from_slice(&bytes);
     }
 
     exif

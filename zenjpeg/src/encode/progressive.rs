@@ -626,7 +626,7 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 // Hash-based noise layered on a diagonal gradient
-                let grad = ((x as u32 + y as u32) * 255 / (width + height)) as u8;
+                let grad = ((x + y) * 255 / (width + height)) as u8;
                 let noise = ((x.wrapping_mul(31337) ^ y.wrapping_mul(7919))
                     .wrapping_mul(2654435761)
                     >> 24) as u8;
@@ -659,7 +659,7 @@ mod tests {
             #[allow(deprecated)]
             let decoded = crate::decode::Decoder::new()
                 .decode(&jpeg, enough::Unstoppable)
-                .expect(&format!("decode failed for restart_mcu_rows={}", rows));
+                .unwrap_or_else(|_| panic!("decode failed for restart_mcu_rows={}", rows));
             assert_eq!(decoded.width, width);
             assert_eq!(decoded.height, height);
             assert_eq!(

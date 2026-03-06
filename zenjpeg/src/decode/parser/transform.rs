@@ -159,13 +159,11 @@ impl<'a> JpegParser<'a> {
             // moved to (col, row), so the quant value must follow it.
             // (For jpegli quant tables, the table is typically symmetric,
             // making this a no-op. But it's correct for asymmetric tables.)
-            for table in &mut self.quant_tables {
-                if let Some(qt) = table {
-                    let old = *qt;
-                    for r in 0..8 {
-                        for c in 0..8 {
-                            qt[r * 8 + c] = old[c * 8 + r];
-                        }
+            for qt in self.quant_tables.iter_mut().flatten() {
+                let old = *qt;
+                for r in 0..8 {
+                    for c in 0..8 {
+                        qt[r * 8 + c] = old[c * 8 + r];
                     }
                 }
             }

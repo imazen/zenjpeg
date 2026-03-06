@@ -221,22 +221,28 @@ fn process_file(path: &Path) -> Option<CompareResult> {
     }
 
     // Compare pairs where both succeeded and dimensions match
-    if let (Ok((zw, zh, zp)), Ok((mw, mh, mp))) = (&zen, &moz) {
-        if zw == mw && zh == mh && zp.len() == mp.len() {
-            result.zen_vs_moz_max = max_diff(zp, mp);
-            result.zen_vs_moz_mean = mean_abs_diff(zp, mp);
-        }
+    if let (Ok((zw, zh, zp)), Ok((mw, mh, mp))) = (&zen, &moz)
+        && zw == mw
+        && zh == mh
+        && zp.len() == mp.len()
+    {
+        result.zen_vs_moz_max = max_diff(zp, mp);
+        result.zen_vs_moz_mean = mean_abs_diff(zp, mp);
     }
-    if let (Ok((zw, zh, zp)), Ok((uw, uh, up))) = (&zen, &zune) {
-        if zw == uw && zh == uh && zp.len() == up.len() {
-            result.zen_vs_zune_max = max_diff(zp, up);
-            result.zen_vs_zune_mean = mean_abs_diff(zp, up);
-        }
+    if let (Ok((zw, zh, zp)), Ok((uw, uh, up))) = (&zen, &zune)
+        && zw == uw
+        && zh == uh
+        && zp.len() == up.len()
+    {
+        result.zen_vs_zune_max = max_diff(zp, up);
+        result.zen_vs_zune_mean = mean_abs_diff(zp, up);
     }
-    if let (Ok((mw, mh, mp)), Ok((uw, uh, up))) = (&moz, &zune) {
-        if mw == uw && mh == uh && mp.len() == up.len() {
-            result.moz_vs_zune_max = max_diff(mp, up);
-        }
+    if let (Ok((mw, mh, mp)), Ok((uw, uh, up))) = (&moz, &zune)
+        && mw == uw
+        && mh == uh
+        && mp.len() == up.len()
+    {
+        result.moz_vs_zune_max = max_diff(mp, up);
     }
 
     Some(result)

@@ -360,7 +360,7 @@ fn load_image_list(dir: &str) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn load_png_rgb(path: &PathBuf) -> Result<(u32, u32, Vec<u8>)> {
+fn load_png_rgb(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>)> {
     let img = zenjpeg_bench_utils::load_png(path)
         .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
     let w = img.width() as u32;

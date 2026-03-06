@@ -3,7 +3,7 @@
 //! Compares both DSSIM and Butteraugli metrics
 use enough::Unstoppable;
 
-use butteraugli::{ButteraugliParams, compute_butteraugli};
+use butteraugli::ButteraugliParams;
 use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::fs;
@@ -28,9 +28,18 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 }
 
 fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
+    let orig_pixels: Vec<rgb::RGB8> = original
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dist_pixels: Vec<rgb::RGB8> = distorted
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+    let dist_img = imgref::Img::new(&dist_pixels[..], width, height);
     let params = ButteraugliParams::default();
-    let result =
-        compute_butteraugli(original, distorted, width, height, &params).expect("butteraugli");
+    let result = butteraugli::butteraugli(orig_img, dist_img, &params).expect("butteraugli");
     result.score
 }
 
@@ -95,8 +104,8 @@ fn main() {
     }
 
     // Load PNG
-    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
-        .expect("Failed to load PNG");
+    let loaded =
+        zenjpeg_bench_utils::load_png(std::path::Path::new(png_path)).expect("Failed to load PNG");
     let rgb: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     let width = loaded.width();
     let height = loaded.height();

@@ -63,6 +63,8 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/linear-srgb.git
           git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash

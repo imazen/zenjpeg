@@ -881,10 +881,10 @@ pub(crate) fn get_aq_map_or_compute(
 #[inline]
 pub(crate) fn create_hybrid_ctx(config: &ComputedConfig) -> Option<HybridQuantContext> {
     // First check for explicit TrellisConfig (mozjpeg-compat API)
-    if let Some(ref trellis) = config.trellis {
-        if trellis.is_enabled() {
-            return Some(HybridQuantContext::from_trellis_config(*trellis));
-        }
+    if let Some(ref trellis) = config.trellis
+        && trellis.is_enabled()
+    {
+        return Some(HybridQuantContext::from_trellis_config(*trellis));
     }
 
     // Fall back to HybridConfig

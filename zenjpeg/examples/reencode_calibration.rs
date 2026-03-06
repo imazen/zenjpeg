@@ -91,9 +91,10 @@ fn default_corpus_dir() -> PathBuf {
 
 fn expand_tilde(s: &str) -> PathBuf {
     if s.starts_with('~')
-        && let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(&s[2..]);
-        }
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(&s[2..]);
+    }
     PathBuf::from(s)
 }
 
@@ -193,9 +194,10 @@ fn encode_turbo(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
         .arg(ppm_path)
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::other(
-            format!("cjpeg failed: {}", String::from_utf8_lossy(&output.stderr)),
-        ));
+        return Err(io::Error::other(format!(
+            "cjpeg failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(output.stdout)
 }
@@ -210,12 +212,10 @@ fn encode_turbo_444(ppm_path: &Path, quality: u8) -> io::Result<Vec<u8>> {
         .arg(ppm_path)
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::other(
-            format!(
-                "cjpeg 444 failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
+        return Err(io::Error::other(format!(
+            "cjpeg 444 failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(output.stdout)
 }
@@ -251,12 +251,10 @@ fn encode_cjpegli(png_path: &Path, quality: u8, tmp_dir: &Path) -> io::Result<Ve
         .arg(quality.to_string())
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::other(
-            format!(
-                "cjpegli failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
+        return Err(io::Error::other(format!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     let data = std::fs::read(&tmp_out)?;
     std::fs::remove_file(&tmp_out).ok();
@@ -434,13 +432,12 @@ fn process_source(
     let mut results = Vec::new();
 
     // Validate with probe
-    if verbose
-        && let Ok(probe) = detect::probe(source_jpeg) {
-            eprintln!(
-                "    {} Q{}: detected {:?} Q{:.0} {:?}",
-                src_encoder, src_quality, probe.encoder, probe.quality.value, probe.subsampling
-            );
-        }
+    if verbose && let Ok(probe) = detect::probe(source_jpeg) {
+        eprintln!(
+            "    {} Q{}: detected {:?} Q{:.0} {:?}",
+            src_encoder, src_quality, probe.encoder, probe.quality.value, probe.subsampling
+        );
+    }
 
     // Decode source JPEG
     let decoded = match decode_jpeg_to_rgb(source_jpeg) {
@@ -473,28 +470,29 @@ fn process_source(
         for &zen_q in zen_qualities {
             for &(zen_sub_str, zen_sub) in &zen_subs {
                 if let Some(reenc) = encode_zen_preset(&decoded_bytes, w, h, zen_q, zen_sub, preset)
-                    && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc) {
-                        let reenc_size = reenc.len();
-                        results.push(RawResult {
-                            image: img_name.to_string(),
-                            src_encoder: src_encoder.to_string(),
-                            src_quality,
-                            src_sub: src_sub.to_string(),
-                            src_ba,
-                            src_ss2,
-                            src_size,
-                            resize_ratio: 1.0,
-                            zen_preset: preset_name.to_string(),
-                            zen_quality: zen_q,
-                            zen_sub: zen_sub_str.to_string(),
-                            reenc_ba,
-                            reenc_ss2,
-                            reenc_size,
-                            ba_delta: reenc_ba - src_ba,
-                            ss2_delta: reenc_ss2 - src_ss2,
-                            size_ratio: reenc_size as f64 / src_size as f64,
-                        });
-                    }
+                    && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(reference, &reenc)
+                {
+                    let reenc_size = reenc.len();
+                    results.push(RawResult {
+                        image: img_name.to_string(),
+                        src_encoder: src_encoder.to_string(),
+                        src_quality,
+                        src_sub: src_sub.to_string(),
+                        src_ba,
+                        src_ss2,
+                        src_size,
+                        resize_ratio: 1.0,
+                        zen_preset: preset_name.to_string(),
+                        zen_quality: zen_q,
+                        zen_sub: zen_sub_str.to_string(),
+                        reenc_ba,
+                        reenc_ss2,
+                        reenc_size,
+                        ba_delta: reenc_ba - src_ba,
+                        ss2_delta: reenc_ss2 - src_ss2,
+                        size_ratio: reenc_size as f64 / src_size as f64,
+                    });
+                }
             }
         }
     }
@@ -551,29 +549,29 @@ fn process_resize(
                 out_h as usize,
                 zen_q,
                 ChromaSubsampling::Quarter,
-            )
-                && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(&resized_ref, &reenc) {
-                    let reenc_size = reenc.len();
-                    results.push(RawResult {
-                        image: img.name.clone(),
-                        src_encoder: src_encoder.to_string(),
-                        src_quality,
-                        src_sub: src_sub.to_string(),
-                        src_ba: rsrc_ba,
-                        src_ss2: rsrc_ss2,
-                        src_size,
-                        resize_ratio: ratio,
-                        zen_preset: "auto".to_string(),
-                        zen_quality: zen_q,
-                        zen_sub: "420".to_string(),
-                        reenc_ba,
-                        reenc_ss2,
-                        reenc_size,
-                        ba_delta: reenc_ba - rsrc_ba,
-                        ss2_delta: reenc_ss2 - rsrc_ss2,
-                        size_ratio: reenc_size as f64 / src_size as f64,
-                    });
-                }
+            ) && let Some((reenc_ba, reenc_ss2)) = measure_jpeg(&resized_ref, &reenc)
+            {
+                let reenc_size = reenc.len();
+                results.push(RawResult {
+                    image: img.name.clone(),
+                    src_encoder: src_encoder.to_string(),
+                    src_quality,
+                    src_sub: src_sub.to_string(),
+                    src_ba: rsrc_ba,
+                    src_ss2: rsrc_ss2,
+                    src_size,
+                    resize_ratio: ratio,
+                    zen_preset: "auto".to_string(),
+                    zen_quality: zen_q,
+                    zen_sub: "420".to_string(),
+                    reenc_ba,
+                    reenc_ss2,
+                    reenc_size,
+                    ba_delta: reenc_ba - rsrc_ba,
+                    ss2_delta: reenc_ss2 - rsrc_ss2,
+                    size_ratio: reenc_size as f64 / src_size as f64,
+                });
+            }
         }
     }
 
@@ -601,23 +599,23 @@ fn process_image(
             90.0,
             ChromaSubsampling::Quarter,
         )
-            && let Some((ba, ss2)) = measure_jpeg(&reference, &direct) {
-                eprintln!(
-                    "  [sanity] {} direct zen Q90: BA={:.2}, SS2={:.2}, size={}",
-                    img.name,
-                    ba,
-                    ss2,
-                    direct.len()
-                );
-            }
+        && let Some((ba, ss2)) = measure_jpeg(&reference, &direct)
+    {
+        eprintln!(
+            "  [sanity] {} direct zen Q90: BA={:.2}, SS2={:.2}, size={}",
+            img.name,
+            ba,
+            ss2,
+            direct.len()
+        );
+    }
 
     // Write PPM for turbo (once per image)
     let ppm_path = tmp_dir.join(format!("{}.ppm", img.name));
     let has_turbo = source_configs.iter().any(|c| c.encoder == "turbo");
-    if has_turbo
-        && let Err(e) = write_ppm(&ppm_path, reference.as_ref()) {
-            eprintln!("  warning: cannot write PPM for {}: {e}", img.name);
-        }
+    if has_turbo && let Err(e) = write_ppm(&ppm_path, reference.as_ref()) {
+        eprintln!("  warning: cannot write PPM for {}: {e}", img.name);
+    }
 
     for src_cfg in source_configs {
         for &sq in src_qualities {
@@ -857,13 +855,14 @@ fn compute_resize_ceilings(results: &[RawResult]) -> Vec<ResizeCeiling> {
 
         // If no ceiling found (all steps are efficient), ceiling is the highest Q
         if ceiling_q.is_none()
-            && let Some(&(q, ba, sr)) = q_points.last() {
-                ceiling_q = Some(q);
-                ceiling_ba = ba;
-                ceiling_sr = sr;
-                next_ba = ba;
-                next_sr = sr;
-            }
+            && let Some(&(q, ba, sr)) = q_points.last()
+        {
+            ceiling_q = Some(q);
+            ceiling_ba = ba;
+            ceiling_sr = sr;
+            next_ba = ba;
+            next_sr = sr;
+        }
 
         ceilings.push(ResizeCeiling {
             ratio,

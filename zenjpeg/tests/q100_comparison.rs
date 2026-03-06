@@ -63,21 +63,10 @@ fn test_q100_rust_vs_cpp() {
 
     // Load PNG
     let png_data = std::fs::read(test_img).unwrap();
-    let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    let width = info.width;
-    let height = info.height;
-
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => panic!("Unsupported color type"),
-    };
+    let img = zenjpeg_bench_utils::load_png_bytes(&png_data).expect("Failed to load PNG");
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
 
     println!("\n=== Q100 Rust vs C++ Comparison ===");
     println!("Image: {}x{}", width, height);

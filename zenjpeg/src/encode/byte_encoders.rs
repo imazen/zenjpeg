@@ -244,12 +244,9 @@ impl BytesEncoder {
         if self.config.pre_blur > 0.0 {
             let w = self.width as usize;
             let h = rows;
-            match self.layout {
-                PixelLayout::Rgb8Srgb => {
-                    let blurred = crate::blur::gaussian_blur_rgb(data, w, h, self.config.pre_blur);
-                    return self.push(&blurred, rows, row_bytes, stop);
-                }
-                _ => {}
+            if self.layout == PixelLayout::Rgb8Srgb {
+                let blurred = crate::blur::gaussian_blur_rgb(data, w, h, self.config.pre_blur);
+                return self.push(&blurred, rows, row_bytes, stop);
             }
         }
 
@@ -362,10 +359,10 @@ impl BytesEncoder {
         // Fall back to individual metadata fields for backwards compatibility
         // These are applied after EncoderSegments if both are provided
         // (allows override of specific fields while keeping bulk segments)
-        if let Some(ref exif) = self.exif_data {
-            if let Some(exif_bytes) = exif.to_bytes() {
-                inject_exif_inplace(output, &exif_bytes);
-            }
+        if let Some(ref exif) = self.exif_data
+            && let Some(exif_bytes) = exif.to_bytes()
+        {
+            inject_exif_inplace(output, &exif_bytes);
         }
 
         if let Some(ref xmp_data) = self.xmp_data {
@@ -1356,10 +1353,10 @@ impl YCbCrPlanarEncoder {
         }
 
         // Fall back to individual metadata fields for backwards compatibility
-        if let Some(ref exif) = self.exif_data {
-            if let Some(exif_bytes) = exif.to_bytes() {
-                inject_exif_inplace(output, &exif_bytes);
-            }
+        if let Some(ref exif) = self.exif_data
+            && let Some(exif_bytes) = exif.to_bytes()
+        {
+            inject_exif_inplace(output, &exif_bytes);
         }
 
         if let Some(ref xmp_data) = self.xmp_data {

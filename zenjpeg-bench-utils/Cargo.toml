@@ -19,6 +19,7 @@ imgref = { workspace = true }
 
 # Image I/O
 png = { workspace = true }
+zenpng = { workspace = true }
 
 # JPEG decoding (de-facto standard decoder for comparisons)
 zune-jpeg = { workspace = true }

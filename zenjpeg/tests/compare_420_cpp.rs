@@ -14,22 +14,11 @@ fn encode_rgb(
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    let file = fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    let rgb = match info.color_type {
-        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => buf[..info.buffer_size()]
-            .chunks(4)
-            .flat_map(|c| [c[0], c[1], c[2]])
-            .collect(),
-        _ => return None,
-    };
-
-    Some((rgb, info.width, info.height))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((rgb, width, height))
 }
 
 #[test]

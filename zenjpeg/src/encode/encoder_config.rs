@@ -709,16 +709,16 @@ impl EncoderConfig {
         }
 
         // Apply trellis/hybrid - hybrid takes priority
-        if let Some(ref hybrid) = expert.hybrid {
-            if hybrid.enabled {
-                self.hybrid_config = *hybrid;
-                self.trellis = None;
-            }
+        if let Some(ref hybrid) = expert.hybrid
+            && hybrid.enabled
+        {
+            self.hybrid_config = *hybrid;
+            self.trellis = None;
         }
-        if expert.hybrid.is_none() || !expert.hybrid.as_ref().is_some_and(|h| h.enabled) {
-            if let Some(trellis) = expert.trellis {
-                self.trellis = Some(trellis);
-            }
+        if (expert.hybrid.is_none() || !expert.hybrid.as_ref().is_some_and(|h| h.enabled))
+            && let Some(trellis) = expert.trellis
+        {
+            self.trellis = Some(trellis);
         }
 
         self

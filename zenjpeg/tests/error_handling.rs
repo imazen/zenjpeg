@@ -235,12 +235,12 @@ fn test_decode_truncated_before_eoi() {
 fn test_decode_corrupted_dqt_length() {
     let mut jpeg = create_test_jpeg();
     // Find DQT marker and corrupt length
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xDB]) {
-        if pos + 4 < jpeg.len() {
-            // Set impossibly large length
-            jpeg[pos + 2] = 0xFF;
-            jpeg[pos + 3] = 0xFF;
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xDB])
+        && pos + 4 < jpeg.len()
+    {
+        // Set impossibly large length
+        jpeg[pos + 2] = 0xFF;
+        jpeg[pos + 3] = 0xFF;
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -251,11 +251,11 @@ fn test_decode_corrupted_dqt_length() {
 fn test_decode_corrupted_dht_length() {
     let mut jpeg = create_test_jpeg();
     // Find DHT marker and corrupt length
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC4]) {
-        if pos + 4 < jpeg.len() {
-            jpeg[pos + 2] = 0xFF;
-            jpeg[pos + 3] = 0xFF;
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC4])
+        && pos + 4 < jpeg.len()
+    {
+        jpeg[pos + 2] = 0xFF;
+        jpeg[pos + 3] = 0xFF;
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -266,11 +266,11 @@ fn test_decode_corrupted_dht_length() {
 fn test_decode_corrupted_sof_length() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 marker and corrupt length
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        if pos + 4 < jpeg.len() {
-            jpeg[pos + 2] = 0x00;
-            jpeg[pos + 3] = 0x01; // Length too small
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 4 < jpeg.len()
+    {
+        jpeg[pos + 2] = 0x00;
+        jpeg[pos + 3] = 0x01; // Length too small
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -285,12 +285,12 @@ fn test_decode_corrupted_sof_length() {
 fn test_decode_zero_width_in_sof() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 marker and set width to 0
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        // SOF structure: length(2) + precision(1) + height(2) + width(2)
-        if pos + 9 < jpeg.len() {
-            jpeg[pos + 7] = 0x00; // Width MSB
-            jpeg[pos + 8] = 0x00; // Width LSB
-        }
+    // SOF structure: length(2) + precision(1) + height(2) + width(2)
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 9 < jpeg.len()
+    {
+        jpeg[pos + 7] = 0x00; // Width MSB
+        jpeg[pos + 8] = 0x00; // Width LSB
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -303,11 +303,11 @@ fn test_decode_zero_width_in_sof() {
 fn test_decode_zero_height_in_sof() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 marker and set height to 0
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        if pos + 7 < jpeg.len() {
-            jpeg[pos + 5] = 0x00; // Height MSB
-            jpeg[pos + 6] = 0x00; // Height LSB
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 7 < jpeg.len()
+    {
+        jpeg[pos + 5] = 0x00; // Height MSB
+        jpeg[pos + 6] = 0x00; // Height LSB
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -324,10 +324,10 @@ fn test_decode_zero_height_in_sof() {
 fn test_decode_zero_components() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 and set component count to 0
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        if pos + 9 < jpeg.len() {
-            jpeg[pos + 9] = 0x00; // Num components = 0
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 9 < jpeg.len()
+    {
+        jpeg[pos + 9] = 0x00; // Num components = 0
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -338,10 +338,10 @@ fn test_decode_zero_components() {
 fn test_decode_too_many_components() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 and set component count to invalid value
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        if pos + 9 < jpeg.len() {
-            jpeg[pos + 9] = 0xFF; // 255 components (invalid)
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 9 < jpeg.len()
+    {
+        jpeg[pos + 9] = 0xFF; // 255 components (invalid)
     }
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
@@ -413,14 +413,14 @@ fn test_decode_progressive_truncated() {
 fn test_decode_huge_dimensions_in_sof() {
     let mut jpeg = create_test_jpeg();
     // Find SOF0 and set huge dimensions
-    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]) {
-        if pos + 9 < jpeg.len() {
-            // Set 65535x65535 dimensions
-            jpeg[pos + 5] = 0xFF;
-            jpeg[pos + 6] = 0xFF;
-            jpeg[pos + 7] = 0xFF;
-            jpeg[pos + 8] = 0xFF;
-        }
+    if let Some(pos) = jpeg.windows(2).position(|w| w == [0xFF, 0xC0])
+        && pos + 9 < jpeg.len()
+    {
+        // Set 65535x65535 dimensions
+        jpeg[pos + 5] = 0xFF;
+        jpeg[pos + 6] = 0xFF;
+        jpeg[pos + 7] = 0xFF;
+        jpeg[pos + 8] = 0xFF;
     }
     let decoder = Decoder::new();
     // Should reject or handle gracefully without OOM

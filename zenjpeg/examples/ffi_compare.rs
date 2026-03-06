@@ -29,8 +29,8 @@ fn main() {
     let distance = quality_to_distance(quality as f32);
 
     // Load PNG
-    let loaded = zenjpeg_bench_utils::load_png(std::path::Path::new(png_path))
-        .expect("Failed to load PNG");
+    let loaded =
+        zenjpeg_bench_utils::load_png(std::path::Path::new(png_path)).expect("Failed to load PNG");
     let width = loaded.width();
     let height = loaded.height();
     let rgb: Vec<u8> = loaded.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();

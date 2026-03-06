@@ -26,7 +26,7 @@ fn must_not_panic(data: &[u8]) -> Result<(), String> {
         Err(e) => {
             let msg = e
                 .downcast_ref::<String>()
-                .map(|s| s.clone())
+                .cloned()
                 .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "unknown panic".to_string());
             Err(msg)
@@ -49,7 +49,7 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
     if let Err(e) = result {
         let msg = e
             .downcast_ref::<String>()
-            .map(|s| s.clone())
+            .cloned()
             .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_else(|| "unknown panic".to_string());
         return Err(format!("panic with fancy_upsampling(false): {}", msg));
@@ -64,7 +64,7 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
     if let Err(e) = result {
         let msg = e
             .downcast_ref::<String>()
-            .map(|s| s.clone())
+            .cloned()
             .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_else(|| "unknown panic".to_string());
         return Err(format!("panic with fancy_upsampling(true): {}", msg));

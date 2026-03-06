@@ -118,10 +118,10 @@ pub(crate) fn generate_candidate_scripts(
         None => Some(optimizer_script),
     };
 
-    if let Some(alt) = best_alternative {
-        if !scripts_equivalent(&alt, &candidates[0]) {
-            candidates.push(alt);
-        }
+    if let Some(alt) = best_alternative
+        && !scripts_equivalent(&alt, &candidates[0])
+    {
+        candidates.push(alt);
     }
 
     Ok(candidates)

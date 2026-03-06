@@ -149,7 +149,7 @@ fn mozjpeg_to_zenjpeg(width: u32, height: u32, ss: mozjpeg_rs::Subsampling) {
     let jpeg = mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::BaselineBalanced)
         .quality(90)
         .subsampling(ss)
-        .encode_rgb(&img.pixels, width as u32, height as u32)
+        .encode_rgb(&img.pixels, width, height)
         .unwrap_or_else(|e| panic!("mozjpeg encode {}x{}: {e}", width, height));
 
     let decoder = Decoder::new();

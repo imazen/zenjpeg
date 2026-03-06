@@ -4,7 +4,7 @@
 //! and writes the results to jpegli/tests/outputs/ for visual inspection.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
@@ -36,33 +36,11 @@ fn get_output_dir() -> PathBuf {
 }
 
 /// Load PNG and convert to RGB bytes
-fn load_png_as_rgb(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
-    let png_data = fs::read(path).ok()?;
-    let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
-    let mut reader = decoder.read_info().ok()?;
-
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    let width = info.width;
-    let height = info.height;
-
-    let rgb_data: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => buf[..(width * height * 3) as usize].to_vec(),
-        png::ColorType::Rgba => buf[..(width * height * 4) as usize]
-            .chunks(4)
-            .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-            .collect(),
-        png::ColorType::Grayscale => buf[..(width * height) as usize]
-            .iter()
-            .flat_map(|&g| [g, g, g])
-            .collect(),
-        png::ColorType::GrayscaleAlpha => buf[..(width * height * 2) as usize]
-            .chunks(2)
-            .flat_map(|ga| [ga[0], ga[0], ga[0]])
-            .collect(),
-        _ => return None,
-    };
-
+fn load_png_as_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb_data: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((rgb_data, width, height))
 }
 

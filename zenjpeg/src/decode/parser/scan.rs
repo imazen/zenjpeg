@@ -1002,7 +1002,7 @@ impl<'a> JpegParser<'a> {
                 use super::super::ChromaUpsampling;
                 use crate::decode::upsample::{
                     upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-                    upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+                    upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg,
                 };
                 Some(match (h_ratio, v_ratio) {
                     (2, 2) => match self.chroma_upsampling {

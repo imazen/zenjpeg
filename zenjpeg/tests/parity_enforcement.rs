@@ -135,19 +135,11 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
 
-    let decoder = png::Decoder::new(fs::File::open(path).ok()?);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    let bytes = &buf[..info.buffer_size()];
-    let rgb: Vec<u8> = match info.color_type {
-        png::ColorType::Rgb => bytes.to_vec(),
-        png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
-        _ => return None,
-    };
-
-    Some((rgb, info.width, info.height))
+    let img = zenjpeg_bench_utils::load_png(path).ok()?;
+    let width = img.width() as u32;
+    let height = img.height() as u32;
+    let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    Some((rgb, width, height))
 }
 
 struct ParityResult {

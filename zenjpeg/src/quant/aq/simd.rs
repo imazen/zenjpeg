@@ -1650,16 +1650,14 @@ pub(crate) mod archmage_impl {
 
             // AVX-512 processes 16 at a time, handle 8-15 pixel remainder with AVX2
             let v4_processed = (width / 16) * 16;
-            if v4_processed < width {
-                if let Some(v3_token) = X64V3Token::summon() {
-                    let remaining_chunks8 = (width - v4_processed) / 8;
-                    for chunk in 0..remaining_chunks8 {
-                        let x = v4_processed + chunk * 8;
-                        let buf_x = x + 1;
-                        mage_pre_erosion_8_inner(
-                            v3_token, row, row_above, row_below, output, buf_x, x,
-                        );
-                    }
+            if v4_processed < width
+                && let Some(v3_token) = X64V3Token::summon()
+            {
+                let remaining_chunks8 = (width - v4_processed) / 8;
+                for chunk in 0..remaining_chunks8 {
+                    let x = v4_processed + chunk * 8;
+                    let buf_x = x + 1;
+                    mage_pre_erosion_8_inner(v3_token, row, row_above, row_below, output, buf_x, x);
                 }
             }
 
@@ -2613,6 +2611,9 @@ pub(crate) mod archmage_impl {
         }
     }
 }
+
+#[cfg(target_arch = "x86_64")]
+pub use archmage_impl::mage_pre_erosion_row_padded;
 
 #[cfg(target_arch = "x86_64")]
 pub use archmage_impl::mage_pre_erosion_row_padded_v4;

@@ -655,26 +655,26 @@ impl StreamingAQ {
 
     /// Debug: dump AQ map to file if DUMP_AQ_MAP env var is set.
     fn dump_aq_map_if_requested(&self) {
-        if let Ok(path) = std::env::var("DUMP_AQ_MAP") {
-            if let Ok(mut file) = std::fs::File::create(&path) {
-                use std::io::Write;
-                let w = self.blocks_w as u32;
-                let h = self.blocks_h as u32;
-                // Write header
-                let _ = file.write_all(&w.to_le_bytes());
-                let _ = file.write_all(&h.to_le_bytes());
-                // Write AQ values
-                for val in &self.all_aq_strengths {
-                    let _ = file.write_all(&val.to_le_bytes());
-                }
-                eprintln!(
-                    "AQ map dumped to {} ({}x{} blocks, {} values)",
-                    path,
-                    w,
-                    h,
-                    self.all_aq_strengths.len()
-                );
+        if let Ok(path) = std::env::var("DUMP_AQ_MAP")
+            && let Ok(mut file) = std::fs::File::create(&path)
+        {
+            use std::io::Write;
+            let w = self.blocks_w as u32;
+            let h = self.blocks_h as u32;
+            // Write header
+            let _ = file.write_all(&w.to_le_bytes());
+            let _ = file.write_all(&h.to_le_bytes());
+            // Write AQ values
+            for val in &self.all_aq_strengths {
+                let _ = file.write_all(&val.to_le_bytes());
             }
+            eprintln!(
+                "AQ map dumped to {} ({}x{} blocks, {} values)",
+                path,
+                w,
+                h,
+                self.all_aq_strengths.len()
+            );
         }
     }
 

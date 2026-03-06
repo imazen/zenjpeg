@@ -175,10 +175,20 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
 }
 
 fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use butteraugli::{ButteraugliParams, compute_butteraugli};
+    use butteraugli::ButteraugliParams;
 
+    let orig_pixels: Vec<rgb::RGB8> = orig
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let comp_pixels: Vec<rgb::RGB8> = comp
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+    let comp_img = imgref::Img::new(&comp_pixels[..], width, height);
     let params = ButteraugliParams::default();
-    match compute_butteraugli(orig, comp, width, height, &params) {
+    match butteraugli::butteraugli(orig_img, comp_img, &params) {
         Ok(result) => result.score,
         Err(_) => f64::NAN,
     }
@@ -212,10 +222,10 @@ fn main() {
             corpus_paths.push(p);
         }
     }
-    if let Ok(corpus) = codec_corpus::Corpus::new() {
-        if let Ok(kodak) = corpus.get("kodak") {
-            corpus_paths.push(kodak);
-        }
+    if let Ok(corpus) = codec_corpus::Corpus::new()
+        && let Ok(kodak) = corpus.get("kodak")
+    {
+        corpus_paths.push(kodak);
     }
 
     let corpus_dir = args

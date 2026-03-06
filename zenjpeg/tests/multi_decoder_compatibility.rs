@@ -14,7 +14,7 @@
 //! ```
 use enough::Unstoppable;
 
-use butteraugli::{ButteraugliParams, compute_butteraugli};
+use butteraugli::ButteraugliParams;
 use dssim_core::Dssim;
 use rgb::RGBA8;
 use std::collections::HashMap;
@@ -91,8 +91,20 @@ fn compute_dssim(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
 }
 
 fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    use imgref::ImgVec;
+    use rgb::RGB8;
+
+    let to_img = |data: &[u8]| -> ImgVec<RGB8> {
+        let pixels: Vec<RGB8> = data
+            .chunks_exact(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        ImgVec::new(pixels, width, height)
+    };
+    let orig_img = to_img(original);
+    let dec_img = to_img(decoded);
     let params = ButteraugliParams::default();
-    match compute_butteraugli(original, decoded, width, height, &params) {
+    match butteraugli::butteraugli(orig_img.as_ref(), dec_img.as_ref(), &params) {
         Ok(result) => result.score,
         Err(_) => 99.0, // Return high score on error
     }

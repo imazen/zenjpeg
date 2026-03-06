@@ -246,12 +246,13 @@ fn main() {
 
     // Write output file if specified
     if let Some(ref output_path) = args.output
-        && !args.disable_output {
-            std::fs::write(output_path, &jpeg_bytes).expect("Failed to write output file");
-            if !args.quiet {
-                eprintln!("Wrote {} bytes to {}", jpeg_bytes.len(), output_path);
-            }
+        && !args.disable_output
+    {
+        std::fs::write(output_path, &jpeg_bytes).expect("Failed to write output file");
+        if !args.quiet {
+            eprintln!("Wrote {} bytes to {}", jpeg_bytes.len(), output_path);
         }
+    }
 
     if !args.quiet {
         eprintln!();

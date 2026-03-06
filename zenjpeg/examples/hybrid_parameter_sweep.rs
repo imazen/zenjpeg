@@ -25,9 +25,10 @@ fn main() {
             "../glassa/results/cid22_comparison/butteraugli_matched/pexels-photo-4577831/original.png".to_string(),
         ];
         if let Ok(corpus) = codec_corpus::Corpus::new()
-            && let Ok(d) = corpus.get("qoi-benchmark/screenshot_web") {
-                defaults.insert(1, d.join("apple.com.png").to_string_lossy().to_string());
-            }
+            && let Ok(d) = corpus.get("qoi-benchmark/screenshot_web")
+        {
+            defaults.insert(1, d.join("apple.com.png").to_string_lossy().to_string());
+        }
         defaults
     };
 

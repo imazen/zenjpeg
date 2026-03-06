@@ -51,10 +51,10 @@ pub fn workspace_root() -> PathBuf {
         let p = PathBuf::from(manifest);
         // If we're in a sub-crate (zenjpeg/, zenjpeg-bench-utils/, etc.),
         // go up one level to the workspace root.
-        if let Some(parent) = p.parent() {
-            if parent.join("Cargo.toml").exists() {
-                return parent.to_path_buf();
-            }
+        if let Some(parent) = p.parent()
+            && parent.join("Cargo.toml").exists()
+        {
+            return parent.to_path_buf();
         }
         return p;
     }
@@ -957,40 +957,43 @@ impl TestImages {
 ///
 /// Handles RGB, RGBA (alpha discarded), grayscale, and grayscale+alpha.
 pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
-    let file = std::fs::File::open(path).map_err(|e| PngLoadError::Io(e.to_string()))?;
-    let file = std::io::BufReader::new(file);
+    let data = std::fs::read(path).map_err(|e| PngLoadError::Io(e.to_string()))?;
+    load_png_bytes(&data)
+}
 
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let data = &buf[..info.buffer_size()];
-
-    let pixels: Vec<RGB8> = match info.color_type {
-        png::ColorType::Rgb => data
-            .chunks_exact(3)
-            .map(|c| RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        png::ColorType::Rgba => data
-            .chunks_exact(4)
-            .map(|c| RGB8::new(c[0], c[1], c[2]))
-            .collect(),
-        png::ColorType::Grayscale => data.iter().map(|&g| RGB8::new(g, g, g)).collect(),
-        png::ColorType::GrayscaleAlpha => data
-            .chunks_exact(2)
+/// Load PNG from in-memory bytes into an RGB image buffer.
+pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
+    let output = zenpng::decode(
+        data,
+        &zenpng::PngDecodeConfig::default(),
+        &enough::Unstoppable,
+    )
+    .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    let width = output.info.width as usize;
+    let height = output.info.height as usize;
+    let channels = output.pixels.descriptor().channels();
+    let bpp = output.pixels.descriptor().bytes_per_pixel();
+    let bytes = output.pixels.copy_to_contiguous_bytes();
+    let pixels: Vec<RGB8> = match channels {
+        1 => bytes.iter().map(|&g| RGB8::new(g, g, g)).collect(),
+        2 => bytes
+            .chunks_exact(bpp)
             .map(|c| RGB8::new(c[0], c[0], c[0]))
             .collect(),
-        other => return Err(PngLoadError::UnsupportedColorType(format!("{:?}", other))),
+        3 => bytes
+            .chunks_exact(bpp)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect(),
+        4 => bytes
+            .chunks_exact(bpp)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect(),
+        _ => {
+            return Err(PngLoadError::Decode(format!(
+                "unsupported channel count: {channels}"
+            )));
+        }
     };
-
     Ok(ImgVec::new(pixels, width, height))
 }
 
@@ -1166,15 +1169,8 @@ impl QualityMetrics {
         assert_eq!(original.width(), distorted.width(), "Width mismatch");
         assert_eq!(original.height(), distorted.height(), "Height mismatch");
 
-        let width = original.width();
-        let height = original.height();
-
-        // Convert to flat sRGB bytes for butteraugli (it does sRGB->linear internally)
-        let orig_bytes = rgb_to_bytes(original);
-        let dist_bytes = rgb_to_bytes(distorted);
-
         let params = butteraugli::ButteraugliParams::default();
-        butteraugli::compute_butteraugli(&orig_bytes, &dist_bytes, width, height, &params)
+        butteraugli::butteraugli(original, distorted, &params)
             .map(|r| r.score)
             .unwrap_or(f64::MAX)
     }
@@ -2915,10 +2911,10 @@ impl FileCache {
     {
         let path = self.path(filename, encoder, quality);
 
-        if path.exists() {
-            if let Ok(data) = std::fs::read(&path) {
-                return (data, true);
-            }
+        if path.exists()
+            && let Ok(data) = std::fs::read(&path)
+        {
+            return (data, true);
         }
 
         let data = encode_fn();

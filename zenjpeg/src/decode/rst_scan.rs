@@ -106,11 +106,7 @@ fn scan_rst_markers_avx2(
     }
 
     let chunk_size = 32;
-    let simd_end = if len > chunk_size {
-        len - chunk_size
-    } else {
-        0
-    };
+    let simd_end = len.saturating_sub(chunk_size);
     let mut i = 0;
 
     // Broadcast 0xFF for comparison

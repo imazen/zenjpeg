@@ -22,22 +22,11 @@ mod comparison {
     }
 
     fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
-        let file = std::fs::File::open(path).ok()?;
-        let decoder = png::Decoder::new(file);
-        let mut reader = decoder.read_info().ok()?;
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).ok()?;
-        let data = &buf[..info.buffer_size()];
-        let rgb: Vec<u8> = match info.color_type {
-            png::ColorType::Rgb => data.to_vec(),
-            png::ColorType::Rgba => data
-                .chunks_exact(4)
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect(),
-            png::ColorType::Grayscale => data.iter().flat_map(|&g| [g, g, g]).collect(),
-            _ => return None,
-        };
-        Some((rgb, info.width, info.height))
+        let img = zenjpeg_bench_utils::load_png(path).ok()?;
+        let width = img.width() as u32;
+        let height = img.height() as u32;
+        let rgb: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        Some((rgb, width, height))
     }
 
     fn encode_jpeg(
@@ -74,46 +63,48 @@ mod comparison {
         use jpegli_internals_sys::*;
         use std::mem::MaybeUninit;
 
-        let mut err: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
-        jpeg_std_error(err.as_mut_ptr());
-        let mut err = err.assume_init();
+        unsafe {
+            let mut err: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
+            jpeg_std_error(err.as_mut_ptr());
+            let mut err = err.assume_init();
 
-        let mut cinfo: MaybeUninit<jpeg_decompress_struct> = MaybeUninit::zeroed();
-        let cinfo_ptr = cinfo.as_mut_ptr();
-        (*cinfo_ptr).err = &mut err;
-        jpeg_CreateDecompress(
-            cinfo_ptr,
-            JPEG_LIB_VERSION as i32,
-            std::mem::size_of::<jpeg_decompress_struct>(),
-        );
-        let cinfo_ptr = cinfo.as_mut_ptr();
+            let mut cinfo: MaybeUninit<jpeg_decompress_struct> = MaybeUninit::zeroed();
+            let cinfo_ptr = cinfo.as_mut_ptr();
+            (*cinfo_ptr).err = &mut err;
+            jpeg_CreateDecompress(
+                cinfo_ptr,
+                JPEG_LIB_VERSION as i32,
+                std::mem::size_of::<jpeg_decompress_struct>(),
+            );
+            let cinfo_ptr = cinfo.as_mut_ptr();
 
-        jpeg_mem_src(cinfo_ptr, data.as_ptr(), data.len() as _);
-        jpeg_read_header(cinfo_ptr, 1);
-        (*cinfo_ptr).out_color_space = JCS_EXT_RGB as u32;
-        jpeg_start_decompress(cinfo_ptr);
+            jpeg_mem_src(cinfo_ptr, data.as_ptr(), data.len() as _);
+            jpeg_read_header(cinfo_ptr, 1);
+            (*cinfo_ptr).out_color_space = JCS_EXT_RGB as u32;
+            jpeg_start_decompress(cinfo_ptr);
 
-        let width = (*cinfo_ptr).output_width as usize;
-        let height = (*cinfo_ptr).output_height as usize;
-        let components = (*cinfo_ptr).output_components as usize;
-        let row_stride = width * components;
-        let mut output = vec![0u8; height * row_stride];
+            let width = (*cinfo_ptr).output_width as usize;
+            let height = (*cinfo_ptr).output_height as usize;
+            let components = (*cinfo_ptr).output_components as usize;
+            let row_stride = width * components;
+            let mut output = vec![0u8; height * row_stride];
 
-        let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
-        #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
-        while ((*cinfo_ptr).output_scanline as usize) < height {
-            let start = (*cinfo_ptr).output_scanline as usize;
-            let remaining = height - start;
-            let count = remaining.min(8);
-            for i in 0..count {
-                row_ptrs[i] = output[(start + i) * row_stride..].as_mut_ptr();
+            let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
+            #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
+            while ((*cinfo_ptr).output_scanline as usize) < height {
+                let start = (*cinfo_ptr).output_scanline as usize;
+                let remaining = height - start;
+                let count = remaining.min(8);
+                for i in 0..count {
+                    row_ptrs[i] = output[(start + i) * row_stride..].as_mut_ptr();
+                }
+                jpeg_read_scanlines(cinfo_ptr, row_ptrs.as_mut_ptr(), count as u32);
             }
-            jpeg_read_scanlines(cinfo_ptr, row_ptrs.as_mut_ptr(), count as u32);
-        }
 
-        jpeg_finish_decompress(cinfo_ptr);
-        jpeg_destroy_decompress(cinfo_ptr);
-        output
+            jpeg_finish_decompress(cinfo_ptr);
+            jpeg_destroy_decompress(cinfo_ptr);
+            output
+        }
     }
 
     fn compute_ssim2(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {

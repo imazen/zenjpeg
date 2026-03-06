@@ -11,8 +11,9 @@
 //! cargo bench -p zenjpeg --bench decode_compare --features decoder
 //! ```
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use enough::Unstoppable;
+use std::hint::black_box;
 use std::io::Cursor;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zune_jpeg::JpegDecoder;
@@ -23,62 +24,64 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 /// Returns RGB pixel data.
 #[cfg(feature = "decoder")]
 unsafe fn decode_with_cjpegli(data: &[u8]) -> Vec<u8> {
-    use jpegli_internals_sys::*;
-    use std::mem::MaybeUninit;
+    unsafe {
+        use jpegli_internals_sys::*;
+        use std::mem::MaybeUninit;
 
-    // Set up error handler
-    let mut err: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
-    jpeg_std_error(err.as_mut_ptr());
-    let mut err = err.assume_init();
+        // Set up error handler
+        let mut err: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
+        jpeg_std_error(err.as_mut_ptr());
+        let mut err = err.assume_init();
 
-    // Create decompressor
-    let mut cinfo: MaybeUninit<jpeg_decompress_struct> = MaybeUninit::zeroed();
-    let cinfo_ptr = cinfo.as_mut_ptr();
-    (*cinfo_ptr).err = &mut err;
-    jpeg_CreateDecompress(
-        cinfo_ptr,
-        JPEG_LIB_VERSION as i32,
-        std::mem::size_of::<jpeg_decompress_struct>(),
-    );
-    let cinfo_ptr = cinfo.as_mut_ptr();
+        // Create decompressor
+        let mut cinfo: MaybeUninit<jpeg_decompress_struct> = MaybeUninit::zeroed();
+        let cinfo_ptr = cinfo.as_mut_ptr();
+        (*cinfo_ptr).err = &mut err;
+        jpeg_CreateDecompress(
+            cinfo_ptr,
+            JPEG_LIB_VERSION as i32,
+            std::mem::size_of::<jpeg_decompress_struct>(),
+        );
+        let cinfo_ptr = cinfo.as_mut_ptr();
 
-    // Set memory source
-    jpeg_mem_src(cinfo_ptr, data.as_ptr(), data.len() as _);
+        // Set memory source
+        jpeg_mem_src(cinfo_ptr, data.as_ptr(), data.len() as _);
 
-    // Read header
-    jpeg_read_header(cinfo_ptr, 1);
+        // Read header
+        jpeg_read_header(cinfo_ptr, 1);
 
-    // Request RGB output
-    (*cinfo_ptr).out_color_space = JCS_EXT_RGB as u32;
+        // Request RGB output
+        (*cinfo_ptr).out_color_space = JCS_EXT_RGB as u32;
 
-    // Start decompression
-    jpeg_start_decompress(cinfo_ptr);
+        // Start decompression
+        jpeg_start_decompress(cinfo_ptr);
 
-    let width = (*cinfo_ptr).output_width as usize;
-    let height = (*cinfo_ptr).output_height as usize;
-    let components = (*cinfo_ptr).output_components as usize;
-    let row_stride = width * components;
+        let width = (*cinfo_ptr).output_width as usize;
+        let height = (*cinfo_ptr).output_height as usize;
+        let components = (*cinfo_ptr).output_components as usize;
+        let row_stride = width * components;
 
-    let mut output = vec![0u8; height * row_stride];
+        let mut output = vec![0u8; height * row_stride];
 
-    // Read scanlines in batches for efficiency
-    let batch = 8u32;
-    let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
-    #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
-    while ((*cinfo_ptr).output_scanline as usize) < height {
-        let start = (*cinfo_ptr).output_scanline as usize;
-        let remaining = height - start;
-        let count = remaining.min(batch as usize);
-        for i in 0..count {
-            row_ptrs[i] = output[(start + i) * row_stride..].as_mut_ptr();
+        // Read scanlines in batches for efficiency
+        let batch = 8u32;
+        let mut row_ptrs = [std::ptr::null_mut::<u8>(); 8];
+        #[allow(clippy::while_immutable_condition)] // output_scanline mutated by FFI call
+        while ((*cinfo_ptr).output_scanline as usize) < height {
+            let start = (*cinfo_ptr).output_scanline as usize;
+            let remaining = height - start;
+            let count = remaining.min(batch as usize);
+            for i in 0..count {
+                row_ptrs[i] = output[(start + i) * row_stride..].as_mut_ptr();
+            }
+            jpeg_read_scanlines(cinfo_ptr, row_ptrs.as_mut_ptr(), count as u32);
         }
-        jpeg_read_scanlines(cinfo_ptr, row_ptrs.as_mut_ptr(), count as u32);
+
+        jpeg_finish_decompress(cinfo_ptr);
+        jpeg_destroy_decompress(cinfo_ptr);
+
+        output
     }
-
-    jpeg_finish_decompress(cinfo_ptr);
-    jpeg_destroy_decompress(cinfo_ptr);
-
-    output
 }
 
 fn create_test_jpeg_with_subsampling(
