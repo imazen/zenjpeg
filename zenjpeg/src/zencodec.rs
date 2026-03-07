@@ -648,8 +648,8 @@ impl zc::decode::DecoderConfig for JpegDecoderConfig {
     type Error = Error;
     type Job<'a> = JpegDecodeJob<'a>;
 
-    fn format() -> ImageFormat {
-        ImageFormat::Jpeg
+    fn formats() -> &'static [ImageFormat] {
+        &[ImageFormat::Jpeg]
     }
 
     fn supported_descriptors() -> &'static [PixelDescriptor] {
