@@ -1504,6 +1504,16 @@ mod tests {
     }
 
     #[test]
+    fn test_cbrtf_fast_zero_not_nan() {
+        // Halley iterations for cube root can produce NaN for x=0 when
+        // t*numerator underflows below f32 min subnormal, yielding 0/0
+        // in the second iteration. This guards against that regression.
+        let result = cbrtf_fast(0.0);
+        assert!(result.is_finite(), "cbrtf_fast(0.0) = {result} (expected finite)");
+        assert_eq!(result, 0.0, "cbrtf_fast(0.0) must be exactly 0.0");
+    }
+
+    #[test]
     fn test_xyb_extreme_colors() {
         let extreme_colors = [
             (0u8, 0u8, 0u8),
