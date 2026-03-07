@@ -21,6 +21,7 @@
 //! | `FrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
 
 extern crate alloc;
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
@@ -620,7 +621,7 @@ impl JpegDecoderConfig {
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
         use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-        self.job().decoder(data, &[])?.decode()
+        self.job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 }
 
@@ -775,10 +776,10 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
 
     fn decoder(
         self,
-        data: &'a [u8],
+        data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<Self::Dec, Self::Error> {
-        self.check_input_size(data)?;
+        self.check_input_size(&data)?;
         Ok(JpegDecoder {
             config: self.config,
             stop: self.stop,
@@ -793,11 +794,21 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
 
     fn streaming_decoder(
         self,
-        data: &'a [u8],
+        data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<Self::StreamDec, Self::Error> {
         #[cfg(feature = "decoder")]
         {
+            // ScanlineReader borrows data with lifetime 'a, so we need &'a [u8].
+            // Cow::Borrowed carries &'a [u8]; Cow::Owned can't provide 'a.
+            let data: &'a [u8] = match data {
+                Cow::Borrowed(slice) => slice,
+                Cow::Owned(_) => {
+                    return Err(Error::unsupported_feature(
+                        "streaming decode requires borrowed data (use Cow::Borrowed)",
+                    ));
+                }
+            };
             self.check_input_size(data)?;
             let cfg = build_decode_config(
                 &self.config.inner,
@@ -833,7 +844,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
 
     fn frame_decoder(
         self,
-        _data: &'a [u8],
+        _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
     ) -> Result<Self::FrameDec, Self::Error> {
         Err(UnsupportedOperation::AnimationDecode.into())
@@ -984,7 +995,7 @@ pub struct JpegDecoder<'a> {
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zc::OrientationHint,
     policy: Option<zc::decode::DecodePolicy>,
-    data: &'a [u8],
+    data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
 
@@ -1021,12 +1032,12 @@ impl zc::decode::Decode for JpegDecoder<'_> {
 
             // Check max_width/max_height before full decode
             if limits.max_width.is_some() || limits.max_height.is_some() {
-                let header = cfg.read_info(data)?;
+                let header = cfg.read_info(&data)?;
                 limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
             }
 
             let stop = self.stop.unwrap_or(&enough::Unstoppable);
-            let mut result = cfg.decode(data, stop)?;
+            let mut result = cfg.decode(&data, stop)?;
 
             let w = result.width();
             let h = result.height();
@@ -1313,6 +1324,7 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::borrow::Cow;
     use imgref::{Img, ImgExt};
     use rgb::{Gray, Rgb, Rgba};
     use zc::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
@@ -1483,7 +1495,7 @@ mod tests {
         let dec = JpegDecoderConfig::new();
         let output = dec
             .job()
-            .decoder(encoded.data(), &[PixelDescriptor::RGB8_SRGB])
+            .decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
             .unwrap()
             .decode()
             .unwrap();
@@ -1532,7 +1544,7 @@ mod tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(encoded.data(), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
             .unwrap();
 
         assert_eq!(stream.info().width, 16);
@@ -1570,7 +1582,7 @@ mod tests {
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
-            .streaming_decoder(encoded.data(), &[PixelDescriptor::RGB8_SRGB])
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
             .unwrap();
 
         let mut batch_count = 0;
@@ -1789,7 +1801,7 @@ mod tests {
         let result = dec
             .job()
             .with_limits(limits)
-            .decoder(encoded.data(), &[])
+            .decoder(Cow::Borrowed(encoded.data()), &[])
             .unwrap()
             .decode();
         assert!(result.is_err(), "should reject image wider than max_width");
@@ -1817,7 +1829,7 @@ mod tests {
         let result = dec
             .job()
             .with_limits(limits)
-            .decoder(encoded.data(), &[])
+            .decoder(Cow::Borrowed(encoded.data()), &[])
             .unwrap()
             .decode();
         assert!(
@@ -1850,7 +1862,7 @@ mod tests {
         let result = dec
             .job()
             .with_limits(limits)
-            .decoder(encoded.data(), &[])
+            .decoder(Cow::Borrowed(encoded.data()), &[])
             .unwrap()
             .decode();
         assert!(
@@ -1872,7 +1884,7 @@ mod tests {
         use zc::decode::{DecodeJob as _, DecoderConfig as _};
 
         let dec = JpegDecoderConfig::new();
-        let result = dec.job().frame_decoder(&[], &[]);
+        let result = dec.job().frame_decoder(Cow::Borrowed(&[]), &[]);
         assert!(result.is_err());
     }
 }
