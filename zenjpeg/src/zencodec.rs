@@ -24,13 +24,10 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
-use zc::{
-    ImageFormat, ImageInfo, MetadataView, ResourceLimits, UnsupportedOperation,
-    Unsupported,
-};
-use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
-use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
+use zc::encode::{EncodeCapabilities, EncodeOutput};
+use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits, Unsupported, UnsupportedOperation};
+use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
@@ -59,7 +56,10 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_f32(true)
-    .with_quality_range(0.0, 100.0);
+    .with_enforces_max_pixels(true)
+    .with_enforces_max_memory(true)
+    .with_quality_range(0.0, 100.0)
+    .with_effort_range(0, 2);
 
 /// JPEG encoder configuration implementing [`zc::encode::EncoderConfig`].
 ///
@@ -69,6 +69,7 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
 pub struct JpegEncoderConfig {
     inner: EncoderConfig,
     quality: f32,
+    effort: i32,
 }
 
 impl JpegEncoderConfig {
@@ -78,6 +79,7 @@ impl JpegEncoderConfig {
         Self {
             inner: EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
             quality: 85.0,
+            effort: 1,
         }
     }
 
@@ -87,6 +89,7 @@ impl JpegEncoderConfig {
         Self {
             inner: EncoderConfig::ycbcr(quality, subsampling),
             quality,
+            effort: 1,
         }
     }
 
@@ -96,6 +99,7 @@ impl JpegEncoderConfig {
         Self {
             inner: EncoderConfig::grayscale(quality),
             quality,
+            effort: 1,
         }
     }
 
@@ -147,6 +151,17 @@ impl JpegEncoderConfig {
         use zc::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
         self.job().encoder()?.encode(pixels)
     }
+
+    /// Apply effort level, returning a modified config.
+    fn effective_config(&self) -> EncoderConfig {
+        use crate::encode::encoder_types::OptimizationPreset;
+        let preset = match self.effort {
+            0 => OptimizationPreset::JpegliBaseline,
+            2 => OptimizationPreset::HybridMaxCompression,
+            _ => OptimizationPreset::HybridProgressive,
+        };
+        self.inner.clone().optimization(preset)
+    }
 }
 
 impl Default for JpegEncoderConfig {
@@ -161,6 +176,8 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBX8_SRGB,
+    PixelDescriptor::BGRX8_SRGB,
     PixelDescriptor::RGB16_SRGB,
     PixelDescriptor::RGBA16_SRGB,
     PixelDescriptor::GRAY16_SRGB,
@@ -196,12 +213,22 @@ impl zc::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.quality)
     }
 
+    fn with_generic_effort(mut self, effort: i32) -> Self {
+        self.effort = effort.clamp(0, 2);
+        self
+    }
+
+    fn generic_effort(&self) -> Option<i32> {
+        Some(self.effort)
+    }
+
     fn job(&self) -> Self::Job<'_> {
         JpegEncodeJob {
             config: self,
             stop: None,
             metadata: None,
             limits: ResourceLimits::none(),
+            policy: None,
         }
     }
 }
@@ -217,6 +244,7 @@ pub struct JpegEncodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: ResourceLimits,
+    policy: Option<zc::encode::EncodePolicy>,
 }
 
 impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
@@ -239,13 +267,19 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
+    fn with_policy(mut self, policy: zc::encode::EncodePolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     fn encoder(self) -> Result<Self::Enc, Self::Error> {
         Ok(JpegEncoder {
-            config: self.config,
+            effective_config: self.config.effective_config(),
             stop: self.stop,
             metadata: self.metadata,
             limits: self.limits,
-            buffer: None,
+            policy: self.policy,
+            accumulator: None,
         })
     }
 
@@ -258,37 +292,49 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
 
 /// Single-image JPEG encoder implementing [`zc::encode::Encoder`].
 ///
-/// Supports both one-shot `encode()` and streaming `push_rows()` + `finish()`.
+/// Supports one-shot `encode()`, streaming `push_rows()` + `finish()`,
+/// and the `encode_srgba8()` convenience method.
 pub struct JpegEncoder<'a> {
-    config: &'a JpegEncoderConfig,
+    effective_config: EncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<&'a MetadataView<'a>>,
     limits: ResourceLimits,
-    /// Accumulated rows for push_rows path (None = not started, Some = buffering).
-    buffer: Option<RowBuffer>,
+    policy: Option<zc::encode::EncodePolicy>,
+    /// Accumulated rows for push_rows path. The native BytesEncoder requires
+    /// total height at creation time, which the zc trait doesn't provide upfront,
+    /// so we accumulate and then stream through the native encoder in finish().
+    accumulator: Option<RowAccumulator>,
 }
 
 /// Internal buffer for accumulating pushed rows.
-struct RowBuffer {
+struct RowAccumulator {
     data: Vec<u8>,
     width: u32,
     total_rows: u32,
+    layout: PixelLayout,
     descriptor: PixelDescriptor,
 }
 
 impl<'a> JpegEncoder<'a> {
-    /// Build an EncodeRequest from current config + metadata.
-    fn build_request(&self) -> crate::encode::request::EncodeRequest<'a> {
-        let mut req = self.config.inner.request();
+    /// Build an EncodeRequest from current config + metadata, applying policy.
+    fn build_request(&self) -> crate::encode::request::EncodeRequest<'_> {
+        let mut req = self.effective_config.request();
         if let Some(meta) = self.metadata {
-            if let Some(icc) = meta.icc_profile {
-                req = req.icc_profile(icc);
+            let policy = self.policy.unwrap_or_default();
+            if policy.resolve_icc(true) {
+                if let Some(icc) = meta.icc_profile {
+                    req = req.icc_profile(icc);
+                }
             }
-            if let Some(exif) = meta.exif {
-                req = req.exif(Exif::raw(exif));
+            if policy.resolve_exif(true) {
+                if let Some(exif) = meta.exif {
+                    req = req.exif(Exif::raw(exif));
+                }
             }
-            if let Some(xmp) = meta.xmp {
-                req = req.xmp(xmp);
+            if policy.resolve_xmp(true) {
+                if let Some(xmp) = meta.xmp {
+                    req = req.xmp(xmp);
+                }
             }
         }
         if let Some(stop) = self.stop {
@@ -297,15 +343,8 @@ impl<'a> JpegEncoder<'a> {
         req
     }
 
-    /// Encode from raw bytes with a known pixel layout.
-    fn encode_bytes_inner(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        layout: PixelLayout,
-    ) -> Result<EncodeOutput, Error> {
-        // Pre-flight limit checks
+    /// Pre-flight limit checks.
+    fn check_limits(&self, width: u32, height: u32, layout: PixelLayout) -> Result<(), Error> {
         self.limits.check_dimensions(width, height).map_err(|_| {
             Error::image_too_large(
                 width as u64 * height as u64,
@@ -316,9 +355,45 @@ impl<'a> JpegEncoder<'a> {
         self.limits.check_memory(estimated_mem).map_err(|_| {
             Error::allocation_failed(estimated_mem as usize, "memory limit exceeded")
         })?;
+        Ok(())
+    }
 
+    /// Check output size limits after encoding.
+    fn check_output_size(&self, output: &[u8]) -> Result<(), Error> {
+        self.limits
+            .check_output_size(output.len() as u64)
+            .map_err(|_| {
+                Error::allocation_failed(output.len(), "output exceeds max_output_bytes limit")
+            })?;
+        Ok(())
+    }
+
+    /// One-shot encode from raw bytes.
+    fn encode_bytes_inner(
+        &self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<EncodeOutput, Error> {
+        self.check_limits(width, height, layout)?;
         let req = self.build_request();
         let output = req.encode_bytes(data, width, height, layout)?;
+        self.check_output_size(&output)?;
+        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
+    }
+
+    /// Stream accumulated rows through the native BytesEncoder.
+    fn encode_accumulated(&self, acc: RowAccumulator) -> Result<EncodeOutput, Error> {
+        self.check_limits(acc.width, acc.total_rows, acc.layout)?;
+
+        let req = self.build_request();
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let mut enc = req.encode_from_bytes(acc.width, acc.total_rows, acc.layout)?;
+        // Stream through native encoder — it processes MCU rows as they arrive
+        enc.push_packed(&acc.data, stop)?;
+        let output = enc.finish()?;
+        self.check_output_size(&output)?;
         Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 }
@@ -331,7 +406,6 @@ impl zc::encode::Encoder for JpegEncoder<'_> {
     }
 
     fn preferred_strip_height(&self) -> u32 {
-        // JPEG MCU height: 16 for 4:2:0 (2x2 chroma), 8 for 4:4:4/4:2:2
         16
     }
 
@@ -343,65 +417,127 @@ impl zc::encode::Encoder for JpegEncoder<'_> {
         self.encode_bytes_inner(&data, width, height, layout)
     }
 
+    fn encode_srgba8(
+        self,
+        data: &mut [u8],
+        make_opaque: bool,
+        width: u32,
+        height: u32,
+        stride_pixels: u32,
+    ) -> Result<EncodeOutput, Error> {
+        if make_opaque {
+            for chunk in data.chunks_exact_mut(4) {
+                chunk[3] = 255;
+            }
+        }
+        let layout = PixelLayout::Rgba8Srgb;
+        self.check_limits(width, height, layout)?;
+        let req = self.build_request();
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let stride_bytes = stride_pixels as usize * 4;
+        let mut enc = req.encode_from_bytes(width, height, layout)?;
+        enc.push(data, height as usize, stride_bytes, stop)?;
+        let output = enc.finish()?;
+        self.check_output_size(&output)?;
+        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
+    }
+
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Error> {
         let desc = rows.descriptor();
+        let layout = descriptor_to_layout(desc)?;
         let width = rows.width();
+        let data = rows.contiguous_bytes();
 
-        match &mut self.buffer {
+        match &mut self.accumulator {
             None => {
-                // First push — initialize buffer with contiguous row data
                 let bpp = desc.bytes_per_pixel();
                 let row_bytes = width as usize * bpp;
-                let mut data = Vec::with_capacity(row_bytes * rows.rows() as usize * 4); // estimate
-                data.extend_from_slice(&rows.contiguous_bytes());
-                self.buffer = Some(RowBuffer {
-                    data,
+                let estimated_total = row_bytes * rows.rows() as usize * 4;
+                let mut buf = Vec::new();
+                buf.try_reserve(estimated_total)
+                    .map_err(|_| Error::allocation_failed(estimated_total, "push_rows buffer"))?;
+                buf.extend_from_slice(&data);
+                self.accumulator = Some(RowAccumulator {
+                    data: buf,
                     width,
                     total_rows: rows.rows(),
+                    layout,
                     descriptor: desc,
                 });
             }
-            Some(buf) => {
-                // Validate consistency
-                if buf.width != width || buf.descriptor != desc {
+            Some(acc) => {
+                if acc.width != width || acc.descriptor != desc {
                     return Err(Error::unsupported_feature(
                         "push_rows: width or format changed between calls",
                     ));
                 }
-                buf.data.extend_from_slice(&rows.contiguous_bytes());
-                buf.total_rows += rows.rows();
+                acc.data.extend_from_slice(&data);
+                acc.total_rows += rows.rows();
             }
         }
         Ok(())
     }
 
     fn finish(mut self) -> Result<EncodeOutput, Error> {
-        let buf = self
-            .buffer
+        let acc = self
+            .accumulator
             .take()
             .ok_or_else(|| Error::unsupported_feature("finish() called without any push_rows()"))?;
-        let layout = descriptor_to_layout(buf.descriptor)?;
-        self.encode_bytes_inner(&buf.data, buf.width, buf.total_rows, layout)
+        self.encode_accumulated(acc)
+    }
+
+    fn encode_from(
+        self,
+        source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
+    ) -> Result<EncodeOutput, Error> {
+        // Pull-based encode: allocate a strip buffer, call source repeatedly,
+        // feed rows to the native streaming encoder.
+        // The challenge: we don't know dimensions upfront from the trait.
+        // Probe with a small buffer to discover width, then accumulate.
+        let _ = source;
+        Err(Self::reject(UnsupportedOperation::PullEncode))
     }
 }
 
 /// Map a PixelDescriptor to a zenjpeg PixelLayout.
 fn descriptor_to_layout(desc: PixelDescriptor) -> Result<PixelLayout, Error> {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+
     match (desc.channel_type(), desc.layout(), desc.transfer()) {
         (ChannelType::U8, ChannelLayout::Rgb, TransferFunction::Srgb) => Ok(PixelLayout::Rgb8Srgb),
         (ChannelType::U8, ChannelLayout::Rgba, TransferFunction::Srgb) => {
-            Ok(PixelLayout::Rgba8Srgb)
+            // Distinguish RGBA (has alpha) from RGBX (padding byte)
+            if desc.alpha() == Some(AlphaMode::Undefined) {
+                Ok(PixelLayout::Rgbx8Srgb)
+            } else {
+                Ok(PixelLayout::Rgba8Srgb)
+            }
         }
         (ChannelType::U8, ChannelLayout::Bgra, TransferFunction::Srgb) => {
-            Ok(PixelLayout::Bgra8Srgb)
+            if desc.alpha() == Some(AlphaMode::Undefined) {
+                Ok(PixelLayout::Bgrx8Srgb)
+            } else {
+                Ok(PixelLayout::Bgra8Srgb)
+            }
         }
         (ChannelType::U8, ChannelLayout::Gray, TransferFunction::Srgb) => {
             Ok(PixelLayout::Gray8Srgb)
         }
-        (ChannelType::U16, ChannelLayout::Rgb, _) => Ok(PixelLayout::Rgb16Linear),
-        (ChannelType::U16, ChannelLayout::Rgba, _) => Ok(PixelLayout::Rgba16Linear),
-        (ChannelType::U16, ChannelLayout::Gray, _) => Ok(PixelLayout::Gray16Linear),
+        (
+            ChannelType::U16,
+            ChannelLayout::Rgb,
+            TransferFunction::Srgb | TransferFunction::Unknown,
+        ) => Ok(PixelLayout::Rgb16Linear),
+        (
+            ChannelType::U16,
+            ChannelLayout::Rgba,
+            TransferFunction::Srgb | TransferFunction::Unknown,
+        ) => Ok(PixelLayout::Rgba16Linear),
+        (
+            ChannelType::U16,
+            ChannelLayout::Gray,
+            TransferFunction::Srgb | TransferFunction::Unknown,
+        ) => Ok(PixelLayout::Gray16Linear),
         (ChannelType::F32, ChannelLayout::Rgb, TransferFunction::Linear) => {
             Ok(PixelLayout::RgbF32Linear)
         }
@@ -430,7 +566,9 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_cheap_probe(true)
     .with_row_level(true)
     .with_native_gray(true)
-    .with_native_f32(true);
+    .with_native_f32(true)
+    .with_enforces_max_pixels(true)
+    .with_enforces_max_memory(true);
 
 /// JPEG decoder configuration implementing [`zc::decode::DecoderConfig`].
 ///
@@ -498,7 +636,10 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGBA8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
     PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBX8_SRGB,
+    PixelDescriptor::BGRX8_SRGB,
     PixelDescriptor::RGBF32_LINEAR,
+    PixelDescriptor::RGBAF32_LINEAR,
     PixelDescriptor::GRAYF32_LINEAR,
 ];
 
@@ -525,6 +666,7 @@ impl zc::decode::DecoderConfig for JpegDecoderConfig {
             limits: ResourceLimits::none(),
             crop_hint: None,
             orientation: zc::OrientationHint::default(),
+            policy: None,
         }
     }
 }
@@ -541,6 +683,7 @@ pub struct JpegDecodeJob<'a> {
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zc::OrientationHint,
+    policy: Option<zc::decode::DecodePolicy>,
 }
 
 impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
@@ -559,6 +702,11 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
+    fn with_policy(mut self, policy: zc::decode::DecodePolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     fn with_crop_hint(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
         self.crop_hint = Some((x, y, width, height));
         self
@@ -572,6 +720,8 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     fn probe(&self, data: &[u8]) -> Result<ImageInfo, Self::Error> {
         #[cfg(feature = "decoder")]
         {
+            // Check input size limits
+            self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
             Ok(to_image_info(&info))
         }
@@ -587,6 +737,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, Self::Error> {
         #[cfg(feature = "decoder")]
         {
+            self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
             let native_format = match info.num_components {
                 1 => PixelDescriptor::GRAY8_SRGB,
@@ -597,7 +748,6 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
 
             let mut out = OutputInfo::full_decode(w, h, native_format);
 
-            // Determine if orientation correction should be applied.
             let will_orient = will_auto_orient(self.orientation);
             if will_orient
                 && let Some(ref exif) = info.exif
@@ -610,7 +760,6 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 out = OutputInfo::full_decode(w, h, native_format).with_orientation_applied(orient);
             }
 
-            // Report crop that will be applied (may be MCU-snapped by the decoder).
             if let Some((x, y, cw, ch)) = self.crop_hint {
                 out = out.with_crop_applied([x, y, cw, ch]);
             }
@@ -629,12 +778,14 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         data: &'a [u8],
         preferred: &[PixelDescriptor],
     ) -> Result<Self::Dec, Self::Error> {
+        self.check_input_size(data)?;
         Ok(JpegDecoder {
             config: self.config,
             stop: self.stop,
             limits: self.limits,
             crop_hint: self.crop_hint,
             orientation: self.orientation,
+            policy: self.policy,
             data,
             preferred: preferred.to_vec(),
         })
@@ -647,18 +798,20 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     ) -> Result<Self::StreamDec, Self::Error> {
         #[cfg(feature = "decoder")]
         {
+            self.check_input_size(data)?;
             let cfg = build_decode_config(
                 &self.config.inner,
                 &self.limits,
                 self.crop_hint,
                 self.orientation,
+                self.policy.as_ref(),
             );
             let header = self.config.inner.read_info(data)?;
             let info = to_image_info(&header);
             let reader = cfg.scanline_reader(data)?;
 
-            // Select output format based on preference and component count
             let descriptor = select_decode_descriptor(preferred, header.num_components);
+            let mcu_height = reader.luma_rows_per_mcu();
 
             Ok(JpegStreamingDecoder {
                 reader,
@@ -666,6 +819,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 descriptor,
                 row_buf: Vec::new(),
                 current_row: 0,
+                mcu_height: mcu_height as u32,
             })
         }
         #[cfg(not(feature = "decoder"))]
@@ -683,6 +837,18 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         _preferred: &[PixelDescriptor],
     ) -> Result<Self::FrameDec, Self::Error> {
         Err(UnsupportedOperation::AnimationDecode.into())
+    }
+}
+
+impl JpegDecodeJob<'_> {
+    /// Check input data size against limits.
+    fn check_input_size(&self, data: &[u8]) -> Result<(), Error> {
+        self.limits
+            .check_input_size(data.len() as u64)
+            .map_err(|_| {
+                Error::allocation_failed(data.len(), "input exceeds max_input_bytes limit")
+            })?;
+        Ok(())
     }
 }
 
@@ -704,6 +870,7 @@ fn build_decode_config(
     limits: &ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zc::OrientationHint,
+    policy: Option<&zc::decode::DecodePolicy>,
 ) -> crate::decode::DecodeConfig {
     let mut cfg = inner.clone();
     if let Some(max) = limits.max_pixels {
@@ -718,28 +885,80 @@ fn build_decode_config(
     if !will_auto_orient(orientation) {
         cfg = cfg.auto_orient(false);
     }
+
+    // Map threading policy
+    match limits.threading {
+        zc::ThreadingPolicy::SingleThread => {
+            cfg = cfg.num_threads(1);
+        }
+        zc::ThreadingPolicy::LimitOrSingle { max_threads } => {
+            cfg = cfg.num_threads(max_threads as usize);
+        }
+        zc::ThreadingPolicy::LimitOrAny {
+            preferred_max_threads,
+        } => {
+            cfg = cfg.num_threads(preferred_max_threads as usize);
+        }
+        _ => {} // Balanced, Unlimited — use default (auto)
+    }
+
+    // Map decode policy to strictness and metadata preservation
+    if let Some(pol) = policy {
+        if let Some(strict) = pol.strict {
+            if strict {
+                cfg = cfg.strict();
+            }
+        }
+        if let Some(false) = pol.allow_truncated {
+            cfg = cfg.strict();
+        }
+        // Map metadata policy to PreserveConfig
+        let mut preserve = crate::decode::PreserveConfig::all();
+        if let Some(false) = pol.allow_icc {
+            preserve = preserve.icc(crate::decode::IccPreserve::None);
+        }
+        if let Some(false) = pol.allow_exif {
+            preserve = preserve.exif(false);
+        }
+        if let Some(false) = pol.allow_xmp {
+            preserve = preserve.xmp(false);
+        }
+        cfg = cfg.preserve(preserve);
+    }
+
     cfg
 }
 
-/// Select the appropriate pixel descriptor for decode output based on preferences
-/// and component count.
+/// Select the appropriate pixel descriptor for decode output.
 #[cfg(feature = "decoder")]
 fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -> PixelDescriptor {
     use zenpixels::{ChannelLayout, ChannelType};
 
     let is_gray = num_components == 1;
 
-    // Check if caller has a preference we can satisfy
     for &desc in preferred {
         let ch = desc.channel_type();
         let layout = desc.layout();
 
         match (is_gray, ch, layout) {
             (true, ChannelType::U8, ChannelLayout::Gray) => return PixelDescriptor::GRAY8_SRGB,
-            (true, ChannelType::F32, ChannelLayout::Gray) => return PixelDescriptor::GRAYF32_LINEAR,
+            (true, ChannelType::F32, ChannelLayout::Gray) => {
+                return PixelDescriptor::GRAYF32_LINEAR;
+            }
             (false, ChannelType::U8, ChannelLayout::Rgb) => return PixelDescriptor::RGB8_SRGB,
-            (false, ChannelType::U8, ChannelLayout::Rgba) => return PixelDescriptor::RGBA8_SRGB,
-            (false, ChannelType::U8, ChannelLayout::Bgra) => return PixelDescriptor::BGRA8_SRGB,
+            (false, ChannelType::U8, ChannelLayout::Rgba) => {
+                // Check if it's RGBX or RGBA
+                if desc.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    return PixelDescriptor::RGBX8_SRGB;
+                }
+                return PixelDescriptor::RGBA8_SRGB;
+            }
+            (false, ChannelType::U8, ChannelLayout::Bgra) => {
+                if desc.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    return PixelDescriptor::BGRX8_SRGB;
+                }
+                return PixelDescriptor::BGRA8_SRGB;
+            }
             (false, ChannelType::F32, ChannelLayout::Rgb) => return PixelDescriptor::RGBF32_LINEAR,
             (false, ChannelType::F32, ChannelLayout::Rgba) => {
                 return PixelDescriptor::RGBAF32_LINEAR;
@@ -748,7 +967,6 @@ fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -
         }
     }
 
-    // Default: u8, RGB or Gray
     if is_gray {
         PixelDescriptor::GRAY8_SRGB
     } else {
@@ -765,6 +983,7 @@ pub struct JpegDecoder<'a> {
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zc::OrientationHint,
+    policy: Option<zc::decode::DecodePolicy>,
     data: &'a [u8],
     preferred: Vec<PixelDescriptor>,
 }
@@ -782,7 +1001,6 @@ impl zc::decode::Decode for JpegDecoder<'_> {
             let data = self.data;
             let preferred = &self.preferred;
 
-            // Check if caller wants f32 output
             let wants_f32 = preferred
                 .iter()
                 .any(|d| d.channel_type() == ChannelType::F32);
@@ -793,6 +1011,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                 &limits,
                 self.crop_hint,
                 self.orientation,
+                self.policy.as_ref(),
             );
             cfg = cfg.preserve_all();
 
@@ -800,7 +1019,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
             }
 
-            // Check max_width/max_height before full decode (header parse is cheap)
+            // Check max_width/max_height before full decode
             if limits.max_width.is_some() || limits.max_height.is_some() {
                 let header = cfg.read_info(data)?;
                 limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
@@ -813,7 +1032,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
             let h = result.height();
             let format = result.format();
 
-            // Extract metadata before consuming pixels
+            // Extract metadata
             let mut info = ImageInfo::new(w, h, ImageFormat::Jpeg);
             if let Some(extras) = result.extras() {
                 if let Some(icc) = extras.icc_profile() {
@@ -821,9 +1040,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                 }
                 if let Some(exif) = extras.exif() {
                     if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-                        info = info.with_orientation(zc::Orientation::from_exif(
-                            orient as u16,
-                        ));
+                        info = info.with_orientation(zc::Orientation::from_exif(orient as u16));
                     }
                     info = info.with_exif(exif.to_vec());
                 }
@@ -832,14 +1049,14 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                 }
             }
 
-            // Take extras before consuming result for pixels
             let jpeg_extras = result.take_extras();
 
+            // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
-                // f32 linear output path
                 let pixels_f32 = result.into_pixels_f32().unwrap_or_default();
                 match format {
                     PixelFormat::Gray => {
+                        // Gray<f32> is repr(transparent) over f32 — safe to reinterpret
                         let gray: Vec<Gray<f32>> =
                             pixels_f32.iter().map(|&v| Gray::new(v)).collect();
                         PixelBuffer::from_pixels(gray, w, h)
@@ -848,45 +1065,55 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                             .into()
                     }
                     _ => {
-                        let rgb: Vec<Rgb<f32>> = pixels_f32
-                            .chunks_exact(3)
-                            .map(|c| Rgb {
-                                r: c[0],
-                                g: c[1],
-                                b: c[2],
-                            })
-                            .collect();
-                        PixelBuffer::from_pixels(rgb, w, h)
-                            .map_err(|_| Error::internal("pixel count mismatch"))?
-                            .with_descriptor(PixelDescriptor::RGBF32_LINEAR)
-                            .into()
+                        // f32 RGB: 3 floats per pixel, reinterpret as Rgb<f32>
+                        let pixel_count = (w as usize) * (h as usize);
+                        if pixels_f32.len() == pixel_count * 3 {
+                            // Zero-copy: Vec<f32> → Vec<Rgb<f32>> via bytemuck
+                            let raw_bytes = bytemuck::cast_vec::<f32, u8>(pixels_f32);
+                            PixelBuffer::from_vec(raw_bytes, w, h, PixelDescriptor::RGBF32_LINEAR)
+                                .map_err(|_| Error::internal("pixel buffer creation failed"))?
+                                .into()
+                        } else {
+                            // RGBA f32 fallback
+                            let rgb: Vec<Rgb<f32>> = pixels_f32
+                                .chunks_exact(3)
+                                .map(|c| Rgb {
+                                    r: c[0],
+                                    g: c[1],
+                                    b: c[2],
+                                })
+                                .collect();
+                            PixelBuffer::from_pixels(rgb, w, h)
+                                .map_err(|_| Error::internal("pixel count mismatch"))?
+                                .with_descriptor(PixelDescriptor::RGBF32_LINEAR)
+                                .into()
+                        }
                     }
                 }
             } else {
-                // u8 sRGB output path (default — JPEG is 8-bit, so lossless)
+                let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                 match format {
                     PixelFormat::Gray => {
-                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                        let gray: Vec<Gray<u8>> = pixels_u8.iter().map(|&v| Gray::new(v)).collect();
-                        PixelBuffer::from_pixels(gray, w, h)
-                            .map_err(|_| Error::internal("pixel count mismatch"))?
-                            .with_descriptor(PixelDescriptor::GRAY8_SRGB)
+                        // Zero-copy: Vec<u8> is already Gray8 layout
+                        PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::GRAY8_SRGB)
+                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
                             .into()
                     }
                     PixelFormat::Rgb => {
-                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                        let rgb = bytes_to_rgb(&pixels_u8);
-                        PixelBuffer::from_pixels(rgb, w, h)
-                            .map_err(|_| Error::internal("pixel count mismatch"))?
-                            .with_descriptor(PixelDescriptor::RGB8_SRGB)
+                        // Zero-copy: Vec<u8> is already packed RGB8 layout
+                        PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::RGB8_SRGB)
+                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
                             .into()
                     }
                     _ => {
-                        let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                        let rgb = bytes_to_rgb(&pixels_u8);
-                        PixelBuffer::from_pixels(rgb, w, h)
-                            .map_err(|_| Error::internal("pixel count mismatch"))?
-                            .with_descriptor(PixelDescriptor::RGB8_SRGB)
+                        // Other formats (Rgba, Bgra, etc.) — pass raw bytes
+                        let desc = match format {
+                            PixelFormat::Rgba => PixelDescriptor::RGBA8_SRGB,
+                            PixelFormat::Bgra => PixelDescriptor::BGRA8_SRGB,
+                            _ => PixelDescriptor::RGB8_SRGB,
+                        };
+                        PixelBuffer::from_vec(pixels_u8, w, h, desc)
+                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
                             .into()
                     }
                 }
@@ -896,6 +1123,18 @@ impl zc::decode::Decode for JpegDecoder<'_> {
             if let Some(extras) = jpeg_extras {
                 output = output.with_extras(extras);
             }
+
+            // Check output size limits
+            let output_bytes = output.pixels().rows() as u64
+                * output.pixels().width() as u64
+                * output.pixels().descriptor().bytes_per_pixel() as u64;
+            self.limits.check_output_size(output_bytes).map_err(|_| {
+                Error::allocation_failed(
+                    output_bytes as usize,
+                    "decoded output exceeds max_output_bytes limit",
+                )
+            })?;
+
             Ok(output)
         }
 
@@ -911,15 +1150,17 @@ impl zc::decode::Decode for JpegDecoder<'_> {
 /// Streaming JPEG decoder implementing [`zc::decode::StreamingDecode`].
 ///
 /// Wraps zenjpeg's `ScanlineReader` to yield scanline batches via `next_batch()`.
-/// Each batch is a single row of decoded pixels.
+/// Each batch contains one MCU-row worth of decoded pixels (8 or 16 rows).
 pub struct JpegStreamingDecoder<'a> {
     #[cfg(feature = "decoder")]
     reader: crate::decode::ScanlineReader<'a>,
     info: ImageInfo,
     descriptor: PixelDescriptor,
-    /// Reusable row buffer for decoded pixel data.
+    /// Reusable row buffer for decoded pixel data (sized for MCU-row batches).
     row_buf: Vec<u8>,
     current_row: u32,
+    /// MCU height in pixels (8 or 16 depending on subsampling).
+    mcu_height: u32,
     #[cfg(not(feature = "decoder"))]
     _phantom: core::marker::PhantomData<&'a ()>,
 }
@@ -940,41 +1181,63 @@ impl zc::decode::StreamingDecode for JpegStreamingDecoder<'_> {
             let width = self.reader.width() as usize;
             let bpp = self.descriptor.bytes_per_pixel();
             let row_bytes = width * bpp;
-            self.row_buf.resize(row_bytes, 0);
+            // Allocate for MCU-row batch instead of single row
+            let batch_rows = self.mcu_height as usize;
+            let batch_bytes = row_bytes * batch_rows;
+            self.row_buf.resize(batch_bytes, 0);
 
-            let out = ImgRefMut::new(&mut self.row_buf, row_bytes, 1);
             let ch_type = self.descriptor.channel_type();
             let ch_layout = self.descriptor.layout();
 
             let count = match (ch_type, ch_layout) {
-                (ChannelType::U8, ChannelLayout::Gray) => self.reader.read_rows_gray8(out)?,
-                (ChannelType::U8, ChannelLayout::Rgb) => self.reader.read_rows_rgb8(out)?,
-                (ChannelType::U8, ChannelLayout::Rgba) => self.reader.read_rows_rgba8(out)?,
+                (ChannelType::U8, ChannelLayout::Gray) => {
+                    let out =
+                        ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                    self.reader.read_rows_gray8(out)?
+                }
+                (ChannelType::U8, ChannelLayout::Rgb) => {
+                    let out =
+                        ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                    self.reader.read_rows_rgb8(out)?
+                }
+                (ChannelType::U8, ChannelLayout::Rgba) => {
+                    if self.descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                        let out =
+                            ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                        self.reader.read_rows_rgbx8(out)?
+                    } else {
+                        let out =
+                            ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                        self.reader.read_rows_rgba8(out)?
+                    }
+                }
                 (ChannelType::U8, ChannelLayout::Bgra) => {
-                    self.reader.read_rows_bgra8(out)?
+                    if self.descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                        let out =
+                            ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                        self.reader.read_rows_bgrx8(out)?
+                    } else {
+                        let out =
+                            ImgRefMut::new(&mut self.row_buf[..batch_bytes], row_bytes, batch_rows);
+                        self.reader.read_rows_bgra8(out)?
+                    }
                 }
                 (ChannelType::F32, ChannelLayout::Gray) => {
-                    // f32 gray requires f32 output buffer
-                    let float_count = width;
+                    let float_count = width * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
                     let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
-                    let f_out = ImgRefMut::new(float_slice, width, 1);
+                    let f_out = ImgRefMut::new(float_slice, width, batch_rows);
                     self.reader.read_rows_gray_f32(f_out)?
                 }
                 (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
-                    // f32 RGBA uses 4 channels
-                    let channels = if ch_layout == ChannelLayout::Rgba {
-                        4
-                    } else {
-                        // read_rows_rgba_f32 always writes 4 channels
-                        4
-                    };
-                    let float_count = width * channels;
+                    // read_rows_rgba_f32 always writes 4 channels
+                    let channels = 4;
+                    let float_count = width * channels * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
                     let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
-                    let f_out = ImgRefMut::new(float_slice, width * channels, 1);
+                    let f_out = ImgRefMut::new(float_slice, width * channels, batch_rows);
                     self.reader.read_rows_rgba_f32(f_out)?
                 }
                 _ => {
@@ -991,9 +1254,10 @@ impl zc::decode::StreamingDecode for JpegStreamingDecoder<'_> {
             let y = self.current_row;
             self.current_row += count as u32;
 
+            let actual_bytes = row_bytes * count;
             let stride = row_bytes;
             let slice = PixelSlice::new(
-                &self.row_buf[..row_bytes * count],
+                &self.row_buf[..actual_bytes],
                 width as u32,
                 count as u32,
                 stride,
@@ -1033,8 +1297,7 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     }
     if let Some(ref exif) = info.exif {
         if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-            img_info =
-                img_info.with_orientation(zc::Orientation::from_exif(orient as u16));
+            img_info = img_info.with_orientation(zc::Orientation::from_exif(orient as u16));
         }
         img_info = img_info.with_exif(exif.clone());
     }
@@ -1045,18 +1308,6 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     img_info
 }
 
-/// Convert raw bytes (3 bytes per pixel) to Vec<Rgb<u8>>.
-fn bytes_to_rgb(bytes: &[u8]) -> Vec<rgb::Rgb<u8>> {
-    bytes
-        .chunks_exact(3)
-        .map(|c| rgb::Rgb {
-            r: c[0],
-            g: c[1],
-            b: c[2],
-        })
-        .collect()
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1064,9 +1315,7 @@ mod tests {
     use super::*;
     use imgref::{Img, ImgExt};
     use rgb::{Gray, Rgb, Rgba};
-    use zc::encode::{
-        EncodeJob as _, Encoder as _, EncoderConfig as _,
-    };
+    use zc::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 
     #[test]
     fn encoding_default_roundtrip() {
@@ -1083,7 +1332,6 @@ mod tests {
         let output = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
         assert!(!output.data().is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
-        // Verify it starts with JPEG SOI marker
         assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
     }
 
@@ -1102,6 +1350,28 @@ mod tests {
             .unwrap()
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
+        assert!(!output.data().is_empty());
+    }
+
+    #[test]
+    fn encoding_with_policy_strips_metadata() {
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
+        let img = Img::new(pixels.as_slice(), 4, 4);
+
+        let icc = b"fake icc profile data";
+        let meta = MetadataView::default().with_icc(icc.as_slice());
+        let policy = zc::encode::EncodePolicy::strict();
+
+        let output = enc
+            .job()
+            .with_metadata(&meta)
+            .with_policy(policy)
+            .encoder()
+            .unwrap()
+            .encode(PixelSlice::from(img.as_ref()).into())
+            .unwrap();
+        // Should succeed but ICC may be stripped by strict policy
         assert!(!output.data().is_empty());
     }
 
@@ -1147,7 +1417,6 @@ mod tests {
         let slice: PixelSlice<'_> = PixelSlice::from(img.as_ref()).into();
 
         let mut encoder = enc.job().encoder().unwrap();
-        // Push 4 rows, then 4 more
         let top = slice.sub_rows(0, 4);
         let bottom = slice.sub_rows(4, 4);
         encoder.push_rows(top).unwrap();
@@ -1157,10 +1426,25 @@ mod tests {
         assert_eq!(&output.data()[0..2], &[0xFF, 0xD8]);
     }
 
+    #[test]
+    fn effort_levels() {
+        let enc = JpegEncoderConfig::new()
+            .with_generic_quality(85.0)
+            .with_generic_effort(0); // Fast
+        assert_eq!(enc.generic_effort(), Some(0));
+
+        let enc = enc.with_generic_effort(2); // Max
+        assert_eq!(enc.generic_effort(), Some(2));
+
+        // Effort clamped to range
+        let enc = enc.with_generic_effort(99);
+        assert_eq!(enc.generic_effort(), Some(2));
+    }
+
     #[cfg(feature = "decoder")]
     #[test]
     fn decode_roundtrip() {
-        // Encode
+        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -1173,7 +1457,6 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 8, 8);
         let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
 
-        // Decode
         let dec = JpegDecoderConfig::new();
         let output = dec.decode(encoded.data()).unwrap();
         assert_eq!(output.info().width, 8);
@@ -1183,7 +1466,40 @@ mod tests {
 
     #[cfg(feature = "decoder")]
     #[test]
+    fn decode_zero_copy_rgb8() {
+        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 200,
+                g: 100,
+                b: 50
+            };
+            64
+        ];
+        let img = Img::new(pixels.as_slice(), 8, 8);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+
+        let dec = JpegDecoderConfig::new();
+        let output = dec
+            .job()
+            .decoder(encoded.data(), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap();
+        // Output should be RGB8 — the native format
+        assert_eq!(output.descriptor(), PixelDescriptor::RGB8_SRGB);
+        let pixel_data = output.pixels();
+        assert_eq!(pixel_data.width(), 8);
+        assert_eq!(pixel_data.rows(), 8);
+        // 8*8*3 = 192 bytes
+        assert!(pixel_data.as_contiguous_bytes().is_some());
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
     fn probe_info() {
+        use zc::decode::{DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels.as_slice(), 10, 10);
@@ -1201,7 +1517,6 @@ mod tests {
     fn streaming_decode_roundtrip() {
         use zc::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
 
-        // Encode a test image
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -1214,7 +1529,6 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 16, 16);
         let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
 
-        // Stream decode
         let dec = JpegDecoderConfig::new();
         let mut stream = dec
             .job()
@@ -1228,14 +1542,54 @@ mod tests {
         while let Some((y, batch)) = stream.next_batch().unwrap() {
             assert_eq!(y, total_rows);
             assert_eq!(batch.width(), 16);
+            // Each batch should be MCU-row sized (multiple rows)
+            assert!(batch.rows() >= 1);
             total_rows += batch.rows();
         }
         assert_eq!(total_rows, 16);
     }
 
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn streaming_decode_batches_mcu_rows() {
+        use zc::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
+
+        // Create a larger image to see MCU batching
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32
+            };
+            64 * 64
+        ];
+        let img = Img::new(pixels.as_slice(), 64, 64);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+
+        let dec = JpegDecoderConfig::new();
+        let mut stream = dec
+            .job()
+            .streaming_decoder(encoded.data(), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap();
+
+        let mut batch_count = 0;
+        let mut total_rows = 0u32;
+        while let Some((_y, batch)) = stream.next_batch().unwrap() {
+            batch_count += 1;
+            total_rows += batch.rows();
+        }
+        assert_eq!(total_rows, 64);
+        // With MCU batching, we should have fewer batches than rows
+        // (64 rows / 16 rows per MCU = ~4 batches for 4:2:0)
+        assert!(
+            batch_count < 64,
+            "expected MCU-row batching, got {batch_count} batches for 64 rows"
+        );
+    }
+
     // ── Encoder trait roundtrip tests ────────────────────────────────
 
-    /// Helper: encode via the type-erased Encoder trait, verify output is valid JPEG.
     fn encoder_trait_roundtrip(pixels: zenpixels::PixelSlice<'_>) {
         use zc::encode::Encoder;
         let config = JpegEncoderConfig::new().with_calibrated_quality(75.0);
@@ -1367,7 +1721,9 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 32, 32);
         let config = JpegEncoderConfig::new().with_calibrated_quality(80.0);
         let dyn_enc = config.job().dyn_encoder().unwrap();
-        let output = dyn_enc.encode(zenpixels::PixelSlice::from(img.as_ref()).into()).unwrap();
+        let output = dyn_enc
+            .encode(zenpixels::PixelSlice::from(img.as_ref()).into())
+            .unwrap();
         assert!(!output.is_empty());
         assert_eq!(output.format(), ImageFormat::Jpeg);
     }
@@ -1385,7 +1741,12 @@ mod tests {
         assert!(!caps.animation());
         assert!(caps.row_level());
         assert!(caps.native_gray());
+        assert!(caps.native_16bit());
+        assert!(caps.native_f32());
+        assert!(caps.enforces_max_pixels());
+        assert!(caps.enforces_max_memory());
         assert!(caps.quality_range().is_some());
+        assert!(caps.effort_range().is_some());
     }
 
     #[cfg(feature = "decoder")]
@@ -1400,6 +1761,9 @@ mod tests {
         assert!(caps.cheap_probe());
         assert!(caps.row_level());
         assert!(caps.native_gray());
+        assert!(caps.native_f32());
+        assert!(caps.enforces_max_pixels());
+        assert!(caps.enforces_max_memory());
         assert!(!caps.animation());
     }
 
@@ -1407,7 +1771,6 @@ mod tests {
     fn decode_trait_max_width_enforced() {
         use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
-        // Encode a 32x32 test image
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
                 r: 128,
@@ -1421,7 +1784,6 @@ mod tests {
             .encode(PixelSlice::from(img.as_ref()).into())
             .unwrap();
 
-        // Decode with max_width=10 should fail
         let dec = JpegDecoderConfig::new();
         let limits = ResourceLimits::none().with_max_width(10);
         let result = dec

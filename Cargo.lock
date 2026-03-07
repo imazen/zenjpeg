@@ -2692,6 +2692,7 @@ dependencies = [
  "rgb",
  "safe_unaligned_simd",
  "thiserror",
+ "whereat",
  "zencodec-types",
  "zenflate",
  "zenpixels",
