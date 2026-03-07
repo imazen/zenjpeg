@@ -9,7 +9,7 @@
 use alloc::string::String;
 use core::fmt;
 use thiserror::Error;
-use whereat::{AtTrace, AtTraceBoxed, AtTraceable};
+use whereat::At;
 
 /// Result type for jpegli operations.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -153,89 +153,115 @@ pub enum ResourceError {
 }
 
 // ============================================================================
-// Internal ErrorKind - Flat enum for internal use
+// ErrorKind - Flat enum for all error variants (derives thiserror::Error)
 // ============================================================================
 
-/// The specific kind of error that occurred (internal flat enum).
+/// The specific kind of error that occurred.
 ///
-/// This is used internally and by the `From` implementations.
-/// Public APIs use [`decoder::ErrorKind`](crate::decoder::ErrorKind) or
-/// [`encoder::ErrorKind`](crate::encoder::ErrorKind).
-#[derive(Debug, Clone, PartialEq)]
+/// This is the inner error type wrapped by [`Error`] (which is `At<ErrorKind>`).
+/// Use [`Error::error()`](At::error) to access the kind, or pattern-match
+/// after calling [`Error::into_inner()`](At::into_inner).
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum ErrorKind {
     // === Shared: Argument errors ===
     /// Invalid input dimensions (zero or too large).
+    #[error("invalid dimensions {width}x{height}: {reason}")]
     InvalidDimensions {
         width: u32,
         height: u32,
         reason: &'static str,
     },
     /// Invalid color space or pixel format combination.
+    #[error("invalid color format: {reason}")]
     InvalidColorFormat { reason: &'static str },
     /// Input buffer has wrong size.
+    #[error("invalid buffer size: expected {expected} bytes, got {actual}")]
     InvalidBufferSize { expected: usize, actual: usize },
     /// Unsupported JPEG feature.
+    #[error("unsupported feature: {feature}")]
     UnsupportedFeature { feature: &'static str },
     /// Pixel format not yet supported for this operation.
+    #[error("pixel format {format:?} not supported")]
     UnsupportedPixelFormat { format: crate::types::PixelFormat },
 
     // === Shared: Resource errors ===
     /// Memory allocation failed (OOM or limit exceeded).
+    #[error("allocation of {bytes} bytes failed while {context}")]
     AllocationFailed { bytes: usize, context: &'static str },
     /// Size calculation overflowed.
+    #[error("size calculation overflow while {context}")]
     SizeOverflow { context: &'static str },
     /// Image exceeds maximum pixel limit.
+    #[error("image too large: {pixels} pixels exceeds limit of {limit}")]
     ImageTooLarge { pixels: u64, limit: u64 },
     /// I/O error during encoding/decoding.
+    #[error("I/O error: {reason}")]
     IoError { reason: String },
 
     // === Shared: Other ===
     /// ICC color management error.
+    #[error("ICC error: {0}")]
     IccError(String),
     /// Internal error (should not happen in correct usage).
+    #[error("internal error: {reason}")]
     InternalError { reason: &'static str },
     /// Operation was cancelled via Stop trait.
+    #[error("operation cancelled")]
     Cancelled,
 
     // === Decoder-specific: Datastream errors ===
     /// Invalid JPEG data (corrupted or not a JPEG).
+    #[error("invalid JPEG data: {reason}")]
     InvalidJpegData { reason: &'static str },
     /// Input data is truncated or corrupted.
+    #[error("truncated data while {context}")]
     TruncatedData { context: &'static str },
     /// Invalid marker or segment in JPEG stream.
+    #[error("invalid marker 0x{marker:02X} while {context}")]
     InvalidMarker { marker: u8, context: &'static str },
     /// Invalid Huffman table.
+    #[error("invalid Huffman table {table_idx}: {reason}")]
     InvalidHuffmanTable { table_idx: u8, reason: &'static str },
     /// Invalid quantization table.
+    #[error("invalid quantization table {table_idx}: {reason}")]
     InvalidQuantTable { table_idx: u8, reason: &'static str },
     /// Too many progressive scans.
+    #[error("too many scans: {count} exceeds limit of {limit}")]
     TooManyScans { count: usize, limit: usize },
     /// Decode error from JPEG decoder.
+    #[error("decode error: {0}")]
     DecodeError(String),
 
     // === Encoder-specific: Argument errors ===
     /// Invalid quality parameter.
+    #[error("invalid quality {value}: must be in {valid_range}")]
     InvalidQuality {
         value: f32,
         valid_range: &'static str,
     },
     /// Invalid scan script for progressive encoding.
+    #[error("invalid scan script: {0}")]
     InvalidScanScript(String),
     /// Invalid encoder configuration.
+    #[error("invalid encoder configuration: {0}")]
     InvalidConfig(String),
     /// Stride too small for image width.
+    #[error("stride {stride} is too small for width {width} pixels")]
     StrideTooSmall { width: u32, stride: usize },
 
     // === Encoder-specific: State errors ===
     /// Pushed more rows than image height.
+    #[error("pushed {pushed} rows but image height is only {height}")]
     TooManyRows { height: u32, pushed: u32 },
     /// Encoding finished without all rows pushed.
+    #[error("encoding finished after {pushed} rows but image height is {height}")]
     IncompleteImage { height: u32, pushed: u32 },
 
-    // === Unsupported codec operation (from zencodec_types) ===
+    // === Unsupported codec operation (from zc) ===
     /// Unsupported codec operation.
-    UnsupportedOperation(zencodec_types::UnsupportedOperation),
+    #[error("unsupported operation: {0}")]
+    UnsupportedOperation(zc::UnsupportedOperation),
 }
 
 impl ErrorKind {
@@ -290,98 +316,6 @@ impl ErrorKind {
     }
 }
 
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            // Argument errors
-            Self::InvalidDimensions {
-                width,
-                height,
-                reason,
-            } => write!(f, "invalid dimensions {}x{}: {}", width, height, reason),
-            Self::InvalidColorFormat { reason } => write!(f, "invalid color format: {}", reason),
-            Self::InvalidBufferSize { expected, actual } => {
-                write!(
-                    f,
-                    "invalid buffer size: expected {} bytes, got {}",
-                    expected, actual
-                )
-            }
-            Self::UnsupportedFeature { feature } => write!(f, "unsupported feature: {}", feature),
-            Self::UnsupportedPixelFormat { format } => {
-                write!(f, "pixel format {:?} not supported", format)
-            }
-
-            // Resource errors
-            Self::AllocationFailed { bytes, context } => {
-                write!(f, "allocation of {} bytes failed while {}", bytes, context)
-            }
-            Self::SizeOverflow { context } => {
-                write!(f, "size calculation overflow while {}", context)
-            }
-            Self::ImageTooLarge { pixels, limit } => {
-                write!(
-                    f,
-                    "image too large: {} pixels exceeds limit of {}",
-                    pixels, limit
-                )
-            }
-            Self::IoError { reason } => write!(f, "I/O error: {}", reason),
-
-            // Other shared
-            Self::IccError(reason) => write!(f, "ICC error: {}", reason),
-            Self::InternalError { reason } => write!(f, "internal error: {}", reason),
-            Self::Cancelled => write!(f, "operation cancelled"),
-
-            // Decoder-specific
-            Self::InvalidJpegData { reason } => write!(f, "invalid JPEG data: {}", reason),
-            Self::TruncatedData { context } => write!(f, "truncated data while {}", context),
-            Self::InvalidMarker { marker, context } => {
-                write!(f, "invalid marker 0x{:02X} while {}", marker, context)
-            }
-            Self::InvalidHuffmanTable { table_idx, reason } => {
-                write!(f, "invalid Huffman table {}: {}", table_idx, reason)
-            }
-            Self::InvalidQuantTable { table_idx, reason } => {
-                write!(f, "invalid quantization table {}: {}", table_idx, reason)
-            }
-            Self::TooManyScans { count, limit } => {
-                write!(f, "too many scans: {} exceeds limit of {}", count, limit)
-            }
-            Self::DecodeError(reason) => write!(f, "decode error: {}", reason),
-
-            // Encoder-specific
-            Self::InvalidQuality { value, valid_range } => {
-                write!(f, "invalid quality {}: must be in {}", value, valid_range)
-            }
-            Self::InvalidScanScript(reason) => write!(f, "invalid scan script: {}", reason),
-            Self::InvalidConfig(reason) => write!(f, "invalid encoder configuration: {}", reason),
-            Self::StrideTooSmall { width, stride } => {
-                write!(
-                    f,
-                    "stride {} is too small for width {} pixels",
-                    stride, width
-                )
-            }
-            Self::TooManyRows { height, pushed } => {
-                write!(
-                    f,
-                    "pushed {} rows but image height is only {}",
-                    pushed, height
-                )
-            }
-            Self::IncompleteImage { height, pushed } => {
-                write!(
-                    f,
-                    "encoding finished after {} rows but image height is {}",
-                    pushed, height
-                )
-            }
-            Self::UnsupportedOperation(op) => write!(f, "unsupported operation: {}", op),
-        }
-    }
-}
-
 // ============================================================================
 // From implementations for ErrorKind
 // ============================================================================
@@ -424,47 +358,62 @@ impl From<ResourceError> for ErrorKind {
 }
 
 // ============================================================================
-// Error - Main error type with location tracking
+// Error - Main error type: At<ErrorKind> newtype with location tracking
 // ============================================================================
 
 /// Errors that can occur during JPEG encoding/decoding.
 ///
-/// Use [`Error::kind()`] to match on the specific error variant.
+/// This is a newtype around `At<ErrorKind>` providing zero-cost stacktraces
+/// via `whereat`. Use [`Error::error()`] to inspect the [`ErrorKind`], or
+/// [`Error::into_inner()`] to destructure.
+///
+/// Traces propagate automatically through `?` when using `ResultAtExt::at()`.
 #[derive(Debug)]
-pub struct Error {
-    kind: ErrorKind,
-    trace: AtTraceBoxed,
-}
+pub struct Error(pub At<ErrorKind>);
 
 impl Error {
-    /// Create a new error with the given kind, capturing the current location.
+    /// Wrap an `ErrorKind` with location tracking.
     #[track_caller]
+    #[inline]
     pub fn new(kind: ErrorKind) -> Self {
-        Self {
-            kind,
-            trace: AtTraceBoxed::capture(),
-        }
+        Self(whereat::at(kind))
     }
 
-    /// Create a new error without capturing a trace (for hot paths).
+    /// Wrap an `ErrorKind` without capturing a trace (for hot paths).
     #[inline]
     pub const fn new_untraced(kind: ErrorKind) -> Self {
-        Self {
-            kind,
-            trace: AtTraceBoxed::new(),
-        }
+        Self(At::wrap(kind))
     }
 
     /// Get the kind of error.
     #[inline]
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        self.0.error()
     }
 
     /// Convert into the error kind, discarding the trace.
     #[inline]
     pub fn into_kind(self) -> ErrorKind {
-        self.kind
+        self.0.into_inner()
+    }
+
+    /// Access the inner `At<ErrorKind>` for trace inspection.
+    #[inline]
+    pub fn inner(&self) -> &At<ErrorKind> {
+        &self.0
+    }
+
+    /// Consume and return the inner `At<ErrorKind>`.
+    #[inline]
+    pub fn into_inner(self) -> At<ErrorKind> {
+        self.0
+    }
+
+    /// Add the caller's location to the trace (for propagation).
+    #[track_caller]
+    #[inline]
+    pub fn at(self) -> Self {
+        Self(self.0.at())
     }
 
     // ========================================================================
@@ -642,29 +591,53 @@ impl Error {
     }
 }
 
-impl AtTraceable for Error {
-    fn trace_mut(&mut self) -> &mut AtTrace {
-        self.trace.get_or_insert_mut()
-    }
-
-    fn trace(&self) -> Option<&AtTrace> {
-        self.trace.as_ref()
-    }
-
-    fn fmt_message(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.kind, f)
-    }
-}
+// ============================================================================
+// Standard trait implementations for Error
+// ============================================================================
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.kind, f)
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        self.0.error().source()
+    }
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.error() == other.0.error()
     }
 }
 
 // ============================================================================
 // From implementations for Error
 // ============================================================================
+
+impl From<ErrorKind> for Error {
+    #[track_caller]
+    #[inline]
+    fn from(kind: ErrorKind) -> Self {
+        Self::new(kind)
+    }
+}
+
+impl From<At<ErrorKind>> for Error {
+    #[inline]
+    fn from(at: At<ErrorKind>) -> Self {
+        Self(at)
+    }
+}
+
+impl From<Error> for At<ErrorKind> {
+    #[inline]
+    fn from(err: Error) -> Self {
+        err.0
+    }
+}
 
 impl From<ArgumentError> for Error {
     #[track_caller]
@@ -687,12 +660,10 @@ impl From<enough::StopReason> for Error {
     }
 }
 
-impl core::error::Error for Error {}
-
-impl From<zencodec_types::LimitExceeded> for Error {
+impl From<zc::LimitExceeded> for Error {
     #[track_caller]
-    fn from(err: zencodec_types::LimitExceeded) -> Self {
-        use zencodec_types::LimitExceeded;
+    fn from(err: zc::LimitExceeded) -> Self {
+        use zc::LimitExceeded;
         match err {
             LimitExceeded::Width { actual, .. } => {
                 Self::invalid_dimensions(actual, 0, "width exceeds limit")
@@ -714,15 +685,12 @@ impl From<zencodec_types::LimitExceeded> for Error {
     }
 }
 
-impl From<zencodec_types::UnsupportedOperation> for Error {
+impl From<zc::UnsupportedOperation> for Error {
     #[track_caller]
-    fn from(op: zencodec_types::UnsupportedOperation) -> Self {
+    fn from(op: zc::UnsupportedOperation) -> Self {
         Self::new(ErrorKind::UnsupportedOperation(op))
     }
 }
-
-// The blanket impl `impl<E: core::error::Error + Send + Sync> From<E> for Box<dyn Error + Send + Sync>`
-// handles this automatically now that Error implements core::error::Error.
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
@@ -767,32 +735,13 @@ impl From<crate::foundation::aligned_alloc::AllocError> for Error {
 }
 
 // ============================================================================
-// Clone and PartialEq for Error
-// ============================================================================
-
-impl Clone for Error {
-    fn clone(&self) -> Self {
-        Self {
-            kind: self.kind.clone(),
-            trace: AtTraceBoxed::new(), // Don't clone the trace
-        }
-    }
-}
-
-impl PartialEq for Error {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whereat::ResultAtTraceableExt;
+    use whereat::ResultAtExt;
 
     #[test]
     fn test_error_size() {
@@ -808,6 +757,8 @@ mod tests {
             "ResourceError: {} bytes",
             core::mem::size_of::<ResourceError>()
         );
+        // At<ErrorKind> = ErrorKind + 8 bytes (boxed trace pointer)
+        // Error newtype adds zero overhead
         assert!(size <= 48, "Error is {} bytes, consider optimizing", size);
     }
 
@@ -844,7 +795,7 @@ mod tests {
     #[test]
     fn test_error_has_trace() {
         let err = Error::invalid_dimensions(0, 100, "width cannot be zero");
-        assert!(!err.trace.is_empty());
+        assert!(err.0.frame_count() >= 1);
     }
 
     #[test]
@@ -854,15 +805,47 @@ mod tests {
         }
 
         fn outer() -> Result<()> {
-            inner().at()?;
+            inner().map_err(|e| e.at())?;
             Ok(())
         }
 
         let err = outer().unwrap_err();
         assert!(
-            err.trace.frame_count() >= 1,
-            "trace should have at least 1 entry"
+            err.0.frame_count() >= 2,
+            "trace should have at least 2 entries (inner + outer), got {}",
+            err.0.frame_count()
         );
+    }
+
+    #[test]
+    fn test_error_kind_is_error_trait() {
+        // ErrorKind implements core::error::Error via thiserror
+        fn assert_error<E: core::error::Error>(_: &E) {}
+        let kind = ErrorKind::Cancelled;
+        assert_error(&kind);
+    }
+
+    #[test]
+    fn test_at_error_kind_roundtrip() {
+        let err = Error::cancelled();
+        let at: At<ErrorKind> = err.into();
+        let err2: Error = at.into();
+        assert_eq!(err2.kind(), &ErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn test_result_at_ext() {
+        fn inner() -> core::result::Result<(), At<ErrorKind>> {
+            Err(whereat::at(ErrorKind::Cancelled))
+        }
+
+        fn outer() -> core::result::Result<(), At<ErrorKind>> {
+            inner().at()?;
+            Ok(())
+        }
+
+        let err = outer().unwrap_err();
+        assert!(err.frame_count() >= 2);
     }
 
     #[cfg(feature = "std")]

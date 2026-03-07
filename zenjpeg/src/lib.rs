@@ -343,6 +343,5 @@ pub use zencodec::{
     JpegEncoder,
     JpegEncoderConfig,
     JpegEncoding,
-    JpegFrameDecoder,
-    JpegFrameEncoder,
+    JpegStreamingDecoder,
 };
