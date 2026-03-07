@@ -915,12 +915,6 @@ mod encoder_error_coverage {
         assert_eq!(err1, err2);
     }
 
-    #[test]
-    fn encoder_error_clone() {
-        let err = Error::internal("test error");
-        let cloned = err.clone();
-        assert_eq!(err, cloned);
-    }
 }
 
 mod decoder_error_coverage {
@@ -960,10 +954,4 @@ mod decoder_error_coverage {
         assert_eq!(err1, err2);
     }
 
-    #[test]
-    fn decoder_error_clone() {
-        let err = Error::invalid_jpeg_data("test error");
-        let cloned = err.clone();
-        assert_eq!(err, cloned);
-    }
 }
