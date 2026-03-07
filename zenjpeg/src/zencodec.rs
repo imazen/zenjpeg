@@ -25,7 +25,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
-use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
+use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo, push_decoder_via_full_decode};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits, Unsupported, UnsupportedOperation};
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
@@ -789,6 +789,17 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
             policy: self.policy,
             data,
             preferred: preferred.to_vec(),
+        })
+    }
+
+    fn push_decoder(
+        self,
+        data: Cow<'a, [u8]>,
+        sink: &mut dyn zc::decode::DecodeRowSink,
+        preferred: &[PixelDescriptor],
+    ) -> Result<OutputInfo, Self::Error> {
+        push_decoder_via_full_decode(self, data, sink, preferred, |e| {
+            Error::io_error(e.to_string())
         })
     }
 
