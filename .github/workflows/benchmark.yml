@@ -57,12 +57,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 

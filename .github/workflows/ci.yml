@@ -40,19 +40,14 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
       - name: Remove non-CI workspace members and deps
         shell: bash
         run: |
-          # Remove jpegli-internals-sys (requires C++ build) and ultrahdr-rs (needs zune-image)
+          # Remove jpegli-internals-sys (requires C++ build) and ultrahdr-rs (needs sibling path deps)
           sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
@@ -87,12 +82,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
@@ -126,12 +116,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
@@ -167,12 +152,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
@@ -200,12 +180,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
@@ -238,12 +213,7 @@ jobs:
         run: |
           cd ..
           git clone --depth 1 https://github.com/imazen/zencodec-types.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
-          git clone --depth 1 https://github.com/imazen/zenlayout.git
-          git clone --depth 1 https://github.com/imazen/zenresize.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
-          git clone --depth 1 https://github.com/imazen/linear-srgb.git
-          git clone --depth 1 https://github.com/awxkee/colorutils-rs.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 

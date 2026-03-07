@@ -101,8 +101,8 @@ ultrahdr-rs = { path = "../ultrahdr/ultrahdr" }
 ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.2.0" }
 
 # Layout + resize pipeline
-zenlayout = { path = "../zenlayout" }
-zenresize = { path = "../zenresize" }
+zenlayout = "0.2"
+zenresize = "0.1"
 
 [profile.release]
 debug = true
@@ -147,3 +147,6 @@ enum_variant_names = "allow"  # Emit* prefix is clear
 doc_overindented_list_items = "allow"  # Doc formatting preferences
 manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
+
+[patch.crates-io]
+zenpixels = { path = "../zenpixels/zenpixels" }
