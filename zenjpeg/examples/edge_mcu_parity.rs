@@ -37,7 +37,7 @@ fn quality_to_distance(q: f32) -> f32 {
     }
 }
 
-fn load_png_rgb8(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
+fn load_png8(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
     let img = zenjpeg_bench_utils::load_png(path).ok()?;
     Some((img.buf().to_vec(), img.width() as u32, img.height() as u32))
 }
@@ -128,7 +128,7 @@ fn main() {
         }
     };
 
-    let (rgb_pixels, width, height) = match load_png_rgb8(&frymire_path) {
+    let (rgb_pixels, width, height) = match load_png8(&frymire_path) {
         Some(data) => data,
         None => {
             eprintln!("Failed to load frymire.png");

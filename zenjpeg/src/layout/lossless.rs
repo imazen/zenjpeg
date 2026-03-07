@@ -31,6 +31,7 @@ pub(crate) fn detect_lossless(commands: &[Command]) -> Option<LosslessTransform>
                     zenlayout::Rotation::Rotate90 => Orientation::Rotate90,
                     zenlayout::Rotation::Rotate180 => Orientation::Rotate180,
                     zenlayout::Rotation::Rotate270 => Orientation::Rotate270,
+                    _ => return None,
                 };
                 orientation = orientation.compose(o);
             }
@@ -38,6 +39,7 @@ pub(crate) fn detect_lossless(commands: &[Command]) -> Option<LosslessTransform>
                 let o = match axis {
                     zenlayout::FlipAxis::Horizontal => Orientation::FlipH,
                     zenlayout::FlipAxis::Vertical => Orientation::FlipV,
+                    _ => return None,
                 };
                 orientation = orientation.compose(o);
             }

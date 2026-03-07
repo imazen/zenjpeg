@@ -13,7 +13,7 @@ fn main() {
     let (rgb, width, height, png_path) = if args.len() > 1 {
         // Load real image
         let path = &args[1];
-        let (rgb, w, h) = load_png_rgb(path);
+        let (rgb, w, h) = load_png(path);
         (rgb, w, h, path.to_string())
     } else {
         // Synthetic gradient
@@ -79,8 +79,8 @@ fn main() {
     decode_with_djpegli(rust_path, rust_decoded_path);
     decode_with_djpegli(cpp_path, cpp_decoded_path);
 
-    let rust_decoded = load_png_rgb(rust_decoded_path).0;
-    let cpp_decoded = load_png_rgb(cpp_decoded_path).0;
+    let rust_decoded = load_png(rust_decoded_path).0;
+    let cpp_decoded = load_png(cpp_decoded_path).0;
 
     // Per-row analysis
     println!("Per-row mean |diff| (R, G, B):");
@@ -133,7 +133,7 @@ fn save_png(rgb: &[u8], width: usize, height: usize, path: &str) {
     writer.write_image_data(rgb).unwrap();
 }
 
-fn load_png_rgb(path: &str) -> (Vec<u8>, usize, usize) {
+fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
     let img =
         zenjpeg_bench_utils::load_png(std::path::Path::new(path)).expect("Failed to load PNG");
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();

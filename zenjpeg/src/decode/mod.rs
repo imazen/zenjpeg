@@ -82,6 +82,7 @@ pub use extras::{
 };
 
 // Re-export types used in public struct fields so users can access them
+#[allow(unused_imports)]
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 use crate::types::{Component, Subsampling};
 

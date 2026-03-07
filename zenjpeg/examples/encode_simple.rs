@@ -9,7 +9,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let img = zenjpeg_bench_utils::load_png(path).ok()?;
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((bytes, img.width() as u32, img.height() as u32))
@@ -26,7 +26,7 @@ fn main() {
     let output_path = Path::new(&args[2]);
     let quality: f32 = args[3].parse().expect("Invalid quality");
 
-    let (rgb, width, height) = load_png_rgb(input_path).expect("Failed to load PNG");
+    let (rgb, width, height) = load_png(input_path).expect("Failed to load PNG");
 
     eprintln!("Loaded {}x{} image from {:?}", width, height, input_path);
 

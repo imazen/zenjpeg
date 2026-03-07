@@ -2613,6 +2613,7 @@ pub(crate) mod archmage_impl {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 pub use archmage_impl::mage_pre_erosion_row_padded;
 
 #[cfg(target_arch = "x86_64")]

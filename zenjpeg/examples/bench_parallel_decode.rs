@@ -25,7 +25,7 @@ mod bench {
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
-    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
         let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
         (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
@@ -111,7 +111,7 @@ mod bench {
             clic_files.sort_by_key(|e| e.file_name());
             for entry in clic_files.iter().step_by(5).take(6) {
                 let path = entry.path();
-                let (pixels, w, h) = load_png_rgb(&path);
+                let (pixels, w, h) = load_png(&path);
                 let name = path.file_stem().unwrap().to_string_lossy();
                 source_images.push((format!("clic_{}", &name[..8]), pixels, w, h));
             }
@@ -123,7 +123,7 @@ mod bench {
             for name in &["imac_dark", "codec_wiki", "windows"] {
                 let path = sc_dir.join(format!("{}.png", name));
                 if path.exists() {
-                    let (pixels, w, h) = load_png_rgb(&path);
+                    let (pixels, w, h) = load_png(&path);
                     source_images.push((format!("sc_{}", name), pixels, w, h));
                 }
             }
@@ -135,7 +135,7 @@ mod bench {
             for name in &["baby", "city", "flowers"] {
                 let path = gb82_dir.join(format!("{}-lossless.png", name));
                 if path.exists() {
-                    let (pixels, w, h) = load_png_rgb(&path);
+                    let (pixels, w, h) = load_png(&path);
                     source_images.push((format!("gb82_{}", name), pixels, w, h));
                 }
             }

@@ -243,7 +243,7 @@ fn build_corpus_tables(
         let mut total_bytes = 0usize;
 
         for (i, path) in images.iter().enumerate() {
-            let (w, h, pixels) = load_png_rgb(path)?;
+            let (w, h, pixels) = load_png(path)?;
             let (jpeg_len, counts) = encode_optimal(w, h, &pixels, quality)?;
             total_bytes += jpeg_len;
 
@@ -281,7 +281,7 @@ fn validate_corpus(
     let mut standard_total = 0usize;
 
     for path in images {
-        let (w, h, pixels) = load_png_rgb(path)?;
+        let (w, h, pixels) = load_png(path)?;
         let (opt_len, _) = encode_optimal(w, h, &pixels, quality)?;
         optimal_total += opt_len;
         corpus_total += encode_with_tables(w, h, &pixels, quality, tables)?;
@@ -360,7 +360,7 @@ fn load_image_list(dir: &str) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn load_png_rgb(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>)> {
+fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>)> {
     let img = zenjpeg_bench_utils::load_png(path)
         .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
     let w = img.width() as u32;

@@ -32,7 +32,7 @@ mod bench {
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig};
 
-    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
         let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
         (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
@@ -225,7 +225,7 @@ mod bench {
         for entry in &selected {
             let path = entry.path();
             let name = path.file_stem().unwrap().to_string_lossy();
-            let (pixels, w, h) = load_png_rgb(&path);
+            let (pixels, w, h) = load_png(&path);
             eprintln!("  {}... ({}x{})", &name[..8], w, h);
             source_images.push((pixels, w, h));
         }

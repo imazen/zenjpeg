@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use enough::Stop;
 use imgref::ImgRefMut;
-use zenresize::{PixelFormat, PixelLayout, ResizeConfig, StreamingResize};
+use zenresize::{PixelDescriptor, ResizeConfig, StreamingResize};
 
 use crate::decode::{DecodeConfig, JpegInfo};
 use crate::encode::encoder_types::PixelLayout as EncPixelLayout;
@@ -81,7 +81,7 @@ fn decode_resize_encode(
 ) -> Result<Vec<u8>> {
     let resize_config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
         .filter(config.filter)
-        .format(PixelFormat::Srgb8(PixelLayout::Rgb))
+        .format(PixelDescriptor::RGB8_SRGB)
         .linear()
         .build();
 
@@ -128,6 +128,7 @@ fn decode_resize_encode(
                         zenresize::StreamingError::RingBufferOverflow => {
                             "resize: ring buffer overflow"
                         }
+                        _ => "resize: unknown streaming error",
                     },
                 })
             })?;
@@ -204,17 +205,18 @@ fn attach_metadata<'a>(
     if let Some(ref icc) = info.icc_profile {
         request = request.icc_profile(icc);
     }
-    if let Some(ref exif) = info.exif {
-        if exif.len() > EXIF_PREFIX_LEN && exif.starts_with(b"Exif\0\0") {
-            if reset_orientation {
-                let mut exif_copy = exif.clone();
-                crate::lossless::set_exif_orientation(&mut exif_copy, 1);
-                // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
-                request = request.exif(Exif::Raw(exif_copy[EXIF_PREFIX_LEN..].to_vec()));
-            } else {
-                // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
-                request = request.exif(Exif::Raw(exif[EXIF_PREFIX_LEN..].to_vec()));
-            }
+    if let Some(ref exif) = info.exif
+        && exif.len() > EXIF_PREFIX_LEN
+        && exif.starts_with(b"Exif\0\0")
+    {
+        if reset_orientation {
+            let mut exif_copy = exif.clone();
+            crate::lossless::set_exif_orientation(&mut exif_copy, 1);
+            // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
+            request = request.exif(Exif::Raw(exif_copy[EXIF_PREFIX_LEN..].to_vec()));
+        } else {
+            // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
+            request = request.exif(Exif::Raw(exif[EXIF_PREFIX_LEN..].to_vec()));
         }
     }
     if let Some(ref xmp) = info.xmp {
@@ -232,7 +234,7 @@ fn drain_resizer(
 ) -> Result<()> {
     for _ in 0..available {
         if let Some(row) = resizer.next_output_row() {
-            encoder.push_packed(&row, stop)?;
+            encoder.push_packed(row, stop)?;
         }
     }
     Ok(())

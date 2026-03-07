@@ -8,7 +8,7 @@
 
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-fn load_png_rgb(path: &str) -> (Vec<u8>, u32, u32) {
+fn load_png(path: &str) -> (Vec<u8>, u32, u32) {
     let img =
         zenjpeg_bench_utils::load_png(std::path::Path::new(path)).expect("Failed to load PNG");
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
@@ -33,10 +33,10 @@ fn main() {
 
     let (pixels, width, height) = if std::path::Path::new(&cid22_path).exists() {
         eprintln!("Loading: {}", cid22_path);
-        load_png_rgb(&cid22_path)
+        load_png(&cid22_path)
     } else if std::path::Path::new(&kodak_path).exists() {
         eprintln!("Loading: {}", kodak_path);
-        load_png_rgb(&kodak_path)
+        load_png(&kodak_path)
     } else {
         eprintln!("Corpus not found, using synthetic 1080p image");
         let width = 1920u32;

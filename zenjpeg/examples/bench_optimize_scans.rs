@@ -27,7 +27,7 @@ fn try_encode_image(
     enc.finish().map_err(|e| format!("finish: {}", e))
 }
 
-fn load_png_rgb(path: &std::path::Path) -> Option<(u32, u32, Vec<u8>)> {
+fn load_png(path: &std::path::Path) -> Option<(u32, u32, Vec<u8>)> {
     let img = zenjpeg_bench_utils::load_png(path).ok()?;
     let w = img.width() as u32;
     let h = img.height() as u32;
@@ -98,7 +98,7 @@ fn main() {
             let name = path.file_name().unwrap().to_string_lossy();
             let short_name: String = name.chars().take(10).collect();
 
-            let (width, height, pixels) = match load_png_rgb(&path) {
+            let (width, height, pixels) = match load_png(&path) {
                 Some(v) => v,
                 None => continue,
             };

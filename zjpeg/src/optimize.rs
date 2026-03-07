@@ -353,20 +353,21 @@ fn build_encoder_config(
         } else if args.strip_gainmaps {
             // Can't use segments API (it always includes gain maps).
             // Fall back to individual metadata methods on the config.
-            if !args.strip_icc && !strip_icc_for_apply {
-                if let Some(icc) = extras.icc_profile() {
-                    config = config.add_segment(0xE2, build_icc_segment(icc));
-                }
+            if !args.strip_icc
+                && !strip_icc_for_apply
+                && let Some(icc) = extras.icc_profile()
+            {
+                config = config.add_segment(0xE2, build_icc_segment(icc));
             }
-            if !args.strip_exif {
-                if let Some(exif) = extras.exif() {
-                    config = config.add_segment(0xE1, build_exif_segment(exif));
-                }
+            if !args.strip_exif
+                && let Some(exif) = extras.exif()
+            {
+                config = config.add_segment(0xE1, build_exif_segment(exif));
             }
-            if !args.strip_xmp {
-                if let Some(xmp) = extras.xmp() {
-                    config = config.add_segment(0xE1, build_xmp_segment(xmp));
-                }
+            if !args.strip_xmp
+                && let Some(xmp) = extras.xmp()
+            {
+                config = config.add_segment(0xE1, build_xmp_segment(xmp));
             }
         } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
             // Selective stripping — use filtered segments API (preserves gain maps)

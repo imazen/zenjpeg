@@ -62,7 +62,7 @@ fn get_cjpegli_version(cjpegli_path: &str) -> String {
         .to_string()
 }
 
-fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let img = zenjpeg_bench_utils::load_png(path).ok()?;
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((bytes, img.width() as u32, img.height() as u32))
@@ -286,7 +286,7 @@ fn main() {
         eprint!("[{}/{}] {} ... ", idx + 1, png_files.len(), name);
         std::io::stderr().flush().unwrap();
 
-        let Some((orig_rgb, width, height)) = load_png_rgb(png_path) else {
+        let Some((orig_rgb, width, height)) = load_png(png_path) else {
             eprintln!("SKIP (failed to load)");
             continue;
         };

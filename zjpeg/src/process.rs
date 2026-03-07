@@ -419,38 +419,37 @@ fn run_lossy(
             .context("expected f32 decode output")?;
 
         // Apply source crop from layout
-        if let Some(ref lr) = layout_result {
-            if let Some(ref crop_rect) = lr.source_crop {
-                pixels_f32 = crop_f32_pixels(
-                    &pixels_f32,
-                    width as usize,
-                    crop_rect.x as usize,
-                    crop_rect.y as usize,
-                    crop_rect.w as usize,
-                    crop_rect.h as usize,
-                );
-                width = crop_rect.w;
-                height = crop_rect.h;
-            }
+        if let Some(ref lr) = layout_result
+            && let Some(ref crop_rect) = lr.source_crop
+        {
+            pixels_f32 = crop_f32_pixels(
+                &pixels_f32,
+                width as usize,
+                crop_rect.x as usize,
+                crop_rect.y as usize,
+                crop_rect.w as usize,
+                crop_rect.h as usize,
+            );
+            width = crop_rect.w;
+            height = crop_rect.h;
         }
 
         // Resize
-        if let Some(ref lr) = layout_result {
-            if lr.needs_resize {
-                pixels_f32 =
-                    resize_f32(&pixels_f32, width, height, lr.target_w, lr.target_h, args)?;
-                width = lr.target_w;
-                height = lr.target_h;
-            }
+        if let Some(ref lr) = layout_result
+            && lr.needs_resize
+        {
+            pixels_f32 = resize_f32(&pixels_f32, width, height, lr.target_w, lr.target_h, args)?;
+            width = lr.target_w;
+            height = lr.target_h;
         }
 
         // Pad
-        if let Some(ref lr) = layout_result {
-            if let Some(ref pad) = lr.padding {
-                pixels_f32 = pad_f32_pixels(&pixels_f32, width as usize, height as usize, pad);
-                width = width + pad.left + pad.right;
-                height = height + pad.top + pad.bottom;
-            }
+        if let Some(ref lr) = layout_result
+            && let Some(ref pad) = lr.padding
+        {
+            pixels_f32 = pad_f32_pixels(&pixels_f32, width as usize, height as usize, pad);
+            width = width + pad.left + pad.right;
+            height = height + pad.top + pad.bottom;
         }
 
         if need_deblock {
@@ -477,37 +476,37 @@ fn run_lossy(
             .to_vec();
 
         // Apply source crop from layout
-        if let Some(ref lr) = layout_result {
-            if let Some(ref crop_rect) = lr.source_crop {
-                pixels_u8 = crop_u8_pixels(
-                    &pixels_u8,
-                    width as usize,
-                    crop_rect.x as usize,
-                    crop_rect.y as usize,
-                    crop_rect.w as usize,
-                    crop_rect.h as usize,
-                );
-                width = crop_rect.w;
-                height = crop_rect.h;
-            }
+        if let Some(ref lr) = layout_result
+            && let Some(ref crop_rect) = lr.source_crop
+        {
+            pixels_u8 = crop_u8_pixels(
+                &pixels_u8,
+                width as usize,
+                crop_rect.x as usize,
+                crop_rect.y as usize,
+                crop_rect.w as usize,
+                crop_rect.h as usize,
+            );
+            width = crop_rect.w;
+            height = crop_rect.h;
         }
 
         // Resize
-        if let Some(ref lr) = layout_result {
-            if lr.needs_resize {
-                pixels_u8 = resize_u8(&pixels_u8, width, height, lr.target_w, lr.target_h, args)?;
-                width = lr.target_w;
-                height = lr.target_h;
-            }
+        if let Some(ref lr) = layout_result
+            && lr.needs_resize
+        {
+            pixels_u8 = resize_u8(&pixels_u8, width, height, lr.target_w, lr.target_h, args)?;
+            width = lr.target_w;
+            height = lr.target_h;
         }
 
         // Pad
-        if let Some(ref lr) = layout_result {
-            if let Some(ref pad) = lr.padding {
-                pixels_u8 = pad_u8_pixels(&pixels_u8, width as usize, height as usize, pad);
-                width = width + pad.left + pad.right;
-                height = height + pad.top + pad.bottom;
-            }
+        if let Some(ref lr) = layout_result
+            && let Some(ref pad) = lr.padding
+        {
+            pixels_u8 = pad_u8_pixels(&pixels_u8, width as usize, height as usize, pad);
+            width = width + pad.left + pad.right;
+            height = height + pad.top + pad.bottom;
         }
 
         let config = build_encoder_config(args, quality, subsampling, &extras);
@@ -877,15 +876,11 @@ fn determine_encode_params(
     // Per-preset quality offset: compensate for R-D efficiency differences.
     // The calibration grids were built with auto_optimize (hybrid-prog).
     let preset_offset = preset_quality_offset(args.preset);
-    if preset_offset >= 5.0 {
-        if let Some(preset) = args.preset {
-            let name = preset.to_possible_value().map(|v| v.get_name().to_string());
-            if let Some(name) = name {
-                eprintln!(
-                    "info: preset '{name}' needs +{preset_offset:.0} Q for equivalent quality"
-                );
-            }
-        }
+    if preset_offset >= 5.0
+        && let Some(preset) = args.preset
+        && let Some(name) = preset.to_possible_value().map(|v| v.get_name().to_string())
+    {
+        eprintln!("info: preset '{name}' needs +{preset_offset:.0} Q for equivalent quality");
     }
 
     let reencode_result = if use_absolute {
@@ -1179,20 +1174,21 @@ fn build_encoder_config(
         if args.strip_all {
             // Strip everything
         } else if args.strip_gainmaps {
-            if !args.strip_icc && !strip_icc_for_apply {
-                if let Some(icc) = extras.icc_profile() {
-                    config = config.add_segment(0xE2, build_icc_segment(icc));
-                }
+            if !args.strip_icc
+                && !strip_icc_for_apply
+                && let Some(icc) = extras.icc_profile()
+            {
+                config = config.add_segment(0xE2, build_icc_segment(icc));
             }
-            if !args.strip_exif {
-                if let Some(exif) = extras.exif() {
-                    config = config.add_segment(0xE1, build_exif_segment(exif));
-                }
+            if !args.strip_exif
+                && let Some(exif) = extras.exif()
+            {
+                config = config.add_segment(0xE1, build_exif_segment(exif));
             }
-            if !args.strip_xmp {
-                if let Some(xmp) = extras.xmp() {
-                    config = config.add_segment(0xE1, build_xmp_segment(xmp));
-                }
+            if !args.strip_xmp
+                && let Some(xmp) = extras.xmp()
+            {
+                config = config.add_segment(0xE1, build_xmp_segment(xmp));
             }
         } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
             let strip_exif = args.strip_exif;
@@ -1356,12 +1352,12 @@ fn resize_u8(
     dst_h: u32,
     args: &ProcessArgs,
 ) -> Result<Vec<u8>> {
-    use zenresize::{PixelFormat, PixelLayout, ResizeConfig, Resizer};
+    use zenresize::{PixelDescriptor, ResizeConfig, Resizer};
 
     let filter = args.down_filter.unwrap_or(args.filter).to_zenresize();
     let config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
         .filter(filter)
-        .format(PixelFormat::Srgb8(PixelLayout::Rgb))
+        .format(PixelDescriptor::RGB8_SRGB)
         .sharpen(args.sharpen)
         .linear()
         .build();
@@ -1378,12 +1374,12 @@ fn resize_f32(
     dst_h: u32,
     args: &ProcessArgs,
 ) -> Result<Vec<f32>> {
-    use zenresize::{PixelFormat, PixelLayout, ResizeConfig, Resizer};
+    use zenresize::{PixelDescriptor, ResizeConfig, Resizer};
 
     let filter = args.down_filter.unwrap_or(args.filter).to_zenresize();
     let config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
         .filter(filter)
-        .format(PixelFormat::LinearF32(PixelLayout::Rgb))
+        .format(PixelDescriptor::RGBF32_LINEAR)
         .sharpen(args.sharpen)
         .build();
 

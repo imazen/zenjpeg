@@ -271,7 +271,7 @@ fn validate_images(
     let mut std_bytes = 0usize;
 
     for path in images {
-        let (w, h, pixels) = load_png_rgb(path)?;
+        let (w, h, pixels) = load_png(path)?;
 
         // Optimal (two-pass)
         let (opt_len, _) = encode_optimal(w, h, &pixels, mode, quality)?;
@@ -401,7 +401,7 @@ fn load_image_list(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn load_png_rgb(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+fn load_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
     let img = zenjpeg_bench_utils::load_png(path)
         .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
     let w = img.width() as u32;

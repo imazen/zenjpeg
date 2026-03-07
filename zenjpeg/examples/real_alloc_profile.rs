@@ -5,7 +5,7 @@
 
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-fn load_png_rgb(path: &str) -> Option<(Vec<u8>, u32, u32)> {
+fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let img = zenjpeg_bench_utils::load_png(std::path::Path::new(path)).ok()?;
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((bytes, img.width() as u32, img.height() as u32))
@@ -65,7 +65,7 @@ fn main() {
                     .to_string()
             })
             .unwrap_or_default();
-        if let Some((pixels, width, height)) = load_png_rgb(&path) {
+        if let Some((pixels, width, height)) = load_png(&path) {
             let short_hash = &img_hash[..8];
             eprintln!("=== CLIC {}.. ({}x{}) ===", short_hash, width, height);
             for quality in [75, 90] {

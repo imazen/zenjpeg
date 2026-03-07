@@ -122,12 +122,11 @@ impl OutputConfig {
 
     /// Ensure the parent directory exists.
     pub fn ensure_parent(path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create directory '{}'", parent.display())
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
         }
         Ok(())
     }

@@ -43,7 +43,7 @@ mod bench {
 
     // --- Image loading and preparation ---
 
-    fn load_png_rgb(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
+    fn load_png(path: &Path) -> (Vec<rgb::RGB<u8>>, u32, u32) {
         let img = zenjpeg_bench_utils::load_png(path).expect("Failed to load PNG");
         (img.buf().to_vec(), img.width() as u32, img.height() as u32)
     }
@@ -330,7 +330,7 @@ mod bench {
             let path = entry.path();
             let name = path.file_stem().unwrap().to_string_lossy();
             let short_name = format!("clic_{}", &name[..8]);
-            let (pixels, w, h) = load_png_rgb(&path);
+            let (pixels, w, h) = load_png(&path);
             eprintln!("  {} ({}x{})", short_name, w, h);
             source_images.push((short_name, pixels, w, h));
         }

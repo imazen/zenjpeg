@@ -374,7 +374,7 @@ fn compare_config(
 // Image Loading
 // ============================================================================
 
-fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let img = zenjpeg_bench_utils::load_png(path).ok()?;
     let bytes: Vec<u8> = img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect();
     Some((bytes, img.width() as u32, img.height() as u32))
@@ -579,7 +579,7 @@ fn main() {
     let mut all_results: Vec<(String, u32, u32, BTreeMap<Config, ParityResult>)> = Vec::new();
 
     if let Some(path) = &image_path {
-        match load_png_rgb(Path::new(path)) {
+        match load_png(Path::new(path)) {
             Some((rgb, width, height)) => {
                 println!("Image:   {} ({}x{})", path, width, height);
                 let results = run_comparison_for_size(

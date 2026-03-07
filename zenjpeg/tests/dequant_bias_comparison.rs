@@ -21,7 +21,7 @@ mod comparison {
         codec_corpus::Corpus::new().ok()
     }
 
-    fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
+    fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         let img = zenjpeg_bench_utils::load_png(path).ok()?;
         let width = img.width() as u32;
         let height = img.height() as u32;
@@ -173,7 +173,7 @@ mod comparison {
             );
 
             for img_path in images.iter() {
-                let (rgb, width, height) = match load_png_rgb(img_path) {
+                let (rgb, width, height) = match load_png(img_path) {
                     Some(v) => v,
                     None => continue,
                 };
@@ -268,7 +268,7 @@ mod comparison {
         let frymire = frymire_dir.join("frymire.png");
         assert!(frymire.exists(), "frymire.png not found at {:?}", frymire);
 
-        let (rgb, width, height) = load_png_rgb(&frymire).expect("failed to load frymire.png");
+        let (rgb, width, height) = load_png(&frymire).expect("failed to load frymire.png");
         let w = width as usize;
         let h = height as usize;
 
@@ -367,7 +367,7 @@ mod comparison {
         let mut count = 0usize;
 
         for img_path in images.iter() {
-            let (rgb, width, height) = match load_png_rgb(img_path) {
+            let (rgb, width, height) = match load_png(img_path) {
                 Some(v) => v,
                 None => continue,
             };
