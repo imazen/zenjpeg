@@ -13,12 +13,12 @@
 //! | `EncoderConfig` | [`JpegEncoderConfig`] |
 //! | `EncodeJob<'a>` | [`JpegEncodeJob`] |
 //! | `Encoder` | [`JpegEncoder`] |
-//! | `FrameEncoder` | `()` (JPEG has no animation) |
+//! | `FullFrameEncoder` | `()` (JPEG has no animation) |
 //! | `DecoderConfig` | [`JpegDecoderConfig`] |
 //! | `DecodeJob<'a>` | [`JpegDecodeJob`] |
 //! | `Decode` | [`JpegDecoder`] |
 //! | `StreamingDecode` | [`JpegStreamingDecoder`] |
-//! | `FrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
+//! | `FullFrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
 
 extern crate alloc;
 use alloc::borrow::Cow;
@@ -251,7 +251,7 @@ pub struct JpegEncodeJob<'a> {
 impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
     type Error = Error;
     type Enc = JpegEncoder<'a>;
-    type FrameEnc = ();
+    type FullFrameEnc = ();
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
@@ -284,7 +284,7 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         })
     }
 
-    fn frame_encoder(self) -> Result<Self::FrameEnc, Self::Error> {
+    fn full_frame_encoder(self) -> Result<Self::FullFrameEnc, Self::Error> {
         Err(UnsupportedOperation::AnimationEncode.into())
     }
 }
@@ -691,7 +691,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
     type Dec = JpegDecoder<'a>;
     type StreamDec = JpegStreamingDecoder<'a>;
-    type FrameDec = Unsupported<Error>;
+    type FullFrameDec = Unsupported<Error>;
 
     fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
@@ -842,11 +842,11 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         }
     }
 
-    fn frame_decoder(
+    fn full_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<Self::FrameDec, Self::Error> {
+    ) -> Result<Self::FullFrameDec, Self::Error> {
         Err(UnsupportedOperation::AnimationDecode.into())
     }
 }
@@ -1872,19 +1872,19 @@ mod tests {
     }
 
     #[test]
-    fn frame_encoder_returns_unsupported() {
+    fn full_frame_encoder_returns_unsupported() {
         let config = JpegEncoderConfig::new();
-        let result = config.job().frame_encoder();
+        let result = config.job().full_frame_encoder();
         assert!(result.is_err());
     }
 
     #[cfg(feature = "decoder")]
     #[test]
-    fn frame_decoder_returns_unsupported() {
+    fn full_frame_decoder_returns_unsupported() {
         use zc::decode::{DecodeJob as _, DecoderConfig as _};
 
         let dec = JpegDecoderConfig::new();
-        let result = dec.job().frame_decoder(Cow::Borrowed(&[]), &[]);
+        let result = dec.job().full_frame_decoder(Cow::Borrowed(&[]), &[]);
         assert!(result.is_err());
     }
 }
