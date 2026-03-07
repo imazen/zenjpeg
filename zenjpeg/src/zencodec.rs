@@ -25,7 +25,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
-use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo, push_decoder_via_full_decode};
+use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
 use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits, Unsupported, UnsupportedOperation};
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
@@ -798,9 +798,17 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         sink: &mut dyn zc::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
-        push_decoder_via_full_decode(self, data, sink, preferred, |e| {
-            Error::io_error(e.to_string())
-        })
+        #[cfg(feature = "decoder")]
+        {
+            push_decoder_native(self, data, sink, preferred)
+        }
+        #[cfg(not(feature = "decoder"))]
+        {
+            let _ = (data, sink, preferred);
+            Err(Error::unsupported_feature(
+                "decoder feature required for push_decoder",
+            ))
+        }
     }
 
     fn streaming_decoder(
@@ -872,6 +880,177 @@ impl JpegDecodeJob<'_> {
             })?;
         Ok(())
     }
+}
+
+/// Native streaming push_decoder using ScanlineReader.
+///
+/// Decodes MCU rows on the fly and pushes them into the sink, avoiding the
+/// full-image allocation that `push_decoder_via_full_decode` requires.
+/// Peak memory is reduced from full image size to one MCU-row strip
+/// (typically 8 or 16 rows × width × bytes-per-pixel).
+#[cfg(feature = "decoder")]
+fn push_decoder_native<'a>(
+    job: JpegDecodeJob<'a>,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zc::decode::DecodeRowSink,
+    preferred: &[PixelDescriptor],
+) -> Result<OutputInfo, Error> {
+    use imgref::ImgRefMut;
+    use zenpixels::{ChannelLayout, ChannelType};
+
+    let wrap = |e: zc::decode::SinkError| Error::io_error(e.to_string());
+
+    // ScanlineReader borrows data with lifetime 'a.
+    let data_ref: &'a [u8] = match data {
+        Cow::Borrowed(slice) => slice,
+        Cow::Owned(_) => {
+            return Err(Error::unsupported_feature(
+                "push_decoder requires borrowed data (use Cow::Borrowed)",
+            ));
+        }
+    };
+    job.check_input_size(data_ref)?;
+
+    // Build decode config with limits, crop, orientation, policy
+    let cfg = build_decode_config(
+        &job.config.inner,
+        &job.limits,
+        job.crop_hint,
+        job.orientation,
+        job.policy.as_ref(),
+    );
+
+    // Probe header for component count (needed for descriptor selection)
+    let header = job.config.inner.read_info(data_ref)?;
+
+    // Create the streaming scanline reader
+    let mut reader = cfg.scanline_reader(data_ref)?;
+
+    let width = reader.width() as usize;
+    let height = reader.height() as usize;
+    let mut descriptor = select_decode_descriptor(preferred, header.num_components);
+    let mcu_height = reader.luma_rows_per_mcu();
+
+    let ch_type = descriptor.channel_type();
+    let ch_layout = descriptor.layout();
+
+    // read_rows_rgba_f32 always outputs 4 channels, so if caller requested
+    // RGBF32 we must upgrade to RGBAF32 to match the actual output layout.
+    if ch_type == ChannelType::F32 && ch_layout == ChannelLayout::Rgb {
+        descriptor = PixelDescriptor::RGBAF32_LINEAR;
+    }
+
+    let bpp = descriptor.bytes_per_pixel();
+    let row_bytes = width * bpp;
+
+    // Tell the sink what's coming
+    sink.begin(width as u32, height as u32, descriptor)
+        .map_err(wrap)?;
+
+    // Allocate a temp buffer for one MCU-row strip
+    let strip_bytes = row_bytes * mcu_height;
+    let mut strip_buf: Vec<u8> = Vec::new();
+    strip_buf
+        .try_reserve(strip_bytes)
+        .map_err(|_| Error::allocation_failed(strip_bytes, "push_decoder strip buffer"))?;
+    strip_buf.resize(strip_bytes, 0);
+
+    let mut y = 0u32;
+
+    while !reader.is_finished() {
+        // Decode the next batch of rows into our strip buffer
+        let remaining = height - y as usize;
+        let batch_max = remaining.min(mcu_height);
+
+        let count = match (ch_type, ch_layout) {
+            (ChannelType::U8, ChannelLayout::Gray) => {
+                let out = ImgRefMut::new(
+                    &mut strip_buf[..row_bytes * batch_max],
+                    row_bytes,
+                    batch_max,
+                );
+                reader.read_rows_gray8(out)?
+            }
+            (ChannelType::U8, ChannelLayout::Rgb) => {
+                let out = ImgRefMut::new(
+                    &mut strip_buf[..row_bytes * batch_max],
+                    row_bytes,
+                    batch_max,
+                );
+                reader.read_rows_rgb8(out)?
+            }
+            (ChannelType::U8, ChannelLayout::Rgba) => {
+                let out = ImgRefMut::new(
+                    &mut strip_buf[..row_bytes * batch_max],
+                    row_bytes,
+                    batch_max,
+                );
+                if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    reader.read_rows_rgbx8(out)?
+                } else {
+                    reader.read_rows_rgba8(out)?
+                }
+            }
+            (ChannelType::U8, ChannelLayout::Bgra) => {
+                let out = ImgRefMut::new(
+                    &mut strip_buf[..row_bytes * batch_max],
+                    row_bytes,
+                    batch_max,
+                );
+                if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
+                    reader.read_rows_bgrx8(out)?
+                } else {
+                    reader.read_rows_bgra8(out)?
+                }
+            }
+            (ChannelType::F32, ChannelLayout::Gray) => {
+                let float_slice: &mut [f32] =
+                    bytemuck::cast_slice_mut(&mut strip_buf[..row_bytes * batch_max]);
+                let f_out = ImgRefMut::new(float_slice, width, batch_max);
+                reader.read_rows_gray_f32(f_out)?
+            }
+            (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
+                // read_rows_rgba_f32 always writes 4 f32 channels; descriptor
+                // was already upgraded to RGBAF32 above, so row_bytes matches.
+                let float_slice: &mut [f32] =
+                    bytemuck::cast_slice_mut(&mut strip_buf[..row_bytes * batch_max]);
+                let f_out = ImgRefMut::new(float_slice, width * 4, batch_max);
+                reader.read_rows_rgba_f32(f_out)?
+            }
+            _ => {
+                return Err(Error::unsupported_feature(
+                    "unsupported pixel format for push_decoder",
+                ));
+            }
+        };
+
+        if count == 0 {
+            break;
+        }
+
+        // Get a buffer from the sink for these rows
+        let mut dst = sink
+            .provide_next_buffer(y, count as u32, width as u32, descriptor)
+            .map_err(wrap)?;
+
+        // Copy decoded rows into the sink's buffer
+        for row in 0..count as u32 {
+            let src_start = row as usize * row_bytes;
+            let src_row = &strip_buf[src_start..src_start + row_bytes];
+            dst.row_mut(row).copy_from_slice(src_row);
+        }
+        drop(dst);
+
+        y += count as u32;
+    }
+
+    sink.finish().map_err(wrap)?;
+
+    Ok(OutputInfo::full_decode(
+        width as u32,
+        height as u32,
+        descriptor,
+    ))
 }
 
 /// Whether the given orientation hint means we should auto-orient during decode.
