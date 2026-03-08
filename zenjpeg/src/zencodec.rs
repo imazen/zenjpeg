@@ -187,6 +187,62 @@ static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::GRAYF32_LINEAR,
 ];
 
+/// Map generic quality (libjpeg-turbo scale) to jpegli native quality.
+///
+/// Calibrated on CID22-512 corpus (209 images) to produce the same median
+/// SSIMULACRA2 as libjpeg-turbo at each quality level.
+fn calibrated_jpeg_quality(generic_q: f32) -> f32 {
+    // generic_quality → jpegli native quality
+    const TABLE: &[(f32, f32)] = &[
+        (5.0, 5.0),
+        (10.0, 5.0),
+        (15.0, 5.9),
+        (20.0, 11.8),
+        (25.0, 16.3),
+        (30.0, 20.2),
+        (35.0, 24.3),
+        (40.0, 28.8),
+        (45.0, 36.5),
+        (50.0, 43.8),
+        (55.0, 49.7),
+        (60.0, 54.7),
+        (65.0, 60.5),
+        (70.0, 65.8),
+        (72.0, 69.1),
+        (75.0, 72.6),
+        (78.0, 76.0),
+        (80.0, 77.6),
+        (82.0, 80.3),
+        (85.0, 84.1),
+        (87.0, 86.0),
+        (90.0, 89.6),
+        (92.0, 91.5),
+        (95.0, 95.1),
+        (97.0, 98.0),
+        (99.0, 99.0),
+    ];
+    interp_quality(TABLE, generic_q)
+}
+
+/// Piecewise linear interpolation with clamping at table bounds.
+fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
+    if x <= table[0].0 {
+        return table[0].1;
+    }
+    if x >= table[table.len() - 1].0 {
+        return table[table.len() - 1].1;
+    }
+    for i in 1..table.len() {
+        if x <= table[i].0 {
+            let (x0, y0) = table[i - 1];
+            let (x1, y1) = table[i];
+            let t = (x - x0) / (x1 - x0);
+            return y0 + t * (y1 - y0);
+        }
+    }
+    table[table.len() - 1].1
+}
+
 impl zc::encode::EncoderConfig for JpegEncoderConfig {
     type Error = Error;
     type Job<'a> = JpegEncodeJob<'a>;
@@ -204,7 +260,7 @@ impl zc::encode::EncoderConfig for JpegEncoderConfig {
     }
 
     fn with_generic_quality(mut self, quality: f32) -> Self {
-        let q = quality.clamp(0.0, 100.0);
+        let q = calibrated_jpeg_quality(quality.clamp(0.0, 100.0));
         self.quality = q;
         self.inner = self.inner.quality(Quality::ApproxJpegli(q));
         self
