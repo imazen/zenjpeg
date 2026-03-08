@@ -1912,6 +1912,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_dyn_encoder() {
+        use zc::encode::DynEncoder as _;
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
                 r: 100,
@@ -1921,7 +1922,10 @@ mod tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        let config = JpegEncoderConfig::new().with_calibrated_quality(80.0);
+        // Use a leaked Box so the config is 'static (dyn_encoder requires 'static Enc)
+        let config: &'static JpegEncoderConfig = Box::leak(Box::new(
+            JpegEncoderConfig::new().with_calibrated_quality(80.0),
+        ));
         let dyn_enc = config.job().dyn_encoder().unwrap();
         let output = dyn_enc
             .encode(zenpixels::PixelSlice::from(img.as_ref()).into())
@@ -2076,5 +2080,45 @@ mod tests {
         let dec = JpegDecoderConfig::new();
         let result = dec.job().full_frame_decoder(Cow::Borrowed(&[]), &[]);
         assert!(result.is_err());
+    }
+
+    /// Regression test: passing the full `supported_descriptors()` list (which
+    /// includes f32 types like RGBF32_LINEAR) to `decoder()` must not panic.
+    ///
+    /// Previously, the f32-to-u8 conversion used `bytemuck::cast_vec::<f32, u8>()`
+    /// which requires identical alignment (f32=4, u8=1 — always panics with
+    /// AlignmentMismatch).
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn decode_with_full_descriptor_list_no_alignment_panic() {
+        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+
+        // Encode a small RGB image
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 200,
+                g: 100,
+                b: 50,
+            };
+            64
+        ];
+        let img = Img::new(pixels.as_slice(), 8, 8);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+
+        // Use the full supported descriptor list (includes f32 types)
+        let dec = JpegDecoderConfig::new();
+        let preferred = JpegDecoderConfig::supported_descriptors();
+
+        // This must not panic — previously hit bytemuck AlignmentMismatch
+        let output = dec
+            .job()
+            .decoder(Cow::Borrowed(encoded.data()), preferred)
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        assert_eq!(output.info().width, 8);
+        assert_eq!(output.info().height, 8);
     }
 }
