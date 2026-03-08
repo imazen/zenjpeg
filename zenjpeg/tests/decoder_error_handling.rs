@@ -629,6 +629,76 @@ fn test_invalid_sos_se_64() {
 }
 
 // ============================================================================
+// SOS Ss > Se validation
+// ============================================================================
+
+/// Regression test: SOS with Ss > Se should be rejected.
+/// This is invalid per JPEG spec (spectral start must be <= spectral end).
+#[test]
+fn test_invalid_sos_ss_greater_than_se() {
+    let mut compressed = COMPRESSED_0.to_vec();
+    // Set Ss=10, Se=5 (invalid: start > end)
+    compressed[SOS_OFFSET + 7] = 10; // Ss
+    compressed[SOS_OFFSET + 8] = 5; // Se
+    assert!(
+        !parse_compressed(&compressed),
+        "Should reject SOS with Ss > Se"
+    );
+}
+
+/// Regression test: SOS with Ss == Se should be accepted (single coefficient scan).
+#[test]
+fn test_valid_sos_ss_equals_se() {
+    // Ss==Se is valid for progressive scans (single coefficient).
+    // For baseline this doesn't matter since Ss=0, Se=63 is required,
+    // but the parser shouldn't reject it at the SOS level.
+    // This tests the boundary: Ss=0, Se=0 (DC-only scan in progressive).
+    let mut compressed = COMPRESSED_0.to_vec();
+    compressed[SOS_OFFSET + 7] = 0; // Ss
+    compressed[SOS_OFFSET + 8] = 0; // Se
+    // This may or may not decode successfully (depends on baseline mode
+    // rejecting non-standard Ss/Se), but it should NOT crash.
+    let _ = parse_compressed(&compressed);
+}
+
+/// Regression test: SOS with Ah > 13 should be rejected.
+/// Valid range is 0-13 per JPEG spec (successive approximation bit position).
+#[test]
+fn test_invalid_sos_ah_out_of_range() {
+    let mut compressed = COMPRESSED_0.to_vec();
+    // Ah=14, Al=0 → ah_al = 0xE0
+    compressed[SOS_OFFSET + 9] = 0xE0;
+    assert!(
+        !parse_compressed(&compressed),
+        "Should reject SOS with Ah=14 (out of range 0-13)"
+    );
+}
+
+/// Regression test: SOS with Al > 13 should be rejected.
+#[test]
+fn test_invalid_sos_al_out_of_range() {
+    let mut compressed = COMPRESSED_0.to_vec();
+    // Ah=0, Al=14 → ah_al = 0x0E
+    compressed[SOS_OFFSET + 9] = 0x0E;
+    assert!(
+        !parse_compressed(&compressed),
+        "Should reject SOS with Al=14 (out of range 0-13)"
+    );
+}
+
+/// Regression test: SOS with Ah=15, Al=15 (both max invalid).
+#[test]
+fn test_invalid_sos_ah_al_both_out_of_range() {
+    let mut compressed = COMPRESSED_0.to_vec();
+    // Ah=15, Al=15 → ah_al = 0xFF
+    compressed[SOS_OFFSET + 9] = 0xFF;
+    assert!(
+        !parse_compressed(&compressed),
+        "Should reject SOS with Ah=15, Al=15"
+    );
+}
+
+// ============================================================================
 // MutateSingleBytes Test
 // ============================================================================
 

@@ -87,7 +87,7 @@ impl<'a> JpegParser<'a> {
         let ah = ah_al >> 4;
         let al = ah_al & 0x0F;
 
-        // Validate spectral selection (must be 0-63)
+        // Validate spectral selection (must be 0-63, and Ss <= Se)
         if ss > 63 {
             return Err(Error::invalid_jpeg_data(
                 "SOS Ss (spectral start) out of range",
@@ -96,6 +96,23 @@ impl<'a> JpegParser<'a> {
         if se > 63 {
             return Err(Error::invalid_jpeg_data(
                 "SOS Se (spectral end) out of range",
+            ));
+        }
+        if ss > se {
+            return Err(Error::invalid_jpeg_data(
+                "SOS Ss (spectral start) exceeds Se (spectral end)",
+            ));
+        }
+
+        // Validate successive approximation (Ah and Al must be 0-13)
+        if ah > 13 {
+            return Err(Error::invalid_jpeg_data(
+                "SOS Ah (successive approximation high) out of range (max 13)",
+            ));
+        }
+        if al > 13 {
+            return Err(Error::invalid_jpeg_data(
+                "SOS Al (successive approximation low) out of range (max 13)",
             ));
         }
 
