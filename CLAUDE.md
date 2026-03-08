@@ -811,9 +811,11 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-1. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
-   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`encode/trellis/ac.rs:52`)
-   - `trellis_num_loops`: Stored but never read — single-pass only
+1. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - Measured via parameter sensitivity test:
+   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`encode/trellis/ac.rs:52`).
+     **Now documented** in TrellisConfig and HybridConfig doc comments.
+   - `trellis_num_loops`: Stored but never read — single-pass only.
+     **Now documented** in both config structs.
    - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
    - EOB optimization: deleted (was broken, destroyed quality). See commit history.
    - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
@@ -868,6 +870,13 @@ sensitivity tables, and preset baselines.
      certain quant table configurations. The quant values at pathological Q levels may cause
      the trellis to make catastrophic coefficient choices for chroma blocks.
    - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
+
+7. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)** - `test_frymire_hashes_locked`
+   fails on `baseline_xyb_opt Q50`: expected 292993 bytes, actual 293121 bytes (+128 bytes).
+   Pre-existing failure, not caused by code review changes. Likely a locked hash that needs
+   updating after a previous encoder change.
+   - Impact: `cargo test --release -p zenjpeg --test frymire_hash_locked` fails
+   - Workaround: Skip or update locked hashes
 
 ### Fixed Bugs (historical reference)
 
@@ -997,9 +1006,8 @@ trellis only). CMA-ES scaling modifies quant table generation and is described a
   - **Duplicate component in SOS**: not checked. libjpeg-turbo rejects duplicate component
     IDs within a single scan. A duplicate could cause the same coefficient buffer to be
     written twice, producing garbage. (`scan.rs:parse_scan`)
-  - **Ah/Al range validation**: successive approximation values not bounds-checked (valid
-    range 0-13). Out-of-range values could cause shift overflow in progressive/arithmetic
-    refinement. (`scan.rs:parse_scan`)
+  - ~~**Ah/Al range validation**~~: FIXED (commit d12d699). Now rejects Ah/Al > 13.
+    Also added Ss > Se validation. 5 regression tests in `decoder_error_handling.rs`.
   - **Extraneous inter-marker bytes**: silently skipped with no count or warning. Should
     at least count discarded bytes and emit a warning in Balanced mode, error in Strict.
     (`mod.rs:read_marker`)
