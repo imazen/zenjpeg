@@ -53,7 +53,7 @@ Renamed from `zenjpeg` with Quick Start documentation.
 
 - **`archmage-simd` feature is now enabled by default** for improved performance
   - Provides ~6% faster encoding on x86_64 via token-based safe SIMD intrinsics
-  - Can be disabled with `default-features = false` if the extra compile time is unwanted
+  - *Note: As of v0.6+, archmage is a mandatory dependency and this feature flag is a no-op*
 
 ### Removed
 
@@ -157,7 +157,7 @@ Renamed from `zenjpeg` with Quick Start documentation.
   - Alternative to `unsafe_simd` using the archmage crate
   - Provides AVX2+FMA intrinsics with compile-time capability tokens
   - New SIMD functions for DCT, color conversion, and AQ computation
-  - Work in progress - not all functions are wired into the pipeline yet
+  - *Note: As of v0.6+, archmage is a mandatory dependency and this feature flag is a no-op*
 
 - **New encoder methods**
   - `.force_baseline()` - Convenience method for maximum compatibility (SOF0)

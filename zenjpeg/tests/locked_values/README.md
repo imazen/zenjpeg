@@ -20,8 +20,8 @@ This folder contains locked reference values for encoder output verification.
 
 The encoder produces slightly different output depending on SIMD implementation:
 
-- **archmage** (`#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]`): Uses token-based intrinsics
-- **wide** (default fallback): Uses `wide` crate for portable SIMD
+- **archmage** (`#[cfg(target_arch = "x86_64")]`): Uses token-based intrinsics (mandatory on x86_64)
+- **wide** (`#[cfg(not(target_arch = "x86_64"))]`): Uses `wide` crate for portable SIMD
 
 Most entries are identical, but Q90 configurations may differ due to floating-point rounding in DCT.
 

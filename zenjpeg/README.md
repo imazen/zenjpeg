@@ -1095,7 +1095,7 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 |---------|---------|-------------|-------------|
 | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
 | `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
-| `archmage-simd` | ✅ Yes | Safe SIMD via archmage (~10-20% faster) | Keep enabled for best performance |
+| `archmage-simd` | N/A | Legacy no-op (archmage is now mandatory) | No effect; kept for backwards compatibility |
 | `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, wide-gamut images |
 | `cms-moxcms` | ❌ No | Pure Rust color management | `no_std` or avoid C dependencies |
 | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
@@ -1103,7 +1103,7 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 | `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |
 | `yuv` | ✅ Yes | SharpYUV chroma downsampling | Keep enabled for quality |
 
-By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe `wide` crate, with `archmage-simd` (default) adding token-based intrinsics for ~10-20% speedup.
+By default, the crate uses `#![forbid(unsafe_code)]`. Portable SIMD is provided via the `wide` crate, with token-based archmage intrinsics automatically enabled on x86_64/aarch64 for ~10-20% speedup. The `archmage-simd` feature flag is a legacy no-op kept for backwards compatibility — archmage is now a mandatory dependency.
 
 ### Common Configurations
 
