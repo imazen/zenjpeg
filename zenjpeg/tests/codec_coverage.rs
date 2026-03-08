@@ -914,7 +914,6 @@ mod encoder_error_coverage {
         let err2 = Error::invalid_dimensions(0, 0, "zero dimensions");
         assert_eq!(err1, err2);
     }
-
 }
 
 mod decoder_error_coverage {
@@ -953,5 +952,4 @@ mod decoder_error_coverage {
         let err2 = Error::invalid_jpeg_data("truncated");
         assert_eq!(err1, err2);
     }
-
 }

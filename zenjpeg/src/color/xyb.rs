@@ -1509,7 +1509,10 @@ mod tests {
         // t*numerator underflows below f32 min subnormal, yielding 0/0
         // in the second iteration. This guards against that regression.
         let result = cbrtf_fast(0.0);
-        assert!(result.is_finite(), "cbrtf_fast(0.0) = {result} (expected finite)");
+        assert!(
+            result.is_finite(),
+            "cbrtf_fast(0.0) = {result} (expected finite)"
+        );
         assert_eq!(result, 0.0, "cbrtf_fast(0.0) must be exactly 0.0");
     }
 
