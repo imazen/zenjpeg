@@ -1269,8 +1269,10 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                         // f32 RGB: 3 floats per pixel, reinterpret as Rgb<f32>
                         let pixel_count = (w as usize) * (h as usize);
                         if pixels_f32.len() == pixel_count * 3 {
-                            // Zero-copy: Vec<f32> → Vec<Rgb<f32>> via bytemuck
-                            let raw_bytes = bytemuck::cast_vec::<f32, u8>(pixels_f32);
+                            // Reinterpret f32 slice as u8 slice, then copy.
+                            // cast_slice requires target alignment (1) divides source (4) — always true.
+                            // cast_vec would require equal alignment (4 != 1) — always panics.
+                            let raw_bytes = bytemuck::cast_slice::<f32, u8>(&pixels_f32).to_vec();
                             PixelBuffer::from_vec(raw_bytes, w, h, PixelDescriptor::RGBF32_LINEAR)
                                 .map_err(|_| Error::internal("pixel buffer creation failed"))?
                                 .into()
