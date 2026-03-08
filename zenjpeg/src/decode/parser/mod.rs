@@ -30,7 +30,7 @@ struct ScanInfo {
 }
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, ErrorKind, Result};
-use crate::foundation::alloc::checked_size_2d;
+use crate::foundation::alloc::{MAX_SCANS, checked_size_2d};
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DAC, MARKER_DHT, MARKER_DNL, MARKER_DQT,
     MARKER_DRI, MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES,
@@ -566,6 +566,12 @@ impl<'a> JpegParser<'a> {
                     match self.parse_scan(stop) {
                         Ok(()) => {
                             scans_decoded += 1;
+                            if scans_decoded >= MAX_SCANS as u32 {
+                                return Err(Error::too_many_scans(
+                                    scans_decoded as usize,
+                                    MAX_SCANS,
+                                ));
+                            }
                         }
                         Err(e) => {
                             // In Balanced/Lenient mode, truncation during a scan

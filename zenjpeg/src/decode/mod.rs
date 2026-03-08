@@ -2214,4 +2214,82 @@ mod limits_tests {
         // let _ = config.max_pixels;
         // let _ = config.max_memory;
     }
+
+    #[test]
+    fn test_max_scans_enforced() {
+        use crate::encode::{EncoderConfig, PixelLayout};
+        use crate::error::ErrorKind;
+        use crate::foundation::alloc::MAX_SCANS;
+        use enough::Unstoppable;
+
+        // Encode a tiny 8x8 grayscale progressive JPEG
+        let width = 8u32;
+        let height = 8u32;
+        let input = vec![128u8; (width * height) as usize];
+
+        let config = EncoderConfig::grayscale(50.0).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
+
+        // Find the first SOS marker (0xFF 0xDA) and extract the scan segment
+        // (SOS header + entropy-coded data up to the next marker).
+        let mut first_sos = None;
+        let mut first_scan_end = None;
+        let mut i = 0;
+        while i < jpeg.len() - 1 {
+            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA {
+                if first_sos.is_none() {
+                    first_sos = Some(i);
+                    // Skip past the SOS marker and scan the entropy data
+                    // to find the next marker (0xFF followed by non-0x00).
+                    let mut j = i + 2;
+                    // Read the SOS segment length
+                    if j + 2 <= jpeg.len() {
+                        let seg_len = ((jpeg[j] as usize) << 8) | (jpeg[j + 1] as usize);
+                        j += seg_len; // Skip past the SOS segment header
+                    }
+                    // Now scan the entropy-coded data
+                    while j < jpeg.len() - 1 {
+                        if jpeg[j] == 0xFF && jpeg[j + 1] != 0x00 {
+                            first_scan_end = Some(j);
+                            break;
+                        }
+                        j += 1;
+                    }
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        let sos_start = first_sos.expect("JPEG should contain an SOS marker");
+        let scan_end = first_scan_end.expect("should find end of first scan");
+        let scan_segment = &jpeg[sos_start..scan_end];
+
+        // Build a malicious JPEG: header + (MAX_SCANS + 1) copies of the scan segment + EOI
+        let header = &jpeg[..sos_start];
+        let num_scans = MAX_SCANS + 1; // 257, exceeding the limit of 256
+
+        let mut malicious = Vec::with_capacity(header.len() + scan_segment.len() * num_scans + 2);
+        malicious.extend_from_slice(header);
+        for _ in 0..num_scans {
+            malicious.extend_from_slice(scan_segment);
+        }
+        malicious.push(0xFF);
+        malicious.push(0xD9); // EOI
+
+        // Attempt to decode — should fail with TooManyScans, not panic
+        let decoder = Decoder::new();
+        let result = decoder.decode(&malicious, Unstoppable);
+        assert!(result.is_err(), "decoding should fail with too many scans");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err.kind(), ErrorKind::TooManyScans { .. }),
+            "expected TooManyScans error, got: {err}",
+        );
+    }
 }
