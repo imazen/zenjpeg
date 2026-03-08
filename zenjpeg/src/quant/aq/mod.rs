@@ -191,26 +191,43 @@ impl AQStrengthMap {
         let variance = self
             .strengths
             .iter()
-            .map(|&x| (x - mean).powi(2))
+            .map(|&x| {
+                let d = x - mean;
+                d * d
+            })
             .sum::<f32>()
             / self.strengths.len() as f32;
         variance.sqrt()
     }
 
     /// Returns (min, max, mean, std) statistics for the AQ map.
+    ///
+    /// Computes all statistics in a single pass over the data.
     #[must_use]
     pub fn stats(&self) -> (f32, f32, f32, f32) {
         if self.strengths.is_empty() {
             return (0.0, 0.0, 0.0, 0.0);
         }
-        let min = self.strengths.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = self
-            .strengths
-            .iter()
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let mean = self.mean();
-        let std = self.std();
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut sum = 0.0f32;
+        for &x in &self.strengths {
+            if x < min {
+                min = x;
+            }
+            if x > max {
+                max = x;
+            }
+            sum += x;
+        }
+        let n = self.strengths.len() as f32;
+        let mean = sum / n;
+        let mut var_sum = 0.0f32;
+        for &x in &self.strengths {
+            let d = x - mean;
+            var_sum += d * d;
+        }
+        let std = (var_sum / n).sqrt();
         (min, max, mean, std)
     }
 

@@ -45,43 +45,10 @@ impl HuffmanSymbolFrequencies {
     }
 
     /// Generates a `HuffmanTableSet` from the aggregated frequencies.
+    ///
+    /// Uses the default `JpegliCreateTree` algorithm.
     pub fn generate_tables(&self) -> Result<HuffmanTableSet> {
-        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
-
-        let dc_luma = self.dc_luma.generate_table_with_method(huffman_method)?;
-        let ac_luma = self.ac_luma.generate_table_with_method(huffman_method)?;
-
-        let (dc_chroma, ac_chroma) = if self.dc_chroma.is_empty_histogram() {
-            use crate::huffman::optimize::OptimizedTable;
-            use crate::huffman::{
-                STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
-                STD_DC_CHROMINANCE_VALUES,
-            };
-            (
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
-                    bits: STD_DC_CHROMINANCE_BITS,
-                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
-                },
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
-                    bits: STD_AC_CHROMINANCE_BITS,
-                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
-                },
-            )
-        } else {
-            (
-                self.dc_chroma.generate_table_with_method(huffman_method)?,
-                self.ac_chroma.generate_table_with_method(huffman_method)?,
-            )
-        };
-
-        Ok(HuffmanTableSet {
-            dc_luma,
-            ac_luma,
-            dc_chroma,
-            ac_chroma,
-        })
+        self.generate_tables_with_method(crate::types::HuffmanMethod::JpegliCreateTree)
     }
 
     /// Generates a `HuffmanTableSet` using the specified algorithm.

@@ -557,13 +557,12 @@ fn encode_scan_data(
 }
 
 /// Return the Huffman category for a coefficient value.
+///
+/// Delegates to `entropy::category()` which uses a lookup table for the
+/// common range and a scalar fallback for out-of-range values.
+#[inline]
 fn category(val: i16) -> u8 {
-    let abs = val.unsigned_abs();
-    if abs == 0 {
-        0
-    } else {
-        16 - abs.leading_zeros() as u8
-    }
+    crate::entropy::category(val)
 }
 
 // ===== JPEG container writing =====
