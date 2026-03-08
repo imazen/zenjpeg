@@ -247,10 +247,17 @@ pub struct HybridConfig {
     /// Enable DC coefficient trellis optimization
     pub dc_enabled: bool,
 
-    /// Number of trellis optimization loops
+    /// Number of trellis optimization loops.
+    ///
+    /// **Currently unused:** The implementation always performs a single pass.
+    /// Multi-loop trellis (iterating until convergence) is a potential future
+    /// optimization.
     pub num_loops: i32,
 
-    /// Use perceptual lambda weighting table
+    /// Use perceptual lambda weighting table.
+    ///
+    /// **Currently unused:** The implementation always uses flat 1/q² weights.
+    /// Retained for future implementation of perceptual weighting.
     pub use_lambda_weight_tbl: bool,
 
     /// AQ strength exponent for non-linear mapping.

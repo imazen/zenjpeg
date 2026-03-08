@@ -189,7 +189,11 @@ impl<'a> EntropyEncoder<'a> {
         self.encode_block_simd(coeffs, component, dc_table_idx, ac_table_idx)
     }
 
-    /// Scalar implementation of block encoding (kept for reference/testing).
+    /// Scalar reference implementation of block encoding.
+    ///
+    /// Not used in production — the SIMD path (`encode_block_simd_impl`) is
+    /// always used instead. Kept as a readable reference for the encoding
+    /// algorithm and for correctness verification in tests.
     #[allow(dead_code)]
     #[inline]
     fn encode_block_scalar(
