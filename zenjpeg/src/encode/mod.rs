@@ -29,6 +29,9 @@
 //! let jpeg = enc.finish()?;
 //! ```
 
+// Many functions in this module are used conditionally via feature flags
+// (test-utils, trellis, parallel) or from examples/benchmarks. The broad
+// allow prevents noise from conditional compilation.
 #![allow(dead_code)]
 
 // Internal implementation modules (pub for internal crate re-exports)
