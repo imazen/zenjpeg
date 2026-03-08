@@ -165,6 +165,21 @@ pub fn probe(data: &[u8]) -> Result<JpegProbe, ProbeError> {
     })
 }
 
+impl zc::SourceEncodingDetails for JpegProbe {
+    fn source_generic_quality(&self) -> Option<f32> {
+        // Map to generic 0-100 scale. IJG quality is already 0-100.
+        // For other scales, approximate.
+        match self.quality.scale {
+            QualityScale::IjgQuality | QualityScale::MozjpegQuality => Some(self.quality.value),
+            QualityScale::ButteraugliDistance => {
+                // Butteraugli: lower = better. ~1.0 = visually lossless.
+                // Rough mapping: distance 0.0 → q100, 1.0 → q90, 3.0 → q75, 10.0 → q50
+                Some((100.0 - self.quality.value * 5.0).clamp(0.0, 100.0))
+            }
+        }
+    }
+}
+
 /// Detect chroma subsampling from SOF component sampling factors.
 fn detect_subsampling(sof: Option<&scanner::SofInfo>) -> Subsampling {
     let sof = match sof {

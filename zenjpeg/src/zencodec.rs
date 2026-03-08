@@ -780,7 +780,11 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
             // Check input size limits
             self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
-            Ok(to_image_info(&info))
+            let mut image_info = to_image_info(&info);
+            if let Ok(probe) = crate::detect::probe(data) {
+                image_info = image_info.with_source_encoding_details(probe);
+            }
+            Ok(image_info)
         }
         #[cfg(not(feature = "decoder"))]
         {
@@ -1381,6 +1385,9 @@ impl zc::decode::Decode for JpegDecoder<'_> {
             let mut output = DecodeOutput::new(buf, info);
             if let Some(extras) = jpeg_extras {
                 output = output.with_extras(extras);
+            }
+            if let Ok(probe) = crate::detect::probe(&data) {
+                output = output.with_source_encoding_details(probe);
             }
 
             // Check output size limits
