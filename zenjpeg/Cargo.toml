@@ -124,6 +124,9 @@ kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 # UltraHDR integration testing
 ultrahdr-core = { workspace = true }
+# Visual regression testing (diff images, montages, checksum management)
+zensim-regress = "0.1"
+image = "0.25"
 
 [features]
 default = ["std", "yuv", "trellis"]
