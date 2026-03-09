@@ -1185,12 +1185,25 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
 ///
 /// Uses DC-only fast path for single-coefficient blocks, otherwise
 /// uses `idct_int_libjpeg` for bit-exact matching with libjpeg-turbo.
+///
+/// Truncates dequantized coefficients to i16 range before the IDCT to match
+/// libjpeg-turbo's SSE2 `pmullw` behavior, which keeps only the low 16 bits
+/// of the `coeff * quant_value` product. Without this, coefficients that
+/// overflow i16 (|coeff * quant| > 32767) produce different IDCT output.
 pub fn idct_int_tiered_libjpeg(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
     stride: usize,
     coeff_count: u8,
 ) {
+    // Truncate to i16 range to match libjpeg-turbo's pmullw dequantization.
+    // pmullw does i16 * i16 → low 16 bits, so dequantized values that exceed
+    // i16 range wrap. Our dequantization produces full i32 results; truncating
+    // here makes the IDCT input match what libjpeg-turbo's SIMD path sees.
+    for c in coeffs.iter_mut() {
+        *c = *c as i16 as i32;
+    }
+
     if coeff_count <= 1 {
         idct_int_dc_only(coeffs[0], output, stride);
     } else {
@@ -1477,12 +1490,19 @@ pub fn idct_int_tiered_unclamped(
 }
 
 /// Unclamped libjpeg-compatible tiered IDCT dispatch.
+///
+/// Truncates to i16 range to match libjpeg-turbo's `pmullw` dequantization
+/// (see `idct_int_tiered_libjpeg` for details).
 pub fn idct_int_tiered_libjpeg_unclamped(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
     stride: usize,
     coeff_count: u8,
 ) {
+    for c in coeffs.iter_mut() {
+        *c = *c as i16 as i32;
+    }
+
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
@@ -1702,5 +1722,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Verify that `idct_int_tiered_libjpeg` truncates coefficients to i16 range,
+    /// matching libjpeg-turbo's `pmullw` dequantization behavior.
+    ///
+    /// When dequantized coefficients exceed i16 range (|coeff * quant| > 32767),
+    /// libjpeg-turbo's SSE2 path silently wraps via `pmullw` (keeps low 16 bits).
+    /// Our `idct_int_tiered_libjpeg` must do the same truncation.
+    #[test]
+    fn test_libjpeg_idct_i16_truncation() {
+        // Coefficient that overflows i16: 40000 > 32767
+        let mut coeffs_truncated = [0i32; 64];
+        coeffs_truncated[0] = 40000; // DC
+        coeffs_truncated[1] = -35000; // AC[0,1]
+
+        // Run through libjpeg tiered (should truncate to i16 first)
+        let mut output_tiered = [0i16; 64];
+        idct_int_tiered_libjpeg(&mut coeffs_truncated, &mut output_tiered, 8, 2);
+
+        // Manually truncate then run plain libjpeg IDCT
+        let mut coeffs_manual = [0i32; 64];
+        coeffs_manual[0] = 40000_i32 as i16 as i32; // wraps to -25536
+        coeffs_manual[1] = -35000_i32 as i16 as i32; // wraps to 30536
+        let mut output_manual = [0i16; 64];
+        idct_int_libjpeg(&mut coeffs_manual, &mut output_manual, 8);
+
+        assert_eq!(
+            output_tiered, output_manual,
+            "tiered libjpeg IDCT should truncate coefficients to i16 before IDCT"
+        );
+
+        // Also verify that WITHOUT truncation, the output differs
+        // (confirming the truncation actually matters for large coefficients)
+        let mut coeffs_no_trunc = [0i32; 64];
+        coeffs_no_trunc[0] = 40000;
+        coeffs_no_trunc[1] = -35000;
+        let mut output_no_trunc = [0i16; 64];
+        idct_int_libjpeg(&mut coeffs_no_trunc, &mut output_no_trunc, 8);
+
+        // These should differ since 40000 and -35000 overflow i16
+        assert_ne!(
+            output_tiered, output_no_trunc,
+            "truncated and non-truncated should differ for overflowing coefficients"
+        );
     }
 }
