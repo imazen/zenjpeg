@@ -9,6 +9,7 @@
 use alloc::string::String;
 use core::fmt;
 use thiserror::Error;
+use whereat::at;
 use whereat::At;
 
 /// Result type for jpegli operations.
