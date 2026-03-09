@@ -17,7 +17,7 @@ use super::upsample::{
     upsample_h1v2_i16_nearest_strided, upsample_h2v1_i16_fancy_strided,
     upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
     upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
-    upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row, upsample_row_h2_fancy_bilinear,
+    upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row, upsample_row_h2v2_fixup,
 };
 use crate::error::Result;
 use crate::foundation::alloc::try_alloc_maybeuninit;
@@ -595,22 +595,21 @@ impl StripProcessor {
 
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
-                // Re-compute last output row with correct vertical neighbor
+                // Re-compute last output row with correct vertical neighbor.
+                // Uses upsample_row_h2v2_fixup to match the main upsampler's formula.
                 let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.cb_strip[last_chroma_offset..last_chroma_offset + in_width],
                     &self.next_cb_row[..in_width],
                     in_width,
                     cb_out,
-                    false, // is_top_half = false → bottom half
                 );
                 let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.cr_strip[last_chroma_offset..last_chroma_offset + in_width],
                     &self.next_cr_row[..in_width],
                     in_width,
                     cr_out,
-                    false,
                 );
             }
             ChromaUpsampling::LibjpegCompat => {
@@ -711,21 +710,20 @@ impl StripProcessor {
             ChromaUpsampling::Triangle => {
                 // prev_cb_row = last chroma row of previous MCU (the one we're fixing)
                 // cb_strip[0..] = first chroma row of next MCU (just decoded)
+                // Uses upsample_row_h2v2_fixup to match the main upsampler's formula.
                 let cb_out = &mut self.deferred_cb_row[..out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.prev_cb_row[..in_width],
                     &self.cb_strip[..in_width],
                     in_width,
                     cb_out,
-                    false, // bottom half
                 );
                 let cr_out = &mut self.deferred_cr_row[..out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.prev_cr_row[..in_width],
                     &self.cr_strip[..in_width],
                     in_width,
                     cr_out,
-                    false,
                 );
             }
             ChromaUpsampling::LibjpegCompat => {
@@ -856,22 +854,22 @@ impl StripProcessor {
     fn fixup_h2v2_row0(&mut self, in_width: usize, out_width: usize, out_stride: usize) {
         match self.chroma_upsampling {
             ChromaUpsampling::Triangle => {
-                // Re-compute output row 0 with correct vertical neighbor
+                // Re-compute output row 0 with correct vertical neighbor.
+                // Uses upsample_row_h2v2_fixup to match the main upsampler's
+                // formula (separable on AVX2, non-separable on scalar).
                 let cb_out = &mut self.cb_upsampled[..out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.cb_strip[..in_width],
                     &self.prev_cb_row[..in_width],
                     in_width,
                     cb_out,
-                    true, // is_top_half
                 );
                 let cr_out = &mut self.cr_upsampled[..out_width];
-                upsample_row_h2_fancy_bilinear(
+                upsample_row_h2v2_fixup(
                     &self.cr_strip[..in_width],
                     &self.prev_cr_row[..in_width],
                     in_width,
                     cr_out,
-                    true,
                 );
             }
             ChromaUpsampling::LibjpegCompat => {

@@ -1009,6 +1009,67 @@ pub(super) fn upsample_row_h2_fancy_bilinear(
     }
 }
 
+/// Upsample a single chroma row for h2v2 boundary fixup, matching the main
+/// upsampler's formula to avoid systematic ±1 rounding mismatches at MCU boundaries.
+///
+/// On x86_64 with AVX2: uses the separable approach (vertical then horizontal,
+/// each `(3*near + far + 2) >> 2`) matching `upsample_h2v2_i16_fancy_avx2`.
+///
+/// On scalar: uses the non-separable 4-tap formula
+/// `(9*C + 3*H + 3*V + HV + 8) >> 4` matching `upsample_h2v2_i16_fancy_scalar`.
+///
+/// Using different formulas for fixup vs main upsampling creates a systematic
+/// ±1 brightness shift at MCU boundary rows (rows 0 and 15 of each 16-row MCU),
+/// visible as faint horizontal stripes on images with strong chroma content.
+pub(super) fn upsample_row_h2v2_fixup(
+    curr_row: &[i16],
+    v_neighbor_row: &[i16],
+    in_width: usize,
+    output: &mut [i16],
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            upsample_row_h2v2_fixup_avx2(token, curr_row, v_neighbor_row, in_width, output);
+            return;
+        }
+    }
+    // Scalar: non-separable formula matches scalar main upsampler
+    upsample_row_h2_fancy_bilinear(curr_row, v_neighbor_row, in_width, output, false);
+}
+
+/// AVX2 separable fixup: vertical pass into scratch, horizontal pass to output.
+/// Matches the formula used by `upsample_h2v2_i16_fancy_avx2`.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn upsample_row_h2v2_fixup_avx2(
+    token: archmage::X64V3Token,
+    curr_row: &[i16],
+    v_neighbor_row: &[i16],
+    in_width: usize,
+    output: &mut [i16],
+) {
+    let mut scratch_storage = [0i16; MAX_UPSAMPLE_SCRATCH];
+    let scratch = if in_width <= MAX_UPSAMPLE_SCRATCH {
+        &mut scratch_storage[..in_width]
+    } else {
+        // Very wide images: fall back to non-separable scalar
+        upsample_row_h2_fancy_bilinear(curr_row, v_neighbor_row, in_width, output, false);
+        return;
+    };
+
+    // Vertical pass: (3 * curr + v_neighbor + 2) >> 2
+    upsample_vertical_row_strided_avx2(
+        token,
+        &curr_row[..in_width],
+        &v_neighbor_row[..in_width],
+        scratch,
+    );
+
+    // Horizontal pass: (3 * curr + h_neighbor + 2) >> 2
+    upsample_horizontal_row_strided_avx2(token, scratch, output);
+}
+
 /// Horizontal 2x upsampling in i16 (4:2:2 → 4:4:4) with triangle filter.
 #[inline]
 pub fn upsample_h2v1_i16_fancy(

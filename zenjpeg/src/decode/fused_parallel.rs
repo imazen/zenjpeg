@@ -1400,7 +1400,7 @@ impl<'a> JpegParser<'a> {
     ) -> FusedDecodeResult {
         use super::upsample::{
             upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
-            upsample_h2v2_i16_libjpeg, upsample_row_h2_fancy_bilinear,
+            upsample_h2v2_i16_libjpeg, upsample_row_h2v2_fixup,
         };
 
         let width = self.width as usize;
@@ -1928,20 +1928,19 @@ impl<'a> JpegParser<'a> {
                 // This is the last output pixel row: mcu_pixel_height - 1 within the MCU
                 let fix_row_bottom = (seg_n_last + 1) * mcu_pixel_height - 1;
                 if fix_row_bottom < height {
-                    // Re-upsample with correct below context
-                    upsample_row_h2_fancy_bilinear(
+                    // Re-upsample with correct below context, using the same
+                    // formula as the main upsampler to avoid boundary artifacts.
+                    upsample_row_h2v2_fixup(
                         &seg_n.last_cb_row,
                         &seg_n1.first_cb_row,
                         c_strip_width,
                         &mut cb_up_row,
-                        false,
                     );
-                    upsample_row_h2_fancy_bilinear(
+                    upsample_row_h2v2_fixup(
                         &seg_n.last_cr_row,
                         &seg_n1.first_cr_row,
                         c_strip_width,
                         &mut cr_up_row,
-                        false,
                     );
                     let rgb_off = fix_row_bottom * rgb_row_bytes;
                     crate::color::ycbcr_planes_i16_to_rgb_u8(
@@ -1955,19 +1954,17 @@ impl<'a> JpegParser<'a> {
                 // Fix top pixel row of segment N+1's first MCU row
                 let fix_row_top = seg_n1_first * mcu_pixel_height;
                 if fix_row_top < height {
-                    upsample_row_h2_fancy_bilinear(
+                    upsample_row_h2v2_fixup(
                         &seg_n1.first_cb_row,
                         &seg_n.last_cb_row,
                         c_strip_width,
                         &mut cb_up_row,
-                        true,
                     );
-                    upsample_row_h2_fancy_bilinear(
+                    upsample_row_h2v2_fixup(
                         &seg_n1.first_cr_row,
                         &seg_n.last_cr_row,
                         c_strip_width,
                         &mut cr_up_row,
-                        true,
                     );
                     let rgb_off = fix_row_top * rgb_row_bytes;
                     crate::color::ycbcr_planes_i16_to_rgb_u8(
