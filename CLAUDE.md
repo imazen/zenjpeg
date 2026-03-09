@@ -860,6 +860,18 @@ sensitivity tables, and preset baselines.
 
 ### Fixed / Resolved Bugs (historical reference)
 
+- **Progressive decoder truncation near restart markers (FIXED 2026-03-09, commit 08ef601)** -
+  Fused `decode_ac_first_scan` and `decode_ac_refine_scan` lacked a bit-by-bit Huffman
+  fallback when `peek_bits_refill(16)` failed near restart marker boundaries. When a Huffman
+  code > 9 bits occurred in the last 2-3 blocks before a restart marker (0xFF 0xDn), the
+  16-bit peek failed because the marker interrupted bitstream refill. The function incorrectly
+  treated this as scan truncation, zeroing all remaining AC coefficients. The standard
+  `decode_huffman_symbol_lenient` had this fallback but the fused functions did not.
+  Triggered at Q91-Q93 (where AC table had codes > 9 bits) with DRI=216 on 576x576 images.
+  Fix: added bit-by-bit Huffman decode fallback matching the standard function.
+  - Found during investigation of Known Bug #1 (catastrophic auto_optimize quality).
+  - Test: `cargo test --release -p zenjpeg --test quality_regression --features decoder -- diagnostic_coefficient_comparison --nocapture --ignored`
+
 - **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
   `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
   the sequential path in `strip/mod.rs:1027-1029` applied `preprocess_deringing_block` before
