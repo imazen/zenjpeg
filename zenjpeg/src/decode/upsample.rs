@@ -2348,4 +2348,345 @@ mod tests {
         let output = upsample_h2v1(&input, 4, 3, 8, 3);
         assert_eq!(output.len(), 24);
     }
+
+    // ========================================================================
+    // Archmage dispatch parity tests
+    // ========================================================================
+    //
+    // These tests verify that AVX2 and scalar paths produce identical output
+    // for all upsampling functions. They use `for_each_token_permutation` to
+    // exhaustively test every SIMD tier the CPU supports.
+
+    /// Test data: gradient pattern with varying values to exercise edge handling
+    fn gradient_test_data(width: usize, height: usize) -> Vec<i16> {
+        (0..width * height)
+            .map(|i| {
+                let x = i % width;
+                let y = i / width;
+                ((x as i32 * 37 + y as i32 * 53) % 500 - 250) as i16
+            })
+            .collect()
+    }
+
+    /// Test data: extreme chroma transitions (worst case for rounding differences)
+    fn extreme_test_data(width: usize, height: usize) -> Vec<i16> {
+        (0..width * height)
+            .map(|i| {
+                let x = i % width;
+                let y = i / width;
+                // Alternate between extreme values at block boundaries
+                if (x / 4 + y / 4) % 2 == 0 {
+                    2000
+                } else {
+                    -2000
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_fancy_strided_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // The AVX2 path uses a separable formula (vertical then horizontal, each
+        // `(3*near + far + 2) >> 2`) while the scalar path uses non-separable
+        // `(9*C + 3*H + 3*V + HV + 8) >> 4`. These differ by ±1 due to
+        // intermediate rounding in the separable version. Both are valid triangle
+        // filter implementations — the important invariant is that the fixup
+        // function matches whichever formula is active (tested separately in
+        // `h2v2_fixup_matches_main_upsampler`).
+        let sizes: &[(usize, usize)] = &[
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (17, 9), // non-aligned
+            (32, 32),
+            (64, 16),  // wide
+            (33, 33),  // odd
+            (128, 64), // larger
+        ];
+
+        for &(in_w, in_h) in sizes {
+            let out_w = in_w * 2;
+            let out_h = in_h * 2;
+
+            for (label, input) in [
+                ("gradient", gradient_test_data(in_w, in_h)),
+                ("extreme", extreme_test_data(in_w, in_h)),
+                ("constant", vec![1000i16; in_w * in_h]),
+            ] {
+                // Compute reference output
+                let mut reference = vec![0i16; out_w * out_h];
+                upsample_h2v2_i16_fancy_strided(
+                    &input,
+                    in_w,
+                    in_w,
+                    in_h,
+                    &mut reference,
+                    out_w,
+                    out_w,
+                    out_h,
+                );
+
+                let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                    let mut result = vec![0i16; out_w * out_h];
+                    upsample_h2v2_i16_fancy_strided(
+                        &input,
+                        in_w,
+                        in_w,
+                        in_h,
+                        &mut result,
+                        out_w,
+                        out_w,
+                        out_h,
+                    );
+
+                    let max_diff = result
+                        .iter()
+                        .zip(reference.iter())
+                        .map(|(a, b)| (a - b).unsigned_abs())
+                        .max()
+                        .unwrap_or(0);
+
+                    assert!(
+                        max_diff <= 1,
+                        "h2v2_fancy_strided max_diff={max_diff} (>1): {label} {in_w}x{in_h} at {perm}"
+                    );
+                });
+
+                if label == "gradient" && in_w == 4 {
+                    eprintln!("h2v2_fancy_strided dispatch: {report}");
+                    assert!(
+                        report.permutations_run >= 2,
+                        "expected at least 2 permutations"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_fixup_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Test various widths including non-aligned
+        let widths: &[usize] = &[4, 8, 15, 16, 17, 32, 33, 64, 128, 255, 256];
+
+        for &in_width in widths {
+            let out_width = in_width * 2;
+
+            for (label, curr_row, v_neighbor_row) in [
+                (
+                    "gradient",
+                    (0..in_width)
+                        .map(|x| (x as i32 * 37 % 500 - 250) as i16)
+                        .collect::<Vec<_>>(),
+                    (0..in_width)
+                        .map(|x| (x as i32 * 53 % 500 - 250) as i16)
+                        .collect::<Vec<_>>(),
+                ),
+                (
+                    "extreme",
+                    (0..in_width)
+                        .map(|x| if x % 2 == 0 { 2000i16 } else { -2000 })
+                        .collect(),
+                    (0..in_width)
+                        .map(|x| if x % 2 == 0 { -2000i16 } else { 2000 })
+                        .collect(),
+                ),
+                ("constant", vec![1000i16; in_width], vec![1000i16; in_width]),
+            ] {
+                let mut reference = vec![0i16; out_width];
+                upsample_row_h2v2_fixup(&curr_row, &v_neighbor_row, in_width, &mut reference);
+
+                let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                    let mut result = vec![0i16; out_width];
+                    upsample_row_h2v2_fixup(&curr_row, &v_neighbor_row, in_width, &mut result);
+                    assert_eq!(
+                        result, reference,
+                        "h2v2_fixup mismatch: {label} width={in_width} at {perm}"
+                    );
+                });
+
+                if label == "gradient" && in_width == 4 {
+                    eprintln!("h2v2_fixup dispatch: {report}");
+                    assert!(
+                        report.permutations_run >= 2,
+                        "expected at least 2 permutations"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_fixup_matches_main_upsampler() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // The fixup function must produce output identical to the main upsampler
+        // for the same row pair. This is the bug that was fixed: previously the
+        // fixup used a non-separable formula while the main used separable,
+        // causing ±1 differences at MCU boundaries.
+        let widths: &[usize] = &[4, 8, 16, 32, 64, 128];
+
+        for &in_width in widths {
+            let out_width = in_width * 2;
+            let in_height = 4;
+            let out_height = in_height * 2;
+
+            let input = gradient_test_data(in_width, in_height);
+
+            // Get the main upsampler's output for row 0 (top edge: curr=row0, v_neighbor=row0)
+            let mut main_output = vec![0i16; out_width * out_height];
+            upsample_h2v2_i16_fancy_strided(
+                &input,
+                in_width,
+                in_width,
+                in_height,
+                &mut main_output,
+                out_width,
+                out_width,
+                out_height,
+            );
+
+            // Test that fixup matches main for each output row pair
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                // Re-run main upsampler at this token level
+                let mut main_at_tier = vec![0i16; out_width * out_height];
+                upsample_h2v2_i16_fancy_strided(
+                    &input,
+                    in_width,
+                    in_width,
+                    in_height,
+                    &mut main_at_tier,
+                    out_width,
+                    out_width,
+                    out_height,
+                );
+
+                // For each pair of input rows, verify fixup matches main upsampler
+                for in_y in 0..in_height {
+                    let curr_row = &input[in_y * in_width..][..in_width];
+
+                    // Top half: v_neighbor is above
+                    let v_above_y = in_y.saturating_sub(1);
+                    let v_above_row = &input[v_above_y * in_width..][..in_width];
+
+                    let mut fixup_out = vec![0i16; out_width];
+                    upsample_row_h2v2_fixup(curr_row, v_above_row, in_width, &mut fixup_out);
+
+                    let main_row_idx = in_y * 2; // top half output row
+                    let main_row = &main_at_tier[main_row_idx * out_width..][..out_width];
+
+                    assert_eq!(
+                        fixup_out, main_row,
+                        "fixup != main at in_y={in_y} (top half), width={in_width}, {perm}"
+                    );
+
+                    // Bottom half: v_neighbor is below
+                    let v_below_y = (in_y + 1).min(in_height - 1);
+                    let v_below_row = &input[v_below_y * in_width..][..in_width];
+
+                    let mut fixup_out = vec![0i16; out_width];
+                    upsample_row_h2v2_fixup(curr_row, v_below_row, in_width, &mut fixup_out);
+
+                    let main_row_idx = in_y * 2 + 1; // bottom half output row
+                    let main_row = &main_at_tier[main_row_idx * out_width..][..out_width];
+
+                    assert_eq!(
+                        fixup_out, main_row,
+                        "fixup != main at in_y={in_y} (bottom half), width={in_width}, {perm}"
+                    );
+                }
+            });
+
+            if in_width == 4 {
+                eprintln!("fixup_matches_main: {report}");
+                assert!(
+                    report.permutations_run >= 2,
+                    "expected at least 2 permutations"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_fancy_strided_with_padding_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Test with in_stride > in_width (padded rows), which exercises the
+        // strided AVX2 path differently from contiguous layout.
+        // Allows ±1 for separable/non-separable rounding difference (see
+        // h2v2_fancy_strided_dispatch_parity for explanation).
+        let cases: &[(usize, usize, usize)] = &[
+            (16, 8, 32),  // stride = 2x width
+            (33, 16, 48), // non-aligned width, padded stride
+            (64, 32, 80), // moderate padding
+        ];
+
+        for &(in_w, in_h, in_stride) in cases {
+            let out_w = in_w * 2;
+            let out_h = in_h * 2;
+
+            // Create strided input with garbage in padding
+            let mut input = vec![0x7FFFi16; in_stride * in_h];
+            for y in 0..in_h {
+                for x in 0..in_w {
+                    input[y * in_stride + x] = ((x as i32 * 37 + y as i32 * 53) % 500 - 250) as i16;
+                }
+            }
+
+            let out_stride = out_w + 16; // padded output too
+            let mut reference = vec![0i16; out_stride * out_h];
+            upsample_h2v2_i16_fancy_strided(
+                &input,
+                in_w,
+                in_stride,
+                in_h,
+                &mut reference,
+                out_w,
+                out_stride,
+                out_h,
+            );
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let mut result = vec![0i16; out_stride * out_h];
+                upsample_h2v2_i16_fancy_strided(
+                    &input,
+                    in_w,
+                    in_stride,
+                    in_h,
+                    &mut result,
+                    out_w,
+                    out_stride,
+                    out_h,
+                );
+
+                // Compare only the active output region (not padding)
+                for y in 0..out_h {
+                    for x in 0..out_w {
+                        let idx = y * out_stride + x;
+                        let diff = (result[idx] - reference[idx]).unsigned_abs();
+                        assert!(
+                            diff <= 1,
+                            "h2v2_fancy_strided (padded) diff={diff} at ({x},{y}): \
+                             {in_w}x{in_h} stride={in_stride} at {perm}"
+                        );
+                    }
+                }
+            });
+
+            if in_w == 16 {
+                eprintln!("h2v2_fancy_strided (padded) dispatch: {report}");
+                assert!(
+                    report.permutations_run >= 2,
+                    "expected at least 2 permutations"
+                );
+            }
+        }
+    }
 }
