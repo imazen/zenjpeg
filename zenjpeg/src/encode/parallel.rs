@@ -16,6 +16,7 @@
 //! Minimum useful size: ~512x512 (4096 blocks)
 
 use crate::encode::dct::simd::forward_dct_8x8_wide;
+use crate::encode::deringing::preprocess_deringing_block;
 use crate::entropy::encoder::EntropyEncoder;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
@@ -43,12 +44,14 @@ const CHUNK_SIZE: usize = 4096;
 /// Core parallel DCT loop - processes a plane's blocks in parallel chunks.
 ///
 /// This is the workhorse that both Y and chroma DCT functions delegate to.
+/// When `deringing` is `Some(dc_quant)`, applies overshoot deringing before DCT.
 #[multiversed]
 fn parallel_dct_plane(
     strip: &[f32],
     blocks_w: usize,
     total_blocks: usize,
     padded_width: usize,
+    deringing: Option<u16>,
     output: &mut [Block8x8f],
 ) {
     output
@@ -63,7 +66,10 @@ fn parallel_dct_plane(
                 }
                 let local_by = i / blocks_w;
                 let bx = i % blocks_w;
-                let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+                let mut block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+                if let Some(dc_quant) = deringing {
+                    preprocess_deringing_block(&mut block, dc_quant);
+                }
                 *out = forward_dct_8x8_wide(&block);
             }
         });
@@ -77,12 +83,16 @@ fn sequential_dct_plane(
     blocks_w: usize,
     total_blocks: usize,
     padded_width: usize,
+    deringing: Option<u16>,
     output: &mut [Block8x8f],
 ) {
     for i in 0..total_blocks {
         let local_by = i / blocks_w;
         let bx = i % blocks_w;
-        let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+        let mut block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+        if let Some(dc_quant) = deringing {
+            preprocess_deringing_block(&mut block, dc_quant);
+        }
         output[i] = forward_dct_8x8_wide(&block);
     }
 }
@@ -91,11 +101,13 @@ fn sequential_dct_plane(
 ///
 /// Pre-allocates output and uses parallel indexed writes.
 /// Falls back to sequential for small block counts.
+/// When `deringing` is `Some(dc_quant)`, applies overshoot deringing before DCT.
 pub fn parallel_dct_y_blocks(
     strip: &[f32],
     blocks_w: usize,
     strip_blocks_h: usize,
     padded_width: usize,
+    deringing: Option<u16>,
     output: &mut Vec<Block8x8f>,
 ) {
     let total_blocks = blocks_w * strip_blocks_h;
@@ -106,9 +118,9 @@ pub fn parallel_dct_y_blocks(
     let output_slice = &mut output[start_idx..];
 
     if total_blocks < PARALLEL_THRESHOLD {
-        sequential_dct_plane(strip, blocks_w, total_blocks, padded_width, output_slice);
+        sequential_dct_plane(strip, blocks_w, total_blocks, padded_width, deringing, output_slice);
     } else {
-        parallel_dct_plane(strip, blocks_w, total_blocks, padded_width, output_slice);
+        parallel_dct_plane(strip, blocks_w, total_blocks, padded_width, deringing, output_slice);
     }
 }
 
@@ -137,13 +149,13 @@ pub fn parallel_dct_chroma_blocks(
 
     if total_blocks < PARALLEL_THRESHOLD / 2 {
         // Sequential for small images
-        sequential_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, cb_slice);
-        sequential_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, cr_slice);
+        sequential_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, None, cb_slice);
+        sequential_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, None, cr_slice);
     } else {
         // Process Cb and Cr in parallel with each other
         rayon::join(
-            || parallel_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, cb_slice),
-            || parallel_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, cr_slice),
+            || parallel_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, None, cb_slice),
+            || parallel_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, None, cr_slice),
         );
     }
 }
@@ -479,6 +491,7 @@ mod tests {
             blocks_w,
             total_blocks,
             padded_width,
+            None,
             &mut seq_output,
         );
 
@@ -489,6 +502,7 @@ mod tests {
             blocks_w,
             total_blocks,
             padded_width,
+            None,
             &mut par_output,
         );
 

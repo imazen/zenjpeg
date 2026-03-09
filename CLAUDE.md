@@ -857,11 +857,16 @@ sensitivity tables, and preset baselines.
    always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
    Both documented in config doc comments. Low priority — parameters have no effect.
 
-5. **Parallel feature non-deterministic output (2026-02-06)** - `locked_values` test fails
-   with `--features parallel` due to threading non-determinism. Expected behavior.
-   - Workaround: Run without `parallel` feature, or skip the test
-
 ### Fixed / Resolved Bugs (historical reference)
+
+- **Parallel feature skipping deringing (FIXED 2026-03-09)** - `parallel_dct_plane` in
+  `encode/parallel.rs` did `extract_block → forward_dct` without applying deringing, while
+  the sequential path in `strip/mod.rs:1027-1029` applied `preprocess_deringing_block` before
+  DCT. This caused `locked_values` test failures with `--features parallel` — not
+  non-determinism, but a deterministic quality regression (deringing silently skipped).
+  Fix: pass `deringing: Option<u16>` (dc_quant when enabled) through `parallel_dct_y_blocks`
+  into both parallel and sequential DCT plane functions. Deringing is block-local (no
+  cross-block dependencies), so it parallelizes trivially.
 
 - **zune-jpeg progressive decode issue (STALE, was Bug #5)** - Originally reported that
   zune-jpeg decoded zenjpeg progressive output as grayscale. Investigation (2026-03-09)

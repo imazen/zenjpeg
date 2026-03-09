@@ -994,11 +994,17 @@ impl StripProcessor {
         // Compute DCT for Y blocks into pending buffer
         #[cfg(feature = "parallel")]
         {
+            let deringing = if self.deringing {
+                Some(self.quant.y_quant.values[0])
+            } else {
+                None
+            };
             super::parallel::parallel_dct_y_blocks(
                 &self.y_strip[..y_size],
                 blocks_w,
                 actual_strip_blocks_h,
                 padded_width,
+                deringing,
                 &mut self.pending.y[pending_idx],
             );
         }
