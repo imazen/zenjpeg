@@ -811,49 +811,7 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-1. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - Measured via parameter sensitivity test:
-   - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`encode/trellis/ac.rs:52`).
-     **Now documented** in TrellisConfig and HybridConfig doc comments.
-   - `trellis_num_loops`: Stored but never read — single-pass only.
-     **Now documented** in both config structs.
-   - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
-   - EOB optimization: deleted (was broken, destroyed quality). See commit history.
-   - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
-
-2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
-   are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
-   was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
-   points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
-   - Root cause: Independent per-anchor SA without monotonicity constraints
-   - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
-   - Verified: `cargo run --release -p zenjpeg --example knobs_vs_jpegli --features optimized-tables`
-
-3. **Parallel feature non-deterministic output (2026-02-06)** - `locked_values` test fails
-   with `--features parallel` because the parallel encoding path produces slightly different
-   output due to threading non-determinism. The locked hashes are generated with default
-   (sequential) features. This is expected behavior for parallel encoding, but the test
-   should either be skipped with parallel or have separate locked values.
-   - Impact: `cargo test --release --all-features --test locked_values` fails
-   - Workaround: Run without `parallel` feature, or skip the test
-
-4. **Grayscale scanline reader panic (FIXED 2026-02-06)** - Streaming scanline reader methods
-   (`read_rows_rgb8`, `read_rows_rgbx8`, `read_rows_rgba_f32`, `read_rows_ycbcr_planes`)
-   panicked on grayscale (1-component) images because they called `row_planes()` which
-   requires cb/cr buffers that are empty for grayscale. Fixed: commit be24fac.
-
-5. **zune-jpeg cannot decode zenjpeg progressive output (2026-02-15)** - zune-jpeg decodes
-   zenjpeg's progressive JPEGs as grayscale (all chroma lost). Decoded pixels show uniform
-   ~125 values instead of correct colors. Both djpeg (libjpeg-turbo) and zenjpeg's own
-   decoder handle the same files correctly. Root cause unknown — likely a zune-jpeg bug with
-   zenjpeg's specific progressive scan structure.
-   - Impact: `decode_jpeg_to_rgb()` in bench-utils produces wrong results for zenjpeg output
-   - Workaround: Use `decode_jpeg_with_icc()` (zenjpeg decoder) instead
-   - Fixed in: knobs_vs_jpegli.rs, reencode_calibration.rs (commit b8fd306)
-   - Still affected: hybrid_parameter_sweep.rs, hybrid_auto_detect.rs, ssim2_pareto_sweep.rs,
-     quality_compare.rs (line 261), xyb_dc_debug.rs, ycbcr_rust_vs_cpp_ssim2.rs,
-     xyb_rust_vs_cpp_ssim2.rs — these use zune-jpeg and will show wrong metrics for zen output
-
-6. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)** -
+1. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)** -
    `auto_optimize(true)` (hybrid trellis) with `ChromaSubsampling::Quarter` produces
    catastrophically degraded output (BA 20-43, visually destroyed) for certain images at
    specific quality levels. Neighboring quality levels are fine.
@@ -866,19 +824,54 @@ sensitivity tables, and preset baselines.
      Min_delta tables showed 0.55 at turbo Q90 instead of correct ~0.03.
    - Reproduction: `/mnt/v/output/zenjpeg/encoder_bug_420/` has source + re-encoded images.
      Raw data: `/mnt/v/output/zenjpeg/reencode_calibration/raw_data.csv`
-   - Root cause: Unknown — suspected hybrid trellis interaction with chroma subsampling at
-     certain quant table configurations. The quant values at pathological Q levels may cause
-     the trellis to make catastrophic coefficient choices for chroma blocks.
+   - **Root cause analysis (2026-03-09):** Trellis lambda weight is `1/(q*q)` per coefficient
+     (`encode/trellis/ac.rs:48-72`). For 4:2:0, K420_RESCALE (`quant/mod.rs:549-566`) reduces
+     chroma quant values to ~36-49% of luma. Smaller quant values → larger lambda weights →
+     trellis zeros chroma AC coefficients more aggressively. This is *backwards*: K420_RESCALE
+     means finer quantization (keep more detail), but the trellis interprets small quant values
+     as "unimportant, zero them." At specific Q levels, the quant table scaling hits sweet spots
+     where this inversion is catastrophic. Additionally, `auto_optimize` uses `aq_lambda_scale=0.0`
+     (no AQ coupling), so there's no per-block adaptation to protect important chroma blocks.
+     The block-norm-adaptive lambda (`scale1 / (scale2 + norm)`) amplifies this: 4:2:0 chroma
+     blocks have smaller raw DCT coefficients → lower norm → even larger lambda → even more
+     aggressive zeroing. This creates a feedback loop at certain Q levels.
+   - **Fix candidates:** (a) Scale lambda weights by K420_RESCALE inverse for chroma components,
+     (b) apply `chroma_scale < 1.0` in HybridConfig to reduce trellis aggression on chroma,
+     (c) add AQ coupling (`aq_lambda_scale > 0`) to protect textured chroma regions.
    - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
 
-7. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)** - `test_frymire_hashes_locked`
-   fails on `baseline_xyb_opt Q50`: expected 292993 bytes, actual 293121 bytes (+128 bytes).
-   Pre-existing failure, not caused by code review changes. Likely a locked hash that needs
-   updating after a previous encoder change.
-   - Impact: `cargo test --release -p zenjpeg --test frymire_hash_locked` fails
-   - Workaround: Skip or update locked hashes
+2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
+   are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
+   was independently SA-optimized, finding different local optima. Results: ~10-20 SSIM2
+   points worse than JpegliProg at matched BPP, non-monotonic BPP vs quality.
+   - Root cause: Independent per-anchor SA without monotonicity constraints
+   - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
 
-### Fixed Bugs (historical reference)
+3. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)** - `test_frymire_hashes_locked`
+   fails on `baseline_xyb_opt Q50`: expected 292993 bytes, actual 293121 bytes (+128 bytes).
+   Stale locked hash needing update after a previous encoder change.
+   - Impact: `cargo test --release -p zenjpeg --test frymire_hash_locked` fails
+   - Fix: Update locked hash value.
+
+4. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
+   always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
+   Both documented in config doc comments. Low priority — parameters have no effect.
+
+5. **Parallel feature non-deterministic output (2026-02-06)** - `locked_values` test fails
+   with `--features parallel` due to threading non-determinism. Expected behavior.
+   - Workaround: Run without `parallel` feature, or skip the test
+
+### Fixed / Resolved Bugs (historical reference)
+
+- **zune-jpeg progressive decode issue (STALE, was Bug #5)** - Originally reported that
+  zune-jpeg decoded zenjpeg progressive output as grayscale. Investigation (2026-03-09)
+  found 70+ progressive encoding tests pass with zune-jpeg. The AC refinement trailing
+  ZRL fix (commit d355648) likely resolved the underlying scan structure issue. The only
+  remaining trace is a skip in `chroma_upsample_regression.rs:1038`. Note: zune-jpeg 0.5.12
+  still has a separate bug silently skipping AC refinement with DRI (max_diff=224).
+
+- **Grayscale scanline reader panic (FIXED 2026-02-06, commit be24fac)** - Streaming scanline
+  reader methods panicked on grayscale images. Fixed by handling 1-component images.
 
 - **XYB 4:2:0 encoder producing undecodable JPEGs (FIXED 2026-03-04, commit b0cafce)** -
   Frequency counter clamped DC categories to 11 (`.min(11)`) but encoder wrote unclamped
