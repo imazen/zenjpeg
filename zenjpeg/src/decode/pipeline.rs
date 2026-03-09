@@ -7,7 +7,7 @@
 //!
 //! Both the scanline decoder and buffered decoder share this code path.
 
-use super::config::{ChromaUpsampling, OutputTarget};
+use super::config::{ChromaUpsampling, IdctMethod, OutputTarget};
 use super::idct_int::{
     idct_int_dc_only, idct_int_dc_only_unclamped, idct_int_tiered, idct_int_tiered_libjpeg,
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
@@ -96,6 +96,7 @@ pub(super) struct StripProcessor {
 
     // Config
     pub chroma_upsampling: ChromaUpsampling,
+    pub idct_method: IdctMethod,
     pub output_target: OutputTarget,
 }
 
@@ -133,6 +134,7 @@ impl StripProcessor {
             has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling: ChromaUpsampling::default(),
+            idct_method: IdctMethod::default(),
             output_target: OutputTarget::default(),
         }
     }
@@ -144,6 +146,7 @@ impl StripProcessor {
         h_samp: [u8; 3],
         v_samp: [u8; 3],
         chroma_upsampling: ChromaUpsampling,
+        idct_method: IdctMethod,
         output_target: OutputTarget,
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
@@ -279,6 +282,7 @@ impl StripProcessor {
             has_deferred_bottom: false,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
             chroma_upsampling,
+            idct_method,
             output_target,
         })
     }
@@ -347,14 +351,14 @@ impl StripProcessor {
             }
         } else {
             dequantize_unzigzag_i32_into_partial(coeffs, quant, &mut self.dequant_buf, coeff_count);
-            match (unclamped, self.chroma_upsampling) {
-                (false, ChromaUpsampling::LibjpegCompat) => {
+            match (unclamped, self.idct_method) {
+                (false, IdctMethod::Libjpeg) => {
                     idct_int_tiered_libjpeg(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
-                (false, _) => {
+                (false, IdctMethod::Jpegli) => {
                     idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
-                (true, ChromaUpsampling::LibjpegCompat) => {
+                (true, IdctMethod::Libjpeg) => {
                     idct_int_tiered_libjpeg_unclamped(
                         &mut self.dequant_buf,
                         strip,
@@ -362,7 +366,7 @@ impl StripProcessor {
                         coeff_count,
                     );
                 }
-                (true, _) => {
+                (true, IdctMethod::Jpegli) => {
                     idct_int_tiered_unclamped(&mut self.dequant_buf, strip, stride, coeff_count);
                 }
             }

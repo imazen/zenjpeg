@@ -144,7 +144,7 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 }
 
 // Re-export config types (defined in config.rs, public API preserved)
-pub use config::{ChromaUpsampling, DecodeWarning, JpegInfo, Strictness};
+pub use config::{ChromaUpsampling, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
 use crate::color::icc::IccTarget;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -221,6 +221,40 @@ impl DecodeConfig {
             ChromaUpsampling::NearestNeighbor
         };
         self
+    }
+
+    /// Sets the integer IDCT algorithm.
+    ///
+    /// Controls which fixed-point IDCT is used during decoding. Different
+    /// algorithms produce slightly different pixel values (max 2-3 levels).
+    ///
+    /// - [`IdctMethod::Jpegli`] (default): 12-bit fixed-point, matches jpegli
+    /// - [`IdctMethod::Libjpeg`]: 13-bit Loeffler, matches libjpeg-turbo/mozjpeg
+    ///
+    /// When [`ChromaUpsampling::LibjpegCompat`] is set and no explicit IDCT method
+    /// is configured, the decoder automatically uses [`IdctMethod::Libjpeg`].
+    /// Calling this method overrides that automatic selection.
+    #[must_use]
+    pub fn idct_method(mut self, method: IdctMethod) -> Self {
+        self.idct_method = Some(method);
+        self
+    }
+
+    /// Returns the effective IDCT method, considering both explicit setting
+    /// and chroma upsampling mode.
+    ///
+    /// - Explicit `idct_method()` always wins
+    /// - `LibjpegCompat` upsampling defaults to `Libjpeg` IDCT
+    /// - Everything else defaults to `Jpegli` IDCT
+    pub(crate) fn effective_idct_method(&self) -> IdctMethod {
+        if let Some(method) = self.idct_method {
+            return method;
+        }
+        if self.chroma_upsampling == ChromaUpsampling::LibjpegCompat {
+            IdctMethod::Libjpeg
+        } else {
+            IdctMethod::Jpegli
+        }
     }
 
     /// Enables inter-block smoothing for progressive JPEGs.
@@ -664,6 +698,7 @@ impl DecodeConfig {
 
             // Fully decode the image (scanline reader doesn't support cancellation)
             parser.chroma_upsampling = self.chroma_upsampling;
+            parser.idct_method = self.effective_idct_method();
             parser.decode(&Unstoppable)?;
 
             // Compute subsampling from sampling factors
@@ -732,6 +767,7 @@ impl DecodeConfig {
             let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
 
             parser.chroma_upsampling = self.chroma_upsampling;
+            parser.idct_method = self.effective_idct_method();
             parser.decode(&Unstoppable)?;
 
             let output_format = if is_grayscale {
@@ -777,6 +813,7 @@ impl DecodeConfig {
                     let mut reader = ScanlineReader::from_scan_data(
                         scan_data,
                         self.chroma_upsampling,
+                        self.effective_idct_method(),
                         self.output_target,
                     )?;
                     reader.attach_wave_state(wave_state);
@@ -786,8 +823,12 @@ impl DecodeConfig {
             }
         }
 
-        let mut reader =
-            ScanlineReader::from_scan_data(scan_data, self.chroma_upsampling, self.output_target)?;
+        let mut reader = ScanlineReader::from_scan_data(
+            scan_data,
+            self.chroma_upsampling,
+            self.effective_idct_method(),
+            self.output_target,
+        )?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
         Ok(reader)
     }
@@ -897,6 +938,7 @@ impl DecodeConfig {
             dc_tables,
             ac_tables,
             self.strictness,
+            self.effective_idct_method(),
             wave_size,
         );
 
@@ -938,6 +980,7 @@ impl DecodeConfig {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.decode_mode = parser::DecodeMode::Coefficient; // Need coefficient storage
         parser.chroma_upsampling = self.chroma_upsampling;
+        parser.idct_method = self.effective_idct_method();
         parser.decode(&Unstoppable)?;
 
         // Compute MCU height for crop resolution
@@ -1007,6 +1050,7 @@ impl DecodeConfig {
         let mut reader = ScanlineReader::from_coefficients(
             coefficients,
             self.chroma_upsampling,
+            self.effective_idct_method(),
             self.output_target,
         )?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
@@ -1103,6 +1147,7 @@ impl DecodeConfig {
             }
         }
         parser.chroma_upsampling = self.chroma_upsampling;
+        parser.idct_method = self.effective_idct_method();
         parser.num_threads = self.num_threads;
         #[cfg(feature = "parallel")]
         {

@@ -211,7 +211,7 @@ impl<'a> JpegParser<'a> {
     /// Only works for non-XYB 4:4:4 RGB output.
     fn to_pixels_fast_i16(
         &self,
-        chroma_upsampling: super::super::ChromaUpsampling,
+        _chroma_upsampling: super::super::ChromaUpsampling,
     ) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
@@ -253,9 +253,9 @@ impl<'a> JpegParser<'a> {
             // No need to clear strips - we write all pixels we'll read
 
             // IDCT all blocks in this MCU row for all 3 components
-            let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-                super::super::ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-                _ => idct_int_tiered,
+            let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+                super::super::IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+                super::super::IdctMethod::Jpegli => idct_int_tiered,
             };
 
             for (comp_idx, strip) in [&mut y_strip, &mut cb_strip, &mut cr_strip]
@@ -336,10 +336,10 @@ impl<'a> JpegParser<'a> {
             upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
-        // Select IDCT function based on compatibility mode
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        // Select IDCT function based on configured method
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            super::super::IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            super::super::IdctMethod::Jpegli => idct_int_tiered,
         };
 
         let width = self.width as usize;

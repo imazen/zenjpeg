@@ -165,6 +165,7 @@ impl<'a> ScanlineReader<'a> {
     pub(super) fn from_scan_data(
         scan: super::parser::ParsedScanData<'a>,
         chroma_upsampling: super::ChromaUpsampling,
+        idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
@@ -191,6 +192,7 @@ impl<'a> ScanlineReader<'a> {
             h_samp,
             v_samp,
             chroma_upsampling,
+            idct_method,
             output_target,
         )?;
 
@@ -335,6 +337,7 @@ impl<'a> ScanlineReader<'a> {
     pub(crate) fn from_coefficients(
         coefficients: super::DecodedCoefficients,
         chroma_upsampling: super::ChromaUpsampling,
+        idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
     ) -> Result<Self> {
         let width = coefficients.width;
@@ -386,6 +389,7 @@ impl<'a> ScanlineReader<'a> {
             h_samp,
             v_samp,
             chroma_upsampling,
+            idct_method,
             output_target,
         )?;
 
@@ -1114,12 +1118,24 @@ impl<'a> ScanlineReader<'a> {
                             coeff_count,
                         );
                         let mut temp_pixels = [0i16; 64];
-                        super::idct_int::idct_int_tiered(
-                            &mut dequant_buf,
-                            &mut temp_pixels,
-                            8,
-                            coeff_count,
-                        );
+                        match self.strip.idct_method {
+                            super::IdctMethod::Libjpeg => {
+                                super::idct_int::idct_int_tiered_libjpeg(
+                                    &mut dequant_buf,
+                                    &mut temp_pixels,
+                                    8,
+                                    coeff_count,
+                                );
+                            }
+                            super::IdctMethod::Jpegli => {
+                                super::idct_int::idct_int_tiered(
+                                    &mut dequant_buf,
+                                    &mut temp_pixels,
+                                    8,
+                                    coeff_count,
+                                );
+                            }
+                        }
                         for px in 0..8 {
                             if x_offset + px < next_row.len() {
                                 next_row[x_offset + px] = temp_pixels[px];

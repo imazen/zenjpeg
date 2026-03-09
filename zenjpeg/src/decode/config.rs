@@ -60,6 +60,38 @@ pub enum ChromaUpsampling {
     HorizontalFancy,
 }
 
+/// Integer IDCT algorithm selection.
+///
+/// Controls which fixed-point IDCT implementation is used during decoding.
+/// Different algorithms produce slightly different rounding, which matters
+/// when comparing output against reference decoders.
+///
+/// | Method | Precision | Matches |
+/// |--------|-----------|---------|
+/// | `Jpegli` | 12-bit fixed-point | jpegli (Google JPEG XL project) |
+/// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg |
+///
+/// The default is `Jpegli`. Setting [`ChromaUpsampling::LibjpegCompat`] on the
+/// decoder automatically switches to `Libjpeg` unless explicitly overridden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum IdctMethod {
+    /// 12-bit fixed-point IDCT (jpegli-derived).
+    ///
+    /// Uses AVX2 or portable wide SIMD with 12-bit precision.
+    /// This is the default and matches jpegli's IDCT behavior.
+    /// Max diff vs libjpeg-turbo: 2-3 levels.
+    #[default]
+    Jpegli,
+
+    /// 13-bit Loeffler IDCT (libjpeg-turbo compatible).
+    ///
+    /// Uses the Loeffler, Ligtenberg, Moschytz algorithm with 13-bit
+    /// fixed-point constants, matching libjpeg-turbo's `jpeg_idct_islow`.
+    /// Use this when you need pixel-exact match with mozjpeg/djpeg output.
+    Libjpeg,
+}
+
 /// Controls how restart segments are mapped to rayon tasks during parallel decode.
 ///
 /// When DRI is MCU-row-aligned, the decoder can parallelize across restart
@@ -723,6 +755,14 @@ pub struct DecodeConfig {
     pub(crate) num_threads: usize,
     /// How restart segments are mapped to rayon tasks during parallel decode.
     pub(crate) parallel_strategy: ParallelStrategy,
+    /// Integer IDCT algorithm override.
+    ///
+    /// When `None` (default), the IDCT is chosen automatically:
+    /// - `ChromaUpsampling::LibjpegCompat` → `IdctMethod::Libjpeg`
+    /// - All other upsampling modes → `IdctMethod::Jpegli`
+    ///
+    /// Set explicitly to override this automatic selection.
+    pub(crate) idct_method: Option<IdctMethod>,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -744,6 +784,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("crop_region", &self.crop_region)
             .field("num_threads", &self.num_threads)
             .field("parallel_strategy", &self.parallel_strategy)
+            .field("idct_method", &self.idct_method)
             .finish()
     }
 }
@@ -769,6 +810,7 @@ impl Default for DecodeConfig {
             crop_region: None,
             num_threads: 0,
             parallel_strategy: ParallelStrategy::default(),
+            idct_method: None,
         }
     }
 }

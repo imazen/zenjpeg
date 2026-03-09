@@ -131,6 +131,9 @@ pub(super) struct JpegParser<'a> {
     /// Chroma upsampling method (set from DecodeConfig before decode).
     pub(super) chroma_upsampling: super::ChromaUpsampling,
 
+    /// IDCT method (set from DecodeConfig before decode).
+    pub(super) idct_method: super::IdctMethod,
+
     // ICC profile (extracted from raw data, not during parsing)
     pub(super) icc_profile: Option<Vec<u8>>,
 
@@ -225,6 +228,7 @@ impl<'a> JpegParser<'a> {
             #[cfg(feature = "parallel")]
             fused_result: None,
             chroma_upsampling: super::ChromaUpsampling::default(),
+            idct_method: super::IdctMethod::default(),
             icc_profile,
             max_pixels,
             preserve_config,

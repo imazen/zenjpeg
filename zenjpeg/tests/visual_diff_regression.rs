@@ -543,6 +543,82 @@ fn test_visual_diff_corpus_photo() {
     }
 }
 
+/// Verify that IdctMethod::Libjpeg with box filter matches mozjpeg box within max=1.
+/// This confirms the remaining max=2-3 diff on the default box path is purely IDCT rounding.
+#[test]
+fn test_idct_method_libjpeg_matches_mozjpeg() {
+    use zenjpeg::decode::{ChromaUpsampling, IdctMethod};
+
+    let sizes = [(128, 128), (256, 256), (96, 80), (255, 255)];
+    let qualities = [50.0, 85.0, 95.0];
+
+    println!("\n=== IdctMethod::Libjpeg + Box vs mozjpeg Box ===");
+    for (w, h) in sizes {
+        for q in qualities {
+            let pixels = make_stress_image(w, h);
+            let jpeg = encode_420(&pixels, w as u32, h as u32, q);
+
+            // Decode with zenjpeg: libjpeg IDCT + box filter
+            let decoder = Decoder::new()
+                .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
+                .idct_method(IdctMethod::Libjpeg);
+            let img = decoder.decode(&jpeg, Unstoppable).expect("decode");
+            let zen_rgb = img.into_pixels_u8().unwrap();
+
+            // Decode with mozjpeg box filter
+            let (_, _, moz_rgb) = decode_mozjpeg_box(&jpeg);
+
+            let max_diff: i32 = zen_rgb
+                .iter()
+                .zip(moz_rgb.iter())
+                .map(|(a, b)| (*a as i32 - *b as i32).abs())
+                .max()
+                .unwrap_or(0);
+
+            println!("  {w}x{h} Q{q}: Libjpeg+box vs mozjpeg-box max_diff={max_diff}");
+            assert!(
+                max_diff <= 1,
+                "{w}x{h} Q{q}: IdctMethod::Libjpeg + box should match mozjpeg within 1, got {max_diff}"
+            );
+        }
+    }
+}
+
+/// Verify that LibjpegCompat (which auto-selects Libjpeg IDCT) matches mozjpeg fancy
+/// within max=2. The remaining diff is from upsampler rounding, not IDCT.
+#[test]
+fn test_idct_method_libjpeg_compat_matches_mozjpeg() {
+    use zenjpeg::decode::ChromaUpsampling;
+
+    let sizes = [(128, 128), (256, 256), (96, 80)];
+
+    println!("\n=== LibjpegCompat (auto Libjpeg IDCT) vs mozjpeg Fancy ===");
+    for (w, h) in sizes {
+        let pixels = make_stress_image(w, h);
+        let jpeg = encode_420(&pixels, w as u32, h as u32, 85.0);
+
+        // LibjpegCompat defaults to Libjpeg IDCT (via effective_idct_method)
+        let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+        let img = decoder.decode(&jpeg, Unstoppable).expect("decode");
+        let zen_rgb = img.into_pixels_u8().unwrap();
+
+        let (_, _, moz_rgb) = decode_mozjpeg(&jpeg);
+
+        let max_diff: i32 = zen_rgb
+            .iter()
+            .zip(moz_rgb.iter())
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap_or(0);
+
+        println!("  {w}x{h}: LibjpegCompat vs mozjpeg-fancy max_diff={max_diff}");
+        assert!(
+            max_diff <= 2,
+            "{w}x{h}: LibjpegCompat should match mozjpeg within 2, got {max_diff}"
+        );
+    }
+}
+
 /// Verify streaming and scanline paths produce identical output (path consistency).
 #[test]
 fn test_decode_path_consistency() {

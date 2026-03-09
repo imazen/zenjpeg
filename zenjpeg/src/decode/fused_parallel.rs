@@ -31,7 +31,7 @@ use crate::quant::dequantize_unzigzag_i32_into_partial;
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::rst_scan::compute_segments;
 use super::upsample::MAX_UPSAMPLE_SCRATCH;
-use super::{ChromaUpsampling, DecodeWarning, Strictness};
+use super::{ChromaUpsampling, DecodeWarning, IdctMethod, Strictness};
 
 use super::parser::JpegParser;
 
@@ -214,6 +214,7 @@ impl<'a> JpegParser<'a> {
 
         // Select fused path
         let chroma_upsampling = self.chroma_upsampling;
+        let idct_method = self.idct_method;
         let (result, any_ac, any_huff, first_trunc, any_pad, total_mcus) = if !is_subsampled {
             // 4:4:4 or grayscale — single pass
             self.decode_fused_444(
@@ -228,7 +229,7 @@ impl<'a> JpegParser<'a> {
                 max_v_samp,
                 ri,
                 group_stride,
-                chroma_upsampling,
+                idct_method,
             )?
         } else if matches!(
             chroma_upsampling,
@@ -248,6 +249,7 @@ impl<'a> JpegParser<'a> {
                 ri,
                 group_stride,
                 chroma_upsampling,
+                idct_method,
             )?
         } else {
             // Subsampled + fancy upsample
@@ -272,6 +274,7 @@ impl<'a> JpegParser<'a> {
                     ri,
                     group_stride,
                     chroma_upsampling,
+                    idct_method,
                 )?
             } else if h_ratio == 2 && v_ratio == 1 {
                 // h2v1 (4:2:2) — horizontal-only upsample, no vertical context
@@ -288,6 +291,7 @@ impl<'a> JpegParser<'a> {
                     ri,
                     group_stride,
                     chroma_upsampling,
+                    idct_method,
                 )?
             } else {
                 return Ok(false); // Fall through to sequential for rare modes
@@ -433,7 +437,7 @@ impl<'a> JpegParser<'a> {
         _max_v_samp: usize,
         ri: usize,
         group_stride: usize,
-        chroma_upsampling: ChromaUpsampling,
+        idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         let width = self.width as usize;
         let height = self.height as usize;
@@ -443,9 +447,9 @@ impl<'a> JpegParser<'a> {
         let strip_width = mcu_cols * 8; // padded width
 
         // Select IDCT function
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
         };
 
         // Build thread-safe Huffman tables
@@ -744,6 +748,7 @@ impl<'a> JpegParser<'a> {
         ri: usize,
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
+        idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         use crate::color::ycbcr::{
             fused_h2v2_box_ycbcr_to_rgb_u8, fused_h2v2_hfancy_ycbcr_to_rgb_u8,
@@ -766,8 +771,11 @@ impl<'a> JpegParser<'a> {
         let c_strip_width = mcu_cols * self.components[1].h_samp_factor as usize * 8;
         let c_strip_height = self.components[1].v_samp_factor as usize * 8;
 
-        // Select IDCT (box filter always uses standard IDCT)
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = idct_int_tiered;
+        // Select IDCT function
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
+        };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 
@@ -1054,6 +1062,7 @@ impl<'a> JpegParser<'a> {
         ri: usize,
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
+        idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         use super::upsample::{
             upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
@@ -1075,9 +1084,9 @@ impl<'a> JpegParser<'a> {
         let c_strip_height = self.components[1].v_samp_factor as usize * 8;
 
         // Select IDCT function
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
         };
 
         // Select h2v1 upsample function
@@ -1397,6 +1406,7 @@ impl<'a> JpegParser<'a> {
         ri: usize,
         group_stride: usize,
         chroma_upsampling: ChromaUpsampling,
+        idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         use super::upsample::{
             upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
@@ -1424,9 +1434,9 @@ impl<'a> JpegParser<'a> {
         let ext_height = c_strip_height + 2;
 
         // Select IDCT function
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
         };
 
         // Select upsample function
@@ -2065,6 +2075,7 @@ pub(super) struct WaveParallelState {
     pub lenient: bool,
     pub permissive_rst: bool,
     pub strict: bool,
+    pub idct_method: IdctMethod,
 
     // Wave parameters
     pub wave_size: usize,
@@ -2086,6 +2097,7 @@ impl WaveParallelState {
         dc_tables: Vec<Option<HuffmanDecodeTable>>,
         ac_tables: Vec<Option<HuffmanDecodeTable>>,
         strictness: super::Strictness,
+        idct_method: IdctMethod,
         wave_size: usize,
     ) -> Self {
         let width = scan_data.width as usize;
@@ -2173,6 +2185,7 @@ impl WaveParallelState {
             lenient,
             permissive_rst,
             strict,
+            idct_method,
             wave_size,
             num_segments,
             mcu_pixel_height: mcu_height,
@@ -2212,7 +2225,10 @@ impl WaveParallelState {
         let c_strip_width = self.mcu_cols * self.comp_h_samps[1] * 8;
         let c_strip_height = self.comp_v_samps[1] * 8;
 
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = idct_int_tiered;
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
+        };
 
         // Split wave buffer into per-segment chunks
         let chunks: Vec<&mut [u8]> = wave_buf[..wave_count * seg_rgb_bytes]
@@ -2477,7 +2493,10 @@ impl WaveParallelState {
             0
         };
 
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = idct_int_tiered;
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
+        };
 
         // Split output buffers into per-segment chunks
         let y_chunks: Vec<&mut [i16]> = wave_y[..wave_count * y_seg_samples]

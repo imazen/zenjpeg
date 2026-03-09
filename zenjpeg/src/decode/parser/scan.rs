@@ -705,12 +705,24 @@ impl<'a> JpegParser<'a> {
                             &mut dequant_buf,
                             coeff_count,
                         );
-                        idct_int_tiered(
-                            &mut dequant_buf,
-                            &mut strip[dst_offset..],
-                            strip_width,
-                            coeff_count,
-                        );
+                        match self.idct_method {
+                            super::super::IdctMethod::Libjpeg => {
+                                super::super::idct_int::idct_int_tiered_libjpeg(
+                                    &mut dequant_buf,
+                                    &mut strip[dst_offset..],
+                                    strip_width,
+                                    coeff_count,
+                                );
+                            }
+                            super::super::IdctMethod::Jpegli => {
+                                idct_int_tiered(
+                                    &mut dequant_buf,
+                                    &mut strip[dst_offset..],
+                                    strip_width,
+                                    coeff_count,
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -1045,13 +1057,9 @@ impl<'a> JpegParser<'a> {
             };
 
         // Select IDCT function
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = if matches!(
-            self.chroma_upsampling,
-            super::super::ChromaUpsampling::LibjpegCompat
-        ) {
-            super::super::idct_int::idct_int_tiered_libjpeg
-        } else {
-            idct_int_tiered
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            super::super::IdctMethod::Libjpeg => super::super::idct_int::idct_int_tiered_libjpeg,
+            super::super::IdctMethod::Jpegli => idct_int_tiered,
         };
 
         /// Decode one MCU row of blocks into Y strip and chroma strips.

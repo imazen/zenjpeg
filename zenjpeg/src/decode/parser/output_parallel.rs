@@ -14,7 +14,7 @@
 //! - `to_pixels_fast_i16_subsampled_parallel`: 4:2:0/4:2:2/4:4:0 non-XYB images
 
 use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8};
-use crate::decode::ChromaUpsampling;
+use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::decode::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use crate::decode::upsample::{
     upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
@@ -47,7 +47,7 @@ impl<'a> JpegParser<'a> {
     /// Returns `None` if the image is too small for parallelism to help.
     pub(super) fn to_pixels_fast_i16_parallel(
         &self,
-        chroma_upsampling: ChromaUpsampling,
+        _chroma_upsampling: ChromaUpsampling,
     ) -> Result<Option<Vec<u8>>> {
         let width = self.width as usize;
         let height = self.height as usize;
@@ -88,9 +88,9 @@ impl<'a> JpegParser<'a> {
         let rgb_row_stride = width * 3;
         let mcu_row_rgb_bytes = mcu_height * rgb_row_stride;
 
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
         };
 
         // Extract Sync-safe references before parallel section
@@ -177,9 +177,9 @@ impl<'a> JpegParser<'a> {
         &self,
         chroma_upsampling: ChromaUpsampling,
     ) -> Result<Option<Vec<u8>>> {
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => idct_int_tiered_libjpeg,
-            _ => idct_int_tiered,
+        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
+            IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
+            IdctMethod::Jpegli => idct_int_tiered,
         };
 
         let width = self.width as usize;
