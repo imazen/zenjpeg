@@ -201,11 +201,14 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
         560337,
     ),
     // XYB: identical between SIMD and non-SIMD
+    // Updated 2026-03-09: Q50 XYB hashes changed after commit e0b5c86 forced
+    // allow_16bit_quant_tables=true for XYB. At Q50, 2 of 3 quant tables exceed
+    // 255, requiring 16-bit DQT entries (+128 bytes). Scan data is identical.
     (
         "baseline_xyb_opt",
         50,
-        "393033519668cb4ba1eb6280f941900e0e4f7c98b906b35652032440a0d08a0a",
-        292993,
+        "cccfb46961716bd9a3923526e065e513e52343c04e1c9e041e588c8c5871edf7",
+        293121,
     ),
     (
         "baseline_xyb_opt",
@@ -222,8 +225,8 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
         "baseline_xyb_fixed",
         50,
-        "ddbe2863e41929e98a3069edf6fee34c3f6c634246066cfcec15674fd828999c",
-        299934,
+        "271dd657300e7e42312eef206b5365300b1a2946f16af18facc15368f7000fc0",
+        300062,
     ),
     (
         "baseline_xyb_fixed",
@@ -240,8 +243,8 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
         "progressive_xyb_opt",
         50,
-        "1290d617a4749c40d23e7ed787f60f028c1e635dfdf5d03e61a1a6209a4756c6",
-        276238,
+        "9051a14e348e62ffbe97d1dc7524673fd709dc112359c72ff3c6c45280241fc9",
+        276366,
     ),
     (
         "progressive_xyb_opt",
@@ -423,11 +426,13 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
         "a598384e07a5258a32e405112f5f31431191342a8022b1aafd6c6cc20f6889d8",
         560335,
     ),
+    // Updated 2026-03-09: Q50 XYB hashes changed after commit e0b5c86 forced
+    // allow_16bit_quant_tables=true for XYB (+128 bytes from 16-bit DQT).
     (
         "baseline_xyb_opt",
         50,
-        "393033519668cb4ba1eb6280f941900e0e4f7c98b906b35652032440a0d08a0a",
-        292993,
+        "cccfb46961716bd9a3923526e065e513e52343c04e1c9e041e588c8c5871edf7",
+        293121,
     ),
     (
         "baseline_xyb_opt",
@@ -444,8 +449,8 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
         "baseline_xyb_fixed",
         50,
-        "ddbe2863e41929e98a3069edf6fee34c3f6c634246066cfcec15674fd828999c",
-        299934,
+        "271dd657300e7e42312eef206b5365300b1a2946f16af18facc15368f7000fc0",
+        300062,
     ),
     (
         "baseline_xyb_fixed",
@@ -462,8 +467,8 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
         "progressive_xyb_opt",
         50,
-        "1290d617a4749c40d23e7ed787f60f028c1e635dfdf5d03e61a1a6209a4756c6",
-        276238,
+        "9051a14e348e62ffbe97d1dc7524673fd709dc112359c72ff3c6c45280241fc9",
+        276366,
     ),
     (
         "progressive_xyb_opt",

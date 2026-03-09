@@ -825,11 +825,10 @@ sensitivity tables, and preset baselines.
    - Root cause: Independent per-anchor SA without monotonicity constraints
    - Impact: Feature unusable as-is. Would need constrained optimization or post-smoothing.
 
-3. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)** - `test_frymire_hashes_locked`
-   fails on `baseline_xyb_opt Q50`: expected 292993 bytes, actual 293121 bytes (+128 bytes).
-   Stale locked hash needing update after a previous encoder change.
-   - Impact: `cargo test --release -p zenjpeg --test frymire_hash_locked` fails
-   - Fix: Update locked hash value.
+~~3. **frymire_hash_locked XYB Q50 size mismatch (2026-03-08)**~~ — **FIXED (2026-03-09).**
+   Stale hashes after commit e0b5c86 forced `allow_16bit_quant_tables=true` for XYB.
+   At Q50, 2 of 3 quant tables exceed 255, requiring 16-bit DQT entries (+128 bytes).
+   Scan data is identical — only DQT marker overhead changed. Hashes updated.
 
 4. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
    always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
