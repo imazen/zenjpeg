@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use rgb::{Gray, Rgb};
 use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
 use zc::encode::{EncodeCapabilities, EncodeOutput};
-use zc::{ImageFormat, ImageInfo, MetadataView, ResourceLimits, Unsupported, UnsupportedOperation};
+use zc::{ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation};
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -51,9 +51,9 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_icc(true)
     .with_exif(true)
     .with_xmp(true)
-    .with_cancel(true)
+    .with_stop(true)
     .with_lossy(true)
-    .with_row_level(true)
+    .with_push_rows(true)
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_f32(true)
@@ -299,7 +299,7 @@ impl zc::encode::EncoderConfig for JpegEncoderConfig {
 pub struct JpegEncodeJob<'a> {
     config: &'a JpegEncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
-    metadata: Option<&'a MetadataView<'a>>,
+    metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zc::encode::EncodePolicy>,
 }
@@ -314,8 +314,8 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn with_metadata(mut self, meta: &'a MetadataView<'a>) -> Self {
-        self.metadata = Some(meta);
+    fn with_metadata(mut self, meta: &Metadata) -> Self {
+        self.metadata = Some(meta.clone());
         self
     }
 
@@ -354,7 +354,7 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
 pub struct JpegEncoder<'a> {
     effective_config: EncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
-    metadata: Option<&'a MetadataView<'a>>,
+    metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zc::encode::EncodePolicy>,
     /// Accumulated rows for push_rows path. The native BytesEncoder requires
@@ -376,20 +376,20 @@ impl<'a> JpegEncoder<'a> {
     /// Build an EncodeRequest from current config + metadata, applying policy.
     fn build_request(&self) -> crate::encode::request::EncodeRequest<'_> {
         let mut req = self.effective_config.request();
-        if let Some(meta) = self.metadata {
+        if let Some(ref meta) = self.metadata {
             let policy = self.policy.unwrap_or_default();
             if policy.resolve_icc(true) {
-                if let Some(icc) = meta.icc_profile {
+                if let Some(ref icc) = meta.icc_profile {
                     req = req.icc_profile(icc);
                 }
             }
             if policy.resolve_exif(true) {
-                if let Some(exif) = meta.exif {
-                    req = req.exif(Exif::raw(exif));
+                if let Some(ref exif) = meta.exif {
+                    req = req.exif(Exif::raw(exif.to_vec()));
                 }
             }
             if policy.resolve_xmp(true) {
-                if let Some(xmp) = meta.xmp {
+                if let Some(ref xmp) = meta.xmp {
                     req = req.xmp(xmp);
                 }
             }
@@ -619,9 +619,9 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_icc(true)
     .with_exif(true)
     .with_xmp(true)
-    .with_cancel(true)
+    .with_stop(true)
     .with_cheap_probe(true)
-    .with_row_level(true)
+    .with_streaming(true)
     .with_native_gray(true)
     .with_native_f32(true)
     .with_enforces_max_pixels(true)
@@ -1609,7 +1609,7 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 4, 4);
 
         let icc = b"fake icc profile data";
-        let meta = MetadataView::default().with_icc(icc.as_slice());
+        let meta = Metadata::default().with_icc(icc.as_slice());
         let output = enc
             .job()
             .with_metadata(&meta)
@@ -1627,7 +1627,7 @@ mod tests {
         let img = Img::new(pixels.as_slice(), 4, 4);
 
         let icc = b"fake icc profile data";
-        let meta = MetadataView::default().with_icc(icc.as_slice());
+        let meta = Metadata::default().with_icc(icc.as_slice());
         let policy = zc::encode::EncodePolicy::strict();
 
         let output = enc
