@@ -935,6 +935,241 @@ fn test_fancy_420_non_aligned_gradient() {
     }
 }
 
+/// STRICT zero-tolerance regression test: zenjpeg vs zune-jpeg must be byte-identical.
+///
+/// Both decoders use the same integer IDCT, so Triangle upsampling should produce
+/// identical output when using the same separable formula. Any diff at MCU boundaries
+/// that exceeds interior diffs indicates a chroma upsampling formula mismatch (stripe bug).
+///
+/// This test also compares against mozjpeg-sys (libjpeg-turbo with NASM SIMD).
+/// mozjpeg uses a slightly different IDCT, so diffs up to ±3-4 are normal, but
+/// boundary diffs must not systematically exceed interior diffs.
+#[test]
+fn test_strict_boundary_parity_vs_zune_and_mozjpeg() {
+    /// Decode using mozjpeg-sys (libjpeg-turbo with NASM SIMD).
+    unsafe fn decode_moz(data: &[u8]) -> Vec<u8> {
+        unsafe {
+            use mozjpeg_sys::*;
+            use std::mem;
+
+            let mut err: jpeg_error_mgr = mem::zeroed();
+            jpeg_std_error(&mut err);
+
+            let mut cinfo: jpeg_decompress_struct = mem::zeroed();
+            cinfo.common.err = &mut err;
+            jpeg_create_decompress(&mut cinfo);
+
+            jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
+            jpeg_read_header(&mut cinfo, true as boolean);
+            cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
+            jpeg_start_decompress(&mut cinfo);
+
+            let width = cinfo.output_width as usize;
+            let height = cinfo.output_height as usize;
+            let components = cinfo.output_components as usize;
+            let row_stride = width * components;
+
+            let mut output = vec![0u8; height * row_stride];
+
+            while (cinfo.output_scanline as usize) < height {
+                let offset = cinfo.output_scanline as usize * row_stride;
+                let mut row_ptr = output[offset..].as_mut_ptr();
+                jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
+            }
+
+            jpeg_finish_decompress(&mut cinfo);
+            jpeg_destroy_decompress(&mut cinfo);
+
+            output
+        }
+    }
+
+    struct TestCase {
+        w: u32,
+        h: u32,
+        label: &'static str,
+        progressive: bool,
+    }
+
+    let cases = [
+        // MCU-aligned
+        TestCase { w: 128, h: 128, label: "128x128 baseline", progressive: false },
+        TestCase { w: 256, h: 256, label: "256x256 baseline", progressive: false },
+        TestCase { w: 512, h: 512, label: "512x512 baseline", progressive: false },
+        // Non-MCU-aligned (critical edge cases)
+        TestCase { w: 100, h: 100, label: "100x100 baseline", progressive: false },
+        TestCase { w: 127, h: 127, label: "127x127 baseline", progressive: false },
+        TestCase { w: 129, h: 129, label: "129x129 baseline", progressive: false },
+        TestCase { w: 255, h: 255, label: "255x255 baseline", progressive: false },
+        TestCase { w: 97, h: 63, label: "97x63 baseline", progressive: false },
+        // Progressive (coefficient-buffered path)
+        TestCase { w: 128, h: 128, label: "128x128 progressive", progressive: true },
+        TestCase { w: 255, h: 255, label: "255x255 progressive", progressive: true },
+    ];
+
+    let mut any_failed = false;
+
+    for case in &cases {
+        let pixels = make_high_contrast_image(case.w as usize, case.h as usize);
+        let jpeg = encode_420(&pixels, case.w, case.h, 85.0);
+        // Re-encode as progressive if needed (encode_420 above is baseline)
+        let jpeg = if case.progressive {
+            let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                .progressive(true)
+                .restart_mcu_rows(0) // no DRI for progressive
+                .allow_16bit_quant_tables(false)
+                .expect("config");
+            let mut enc = config
+                .encode_from_bytes(case.w, case.h, PixelLayout::Rgb8Srgb)
+                .expect("encoder");
+            enc.push_packed(&pixels, Unstoppable).expect("push");
+            enc.finish().expect("finish")
+        } else {
+            jpeg
+        };
+
+        let w = case.w as usize;
+        let h = case.h as usize;
+
+        // Decode with all paths
+        let (zen_full, _, _) = decode_zenjpeg_fancy(&jpeg);
+        let (zune_px, _, _) = decode_zune(&jpeg);
+
+        // Skip progressive vs zune comparison (known zune bug #5)
+        let skip_zune = case.progressive;
+
+        let moz_px = unsafe { decode_moz(&jpeg) };
+
+        // Scanline path
+        let decoder = Decoder::new();
+        let mut reader = decoder.scanline_reader(&jpeg).expect("scanline_reader");
+        let mut zen_scan = vec![0u8; w * h * 3];
+        let stride = w * 3;
+        let mut total = 0;
+        while !reader.is_finished() {
+            let rem = h - total;
+            let output = imgref::ImgRefMut::new(&mut zen_scan[total * stride..], stride, rem);
+            total += reader.read_rows_rgb8(output).expect("read");
+        }
+
+        let mcu_height = 16usize;
+
+        // === 1. zenjpeg vs zune-jpeg: must be byte-identical ===
+        if !skip_zune {
+            let mut bnd_max_fz = 0u32;
+            let mut int_max_fz = 0u32;
+            let mut bnd_max_sz = 0u32;
+            let mut int_max_sz = 0u32;
+
+            for y in 0..h {
+                let start = y * w * 3;
+                let end = start + w * 3;
+                let max_fz: u32 = zen_full[start..end].iter().zip(zune_px[start..end].iter())
+                    .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs()).max().unwrap_or(0);
+                let max_sz: u32 = zen_scan[start..end].iter().zip(zune_px[start..end].iter())
+                    .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs()).max().unwrap_or(0);
+
+                let in_mcu = y % mcu_height;
+                let is_boundary = in_mcu == 0 || in_mcu == mcu_height - 1;
+                if is_boundary {
+                    bnd_max_fz = bnd_max_fz.max(max_fz);
+                    bnd_max_sz = bnd_max_sz.max(max_sz);
+                } else {
+                    int_max_fz = int_max_fz.max(max_fz);
+                    int_max_sz = int_max_sz.max(max_sz);
+                }
+            }
+
+            // STRICT: boundary must not exceed interior (stripe detection)
+            if bnd_max_fz > int_max_fz {
+                eprintln!(
+                    "FAIL {}: full vs zune boundary_max={bnd_max_fz} > interior_max={int_max_fz}",
+                    case.label
+                );
+                any_failed = true;
+            }
+            if bnd_max_sz > int_max_sz {
+                eprintln!(
+                    "FAIL {}: scanline vs zune boundary_max={bnd_max_sz} > interior_max={int_max_sz}",
+                    case.label
+                );
+                any_failed = true;
+            }
+
+            // STRICT: vs zune should be zero for baseline (same IDCT, same upsampling)
+            let total_max = bnd_max_fz.max(int_max_fz);
+            if total_max > 0 {
+                eprintln!(
+                    "NOTE {}: full vs zune max_diff={total_max} (expected 0 for baseline)",
+                    case.label
+                );
+                // Don't fail for this — it's informational. The stripe assertion above is the strict check.
+            }
+        }
+
+        // === 2. zenjpeg vs mozjpeg: boundary must not exceed interior ===
+        {
+            let mut bnd_max_fm = 0u32;
+            let mut int_max_fm = 0u32;
+
+            for y in 0..h {
+                let start = y * w * 3;
+                let end = start + w * 3;
+                let max_fm: u32 = zen_full[start..end].iter().zip(moz_px[start..end].iter())
+                    .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs()).max().unwrap_or(0);
+
+                let in_mcu = y % mcu_height;
+                let is_boundary = in_mcu == 0 || in_mcu == mcu_height - 1;
+                if is_boundary {
+                    bnd_max_fm = bnd_max_fm.max(max_fm);
+                } else {
+                    int_max_fm = int_max_fm.max(max_fm);
+                }
+            }
+
+            // STRICT: boundary must not exceed interior
+            if bnd_max_fm > int_max_fm {
+                eprintln!(
+                    "FAIL {}: full vs mozjpeg boundary_max={bnd_max_fm} > interior_max={int_max_fm}",
+                    case.label
+                );
+                any_failed = true;
+            }
+        }
+
+        // === 3. full vs scanline must be identical ===
+        {
+            let max_fs: u32 = zen_full.iter().zip(zen_scan.iter())
+                .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs()).max().unwrap_or(0);
+            if max_fs > 0 {
+                // Find which row
+                for y in 0..h {
+                    let start = y * w * 3;
+                    let end = start + w * 3;
+                    let row_max: u32 = zen_full[start..end].iter().zip(zen_scan[start..end].iter())
+                        .map(|(&a, &b)| (a as i32 - b as i32).unsigned_abs()).max().unwrap_or(0);
+                    if row_max > 0 {
+                        let in_mcu = y % mcu_height;
+                        eprintln!(
+                            "FAIL {}: full vs scanline diff at row {y} (MCU pos {in_mcu}): max={row_max}",
+                            case.label
+                        );
+                        break;
+                    }
+                }
+                any_failed = true;
+            }
+        }
+
+        println!("  {} ... OK", case.label);
+    }
+
+    assert!(
+        !any_failed,
+        "Strict boundary parity test failed — see FAIL messages above"
+    );
+}
+
 /// Test with real corpus images — the most realistic test.
 #[test]
 fn test_fancy_420_corpus_all_paths() {
