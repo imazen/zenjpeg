@@ -86,8 +86,7 @@ fn encode_jpeg(
     let config = EncoderConfig::ycbcr(quality, subsampling)
         .progressive(progressive)
         .restart_mcu_rows(restart_mcu_rows)
-        .allow_16bit_quant_tables(false)
-        .expect("baseline config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");

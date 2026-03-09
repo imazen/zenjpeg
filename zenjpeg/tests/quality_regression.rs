@@ -150,8 +150,7 @@ fn encode_ycbcr(
 ) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, subsampling)
         .progressive(false)
-        .allow_16bit_quant_tables(false)
-        .expect("baseline config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
@@ -168,8 +167,7 @@ fn encode_ycbcr_auto_optimize(
 ) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, subsampling)
         .auto_optimize(true)
-        .allow_16bit_quant_tables(false)
-        .expect("baseline config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
@@ -1060,8 +1058,7 @@ fn diagnostic_isolate_trellis_progressive() {
                 base_lambda_scale1: 14.5,
                 ..Default::default()
             })
-            .allow_16bit_quant_tables(false)
-            .expect("config B");
+            .allow_16bit_quant_tables(false);
         let mut enc_b = config_b
             .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
             .unwrap();

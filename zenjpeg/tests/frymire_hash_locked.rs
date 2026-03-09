@@ -201,50 +201,51 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
         560337,
     ),
     // XYB: identical between SIMD and non-SIMD
-    // Updated 2026-03-09: Q50 XYB hashes changed after commit e0b5c86 forced
-    // allow_16bit_quant_tables=true for XYB. At Q50, 2 of 3 quant tables exceed
-    // 255, requiring 16-bit DQT entries (+128 bytes). Scan data is identical.
+    // Updated 2026-03-09: XYB now defaults allow_16bit_quant_tables=false (8-bit DQT)
+    // with force_sof1=true (SOF1 for DC categories). All sequential XYB hashes changed
+    // because SOF marker is now always 0xC1 (SOF1) regardless of quant value range.
+    // Progressive XYB uses SOF2 (unchanged by force_sof1).
     (
         "baseline_xyb_opt",
         50,
-        "cccfb46961716bd9a3923526e065e513e52343c04e1c9e041e588c8c5871edf7",
-        293121,
+        "19aa6087a9aa7d55dfc8bfbb3dd041b04d026fc595e4ff3b02ffbe44c99dedb4",
+        292993,
     ),
     (
         "baseline_xyb_opt",
         75,
-        "dd8f3a6329b36f64e3f2eee3f1f1e72cab18d9c8242bfe53b8f735ebd919439f",
+        "78c924eab670e3c0a91e8b8f528c2271abe2174d78890c4188c4cb6fd7e7fcd8",
         408624,
     ),
     (
         "baseline_xyb_opt",
         90,
-        "8e816bd90068bd00fc8dc456f12ae1f17851851310daee1242b4ff3c1028b85e",
+        "a1d238702e287da0e4e5a152ffd253afc791f8e1446dbd467b14bcbe5d1f4d6f",
         610601,
     ),
     (
         "baseline_xyb_fixed",
         50,
-        "271dd657300e7e42312eef206b5365300b1a2946f16af18facc15368f7000fc0",
-        300062,
+        "a04030de3e0ff058227e8a4253a17d25a2df1fc55d4e06907ef7d9bf40ed7fdc",
+        299934,
     ),
     (
         "baseline_xyb_fixed",
         75,
-        "8f0efc08af882bbacc850a96c7f7cdf309d5027917986322d8d59e4f5690bfaf",
+        "5738273a2d3cb8c95e56119cd6cc991804c342c538b6e78d2534039d044bca25",
         424935,
     ),
     (
         "baseline_xyb_fixed",
         90,
-        "2007d806d9c320721cc29fb55889c6b4995d86d84675ce25a5feb74f1db6703c",
+        "0df9f96865fac0ff9d13743d9c9842919d938b69a779326b482622612df59c2a",
         622375,
     ),
     (
         "progressive_xyb_opt",
         50,
-        "9051a14e348e62ffbe97d1dc7524673fd709dc112359c72ff3c6c45280241fc9",
-        276366,
+        "1290d617a4749c40d23e7ed787f60f028c1e635dfdf5d03e61a1a6209a4756c6",
+        276238,
     ),
     (
         "progressive_xyb_opt",
@@ -426,49 +427,49 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
         "a598384e07a5258a32e405112f5f31431191342a8022b1aafd6c6cc20f6889d8",
         560335,
     ),
-    // Updated 2026-03-09: Q50 XYB hashes changed after commit e0b5c86 forced
-    // allow_16bit_quant_tables=true for XYB (+128 bytes from 16-bit DQT).
+    // Updated 2026-03-09: XYB defaults to 8-bit DQT + force_sof1.
+    // Sequential XYB hashes changed (SOF0→SOF1). Progressive unchanged (SOF2).
     (
         "baseline_xyb_opt",
         50,
-        "cccfb46961716bd9a3923526e065e513e52343c04e1c9e041e588c8c5871edf7",
-        293121,
+        "19aa6087a9aa7d55dfc8bfbb3dd041b04d026fc595e4ff3b02ffbe44c99dedb4",
+        292993,
     ),
     (
         "baseline_xyb_opt",
         75,
-        "dd8f3a6329b36f64e3f2eee3f1f1e72cab18d9c8242bfe53b8f735ebd919439f",
+        "78c924eab670e3c0a91e8b8f528c2271abe2174d78890c4188c4cb6fd7e7fcd8",
         408624,
     ),
     (
         "baseline_xyb_opt",
         90,
-        "8e816bd90068bd00fc8dc456f12ae1f17851851310daee1242b4ff3c1028b85e",
+        "a1d238702e287da0e4e5a152ffd253afc791f8e1446dbd467b14bcbe5d1f4d6f",
         610601,
     ),
     (
         "baseline_xyb_fixed",
         50,
-        "271dd657300e7e42312eef206b5365300b1a2946f16af18facc15368f7000fc0",
-        300062,
+        "a04030de3e0ff058227e8a4253a17d25a2df1fc55d4e06907ef7d9bf40ed7fdc",
+        299934,
     ),
     (
         "baseline_xyb_fixed",
         75,
-        "8f0efc08af882bbacc850a96c7f7cdf309d5027917986322d8d59e4f5690bfaf",
+        "5738273a2d3cb8c95e56119cd6cc991804c342c538b6e78d2534039d044bca25",
         424935,
     ),
     (
         "baseline_xyb_fixed",
         90,
-        "2007d806d9c320721cc29fb55889c6b4995d86d84675ce25a5feb74f1db6703c",
+        "0df9f96865fac0ff9d13743d9c9842919d938b69a779326b482622612df59c2a",
         622375,
     ),
     (
         "progressive_xyb_opt",
         50,
-        "9051a14e348e62ffbe97d1dc7524673fd709dc112359c72ff3c6c45280241fc9",
-        276366,
+        "1290d617a4749c40d23e7ed787f60f028c1e635dfdf5d03e61a1a6209a4756c6",
+        276238,
     ),
     (
         "progressive_xyb_opt",

@@ -117,6 +117,13 @@ pub struct ComputedConfig {
     /// this for compatibility with very old or limited JPEG decoders.
     pub allow_16bit_quant_tables: bool,
 
+    /// Force SOF1 (extended sequential) regardless of quant table precision.
+    ///
+    /// XYB color space requires SOF1 because its wider dynamic range produces
+    /// DC categories 12-15, exceeding baseline's limit of 11. This is independent
+    /// of whether quant values exceed 255.
+    pub force_sof1: bool,
+
     /// Progressive scan script strategy.
     ///
     /// Controls how scans are structured for progressive JPEGs:
@@ -280,6 +287,7 @@ impl Default for ComputedConfig {
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
             allow_16bit_quant_tables: false,
+            force_sof1: false,
             scan_strategy: ScanStrategy::Default,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,

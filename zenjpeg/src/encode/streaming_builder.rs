@@ -38,8 +38,11 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
     pub(crate) aq_enabled: bool,
-    /// Allow 16-bit quantization tables (default: true)
+    /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
+    /// Force SOF1 (extended sequential) regardless of quant table precision.
+    /// Required for XYB (DC categories can exceed baseline limit of 11).
+    pub(crate) force_sof1: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
     pub(crate) separate_chroma_tables: bool,
     /// Progressive scan script strategy
@@ -78,6 +81,7 @@ impl StreamingEncoderBuilder {
             deringing: true,
             aq_enabled: true,
             allow_16bit_quant_tables: false,
+            force_sof1: false,
             separate_chroma_tables: true,
             scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
@@ -288,14 +292,24 @@ impl StreamingEncoderBuilder {
 
     /// Allow 16-bit quantization tables for better low-quality precision.
     ///
-    /// When enabled (default), quantization values can exceed 255, producing
-    /// extended sequential JPEGs (SOF1 marker).
+    /// When enabled, quantization values can exceed 255, using 16-bit DQT
+    /// markers. When any table exceeds 255, SOF1 is used automatically.
     ///
-    /// When disabled, quantization values are clamped to 255, producing
-    /// baseline-compatible JPEGs (SOF0 marker) that work with all decoders.
+    /// When disabled, quantization values are clamped to 255 (8-bit DQT).
+    /// SOF0 is used unless `force_sof1` is set.
     #[must_use]
     pub(crate) fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
+        self
+    }
+
+    /// Force SOF1 (extended sequential) regardless of quant table precision.
+    ///
+    /// Required for XYB color space, where DC categories can exceed the
+    /// baseline limit of 11 due to the wider dynamic range.
+    #[must_use]
+    pub(crate) fn force_sof1(mut self, enable: bool) -> Self {
+        self.force_sof1 = enable;
         self
     }
 

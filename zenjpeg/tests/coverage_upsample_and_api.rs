@@ -180,8 +180,7 @@ mod encoder_config_tests {
     fn force_baseline_clamps_quant() {
         let config = EncoderConfig::ycbcr(50.0, ChromaSubsampling::Quarter)
             .progressive(false)
-            .allow_16bit_quant_tables(false)
-            .expect("allow_16bit_quant_tables");
+            .allow_16bit_quant_tables(false);
         let pixels = make_test_pixels(64, 64);
         let jpeg = encode(&pixels, 64, 64, &config);
         // Should start with SOF0 (baseline, marker 0xFFC0)

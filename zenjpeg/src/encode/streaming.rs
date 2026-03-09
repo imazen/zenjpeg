@@ -297,6 +297,7 @@ impl StreamingEncoder {
             original_width: None,
             original_height: None,
             allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
+            force_sof1: builder.force_sof1,
             separate_chroma_tables: builder.separate_chroma_tables,
             scan_strategy: builder.scan_strategy,
         };
@@ -1235,8 +1236,11 @@ impl StreamingEncoder {
         config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
         config.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
 
-        // Use SOF1 if any quant table needs 16-bit precision
-        let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        // Use SOF1 if any quant table needs 16-bit precision, or if forced (XYB DC categories)
+        let is_extended = config.force_sof1
+            || y_quant.precision > 0
+            || cb_quant.precision > 0
+            || cr_quant.precision > 0;
         config.write_frame_header_xyb_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
@@ -1335,8 +1339,11 @@ impl StreamingEncoder {
         config.write_header(output)?;
         config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
 
-        // Use SOF1 if any quant table needs 16-bit precision
-        let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        // Use SOF1 if any quant table needs 16-bit precision, or if forced (XYB DC categories)
+        let is_extended = config.force_sof1
+            || y_quant.precision > 0
+            || cb_quant.precision > 0
+            || cr_quant.precision > 0;
         config.write_frame_header_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {

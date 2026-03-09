@@ -96,32 +96,35 @@ fn xyb_420_roundtrip_all_qualities() {
     }
 }
 
-/// XYB rejects force_baseline() and allow_16bit_quant_tables(false).
+/// XYB allows both allow_16bit_quant_tables settings, but always uses SOF1.
+/// SOF1 is required for XYB DC categories, independent of quant precision.
 #[test]
-fn xyb_rejects_baseline() {
-    // force_baseline() must error for XYB
-    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter).force_baseline();
-    assert!(err.is_err(), "force_baseline() should fail for XYB");
+fn xyb_allows_baseline_quant() {
+    // force_baseline() works for XYB (clamps quant, still uses SOF1)
+    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter).force_baseline();
+    assert!(!config.is_allow_16bit_quant_tables());
 
-    // allow_16bit_quant_tables(false) must error for XYB
-    let err = EncoderConfig::xyb(50, XybSubsampling::BQuarter).allow_16bit_quant_tables(false);
-    assert!(
-        err.is_err(),
-        "disabling 16-bit quant tables should fail for XYB"
-    );
+    // allow_16bit_quant_tables(false) works for XYB
+    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter).allow_16bit_quant_tables(false);
+    assert!(!config.is_allow_16bit_quant_tables());
 
-    // allow_16bit_quant_tables(true) is fine for XYB
-    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter)
-        .allow_16bit_quant_tables(true)
-        .expect("enabling 16-bit should succeed for XYB");
+    // allow_16bit_quant_tables(true) also works
+    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter).allow_16bit_quant_tables(true);
     assert!(config.is_allow_16bit_quant_tables());
+
+    // XYB defaults to allow_16bit=false (quant values >255 have no quality impact)
+    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter);
+    assert!(!config.is_allow_16bit_quant_tables());
 }
 
-/// XYB output always uses SOF1 (extended sequential).
+/// Non-progressive XYB output uses SOF1 (extended sequential), even with 8-bit quant tables.
+/// SOF1 is required because XYB DC categories can exceed baseline's limit of 11.
+/// Progressive XYB uses SOF2 (progressive) which also supports extended DC categories.
 #[test]
-fn xyb_always_extended_sequential() {
-    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter);
-    assert!(config.is_allow_16bit_quant_tables());
+fn xyb_sequential_uses_sof1() {
+    // Force sequential mode (progressive uses SOF2 which is fine for XYB)
+    let config = EncoderConfig::xyb(50, XybSubsampling::BQuarter).progressive(false);
+    assert!(!config.is_allow_16bit_quant_tables());
 
     let rgb = generate_test_image(64, 64);
     let encoded = config
@@ -131,10 +134,8 @@ fn xyb_always_extended_sequential() {
     // SOF1 = 0xFFC1, SOF0 = 0xFFC0
     let has_sof1 = encoded.windows(2).any(|w| w == [0xFF, 0xC1]);
     let has_sof0 = encoded.windows(2).any(|w| w == [0xFF, 0xC0]);
-    assert!(
-        has_sof1 || !has_sof0,
-        "XYB should use SOF1 (extended) not SOF0 (baseline)"
-    );
+    assert!(has_sof1, "Sequential XYB must use SOF1 (extended)");
+    assert!(!has_sof0, "Sequential XYB must not use SOF0 (baseline)");
 }
 
 /// XYB full resolution (no subsampling) roundtrip — verify no regression.

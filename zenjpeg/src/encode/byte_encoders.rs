@@ -137,6 +137,10 @@ impl BytesEncoder {
         builder = builder.aq_enabled(config.aq_enabled);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
+        builder = builder.force_sof1(matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Xyb { .. }
+        ));
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -1020,6 +1024,10 @@ impl YCbCrPlanarEncoder {
         builder = builder.aq_enabled(config.aq_enabled);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
+        builder = builder.force_sof1(matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Xyb { .. }
+        ));
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
