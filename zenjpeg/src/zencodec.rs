@@ -1,14 +1,14 @@
-//! zencodec-types trait implementations for zenjpeg.
+//! zencodec trait implementations for zenjpeg.
 //!
 //! Provides [`JpegEncoderConfig`] and [`JpegDecoderConfig`] types that implement
-//! the encode/decode trait hierarchy from zencodec-types, wrapping the native
+//! the encode/decode trait hierarchy from zencodec, wrapping the native
 //! zenjpeg API.
 //!
 //! The native API remains untouched — this is a thin adapter layer.
 //!
 //! # Trait mapping
 //!
-//! | zencodec-types | zenjpeg adapter |
+//! | zencodec | zenjpeg adapter |
 //! |----------------|-----------------|
 //! | `EncoderConfig` | [`JpegEncoderConfig`] |
 //! | `EncodeJob<'a>` | [`JpegEncodeJob`] |

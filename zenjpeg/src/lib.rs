@@ -329,7 +329,7 @@ pub mod layout;
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
-// zencodec-types trait implementations
+// zencodec trait implementations
 #[cfg(feature = "zencodec")]
 mod zencodec;
 #[cfg(feature = "zencodec")]

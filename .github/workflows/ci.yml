@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
@@ -81,7 +81,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
@@ -151,7 +151,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
@@ -212,7 +212,7 @@ jobs:
         shell: bash
         run: |
           cd ..
-          git clone --depth 1 https://github.com/imazen/zencodec-types.git
+          git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git

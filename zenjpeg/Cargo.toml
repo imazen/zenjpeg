@@ -109,7 +109,7 @@ approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
 png = { workspace = true }
-# zenpng = { workspace = true }  # Temporarily disabled: zencodec-types/zenpixels API mismatch
+# zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
 dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
@@ -184,7 +184,7 @@ yuv = ["dep:yuv"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
 ultrahdr = ["dep:ultrahdr-core", "decoder", "std"]
-# zencodec-types trait implementations (EncoderConfig, DecoderConfig, etc.)
+# zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode
 # Integrates zenlayout (geometry) and zenresize (resampling)
