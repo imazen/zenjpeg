@@ -18,7 +18,7 @@ use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use zensim::source::{PixelFormat, StridedBytes};
 use zensim::{Zensim, ZensimProfile};
-use zensim_regress::testing::{check_regression, RegressionTolerance};
+use zensim_regress::testing::{RegressionTolerance, check_regression};
 
 // =============================================================================
 // Image loading from codec-corpus
@@ -76,8 +76,7 @@ fn get_gb82_dir() -> Option<PathBuf> {
         }
     }
     // Fallback to known local path
-    let local = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../internal/jpegli-cpp/testdata");
+    let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata");
     // gb82 may not be there, but check common locations
     for candidate in [
         PathBuf::from("/home/lilith/work/codec-eval/codec-corpus/gb82"),
@@ -101,11 +100,7 @@ fn load_pngs_from_dir(dir: &Path, max: usize) -> Vec<(String, Vec<u8>, u32, u32)
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .expect("read dir")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "png")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.file_name());
     entries.truncate(max);
@@ -200,12 +195,7 @@ fn decode_rgb(jpeg: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 /// Compare original vs decoded using zensim. Returns (score, report_string).
-fn compare_quality(
-    original: &[u8],
-    decoded: &[u8],
-    width: usize,
-    height: usize,
-) -> (f64, String) {
+fn compare_quality(original: &[u8], decoded: &[u8], width: usize, height: usize) -> (f64, String) {
     let z = Zensim::new(ZensimProfile::latest());
     let stride = width * 3;
     let expected = StridedBytes::new(original, width, height, stride, PixelFormat::Srgb8Rgb);
@@ -243,8 +233,7 @@ fn quality_sweep_multi(
             };
             assert_eq!((dw, dh), (*w, *h), "{name} Q{q}: dimension mismatch");
 
-            let (score, _) =
-                compare_quality(pixels, &decoded, *w as usize, *h as usize);
+            let (score, _) = compare_quality(pixels, &decoded, *w as usize, *h as usize);
             results.push((q, score, jpeg.len()));
         }
         all_results.push((name.clone(), results));
@@ -361,10 +350,7 @@ fn test_ycbcr_420_quality_monotonic() {
 
     for (name, results) in &all_results {
         for &(q, score, _) in results {
-            assert!(
-                score >= 0.0,
-                "{name} Q{q}: decode failure"
-            );
+            assert!(score >= 0.0, "{name} Q{q}: decode failure");
             // 4:2:0 loses some chroma detail; thresholds slightly lower than 4:4:4
             let min_score = match q {
                 50..=59 => 50.0,
@@ -381,14 +367,13 @@ fn test_ycbcr_420_quality_monotonic() {
     }
 }
 
-/// 4:2:0 with auto_optimize: catches bug #1 (catastrophic quality at specific Q levels).
+/// 4:2:0 with auto_optimize: catches bug #6 (catastrophic quality at specific Q levels).
 /// Tests EVERY quality level from Q70-Q99 on the exact images that reproduced the bug.
-/// Bug #1 specifically affected: bulb, baby, girl at certain Q levels with 4:2:0 + trellis.
+/// Bug #6 specifically affected: bulb, baby, girl at certain Q levels with 4:2:0 + trellis.
 ///
-/// KNOWN FAILURE: bug #1 (CLAUDE.md) — catastrophic 4:2:0 auto_optimize quality.
-/// Unignore when bug #1 is fixed.
+/// Root cause was progressive decoder truncation near restart markers (commit 08ef601).
 #[test]
-#[ignore]
+#[ignore] // Requires gb82 corpus
 fn test_420_auto_optimize_no_catastrophic() {
     // These are the exact images that triggered bug #1
     let bug_images = ["bulb", "baby", "girl", "city", "flowers"];
@@ -447,10 +432,10 @@ fn test_420_auto_optimize_no_catastrophic() {
 }
 
 /// 4:4:4 with auto_optimize: should never have catastrophic drops.
-/// KNOWN FAILURE: waves Q97 hits 47.7 — bug #1 also affects 4:4:4 at extreme Q levels.
-/// Unignore when bug #1 is fixed.
+/// Previously failed (waves Q97 hit 47.7) due to progressive decoder truncation bug.
+/// Fixed in commit 08ef601.
 #[test]
-#[ignore]
+#[ignore] // Requires gb82 corpus
 fn test_444_auto_optimize_quality() {
     let images = match load_gb82_images(&["baby", "bulb", "guitar", "waves"]) {
         Some(imgs) => imgs,
@@ -519,11 +504,13 @@ fn test_xyb_roundtrip_all_qualities() {
 
             assert_eq!((dw, dh), (*w, *h), "{name} Q{q}: dimension mismatch");
 
-            let (score, _) =
-                compare_quality(pixels, &decoded, *w as usize, *h as usize);
+            let (score, _) = compare_quality(pixels, &decoded, *w as usize, *h as usize);
 
             let flag = if score < 30.0 { "LOW" } else { "" };
-            println!("    Q{q:3}: score={score:6.1}  size={:6}  {flag}", jpeg.len());
+            println!(
+                "    Q{q:3}: score={score:6.1}  size={:6}  {flag}",
+                jpeg.len()
+            );
         }
     }
 
@@ -582,10 +569,8 @@ fn test_decoder_path_consistency() {
             }
 
             // Compare with zensim
-            let expected =
-                StridedBytes::new(&stream_pixels, sw, sh, stride, PixelFormat::Srgb8Rgb);
-            let actual =
-                StridedBytes::new(&scanline_pixels, sw, sh, stride, PixelFormat::Srgb8Rgb);
+            let expected = StridedBytes::new(&stream_pixels, sw, sh, stride, PixelFormat::Srgb8Rgb);
+            let actual = StridedBytes::new(&scanline_pixels, sw, sh, stride, PixelFormat::Srgb8Rgb);
 
             let tolerance = RegressionTolerance::exact();
             let report = check_regression(&z, &expected, &actual, &tolerance).unwrap();
@@ -595,7 +580,11 @@ fn test_decoder_path_consistency() {
                 report.score(),
                 report.max_channel_delta(),
                 report.pixels_differing(),
-                if report.passed() { "IDENTICAL" } else { "DIFFER" }
+                if report.passed() {
+                    "IDENTICAL"
+                } else {
+                    "DIFFER"
+                }
             );
 
             assert!(
@@ -627,7 +616,10 @@ fn test_cid22_quality_statistics() {
 
     let qualities = [75, 90];
 
-    println!("\n=== CID22 Statistical Quality Check ({} images) ===", images.len());
+    println!(
+        "\n=== CID22 Statistical Quality Check ({} images) ===",
+        images.len()
+    );
 
     for q in qualities {
         let mut scores = Vec::new();
@@ -650,7 +642,10 @@ fn test_cid22_quality_statistics() {
         let mean = scores.iter().sum::<f64>() / scores.len() as f64;
         let min = scores.iter().cloned().fold(f64::INFINITY, f64::min);
 
-        println!("  Q{q}: mean={mean:.1}  min={min:.1} ({worst_name})  n={}", scores.len());
+        println!(
+            "  Q{q}: mean={mean:.1}  min={min:.1} ({worst_name})  n={}",
+            scores.len()
+        );
 
         let min_mean = if q >= 90 { 80.0 } else { 65.0 };
         assert!(
@@ -679,7 +674,9 @@ fn diagnostic_trellis_vs_plain() {
     };
 
     println!("\n=== Trellis vs Plain Diagnostic ===");
-    println!("Legend: auto=auto_optimize(4:2:0), plain=no trellis(4:2:0), ratio=auto_mae/plain_mae");
+    println!(
+        "Legend: auto=auto_optimize(4:2:0), plain=no trellis(4:2:0), ratio=auto_mae/plain_mae"
+    );
 
     for (name, pixels, w, h) in &images {
         println!("\n  {name} ({w}x{h}):");
@@ -687,7 +684,8 @@ fn diagnostic_trellis_vs_plain() {
             let q_f32 = q as f32;
 
             // With auto_optimize 4:2:0
-            let jpeg_auto = encode_ycbcr_auto_optimize(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+            let jpeg_auto =
+                encode_ycbcr_auto_optimize(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
 
             // Without auto_optimize (no trellis) 4:2:0
             let jpeg_plain = encode_ycbcr(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
@@ -715,8 +713,7 @@ fn diagnostic_trellis_vs_plain() {
             }
 
             let auto_mae = (auto_rgb[0] + auto_rgb[1] + auto_rgb[2]) as f64 / (npix * 3) as f64;
-            let plain_mae =
-                (plain_rgb[0] + plain_rgb[1] + plain_rgb[2]) as f64 / (npix * 3) as f64;
+            let plain_mae = (plain_rgb[0] + plain_rgb[1] + plain_rgb[2]) as f64 / (npix * 3) as f64;
             let ratio = auto_mae / plain_mae.max(0.001);
 
             let auto_r = auto_rgb[0] as f64 / npix as f64;
@@ -726,7 +723,8 @@ fn diagnostic_trellis_vs_plain() {
             let flag = if ratio > 2.0 { " *** BAD" } else { "" };
             println!(
                 "    Q{q:2}: auto={:6}B mae={auto_mae:.2} (R={auto_r:.2} G={auto_g:.2} B={auto_b:.2}) max={auto_max:3} | plain={:6}B mae={plain_mae:.2} | ratio={ratio:.2}x{flag}",
-                jpeg_auto.len(), jpeg_plain.len()
+                jpeg_auto.len(),
+                jpeg_plain.len()
             );
         }
     }
@@ -748,9 +746,10 @@ fn diagnostic_cross_decoder() {
     println!("\n=== Cross-decoder check for {name} Q90 vs Q91 ===");
     for q in [90.0f32, 91.0, 92.0, 93.0, 94.0] {
         // Progressive (no trellis)
-        let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
-            .progressive(true);
-        let mut enc = config.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(pixels, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
 
@@ -795,10 +794,10 @@ fn diagnostic_cross_decoder() {
                     -1.0
                 }
             } else {
-                -2.0  // djpeg failed
+                -2.0 // djpeg failed
             }
         } else {
-            -3.0  // djpeg not found
+            -3.0 // djpeg not found
         };
 
         // Compare both decoders against original
@@ -808,8 +807,220 @@ fn diagnostic_cross_decoder() {
             zen_sum += (pixels[i] as i32 - zen_pix[i] as i32).unsigned_abs() as u64;
         }
         let zen_mae = zen_sum as f64 / (npix * 3) as f64;
-        let flag = if zen_mae > 3.0 || djpeg_mae > 3.0 { " *** BAD" } else { "" };
+        let flag = if zen_mae > 3.0 || djpeg_mae > 3.0 {
+            " *** BAD"
+        } else {
+            ""
+        };
         println!("  Q{q:.0}: zen_mae={zen_mae:.2}  djpeg_mae={djpeg_mae:.2}{flag}");
+    }
+}
+
+/// Diagnostic: compare coefficient arrays between progressive and baseline decode.
+///
+/// This is the most direct test for the progressive decoder bug. Same quantized
+/// coefficients are encoded as both baseline and progressive. If the progressive
+/// decoder reconstructs different coefficients, this prints the exact positions
+/// and values that differ.
+#[test]
+#[ignore]
+fn diagnostic_coefficient_comparison() {
+    let images = match load_gb82_images(&["bulb"]) {
+        Some(imgs) => imgs,
+        None => {
+            eprintln!("Skipping: gb82 corpus not available");
+            return;
+        }
+    };
+    let (name, pixels, w, h) = &images[0];
+    let decoder = Decoder::new();
+
+    println!("\n=== Coefficient comparison: progressive vs baseline for {name} ===");
+    for q in [88, 89, 90, 91, 92, 93, 94, 95] {
+        let q_f32 = q as f32;
+
+        // Encode as baseline
+        let jpeg_bl = encode_ycbcr(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+        // Encode as progressive (same quality, same quantization)
+        let config_pg = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter).progressive(true);
+        let mut enc_pg = config_pg
+            .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc_pg.push_packed(pixels, Unstoppable).unwrap();
+        let jpeg_pg = enc_pg.finish().unwrap();
+
+        // Extract coefficients from both
+        let coeffs_bl = decoder.decode_coefficients(&jpeg_bl, Unstoppable).unwrap();
+        let coeffs_pg = decoder.decode_coefficients(&jpeg_pg, Unstoppable).unwrap();
+
+        // Compare per-component
+        let mut total_diffs = 0usize;
+        let mut total_coeffs = 0usize;
+        let mut max_diff = 0i32;
+        let mut first_diffs: Vec<String> = Vec::new();
+
+        for comp in 0..coeffs_bl.components.len().min(coeffs_pg.components.len()) {
+            let bl = &coeffs_bl.components[comp];
+            let pg = &coeffs_pg.components[comp];
+            let comp_label = ["Y", "Cb", "Cr"][comp];
+
+            let num_blocks = bl.num_blocks().min(pg.num_blocks());
+            for b in 0..num_blocks {
+                let bl_block = bl.block(b);
+                let pg_block = pg.block(b);
+                for k in 0..64 {
+                    total_coeffs += 1;
+                    let diff = (bl_block[k] as i32) - (pg_block[k] as i32);
+                    if diff != 0 {
+                        total_diffs += 1;
+                        max_diff = max_diff.max(diff.abs());
+                        if first_diffs.len() < 10 {
+                            let bx = b % bl.blocks_wide;
+                            let by = b / bl.blocks_wide;
+                            first_diffs.push(format!(
+                                "      {comp_label} block({bx},{by}) k={k}: bl={} pg={} diff={diff}",
+                                bl_block[k], pg_block[k]
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Count affected block rows
+        let mut affected_rows = std::collections::BTreeSet::new();
+        for comp in 0..coeffs_bl.components.len().min(coeffs_pg.components.len()) {
+            let bl = &coeffs_bl.components[comp];
+            let pg = &coeffs_pg.components[comp];
+            let num_blocks = bl.num_blocks().min(pg.num_blocks());
+            for b in 0..num_blocks {
+                let bl_block = bl.block(b);
+                let pg_block = pg.block(b);
+                for k in 0..64 {
+                    if bl_block[k] != pg_block[k] {
+                        let by = b / bl.blocks_wide;
+                        affected_rows.insert((comp, by, k));
+                    }
+                }
+            }
+        }
+
+        let pct = if total_coeffs > 0 {
+            100.0 * total_diffs as f64 / total_coeffs as f64
+        } else {
+            0.0
+        };
+        let flag = if total_diffs > 0 && max_diff > 2 {
+            " *** BUG"
+        } else {
+            ""
+        };
+        println!(
+            "  Q{q:2}: {total_diffs:6} diffs / {total_coeffs} coeffs ({pct:.3}%) max_diff={max_diff}{flag}"
+        );
+        if total_diffs > 0 {
+            // Show which zigzag positions are affected
+            let mut affected_k: std::collections::BTreeSet<usize> =
+                std::collections::BTreeSet::new();
+            let mut min_row = usize::MAX;
+            let mut max_row = 0;
+            for &(comp, by, k) in &affected_rows {
+                if comp == 0 {
+                    // Y component
+                    affected_k.insert(k);
+                    min_row = min_row.min(by);
+                    max_row = max_row.max(by);
+                }
+            }
+            let ks: Vec<_> = affected_k.iter().collect();
+            println!("    Affected zigzag positions: {ks:?}");
+            println!(
+                "    Affected Y block rows: {min_row}..={max_row} (image: {}x{})",
+                *w, *h
+            );
+            let blocks_h = coeffs_bl.components[0].blocks_wide;
+            let blocks_v = coeffs_bl.components[0].blocks_high;
+            println!("    Y blocks: {blocks_h} wide x {blocks_v} high");
+        }
+        for d in &first_diffs {
+            println!("{d}");
+        }
+    }
+}
+
+/// Diagnostic: check scan structure of progressive JPEGs at Q90 vs Q91.
+/// Verifies whether the issue is scan truncation or coefficient corruption.
+#[test]
+#[ignore]
+fn diagnostic_scan_structure() {
+    let images = match load_gb82_images(&["bulb"]) {
+        Some(imgs) => imgs,
+        None => {
+            eprintln!("Skipping: gb82 corpus not available");
+            return;
+        }
+    };
+    let (name, pixels, w, h) = &images[0];
+
+    println!("\n=== Scan structure comparison for {name} Q90 vs Q91 ===");
+    for q in [90.0f32, 91.0] {
+        let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(pixels, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        println!("\n  Q{q:.0}: {} bytes total", jpeg.len());
+
+        // Find all SOS markers and their scan parameters
+        let mut i = 0;
+        let mut scan_num = 0;
+        while i + 1 < jpeg.len() {
+            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA {
+                // SOS marker found
+                let sos_pos = i;
+                let length = ((jpeg[i + 2] as usize) << 8) | jpeg[i + 3] as usize;
+                let num_comp = jpeg[i + 4];
+
+                // Parse scan components and spectral selection
+                let param_start = i + 5 + (num_comp as usize * 2);
+                let ss = jpeg[param_start];
+                let se = jpeg[param_start + 1];
+                let ah_al = jpeg[param_start + 2];
+                let ah = ah_al >> 4;
+                let al = ah_al & 0x0F;
+
+                // Find end of scan data (next marker)
+                let data_start = i + 2 + length;
+                let mut data_end = data_start;
+                while data_end + 1 < jpeg.len() {
+                    if jpeg[data_end] == 0xFF
+                        && jpeg[data_end + 1] != 0x00
+                        && jpeg[data_end + 1] != 0xFF
+                    {
+                        // Check it's not a restart marker (0xD0-0xD7)
+                        if !(0xD0..=0xD7).contains(&jpeg[data_end + 1]) {
+                            break;
+                        }
+                    }
+                    data_end += 1;
+                }
+                let data_len = data_end - data_start;
+
+                let comp_ids: Vec<u8> = (0..num_comp)
+                    .map(|c| jpeg[i + 5 + (c as usize * 2)])
+                    .collect();
+
+                println!(
+                    "    Scan {scan_num}: components={comp_ids:?} ss={ss} se={se} ah={ah} al={al} | sos_pos={sos_pos} data_len={data_len}",
+                );
+                scan_num += 1;
+                i = data_end;
+            } else {
+                i += 1;
+            }
+        }
     }
 }
 
@@ -851,14 +1062,17 @@ fn diagnostic_isolate_trellis_progressive() {
             })
             .allow_16bit_quant_tables(false)
             .expect("config B");
-        let mut enc_b = config_b.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc_b = config_b
+            .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc_b.push_packed(pixels, Unstoppable).unwrap();
         let jpeg_b = enc_b.finish().unwrap();
 
         // C: plain progressive (no trellis)
-        let config_c = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter)
-            .progressive(true);
-        let mut enc_c = config_c.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        let config_c = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter).progressive(true);
+        let mut enc_c = config_c
+            .encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc_c.push_packed(pixels, Unstoppable).unwrap();
         let jpeg_c = enc_c.finish().unwrap();
 

@@ -811,35 +811,12 @@ sensitivity tables, and preset baselines.
 
 ## Known Bugs
 
-1. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)** -
-   `auto_optimize(true)` (hybrid trellis) with `ChromaSubsampling::Quarter` produces
-   catastrophically degraded output (BA 20-43, visually destroyed) for certain images at
-   specific quality levels. Neighboring quality levels are fine.
-   - Affected images: bulb, baby, girl (from gb82 corpus). Also city/flowers at some Q levels.
-   - Pattern: turbo Q90 source → zen Q75 (bulb: BA=32), Q97 (bulb: BA=43, baby: BA=32).
-     cjpegli Q90 source → zen Q93 4:2:0 (bulb: BA=43), but zen Q93 4:4:4 is fine (BA=0.09).
-   - The bug is quality-level-specific and non-monotonic: Q95 is fine but Q93 and Q97 are bad.
-   - 4:4:4 also affected at extreme Q levels: waves Q97 4:4:4 auto_optimize scores 47.7.
-     Previously believed 4:2:0-only; zensim regression tests found 4:4:4 cases too.
-   - Impact: Contaminates reencode calibration grids (3/10 images have 16-42 BA deltas).
-     Min_delta tables showed 0.55 at turbo Q90 instead of correct ~0.03.
-   - Reproduction: `/mnt/v/output/zenjpeg/encoder_bug_420/` has source + re-encoded images.
-     Raw data: `/mnt/v/output/zenjpeg/reencode_calibration/raw_data.csv`
-   - **Root cause analysis (2026-03-09):** Trellis lambda weight is `1/(q*q)` per coefficient
-     (`encode/trellis/ac.rs:48-72`). For 4:2:0, K420_RESCALE (`quant/mod.rs:549-566`) reduces
-     chroma quant values to ~36-49% of luma. Smaller quant values → larger lambda weights →
-     trellis zeros chroma AC coefficients more aggressively. This is *backwards*: K420_RESCALE
-     means finer quantization (keep more detail), but the trellis interprets small quant values
-     as "unimportant, zero them." At specific Q levels, the quant table scaling hits sweet spots
-     where this inversion is catastrophic. Additionally, `auto_optimize` uses `aq_lambda_scale=0.0`
-     (no AQ coupling), so there's no per-block adaptation to protect important chroma blocks.
-     The block-norm-adaptive lambda (`scale1 / (scale2 + norm)`) amplifies this: 4:2:0 chroma
-     blocks have smaller raw DCT coefficients → lower norm → even larger lambda → even more
-     aggressive zeroing. This creates a feedback loop at certain Q levels.
-   - **Fix candidates:** (a) Scale lambda weights by K420_RESCALE inverse for chroma components,
-     (b) apply `chroma_scale < 1.0` in HybridConfig to reduce trellis aggression on chroma,
-     (c) add AQ coupling (`aq_lambda_scale > 0`) to protect textured chroma regions.
-   - Workaround: Calibration grids now use trimmed mean (drop top 20%) instead of mean.
+~~1. **Catastrophic 4:2:0 auto_optimize quality at specific Q levels (2026-02-19)**~~ —
+   **FIXED (2026-03-09, commit 08ef601).** Root cause was progressive decoder truncation near
+   restart markers (see Fixed Bugs below), NOT encoder trellis lambda weights. The trellis
+   analysis was a red herring. All quality levels Q70-Q99 now pass on bulb/baby/girl/city/flowers
+   with `auto_optimize(true)` + 4:2:0, minimum score 75.9 (previously catastrophic 20-43).
+   4:4:4 auto_optimize also passes, minimum 79.4.
 
 2. **SA-optimized tables non-monotonic (2026-02-03)** - `optimized_tables.rs` anchor tables
    are non-monotonic between quality levels. Luma DC: q90=5, q95=37, q100=6. Each anchor
