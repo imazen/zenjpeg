@@ -819,7 +819,8 @@ sensitivity tables, and preset baselines.
    - Pattern: turbo Q90 source → zen Q75 (bulb: BA=32), Q97 (bulb: BA=43, baby: BA=32).
      cjpegli Q90 source → zen Q93 4:2:0 (bulb: BA=43), but zen Q93 4:4:4 is fine (BA=0.09).
    - The bug is quality-level-specific and non-monotonic: Q95 is fine but Q93 and Q97 are bad.
-   - 4:4:4 encoding at the same Q level is always fine — only 4:2:0 is affected.
+   - 4:4:4 also affected at extreme Q levels: waves Q97 4:4:4 auto_optimize scores 47.7.
+     Previously believed 4:2:0-only; zensim regression tests found 4:4:4 cases too.
    - Impact: Contaminates reencode calibration grids (3/10 images have 16-42 BA deltas).
      Min_delta tables showed 0.55 at turbo Q90 instead of correct ~0.03.
    - Reproduction: `/mnt/v/output/zenjpeg/encoder_bug_420/` has source + re-encoded images.
