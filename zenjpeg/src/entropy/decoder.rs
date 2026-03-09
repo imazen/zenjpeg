@@ -1623,7 +1623,37 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                     break 'block;
                                 }
                             }
-                            None => return Ok(false),
+                            None => {
+                                // Edge case: near restart marker or end of scan,
+                                // fewer than 16 bits available. Fall back to
+                                // bit-by-bit Huffman decode (matches the standard
+                                // decode_huffman_symbol_lenient fallback).
+                                let mut code = 0u32;
+                                let mut found_symbol = None;
+                                for len in 1..=16usize {
+                                    let bit = match self.reader.read_bits(1)? {
+                                        ScanRead::Value(b) => b,
+                                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                                            return Ok(false);
+                                        }
+                                    };
+                                    code = (code << 1) | bit;
+                                    if (code as i32) <= ac_table.maxcode[len] {
+                                        let idx = (code as i32 + ac_table.valoffset[len]) as usize;
+                                        if idx < ac_table.values.len() {
+                                            found_symbol = Some(ac_table.values[idx]);
+                                            break;
+                                        }
+                                    }
+                                }
+                                match found_symbol {
+                                    Some(sym) => sym,
+                                    None => {
+                                        // Invalid code or truly exhausted
+                                        break 'block;
+                                    }
+                                }
+                            }
                         }
                     };
 
@@ -1649,7 +1679,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         k += run as usize;
                         if k > se_usize {
-                            // AC overflow — treat as EOB in lenient mode
+                            // AC overflow — treat as EOB
                             break 'block;
                         }
                         // Extra bits for coefficient value (size ≤ 10)
@@ -1797,16 +1827,36 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // Slow path: extended codes need up to 16 bits
                         if self.reader.bits_available() < 16 {
                             let _ = self.reader.refill();
-                            if self.reader.bits_available() < 16 {
+                        }
+                        if self.reader.bits_available() >= 16 {
+                            let bits16 = self.reader.peek_top(16);
+                            if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                                self.reader.skip_bits_fast(len);
+                                sym
+                            } else {
                                 break;
                             }
-                        }
-                        let bits16 = self.reader.peek_top(16);
-                        if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
-                            self.reader.skip_bits_fast(len);
-                            sym
                         } else {
-                            break;
+                            // Edge case: near restart marker or end of scan,
+                            // fewer than 16 bits available. Fall back to
+                            // bit-by-bit Huffman decode.
+                            let mut code = 0u32;
+                            let mut found_symbol = None;
+                            for len in 1..=16usize {
+                                let bit = self.reader.read_bit_refine();
+                                code = (code << 1) | (bit as u32);
+                                if (code as i32) <= ac_table.maxcode[len] {
+                                    let idx = (code as i32 + ac_table.valoffset[len]) as usize;
+                                    if idx < ac_table.values.len() {
+                                        found_symbol = Some(ac_table.values[idx]);
+                                        break;
+                                    }
+                                }
+                            }
+                            match found_symbol {
+                                Some(sym) => sym,
+                                None => break,
+                            }
                         }
                     };
 
