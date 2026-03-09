@@ -619,6 +619,194 @@ fn test_idct_method_libjpeg_compat_matches_mozjpeg() {
     }
 }
 
+/// Decode waterhouse.jpg from corpus and compare against mozjpeg to detect banding.
+///
+/// Banding manifests as systematic per-row or per-block-row diff spikes in smooth
+/// gradient regions. This test analyzes:
+/// - Per-row max/mean diffs (banding = periodic spikes every 8 or 16 rows)
+/// - Block-row vs interior diff ratios (8px boundaries from IDCT)
+/// - MCU-row boundary artifacts (16px boundaries from chroma upsampling)
+/// - Channel-separated analysis (banding often affects chroma more than luma)
+///
+/// The waterhouse painting has large smooth sky/water gradients that are sensitive
+/// to decoder precision differences.
+#[test]
+fn test_waterhouse_banding() {
+    let corpus = zenjpeg_bench_utils::codec_corpus_dir();
+    let Some(corpus) = corpus else {
+        println!("SKIP: codec-corpus not found");
+        return;
+    };
+    let path = corpus.join("imageflow/test_inputs/waterhouse.jpg");
+    let jpeg = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("SKIP: {}: {e}", path.display());
+            return;
+        }
+    };
+
+    let paths = standard_decode_paths();
+
+    // Decode with mozjpeg (reference)
+    let (w, h, moz_fancy_rgb) = decode_mozjpeg(&jpeg);
+    let (_, _, moz_box_rgb) = decode_mozjpeg_box(&jpeg);
+    let moz_fancy_rgba = rgb_to_rgba(&moz_fancy_rgb);
+    let moz_box_rgba = rgb_to_rgba(&moz_box_rgb);
+
+    println!("\n=== Waterhouse Banding Analysis ({w}x{h}) ===");
+
+    for (path_name, decode_fn) in &paths {
+        let (zen_w, zen_h, zen_rgb) = decode_fn(&jpeg);
+        assert_eq!((zen_w, zen_h), (w, h), "{path_name}: size mismatch");
+
+        let is_box = *path_name == "box_filter";
+        let ref_rgb = if is_box { &moz_box_rgb } else { &moz_fancy_rgb };
+        let ref_rgba = if is_box { &moz_box_rgba } else { &moz_fancy_rgba };
+        let ref_label = if is_box { "vs moz-box" } else { "vs moz-fancy" };
+
+        // Global stats
+        let (max_diff, mean_diff, boundary_max, interior_max) =
+            analyze_diffs(ref_rgb, &zen_rgb, w as usize, h as usize);
+
+        // Per-row analysis for banding detection
+        let width = w as usize;
+        let height = h as usize;
+        let stride = width * 3;
+        let mut row_maxes = Vec::with_capacity(height);
+        let mut row_means = Vec::with_capacity(height);
+
+        for y in 0..height {
+            let off = y * stride;
+            let a = &ref_rgb[off..off + stride];
+            let b = &zen_rgb[off..off + stride];
+            let mut rmax = 0i32;
+            let mut rsum = 0i64;
+            for (av, bv) in a.iter().zip(b.iter()) {
+                let d = (*av as i32 - *bv as i32).abs();
+                rmax = rmax.max(d);
+                rsum += d as i64;
+            }
+            row_maxes.push(rmax);
+            row_means.push(rsum as f64 / stride as f64);
+        }
+
+        // Detect periodic banding: check if block-boundary rows (every 8px)
+        // have systematically higher diffs than their neighbors
+        let mut block_boundary_diffs = Vec::new(); // rows at y % 8 == 0
+        let mut block_interior_diffs = Vec::new(); // all other rows
+        let mut mcu_boundary_diffs = Vec::new(); // rows at y % 16 == {0, 15}
+
+        for (y, &rm) in row_maxes.iter().enumerate() {
+            if y % 8 == 0 || y % 8 == 7 {
+                block_boundary_diffs.push(rm);
+            } else {
+                block_interior_diffs.push(rm);
+            }
+            if y % 16 == 0 || y % 16 == 15 {
+                mcu_boundary_diffs.push(rm);
+            }
+        }
+
+        let block_boundary_mean = if block_boundary_diffs.is_empty() {
+            0.0
+        } else {
+            block_boundary_diffs.iter().sum::<i32>() as f64 / block_boundary_diffs.len() as f64
+        };
+        let block_interior_mean = if block_interior_diffs.is_empty() {
+            0.0
+        } else {
+            block_interior_diffs.iter().sum::<i32>() as f64 / block_interior_diffs.len() as f64
+        };
+        let mcu_boundary_mean = if mcu_boundary_diffs.is_empty() {
+            0.0
+        } else {
+            mcu_boundary_diffs.iter().sum::<i32>() as f64 / mcu_boundary_diffs.len() as f64
+        };
+
+        // Per-channel analysis (banding often hits one channel harder)
+        let mut ch_max = [0i32; 3];
+        let mut ch_sum = [0i64; 3];
+        let npixels = (width * height) as f64;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                for c in 0..3 {
+                    let d = (ref_rgb[idx + c] as i32 - zen_rgb[idx + c] as i32).abs();
+                    ch_max[c] = ch_max[c].max(d);
+                    ch_sum[c] += d as i64;
+                }
+            }
+        }
+        let ch_mean: Vec<f64> = ch_sum.iter().map(|&s| s as f64 / npixels).collect();
+
+        // Print top-10 worst rows for banding inspection
+        let mut sorted_rows: Vec<(usize, i32, f64)> = row_maxes
+            .iter()
+            .zip(row_means.iter())
+            .enumerate()
+            .map(|(y, (&mx, &mn))| (y, mx, mn))
+            .collect();
+        sorted_rows.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.partial_cmp(&a.2).unwrap()));
+
+        println!("\n--- {path_name} {ref_label} ---");
+        println!(
+            "  global: max={max_diff} mean={mean_diff:.4} mcu_boundary={boundary_max} interior={interior_max}"
+        );
+        println!(
+            "  block boundaries (8px): mean_max={block_boundary_mean:.2}  interior: mean_max={block_interior_mean:.2}  ratio={:.2}",
+            if block_interior_mean > 0.0 { block_boundary_mean / block_interior_mean } else { 0.0 }
+        );
+        println!("  MCU boundaries (16px): mean_max={mcu_boundary_mean:.2}");
+        println!(
+            "  per-channel max: R={} G={} B={}  mean: R={:.4} G={:.4} B={:.4}",
+            ch_max[0], ch_max[1], ch_max[2], ch_mean[0], ch_mean[1], ch_mean[2]
+        );
+        println!("  worst 10 rows:");
+        for &(y, mx, mn) in sorted_rows.iter().take(10) {
+            let pos = if y % 16 == 0 || y % 16 == 15 {
+                "MCU-bnd"
+            } else if y % 8 == 0 || y % 8 == 7 {
+                "blk-bnd"
+            } else {
+                "interior"
+            };
+            println!("    row {y:4}: max={mx:3} mean={mn:.3} [{pos}]");
+        }
+
+        // Save visual diff montage
+        let zen_rgba = rgb_to_rgba(&zen_rgb);
+        let montage = create_comparison_montage_raw(ref_rgba, &zen_rgba, w, h, 10, 4);
+        save_montage(&montage, &format!("waterhouse_{path_name}"));
+
+        let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, w, h, 10);
+        let diff_dir = std::path::Path::new(OUTPUT_DIR);
+        diff_img
+            .save(diff_dir.join(format!("waterhouse_{path_name}_diff.png")))
+            .expect("save diff");
+
+        // Assertions:
+        // 1. No MCU-boundary stripe pattern
+        let stripe_detected = boundary_max > interior_max + 3;
+        assert!(
+            !stripe_detected,
+            "waterhouse/{path_name}: MCU stripe pattern detected (boundary={boundary_max} interior={interior_max})"
+        );
+
+        // 2. Block boundary diffs should not be systematically worse than interior.
+        // A ratio > 1.5 suggests 8px-periodic banding from IDCT boundary effects.
+        let block_ratio = if block_interior_mean > 0.5 {
+            block_boundary_mean / block_interior_mean
+        } else {
+            1.0 // too-small diffs, no banding concern
+        };
+        assert!(
+            block_ratio < 1.5,
+            "waterhouse/{path_name}: block-boundary banding detected (ratio={block_ratio:.2}, boundary={block_boundary_mean:.2}, interior={block_interior_mean:.2})"
+        );
+    }
+}
+
 /// Verify streaming and scanline paths produce identical output (path consistency).
 #[test]
 fn test_decode_path_consistency() {
