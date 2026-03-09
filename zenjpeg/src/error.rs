@@ -376,7 +376,7 @@ impl Error {
     #[track_caller]
     #[inline]
     pub fn new(kind: ErrorKind) -> Self {
-        Self(whereat::at(kind))
+        Self(at!(kind))
     }
 
     /// Wrap an `ErrorKind` without capturing a trace (for hot paths).
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn test_result_at_ext() {
         fn inner() -> core::result::Result<(), At<ErrorKind>> {
-            Err(whereat::at(ErrorKind::Cancelled))
+            Err(at!(ErrorKind::Cancelled))
         }
 
         fn outer() -> core::result::Result<(), At<ErrorKind>> {
