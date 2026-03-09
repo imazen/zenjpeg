@@ -665,3 +665,226 @@ fn test_cid22_quality_statistics() {
         );
     }
 }
+
+/// Diagnostic: compare auto_optimize vs plain vs trellis-baseline to isolate the bug.
+#[test]
+#[ignore]
+fn diagnostic_trellis_vs_plain() {
+    let images = match load_gb82_images(&["bulb", "city", "flowers"]) {
+        Some(imgs) => imgs,
+        None => {
+            eprintln!("Skipping: gb82 corpus not available");
+            return;
+        }
+    };
+
+    println!("\n=== Trellis vs Plain Diagnostic ===");
+    println!("Legend: auto=auto_optimize(4:2:0), plain=no trellis(4:2:0), ratio=auto_mae/plain_mae");
+
+    for (name, pixels, w, h) in &images {
+        println!("\n  {name} ({w}x{h}):");
+        for q in 85..=99 {
+            let q_f32 = q as f32;
+
+            // With auto_optimize 4:2:0
+            let jpeg_auto = encode_ycbcr_auto_optimize(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+
+            // Without auto_optimize (no trellis) 4:2:0
+            let jpeg_plain = encode_ycbcr(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+
+            // Decode both
+            let (_, _, pix_auto) = decode_rgb(&jpeg_auto).expect("decode auto");
+            let (_, _, pix_plain) = decode_rgb(&jpeg_plain).expect("decode plain");
+
+            let npix = (*w as usize) * (*h as usize);
+            let mut auto_rgb = [0u64; 3];
+            let mut plain_rgb = [0u64; 3];
+            let mut auto_max = 0u32;
+
+            for i in 0..npix {
+                for c in 0..3 {
+                    let orig = pixels[i * 3 + c] as i32;
+                    let auto_v = pix_auto[i * 3 + c] as i32;
+                    let plain_v = pix_plain[i * 3 + c] as i32;
+                    let d_auto = (orig - auto_v).unsigned_abs();
+                    let d_plain = (orig - plain_v).unsigned_abs();
+                    auto_rgb[c] += d_auto as u64;
+                    plain_rgb[c] += d_plain as u64;
+                    auto_max = auto_max.max(d_auto);
+                }
+            }
+
+            let auto_mae = (auto_rgb[0] + auto_rgb[1] + auto_rgb[2]) as f64 / (npix * 3) as f64;
+            let plain_mae =
+                (plain_rgb[0] + plain_rgb[1] + plain_rgb[2]) as f64 / (npix * 3) as f64;
+            let ratio = auto_mae / plain_mae.max(0.001);
+
+            let auto_r = auto_rgb[0] as f64 / npix as f64;
+            let auto_g = auto_rgb[1] as f64 / npix as f64;
+            let auto_b = auto_rgb[2] as f64 / npix as f64;
+
+            let flag = if ratio > 2.0 { " *** BAD" } else { "" };
+            println!(
+                "    Q{q:2}: auto={:6}B mae={auto_mae:.2} (R={auto_r:.2} G={auto_g:.2} B={auto_b:.2}) max={auto_max:3} | plain={:6}B mae={plain_mae:.2} | ratio={ratio:.2}x{flag}",
+                jpeg_auto.len(), jpeg_plain.len()
+            );
+        }
+    }
+}
+
+/// Diagnostic: decode with djpeg (libjpeg-turbo) to check if it's encoder or decoder bug.
+#[test]
+#[ignore]
+fn diagnostic_cross_decoder() {
+    let images = match load_gb82_images(&["bulb"]) {
+        Some(imgs) => imgs,
+        None => {
+            eprintln!("Skipping: gb82 corpus not available");
+            return;
+        }
+    };
+    let (name, pixels, w, h) = &images[0];
+
+    println!("\n=== Cross-decoder check for {name} Q90 vs Q91 ===");
+    for q in [90.0f32, 91.0, 92.0, 93.0, 94.0] {
+        // Progressive (no trellis)
+        let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
+            .progressive(true);
+        let mut enc = config.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(pixels, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+
+        // Decode with zenjpeg
+        let zen_dec = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let zen_pix = zen_dec.into_pixels_u8().unwrap();
+
+        // Save JPEG to temp file and decode with djpeg (libjpeg-turbo reference)
+        let tmp_jpeg = format!("/tmp/diag_bulb_q{}.jpg", q as u32);
+        let tmp_ppm = format!("/tmp/diag_bulb_q{}.ppm", q as u32);
+        std::fs::write(&tmp_jpeg, &jpeg).unwrap();
+
+        let djpeg_result = std::process::Command::new("djpeg")
+            .args(["-ppm", "-outfile", &tmp_ppm, &tmp_jpeg])
+            .output();
+
+        let djpeg_mae = if let Ok(output) = djpeg_result {
+            if output.status.success() {
+                // Read PPM file (P6 binary format)
+                let ppm_data = std::fs::read(&tmp_ppm).unwrap();
+                // Skip PPM header (find 3rd newline after "P6\n<w> <h>\n255\n")
+                let mut newlines = 0;
+                let mut pixel_start = 0;
+                for (i, &b) in ppm_data.iter().enumerate() {
+                    if b == b'\n' {
+                        newlines += 1;
+                        if newlines == 3 {
+                            pixel_start = i + 1;
+                            break;
+                        }
+                    }
+                }
+                let djpeg_pix = &ppm_data[pixel_start..];
+                let npix3 = (*w as usize) * (*h as usize) * 3;
+                if djpeg_pix.len() >= npix3 {
+                    let mut sum = 0u64;
+                    for i in 0..npix3 {
+                        sum += (pixels[i] as i32 - djpeg_pix[i] as i32).unsigned_abs() as u64;
+                    }
+                    sum as f64 / npix3 as f64
+                } else {
+                    -1.0
+                }
+            } else {
+                -2.0  // djpeg failed
+            }
+        } else {
+            -3.0  // djpeg not found
+        };
+
+        // Compare both decoders against original
+        let npix = (*w as usize) * (*h as usize);
+        let mut zen_sum = 0u64;
+        for i in 0..npix * 3 {
+            zen_sum += (pixels[i] as i32 - zen_pix[i] as i32).unsigned_abs() as u64;
+        }
+        let zen_mae = zen_sum as f64 / (npix * 3) as f64;
+        let flag = if zen_mae > 3.0 || djpeg_mae > 3.0 { " *** BAD" } else { "" };
+        println!("  Q{q:.0}: zen_mae={zen_mae:.2}  djpeg_mae={djpeg_mae:.2}{flag}");
+    }
+}
+
+/// Diagnostic: isolate whether the bug is from trellis, progressive, or their combination.
+#[test]
+#[ignore]
+fn diagnostic_isolate_trellis_progressive() {
+    use zenjpeg::encode::trellis::HybridConfig;
+
+    let images = match load_gb82_images(&["bulb"]) {
+        Some(imgs) => imgs,
+        None => {
+            eprintln!("Skipping: gb82 corpus not available");
+            return;
+        }
+    };
+    let (name, pixels, w, h) = &images[0];
+
+    println!("\n=== Isolating trellis vs progressive for {name} ===");
+    println!("  Configurations:");
+    println!("    A: plain baseline (no trellis, no progressive)");
+    println!("    B: trellis + baseline (trellis, no progressive)");
+    println!("    C: plain progressive (no trellis, progressive)");
+    println!("    D: trellis + progressive (auto_optimize — the buggy config)");
+
+    for q in 88..=96 {
+        let q_f32 = q as f32;
+
+        // A: plain baseline
+        let jpeg_a = encode_ycbcr(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+
+        // B: trellis + baseline
+        let config_b = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter)
+            .progressive(false)
+            .hybrid_config(HybridConfig {
+                enabled: true,
+                base_lambda_scale1: 14.5,
+                ..Default::default()
+            })
+            .allow_16bit_quant_tables(false)
+            .expect("config B");
+        let mut enc_b = config_b.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        enc_b.push_packed(pixels, Unstoppable).unwrap();
+        let jpeg_b = enc_b.finish().unwrap();
+
+        // C: plain progressive (no trellis)
+        let config_c = EncoderConfig::ycbcr(q_f32, ChromaSubsampling::Quarter)
+            .progressive(true);
+        let mut enc_c = config_c.encode_from_bytes(*w, *h, PixelLayout::Rgb8Srgb).unwrap();
+        enc_c.push_packed(pixels, Unstoppable).unwrap();
+        let jpeg_c = enc_c.finish().unwrap();
+
+        // D: auto_optimize (trellis + progressive)
+        let jpeg_d = encode_ycbcr_auto_optimize(pixels, *w, *h, q_f32, ChromaSubsampling::Quarter);
+
+        // Decode all and compute MAE
+        let configs = [
+            ("A:plain-bl", jpeg_a),
+            ("B:trel-bl ", jpeg_b),
+            ("C:plain-pg", jpeg_c),
+            ("D:trel-pg ", jpeg_d),
+        ];
+
+        print!("  Q{q:2}:");
+        for (label, jpeg) in &configs {
+            let (_, _, dec) = decode_rgb(jpeg).expect("decode");
+            let npix = (*w as usize) * (*h as usize);
+            let mut sum = 0u64;
+            for i in 0..npix * 3 {
+                sum += (pixels[i] as i32 - dec[i] as i32).unsigned_abs() as u64;
+            }
+            let mae = sum as f64 / (npix * 3) as f64;
+            let flag = if mae > 3.0 { "***" } else { "   " };
+            print!("  {label}={mae:.2}{flag}");
+        }
+        println!();
+    }
+}
