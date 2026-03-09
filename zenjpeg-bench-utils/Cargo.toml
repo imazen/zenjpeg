@@ -19,7 +19,7 @@ imgref = { workspace = true }
 
 # Image I/O
 png = { workspace = true }
-zenpng = { workspace = true }
+# zenpng = { workspace = true }  # Temporarily disabled: zencodec-types/zenpixels API mismatch
 
 # JPEG decoding (de-facto standard decoder for comparisons)
 zune-jpeg = { workspace = true }

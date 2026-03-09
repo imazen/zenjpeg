@@ -25,7 +25,7 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cell::OnceCell;
+use std::sync::OnceLock;
 
 // Re-export shared types from encoder extras
 pub use crate::encode::extras::{
@@ -357,9 +357,9 @@ pub struct DecodedExtras {
     pub(crate) secondary_images: Vec<PreservedMpfImage>,
 
     // Lazy parse cache
-    xmp_cache: OnceCell<Option<String>>,
-    icc_cache: OnceCell<Option<Vec<u8>>>,
-    mpf_cache: OnceCell<Option<MpfDirectory>>,
+    xmp_cache: OnceLock<Option<String>>,
+    icc_cache: OnceLock<Option<Vec<u8>>>,
+    mpf_cache: OnceLock<Option<MpfDirectory>>,
 }
 
 impl core::fmt::Debug for DecodedExtras {
@@ -376,9 +376,9 @@ impl Clone for DecodedExtras {
         Self {
             segments: self.segments.clone(),
             secondary_images: self.secondary_images.clone(),
-            xmp_cache: OnceCell::new(),
-            icc_cache: OnceCell::new(),
-            mpf_cache: OnceCell::new(),
+            xmp_cache: OnceLock::new(),
+            icc_cache: OnceLock::new(),
+            mpf_cache: OnceLock::new(),
         }
     }
 }
@@ -389,9 +389,9 @@ impl DecodedExtras {
         Self {
             segments: Vec::new(),
             secondary_images: Vec::new(),
-            xmp_cache: OnceCell::new(),
-            icc_cache: OnceCell::new(),
-            mpf_cache: OnceCell::new(),
+            xmp_cache: OnceLock::new(),
+            icc_cache: OnceLock::new(),
+            mpf_cache: OnceLock::new(),
         }
     }
 

@@ -997,17 +997,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "garb"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "232a3653471b7228242fec8669102c1991af35a5262c6eb18aa47d68d661a143"
-dependencies = [
- "archmage 0.9.5",
- "bytemuck",
- "paste",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3002,21 +2991,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 
 [[package]]
-name = "zencodec-types"
+name = "zencodec"
 version = "0.1.0"
 dependencies = [
  "enough",
  "whereat 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "zenpixels",
-]
-
-[[package]]
-name = "zenflate"
-version = "0.3.0"
-dependencies = [
- "archmage 0.9.5",
- "enough",
- "libm",
 ]
 
 [[package]]
@@ -3073,11 +3053,10 @@ dependencies = [
  "whereat 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "wide 1.1.1",
  "yuv",
- "zencodec-types",
+ "zencodec",
  "zenjpeg-bench-utils",
  "zenlayout",
  "zenpixels",
- "zenpng",
  "zenresize",
  "zensim-regress",
  "zune-core 0.5.1",
@@ -3099,7 +3078,6 @@ dependencies = [
  "png",
  "rgb",
  "zenjpeg",
- "zenpng",
  "zune-jpeg 0.5.12",
 ]
 
@@ -3117,38 +3095,6 @@ dependencies = [
  "imgref",
  "rgb",
  "whereat 0.1.3",
-]
-
-[[package]]
-name = "zenpixels-convert"
-version = "0.1.1"
-dependencies = [
- "bytemuck",
- "garb",
- "linear-srgb",
- "rgb",
- "whereat 0.1.3",
- "zenpixels",
-]
-
-[[package]]
-name = "zenpng"
-version = "0.1.0"
-dependencies = [
- "almost-enough",
- "archmage 0.9.5",
- "bytemuck",
- "enough",
- "imgref",
- "linear-srgb",
- "rgb",
- "safe_unaligned_simd",
- "thiserror",
- "whereat 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "zencodec-types",
- "zenflate",
- "zenpixels",
- "zenpixels-convert",
 ]
 
 [[package]]

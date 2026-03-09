@@ -43,7 +43,7 @@ imgref = { workspace = true }
 multiversion = { workspace = true }
 multiversed = { workspace = true }
 enough = { workspace = true }
-zencodec-types = { workspace = true }
+zc = { workspace = true }
 zenpixels = { workspace = true }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 # linear-srgb = { workspace = true }  # Disabled: incompatible with archmage 0.9 (not used in lib)
@@ -109,7 +109,7 @@ approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
 png = { workspace = true }
-zenpng = { workspace = true }
+# zenpng = { workspace = true }  # Temporarily disabled: zencodec-types/zenpixels API mismatch
 dssim-core = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }

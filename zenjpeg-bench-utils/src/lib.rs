@@ -963,34 +963,34 @@ pub fn load_png(path: &std::path::Path) -> Result<RgbImage, PngLoadError> {
 
 /// Load PNG from in-memory bytes into an RGB image buffer.
 pub fn load_png_bytes(data: &[u8]) -> Result<RgbImage, PngLoadError> {
-    let output = zenpng::decode(
-        data,
-        &zenpng::PngDecodeConfig::default(),
-        &enough::Unstoppable,
-    )
-    .map_err(|e| PngLoadError::Decode(e.to_string()))?;
-    let width = output.info.width as usize;
-    let height = output.info.height as usize;
-    let channels = output.pixels.descriptor().channels();
-    let bpp = output.pixels.descriptor().bytes_per_pixel();
-    let bytes = output.pixels.copy_to_contiguous_bytes();
-    let pixels: Vec<RGB8> = match channels {
-        1 => bytes.iter().map(|&g| RGB8::new(g, g, g)).collect(),
-        2 => bytes
-            .chunks_exact(bpp)
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG output buffer size")];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| PngLoadError::Decode(e.to_string()))?;
+    let width = info.width as usize;
+    let height = info.height as usize;
+    let bytes = &buf[..info.buffer_size()];
+    let pixels: Vec<RGB8> = match info.color_type {
+        png::ColorType::Grayscale => bytes.iter().map(|&g| RGB8::new(g, g, g)).collect(),
+        png::ColorType::GrayscaleAlpha => bytes
+            .chunks_exact(2)
             .map(|c| RGB8::new(c[0], c[0], c[0]))
             .collect(),
-        3 => bytes
-            .chunks_exact(bpp)
+        png::ColorType::Rgb => bytes
+            .chunks_exact(3)
             .map(|c| RGB8::new(c[0], c[1], c[2]))
             .collect(),
-        4 => bytes
-            .chunks_exact(bpp)
+        png::ColorType::Rgba => bytes
+            .chunks_exact(4)
             .map(|c| RGB8::new(c[0], c[1], c[2]))
             .collect(),
-        _ => {
+        ct => {
             return Err(PngLoadError::Decode(format!(
-                "unsupported channel count: {channels}"
+                "unsupported color type: {ct:?}"
             )));
         }
     };
