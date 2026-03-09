@@ -1112,11 +1112,16 @@ The `force_baseline` parameter:
 **zenjpeg behavior:**
 - `allow_16bit_quant_tables = true` (default): Matches `force_baseline = FALSE`
 - `allow_16bit_quant_tables = false`: Matches `force_baseline = TRUE` (cjpegli CLI)
-- **XYB always uses extended sequential (SOF1)**: `EncoderConfig::xyb()` sets
-  `allow_16bit_quant_tables = true`. Calling `allow_16bit_quant_tables(false)` or
-  `force_baseline()` on an XYB config returns `Err`. XYB's wider dynamic range
-  (scaling factors up to 23x) produces DC categories 12-15 that exceed baseline's
-  limit of 11.
+- **SOF1 vs quant precision are decoupled**: `allow_16bit_quant_tables` controls only
+  DQT marker precision (8-bit vs 16-bit values). SOF1 frame type is controlled
+  separately by an internal `force_sof1` flag.
+- **XYB always uses SOF1**: `force_sof1` is set automatically for XYB color mode
+  because XYB's wider dynamic range (scaling factors up to 23x) produces DC
+  categories 12-15, exceeding baseline SOF0's limit of 11. This is independent of
+  quant table precision — XYB defaults to `allow_16bit_quant_tables = false` since
+  16-bit DQT provides no quality benefit.
+- `allow_16bit_quant_tables()` and `force_baseline()` return `Self` (infallible)
+  and work with any color mode including XYB.
 - Precision is auto-selected per-table: 8-bit if max ≤ 255, 16-bit if max > 255
 - We DO automatically use 8-bit when no coefficient exceeds 255
 
@@ -1153,10 +1158,9 @@ Tested on Kodak corpus at Q5-Q86:
 - **SSIMULACRA2 delta: 0.000** at all quality levels (Q5, Q10, Q20, Q50...)
 - Only difference is DQT marker overhead (~128 bytes)
 
-C++ chose baseline compatibility with zero quality impact. Consider defaulting
-`allow_16bit_quant_tables=false` to match, since 16-bit provides no benefit.
-
-To match C++ cjpegli CLI, use `.allow_16bit_quant_tables(false)`.
+C++ chose baseline compatibility with zero quality impact. zenjpeg now also
+defaults `allow_16bit_quant_tables=true` for YCbCr (matching C++ API capability)
+but `false` for XYB (where SOF1 is forced for DC categories, not quant precision).
 
 ## Running Tests
 
