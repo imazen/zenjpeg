@@ -25,8 +25,9 @@ fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     rgba
 }
 
-/// Decode with mozjpeg-sys (libjpeg-turbo C, fancy upsampling).
-fn decode_mozjpeg(data: &[u8]) -> (u32, u32, Vec<u8>) {
+/// Decode with mozjpeg-sys (libjpeg-turbo C).
+/// `fancy`: true = triangle/fancy upsampling (default), false = box filter.
+fn decode_mozjpeg_impl(data: &[u8], fancy: bool) -> (u32, u32, Vec<u8>) {
     use mozjpeg_sys::*;
     use std::mem;
     unsafe {
@@ -38,6 +39,7 @@ fn decode_mozjpeg(data: &[u8]) -> (u32, u32, Vec<u8>) {
         jpeg_mem_src(&mut ci, data.as_ptr(), data.len() as _);
         assert_eq!(jpeg_read_header(&mut ci, 1), 1, "mozjpeg: read_header failed");
         ci.out_color_space = J_COLOR_SPACE::JCS_RGB;
+        ci.do_fancy_upsampling = if fancy { 1 } else { 0 };
         jpeg_start_decompress(&mut ci);
         let w = ci.output_width;
         let h = ci.output_height;
@@ -52,6 +54,16 @@ fn decode_mozjpeg(data: &[u8]) -> (u32, u32, Vec<u8>) {
         jpeg_destroy_decompress(&mut ci);
         (w, h, out)
     }
+}
+
+/// Decode with mozjpeg fancy upsampling (default).
+fn decode_mozjpeg(data: &[u8]) -> (u32, u32, Vec<u8>) {
+    decode_mozjpeg_impl(data, true)
+}
+
+/// Decode with mozjpeg box filter (no fancy upsampling).
+fn decode_mozjpeg_box(data: &[u8]) -> (u32, u32, Vec<u8>) {
+    decode_mozjpeg_impl(data, false)
 }
 
 /// Decode with zenjpeg streaming (default path via Decoder::decode).
@@ -232,9 +244,9 @@ fn analyze_diffs(a: &[u8], b: &[u8], width: usize, height: usize) -> (i32, f64, 
 /// Run a full visual diff comparison for a given test case.
 /// Returns true if no stripe pattern detected.
 ///
-/// Box filter paths are excluded from stripe detection because they use a
-/// fundamentally different upsampling algorithm than mozjpeg's fancy upsampler,
-/// so boundary vs interior diff is not meaningful for stripe detection.
+/// Each zenjpeg decode path is compared against the matching mozjpeg mode:
+/// - Fancy-upsampled paths (streaming, scanline, libjpeg_compat) → mozjpeg fancy
+/// - Box filter path → mozjpeg box filter (do_fancy_upsampling=0)
 fn run_visual_diff(
     label: &str,
     jpeg: &[u8],
@@ -242,11 +254,25 @@ fn run_visual_diff(
     height: u32,
     decode_paths: &[(&str, fn(&[u8]) -> (u32, u32, Vec<u8>))],
 ) -> bool {
-    let (moz_w, moz_h, moz_rgb) = decode_mozjpeg(jpeg);
+    // Pre-decode both mozjpeg modes (lazy — only decode box if needed)
+    let (moz_w, moz_h, moz_fancy_rgb) = decode_mozjpeg(jpeg);
     assert_eq!(moz_w, width, "{label}: mozjpeg width mismatch");
     assert_eq!(moz_h, height, "{label}: mozjpeg height mismatch");
 
-    let moz_rgba = rgb_to_rgba(&moz_rgb);
+    let moz_fancy_rgba = rgb_to_rgba(&moz_fancy_rgb);
+
+    // Lazily decode mozjpeg box mode only if we have a box_filter path
+    let has_box = decode_paths.iter().any(|(name, _)| *name == "box_filter");
+    let (moz_box_rgb, moz_box_rgba) = if has_box {
+        let (bw, bh, rgb) = decode_mozjpeg_box(jpeg);
+        assert_eq!(bw, width, "{label}: mozjpeg-box width mismatch");
+        assert_eq!(bh, height, "{label}: mozjpeg-box height mismatch");
+        let rgba = rgb_to_rgba(&rgb);
+        (rgb, rgba)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     let mut all_ok = true;
 
     for (path_name, decode_fn) in decode_paths {
@@ -254,18 +280,20 @@ fn run_visual_diff(
         assert_eq!(zen_w, width, "{label}/{path_name}: width mismatch");
         assert_eq!(zen_h, height, "{label}/{path_name}: height mismatch");
 
-        let (max_diff, mean_diff, boundary_max, interior_max) =
-            analyze_diffs(&moz_rgb, &zen_rgb, width as usize, height as usize);
-
-        // Box filter uses a fundamentally different upsampling algorithm than
-        // mozjpeg's fancy upsampler, so boundary vs interior diff comparison
-        // is not meaningful for stripe detection.
+        // Compare against matching mozjpeg mode
         let is_box_filter = *path_name == "box_filter";
-        let stripe_detected = !is_box_filter && boundary_max > interior_max + 3;
+        let ref_rgb = if is_box_filter { &moz_box_rgb } else { &moz_fancy_rgb };
+        let ref_rgba = if is_box_filter { &moz_box_rgba } else { &moz_fancy_rgba };
+
+        let (max_diff, mean_diff, boundary_max, interior_max) =
+            analyze_diffs(ref_rgb, &zen_rgb, width as usize, height as usize);
+
+        let stripe_detected = boundary_max > interior_max + 3;
         let status = if stripe_detected { "STRIPE!" } else { "OK" };
+        let ref_label = if is_box_filter { "vs moz-box" } else { "vs moz-fancy" };
 
         println!(
-            "  {path_name:20} max={max_diff:3} mean={mean_diff:.3} boundary={boundary_max:3} interior={interior_max:3} [{status}]"
+            "  {path_name:20} max={max_diff:3} mean={mean_diff:.3} boundary={boundary_max:3} interior={interior_max:3} [{status}] {ref_label}"
         );
 
         if stripe_detected {
@@ -276,12 +304,12 @@ fn run_visual_diff(
         let zen_rgba = rgb_to_rgba(&zen_rgb);
         let amplification = 10u8; // amplify diffs 10x for visibility
         let montage =
-            create_comparison_montage_raw(&moz_rgba, &zen_rgba, width, height, amplification, 4);
+            create_comparison_montage_raw(ref_rgba, &zen_rgba, width, height, amplification, 4);
         save_montage(&montage, &format!("{label}_{path_name}"));
 
         // Also save standalone diff image for easy inspection
         let diff_img =
-            generate_diff_image_raw(&moz_rgba, &zen_rgba, width, height, amplification);
+            generate_diff_image_raw(ref_rgba, &zen_rgba, width, height, amplification);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         diff_img
             .save(diff_dir.join(format!("{label}_{path_name}_diff.png")))
@@ -475,9 +503,11 @@ fn test_visual_diff_corpus_photo() {
             .to_str()
             .unwrap();
 
-        // Get dimensions from mozjpeg decode
-        let (w, h, moz_rgb) = decode_mozjpeg(&jpeg);
-        let moz_rgba = rgb_to_rgba(&moz_rgb);
+        // Decode both mozjpeg modes
+        let (w, h, moz_fancy_rgb) = decode_mozjpeg(&jpeg);
+        let moz_fancy_rgba = rgb_to_rgba(&moz_fancy_rgb);
+        let (_, _, moz_box_rgb) = decode_mozjpeg_box(&jpeg);
+        let moz_box_rgba = rgb_to_rgba(&moz_box_rgb);
 
         println!("\n--- {name} ({w}x{h}) ---");
         for (path_name, decode_fn) in &paths {
@@ -486,17 +516,23 @@ fn test_visual_diff_corpus_photo() {
                 println!("  {path_name}: size mismatch, skip");
                 continue;
             }
+
+            let is_box = *path_name == "box_filter";
+            let ref_rgb = if is_box { &moz_box_rgb } else { &moz_fancy_rgb };
+            let ref_rgba = if is_box { &moz_box_rgba } else { &moz_fancy_rgba };
+
             let (max_diff, mean_diff, boundary_max, interior_max) =
-                analyze_diffs(&moz_rgb, &zen_rgb, w as usize, h as usize);
+                analyze_diffs(ref_rgb, &zen_rgb, w as usize, h as usize);
             let stripe_detected = boundary_max > interior_max + 3;
             let status = if stripe_detected { "STRIPE!" } else { "OK" };
+            let ref_label = if is_box { "vs moz-box" } else { "vs moz-fancy" };
             println!(
-                "  {path_name:20} max={max_diff:3} mean={mean_diff:.3} boundary={boundary_max:3} interior={interior_max:3} [{status}]"
+                "  {path_name:20} max={max_diff:3} mean={mean_diff:.3} boundary={boundary_max:3} interior={interior_max:3} [{status}] {ref_label}"
             );
 
             let zen_rgba = rgb_to_rgba(&zen_rgb);
             let montage =
-                create_comparison_montage_raw(&moz_rgba, &zen_rgba, w, h, 10, 4);
+                create_comparison_montage_raw(ref_rgba, &zen_rgba, w, h, 10, 4);
             save_montage(&montage, &format!("corpus_{name}_{path_name}"));
 
             assert!(
