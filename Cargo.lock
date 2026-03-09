@@ -3058,6 +3058,7 @@ dependencies = [
  "zenlayout",
  "zenpixels",
  "zenresize",
+ "zensim",
  "zensim-regress",
  "zune-core 0.5.1",
  "zune-jpeg 0.5.12",
@@ -3117,9 +3118,9 @@ dependencies = [
 
 [[package]]
 name = "zensim"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4197dd2d391fbce75dc617e78c019a7bff1bae62a8dc8699fc07695bc0b29f44"
+checksum = "fe3b8492f533d93a410a61b1483444f2d26710e5203b561ccf4579ce08d7b6d6"
 dependencies = [
  "archmage 0.9.5",
  "bytemuck",
@@ -3133,9 +3134,9 @@ dependencies = [
 
 [[package]]
 name = "zensim-regress"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "702d12105ae84a30a6d068344290e1a7266259556a5e64b72648122e9d5895d6"
+checksum = "87f58518aa4cec13fe0524738785543d5e46eb3c1ea85bc25650338794c5ebbc"
 dependencies = [
  "base64",
  "fs2",
