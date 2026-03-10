@@ -5,7 +5,7 @@
 //!
 //! Three modes:
 //! 1. `sweep` - Systematic per-component mul sweep to find optimal values
-//! 2. `bench` - Compare pre-encode denoising, tuned tables, and perceptual loop
+//! 2. `bench` - Compare tuned tables, MSE loop, and butteraugli-guided loop
 //! 3. `prefilter` - Test pre-encode noise-gated smoothing
 //!
 //! Usage:
@@ -658,7 +658,7 @@ fn run_benchmark(paths: &[String]) {
             report("prefilter+tuned_v3", jpeg_pf_tuned.len(), ss2_pf_tuned, bfly_pf_tuned,
                    jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_pf_tuned);
 
-            // Perceptual loop (2 iterations, using tuned v3 as starting point)
+            // MSE-based perceptual loop (2 iterations)
             let t0 = Instant::now();
             let loop_tables = perceptual_loop_xyb(&pixels, width, height, q, 2);
             let jpeg_loop = encode_xyb_with_tables(&pixels, width, height, q, &loop_tables);
@@ -666,8 +666,30 @@ fn run_benchmark(paths: &[String]) {
             let dec_loop = decode_jpeg_to_rgb_u8(&jpeg_loop);
             let ss2_loop = compute_ssim2(&pixels, &dec_loop, width, height);
             let bfly_loop = compute_butteraugli(&pixels, &dec_loop, width, height);
-            report("percept_loop_2", jpeg_loop.len(), ss2_loop, bfly_loop,
+            report("mse_loop_2", jpeg_loop.len(), ss2_loop, bfly_loop,
                    jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_loop);
+
+            // Butteraugli-guided perceptual loop (2 iterations)
+            let t0 = Instant::now();
+            let bfly_loop_tables = perceptual_loop_butteraugli(&pixels, width, height, q, 2);
+            let jpeg_bfly_loop = encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop_tables);
+            let t_bfly_loop = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_bfly_loop = decode_jpeg_to_rgb_u8(&jpeg_bfly_loop);
+            let ss2_bfly_loop = compute_ssim2(&pixels, &dec_bfly_loop, width, height);
+            let bfly_bfly_loop = compute_butteraugli(&pixels, &dec_bfly_loop, width, height);
+            report("bfly_loop_2", jpeg_bfly_loop.len(), ss2_bfly_loop, bfly_bfly_loop,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_bfly_loop);
+
+            // Butteraugli-guided loop with 4 iterations
+            let t0 = Instant::now();
+            let bfly_loop4_tables = perceptual_loop_butteraugli(&pixels, width, height, q, 4);
+            let jpeg_bfly_loop4 = encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop4_tables);
+            let t_bfly_loop4 = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_bfly_loop4 = decode_jpeg_to_rgb_u8(&jpeg_bfly_loop4);
+            let ss2_bfly_loop4 = compute_ssim2(&pixels, &dec_bfly_loop4, width, height);
+            let bfly_bfly_loop4 = compute_butteraugli(&pixels, &dec_bfly_loop4, width, height);
+            report("bfly_loop_4", jpeg_bfly_loop4.len(), ss2_bfly_loop4, bfly_bfly_loop4,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_bfly_loop4);
 
             eprintln!("  Q{} done", q);
         }
@@ -772,7 +794,7 @@ fn run_prefilter(paths: &[String]) {
 }
 
 // ============================================================================
-// Perceptual feedback loop
+// Perceptual feedback loop (MSE-based, original)
 // ============================================================================
 
 fn perceptual_loop_xyb(
@@ -795,7 +817,7 @@ fn perceptual_loop_xyb(
         let decoded = decode_jpeg_to_rgb_u8(&jpeg);
         if decoded.len() != pixels.len() {
             eprintln!(
-                "  loop iter {}: decode size mismatch ({} vs {}), skipping",
+                "  mse loop iter {}: decode size mismatch ({} vs {}), skipping",
                 iter,
                 decoded.len(),
                 pixels.len()
@@ -803,13 +825,12 @@ fn perceptual_loop_xyb(
             break;
         }
 
-        // Compute per-block MSE
         let block_mse = compute_block_mse(pixels, &decoded, width, height);
         let avg_mse: f32 = block_mse.iter().sum::<f32>() / block_mse.len() as f32;
         let max_mse = block_mse.iter().copied().fold(0.0f32, f32::max);
 
         eprintln!(
-            "  loop iter {}: avg_mse={:.1} max_mse={:.1} jpeg_size={}",
+            "  mse loop iter {}: avg_mse={:.1} max_mse={:.1} jpeg_size={}",
             iter, avg_mse, max_mse, jpeg.len()
         );
 
@@ -817,7 +838,6 @@ fn perceptual_loop_xyb(
             break;
         }
 
-        // Sum-preserving redistribution
         let k_alpha = 0.15;
         let mut new_scales = vec![0.0f32; num_blocks];
         let mut sum_before = 0.0f32;
@@ -844,6 +864,218 @@ fn perceptual_loop_xyb(
         block_scales = new_scales;
 
         adjust_tables_from_block_scales(&mut tables, &block_scales, &block_mse, avg_mse);
+    }
+
+    tables
+}
+
+// ============================================================================
+// Butteraugli-guided perceptual feedback loop
+// ============================================================================
+
+/// Compute per-block error from butteraugli diffmap using L4 norm.
+/// L4 emphasizes blocks with high peak error (like libjxl's L16 but less extreme).
+fn block_errors_from_diffmap(
+    diffmap: &imgref::ImgRef<'_, f32>,
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
+    let bw = (width + 7) / 8;
+    let bh = (height + 7) / 8;
+    let mut block_errors = vec![0.0f32; bw * bh];
+
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut sum4 = 0.0f64;
+            let mut count = 0u32;
+            for dy in 0..8 {
+                let y = by * 8 + dy;
+                if y >= height {
+                    break;
+                }
+                for dx in 0..8 {
+                    let x = bx * 8 + dx;
+                    if x >= width {
+                        break;
+                    }
+                    let v = diffmap[(x, y)] as f64;
+                    let v2 = v * v;
+                    sum4 += v2 * v2; // L4 norm
+                    count += 1;
+                }
+            }
+            block_errors[by * bw + bx] = if count > 0 {
+                (sum4 / count as f64).powf(0.25) as f32
+            } else {
+                0.0
+            };
+        }
+    }
+    block_errors
+}
+
+/// Butteraugli-guided perceptual loop.
+///
+/// Like the MSE loop but uses actual butteraugli diffmap for per-block error.
+/// This gives perceptually weighted spatial error: blocks with high butteraugli
+/// error get more precision (lower zero-bias mul), blocks with low error get
+/// more aggressive zeroing.
+///
+/// The adjustment is sum-preserving: total zero-bias energy is held constant
+/// to avoid file size drift.
+fn perceptual_loop_butteraugli(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+    iters: usize,
+) -> EncodingTables {
+    let mut tables = xyb_tuned_zero_bias_v2(quality_to_distance(quality));
+
+    let bw = (width + 7) / 8;
+    let bh = (height + 7) / 8;
+    let num_blocks = bw * bh;
+
+    let params = ButteraugliParams::default().with_compute_diffmap(true);
+
+    // Build reference image once (sRGB u8 → RGB8 pixels for butteraugli)
+    let orig_pixels: Vec<rgb::RGB8> = pixels
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+
+    for iter in 0..iters {
+        let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
+        let decoded = decode_jpeg_to_rgb_u8(&jpeg);
+        if decoded.len() != pixels.len() {
+            eprintln!(
+                "  bfly loop iter {}: decode size mismatch, skipping",
+                iter,
+            );
+            break;
+        }
+
+        // Compute butteraugli with diffmap
+        let dec_pixels: Vec<rgb::RGB8> = decoded
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_img = imgref::Img::new(&dec_pixels[..], width, height);
+        let result = match butteraugli::butteraugli(orig_img, dec_img, &params) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("  bfly loop iter {}: butteraugli failed, stopping", iter);
+                break;
+            }
+        };
+
+        let diffmap = match &result.diffmap {
+            Some(dm) => dm,
+            None => {
+                eprintln!("  bfly loop iter {}: no diffmap returned", iter);
+                break;
+            }
+        };
+
+        let block_errors = block_errors_from_diffmap(&diffmap.as_ref(), width, height);
+        let avg_error: f32 = block_errors.iter().sum::<f32>() / block_errors.len() as f32;
+        let max_error = block_errors.iter().copied().fold(0.0f32, f32::max);
+
+        eprintln!(
+            "  bfly loop iter {}: score={:.4} avg_block={:.4} max_block={:.4} size={}",
+            iter, result.score, avg_error, max_error, jpeg.len()
+        );
+
+        if avg_error < 0.01 {
+            break;
+        }
+
+        // Sum-preserving redistribution of zero-bias mul tables.
+        // High-error blocks → lower mul (keep more coefficients).
+        // Low-error blocks → higher mul (zero more aggressively).
+        // K_ALPHA controls aggressiveness. Start mild (0.10), like zensim.
+        let k_alpha = 0.10;
+
+        // Compute per-block adjustment factors
+        let mut factors = vec![1.0f32; num_blocks];
+        for bi in 0..num_blocks {
+            let ratio = if avg_error > 0.0 {
+                block_errors[bi] / avg_error
+            } else {
+                1.0
+            };
+            // High error → factor > 1 → we want LOWER mul → divide by factor
+            factors[bi] = (1.0 + k_alpha * (ratio - 1.0)).clamp(0.7, 1.5);
+        }
+
+        // Aggregate block factors into frequency-band adjustments.
+        // JPEG has global tables, so we can't adjust per-block.
+        // Strategy: partition blocks by error level, compute average factor
+        // per frequency band for high-error vs low-error regions, then
+        // shift the global table toward preserving high-error frequencies.
+        //
+        // Split into 3 frequency bands:
+        //   - Low (positions 1-7): DC-adjacent, most important
+        //   - Mid (positions 8-31): mid frequencies
+        //   - High (positions 32-63): high frequencies, least important
+        let error_threshold_high = avg_error * 1.3;
+        let error_threshold_low = avg_error * 0.7;
+
+        let mut high_factor_sum = 0.0f32;
+        let mut low_factor_sum = 0.0f32;
+        let mut high_count = 0usize;
+        let mut low_count = 0usize;
+
+        for bi in 0..num_blocks {
+            if block_errors[bi] > error_threshold_high {
+                high_factor_sum += factors[bi];
+                high_count += 1;
+            } else if block_errors[bi] < error_threshold_low {
+                low_factor_sum += factors[bi];
+                low_count += 1;
+            }
+        }
+
+        if high_count == 0 || low_count == 0 {
+            continue;
+        }
+
+        let high_avg_factor = high_factor_sum / high_count as f32;
+        let low_avg_factor = low_factor_sum / low_count as f32;
+
+        // The ratio tells us how much more precision high-error blocks need.
+        // Apply this as a frequency-dependent adjustment: high frequencies
+        // get a stronger shift because they're where zero-bias has the most effect.
+        let ratio = high_avg_factor / low_avg_factor;
+
+        // Apply per-band: low-freq gets mild adjustment, high-freq gets stronger
+        for c in 0..3 {
+            let mul = tables.zero_bias_mul.get_mut(c);
+            let sum_before: f32 = mul[1..].iter().sum();
+
+            // Low band (1-7): mild — these are critical, don't change much
+            for k in 1..8 {
+                mul[k] /= 1.0 + 0.3 * (ratio - 1.0);
+            }
+            // Mid band (8-31): moderate
+            for k in 8..32 {
+                mul[k] /= 1.0 + 0.6 * (ratio - 1.0);
+            }
+            // High band (32-63): strongest
+            for k in 32..64 {
+                mul[k] /= ratio;
+            }
+
+            // Renormalize to preserve total zero-bias energy (controls file size)
+            let sum_after: f32 = mul[1..].iter().sum();
+            if sum_after > 0.0 {
+                let renorm = sum_before / sum_after;
+                for k in 1..64 {
+                    mul[k] *= renorm;
+                }
+            }
+        }
     }
 
     tables
