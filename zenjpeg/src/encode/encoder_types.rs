@@ -1140,9 +1140,7 @@ pub enum QuantTableSource {
 /// | `Jpegli` | 3 (Y, Cb, Cr) | jpegli perceptual | Default, matches `jpegli_set_distance()` |
 /// | `JpegliSharedChroma` | 2 (Y, shared) | jpegli perceptual | Matches `jpeg_set_quality()` |
 /// | `MozjpegRobidoux` | 2 (Y, shared) | Robidoux psychovisual | Matches C mozjpeg default |
-/// | `Custom` | (user-defined) | user-defined | Full control via [`EncodingTables`] |
-///
-/// [`EncodingTables`]: super::tuning::EncodingTables
+/// | `Custom` | (user-defined) | user-defined | Full control via `EncodingTables` |
 #[derive(Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub enum QuantTableConfig {
@@ -1169,8 +1167,7 @@ pub enum QuantTableConfig {
     /// User-provided custom encoding tables.
     ///
     /// Overrides both quantization tables and zero-bias configuration.
-    /// Use [`EncodingTables::default_ycbcr()`](super::tuning::EncodingTables::default_ycbcr)
-    /// as a starting point for modifications.
+    /// Use `EncodingTables::default_ycbcr()` as a starting point for modifications.
     Custom(Box<super::tuning::EncodingTables>),
 
     /// Glassa low-BPP optimized tables for extreme compression (Q3-Q25).
@@ -1195,7 +1192,7 @@ pub enum QuantTableConfig {
 }
 
 impl QuantTableConfig {
-    /// Returns the internal [`QuantTableSource`] for this configuration.
+    /// Returns the internal `QuantTableSource` for this configuration.
     ///
     /// Custom and GlassaLowBpp tables return `Jpegli` (ignored when custom tables are present).
     #[must_use]
