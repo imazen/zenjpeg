@@ -3,15 +3,17 @@
 //! Tests improved XYB zero-bias tables against the hardcoded 0.5 baseline.
 //! Measures quality with SSIMULACRA2 (perceptually calibrated) instead of PSNR.
 //!
-//! Three modes:
+//! Four modes:
 //! 1. `sweep` - Systematic per-component mul sweep to find optimal values
 //! 2. `bench` - Compare tuned tables, MSE loop, and butteraugli-guided loop
 //! 3. `prefilter` - Test pre-encode noise-gated smoothing
+//! 4. `dqt` - Per-image DQT seeding from spectral analysis
 //!
 //! Usage:
 //!   cargo run --release --example explore_prefilter -- sweep image1.png [image2.png ...]
 //!   cargo run --release --example explore_prefilter -- bench image1.png [image2.png ...]
 //!   cargo run --release --example explore_prefilter -- prefilter image1.png [image2.png ...]
+//!   cargo run --release --example explore_prefilter -- dqt image1.png [image2.png ...]
 
 use std::env;
 use std::path::Path;
@@ -19,7 +21,9 @@ use std::time::Instant;
 
 use butteraugli::ButteraugliParams;
 use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
-use zenjpeg::encode::tuning::EncodingTables;
+use zenjpeg::color::xyb::srgb_to_xyb;
+use zenjpeg::encode::dct::forward_dct_8x8;
+use zenjpeg::encode::tuning::{EncodingTables, ScalingParams};
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 // ============================================================================
@@ -1443,6 +1447,596 @@ fn adjust_tables_from_block_scales(
 }
 
 // ============================================================================
+// Mode 4: Per-image DQT seeding from spectral analysis
+// ============================================================================
+
+/// Compute per-position DCT coefficient statistics in XYB color space.
+///
+/// Returns (median_abs, mad) for each of 3 channels × 64 positions.
+/// median_abs[c][k] = median of |coeff_k| across all blocks for channel c.
+/// This is the Laplacian scale parameter b_k (up to ln(2) factor).
+fn compute_xyb_dct_statistics(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+) -> ([[f32; 64]; 3], [[f32; 64]; 3]) {
+    let bw = (width + 7) / 8;
+    let bh = (height + 7) / 8;
+    let num_blocks = bw * bh;
+
+    // Convert entire image to XYB planes (f32)
+    let npix = width * height;
+    let mut x_plane = vec![0.0f32; npix];
+    let mut y_plane = vec![0.0f32; npix];
+    let mut b_plane = vec![0.0f32; npix];
+
+    for i in 0..npix {
+        let r = pixels[i * 3];
+        let g = pixels[i * 3 + 1];
+        let b = pixels[i * 3 + 2];
+        let (x, y, bv) = srgb_to_xyb(r, g, b);
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = bv;
+    }
+
+    let planes = [&x_plane, &y_plane, &b_plane];
+
+    // Collect |coeff_k| for all blocks, per channel, per position
+    // Use a flat buffer: coeffs[c][k] = Vec of |values| across all blocks
+    let mut coeffs: [Vec<Vec<f32>>; 3] = [
+        (0..64).map(|_| Vec::with_capacity(num_blocks)).collect(),
+        (0..64).map(|_| Vec::with_capacity(num_blocks)).collect(),
+        (0..64).map(|_| Vec::with_capacity(num_blocks)).collect(),
+    ];
+
+    for c in 0..3 {
+        let plane = planes[c];
+        for by in 0..bh {
+            for bx in 0..bw {
+                // Extract 8x8 block (with edge replication)
+                let mut block = [0.0f32; 64];
+                for dy in 0..8 {
+                    let y = (by * 8 + dy).min(height - 1);
+                    for dx in 0..8 {
+                        let x = (bx * 8 + dx).min(width - 1);
+                        block[dy * 8 + dx] = plane[y * width + x];
+                    }
+                }
+
+                // Forward DCT
+                let dct = forward_dct_8x8(&block);
+
+                // Collect absolute values (skip DC for AC statistics)
+                for k in 0..64 {
+                    coeffs[c][k].push(dct[k].abs());
+                }
+            }
+        }
+    }
+
+    // Compute median and MAD for each position
+    let mut median_abs = [[0.0f32; 64]; 3];
+    let mut mad = [[0.0f32; 64]; 3];
+
+    for c in 0..3 {
+        for k in 0..64 {
+            let vals = &mut coeffs[c][k];
+            vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = vals.len();
+            if n == 0 {
+                continue;
+            }
+            let med = if n % 2 == 0 {
+                (vals[n / 2 - 1] + vals[n / 2]) / 2.0
+            } else {
+                vals[n / 2]
+            };
+            median_abs[c][k] = med;
+
+            // MAD (median absolute deviation from median)
+            let mut deviations: Vec<f32> = vals.iter().map(|&v| (v - med).abs()).collect();
+            deviations.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            mad[c][k] = if n % 2 == 0 {
+                (deviations[n / 2 - 1] + deviations[n / 2]) / 2.0
+            } else {
+                deviations[n / 2]
+            };
+        }
+    }
+
+    (median_abs, mad)
+}
+
+/// Per-image DQT seeding using spectral analysis.
+///
+/// Mathematical foundation: For Laplacian-distributed DCT coefficients
+/// with scale b_k and perceptual weight w_k, the RD-optimal quantization
+/// step is q_k = C * b_k / w_k.
+///
+/// We use a hybrid approach: scale the corpus-tuned tables by the ratio
+/// of this image's spectral profile to the average corpus profile.
+///
+/// seed_q[k] = corpus_q[k] * (b_k / b_k_ref)^alpha
+///
+/// alpha controls adaptation strength:
+///   0.0 = pure corpus (ignore image statistics)
+///   0.5 = geometric mean (balanced)
+///   1.0 = full per-image (maximum adaptation)
+fn per_image_dqt_seed(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+    alpha: f32,
+) -> EncodingTables {
+    let distance = quality_to_distance(quality);
+
+    // Step 1: Compute this image's DCT coefficient statistics
+    let (median_abs, _mad) = compute_xyb_dct_statistics(pixels, width, height);
+
+    // Step 2: Get the corpus base tables and compute what DQT values they produce
+    let corpus_tables = EncodingTables::default_xyb();
+    let (qt0, qt1, qt2) = corpus_tables.generate_quant_tables(distance, false); // XYB uses S444
+
+    let corpus_dqt: [Vec<u16>; 3] = [
+        qt0.values.to_vec(),
+        qt1.values.to_vec(),
+        qt2.values.to_vec(),
+    ];
+
+    // Step 3: Compute reference spectral profile (what the corpus tables "expect").
+    // We derive b_k_ref from the corpus quant values and CSF weights.
+    // Since corpus_q[k] = base[k] * scale, and optimal q_k ∝ b_k / w_k,
+    // we can use the corpus median as the reference.
+    // For simplicity: use the geometric mean of all images' median_abs as reference.
+    // Since we don't have the corpus statistics, we use a heuristic:
+    // b_k_ref = corpus_dqt[k] * normalization_factor
+    // This means the adaptation ratio becomes b_k_actual / (corpus_dqt[k] * norm).
+    //
+    // Better approach: use the image's own statistics directly.
+    // ratio[k] = median_abs[k] / geomean(median_abs), then apply to corpus DQT.
+    // This preserves the corpus's absolute calibration while adapting the shape.
+
+    // Start from tuned tables (not default_xyb) so zero-bias matches baseline
+    let mut tables = xyb_tuned_zero_bias_v2(distance);
+
+    for c in 0..3 {
+        // Compute geometric mean of this image's coefficient magnitudes (AC only)
+        let mut log_sum = 0.0f64;
+        let mut count = 0;
+        for k in 1..64 {
+            let v = median_abs[c][k] as f64;
+            if v > 1e-10 {
+                log_sum += v.ln();
+                count += 1;
+            }
+        }
+        let geomean = if count > 0 {
+            (log_sum / count as f64).exp() as f32
+        } else {
+            1.0
+        };
+
+        // Similarly for the corpus DQT values (geometric mean of AC)
+        let mut log_sum_corpus = 0.0f64;
+        let mut count_corpus = 0;
+        for k in 1..64 {
+            let v = corpus_dqt[c][k] as f64;
+            if v > 1.0 {
+                log_sum_corpus += v.ln();
+                count_corpus += 1;
+            }
+        }
+        let geomean_corpus = if count_corpus > 0 {
+            (log_sum_corpus / count_corpus as f64).exp() as f32
+        } else {
+            1.0
+        };
+
+        // Compute per-position adaptation ratio.
+        // ratio[k] = (median_abs[k] / geomean) / (corpus_dqt[k] / geomean_corpus)
+        // This normalizes both profiles to their geometric means, so we're comparing
+        // the *shape* of the spectral distribution, not the absolute level.
+        let mut adapted_quant = [0.0f32; 64];
+
+        // DC: keep corpus value (DC is well-calibrated in corpus tables)
+        adapted_quant[0] = corpus_dqt[c][0] as f32;
+
+        for k in 1..64 {
+            let b_k = median_abs[c][k];
+            let b_k_norm = if geomean > 1e-10 { b_k / geomean } else { 1.0 };
+
+            let corpus_k = corpus_dqt[c][k] as f32;
+            let corpus_k_norm = if geomean_corpus > 1.0 {
+                corpus_k / geomean_corpus
+            } else {
+                1.0
+            };
+
+            // Spectral shape ratio: how much more energy this image has at position k
+            // relative to the corpus average at position k
+            let shape_ratio = if corpus_k_norm > 0.01 {
+                b_k_norm / corpus_k_norm
+            } else {
+                1.0
+            };
+
+            // Apply adaptation: q_new = q_corpus * ratio^alpha
+            // alpha=0: no adaptation (shape_ratio^0 = 1)
+            // alpha=0.5: moderate adaptation
+            // alpha=1: full adaptation
+            let factor = shape_ratio.powf(alpha).clamp(0.3, 3.0);
+            adapted_quant[k] = (corpus_k * factor).round().clamp(1.0, 65535.0);
+        }
+
+        // Store as exact quant values (bypass scaling)
+        tables.quant.get_mut(c).copy_from_slice(&adapted_quant);
+    }
+
+    // Use Exact scaling since we've already computed final DQT values
+    tables.scaling = ScalingParams::Exact;
+
+    tables
+}
+
+/// Per-image DQT with iterative refinement.
+///
+/// Starts from spectral-seeded DQT, then uses encode→measure→adjust loop
+/// to refine. The per-coefficient error contribution guides adjustment.
+fn per_image_dqt_iterative(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+    alpha: f32,
+    iters: usize,
+) -> EncodingTables {
+    let mut tables = per_image_dqt_seed(pixels, width, height, quality, alpha);
+
+    // Set up zensim for error measurement
+    let z = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
+    let stride = width * 3;
+    let ref_img = zensim::StridedBytes::new(
+        pixels,
+        width,
+        height,
+        stride,
+        zensim::PixelFormat::Srgb8Rgb,
+    );
+    let precomputed = match z.precompute_reference(&ref_img) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("  zensim precompute failed: {}", e);
+            return tables;
+        }
+    };
+    let diffmap_opts = zensim::DiffmapOptions {
+        weighting: zensim::DiffmapWeighting::Trained,
+        masking_strength: Some(8.0),
+        sqrt: false,
+        include_hf: true,
+        include_edge_mse: true,
+    };
+
+    for iter in 0..iters {
+        // Encode with current tables
+        let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
+        let decoded = decode_jpeg_to_rgb_u8(&jpeg);
+        if decoded.len() != pixels.len() {
+            eprintln!("  dqt iter {}: decode size mismatch", iter);
+            break;
+        }
+
+        // Get per-pixel error via zensim diffmap
+        let dec_img = zensim::StridedBytes::new(
+            &decoded,
+            width,
+            height,
+            stride,
+            zensim::PixelFormat::Srgb8Rgb,
+        );
+        let dm_result =
+            match z.compute_with_ref_and_diffmap(&precomputed, &dec_img, diffmap_opts) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("  dqt iter {}: diffmap failed: {}", iter, e);
+                    break;
+                }
+            };
+
+        let score = dm_result.score();
+        eprintln!(
+            "  dqt iter {}: score={:.2} size={}",
+            iter,
+            score,
+            jpeg.len()
+        );
+
+        // Compute per-block error and per-position coefficient error contribution.
+        // Strategy: blocks with high error → their dominant frequencies need smaller quant steps.
+        // Compute per-position "error weight" by correlating block error with coefficient energy.
+        let bw = (width + 7) / 8;
+        let bh = (height + 7) / 8;
+        let diffmap = dm_result.diffmap();
+
+        let block_errors = block_errors_from_flat_diffmap(
+            diffmap,
+            dm_result.width(),
+            dm_result.height(),
+            width,
+            height,
+        );
+        let avg_error: f32 = block_errors.iter().sum::<f32>() / block_errors.len() as f32;
+
+        // For each frequency position, compute the weighted error contribution:
+        // error_weight[k] = Σ (block_error[b] * |coeff_b_k|) / Σ |coeff_b_k|
+        // This tells us which frequency positions contribute most to perceptual error.
+        // Then adjust: positions with error_weight > average → decrease quant step.
+        let planes = {
+            let npix = width * height;
+            let mut x_plane = vec![0.0f32; npix];
+            let mut y_plane = vec![0.0f32; npix];
+            let mut b_plane = vec![0.0f32; npix];
+            for i in 0..npix {
+                let (x, y, bv) = srgb_to_xyb(pixels[i * 3], pixels[i * 3 + 1], pixels[i * 3 + 2]);
+                x_plane[i] = x;
+                y_plane[i] = y;
+                b_plane[i] = bv;
+            }
+            [x_plane, y_plane, b_plane]
+        };
+
+        for c in 0..3 {
+            let plane = &planes[c];
+            let mut error_energy = [0.0f64; 64]; // sum of (block_error * |coeff|)
+            let mut total_energy = [0.0f64; 64]; // sum of |coeff|
+
+            for by in 0..bh {
+                for bx in 0..bw {
+                    let bi = by * bw + bx;
+                    let be = block_errors[bi] as f64;
+
+                    let mut block = [0.0f32; 64];
+                    for dy in 0..8 {
+                        let y = (by * 8 + dy).min(height - 1);
+                        for dx in 0..8 {
+                            let x = (bx * 8 + dx).min(width - 1);
+                            block[dy * 8 + dx] = plane[y * width + x];
+                        }
+                    }
+                    let dct = forward_dct_8x8(&block);
+
+                    for k in 1..64 {
+                        let abs_c = dct[k].abs() as f64;
+                        error_energy[k] += be * abs_c;
+                        total_energy[k] += abs_c;
+                    }
+                }
+            }
+
+            // Compute per-position error weight
+            let mut error_weight = [0.0f32; 64];
+            for k in 1..64 {
+                error_weight[k] = if total_energy[k] > 1e-10 {
+                    (error_energy[k] / total_energy[k]) as f32
+                } else {
+                    avg_error
+                };
+            }
+
+            let avg_ew: f32 = error_weight[1..].iter().sum::<f32>() / 63.0;
+
+            // Adjust quant values: positions with above-average error → decrease step
+            let quant = tables.quant.get_mut(c);
+            let k_adjust = 0.15; // conservative per iteration
+
+            for k in 1..64 {
+                let ratio = if avg_ew > 0.0 {
+                    error_weight[k] / avg_ew
+                } else {
+                    1.0
+                };
+                // ratio > 1: this position contributes more error → need finer quant
+                // ratio < 1: this position contributes less → can coarsen
+                let factor = 1.0 / (1.0 + k_adjust * (ratio - 1.0));
+                let factor = factor.clamp(0.85, 1.15);
+                quant[k] = (quant[k] * factor).round().clamp(1.0, 65535.0);
+            }
+        }
+    }
+
+    tables
+}
+
+fn run_dqt_benchmark(paths: &[String]) {
+    println!(
+        "image\tquality\tmode\tsize\tssim2\tbfly\tsize_vs_ycbcr\tssim2_vs_ycbcr\tbfly_vs_ycbcr\tms"
+    );
+
+    let qualities = [75u8, 85, 95];
+    let alphas = [0.0f32, 0.3, 0.5, 0.7, 1.0];
+
+    for path in paths {
+        if !Path::new(path).exists() {
+            eprintln!("Skipping {}: not found", path);
+            continue;
+        }
+
+        let name = Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let (pixels, width, height) = load_png(path);
+        eprintln!("\n=== {} ({}x{}) ===", name, width, height);
+
+        for &q in &qualities {
+            let report = |label: &str,
+                          size: usize,
+                          ss2: f64,
+                          bfly: f64,
+                          base_size: usize,
+                          base_ss2: f64,
+                          base_bfly: f64,
+                          ms: f64| {
+                let delta_pct = (size as f64 / base_size as f64 - 1.0) * 100.0;
+                let delta_ss2 = ss2 - base_ss2;
+                let delta_bfly = if base_bfly > 0.0 {
+                    (bfly / base_bfly - 1.0) * 100.0
+                } else {
+                    0.0
+                };
+                println!(
+                    "{}\t{}\t{}\t{}\t{:.2}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%\t{:.0}",
+                    name, q, label, size, ss2, bfly, delta_pct, delta_ss2, delta_bfly, ms
+                );
+            };
+
+            // YCbCr baseline
+            let t0 = Instant::now();
+            let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
+            let t_ycbcr = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
+            let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
+            report(
+                "ycbcr",
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_ycbcr,
+            );
+
+            // XYB tuned v3 (corpus tables, our current best)
+            let t0 = Instant::now();
+            let tuned = xyb_tuned_zero_bias_v2(quality_to_distance(q));
+            let jpeg_tuned = encode_xyb_with_tables(&pixels, width, height, q, &tuned);
+            let t_tuned = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
+            let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
+            let bfly_tuned = compute_butteraugli(&pixels, &dec_tuned, width, height);
+            report(
+                "xyb_tuned_v3",
+                jpeg_tuned.len(),
+                ss2_tuned,
+                bfly_tuned,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_tuned,
+            );
+
+            // Exact-mode reproduction of tuned_v3 (should match exactly)
+            {
+                let t0 = Instant::now();
+                let distance = quality_to_distance(q);
+                let mut exact_tables = xyb_tuned_zero_bias_v2(distance);
+                let (qt0, qt1, qt2) = exact_tables.generate_quant_tables(distance, false);
+                for (k, &v) in qt0.values.iter().enumerate() {
+                    exact_tables.quant.get_mut(0)[k] = v as f32;
+                }
+                for (k, &v) in qt1.values.iter().enumerate() {
+                    exact_tables.quant.get_mut(1)[k] = v as f32;
+                }
+                for (k, &v) in qt2.values.iter().enumerate() {
+                    exact_tables.quant.get_mut(2)[k] = v as f32;
+                }
+                exact_tables.scaling = ScalingParams::Exact;
+                let jpeg_exact =
+                    encode_xyb_with_tables(&pixels, width, height, q, &exact_tables);
+                let t_exact = t0.elapsed().as_secs_f64() * 1000.0;
+                let dec_exact = decode_jpeg_to_rgb_u8(&jpeg_exact);
+                let ss2_exact = compute_ssim2(&pixels, &dec_exact, width, height);
+                let bfly_exact = compute_butteraugli(&pixels, &dec_exact, width, height);
+                report(
+                    "exact_tuned",
+                    jpeg_exact.len(),
+                    ss2_exact,
+                    bfly_exact,
+                    jpeg_ycbcr.len(),
+                    ss2_ycbcr,
+                    bfly_ycbcr,
+                    t_exact,
+                );
+            }
+
+            // Per-image DQT at various alpha values
+            for &alpha in &alphas {
+                let label = format!("dqt_a{:.1}", alpha);
+                let t0 = Instant::now();
+                let dqt_tables = per_image_dqt_seed(&pixels, width, height, q, alpha);
+                let jpeg_dqt =
+                    encode_xyb_with_tables(&pixels, width, height, q, &dqt_tables);
+                let t_dqt = t0.elapsed().as_secs_f64() * 1000.0;
+                let dec_dqt = decode_jpeg_to_rgb_u8(&jpeg_dqt);
+                let ss2_dqt = compute_ssim2(&pixels, &dec_dqt, width, height);
+                let bfly_dqt = compute_butteraugli(&pixels, &dec_dqt, width, height);
+                report(
+                    &label,
+                    jpeg_dqt.len(),
+                    ss2_dqt,
+                    bfly_dqt,
+                    jpeg_ycbcr.len(),
+                    ss2_ycbcr,
+                    bfly_ycbcr,
+                    t_dqt,
+                );
+            }
+
+            // Per-image DQT + iterative refinement (alpha=0.5, 2 iterations)
+            let t0 = Instant::now();
+            let dqt_iter_tables =
+                per_image_dqt_iterative(&pixels, width, height, q, 0.5, 2);
+            let jpeg_dqt_iter =
+                encode_xyb_with_tables(&pixels, width, height, q, &dqt_iter_tables);
+            let t_dqt_iter = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_dqt_iter = decode_jpeg_to_rgb_u8(&jpeg_dqt_iter);
+            let ss2_dqt_iter = compute_ssim2(&pixels, &dec_dqt_iter, width, height);
+            let bfly_dqt_iter =
+                compute_butteraugli(&pixels, &dec_dqt_iter, width, height);
+            report(
+                "dqt_iter_a0.5",
+                jpeg_dqt_iter.len(),
+                ss2_dqt_iter,
+                bfly_dqt_iter,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_dqt_iter,
+            );
+
+            // Per-image DQT + iterative refinement (alpha=0.7, 3 iterations)
+            let t0 = Instant::now();
+            let dqt_iter3_tables =
+                per_image_dqt_iterative(&pixels, width, height, q, 0.7, 3);
+            let jpeg_dqt_iter3 =
+                encode_xyb_with_tables(&pixels, width, height, q, &dqt_iter3_tables);
+            let t_dqt_iter3 = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_dqt_iter3 = decode_jpeg_to_rgb_u8(&jpeg_dqt_iter3);
+            let ss2_dqt_iter3 = compute_ssim2(&pixels, &dec_dqt_iter3, width, height);
+            let bfly_dqt_iter3 =
+                compute_butteraugli(&pixels, &dec_dqt_iter3, width, height);
+            report(
+                "dqt_iter_a0.7x3",
+                jpeg_dqt_iter3.len(),
+                ss2_dqt_iter3,
+                bfly_dqt_iter3,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_dqt_iter3,
+            );
+
+            eprintln!("  Q{} done", q);
+        }
+    }
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -1454,6 +2048,7 @@ fn main() {
         eprintln!("  sweep     - Per-component zero-bias multiplier sweep");
         eprintln!("  bench     - Full benchmark (prefilter + tuned tables + loop)");
         eprintln!("  prefilter - Pre-encode noise-gated smoothing comparison");
+        eprintln!("  dqt       - Per-image DQT seeding from spectral analysis");
         std::process::exit(1);
     }
 
@@ -1464,8 +2059,12 @@ fn main() {
         "sweep" => run_sweep(&paths),
         "bench" => run_benchmark(&paths),
         "prefilter" => run_prefilter(&paths),
+        "dqt" => run_dqt_benchmark(&paths),
         _ => {
-            eprintln!("Unknown mode: {}. Use sweep, bench, or prefilter.", mode);
+            eprintln!(
+                "Unknown mode: {}. Use sweep, bench, prefilter, or dqt.",
+                mode
+            );
             std::process::exit(1);
         }
     }
