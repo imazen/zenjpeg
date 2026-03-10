@@ -435,13 +435,50 @@ when the problem IS frequency allocation rather than total bit budget.
 lambda). These can exploit spatial information directly instead of collapsing
 it into global table adjustments.
 
+### Tested: Zensim-Guided Loop — 3x Faster, Same Limitation
+
+The zensim-guided loop replaces butteraugli with zensim's psychovisual diffmap
+as the error signal. Same sum-preserving redistribution, same frequency-band
+adjustment to global tables. Key advantage: **3.2x faster** (72ms vs 226ms avg
+for 2-iteration loop on 512x512 images).
+
+**Zensim loop vs tuned v3 (6 CID22 images × 3 qualities = 18 data points)**:
+
+| Quality | ΔSize | ΔSSIM2 | ΔButteraugli |
+|---------|-------|--------|-------------|
+| Q75 | -0.2% | -0.12 | -2.1% (mixed) |
+| Q85 | -0.1% | -0.07 | +0.7% (mixed) |
+| Q95 | -0.0% | -0.03 | +0.4% (noise) |
+
+**Speed comparison (2-iteration loops)**:
+
+| Loop | Avg ms | Relative |
+|------|--------|----------|
+| Zensim ×2 | 72ms | **1.0x** |
+| Bfly ×2 | 226ms | 3.1x slower |
+| MSE ×2 | 42ms | 0.6x (faster but different approach) |
+
+**1 Pareto win** (smaller + better on at least one metric):
+- 1025469 Q75: -0.3% size, -13.3% butteraugli (same star trails win as bfly loop)
+
+**Conclusion**: Zensim is the best error signal for the spatial loop if you want
+speed — 3x faster than butteraugli with equivalent quality outcomes. But the
+fundamental limitation is JPEG's global tables. Both zensim and butteraugli
+loops produce nearly identical results because the bottleneck is the adjustment
+mechanism (global frequency-band redistribution), not the error signal quality.
+
+For JXL where per-block quant fields CAN be adjusted, zensim's speed advantage
+is decisive. For JPEG, neither loop is particularly impactful — the MSE loop
+(which grows file size for quality, not redistribute) remains the most effective
+iterative approach.
+
 ## Priority Ranking (Updated March 9)
 
 | # | Idea | Effort | Expected Impact | Status |
 |---|------|--------|-----------------|--------|
 | **1** | **XYB zero-bias tuning (v3)** | Low | **+0.76 SSIM2** at Q75 | **Dual-metric validated** — ready to ship |
 | **2** | **MSE perceptual loop** | Low | +0.77 SSIM2, -4.8% bfly at Q75 | **Dual-metric validated** — quality-max mode |
-| **3** | **Bfly perceptual loop** | Low | -13% bfly on content like star trails | **Pareto wins at zero size cost** — size-neutral mode |
+| **3** | **Zensim/Bfly perceptual loop** | Low | -13% bfly on star trails, zensim 3x faster | **Pareto wins at zero size cost** — prefer zensim for speed |
 | 4 | Per-block AQ-integrated bfly loop | Medium | 2-5% quality | Not tested — best path for butteraugli |
 | 5 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
 | 6 | Pre-encode noise-gated smoothing | Low | -6% size, -57% bfly on noisy content | **Pareto wins on noisy images** — needs auto-detect |

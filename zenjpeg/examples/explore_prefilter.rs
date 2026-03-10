@@ -701,6 +701,26 @@ fn run_benchmark(paths: &[String]) {
                 t_bfly_loop4,
             );
 
+            // Zensim-guided perceptual loop (2 iterations)
+            let t0 = Instant::now();
+            let zen_loop_tables = perceptual_loop_zensim(&pixels, width, height, q, 2);
+            let jpeg_zen_loop =
+                encode_xyb_with_tables(&pixels, width, height, q, &zen_loop_tables);
+            let t_zen_loop = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_zen_loop = decode_jpeg_to_rgb_u8(&jpeg_zen_loop);
+            let ss2_zen_loop = compute_ssim2(&pixels, &dec_zen_loop, width, height);
+            let bfly_zen_loop = compute_butteraugli(&pixels, &dec_zen_loop, width, height);
+            report(
+                "zensim_loop_2",
+                jpeg_zen_loop.len(),
+                ss2_zen_loop,
+                bfly_zen_loop,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_zen_loop,
+            );
+
             eprintln!("  Q{} done", q);
         }
     }
@@ -1116,6 +1136,225 @@ fn perceptual_loop_butteraugli(
             }
 
             // Renormalize to preserve total zero-bias energy (controls file size)
+            let sum_after: f32 = mul[1..].iter().sum();
+            if sum_after > 0.0 {
+                let renorm = sum_before / sum_after;
+                for k in 1..64 {
+                    mul[k] *= renorm;
+                }
+            }
+        }
+    }
+
+    tables
+}
+
+// ============================================================================
+// Zensim-guided perceptual feedback loop
+// ============================================================================
+
+/// Compute per-block L4 error from a flat diffmap (row-major f32 slice).
+///
+/// Same approach as `block_errors_from_diffmap` but works with zensim's flat
+/// `&[f32]` diffmap instead of butteraugli's `ImgRef<f32>`.
+fn block_errors_from_flat_diffmap(
+    diffmap: &[f32],
+    dm_width: usize,
+    _dm_height: usize,
+    img_width: usize,
+    img_height: usize,
+) -> Vec<f32> {
+    let bw = (img_width + 7) / 8;
+    let bh = (img_height + 7) / 8;
+    let mut block_errors = vec![0.0f32; bw * bh];
+
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut sum4 = 0.0f64;
+            let mut count = 0u32;
+            for dy in 0..8 {
+                let y = by * 8 + dy;
+                if y >= img_height {
+                    break;
+                }
+                for dx in 0..8 {
+                    let x = bx * 8 + dx;
+                    if x >= img_width {
+                        break;
+                    }
+                    let v = diffmap[y * dm_width + x] as f64;
+                    let v2 = v * v;
+                    sum4 += v2 * v2; // L4 norm
+                    count += 1;
+                }
+            }
+            block_errors[by * bw + bx] = if count > 0 {
+                (sum4 / count as f64).powf(0.25) as f32
+            } else {
+                0.0
+            };
+        }
+    }
+    block_errors
+}
+
+/// Zensim-guided perceptual loop.
+///
+/// Uses zensim's psychovisual diffmap for per-block error instead of
+/// butteraugli or MSE. Key advantages:
+/// - Much faster than butteraugli (~2-3x)
+/// - Optimizes for SSIM2 (the metric we care about most)
+/// - Includes edge artifact and HF texture features
+///
+/// Same sum-preserving redistribution as the butteraugli loop.
+fn perceptual_loop_zensim(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+    iters: usize,
+) -> EncodingTables {
+    let mut tables = xyb_tuned_zero_bias_v2(quality_to_distance(quality));
+
+    let bw = (width + 7) / 8;
+    let bh = (height + 7) / 8;
+    let num_blocks = bw * bh;
+
+    // Set up zensim with precomputed reference
+    let z = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
+    let stride = width * 3;
+    let ref_img = zensim::StridedBytes::new(
+        pixels,
+        width,
+        height,
+        stride,
+        zensim::PixelFormat::Srgb8Rgb,
+    );
+    let precomputed = match z.precompute_reference(&ref_img) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("  zensim precompute failed: {}", e);
+            return tables;
+        }
+    };
+
+    let diffmap_opts = zensim::DiffmapOptions {
+        weighting: zensim::DiffmapWeighting::Trained,
+        masking_strength: Some(8.0),
+        sqrt: false,
+        include_hf: true,
+        include_edge_mse: true,
+    };
+
+    for iter in 0..iters {
+        let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
+        let decoded = decode_jpeg_to_rgb_u8(&jpeg);
+        if decoded.len() != pixels.len() {
+            eprintln!(
+                "  zensim loop iter {}: decode size mismatch, skipping",
+                iter
+            );
+            break;
+        }
+
+        // Compute zensim diffmap
+        let dec_img = zensim::StridedBytes::new(
+            &decoded,
+            width,
+            height,
+            stride,
+            zensim::PixelFormat::Srgb8Rgb,
+        );
+        let dm_result =
+            match z.compute_with_ref_and_diffmap(&precomputed, &dec_img, diffmap_opts) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("  zensim loop iter {}: diffmap failed: {}", iter, e);
+                    break;
+                }
+            };
+
+        let score = dm_result.score();
+        let diffmap = dm_result.diffmap();
+
+        // Per-block L4 error from diffmap
+        let block_errors = block_errors_from_flat_diffmap(
+            diffmap,
+            dm_result.width(),
+            dm_result.height(),
+            width,
+            height,
+        );
+        let avg_error: f32 = block_errors.iter().sum::<f32>() / block_errors.len() as f32;
+        let max_error = block_errors.iter().copied().fold(0.0f32, f32::max);
+
+        eprintln!(
+            "  zensim loop iter {}: score={:.2} avg_block={:.4} max_block={:.4} size={}",
+            iter, score, avg_error, max_error, jpeg.len()
+        );
+
+        // No early exit — zensim diffmap values are small (0.0001-0.002 range)
+        // but the relative distribution (ratio high/low) is what drives redistribution.
+
+        // Sum-preserving redistribution of zero-bias mul tables.
+        // Same approach as butteraugli loop: partition blocks by error level,
+        // adjust frequency bands differently.
+        let k_alpha = 0.15; // Slightly more aggressive than bfly (0.10) since zensim is SSIM-tuned
+        let mut factors = vec![1.0f32; num_blocks];
+        for bi in 0..num_blocks {
+            let ratio = if avg_error > 0.0 {
+                block_errors[bi] / avg_error
+            } else {
+                1.0
+            };
+            factors[bi] = (1.0 + k_alpha * (ratio - 1.0)).clamp(0.7, 1.5);
+        }
+
+        let error_threshold_high = avg_error * 1.3;
+        let error_threshold_low = avg_error * 0.7;
+
+        let mut high_factor_sum = 0.0f32;
+        let mut low_factor_sum = 0.0f32;
+        let mut high_count = 0usize;
+        let mut low_count = 0usize;
+
+        for bi in 0..num_blocks {
+            if block_errors[bi] > error_threshold_high {
+                high_factor_sum += factors[bi];
+                high_count += 1;
+            } else if block_errors[bi] < error_threshold_low {
+                low_factor_sum += factors[bi];
+                low_count += 1;
+            }
+        }
+
+        if high_count == 0 || low_count == 0 {
+            continue;
+        }
+
+        let high_avg_factor = high_factor_sum / high_count as f32;
+        let low_avg_factor = low_factor_sum / low_count as f32;
+        let ratio = high_avg_factor / low_avg_factor;
+
+        // Apply per-band adjustment (same as bfly loop)
+        for c in 0..3 {
+            let mul = tables.zero_bias_mul.get_mut(c);
+            let sum_before: f32 = mul[1..].iter().sum();
+
+            // Low band (1-7): mild — critical frequencies
+            for k in 1..8 {
+                mul[k] /= 1.0 + 0.3 * (ratio - 1.0);
+            }
+            // Mid band (8-31): moderate
+            for k in 8..32 {
+                mul[k] /= 1.0 + 0.6 * (ratio - 1.0);
+            }
+            // High band (32-63): strongest
+            for k in 32..64 {
+                mul[k] /= ratio;
+            }
+
+            // Renormalize to preserve total zero-bias energy
             let sum_after: f32 = mul[1..].iter().sum();
             if sum_after > 0.0 {
                 let renorm = sum_before / sum_after;
