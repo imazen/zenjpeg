@@ -351,20 +351,36 @@ the gate function treats fine texture as noise and removes it.
 2. Visual inspection of noisy-image results (mandatory before shipping)
 3. If useful on noisy images, make it opt-in (not default)
 
-### Needs More Testing: Perceptual Feedback Loop for Global Tables
+### Promising: Perceptual Feedback Loop for Global Zero-Bias Tables
 
-JPEG only supports global quant/zero-bias tables, not per-block. The perceptual loop
-(encode→decode→measure per-block MSE→adjust global tables) showed inconsistent results
-on SSIM2: helped 1/3 images, hurt 2/3. But again, only measured with SSIM2.
+The perceptual loop (encode→decode→measure per-block MSE→adjust global tables)
+consistently improves BOTH metrics over v3 tables alone, at modest file size cost.
 
-JXL's butteraugli and zensim loops work because JXL has a per-block quant field.
-JPEG can't replicate this architecture for zero-bias tables, but other per-block
-mechanisms exist:
+**Butteraugli evaluation (6 CID22 images, March 9, loop vs v3 tables)**:
 
-**What might work instead**:
+| Quality | ΔSize | ΔSSIM2 | ΔButteraugli |
+|---------|-------|--------|-------------|
+| Q75 | +3.4% | +0.77 | -4.8% better |
+| Q85 | +2.3% | +0.45 | -1.9% better |
+| Q95 | +1.2% | +0.23 | -2.7% better |
+
+The loop spends 1-3% more bits to get 2-5% better butteraugli — a favorable RD
+tradeoff (distortion improvement exceeds rate increase). The content-adaptive
+redistribution is doing useful work despite JPEG's global table constraint.
+
+**Mechanism**: The loop starts from v3 tables, encodes, measures per-block MSE,
+then adjusts the global tables to reduce high-frequency zeroing in high-error
+blocks. This is a crude form of content adaptation — it can't adjust per-block
+(JPEG constraint), but it CAN shift the global tables toward the content's needs.
+
+**Limitations**: Only 2 iterations. The MSE-based error measure could be replaced
+with actual butteraugli or SSIM2 per-block error for better perceptual targeting.
+The current approach uses simple RGB MSE which misses perceptual masking.
+
+**What could improve further**:
 - Adjusting per-block AQ strength based on perceptual feedback (AQ operates per-block)
 - Modulating trellis lambda per-block (trellis already makes per-coefficient decisions)
-- Using the loop signal to guide quantization rounding decisions per-block
+- Using actual butteraugli/SSIM2 diffmap instead of RGB MSE for error measurement
 
 ## Priority Ranking (Updated March 9)
 
