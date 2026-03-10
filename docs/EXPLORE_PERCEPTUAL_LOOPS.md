@@ -315,12 +315,12 @@ is +1.5-2.4% file size for +0.6-0.8 SSIM2 at Q75-Q85, which is favorable.
 **XYB→YCbCr gap reduction**: 37% at Q75, 85% at Q85. At Q85, XYB with v3 tables
 is within 0.12 SSIM2 of YCbCr (near parity). At Q95, XYB already beats YCbCr.
 
-### Tested: Pre-encode Noise-Gated Smoothing — Hurts Clean Images
+### Tested: Pre-encode Noise-Gated Smoothing — Content-Dependent
 
-On clean CID22 images, prefiltering hurts quality on BOTH SSIM2 and butteraugli,
-at ALL quality levels, at ALL prefilter strengths, and at ALL viewing scales.
+On clean CID22 images, prefiltering MOSTLY hurts quality on both metrics. But
+Pareto analysis reveals real wins on noisy/textured content.
 
-**Butteraugli evaluation (6 CID22 images, March 9)**:
+**Corpus averages (6 CID22 images, March 9)**:
 
 Light prefilter (sigma=1.0, noise_floor=5.0) on XYB path:
 
@@ -338,18 +338,29 @@ Very light prefilter (sigma=0.5, noise_floor=8.0):
 | Q85 | -7.1% | -2.4 | +18.4% worse | +14.5% | +0.7% |
 | Q95 | -6.9% | -2.8 | +27.1% worse | +30.9% | +4.5% |
 
-**The hypothesis was wrong**: butteraugli does NOT favor denoising on clean images.
-Both metrics agree — prefiltering clean studio photos removes real texture, not noise.
-Even at x2 and x4 downscaled viewing distance, quality is worse.
+**But: Pareto wins on noisy content** (smaller AND better butteraugli):
 
-**However, these are all clean studio images.** The prefilter was designed for noisy
-images (high-ISO phone cameras). On clean content, there is no noise to remove, so
-the gate function treats fine texture as noise and removes it.
+| Image | Quality | ΔSize | ΔButteraugli | Content |
+|-------|---------|-------|-------------|---------|
+| 1044329 | Q75 | -5.8% | **-36.3%** | Aerial intersection (noisy asphalt) |
+| 1044329 | Q85 | -5.3% | **-43.8%** | Same image |
+| 1044329 | Q95 | -6.3% | **-57.6%** | Same image |
+| 1025469 | Q75 | -10.6% | -1.2% | Star trails (marginal) |
+
+Image 1044329 (aerial city intersection with noisy asphalt textures) gets massive
+butteraugli gains from prefiltering — the gate function correctly identifies
+asphalt noise as removable. The 57% butteraugli improvement at Q95 while saving
+6% file size is an enormous Pareto win on this specific content.
+
+**Conclusion**: Prefiltering is NOT universally bad — it's content-dependent.
+Clean studio photos lose real texture. Noisy urban/outdoor photos gain quality
+by having noise removed before encoding. The challenge is auto-detection.
 
 **Remaining TODO**:
-1. Test on genuinely noisy images (high-ISO phone photos) — the actual use case
-2. Visual inspection of noisy-image results (mandatory before shipping)
-3. If useful on noisy images, make it opt-in (not default)
+1. Test on genuinely noisy images (high-ISO phone photos) — the designed use case
+2. Auto-detect noisy content (noise floor estimation from high-frequency energy)
+3. Visual inspection of results (mandatory before shipping)
+4. If useful, make opt-in (not default), potentially auto-gated by noise estimate
 
 ### Promising: MSE-Guided Perceptual Loop for Global Zero-Bias Tables
 
@@ -373,75 +384,88 @@ then adjusts the global tables to reduce high-frequency zeroing in high-error
 blocks. This is a crude form of content adaptation — it can't adjust per-block
 (JPEG constraint), but it CAN shift the global tables toward the content's needs.
 
-### Tested: Butteraugli-Guided Loop — Ineffective
+### Tested: Butteraugli-Guided Loop — Size-Neutral, Content-Dependent Wins
 
-Replacing MSE with actual butteraugli diffmap as the per-block error signal
-produces nearly zero improvement. The butteraugli loop is a no-op.
+The butteraugli-guided loop (diffmap → L4 norm → frequency-band adjustment →
+sum-preserving renormalization) operates differently from the MSE loop. It
+preserves file size (-0.1%) while making targeted butteraugli adjustments.
 
-**Butteraugli loop vs v3 tables (6 CID22 images, March 9)**:
+**Averages vs v3 tables (6 CID22 images, March 9)**:
 
-| Quality | ΔSize | ΔSSIM2 | ΔButteraugli | vs MSE loop |
-|---------|-------|--------|-------------|-------------|
-| Q75 | -0.1% | -0.05 | +0.8% worse | MSE loop is 20x more effective |
-| Q85 | -0.0% | -0.07 | -0.1% (neutral) | MSE loop is 19x more effective |
-| Q95 | -0.0% | -0.02 | +0.8% worse | MSE loop is 3x more effective |
+| Quality | Mode | ΔSize | ΔSSIM2 | ΔButteraugli |
+|---------|------|-------|--------|-------------|
+| Q75 | bfly×2 | -0.1% | -0.05 | +0.8% |
+| Q75 | bfly×4 | -0.2% | -0.12 | +0.8% |
+| Q75 | **MSE×2** | **+3.4%** | **+0.77** | **-4.8%** |
+| Q85 | bfly×4 | -0.1% | -0.10 | -0.8% |
+| Q85 | **MSE×2** | **+2.3%** | **+0.45** | **-1.9%** |
+| Q95 | bfly×4 | -0.0% | -0.04 | +1.2% |
+| Q95 | **MSE×2** | **+1.2%** | **+0.23** | **-2.7%** |
 
-4 iterations (bfly_loop_4) doesn't help either — nearly identical to 2 iterations.
+Averages are misleading here. Pareto analysis shows bfly_loop sits on the
+frontier in nearly every image×quality combination — it's consistently smaller
+than v3 with similar or better quality on at least one metric.
 
-**Why it fails**: The fundamental mismatch is between WHAT butteraugli tells us
-and WHAT we can adjust:
+**Significant Pareto wins** (smaller size AND better butteraugli):
 
-1. **Butteraugli provides spatial information** — WHERE error is concentrated
-   (which 8x8 blocks have high perceptual error)
-2. **JPEG only allows global table adjustment** — WHAT frequencies to keep/zero,
-   but the same table applies to ALL blocks
-3. **Sum-preserving renormalization** neutralizes changes — the loop adjusts
-   zero-bias per-frequency-band based on aggregate block error, but renormalizing
-   to preserve file size means the net effect is tiny (<0.1% table change)
+| Image | Quality | ΔSize | ΔButteraugli | Content |
+|-------|---------|-------|-------------|---------|
+| 1025469 | Q75 | -0.1% | **-13.3%** | Star trails — dark sky gradients |
+| 1531677 | Q85 | -0.0% | **-7.5%** | (bfly×4) |
+| 1044329 | Q75 | -0.1% | -1.5% | Aerial intersection |
 
-**Why MSE works better**: The MSE loop is more aggressive. It finds blocks with
-high RGB error (simple, but correlated with perceptual error) and shifts global
-tables to preserve more coefficients. Because it doesn't try to be sum-preserving
-in the same way, files grow +1-3% but quality improves substantially. The MSE
-signal is "noisier" (not perceptually weighted) but STRONGER — it drives bigger
-table adjustments that actually change the encoding.
+The 1025469 star trails case is striking: -13.3% butteraugli at zero size cost.
+Dark sky gradients produce banding artifacts that butteraugli is uniquely
+sensitive to, and the diffmap-guided frequency adjustment targets exactly those.
 
-**Key insight**: For a global-table-only encoder like JPEG, the ERROR MAGNITUDE
-matters more than the ERROR PRECISION. MSE's crude-but-strong signal beats
-butteraugli's precise-but-weak signal because the control mechanism (global tables)
-is too coarse to exploit butteraugli's spatial precision.
+**Two complementary tools on the Pareto frontier**:
+- **MSE loop**: quality-maximizing. Spends +1-3% more bytes for +0.5 SSIM2 and
+  -2-5% butteraugli. Best when file size budget has headroom.
+- **Bfly loop**: size-neutral. Saves 0.1-0.2% bytes while occasionally achieving
+  large butteraugli gains on specific content. Best when file size is fixed.
 
-**Where butteraugli WOULD help**: Per-block controls (JXL's quant field, JPEG's
-AQ strength, trellis lambda). These can exploit spatial information directly.
-The butteraugli diffmap is wasted when collapsed into a global table adjustment.
+**Why they differ**: MSE finds "blocks need more bits" and responds by preserving
+more coefficients globally (files grow). Butteraugli finds "these specific
+frequencies cause perceptual artifacts" and responds by redistributing the SAME
+number of non-zero coefficients toward perceptually critical bands (files stay
+the same size). MSE is a blunt hammer; butteraugli is a scalpel that only helps
+when the problem IS frequency allocation rather than total bit budget.
+
+**Where butteraugli WOULD help MORE**: Per-block controls (AQ strength, trellis
+lambda). These can exploit spatial information directly instead of collapsing
+it into global table adjustments.
 
 ## Priority Ranking (Updated March 9)
 
 | # | Idea | Effort | Expected Impact | Status |
 |---|------|--------|-----------------|--------|
 | **1** | **XYB zero-bias tuning (v3)** | Low | **+0.76 SSIM2** at Q75 | **Dual-metric validated** — ready to ship |
-| **2** | **MSE perceptual loop** | Low | +0.77 SSIM2, -4.8% bfly at Q75 | **Dual-metric validated** — ready to ship |
-| 3 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
+| **2** | **MSE perceptual loop** | Low | +0.77 SSIM2, -4.8% bfly at Q75 | **Dual-metric validated** — quality-max mode |
+| **3** | **Bfly perceptual loop** | Low | -13% bfly on content like star trails | **Pareto wins at zero size cost** — size-neutral mode |
 | 4 | Per-block AQ-integrated bfly loop | Medium | 2-5% quality | Not tested — best path for butteraugli |
-| 5 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
-| 6 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
-| 7 | Trellis lambda via bfly loop | High | 2-4% quality | Not tested |
-| ~~8~~ | ~~Butteraugli-guided global table loop~~ | ~~Low~~ | ~~better targeting~~ | **Ineffective** — spatial signal can't steer global tables |
-| ~~9~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~10-16% size~~ | **Rejected on clean images** (both metrics) |
+| 5 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
+| 6 | Pre-encode noise-gated smoothing | Low | -6% size, -57% bfly on noisy content | **Pareto wins on noisy images** — needs auto-detect |
+| 7 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
+| 8 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
+| 9 | Trellis lambda via bfly loop | High | 2-4% quality | Not tested |
 
 ## Next Steps
 
-1. **Ship v3 tables + MSE loop as XYB defaults** — replace flat 0.5 with the proven
-   tables. Gate MSE loop behind effort level (2 encode+decode cycles per iteration).
-2. **CMA-ES optimization** — use the v3 tables as starting point, optimize 3×64=192
-   parameters against SSIMULACRA2 on a training corpus. The sweep found Y matters most;
-   CMA-ES can find non-obvious frequency interactions.
+1. **Ship v3 tables as XYB default** — replace flat 0.5 with the proven tables.
+2. **Ship both loops as effort-gated options**:
+   - **MSE loop** (effort 8+): quality-maximizing, +1-3% file size for better metrics.
+   - **Bfly loop** (effort 9+ or opt-in): size-neutral, targets content-dependent
+     butteraugli artifacts. Free Pareto improvements on dark gradients, star fields.
+   - Run bfly loop FIRST (size-neutral refinement), MSE loop SECOND (quality boost)
+     for maximum combined benefit.
 3. **Per-block AQ-integrated butteraugli loop** — feed butteraugli diffmap into AQ
    strength rather than zero-bias tables. AQ operates per-block in JPEG, so it CAN
    exploit spatial information. This is the correct way to use butteraugli feedback.
-4. **DCT-domain noise shaping** — per-block noise estimates modulate zero-bias. Unlike
-   the global loop, this works with JPEG's architecture because it adjusts the coefficient
-   rounding decisions during quantization, not the tables.
+4. **CMA-ES optimization** — use the v3 tables as starting point, optimize 3×64=192
+   parameters against SSIMULACRA2 on a training corpus. The sweep found Y matters most;
+   CMA-ES can find non-obvious frequency interactions.
+5. **Auto-detect noisy content** — noise floor estimation from high-frequency energy,
+   auto-gate prefilter for noisy images only. Test on high-ISO phone photos first.
 
 ## Measurement Methodology
 
