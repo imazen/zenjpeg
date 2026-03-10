@@ -331,9 +331,9 @@ pub mod profile;
 
 // zencodec trait implementations
 #[cfg(feature = "zencodec")]
-mod zencodec;
+mod codec;
 #[cfg(feature = "zencodec")]
-pub use zencodec::{
+pub use codec::{
     JpegDecodeJob,
     JpegDecoder,
     JpegDecoderConfig,

@@ -9,8 +9,8 @@
 use alloc::string::String;
 use core::fmt;
 use thiserror::Error;
-use whereat::at;
 use whereat::At;
+use whereat::at;
 
 /// Result type for jpegli operations.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -259,10 +259,10 @@ pub enum ErrorKind {
     #[error("encoding finished after {pushed} rows but image height is {height}")]
     IncompleteImage { height: u32, pushed: u32 },
 
-    // === Unsupported codec operation (from zc) ===
+    // === Unsupported codec operation (from zencodec) ===
     /// Unsupported codec operation.
     #[error("unsupported operation: {0}")]
-    UnsupportedOperation(zc::UnsupportedOperation),
+    UnsupportedOperation(zencodec::UnsupportedOperation),
 }
 
 impl ErrorKind {
@@ -661,10 +661,10 @@ impl From<enough::StopReason> for Error {
     }
 }
 
-impl From<zc::LimitExceeded> for Error {
+impl From<zencodec::LimitExceeded> for Error {
     #[track_caller]
-    fn from(err: zc::LimitExceeded) -> Self {
-        use zc::LimitExceeded;
+    fn from(err: zencodec::LimitExceeded) -> Self {
+        use zencodec::LimitExceeded;
         match err {
             LimitExceeded::Width { actual, .. } => {
                 Self::invalid_dimensions(actual, 0, "width exceeds limit")
@@ -686,9 +686,9 @@ impl From<zc::LimitExceeded> for Error {
     }
 }
 
-impl From<zc::UnsupportedOperation> for Error {
+impl From<zencodec::UnsupportedOperation> for Error {
     #[track_caller]
-    fn from(op: zc::UnsupportedOperation) -> Self {
+    fn from(op: zencodec::UnsupportedOperation) -> Self {
         Self::new(ErrorKind::UnsupportedOperation(op))
     }
 }

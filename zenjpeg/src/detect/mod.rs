@@ -165,7 +165,7 @@ pub fn probe(data: &[u8]) -> Result<JpegProbe, ProbeError> {
     })
 }
 
-impl zc::SourceEncodingDetails for JpegProbe {
+impl zencodec::SourceEncodingDetails for JpegProbe {
     fn source_generic_quality(&self) -> Option<f32> {
         // Map to generic 0-100 scale. IJG quality is already 0-100.
         // For other scales, approximate.
