@@ -709,8 +709,8 @@ mod tests {
     fn test_default_xyb_tables() {
         let tables = EncodingTables::default_xyb();
 
-        // XYB uses uniform 0.5 offset for AC
-        assert_eq!(tables.zero_bias_offset_ac, [0.5, 0.5, 0.5]);
+        // XYB v3 uses per-component AC offsets [X=0.50, Y=0.48, B=0.55]
+        assert_eq!(tables.zero_bias_offset_ac, [0.5, 0.48, 0.55]);
 
         // DC offset is 0
         assert_eq!(tables.zero_bias_offset_dc, [0.0, 0.0, 0.0]);
@@ -720,8 +720,9 @@ mod tests {
         assert_eq!(tables.zero_bias_mul.c1[0], 0.0);
         assert_eq!(tables.zero_bias_mul.c2[0], 0.0);
 
-        // Zero-bias mul AC should be 0.5
-        assert_eq!(tables.zero_bias_mul.c0[1], 0.5);
+        // v3: Zero-bias mul AC is frequency-dependent (LQ defaults), not flat 0.5
+        assert!(tables.zero_bias_mul.c0[1] > 0.0);
+        assert!(tables.zero_bias_mul.c0[1] < 1.0);
     }
 
     #[test]
