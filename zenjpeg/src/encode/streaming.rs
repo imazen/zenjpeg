@@ -213,12 +213,12 @@ impl StreamingEncoder {
                 let effective_distance =
                     quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2);
 
-                // Auto-select zero bias based on color mode (matches C++ jpegli behavior)
+                // Auto-select zero bias based on color mode
                 let zero_bias = if builder.use_xyb {
                     (
-                        ZeroBiasParams::for_xyb(),
-                        ZeroBiasParams::for_xyb(),
-                        ZeroBiasParams::for_xyb(),
+                        ZeroBiasParams::for_xyb(effective_distance, 0),
+                        ZeroBiasParams::for_xyb(effective_distance, 1),
+                        ZeroBiasParams::for_xyb(effective_distance, 2),
                     )
                 } else {
                     (

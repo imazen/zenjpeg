@@ -30,8 +30,8 @@ use crate::foundation::consts::{
     BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
 };
 use crate::quant::{
-    FREQUENCY_EXPONENT, ZERO_BIAS_MUL_XYB, ZERO_BIAS_MUL_YCBCR_HQ, ZERO_BIAS_MUL_YCBCR_LQ,
-    ZERO_BIAS_OFFSET_XYB, ZERO_BIAS_OFFSET_YCBCR_AC, ZERO_BIAS_OFFSET_YCBCR_DC,
+    FREQUENCY_EXPONENT, ZERO_BIAS_MUL_XYB_LQ, ZERO_BIAS_MUL_YCBCR_HQ, ZERO_BIAS_MUL_YCBCR_LQ,
+    ZERO_BIAS_OFFSET_XYB_AC, ZERO_BIAS_OFFSET_YCBCR_AC, ZERO_BIAS_OFFSET_YCBCR_DC,
 };
 
 /// Per-component data with type aliases for each color space.
@@ -307,7 +307,12 @@ impl EncodingTables {
 
     /// Default tables for XYB encoding.
     ///
-    /// Uses jpegli's XYB quantization tables with simple 0.5/0.5 zero-bias.
+    /// Uses v3 frequency-dependent, per-component zero-bias tables with LQ
+    /// values as the default (HQ tables blended at runtime via quality-adaptive
+    /// `ZeroBiasParams::for_xyb(distance, component)`). This matches the YCbCr
+    /// pattern of storing LQ tables as the default.
+    ///
+    /// +0.76 SSIM2 at Q75, +0.68 at Q85 vs the old flat 0.5 baseline.
     #[must_use]
     pub fn default_xyb() -> Self {
         // Extract per-component quant tables
@@ -317,28 +322,18 @@ impl EncodingTables {
             c2: std::array::from_fn(|i| BASE_QUANT_MATRIX_XYB[128 + i]),
         };
 
-        // XYB uses uniform 0.5 mul for all AC (DC uses 0.0)
-        let make_xyb_mul = || {
-            let mut arr = [ZERO_BIAS_MUL_XYB; 64];
-            arr[0] = 0.0; // DC
-            arr
-        };
-
+        // v3 frequency-dependent tables (LQ as default, matches YCbCr pattern)
         let zero_bias_mul = PerComponent {
-            c0: make_xyb_mul(),
-            c1: make_xyb_mul(),
-            c2: make_xyb_mul(),
+            c0: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[i]),
+            c1: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[64 + i]),
+            c2: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[128 + i]),
         };
 
         Self {
             quant,
             zero_bias_mul,
             zero_bias_offset_dc: [0.0, 0.0, 0.0],
-            zero_bias_offset_ac: [
-                ZERO_BIAS_OFFSET_XYB,
-                ZERO_BIAS_OFFSET_XYB,
-                ZERO_BIAS_OFFSET_XYB,
-            ],
+            zero_bias_offset_ac: ZERO_BIAS_OFFSET_XYB_AC,
             scaling: ScalingParams::default_xyb(),
         }
     }
@@ -362,6 +357,27 @@ impl EncodingTables {
             c0: std::array::from_fn(|i| ZERO_BIAS_MUL_YCBCR_LQ[i]),
             c1: std::array::from_fn(|i| ZERO_BIAS_MUL_YCBCR_LQ[64 + i]),
             c2: std::array::from_fn(|i| ZERO_BIAS_MUL_YCBCR_LQ[128 + i]),
+        }
+    }
+
+    /// Get the HQ zero-bias multiplier tables for XYB (v3).
+    #[must_use]
+    pub fn xyb_hq_zero_bias_mul() -> PerComponent<[f32; 64]> {
+        use crate::quant::ZERO_BIAS_MUL_XYB_HQ;
+        PerComponent {
+            c0: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_HQ[i]),
+            c1: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_HQ[64 + i]),
+            c2: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_HQ[128 + i]),
+        }
+    }
+
+    /// Get the LQ zero-bias multiplier tables for XYB (v3).
+    #[must_use]
+    pub fn xyb_lq_zero_bias_mul() -> PerComponent<[f32; 64]> {
+        PerComponent {
+            c0: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[i]),
+            c1: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[64 + i]),
+            c2: std::array::from_fn(|i| ZERO_BIAS_MUL_XYB_LQ[128 + i]),
         }
     }
 
