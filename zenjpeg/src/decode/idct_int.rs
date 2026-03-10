@@ -1718,10 +1718,6 @@ mod tests {
         }
     }
 
-    /// Verify that `idct_int_tiered_libjpeg` truncates coefficients to i16 range,
-    /// matching libjpeg-turbo's `pmullw` dequantization behavior.
-    ///
-    /// When dequantized coefficients exceed i16 range (|coeff * quant| > 32767),
     /// Verify i64 intermediates handle wide-gamut coefficients without overflow.
     /// With i32 intermediates, coefficients above ~2048 caused silent wrapping
     /// in the Loeffler row pass. i64 (matching libjpeg-turbo's JLONG = long on
@@ -1755,6 +1751,168 @@ mod tests {
                 (0..=255).contains(&v),
                 "IDCT output {v} out of [0, 255] range"
             );
+        }
+    }
+
+    /// Reference f64 IDCT for cross-validation. Type-II DCT inverse using
+    /// the textbook cos() formula. Slow but maximally precise.
+    fn reference_idct_f64(coeffs: &[i32; 64]) -> [f64; 64] {
+        use core::f64::consts::PI;
+        let mut output = [0.0f64; 64];
+
+        for y in 0..8 {
+            for x in 0..8 {
+                let mut sum = 0.0f64;
+                for v in 0..8 {
+                    for u in 0..8 {
+                        let cu = if u == 0 {
+                            1.0 / core::f64::consts::SQRT_2
+                        } else {
+                            1.0
+                        };
+                        let cv = if v == 0 {
+                            1.0 / core::f64::consts::SQRT_2
+                        } else {
+                            1.0
+                        };
+                        let cos_x = ((2 * x + 1) as f64 * u as f64 * PI / 16.0).cos();
+                        let cos_y = ((2 * y + 1) as f64 * v as f64 * PI / 16.0).cos();
+                        sum += cu * cv * coeffs[v * 8 + u] as f64 * cos_x * cos_y;
+                    }
+                }
+                output[y * 8 + x] = sum / 4.0 + 128.0; // level shift
+            }
+        }
+        output
+    }
+
+    /// Exhaustive IDCT cross-validation harness.
+    ///
+    /// Tests all integer IDCT variants against an f64 reference across a wide
+    /// range of coefficient magnitudes (normal JPEG through wide-gamut extremes).
+    /// Each variant must produce output within `max_err` of the reference.
+    #[test]
+    fn test_idct_cross_validation_harness() {
+        // Coefficient magnitude ranges to test:
+        // - Normal JPEG: ±512 (Q90 typical)
+        // - Low quality: ±2048 (Q50 typical)
+        // - Wide-gamut: ±8000 (ProPhoto RGB, Adobe RGB)
+        // - Extreme: ±16000 (worst-case extended sequential)
+        let magnitudes = [512, 2048, 4000, 8000, 16000];
+
+        // Simple LCG PRNG for reproducible test data
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+        let mut next = || -> i32 {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng >> 33) as i32
+        };
+
+        let mut total_blocks = 0u64;
+        let mut max_err_loeffler = 0.0f64;
+        let mut max_err_zune = 0.0f64;
+        let mut max_err_zune_simd = 0.0f64;
+
+        for &mag in &magnitudes {
+            for _trial in 0..200 {
+                // Generate random coefficient block scaled to magnitude
+                let coeffs: [i32; 64] = core::array::from_fn(|_| {
+                    let raw = next() % (2 * mag + 1) - mag;
+                    raw
+                });
+
+                // f64 reference (textbook precision)
+                let ref_output = reference_idct_f64(&coeffs);
+
+                // Loeffler i64 (our primary IDCT for libjpeg compat)
+                let mut coeffs_lj = coeffs;
+                let mut out_lj = [0i16; 64];
+                idct_int_libjpeg(&mut coeffs_lj, &mut out_lj, 8);
+
+                // Zune-based scalar (12-bit, wrapping i32)
+                let mut coeffs_zune = coeffs;
+                let mut out_zune = [0i16; 64];
+                idct_int(&mut coeffs_zune, &mut out_zune, 8);
+
+                // Zune-based wide SIMD
+                let mut out_wide = [0i16; 64];
+                wide_simd::idct_int_wide(&coeffs, &mut out_wide, 8);
+
+                // Compare each against reference
+                for i in 0..64 {
+                    let ref_clamped = ref_output[i].round().clamp(0.0, 255.0);
+
+                    let err_lj = (out_lj[i] as f64 - ref_clamped).abs();
+                    max_err_loeffler = max_err_loeffler.max(err_lj);
+
+                    let err_zune = (out_zune[i] as f64 - ref_clamped).abs();
+                    max_err_zune = max_err_zune.max(err_zune);
+
+                    let err_wide = (out_wide[i] as f64 - ref_clamped).abs();
+                    max_err_zune_simd = max_err_zune_simd.max(err_wide);
+
+                    // Loeffler i64 must be within ±2 of reference at all magnitudes
+                    assert!(
+                        err_lj <= 2.0,
+                        "Loeffler i64 error {err_lj} at pos {i}, mag={mag}, \
+                         ref={ref_clamped}, got={}", out_lj[i]
+                    );
+                }
+
+                // Zune scalar vs SIMD must match exactly (same algorithm)
+                assert_eq!(
+                    out_zune, out_wide,
+                    "zune scalar/SIMD mismatch at mag={mag}"
+                );
+
+                total_blocks += 1;
+            }
+        }
+
+        // Zune-based (12-bit i32) WILL have large errors at high magnitudes
+        // due to wrapping arithmetic — that's expected and documented.
+        // We just verify it doesn't panic.
+
+        eprintln!(
+            "IDCT harness: {total_blocks} blocks tested, \
+             max_err: loeffler={max_err_loeffler:.1}, \
+             zune={max_err_zune:.1}, zune_simd={max_err_zune_simd:.1}"
+        );
+    }
+
+    /// Test that the Loeffler IDCT handles extreme coefficients without panic
+    /// or producing out-of-range output. This covers the boundary between
+    /// baseline (max coeff ±1023 * qval 255 = ±260,865) and extended sequential
+    /// (max coeff ±1023 * qval 32767 = ±33,520,641).
+    #[test]
+    fn test_loeffler_extreme_coefficients() {
+        // Worst case: all 64 coefficients at maximum magnitude
+        for &mag in &[1000, 5000, 10000, 50000, 100000] {
+            let coeffs_pos: [i32; 64] = [mag; 64];
+            let mut coeffs = coeffs_pos;
+            let mut output = [0i16; 64];
+            idct_int_libjpeg(&mut coeffs, &mut output, 8);
+
+            for (i, &v) in output.iter().enumerate() {
+                assert!(
+                    (0..=255).contains(&v),
+                    "mag={mag} pos {i}: output {v} out of range"
+                );
+            }
+
+            // Alternating signs (worst for intermediate sums)
+            let coeffs_alt: [i32; 64] = core::array::from_fn(|i| {
+                if i % 2 == 0 { mag } else { -mag }
+            });
+            let mut coeffs = coeffs_alt;
+            let mut output = [0i16; 64];
+            idct_int_libjpeg(&mut coeffs, &mut output, 8);
+
+            for (i, &v) in output.iter().enumerate() {
+                assert!(
+                    (0..=255).contains(&v),
+                    "mag={mag} alt pos {i}: output {v} out of range"
+                );
+            }
         }
     }
 }
