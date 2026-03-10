@@ -17,6 +17,7 @@ use std::env;
 use std::path::Path;
 use std::time::Instant;
 
+use butteraugli::ButteraugliParams;
 use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
 use zenjpeg::encode::tuning::EncodingTables;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, Quality, XybSubsampling};
@@ -157,6 +158,78 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let orig = bytes_to_linear(original, width, height);
     let dec = bytes_to_linear(decoded, width, height);
     compute_frame_ssimulacra2(orig, dec).unwrap_or(-99.0)
+}
+
+// ============================================================================
+// Butteraugli quality metric
+// ============================================================================
+
+fn compute_butteraugli(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    let orig_pixels: Vec<rgb::RGB8> = original
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_pixels: Vec<rgb::RGB8> = decoded
+        .chunks_exact(3)
+        .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = imgref::Img::new(&orig_pixels[..], width, height);
+    let dec_img = imgref::Img::new(&dec_pixels[..], width, height);
+    let params = ButteraugliParams::default();
+    match butteraugli::butteraugli(orig_img, dec_img, &params) {
+        Ok(result) => result.score,
+        Err(_) => f64::NAN,
+    }
+}
+
+/// Compute butteraugli at a downscaled resolution (e.g., scale=2 means half-size).
+/// This tests whether denoising looks better at typical viewing distances.
+fn compute_butteraugli_scaled(
+    original: &[u8],
+    decoded: &[u8],
+    width: usize,
+    height: usize,
+    scale: usize,
+) -> f64 {
+    if scale <= 1 {
+        return compute_butteraugli(original, decoded, width, height);
+    }
+    let sw = width / scale;
+    let sh = height / scale;
+    if sw < 8 || sh < 8 {
+        return f64::NAN;
+    }
+    let orig_down = box_downsample(original, width, height, scale);
+    let dec_down = box_downsample(decoded, width, height, scale);
+    compute_butteraugli(&orig_down, &dec_down, sw, sh)
+}
+
+/// Simple box-filter downsampling (average NxN blocks).
+fn box_downsample(pixels: &[u8], width: usize, height: usize, scale: usize) -> Vec<u8> {
+    let sw = width / scale;
+    let sh = height / scale;
+    let mut out = vec![0u8; sw * sh * 3];
+    let area = (scale * scale) as f32;
+    for sy in 0..sh {
+        for sx in 0..sw {
+            let mut r = 0.0f32;
+            let mut g = 0.0f32;
+            let mut b = 0.0f32;
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let idx = ((sy * scale + dy) * width + sx * scale + dx) * 3;
+                    r += pixels[idx] as f32;
+                    g += pixels[idx + 1] as f32;
+                    b += pixels[idx + 2] as f32;
+                }
+            }
+            let oi = (sy * sw + sx) * 3;
+            out[oi] = (r / area + 0.5) as u8;
+            out[oi + 1] = (g / area + 0.5) as u8;
+            out[oi + 2] = (b / area + 0.5) as u8;
+        }
+    }
+    out
 }
 
 // ============================================================================
@@ -398,7 +471,7 @@ fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
 // ============================================================================
 
 fn run_sweep(paths: &[String]) {
-    println!("image\tquality\tmode\tx_mul\ty_mul\tb_mul\tsize\tssim2");
+    println!("image\tquality\tmode\tx_mul\ty_mul\tb_mul\tsize\tssim2\tbfly");
 
     // Sweep values: test a grid of uniform per-component multipliers
     let mul_values = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2];
@@ -423,36 +496,30 @@ fn run_sweep(paths: &[String]) {
             let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
             let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
             let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
             println!(
-                "{}\t{}\tycbcr\t-\t-\t-\t{}\t{:.2}",
-                name,
-                q,
-                jpeg_ycbcr.len(),
-                ss2_ycbcr
+                "{}\t{}\tycbcr\t-\t-\t-\t{}\t{:.2}\t{:.4}",
+                name, q, jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr
             );
 
             let jpeg_xyb = encode_xyb(&pixels, width, height, q);
             let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
             let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
+            let bfly_xyb = compute_butteraugli(&pixels, &dec_xyb, width, height);
             println!(
-                "{}\t{}\txyb_0.5\t0.5\t0.5\t0.5\t{}\t{:.2}",
-                name,
-                q,
-                jpeg_xyb.len(),
-                ss2_xyb
+                "{}\t{}\txyb_0.5\t0.5\t0.5\t0.5\t{}\t{:.2}\t{:.4}",
+                name, q, jpeg_xyb.len(), ss2_xyb, bfly_xyb
             );
 
-            // Tuned v2 (frequency-dependent)
+            // Tuned v3 (frequency-dependent)
             let tuned = xyb_tuned_zero_bias_v2(quality_to_distance(q));
             let jpeg_tuned = encode_xyb_with_tables(&pixels, width, height, q, &tuned);
             let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
             let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
+            let bfly_tuned = compute_butteraugli(&pixels, &dec_tuned, width, height);
             println!(
-                "{}\t{}\txyb_tuned_v2\t-\t-\t-\t{}\t{:.2}",
-                name,
-                q,
-                jpeg_tuned.len(),
-                ss2_tuned
+                "{}\t{}\txyb_tuned_v3\t-\t-\t-\t{}\t{:.2}\t{:.4}",
+                name, q, jpeg_tuned.len(), ss2_tuned, bfly_tuned
             );
 
             // Sweep: vary Y with X=0.6, B=0.9 (based on YCbCr patterns)
@@ -461,13 +528,10 @@ fn run_sweep(paths: &[String]) {
                 let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
                 let dec = decode_jpeg_to_rgb_u8(&jpeg);
                 let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
-                    "{}\t{}\tsweep_y\t0.6\t{:.1}\t0.9\t{}\t{:.2}",
-                    name,
-                    q,
-                    y_mul,
-                    jpeg.len(),
-                    ss2
+                    "{}\t{}\tsweep_y\t0.6\t{:.1}\t0.9\t{}\t{:.2}\t{:.4}",
+                    name, q, y_mul, jpeg.len(), ss2, bfly
                 );
             }
 
@@ -477,13 +541,10 @@ fn run_sweep(paths: &[String]) {
                 let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
                 let dec = decode_jpeg_to_rgb_u8(&jpeg);
                 let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
-                    "{}\t{}\tsweep_x\t{:.1}\t0.5\t0.9\t{}\t{:.2}",
-                    name,
-                    q,
-                    x_mul,
-                    jpeg.len(),
-                    ss2
+                    "{}\t{}\tsweep_x\t{:.1}\t0.5\t0.9\t{}\t{:.2}\t{:.4}",
+                    name, q, x_mul, jpeg.len(), ss2, bfly
                 );
             }
 
@@ -493,13 +554,10 @@ fn run_sweep(paths: &[String]) {
                 let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
                 let dec = decode_jpeg_to_rgb_u8(&jpeg);
                 let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
-                    "{}\t{}\tsweep_b\t0.6\t0.5\t{:.1}\t{}\t{:.2}",
-                    name,
-                    q,
-                    b_mul,
-                    jpeg.len(),
-                    ss2
+                    "{}\t{}\tsweep_b\t0.6\t0.5\t{:.1}\t{}\t{:.2}\t{:.4}",
+                    name, q, b_mul, jpeg.len(), ss2, bfly
                 );
             }
 
@@ -513,7 +571,7 @@ fn run_sweep(paths: &[String]) {
 // ============================================================================
 
 fn run_benchmark(paths: &[String]) {
-    println!("image\tquality\tmode\tsize\tssim2\tsize_vs_ycbcr\tssim2_vs_ycbcr\tms");
+    println!("image\tquality\tmode\tsize\tssim2\tbfly\tsize_vs_ycbcr\tssim2_vs_ycbcr\tbfly_vs_ycbcr\tms");
 
     let qualities = [75u8, 85, 95];
 
@@ -532,12 +590,18 @@ fn run_benchmark(paths: &[String]) {
         eprintln!("\n=== {} ({}x{}) ===", name, width, height);
 
         for &q in &qualities {
-            let report = |label: &str, size: usize, ss2: f64, base_size: usize, base_ss2: f64, ms: f64| {
+            let report = |label: &str, size: usize, ss2: f64, bfly: f64,
+                          base_size: usize, base_ss2: f64, base_bfly: f64, ms: f64| {
                 let delta_pct = (size as f64 / base_size as f64 - 1.0) * 100.0;
                 let delta_ss2 = ss2 - base_ss2;
+                let delta_bfly = if base_bfly > 0.0 {
+                    (bfly / base_bfly - 1.0) * 100.0
+                } else {
+                    0.0
+                };
                 println!(
-                    "{}\t{}\t{}\t{}\t{:.2}\t{:+.1}%\t{:+.2}\t{:.0}",
-                    name, q, label, size, ss2, delta_pct, delta_ss2, ms
+                    "{}\t{}\t{}\t{}\t{:.2}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%\t{:.0}",
+                    name, q, label, size, ss2, bfly, delta_pct, delta_ss2, delta_bfly, ms
                 );
             };
 
@@ -547,7 +611,9 @@ fn run_benchmark(paths: &[String]) {
             let t_ycbcr = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
             let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
-            report("ycbcr", jpeg_ycbcr.len(), ss2_ycbcr, jpeg_ycbcr.len(), ss2_ycbcr, t_ycbcr);
+            let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
+            report("ycbcr", jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_ycbcr);
 
             // XYB baseline (flat 0.5)
             let t0 = Instant::now();
@@ -555,16 +621,20 @@ fn run_benchmark(paths: &[String]) {
             let t_xyb = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
             let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
-            report("xyb_0.5", jpeg_xyb.len(), ss2_xyb, jpeg_ycbcr.len(), ss2_ycbcr, t_xyb);
+            let bfly_xyb = compute_butteraugli(&pixels, &dec_xyb, width, height);
+            report("xyb_0.5", jpeg_xyb.len(), ss2_xyb, bfly_xyb,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_xyb);
 
-            // XYB tuned v2 (frequency-dependent, YCbCr-inspired)
+            // XYB tuned v3 (frequency-dependent)
             let t0 = Instant::now();
             let tuned = xyb_tuned_zero_bias_v2(quality_to_distance(q));
             let jpeg_tuned = encode_xyb_with_tables(&pixels, width, height, q, &tuned);
             let t_tuned = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
             let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
-            report("xyb_tuned_v2", jpeg_tuned.len(), ss2_tuned, jpeg_ycbcr.len(), ss2_ycbcr, t_tuned);
+            let bfly_tuned = compute_butteraugli(&pixels, &dec_tuned, width, height);
+            report("xyb_tuned_v3", jpeg_tuned.len(), ss2_tuned, bfly_tuned,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_tuned);
 
             // Prefilter + XYB baseline
             let t0 = Instant::now();
@@ -574,24 +644,30 @@ fn run_benchmark(paths: &[String]) {
             let dec_pf_xyb = decode_jpeg_to_rgb_u8(&jpeg_pf_xyb);
             // Compare decoded against ORIGINAL pixels
             let ss2_pf_xyb = compute_ssim2(&pixels, &dec_pf_xyb, width, height);
-            report("prefilter+xyb", jpeg_pf_xyb.len(), ss2_pf_xyb, jpeg_ycbcr.len(), ss2_ycbcr, t_pf);
+            let bfly_pf_xyb = compute_butteraugli(&pixels, &dec_pf_xyb, width, height);
+            report("prefilter+xyb", jpeg_pf_xyb.len(), ss2_pf_xyb, bfly_pf_xyb,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_pf);
 
-            // Prefilter + tuned v2
+            // Prefilter + tuned v3
             let t0 = Instant::now();
             let jpeg_pf_tuned = encode_xyb_with_tables(&filtered, width, height, q, &tuned);
             let t_pf_tuned = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_pf_tuned = decode_jpeg_to_rgb_u8(&jpeg_pf_tuned);
             let ss2_pf_tuned = compute_ssim2(&pixels, &dec_pf_tuned, width, height);
-            report("prefilter+tuned_v2", jpeg_pf_tuned.len(), ss2_pf_tuned, jpeg_ycbcr.len(), ss2_ycbcr, t_pf_tuned);
+            let bfly_pf_tuned = compute_butteraugli(&pixels, &dec_pf_tuned, width, height);
+            report("prefilter+tuned_v3", jpeg_pf_tuned.len(), ss2_pf_tuned, bfly_pf_tuned,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_pf_tuned);
 
-            // Perceptual loop (2 iterations, using tuned v2 as starting point)
+            // Perceptual loop (2 iterations, using tuned v3 as starting point)
             let t0 = Instant::now();
             let loop_tables = perceptual_loop_xyb(&pixels, width, height, q, 2);
             let jpeg_loop = encode_xyb_with_tables(&pixels, width, height, q, &loop_tables);
             let t_loop = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_loop = decode_jpeg_to_rgb_u8(&jpeg_loop);
             let ss2_loop = compute_ssim2(&pixels, &dec_loop, width, height);
-            report("percept_loop_2", jpeg_loop.len(), ss2_loop, jpeg_ycbcr.len(), ss2_ycbcr, t_loop);
+            let bfly_loop = compute_butteraugli(&pixels, &dec_loop, width, height);
+            report("percept_loop_2", jpeg_loop.len(), ss2_loop, bfly_loop,
+                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_loop);
 
             eprintln!("  Q{} done", q);
         }
@@ -603,11 +679,12 @@ fn run_benchmark(paths: &[String]) {
 // ============================================================================
 
 fn run_prefilter(paths: &[String]) {
-    println!("image\tquality\tmode\tsize\tssim2\tsize_vs_base\tssim2_vs_base");
+    println!("image\tquality\tmode\tsize\tssim2\tbfly\tbfly_x2\tbfly_x4\tsize_vs_base\tssim2_vs_base\tbfly_vs_base");
 
     let qualities = [75u8, 85, 95];
     let configs = [
-        ("light", 1.0f32, 5.0f32),
+        ("vlight", 0.5f32, 8.0f32),
+        ("light", 1.0, 5.0),
         ("medium", 1.5, 3.0),
         ("heavy", 2.0, 2.0),
     ];
@@ -630,23 +707,23 @@ fn run_prefilter(paths: &[String]) {
             let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
             let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
             let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
+            let bfly_ycbcr_x2 = compute_butteraugli_scaled(&pixels, &dec_ycbcr, width, height, 2);
+            let bfly_ycbcr_x4 = compute_butteraugli_scaled(&pixels, &dec_ycbcr, width, height, 4);
             println!(
-                "{}\t{}\tycbcr\t{}\t{:.2}\t-\t-",
-                name,
-                q,
-                jpeg_ycbcr.len(),
-                ss2_ycbcr
+                "{}\t{}\tycbcr\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t-\t-\t-",
+                name, q, jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, bfly_ycbcr_x2, bfly_ycbcr_x4
             );
 
             let jpeg_xyb = encode_xyb(&pixels, width, height, q);
             let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
             let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
+            let bfly_xyb = compute_butteraugli(&pixels, &dec_xyb, width, height);
+            let bfly_xyb_x2 = compute_butteraugli_scaled(&pixels, &dec_xyb, width, height, 2);
+            let bfly_xyb_x4 = compute_butteraugli_scaled(&pixels, &dec_xyb, width, height, 4);
             println!(
-                "{}\t{}\txyb\t{}\t{:.2}\t-\t-",
-                name,
-                q,
-                jpeg_xyb.len(),
-                ss2_xyb
+                "{}\t{}\txyb\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t-\t-\t-",
+                name, q, jpeg_xyb.len(), ss2_xyb, bfly_xyb, bfly_xyb_x2, bfly_xyb_x4
             );
 
             for &(label, sigma, noise_floor) in &configs {
@@ -656,34 +733,38 @@ fn run_prefilter(paths: &[String]) {
                 let jpeg = encode_ycbcr(&filtered, width, height, q);
                 let dec = decode_jpeg_to_rgb_u8(&jpeg);
                 let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let bfly = compute_butteraugli(&pixels, &dec, width, height);
+                let bfly_x2 = compute_butteraugli_scaled(&pixels, &dec, width, height, 2);
+                let bfly_x4 = compute_butteraugli_scaled(&pixels, &dec, width, height, 4);
                 let d_size = (jpeg.len() as f64 / jpeg_ycbcr.len() as f64 - 1.0) * 100.0;
                 let d_ss2 = ss2 - ss2_ycbcr;
+                let d_bfly = if bfly_ycbcr > 0.0 {
+                    (bfly / bfly_ycbcr - 1.0) * 100.0
+                } else {
+                    0.0
+                };
                 println!(
-                    "{}\t{}\tpf_{}_ycbcr\t{}\t{:.2}\t{:+.1}%\t{:+.2}",
-                    name,
-                    q,
-                    label,
-                    jpeg.len(),
-                    ss2,
-                    d_size,
-                    d_ss2
+                    "{}\t{}\tpf_{}_ycbcr\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%",
+                    name, q, label, jpeg.len(), ss2, bfly, bfly_x2, bfly_x4, d_size, d_ss2, d_bfly
                 );
 
                 // Prefilter + XYB
                 let jpeg = encode_xyb(&filtered, width, height, q);
                 let dec = decode_jpeg_to_rgb_u8(&jpeg);
                 let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let bfly = compute_butteraugli(&pixels, &dec, width, height);
+                let bfly_x2 = compute_butteraugli_scaled(&pixels, &dec, width, height, 2);
+                let bfly_x4 = compute_butteraugli_scaled(&pixels, &dec, width, height, 4);
                 let d_size = (jpeg.len() as f64 / jpeg_xyb.len() as f64 - 1.0) * 100.0;
                 let d_ss2 = ss2 - ss2_xyb;
+                let d_bfly = if bfly_xyb > 0.0 {
+                    (bfly / bfly_xyb - 1.0) * 100.0
+                } else {
+                    0.0
+                };
                 println!(
-                    "{}\t{}\tpf_{}_xyb\t{}\t{:.2}\t{:+.1}%\t{:+.2}",
-                    name,
-                    q,
-                    label,
-                    jpeg.len(),
-                    ss2,
-                    d_size,
-                    d_ss2
+                    "{}\t{}\tpf_{}_xyb\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%",
+                    name, q, label, jpeg.len(), ss2, bfly, bfly_x2, bfly_x4, d_size, d_ss2, d_bfly
                 );
             }
         }
