@@ -28,7 +28,7 @@ struct ScanInfo {
     /// Position in data where entropy-coded scan data begins
     data_start: usize,
 }
-use crate::color::icc::{extract_icc_profile, is_xyb_profile};
+use crate::color::icc::{extract_icc_profile, is_wide_gamut_profile, is_xyb_profile};
 use crate::error::{Error, ErrorKind, Result};
 use crate::foundation::alloc::{MAX_SCANS, checked_size_2d};
 use crate::foundation::consts::{
@@ -199,6 +199,14 @@ impl<'a> JpegParser<'a> {
         // Extract ICC profile from raw data upfront
         let icc_profile = extract_icc_profile(data);
 
+        // Wide-gamut ICC profiles (Adobe RGB, ProPhoto RGB, Rec.2020, etc.) produce
+        // dequantized DCT coefficients that overflow 12/13-bit integer IDCTs.
+        // Route these through the f32 IDCT path to avoid pixel errors up to 255.
+        let force_f32_idct = icc_profile
+            .as_ref()
+            .map(|p| is_wide_gamut_profile(p))
+            .unwrap_or(false);
+
         // Initialize extras if preservation is enabled
         let (preserve_config, extras) = match preserve_config {
             Some(config) if config.preserves_any_metadata() || config.preserves_any_mpf() => {
@@ -242,7 +250,7 @@ impl<'a> JpegParser<'a> {
             warnings: Vec::new(),
             arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
             arith_ac_kx: [5; 4],        // Default Kx=5
-            force_f32_idct: false,
+            force_f32_idct,
         })
     }
 

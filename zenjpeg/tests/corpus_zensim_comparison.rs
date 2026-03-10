@@ -26,17 +26,16 @@ const MIN_DIM: u32 = 8;
 
 // ── Decoders ─────────────────────────────────────────────────────────────
 
-/// Decode with zenjpeg (libjpeg-compatible IDCT, no EXIF rotation).
-/// Uses IdctMethod::Libjpeg to avoid 12-bit overflow on wide-gamut images.
-/// Disables EXIF rotation to match mozjpeg output orientation.
+/// Decode with zenjpeg (no EXIF rotation, no internal ICC transform).
+/// ICC transform is handled separately by normalize_to_srgb() to match mozjpeg path.
+/// Wide-gamut ICC profiles automatically use f32 IDCT to avoid integer overflow.
 fn decode_zenjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     use enough::Unstoppable;
-    use zenjpeg::decode::IdctMethod;
     use zenjpeg::decoder::Decoder;
 
     let decoder = Decoder::new()
-        .idct_method(IdctMethod::Libjpeg)
-        .auto_orient(false);
+        .auto_orient(false)
+        .apply_icc(false);
     let decoded = decoder
         .decode(data, Unstoppable)
         .map_err(|e| format!("{e}"))?;

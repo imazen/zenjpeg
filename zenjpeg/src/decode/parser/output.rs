@@ -1045,6 +1045,7 @@ impl<'a> JpegParser<'a> {
                         if is_xyb || dequant_bias || self.force_f32_idct {
                             // f32 IDCT path: XYB needs extended gamut precision,
                             // dequant_bias needs fractional bias application,
+                            // wide-gamut needs overflow-free IDCT,
                             // dimension-swapping transforms need symmetric IDCT
                             let dequant = if dequant_bias && !is_xyb {
                                 dequantize_block_with_bias(&natural_coeffs, quant, biases)

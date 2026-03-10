@@ -135,6 +135,45 @@ pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
         || icc_data.windows(6).any(|w| w == XYB_UTF16BE)
 }
 
+/// Check if an ICC profile describes a wide-gamut color space that may cause
+/// integer IDCT overflow.
+///
+/// Returns `true` for any non-sRGB, non-XYB ICC profile (Adobe RGB, ProPhoto RGB,
+/// Display P3, Rec.2020, etc.). These color spaces can produce dequantized DCT
+/// coefficients that exceed the range of 12/13-bit integer IDCTs, causing pixel
+/// errors up to 255. When detected, the decoder should use the f32 IDCT path.
+///
+/// sRGB profiles (identified by "sRGB" in the profile data) do not overflow
+/// and are excluded to avoid unnecessary performance cost.
+pub fn is_wide_gamut_profile(icc_data: &[u8]) -> bool {
+    // XYB has its own decode path — not "wide gamut" in this context
+    if is_xyb_profile(icc_data) {
+        return false;
+    }
+
+    // Too small to be a real ICC profile
+    if icc_data.len() < 128 {
+        return false;
+    }
+
+    // Check for "sRGB" marker in ASCII — sRGB profiles don't overflow
+    if icc_data
+        .windows(4)
+        .any(|w| w.eq_ignore_ascii_case(b"sRGB"))
+    {
+        return false;
+    }
+
+    // Check for "sRGB" in UTF-16BE (used in some ICC profile descriptions)
+    const SRGB_UTF16BE: [u8; 8] = [0, b's', 0, b'R', 0, b'G', 0, b'B'];
+    if icc_data.windows(8).any(|w| w == SRGB_UTF16BE) {
+        return false;
+    }
+
+    // Any other ICC profile is potentially wide-gamut
+    true
+}
+
 /// Apply ICC profile transformation to RGB image data.
 ///
 /// Converts from the input profile's color space to the specified target.
@@ -412,6 +451,38 @@ mod tests {
             !is_xyb_profile(&jxl_srgb),
             "jxl CMM type alone should not be detected as XYB"
         );
+    }
+
+    #[test]
+    fn test_is_wide_gamut_profile() {
+        // XYB profile is NOT wide-gamut (has its own handling)
+        assert!(!is_wide_gamut_profile(
+            &crate::foundation::consts::XYB_ICC_PROFILE
+        ));
+
+        // sRGB profile is NOT wide-gamut
+        let mut srgb = vec![0u8; 256];
+        srgb[20..24].copy_from_slice(b"sRGB");
+        assert!(!is_wide_gamut_profile(&srgb));
+
+        // sRGB with "jxl " CMM type (cjpegli) is NOT wide-gamut
+        let mut jxl_srgb = vec![0u8; 256];
+        jxl_srgb[4..8].copy_from_slice(b"jxl ");
+        jxl_srgb[20..24].copy_from_slice(b"sRGB");
+        assert!(!is_wide_gamut_profile(&jxl_srgb));
+
+        // Adobe RGB profile IS wide-gamut
+        let mut adobe_rgb = vec![0u8; 256];
+        adobe_rgb[20..50].copy_from_slice(b"Adobe RGB (1998)______________");
+        assert!(is_wide_gamut_profile(&adobe_rgb));
+
+        // ProPhoto RGB IS wide-gamut
+        let mut prophoto = vec![0u8; 256];
+        prophoto[20..40].copy_from_slice(b"ProPhoto RGB________");
+        assert!(is_wide_gamut_profile(&prophoto));
+
+        // Too small → not wide-gamut
+        assert!(!is_wide_gamut_profile(&[0u8; 64]));
     }
 
     #[test]

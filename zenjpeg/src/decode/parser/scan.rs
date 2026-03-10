@@ -491,6 +491,11 @@ impl<'a> JpegParser<'a> {
         if self.mode != JpegMode::Baseline {
             return false;
         }
+        // f32 IDCT required (wide-gamut ICC, dimension-swapping transforms) — streaming
+        // path uses integer IDCT only, so fall back to buffered coefficient path.
+        if self.force_f32_idct {
+            return false;
+        }
         // Must have 3 components (YCbCr). Grayscale excluded: streaming produces
         // 1 bpp but output path expects RGB 3 bpp in streaming_rgb.
         if self.num_components != 3 {
