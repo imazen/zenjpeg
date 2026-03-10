@@ -1153,7 +1153,7 @@ impl DecodeConfig {
         {
             parser.parallel_strategy = self.parallel_strategy;
         }
-        // Propagate force_f32_idct from config (set by tests for fair comparison).
+        // Propagate force_f32_idct from config (set by dimension-swapping transforms).
         // Must be set before decode() so can_use_streaming() sees it.
         if self.force_f32_idct {
             parser.force_f32_idct = true;

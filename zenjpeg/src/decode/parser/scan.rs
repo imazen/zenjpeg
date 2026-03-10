@@ -491,8 +491,8 @@ impl<'a> JpegParser<'a> {
         if self.mode != JpegMode::Baseline {
             return false;
         }
-        // f32 IDCT required (wide-gamut ICC, dimension-swapping transforms) — streaming
-        // path uses integer IDCT only, so fall back to buffered coefficient path.
+        // f32 IDCT required (dimension-swapping transforms need symmetric IDCT) —
+        // streaming path uses integer IDCT only, so fall back to buffered path.
         if self.force_f32_idct {
             return false;
         }

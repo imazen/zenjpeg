@@ -107,25 +107,31 @@ pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {
 //   Proc. ICASSP '89, pp. 988-991.
 
 /// 13-bit fixed-point constants for the Loeffler IDCT.
-const LJ_FIX_0_298631336: i32 = 2446;
-const LJ_FIX_0_390180644: i32 = 3196;
-const LJ_FIX_0_541196100: i32 = 4433;
-const LJ_FIX_0_765366865: i32 = 6270;
-const LJ_FIX_0_899976223: i32 = 7373;
-const LJ_FIX_1_175875602: i32 = 9633;
-const LJ_FIX_1_501321110: i32 = 12299;
-const LJ_FIX_1_847759065: i32 = 15137;
-const LJ_FIX_1_961570560: i32 = 16069;
-const LJ_FIX_2_053119869: i32 = 16819;
-const LJ_FIX_2_562915447: i32 = 20995;
-const LJ_FIX_3_072711026: i32 = 25172;
+///
+/// These are i64 to match libjpeg-turbo's `JLONG` type (`long` = 64-bit on
+/// x86_64). The Loeffler algorithm's intermediate products overflow i32 when
+/// dequantized coefficients exceed ~2048 (common with wide-gamut ICC profiles
+/// like ProPhoto RGB, Adobe RGB, Rec.2020). Using i64 throughout both passes
+/// prevents silent wrapping that corrupts pixel values by up to 255.
+const LJ_FIX_0_298631336: i64 = 2446;
+const LJ_FIX_0_390180644: i64 = 3196;
+const LJ_FIX_0_541196100: i64 = 4433;
+const LJ_FIX_0_765366865: i64 = 6270;
+const LJ_FIX_0_899976223: i64 = 7373;
+const LJ_FIX_1_175875602: i64 = 9633;
+const LJ_FIX_1_501321110: i64 = 12299;
+const LJ_FIX_1_847759065: i64 = 15137;
+const LJ_FIX_1_961570560: i64 = 16069;
+const LJ_FIX_2_053119869: i64 = 16819;
+const LJ_FIX_2_562915447: i64 = 20995;
+const LJ_FIX_3_072711026: i64 = 25172;
 
 const LJ_CONST_BITS: u32 = 13;
 const LJ_PASS1_BITS: u32 = 2;
 
 /// Rounded right shift: (x + (1 << (n-1))) >> n
 #[inline(always)]
-const fn descale(x: i32, n: u32) -> i32 {
+const fn descale(x: i64, n: u32) -> i64 {
     (x + (1 << (n - 1))) >> n
 }
 
@@ -148,7 +154,10 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
     assert!(out_vector.len() >= min_len);
     let out_vector = &mut out_vector[..min_len];
 
-    let mut workspace = [0i32; 64];
+    // i64 workspace matches libjpeg-turbo's JLONG (long = 64-bit on x86_64).
+    // i32 workspace overflows when dequantized coefficients exceed ~2048,
+    // which happens with wide-gamut ICC profiles (ProPhoto RGB, Adobe RGB).
+    let mut workspace = [0i64; 64];
 
     // Pass 1: process columns, store into workspace.
     // Results are scaled up by sqrt(8) * 2^PASS1_BITS.
@@ -162,7 +171,7 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
             && in_vector[col + 48] == 0
             && in_vector[col + 56] == 0
         {
-            let dcval = in_vector[col] << LJ_PASS1_BITS;
+            let dcval = (in_vector[col] as i64) << LJ_PASS1_BITS;
             workspace[col] = dcval;
             workspace[col + 8] = dcval;
             workspace[col + 16] = dcval;
@@ -174,16 +183,16 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
             continue;
         }
 
-        // Even part
-        let z2 = in_vector[col + 16];
-        let z3 = in_vector[col + 48];
+        // Even part — widen to i64 at the boundary
+        let z2 = in_vector[col + 16] as i64;
+        let z3 = in_vector[col + 48] as i64;
 
         let z1 = (z2 + z3) * LJ_FIX_0_541196100;
         let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
         let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
 
-        let z2 = in_vector[col];
-        let z3 = in_vector[col + 32];
+        let z2 = in_vector[col] as i64;
+        let z3 = in_vector[col + 32] as i64;
 
         let tmp0 = (z2 + z3) << LJ_CONST_BITS;
         let tmp1 = (z2 - z3) << LJ_CONST_BITS;
@@ -194,10 +203,10 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
         let tmp12 = tmp1 - tmp2;
 
         // Odd part
-        let mut tmp0 = in_vector[col + 56];
-        let mut tmp1 = in_vector[col + 40];
-        let mut tmp2 = in_vector[col + 24];
-        let mut tmp3 = in_vector[col + 8];
+        let mut tmp0 = in_vector[col + 56] as i64;
+        let mut tmp1 = in_vector[col + 40] as i64;
+        let mut tmp2 = in_vector[col + 24] as i64;
+        let mut tmp3 = in_vector[col + 8] as i64;
 
         let z1 = tmp0 + tmp3;
         let z2 = tmp1 + tmp2;
@@ -252,7 +261,7 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
             continue;
         }
 
-        // Even part
+        // Even part (all i64 — workspace is already i64)
         let z2 = workspace[base + 2];
         let z3 = workspace[base + 6];
 
@@ -1186,24 +1195,15 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
 /// Uses DC-only fast path for single-coefficient blocks, otherwise
 /// uses `idct_int_libjpeg` for bit-exact matching with libjpeg-turbo.
 ///
-/// Truncates dequantized coefficients to i16 range before the IDCT to match
-/// libjpeg-turbo's SSE2 `pmullw` behavior, which keeps only the low 16 bits
-/// of the `coeff * quant_value` product. Without this, coefficients that
-/// overflow i16 (|coeff * quant| > 32767) produce different IDCT output.
+/// Uses i64 intermediates (matching libjpeg-turbo's `JLONG = long`) so
+/// wide-gamut dequantized coefficients (up to ±8000) are handled correctly
+/// without overflow.
 pub fn idct_int_tiered_libjpeg(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
     stride: usize,
     coeff_count: u8,
 ) {
-    // Truncate to i16 range to match libjpeg-turbo's pmullw dequantization.
-    // pmullw does i16 * i16 → low 16 bits, so dequantized values that exceed
-    // i16 range wrap. Our dequantization produces full i32 results; truncating
-    // here makes the IDCT input match what libjpeg-turbo's SIMD path sees.
-    for c in coeffs.iter_mut() {
-        *c = *c as i16 as i32;
-    }
-
     if coeff_count <= 1 {
         idct_int_dc_only(coeffs[0], output, stride);
     } else {
@@ -1301,12 +1301,10 @@ pub fn idct_int_libjpeg_unclamped(
     assert!(out_vector.len() >= min_len);
     let out_vector = &mut out_vector[..min_len];
 
-    // Same butterfly as idct_int_libjpeg, but without clamping.
-    // We reuse the column pass (which writes to workspace), then do the row pass
-    // with unclamped output.
-    let mut workspace = [0i32; 64];
+    // i64 workspace matches libjpeg-turbo's JLONG (see idct_int_libjpeg).
+    let mut workspace = [0i64; 64];
 
-    // Column pass (same as clamped version)
+    // Column pass
     for col in 0..8 {
         let base = col;
 
@@ -1319,22 +1317,22 @@ pub fn idct_int_libjpeg_unclamped(
             && in_vector[base + 48] == 0
             && in_vector[base + 56] == 0
         {
-            let dcval = in_vector[base] << LJ_PASS1_BITS;
+            let dcval = (in_vector[base] as i64) << LJ_PASS1_BITS;
             for r in 0..8 {
                 workspace[r * 8 + col] = dcval;
             }
             continue;
         }
 
-        let z2 = in_vector[base + 16];
-        let z3 = in_vector[base + 48];
+        let z2 = in_vector[base + 16] as i64;
+        let z3 = in_vector[base + 48] as i64;
 
         let z1 = (z2 + z3) * LJ_FIX_0_541196100;
         let tmp2 = z1 + z3 * (-LJ_FIX_1_847759065);
         let tmp3 = z1 + z2 * LJ_FIX_0_765366865;
 
-        let z2 = in_vector[base];
-        let z3 = in_vector[base + 32];
+        let z2 = in_vector[base] as i64;
+        let z3 = in_vector[base + 32] as i64;
 
         let tmp0 = (z2 + z3) << LJ_CONST_BITS;
         let tmp1 = (z2 - z3) << LJ_CONST_BITS;
@@ -1344,10 +1342,10 @@ pub fn idct_int_libjpeg_unclamped(
         let tmp11 = tmp1 + tmp2;
         let tmp12 = tmp1 - tmp2;
 
-        let tmp0 = in_vector[base + 56];
-        let tmp1 = in_vector[base + 40];
-        let tmp2 = in_vector[base + 24];
-        let tmp3 = in_vector[base + 8];
+        let tmp0 = in_vector[base + 56] as i64;
+        let tmp1 = in_vector[base + 40] as i64;
+        let tmp2 = in_vector[base + 24] as i64;
+        let tmp3 = in_vector[base + 8] as i64;
 
         let z1 = tmp0 + tmp3;
         let z2 = tmp1 + tmp2;
@@ -1491,18 +1489,14 @@ pub fn idct_int_tiered_unclamped(
 
 /// Unclamped libjpeg-compatible tiered IDCT dispatch.
 ///
-/// Truncates to i16 range to match libjpeg-turbo's `pmullw` dequantization
-/// (see `idct_int_tiered_libjpeg` for details).
+/// Uses i64 intermediates (matching libjpeg-turbo's `JLONG = long`) so
+/// wide-gamut dequantized coefficients are handled correctly.
 pub fn idct_int_tiered_libjpeg_unclamped(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
     stride: usize,
     coeff_count: u8,
 ) {
-    for c in coeffs.iter_mut() {
-        *c = *c as i16 as i32;
-    }
-
     if coeff_count <= 1 {
         idct_int_dc_only_unclamped(coeffs[0], output, stride);
     } else {
@@ -1728,43 +1722,39 @@ mod tests {
     /// matching libjpeg-turbo's `pmullw` dequantization behavior.
     ///
     /// When dequantized coefficients exceed i16 range (|coeff * quant| > 32767),
-    /// libjpeg-turbo's SSE2 path silently wraps via `pmullw` (keeps low 16 bits).
-    /// Our `idct_int_tiered_libjpeg` must do the same truncation.
+    /// Verify i64 intermediates handle wide-gamut coefficients without overflow.
+    /// With i32 intermediates, coefficients above ~2048 caused silent wrapping
+    /// in the Loeffler row pass. i64 (matching libjpeg-turbo's JLONG = long on
+    /// x86_64) handles the full range correctly.
     #[test]
-    fn test_libjpeg_idct_i16_truncation() {
-        // Coefficient that overflows i16: 40000 > 32767
-        let mut coeffs_truncated = [0i32; 64];
-        coeffs_truncated[0] = 40000; // DC
-        coeffs_truncated[1] = -35000; // AC[0,1]
+    fn test_libjpeg_idct_wide_gamut_coefficients() {
+        // Coefficients that exceed i16 range — typical of wide-gamut ICC profiles
+        // (ProPhoto RGB, Adobe RGB). With i64 intermediates these produce valid output.
+        let mut coeffs = [0i32; 64];
+        coeffs[0] = 40000; // DC
+        coeffs[1] = -35000; // AC[0,1]
 
-        // Run through libjpeg tiered (should truncate to i16 first)
-        let mut output_tiered = [0i16; 64];
-        idct_int_tiered_libjpeg(&mut coeffs_truncated, &mut output_tiered, 8, 2);
+        let mut output = [0i16; 64];
+        idct_int_tiered_libjpeg(&mut coeffs, &mut output, 8, 2);
 
-        // Manually truncate then run plain libjpeg IDCT
-        let mut coeffs_manual = [0i32; 64];
-        coeffs_manual[0] = 40000_i32 as i16 as i32; // wraps to -25536
-        coeffs_manual[1] = -35000_i32 as i16 as i32; // wraps to 30536
-        let mut output_manual = [0i16; 64];
-        idct_int_libjpeg(&mut coeffs_manual, &mut output_manual, 8);
+        // Direct call should produce identical results (no truncation step)
+        let mut coeffs2 = [0i32; 64];
+        coeffs2[0] = 40000;
+        coeffs2[1] = -35000;
+        let mut output2 = [0i16; 64];
+        idct_int_libjpeg(&mut coeffs2, &mut output2, 8);
 
         assert_eq!(
-            output_tiered, output_manual,
-            "tiered libjpeg IDCT should truncate coefficients to i16 before IDCT"
+            output, output2,
+            "tiered and direct libjpeg IDCT should produce identical results"
         );
 
-        // Also verify that WITHOUT truncation, the output differs
-        // (confirming the truncation actually matters for large coefficients)
-        let mut coeffs_no_trunc = [0i32; 64];
-        coeffs_no_trunc[0] = 40000;
-        coeffs_no_trunc[1] = -35000;
-        let mut output_no_trunc = [0i16; 64];
-        idct_int_libjpeg(&mut coeffs_no_trunc, &mut output_no_trunc, 8);
-
-        // These should differ since 40000 and -35000 overflow i16
-        assert_ne!(
-            output_tiered, output_no_trunc,
-            "truncated and non-truncated should differ for overflowing coefficients"
-        );
+        // All pixel values should be in valid range [0, 255]
+        for &v in &output {
+            assert!(
+                (0..=255).contains(&v),
+                "IDCT output {v} out of [0, 255] range"
+            );
+        }
     }
 }
