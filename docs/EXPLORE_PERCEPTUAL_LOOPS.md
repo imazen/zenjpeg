@@ -263,46 +263,17 @@ Only 64-128 values to optimize (1-2 DQT tables), so convergence is fast.
 needs different frequency emphasis than a portrait or a screenshot. Per-image DQT
 tuning adapts to the actual frequency content.
 
-## Idea 5: Noise-Aware AQ (Replacing Constant aq_strength=0.08)
-
-The current AQ uses a constant `aq_strength = 0.08` (calibrated from C++ testdata mean).
-The full jpegli pipeline (ComputePreErosion → FuzzyErosion → PerBlockModulations) is
-partially ported but not active.
-
-A simpler alternative using zenfilter-style noise gating:
-
-```
-# Compute per-block noise gate (from AdaptiveSharpen pattern)
-for each 8x8 block:
-    detail = pixel - blur(pixel, sigma=1.5)
-    energy = mean(detail^2)  # local texture energy
-    gate = sqrt(energy) / (sqrt(energy) + noise_floor)
-
-    # gate ≈ 0: flat region → more AQ (more aggressive quantization)
-    # gate ≈ 1: textured → less AQ (preserve detail)
-    aq_strength[block] = base_strength * (1.0 - gate * protection)
-```
-
-This sidesteps the complex jpegli AQ pipeline entirely. One Gaussian blur gives a
-noise-aware masking field. No need for QuantMasking → MaskingSqrt → FuzzyErosion →
-PerBlockModulations.
-
-**Advantage**: Simpler, fewer parameters, directly addresses the noise/texture
-distinction. The jpegli pipeline was designed for butteraugli-domain quality; this
-targets entropy efficiency (save bits on noise, spend on texture).
-
 ## Priority Ranking
 
 | # | Idea | Effort | Expected Impact | Risk |
 |---|------|--------|-----------------|------|
 | 1 | Pre-encode noise-gated smoothing (1A) | Low | 3-8% size at equal quality | Low — preprocessing only |
-| 2 | Noise-aware AQ (5) | Low | 1-3% quality improvement | Low — replaces constant |
+| 2 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Low — extends zero-bias |
 | 3 | Per-block zero-bias via loop (3) | Medium | 2-5% quality improvement | Medium — iteration cost |
-| 4 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Low — extends zero-bias |
-| 5 | Frequency-selective pre-filter (1B) | Medium | 3-6% size | Low |
+| 4 | Frequency-selective pre-filter (1B) | Medium | 3-6% size | Low |
+| 5 | Noise pattern regularization (2C) | High | Unknown | High — speculative |
 | 6 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Medium — convergence |
-| 7 | Noise pattern regularization (2C) | High | Unknown | High — speculative |
-| 8 | Trellis lambda via loop (3 variant) | High | 2-4% quality | Medium — complex integration |
+| 7 | Trellis lambda via loop (3 variant) | High | 2-4% quality | Medium — complex integration |
 
 ## Implementation Plan
 
@@ -314,21 +285,20 @@ targets entropy efficiency (save bits on noise, spend on texture).
 4. Benchmark: encode with/without, compare file size at equal SSIM2/butteraugli
 5. Test on CID22 corpus + high-ISO phone photos + clean studio shots
 
-### Phase 2: Noise-aware adaptive zero-bias
+### Phase 2: Noise pattern regularization
 
-1. Compute per-block texture energy (one Gaussian blur)
-2. Modulate zero_bias_mul per-block based on energy gate
-3. High noise → more aggressive zeroing (save bits)
-4. High texture → less aggressive zeroing (preserve detail)
-5. Compare against constant aq_strength=0.08 and full jpegli AQ
+1. DCT-domain noise shaping: per-block noise estimates modulate zero-bias
+2. Block-aligned pre-filtering: test sigma=4 Gaussian (half-block support)
+3. Perceptual noise substitution: denoise + add grid-aligned synthetic noise
+4. Measure entropy reduction in DCT domain with/without each technique
 
-### Phase 3: Perceptual feedback loop (if Phase 1-2 show promise)
+### Phase 3: Perceptual feedback loop for zero-bias
 
 1. Add encode-decode-measure iteration
 2. Start with butteraugli diffmap (already have the crate)
 3. Zensim-style sum-preserving redistribution on zero_bias_mul
 4. 2-3 iterations at high effort, gated behind effort level
-5. Benchmark against Phase 2 (is the loop worth the cost?)
+5. Benchmark: is the loop worth the iteration cost?
 
 ## Measurement Methodology
 

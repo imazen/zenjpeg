@@ -1,50 +1,33 @@
-//! Adaptive Quantization for jpegli - C++ Matching Implementation
+//! Adaptive Quantization — C++ parity implementation.
 //!
-//! # Status: PARTIAL IMPLEMENTATION
+//! Full port of jpegli's adaptive quantization pipeline from
+//! `lib/jpegli/adaptive_quantization.cc`. Produces per-block `aq_strength`
+//! values (typically 0.0–0.2, mean ~0.08) used to modulate zero-bias
+//! thresholds during coefficient quantization.
 //!
-//! This module contains a partial port of the C++ adaptive quantization.
-//! The constants and helper functions are ported from a previous implementation.
+//! ## Algorithm Steps
 //!
-//! ## What C++ Does (from lib/jpegli/adaptive_quantization.cc)
+//! 1. **ComputePreErosion()** — Initial quant field from pixel statistics.
+//!    Uses `QuantMasking()` for spatial frequency masking and `MaskingSqrt()`
+//!    to combine with butteraugli distance.
 //!
-//! The C++ algorithm produces per-block `aq_strength` values in the range
-//! 0.0-0.2 (mean ~0.08). These values are used in zero-biasing to determine
-//! quantization thresholds.
+//! 2. **FuzzyErosion()** — Spatial smoothing of the quant field.
+//!    5×5 kernel with asymmetric weights, separate horizontal/vertical passes.
 //!
-//! ### Algorithm Steps:
+//! 3. **PerBlockModulations()** — Final per-block modulations using spatial
+//!    frequency analysis and AC energy distribution masking.
 //!
-//! 1. **ComputePreErosion()** - Computes initial quant field from DCT coefficients
-//!    - Uses `QuantMasking()` for spatial frequency masking
-//!    - Uses `MaskingSqrt()` to combine with butteraugli distance
-//!
-//! 2. **FuzzyErosion()** - Applies spatial smoothing to the quant field
-//!    - 5x5 kernel with asymmetric weights
-//!    - Separate passes for horizontal and vertical
-//!
-//! 3. **PerBlockModulations()** - Final per-block modulations
-//!    - Uses spatial frequency analysis
-//!    - Applies masking based on AC energy distribution
-//!
-//! 4. **Final Transform** - Converts quant_field to aq_strength:
+//! 4. **Final Transform** — Converts quant_field to aq_strength:
 //!    ```text
 //!    aq_strength = max(0.0, (0.6 / quant_field) - 1.0)
 //!    ```
 //!
-//! ## Current Workaround
-//!
-//! Until the algorithm is fully verified, the encoder uses a constant
-//! `aq_strength = 0.08` calibrated from C++ testdata mean.
-//!
-//! ## Previous Port Attempt
-//!
-//! Constants and helpers below were ported from a previous attempt that
-//! produced output in wrong range (0-5 instead of 0-0.2). The issue was
-//! the missing final transform. These are preserved for future work.
+//! All four steps have SIMD implementations (AVX2/AVX-512) and a streaming
+//! variant for strip-based encoding. See [`streaming::StreamingAQ`].
 //!
 //! See also:
 //! - `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
 //! - `tests/aq_locked_tests.rs` for invariant tests
-//! - `simplified_quant.rs` for the simplified (non-C++) version
 
 #![allow(dead_code)]
 
