@@ -118,9 +118,23 @@ pub fn parallel_dct_y_blocks(
     let output_slice = &mut output[start_idx..];
 
     if total_blocks < PARALLEL_THRESHOLD {
-        sequential_dct_plane(strip, blocks_w, total_blocks, padded_width, deringing, output_slice);
+        sequential_dct_plane(
+            strip,
+            blocks_w,
+            total_blocks,
+            padded_width,
+            deringing,
+            output_slice,
+        );
     } else {
-        parallel_dct_plane(strip, blocks_w, total_blocks, padded_width, deringing, output_slice);
+        parallel_dct_plane(
+            strip,
+            blocks_w,
+            total_blocks,
+            padded_width,
+            deringing,
+            output_slice,
+        );
     }
 }
 
@@ -149,13 +163,45 @@ pub fn parallel_dct_chroma_blocks(
 
     if total_blocks < PARALLEL_THRESHOLD / 2 {
         // Sequential for small images
-        sequential_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, None, cb_slice);
-        sequential_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, None, cr_slice);
+        sequential_dct_plane(
+            cb_strip,
+            c_blocks_w,
+            total_blocks,
+            padded_c_width,
+            None,
+            cb_slice,
+        );
+        sequential_dct_plane(
+            cr_strip,
+            c_blocks_w,
+            total_blocks,
+            padded_c_width,
+            None,
+            cr_slice,
+        );
     } else {
         // Process Cb and Cr in parallel with each other
         rayon::join(
-            || parallel_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, None, cb_slice),
-            || parallel_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, None, cr_slice),
+            || {
+                parallel_dct_plane(
+                    cb_strip,
+                    c_blocks_w,
+                    total_blocks,
+                    padded_c_width,
+                    None,
+                    cb_slice,
+                )
+            },
+            || {
+                parallel_dct_plane(
+                    cr_strip,
+                    c_blocks_w,
+                    total_blocks,
+                    padded_c_width,
+                    None,
+                    cr_slice,
+                )
+            },
         );
     }
 }

@@ -14,13 +14,13 @@
 //! - `to_pixels_fast_i16_subsampled_parallel`: 4:2:0/4:2:2/4:4:0 non-XYB images
 
 use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8};
-use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::decode::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use crate::decode::upsample::{
     upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
     upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
     upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
 };
+use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_maybeuninit};
 use crate::foundation::consts::DCT_BLOCK_SIZE;

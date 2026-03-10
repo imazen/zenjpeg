@@ -37,7 +37,11 @@ fn decode_mozjpeg_impl(data: &[u8], fancy: bool) -> (u32, u32, Vec<u8>) {
         ci.common.err = &mut err;
         jpeg_create_decompress(&mut ci);
         jpeg_mem_src(&mut ci, data.as_ptr(), data.len() as _);
-        assert_eq!(jpeg_read_header(&mut ci, 1), 1, "mozjpeg: read_header failed");
+        assert_eq!(
+            jpeg_read_header(&mut ci, 1),
+            1,
+            "mozjpeg: read_header failed"
+        );
         ci.out_color_space = J_COLOR_SPACE::JCS_RGB;
         ci.do_fancy_upsampling = if fancy { 1 } else { 0 };
         jpeg_start_decompress(&mut ci);
@@ -69,7 +73,9 @@ fn decode_mozjpeg_box(data: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Decode with zenjpeg streaming (default path via Decoder::decode).
 fn decode_zen_streaming(data: &[u8]) -> (u32, u32, Vec<u8>) {
     let decoder = Decoder::new();
-    let img = decoder.decode(data, Unstoppable).expect("zen streaming decode");
+    let img = decoder
+        .decode(data, Unstoppable)
+        .expect("zen streaming decode");
     (img.width, img.height, img.into_pixels_u8().unwrap())
 }
 
@@ -97,7 +103,9 @@ fn decode_zen_scanline(data: &[u8]) -> (u32, u32, Vec<u8>) {
 fn decode_zen_libjpeg_compat(data: &[u8]) -> (u32, u32, Vec<u8>) {
     use zenjpeg::decode::ChromaUpsampling;
     let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::LibjpegCompat);
-    let img = decoder.decode(data, Unstoppable).expect("zen libjpeg_compat decode");
+    let img = decoder
+        .decode(data, Unstoppable)
+        .expect("zen libjpeg_compat decode");
     (img.width, img.height, img.into_pixels_u8().unwrap())
 }
 
@@ -113,8 +121,7 @@ fn decode_zen_box(data: &[u8]) -> (u32, u32, Vec<u8>) {
 fn encode_420(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
         .progressive(false)
-        .allow_16bit_quant_tables(false)
-        .expect("baseline config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
@@ -126,8 +133,7 @@ fn encode_420(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 fn encode_444(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None)
         .progressive(false)
-        .allow_16bit_quant_tables(false)
-        .expect("baseline config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
@@ -139,8 +145,7 @@ fn encode_444(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 fn encode_420_progressive(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
         .progressive(true)
-        .allow_16bit_quant_tables(false)
-        .expect("progressive config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
@@ -282,15 +287,27 @@ fn run_visual_diff(
 
         // Compare against matching mozjpeg mode
         let is_box_filter = *path_name == "box_filter";
-        let ref_rgb = if is_box_filter { &moz_box_rgb } else { &moz_fancy_rgb };
-        let ref_rgba = if is_box_filter { &moz_box_rgba } else { &moz_fancy_rgba };
+        let ref_rgb = if is_box_filter {
+            &moz_box_rgb
+        } else {
+            &moz_fancy_rgb
+        };
+        let ref_rgba = if is_box_filter {
+            &moz_box_rgba
+        } else {
+            &moz_fancy_rgba
+        };
 
         let (max_diff, mean_diff, boundary_max, interior_max) =
             analyze_diffs(ref_rgb, &zen_rgb, width as usize, height as usize);
 
         let stripe_detected = boundary_max > interior_max + 3;
         let status = if stripe_detected { "STRIPE!" } else { "OK" };
-        let ref_label = if is_box_filter { "vs moz-box" } else { "vs moz-fancy" };
+        let ref_label = if is_box_filter {
+            "vs moz-box"
+        } else {
+            "vs moz-fancy"
+        };
 
         println!(
             "  {path_name:20} max={max_diff:3} mean={mean_diff:.3} boundary={boundary_max:3} interior={interior_max:3} [{status}] {ref_label}"
@@ -308,8 +325,7 @@ fn run_visual_diff(
         save_montage(&montage, &format!("{label}_{path_name}"));
 
         // Also save standalone diff image for easy inspection
-        let diff_img =
-            generate_diff_image_raw(ref_rgba, &zen_rgba, width, height, amplification);
+        let diff_img = generate_diff_image_raw(ref_rgba, &zen_rgba, width, height, amplification);
         let diff_dir = std::path::Path::new(OUTPUT_DIR);
         diff_img
             .save(diff_dir.join(format!("{label}_{path_name}_diff.png")))
@@ -486,9 +502,7 @@ fn encode_with_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: i32)
 /// Real JPEG from corpus (if available).
 #[test]
 fn test_visual_diff_corpus_photo() {
-    let corpus_files = [
-        "/home/lilith/work/zen/zenjpeg/zenjpeg/fuzz/corpus/seed/flower_420.jpg",
-    ];
+    let corpus_files = ["/home/lilith/work/zen/zenjpeg/zenjpeg/fuzz/corpus/seed/flower_420.jpg"];
     let paths = standard_decode_paths();
 
     println!("\n=== Visual Diff: Corpus Photos ===");
@@ -519,7 +533,11 @@ fn test_visual_diff_corpus_photo() {
 
             let is_box = *path_name == "box_filter";
             let ref_rgb = if is_box { &moz_box_rgb } else { &moz_fancy_rgb };
-            let ref_rgba = if is_box { &moz_box_rgba } else { &moz_fancy_rgba };
+            let ref_rgba = if is_box {
+                &moz_box_rgba
+            } else {
+                &moz_fancy_rgba
+            };
 
             let (max_diff, mean_diff, boundary_max, interior_max) =
                 analyze_diffs(ref_rgb, &zen_rgb, w as usize, h as usize);
@@ -531,8 +549,7 @@ fn test_visual_diff_corpus_photo() {
             );
 
             let zen_rgba = rgb_to_rgba(&zen_rgb);
-            let montage =
-                create_comparison_montage_raw(ref_rgba, &zen_rgba, w, h, 10, 4);
+            let montage = create_comparison_montage_raw(ref_rgba, &zen_rgba, w, h, 10, 4);
             save_montage(&montage, &format!("corpus_{name}_{path_name}"));
 
             assert!(
@@ -662,7 +679,11 @@ fn test_waterhouse_banding() {
 
         let is_box = *path_name == "box_filter";
         let ref_rgb = if is_box { &moz_box_rgb } else { &moz_fancy_rgb };
-        let ref_rgba = if is_box { &moz_box_rgba } else { &moz_fancy_rgba };
+        let ref_rgba = if is_box {
+            &moz_box_rgba
+        } else {
+            &moz_fancy_rgba
+        };
         let ref_label = if is_box { "vs moz-box" } else { "vs moz-fancy" };
 
         // Global stats
@@ -755,7 +776,11 @@ fn test_waterhouse_banding() {
         );
         println!(
             "  block boundaries (8px): mean_max={block_boundary_mean:.2}  interior: mean_max={block_interior_mean:.2}  ratio={:.2}",
-            if block_interior_mean > 0.0 { block_boundary_mean / block_interior_mean } else { 0.0 }
+            if block_interior_mean > 0.0 {
+                block_boundary_mean / block_interior_mean
+            } else {
+                0.0
+            }
         );
         println!("  MCU boundaries (16px): mean_max={mcu_boundary_mean:.2}");
         println!(

@@ -14,8 +14,7 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 fn encode_420(pixels: &[u8], w: u32, h: u32, q: f32, progressive: bool) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
         .progressive(progressive)
-        .allow_16bit_quant_tables(false)
-        .expect("config");
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -236,10 +235,12 @@ fn analyze(
             };
             let show = in_mcu <= 1 || in_mcu >= 14 || max_d > 1;
             if show {
-                let flag = if max_d > interior_max.max(1) { " ***" } else { "" };
-                println!(
-                    "  {y:3} | max={max_d:2} mean={mean_d:.2} cnt={cnt_d:4} |{note}{flag}",
-                );
+                let flag = if max_d > interior_max.max(1) {
+                    " ***"
+                } else {
+                    ""
+                };
+                println!("  {y:3} | max={max_d:2} mean={mean_d:.2} cnt={cnt_d:4} |{note}{flag}",);
             }
         }
     }
@@ -305,7 +306,11 @@ fn make_test_image(w: u32, h: u32) -> Vec<u8> {
                     pixels[idx + 2] = n >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
                     pixels[idx] = edge;
                     pixels[idx + 1] = edge.wrapping_add(n >> 4);
                     pixels[idx + 2] = 255 - edge;

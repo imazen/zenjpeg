@@ -1803,7 +1803,9 @@ mod tests {
         // Simple LCG PRNG for reproducible test data
         let mut rng = 0x1234_5678_9ABC_DEF0u64;
         let mut next = || -> i32 {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 33) as i32
         };
 
@@ -1854,15 +1856,13 @@ mod tests {
                     assert!(
                         err_lj <= 2.0,
                         "Loeffler i64 error {err_lj} at pos {i}, mag={mag}, \
-                         ref={ref_clamped}, got={}", out_lj[i]
+                         ref={ref_clamped}, got={}",
+                        out_lj[i]
                     );
                 }
 
                 // Zune scalar vs SIMD must match exactly (same algorithm)
-                assert_eq!(
-                    out_zune, out_wide,
-                    "zune scalar/SIMD mismatch at mag={mag}"
-                );
+                assert_eq!(out_zune, out_wide, "zune scalar/SIMD mismatch at mag={mag}");
 
                 total_blocks += 1;
             }
@@ -1900,9 +1900,8 @@ mod tests {
             }
 
             // Alternating signs (worst for intermediate sums)
-            let coeffs_alt: [i32; 64] = core::array::from_fn(|i| {
-                if i % 2 == 0 { mag } else { -mag }
-            });
+            let coeffs_alt: [i32; 64] =
+                core::array::from_fn(|i| if i % 2 == 0 { mag } else { -mag });
             let mut coeffs = coeffs_alt;
             let mut output = [0i16; 64];
             idct_int_libjpeg(&mut coeffs, &mut output, 8);

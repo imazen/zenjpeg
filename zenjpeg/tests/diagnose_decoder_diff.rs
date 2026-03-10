@@ -1444,3 +1444,201 @@ fn test_nonstandard_sampling_ycbcr_i16() {
         w * h
     );
 }
+
+/// Diagnose the 3 corpus files with max_diff > 10 vs mozjpeg (default Jpegli IDCT).
+/// Generates amplified diff PNGs and per-channel statistics.
+///
+/// The 3 files (from 754-file corpus comparison):
+/// - source_jpegs/ab713625eeff48e1.jpg: max=22, mean=0.346
+/// - wide-gamut/adobe-rgb/reddit_ac470c0702018bb7.jpg: max=17, mean=0.298
+/// - source_jpegs/7ccea196894ff1ad.jpg: max=11, mean=0.320
+#[test]
+#[ignore = "requires corpus + output dir"]
+fn diagnose_top3_outlier_diffs() {
+    let corpus = zenjpeg_bench_utils::corpus_builder_dir();
+    let out_dir = std::path::Path::new("/mnt/v/output/zenjpeg/diff-investigation");
+    std::fs::create_dir_all(out_dir).unwrap();
+
+    let files: &[(&str, &str)] = &[
+        ("ab713625eeff48e1", "source_jpegs/ab713625eeff48e1.jpg"),
+        ("reddit_ac470c07", "wide-gamut/adobe-rgb/reddit_ac470c0702018bb7.jpg"),
+        ("7ccea196894ff1ad", "source_jpegs/7ccea196894ff1ad.jpg"),
+    ];
+
+    for (label, rel_path) in files {
+        let path = corpus.join(rel_path);
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("SKIP {label}: {e}");
+                continue;
+            }
+        };
+
+        println!("\n=== {label} ({rel_path}) ===");
+
+        // Decode with mozjpeg (reference)
+        let (mw, mh, moz_rgb) = decode_mozjpeg_rgb(&data);
+        let w = mw as usize;
+        let h = mh as usize;
+        println!("  dimensions: {w}x{h}");
+
+        // Decode with zenjpeg default (Jpegli IDCT, no ICC)
+        let zen_default = zenjpeg::decoder::Decoder::new()
+            .apply_icc(false)
+            .decode(&data, Unstoppable)
+            .unwrap();
+        let zen_rgb = zen_default.pixels_u8().unwrap();
+
+        // Decode with zenjpeg LibjpegCompat (Libjpeg IDCT, no ICC)
+        let zen_compat = zenjpeg::decoder::Decoder::new()
+            .apply_icc(false)
+            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::LibjpegCompat)
+            .decode(&data, Unstoppable)
+            .unwrap();
+        let compat_rgb = zen_compat.pixels_u8().unwrap();
+
+        // Per-channel stats: default vs mozjpeg
+        let mut max_diff = [0i32; 3];
+        let mut sum_diff = [0u64; 3];
+        let mut diff_hist = [[0u32; 256]; 3]; // histogram of abs diffs per channel
+        let mut worst_pos = [(0usize, 0usize); 3];
+
+        for py in 0..h {
+            for px in 0..w {
+                let i = (py * w + px) * 3;
+                for ch in 0..3 {
+                    let d = (zen_rgb[i + ch] as i32 - moz_rgb[i + ch] as i32).abs();
+                    if d > max_diff[ch] {
+                        max_diff[ch] = d;
+                        worst_pos[ch] = (px, py);
+                    }
+                    sum_diff[ch] += d as u64;
+                    diff_hist[ch][d as usize] += 1;
+                }
+            }
+        }
+
+        let total = (w * h) as f64;
+        let ch_names = ["R", "G", "B"];
+        println!("\n  Default IDCT vs mozjpeg:");
+        for ch in 0..3 {
+            let (wx, wy) = worst_pos[ch];
+            println!(
+                "    {}: max={:>2} mean={:.4} worst@({wx},{wy})",
+                ch_names[ch],
+                max_diff[ch],
+                sum_diff[ch] as f64 / total,
+            );
+        }
+
+        // Per-channel stats: LibjpegCompat vs mozjpeg
+        let mut compat_max = [0i32; 3];
+        let mut compat_sum = [0u64; 3];
+        for py in 0..h {
+            for px in 0..w {
+                let i = (py * w + px) * 3;
+                for ch in 0..3 {
+                    let d = (compat_rgb[i + ch] as i32 - moz_rgb[i + ch] as i32).abs();
+                    compat_max[ch] = compat_max[ch].max(d);
+                    compat_sum[ch] += d as u64;
+                }
+            }
+        }
+        println!("\n  Libjpeg IDCT vs mozjpeg:");
+        for ch in 0..3 {
+            println!(
+                "    {}: max={:>2} mean={:.4}",
+                ch_names[ch],
+                compat_max[ch],
+                compat_sum[ch] as f64 / total,
+            );
+        }
+
+        // Diff histogram summary
+        println!("\n  Diff histogram (default IDCT, combined channels):");
+        for d in 0..=(*max_diff.iter().max().unwrap() as usize) {
+            let count: u32 = diff_hist.iter().map(|h| h[d]).sum();
+            let pct = count as f64 / (total * 3.0) * 100.0;
+            if count > 0 {
+                println!("    diff={d:>2}: {count:>10} ({pct:>6.2}%)");
+            }
+        }
+
+        // Write 10x amplified diff PNG (default IDCT)
+        let mut diff_img = vec![0u8; w * h * 3];
+        for i in 0..w * h * 3 {
+            let d = (zen_rgb[i] as i32 - moz_rgb[i] as i32).abs();
+            diff_img[i] = (d * 10).min(255) as u8;
+        }
+        let diff_path = out_dir.join(format!("{label}_diff_10x.png"));
+        write_rgb_png(&diff_path, &diff_img, w as u32, h as u32);
+        println!("\n  Wrote: {}", diff_path.display());
+
+        // Write side-by-side worst pixel region (32x32 crop around worst overall pixel)
+        let overall_worst_ch = max_diff
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, v)| *v)
+            .unwrap()
+            .0;
+        let (cx, cy) = worst_pos[overall_worst_ch];
+        let crop = 32usize;
+        let x0 = cx.saturating_sub(crop / 2);
+        let y0 = cy.saturating_sub(crop / 2);
+        let x1 = (x0 + crop).min(w);
+        let y1 = (y0 + crop).min(h);
+        let cw = x1 - x0;
+        let ch = y1 - y0;
+
+        // 3 panels: mozjpeg | zen default | diff 20x
+        let panel_w = cw * 3;
+        let mut panel = vec![0u8; panel_w * ch * 3];
+        for py in 0..ch {
+            for px in 0..cw {
+                let src_i = ((y0 + py) * w + (x0 + px)) * 3;
+                let dst_base = (py * panel_w + px) * 3;
+                // Panel 1: mozjpeg
+                panel[dst_base] = moz_rgb[src_i];
+                panel[dst_base + 1] = moz_rgb[src_i + 1];
+                panel[dst_base + 2] = moz_rgb[src_i + 2];
+                // Panel 2: zenjpeg
+                let dst2 = (py * panel_w + cw + px) * 3;
+                panel[dst2] = zen_rgb[src_i];
+                panel[dst2 + 1] = zen_rgb[src_i + 1];
+                panel[dst2 + 2] = zen_rgb[src_i + 2];
+                // Panel 3: diff 20x
+                let dst3 = (py * panel_w + cw * 2 + px) * 3;
+                for c in 0..3 {
+                    let d = (zen_rgb[src_i + c] as i32 - moz_rgb[src_i + c] as i32).abs();
+                    panel[dst3 + c] = (d * 20).min(255) as u8;
+                }
+            }
+        }
+        let panel_path = out_dir.join(format!("{label}_worst_region.png"));
+        write_rgb_png(&panel_path, &panel, panel_w as u32, ch as u32);
+        println!("  Wrote: {}", panel_path.display());
+
+        // Show actual pixel values at worst position
+        let wi = (cy * w + cx) * 3;
+        println!(
+            "\n  Worst pixel ({cx},{cy}): mozjpeg=({},{},{}) zen=({},{},{}) diff=({},{},{})",
+            moz_rgb[wi], moz_rgb[wi + 1], moz_rgb[wi + 2],
+            zen_rgb[wi], zen_rgb[wi + 1], zen_rgb[wi + 2],
+            zen_rgb[wi] as i32 - moz_rgb[wi] as i32,
+            zen_rgb[wi + 1] as i32 - moz_rgb[wi + 1] as i32,
+            zen_rgb[wi + 2] as i32 - moz_rgb[wi + 2] as i32,
+        );
+    }
+}
+
+fn write_rgb_png(path: &std::path::Path, data: &[u8], w: u32, h: u32) {
+    use std::io::BufWriter;
+    let file = std::fs::File::create(path).unwrap();
+    let bw = BufWriter::new(file);
+    let mut encoder = png::Encoder::new(bw, w, h);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(data).unwrap();
+}

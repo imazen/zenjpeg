@@ -157,10 +157,7 @@ pub fn is_wide_gamut_profile(icc_data: &[u8]) -> bool {
     }
 
     // Check for "sRGB" marker in ASCII — sRGB profiles don't overflow
-    if icc_data
-        .windows(4)
-        .any(|w| w.eq_ignore_ascii_case(b"sRGB"))
-    {
+    if icc_data.windows(4).any(|w| w.eq_ignore_ascii_case(b"sRGB")) {
         return false;
     }
 

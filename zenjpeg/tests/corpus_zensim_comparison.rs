@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use zenjpeg::color::icc::{apply_icc_transform, extract_icc_profile, IccTarget};
+use zenjpeg::color::icc::{IccTarget, apply_icc_transform, extract_icc_profile};
 use zensim::{RgbSlice, Zensim, ZensimProfile};
 
 fn corpus_dir() -> PathBuf {
@@ -33,9 +33,7 @@ fn decode_zenjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
 
-    let decoder = Decoder::new()
-        .auto_orient(false)
-        .apply_icc(false);
+    let decoder = Decoder::new().auto_orient(false).apply_icc(false);
     let decoded = decoder
         .decode(data, Unstoppable)
         .map_err(|e| format!("{e}"))?;
@@ -92,10 +90,14 @@ fn decode_mozjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 /// Apply ICC profile to convert pixels to sRGB. Returns pixels unchanged if no ICC.
 fn normalize_to_srgb(pixels: &[u8], width: u32, height: u32, icc: Option<&[u8]>) -> Vec<u8> {
     match icc {
-        Some(profile) => {
-            apply_icc_transform(pixels, width as usize, height as usize, profile, IccTarget::Srgb)
-                .unwrap_or_else(|_| pixels.to_vec())
-        }
+        Some(profile) => apply_icc_transform(
+            pixels,
+            width as usize,
+            height as usize,
+            profile,
+            IccTarget::Srgb,
+        )
+        .unwrap_or_else(|_| pixels.to_vec()),
         None => pixels.to_vec(),
     }
 }
@@ -406,8 +408,7 @@ fn zensim_compare_decoders() {
     for r in &by_score {
         report.push_str(&format!(
             "{:.4}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            r.score, r.raw_max_diff, r.srgb_max_diff, r.width, r.height, r.has_icc, r.size,
-            r.path
+            r.score, r.raw_max_diff, r.srgb_max_diff, r.width, r.height, r.has_icc, r.size, r.path
         ));
     }
     let _ = std::fs::write(results_path, &report);
