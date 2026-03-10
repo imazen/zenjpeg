@@ -527,6 +527,559 @@ fn compare_streaming_vs_coefficient_ycbcr() {
     }
 }
 
+/// Compare streaming decode RGB output vs manually-computed RGB from scanline YCbCr.
+/// This isolates whether the bug is in SIMD color conversion or in the streaming IDCT data.
+#[test]
+#[ignore = "requires corpus"]
+fn compare_streaming_rgb_vs_manual_scalar_rgb() {
+    use imgref::ImgRefMut;
+
+    let path = zenjpeg_bench_utils::corpus_builder_dir()
+        .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Cannot read {}: {e}", path.display());
+            return;
+        }
+    };
+
+    println!("\n=== Comparing streaming RGB vs manual scalar RGB ===");
+
+    // Path 1: decode() — uses streaming path with SIMD color conversion
+    let d = zenjpeg::decoder::Decoder::new();
+    let result = d.decode(&data, Unstoppable).unwrap();
+    let streaming_rgb = result.pixels_u8().unwrap();
+    let w = result.width() as usize;
+    let h = result.height() as usize;
+
+    // Path 2: scanline reader → native i16 YCbCr → manual scalar RGB
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let sw = reader.width() as usize;
+    let sh = reader.height() as usize;
+    assert_eq!((w, h), (sw, sh));
+
+    let y_stride = (sw + 15) & !15;
+    let c_stride = y_stride;
+    let mut y_buf = vec![0i16; y_stride * sh];
+    let mut cb_buf = vec![0i16; c_stride * sh];
+    let mut cr_buf = vec![0i16; c_stride * sh];
+
+    let mut total_y_rows = 0;
+    while total_y_rows < sh {
+        let remaining = (sh - total_y_rows + 7) / 8;
+        let (y_rows, _c_rows) = reader
+            .read_rows_ycbcr_native_i16(
+                &mut y_buf[total_y_rows * y_stride..],
+                y_stride,
+                &mut cb_buf[total_y_rows * c_stride..],
+                &mut cr_buf[total_y_rows * c_stride..],
+                c_stride,
+                remaining.min(4),
+            )
+            .unwrap();
+        if y_rows == 0 {
+            break;
+        }
+        total_y_rows += y_rows;
+    }
+
+    // Manual scalar RGB conversion using zenjpeg's exact constants
+    let mut manual_rgb = vec![0u8; w * h * 3];
+    for py in 0..h {
+        for px in 0..w {
+            let yi = py * y_stride + px;
+            let ci = py * c_stride + px;
+            let y_val = y_buf[yi] as i32;
+            let cb_val = cb_buf[ci] as i32 - 128;
+            let cr_val = cr_buf[ci] as i32 - 128;
+            let y_scaled = y_val * 16384 + 8192;
+            let r = ((y_scaled + cr_val * 22970) >> 14).clamp(0, 255) as u8;
+            let g = ((y_scaled + cr_val * -11700 + cb_val * -5638) >> 14).clamp(0, 255) as u8;
+            let b = ((y_scaled + cb_val * 29032) >> 14).clamp(0, 255) as u8;
+            let o = (py * w + px) * 3;
+            manual_rgb[o] = r;
+            manual_rgb[o + 1] = g;
+            manual_rgb[o + 2] = b;
+        }
+    }
+
+    // Also get mozjpeg RGB for reference
+    let (_, _, moz_rgb) = decode_mozjpeg_rgb(&data);
+
+    // Compare streaming vs manual
+    let mut max_stream_manual = 0i32;
+    let mut max_stream_moz = 0i32;
+    let mut max_manual_moz = 0i32;
+    let mut worst_stream_manual_pos = (0usize, 0usize);
+    for py in 0..h {
+        for px in 0..w {
+            let i = (py * w + px) * 3;
+            for ch in 0..3 {
+                let s = streaming_rgb[i + ch] as i32;
+                let m = manual_rgb[i + ch] as i32;
+                let z = moz_rgb[i + ch] as i32;
+                let d_sm = (s - m).abs();
+                let d_sz = (s - z).abs();
+                let d_mz = (m - z).abs();
+                if d_sm > max_stream_manual {
+                    max_stream_manual = d_sm;
+                    worst_stream_manual_pos = (px, py);
+                }
+                max_stream_moz = max_stream_moz.max(d_sz);
+                max_manual_moz = max_manual_moz.max(d_mz);
+            }
+        }
+    }
+
+    println!("streaming RGB vs manual scalar RGB: max={max_stream_manual}");
+    println!("streaming RGB vs mozjpeg RGB:       max={max_stream_moz}");
+    println!("manual scalar vs mozjpeg RGB:       max={max_manual_moz}");
+
+    // Dump worst pixel
+    let (wpx, wpy) = worst_stream_manual_pos;
+    let i = (wpy * w + wpx) * 3;
+    let yi = wpy * y_stride + wpx;
+    let ci = wpy * c_stride + wpx;
+    println!(
+        "\nWorst pixel at ({wpx},{wpy}): Y={} Cb={} Cr={}",
+        y_buf[yi], cb_buf[ci], cr_buf[ci]
+    );
+    println!(
+        "  streaming: ({}, {}, {})",
+        streaming_rgb[i],
+        streaming_rgb[i + 1],
+        streaming_rgb[i + 2]
+    );
+    println!(
+        "  manual:    ({}, {}, {})",
+        manual_rgb[i],
+        manual_rgb[i + 1],
+        manual_rgb[i + 2]
+    );
+    println!(
+        "  mozjpeg:   ({}, {}, {})",
+        moz_rgb[i],
+        moz_rgb[i + 1],
+        moz_rgb[i + 2]
+    );
+}
+
+/// Test the SIMD color conversion in isolation by passing correct i16 YCbCr through it.
+#[test]
+#[ignore = "requires corpus"]
+fn test_simd_color_conversion_in_isolation() {
+    use imgref::ImgRefMut;
+    use zenjpeg::color::ycbcr::ycbcr_planes_i16_to_rgb_u8;
+
+    let path = zenjpeg_bench_utils::corpus_builder_dir()
+        .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Cannot read {}: {e}", path.display());
+            return;
+        }
+    };
+
+    println!("\n=== Testing SIMD color conversion in isolation ===");
+
+    // Get correct YCbCr from scanline reader
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let w = reader.width() as usize;
+    let h = reader.height() as usize;
+
+    let stride = (w + 15) & !15;
+    let mut y_buf = vec![0i16; stride * h];
+    let mut cb_buf = vec![0i16; stride * h];
+    let mut cr_buf = vec![0i16; stride * h];
+
+    let mut total_rows = 0;
+    while total_rows < h {
+        let remaining = (h - total_rows + 7) / 8;
+        let (y_rows, _) = reader
+            .read_rows_ycbcr_native_i16(
+                &mut y_buf[total_rows * stride..],
+                stride,
+                &mut cb_buf[total_rows * stride..],
+                &mut cr_buf[total_rows * stride..],
+                stride,
+                remaining.min(4),
+            )
+            .unwrap();
+        if y_rows == 0 {
+            break;
+        }
+        total_rows += y_rows;
+    }
+
+    // Convert using SIMD path (ycbcr_planes_i16_to_rgb_u8)
+    let mut simd_rgb = vec![0u8; w * h * 3];
+    for py in 0..h {
+        let src_off = py * stride;
+        let dst_off = py * w * 3;
+        ycbcr_planes_i16_to_rgb_u8(
+            &y_buf[src_off..src_off + w],
+            &cb_buf[src_off..src_off + w],
+            &cr_buf[src_off..src_off + w],
+            &mut simd_rgb[dst_off..dst_off + w * 3],
+        );
+    }
+
+    // Convert using manual scalar
+    let mut scalar_rgb = vec![0u8; w * h * 3];
+    for py in 0..h {
+        for px in 0..w {
+            let si = py * stride + px;
+            let y_val = y_buf[si] as i32;
+            let cb_val = cb_buf[si] as i32 - 128;
+            let cr_val = cr_buf[si] as i32 - 128;
+            let y_scaled = y_val * 16384 + 8192;
+            let r = ((y_scaled + cr_val * 22970) >> 14).clamp(0, 255) as u8;
+            let g = ((y_scaled + cr_val * -11700 + cb_val * -5638) >> 14).clamp(0, 255) as u8;
+            let b = ((y_scaled + cb_val * 29032) >> 14).clamp(0, 255) as u8;
+            let o = (py * w + px) * 3;
+            scalar_rgb[o] = r;
+            scalar_rgb[o + 1] = g;
+            scalar_rgb[o + 2] = b;
+        }
+    }
+
+    // Compare SIMD vs scalar
+    let mut max_diff = 0i32;
+    let mut worst_pos = (0usize, 0usize);
+    for py in 0..h {
+        for px in 0..w {
+            let i = (py * w + px) * 3;
+            for ch in 0..3 {
+                let d = (simd_rgb[i + ch] as i32 - scalar_rgb[i + ch] as i32).abs();
+                if d > max_diff {
+                    max_diff = d;
+                    worst_pos = (px, py);
+                }
+            }
+        }
+    }
+    println!("SIMD vs scalar color conversion: max={max_diff}");
+
+    // Compare SIMD vs mozjpeg RGB
+    let (_, _, moz_rgb) = decode_mozjpeg_rgb(&data);
+    let mut max_simd_moz = 0i32;
+    for i in 0..simd_rgb.len() {
+        let d = (simd_rgb[i] as i32 - moz_rgb[i] as i32).abs();
+        max_simd_moz = max_simd_moz.max(d);
+    }
+    println!("SIMD(correct YCbCr) vs mozjpeg RGB: max={max_simd_moz}");
+
+    if max_diff > 1 {
+        let (wpx, wpy) = worst_pos;
+        let i = (wpy * w + wpx) * 3;
+        let si = wpy * stride + wpx;
+        println!(
+            "Worst at ({wpx},{wpy}): Y={} Cb={} Cr={}",
+            y_buf[si], cb_buf[si], cr_buf[si]
+        );
+        println!(
+            "  SIMD:   ({}, {}, {})",
+            simd_rgb[i],
+            simd_rgb[i + 1],
+            simd_rgb[i + 2]
+        );
+        println!(
+            "  scalar: ({}, {}, {})",
+            scalar_rgb[i],
+            scalar_rgb[i + 1],
+            scalar_rgb[i + 2]
+        );
+    }
+}
+
+/// Compare scanline reader RGB8 vs decode() streaming RGB on a STANDARD sRGB 4:4:4 JPEG.
+/// If this also shows diffs, the bug is not specific to wide-gamut images.
+#[test]
+fn compare_scanline_vs_streaming_standard_444() {
+    use imgref::ImgRefMut;
+
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fuzz/corpus/seed/flower_444.jpg");
+    let data = std::fs::read(&path).unwrap();
+
+    println!("\n=== Comparing streaming vs scanline on flower_444.jpg ===");
+
+    // Path 1: decode() — streaming
+    let d = zenjpeg::decoder::Decoder::new();
+    let result = d.decode(&data, Unstoppable).unwrap();
+    let streaming_rgb = result.pixels_u8().unwrap();
+    let w = result.width() as usize;
+    let h = result.height() as usize;
+    println!("Image: {w}x{h}");
+
+    // Path 2: scanline reader → RGB8
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let row_stride = w * 3;
+    let mut scanline_rgb = vec![0u8; row_stride * h];
+    let mut total_rows = 0;
+    while total_rows < h {
+        let remaining = h - total_rows;
+        let batch = remaining.min(8);
+        let out_slice = &mut scanline_rgb[total_rows * row_stride..];
+        let img = ImgRefMut::new_stride(out_slice, w * 3, batch, row_stride);
+        let rows = reader.read_rows_rgb8(img).unwrap();
+        if rows == 0 {
+            break;
+        }
+        total_rows += rows;
+    }
+
+    // Compare
+    let mut max_diff = 0i32;
+    let mut diff_count = 0usize;
+    for i in 0..streaming_rgb.len() {
+        let d = (streaming_rgb[i] as i32 - scanline_rgb[i] as i32).abs();
+        if d > 0 {
+            diff_count += 1;
+        }
+        max_diff = max_diff.max(d);
+    }
+    println!("streaming vs scanline: max={max_diff} diff_pixels={diff_count}");
+    assert!(
+        max_diff <= 1,
+        "streaming vs scanline should match within ±1 for standard 4:4:4"
+    );
+}
+
+/// Test if Libjpeg IDCT fixes the wide-gamut streaming path diff.
+#[test]
+#[ignore = "requires corpus"]
+fn compare_streaming_libjpeg_idct_wide_gamut() {
+    use imgref::ImgRefMut;
+
+    let path = zenjpeg_bench_utils::corpus_builder_dir()
+        .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Cannot read {}: {e}", path.display());
+            return;
+        }
+    };
+
+    println!("\n=== Streaming with Libjpeg IDCT on wide-gamut ===");
+
+    // Default IDCT (Jpegli) streaming — disable ICC to compare raw decode
+    let d = zenjpeg::decoder::Decoder::new().apply_icc(false);
+    let result_jpegli = d.decode(&data, Unstoppable).unwrap();
+    let jpegli_rgb = result_jpegli.pixels_u8().unwrap();
+    let w = result_jpegli.width() as usize;
+    let h = result_jpegli.height() as usize;
+
+    // Libjpeg IDCT streaming — disable ICC to compare raw decode
+    let d = zenjpeg::decoder::Decoder::new()
+        .apply_icc(false)
+        .idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
+    let result_lj = d.decode(&data, Unstoppable).unwrap();
+    let lj_rgb = result_lj.pixels_u8().unwrap();
+
+    // Libjpeg IDCT scanline reader
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .idct_method(zenjpeg::decode::IdctMethod::Libjpeg)
+        .scanline_reader(&data)
+        .unwrap();
+    let row_stride = w * 3;
+    let mut scanline_rgb = vec![0u8; row_stride * h];
+    let mut total_rows = 0;
+    while total_rows < h {
+        let remaining = h - total_rows;
+        let batch = remaining.min(8);
+        let out_slice = &mut scanline_rgb[total_rows * row_stride..];
+        let img = ImgRefMut::new_stride(out_slice, w * 3, batch, row_stride);
+        let rows = reader.read_rows_rgb8(img).unwrap();
+        if rows == 0 {
+            break;
+        }
+        total_rows += rows;
+    }
+
+    // mozjpeg reference
+    let (_, _, moz_rgb) = decode_mozjpeg_rgb(&data);
+
+    // Compare streaming Jpegli vs Libjpeg
+    let mut max_jpegli_lj = 0i32;
+    for i in 0..jpegli_rgb.len() {
+        max_jpegli_lj = max_jpegli_lj.max((jpegli_rgb[i] as i32 - lj_rgb[i] as i32).abs());
+    }
+    println!("streaming Jpegli IDCT vs Libjpeg IDCT: max={max_jpegli_lj}");
+
+    // Compare streaming Libjpeg vs scanline Libjpeg
+    let mut max_stream_scan_lj = 0i32;
+    for i in 0..lj_rgb.len() {
+        max_stream_scan_lj =
+            max_stream_scan_lj.max((lj_rgb[i] as i32 - scanline_rgb[i] as i32).abs());
+    }
+    println!("streaming Libjpeg vs scanline Libjpeg: max={max_stream_scan_lj}");
+
+    // Compare streaming Libjpeg vs mozjpeg
+    let mut max_lj_moz = 0i32;
+    for i in 0..lj_rgb.len() {
+        max_lj_moz = max_lj_moz.max((lj_rgb[i] as i32 - moz_rgb[i] as i32).abs());
+    }
+    println!("streaming Libjpeg IDCT vs mozjpeg: max={max_lj_moz}");
+
+    // Compare scanline Libjpeg vs mozjpeg
+    let mut max_scan_lj_moz = 0i32;
+    for i in 0..scanline_rgb.len() {
+        max_scan_lj_moz = max_scan_lj_moz.max((scanline_rgb[i] as i32 - moz_rgb[i] as i32).abs());
+    }
+    println!("scanline Libjpeg IDCT vs mozjpeg: max={max_scan_lj_moz}");
+}
+
+/// Compare scanline reader RGB8 vs decode() streaming RGB to isolate the streaming path bug.
+/// Both paths use the same ycbcr_planes_i16_to_rgb_u8 color conversion.
+/// If scanline RGB8 matches mozjpeg but decode() doesn't, the streaming path's
+/// IDCT/buffer management is wrong.
+#[test]
+#[ignore = "requires corpus"]
+fn compare_scanline_rgb8_vs_streaming_decode() {
+    use imgref::ImgRefMut;
+
+    let path = zenjpeg_bench_utils::corpus_builder_dir()
+        .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Cannot read {}: {e}", path.display());
+            return;
+        }
+    };
+
+    println!("\n=== Comparing scanline RGB8 vs streaming decode() ===");
+
+    // Path 1: decode() — uses streaming path
+    // Disable ICC to compare raw decode output (not ICC-corrected)
+    let d = zenjpeg::decoder::Decoder::new().apply_icc(false);
+    let result = d.decode(&data, Unstoppable).unwrap();
+    let streaming_rgb = result.pixels_u8().unwrap();
+    let w = result.width() as usize;
+    let h = result.height() as usize;
+
+    // Path 2: scanline reader → read_rows_rgb8
+    let mut reader = zenjpeg::decoder::Decoder::new()
+        .scanline_reader(&data)
+        .unwrap();
+    let sw = reader.width() as usize;
+    let sh = reader.height() as usize;
+    assert_eq!((w, h), (sw, sh));
+
+    let row_stride = w * 3;
+    let mut scanline_rgb = vec![0u8; row_stride * h];
+    let mut total_rows = 0;
+    while total_rows < h {
+        let remaining = h - total_rows;
+        let batch = remaining.min(8);
+        let out_slice = &mut scanline_rgb[total_rows * row_stride..];
+        let img = ImgRefMut::new_stride(out_slice, w * 3, batch, row_stride);
+        let rows = reader.read_rows_rgb8(img).unwrap();
+        if rows == 0 {
+            break;
+        }
+        total_rows += rows;
+    }
+
+    // Path 3: mozjpeg
+    let (_, _, moz_rgb) = decode_mozjpeg_rgb(&data);
+
+    // Compare
+    let mut max_streaming_scanline = 0i32;
+    let mut max_streaming_moz = 0i32;
+    let mut max_scanline_moz = 0i32;
+    let mut worst_pos = (0usize, 0usize);
+    let mut worst_ch = 0usize;
+
+    for py in 0..h {
+        for px in 0..w {
+            let i = (py * w + px) * 3;
+            for ch in 0..3 {
+                let s = streaming_rgb[i + ch] as i32;
+                let sl = scanline_rgb[i + ch] as i32;
+                let m = moz_rgb[i + ch] as i32;
+
+                let d_ss = (s - sl).abs();
+                let d_sm = (s - m).abs();
+                let d_slm = (sl - m).abs();
+
+                if d_ss > max_streaming_scanline {
+                    max_streaming_scanline = d_ss;
+                    worst_pos = (px, py);
+                    worst_ch = ch;
+                }
+                max_streaming_moz = max_streaming_moz.max(d_sm);
+                max_scanline_moz = max_scanline_moz.max(d_slm);
+            }
+        }
+    }
+
+    println!("streaming decode() vs scanline RGB8: max={max_streaming_scanline}");
+    println!("streaming decode() vs mozjpeg:       max={max_streaming_moz}");
+    println!("scanline RGB8 vs mozjpeg:            max={max_scanline_moz}");
+
+    if max_streaming_scanline > 2 {
+        let (wpx, wpy) = worst_pos;
+        let i = (wpy * w + wpx) * 3;
+        println!("\nWorst at ({wpx},{wpy}) ch={worst_ch}:");
+        println!(
+            "  streaming: ({}, {}, {})",
+            streaming_rgb[i],
+            streaming_rgb[i + 1],
+            streaming_rgb[i + 2]
+        );
+        println!(
+            "  scanline:  ({}, {}, {})",
+            scanline_rgb[i],
+            scanline_rgb[i + 1],
+            scanline_rgb[i + 2]
+        );
+        println!(
+            "  mozjpeg:   ({}, {}, {})",
+            moz_rgb[i],
+            moz_rgb[i + 1],
+            moz_rgb[i + 2]
+        );
+
+        // Show a 3x3 neighborhood around worst pixel
+        println!("\n  3x3 neighborhood (streaming vs scanline):");
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                let nx = wpx as i32 + dx;
+                let ny = wpy as i32 + dy;
+                if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                    let ni = (ny as usize * w + nx as usize) * 3;
+                    print!(
+                        "  ({},{}) s=({},{},{}) sl=({},{},{})",
+                        nx,
+                        ny,
+                        streaming_rgb[ni],
+                        streaming_rgb[ni + 1],
+                        streaming_rgb[ni + 2],
+                        scanline_rgb[ni],
+                        scanline_rgb[ni + 1],
+                        scanline_rgb[ni + 2],
+                    );
+                    let ch_diff: Vec<i32> = (0..3)
+                        .map(|c| streaming_rgb[ni + c] as i32 - scanline_rgb[ni + c] as i32)
+                        .collect();
+                    println!(" diff=({},{},{})", ch_diff[0], ch_diff[1], ch_diff[2]);
+                }
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Non-standard sampling factor tests
 // =============================================================================
