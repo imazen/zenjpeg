@@ -286,6 +286,7 @@ impl zc::encode::EncoderConfig for JpegEncoderConfig {
             metadata: None,
             limits: ResourceLimits::none(),
             policy: None,
+            image_size: None,
         }
     }
 }
@@ -302,6 +303,9 @@ pub struct JpegEncodeJob<'a> {
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zc::encode::EncodePolicy>,
+    /// Image dimensions, set via `with_canvas_size`. When known, enables true
+    /// streaming in `push_rows` → `finish` (no full-image accumulation).
+    image_size: Option<(u32, u32)>,
 }
 
 impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
@@ -329,6 +333,11 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
+    fn with_canvas_size(mut self, width: u32, height: u32) -> Self {
+        self.image_size = Some((width, height));
+        self
+    }
+
     fn encoder(self) -> Result<Self::Enc, Self::Error> {
         Ok(JpegEncoder {
             effective_config: self.config.effective_config(),
@@ -337,6 +346,8 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
             limits: self.limits,
             policy: self.policy,
             accumulator: None,
+            streaming_enc: None,
+            image_size: self.image_size,
         })
     }
 
@@ -357,10 +368,14 @@ pub struct JpegEncoder<'a> {
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zc::encode::EncodePolicy>,
-    /// Accumulated rows for push_rows path. The native BytesEncoder requires
-    /// total height at creation time, which the zc trait doesn't provide upfront,
-    /// so we accumulate and then stream through the native encoder in finish().
+    /// Accumulated rows for push_rows path (fallback when dimensions unknown).
     accumulator: Option<RowAccumulator>,
+    /// Native streaming encoder — used when dimensions are known via
+    /// `with_canvas_size`. Streams rows directly without accumulation.
+    /// Forces baseline mode (progressive requires buffering all coefficients).
+    streaming_enc: Option<crate::encode::byte_encoders::BytesEncoder>,
+    /// Image dimensions from `with_canvas_size`.
+    image_size: Option<(u32, u32)>,
 }
 
 /// Internal buffer for accumulating pushed rows.
@@ -375,7 +390,15 @@ struct RowAccumulator {
 impl<'a> JpegEncoder<'a> {
     /// Build an EncodeRequest from current config + metadata, applying policy.
     fn build_request(&self) -> crate::encode::request::EncodeRequest<'_> {
-        let mut req = self.effective_config.request();
+        self.build_request_from(&self.effective_config)
+    }
+
+    /// Build an EncodeRequest from a specific config + metadata, applying policy.
+    fn build_request_from<'b>(
+        &'b self,
+        config: &'b EncoderConfig,
+    ) -> crate::encode::request::EncodeRequest<'b> {
+        let mut req = config.request();
         if let Some(ref meta) = self.metadata {
             let policy = self.policy.unwrap_or_default();
             if policy.resolve_icc(true) {
@@ -502,9 +525,27 @@ impl zc::encode::Encoder for JpegEncoder<'_> {
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Error> {
         let desc = rows.descriptor();
         let layout = descriptor_to_layout(desc)?;
+
+        // Streaming path: dimensions known, push directly to native encoder.
+        if let Some((img_w, img_h)) = self.image_size {
+            if self.streaming_enc.is_none() {
+                self.check_limits(img_w, img_h, layout)?;
+                // Force baseline for streaming — progressive buffers all coefficients.
+                let baseline_config = self.effective_config.clone().progressive(false);
+                let req = self.build_request_from(&baseline_config);
+                let enc = req.encode_from_bytes(img_w, img_h, layout)?;
+                self.streaming_enc = Some(enc);
+            }
+            let enc = self.streaming_enc.as_mut().unwrap();
+            let stop = self.stop.unwrap_or(&enough::Unstoppable);
+            // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
+            enc.push(rows.as_strided_bytes(), rows.rows() as usize, rows.stride(), stop)?;
+            return Ok(());
+        }
+
+        // Fallback: accumulate rows (dimensions unknown).
         let width = rows.width();
         let data = rows.contiguous_bytes();
-
         match &mut self.accumulator {
             None => {
                 let bpp = desc.bytes_per_pixel();
@@ -536,6 +577,14 @@ impl zc::encode::Encoder for JpegEncoder<'_> {
     }
 
     fn finish(mut self) -> Result<EncodeOutput, Error> {
+        // Streaming path: finish the native encoder directly.
+        if let Some(enc) = self.streaming_enc.take() {
+            let output = enc.finish()?;
+            self.check_output_size(&output)?;
+            return Ok(EncodeOutput::new(output, ImageFormat::Jpeg));
+        }
+
+        // Fallback: accumulation path.
         let acc = self
             .accumulator
             .take()
