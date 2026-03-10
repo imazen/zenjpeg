@@ -979,6 +979,13 @@ impl<'a> ScanlineReader<'a> {
 
         // Upsample chroma only if this MCU row is in the crop
         if self.mcu_row_in_crop(self.current_mcu_row) {
+            // Edge-replicate the last real chroma row/column over MCU padding so
+            // the upsampler doesn't interpolate with IDCT-rounded padding data.
+            self.strip.truncate_chroma_padding(
+                self.width as usize,
+                self.height as usize,
+                self.current_mcu_row,
+            );
             self.strip.upsample_chroma();
         }
 
@@ -1049,6 +1056,17 @@ impl<'a> ScanlineReader<'a> {
         if self.strip.needs_vertical_upsample() && !self.is_last_mcu_row() {
             self.peek_next_chroma_row(&quant_refs);
         }
+
+        // Edge-replicate the last real chroma row/column over MCU padding so
+        // the upsampler doesn't interpolate with IDCT-rounded padding data.
+        // Vertical: only affects the last MCU row. Horizontal: affects any
+        // MCU row where image width is not MCU-aligned. Both are handled
+        // inside truncate_chroma_padding with early-return when no-op.
+        self.strip.truncate_chroma_padding(
+            self.width as usize,
+            self.height as usize,
+            self.current_mcu_row,
+        );
 
         // Upsample chroma if needed
         self.strip.upsample_chroma();
@@ -1219,10 +1237,17 @@ impl<'a> ScanlineReader<'a> {
         //    Compute the corrected bottom chroma.
         self.strip.compute_deferred_bottom();
 
-        // 4. Upsample the next MCU row (top boundary fixup uses prev_cb_row)
+        // 4. Edge-replicate padding before upsampling (needed for last MCU row)
+        self.strip.truncate_chroma_padding(
+            self.width as usize,
+            self.height as usize,
+            self.current_mcu_row,
+        );
+
+        // 5. Upsample the next MCU row (top boundary fixup uses prev_cb_row)
         self.strip.upsample_chroma();
 
-        // 5. Mark state
+        // 6. Mark state
         self.current_mcu_row -= 1; // Restore to current MCU row
         self.next_mcu_preloaded = true;
         self.mcu_row_decoded = true; // Current MCU is still decoded
@@ -1339,9 +1364,11 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
-        // Wave-parallel mode: serve from wave buffer, decoding on demand
+        // Wave-parallel mode: serve from wave buffer, decoding on demand.
+        // Only when wave_buf is allocated (WaveOnly mode, box filter).
+        // WaveState mode (fancy) uses wave only for planar i16, not RGB.
         #[cfg(feature = "parallel")]
-        if self.wave_state.is_some() {
+        if self.wave_state.is_some() && !self.wave_buf.is_empty() {
             return self.read_rows_rgb8_wave(output);
         }
 

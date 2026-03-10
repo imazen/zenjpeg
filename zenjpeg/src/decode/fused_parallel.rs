@@ -1507,6 +1507,14 @@ impl<'a> JpegParser<'a> {
         let upsample_out_size = upsample_out_height * y_strip_width;
         let y_cols_this_image = width.min(y_strip_width);
 
+        // Chroma padding: edge-replicate last real row/column over MCU padding
+        // to match libjpeg-turbo's set_bottom_pointers() behavior.
+        let c_h_samp = self.components[1].h_samp_factor as usize;
+        let h_ratio = y_h / c_h_samp;
+        let downsampled_w = (width + h_ratio - 1) / h_ratio;
+        let has_h_padding = downsampled_w < c_strip_width;
+        let downsampled_h = (height + v_ratio - 1) / v_ratio;
+
         // Boundary data saved per segment for the fixup pass
         struct SegmentBoundary {
             first_cb_row: Vec<i16>,
@@ -1555,6 +1563,20 @@ impl<'a> JpegParser<'a> {
                 // Boundaries collected per sub-segment
                 let mut boundaries: Vec<SegmentBoundary> =
                     Vec::with_capacity(last_raw_excl - first_raw);
+
+                // Edge-replicate horizontal padding columns in extended chroma buffers.
+                let fixup_h_padding = |buf: &mut [i16]| {
+                    if !has_h_padding {
+                        return;
+                    }
+                    for row in 0..ext_height {
+                        let row_off = row * c_strip_width;
+                        let last_val = buf[row_off + downsampled_w - 1];
+                        for col in downsampled_w..c_strip_width {
+                            buf[row_off + col] = last_val;
+                        }
+                    }
+                };
 
                 // Helper closure: upsample extended chroma strip and color convert
                 // one MCU row to RGB output
@@ -1810,6 +1832,9 @@ impl<'a> JpegParser<'a> {
                             ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
                                 .copy_from_slice(&ext_cr_b[src..src + c_strip_width]);
 
+                            fixup_h_padding(&mut ext_cb_a);
+                            fixup_h_padding(&mut ext_cr_a);
+
                             upsample_and_output(
                                 first_mcu_row + local_row - 1,
                                 &y_strip_a,
@@ -1863,11 +1888,35 @@ impl<'a> JpegParser<'a> {
                     }
 
                     // Output last MCU row of this sub-segment (now in a buffers after final swap)
+
+                    // Vertical chroma padding: on the image's last MCU row,
+                    // edge-replicate the last real chroma row over padding rows.
+                    // Matches libjpeg-turbo's set_bottom_pointers().
+                    if last_mcu_row == mcu_rows - 1 {
+                        let real_rows_in_strip = c_strip_height
+                            .min(downsampled_h.saturating_sub(last_mcu_row * c_strip_height));
+                        if real_rows_in_strip < c_strip_height {
+                            let c_data_offset = c_strip_width; // row 0 is above context
+                            let last_real =
+                                c_data_offset + (real_rows_in_strip - 1) * c_strip_width;
+                            for pad_row in real_rows_in_strip..c_strip_height {
+                                let dst = c_data_offset + pad_row * c_strip_width;
+                                ext_cb_a
+                                    .copy_within(last_real..last_real + c_strip_width, dst);
+                                ext_cr_a
+                                    .copy_within(last_real..last_real + c_strip_width, dst);
+                            }
+                        }
+                    }
+
                     let below_ctx_start = (c_strip_height + 1) * c_strip_width;
                     let last_data = c_strip_height * c_strip_width;
                     // Set below context = edge replicate (segment boundary)
                     ext_cb_a.copy_within(last_data..last_data + c_strip_width, below_ctx_start);
                     ext_cr_a.copy_within(last_data..last_data + c_strip_width, below_ctx_start);
+
+                    fixup_h_padding(&mut ext_cb_a);
+                    fixup_h_padding(&mut ext_cr_a);
 
                     upsample_and_output(
                         last_mcu_row,

@@ -379,6 +379,73 @@ impl StripProcessor {
         matches!(self.subsampling, Subsampling::S420 | Subsampling::S440)
     }
 
+    /// Edge-replicate the last real chroma row/column over MCU padding.
+    ///
+    /// The encoder pads MCU boundaries by replicating pixel rows/columns
+    /// before DCT, but IDCT rounding means decoded padding differs slightly
+    /// from the last real sample. libjpeg-turbo handles this via
+    /// `set_bottom_pointers()` (vertical) and using `downsampled_width`
+    /// (horizontal). We overwrite the padding data to match.
+    ///
+    /// `image_width`: the actual image width in pixels.
+    /// `image_height`: the actual image height in pixels.
+    /// `mcu_row`: the current MCU row index (0-based).
+    pub fn truncate_chroma_padding(
+        &mut self,
+        image_width: usize,
+        image_height: usize,
+        mcu_row: usize,
+    ) {
+        if !matches!(
+            self.subsampling,
+            Subsampling::S420 | Subsampling::S440 | Subsampling::S422
+        ) {
+            return;
+        }
+
+        let h_ratio = if self.h_samp[0] > self.h_samp[1] {
+            self.h_samp[0] as usize / self.h_samp[1] as usize
+        } else {
+            1
+        };
+        let v_ratio = self.mcu_height / self.chroma_strip_height.max(1);
+        let stride = self.chroma_strip_stride;
+        let strip_w = self.chroma_strip_width;
+
+        // Vertical padding (last MCU row only)
+        if v_ratio > 1 {
+            let downsampled_h = (image_height + v_ratio - 1) / v_ratio;
+            let real_rows = self
+                .chroma_strip_height
+                .min(downsampled_h.saturating_sub(mcu_row * self.chroma_strip_height));
+            if real_rows < self.chroma_strip_height {
+                let last_real = (real_rows - 1) * stride;
+                for pad_row in real_rows..self.chroma_strip_height {
+                    let dst = pad_row * stride;
+                    self.cb_strip.copy_within(last_real..last_real + stride, dst);
+                    self.cr_strip.copy_within(last_real..last_real + stride, dst);
+                }
+            }
+        }
+
+        // Horizontal padding (all MCU rows if image width not MCU-aligned)
+        if h_ratio > 0 {
+            let downsampled_w = (image_width + h_ratio - 1) / h_ratio;
+            if downsampled_w < strip_w {
+                let rows = self.chroma_strip_height;
+                for row in 0..rows {
+                    let row_off = row * stride;
+                    let last_val_cb = self.cb_strip[row_off + downsampled_w - 1];
+                    let last_val_cr = self.cr_strip[row_off + downsampled_w - 1];
+                    for col in downsampled_w..strip_w {
+                        self.cb_strip[row_off + col] = last_val_cb;
+                        self.cr_strip[row_off + col] = last_val_cr;
+                    }
+                }
+            }
+        }
+    }
+
     /// Upsample chroma buffers to full resolution.
     ///
     /// Call this after all blocks in the MCU row have been IDCT'd.

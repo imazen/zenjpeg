@@ -549,6 +549,23 @@ impl<'a> JpegParser<'a> {
             && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
         let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
+        // Horizontal chroma padding fixup (same as scan.rs streaming path)
+        let downsampled_w = (width + h_ratio - 1) / h_ratio;
+        let has_h_padding = downsampled_w < c_strip_width;
+        let fixup_h_padding = |buf: &mut [i16]| {
+            if !has_h_padding {
+                return;
+            }
+            let total_rows = ext_height;
+            for row in 0..total_rows {
+                let row_off = row * c_strip_width;
+                let last_val = buf[row_off + downsampled_w - 1];
+                for col in downsampled_w..c_strip_width {
+                    buf[row_off + col] = last_val;
+                }
+            }
+        };
+
         for imcu_row in 0..mcu_rows {
             // Set below context for current strip (ext_a)
             let last_data_row_start = c_strip_height * c_strip_width; // row c_strip_height in ext
@@ -561,7 +578,24 @@ impl<'a> JpegParser<'a> {
                 ext_cr_a[below_ctx_start..below_ctx_start + c_strip_width]
                     .copy_from_slice(&ext_cr_b[src_start..src_start + c_strip_width]);
             } else {
-                // Last strip: edge replication (copy last data row)
+                // Last strip: edge-replicate from the last REAL chroma row,
+                // not the last padding row. Padding rows have IDCT rounding
+                // differences vs the last real row (matching libjpeg-turbo's
+                // set_bottom_pointers behavior).
+                let downsampled_h = (height + v_ratio - 1) / v_ratio;
+                let real_rows = c_strip_height
+                    .min(downsampled_h.saturating_sub(imcu_row * c_strip_height));
+                // Overwrite padding data rows with last real row
+                if real_rows < c_strip_height {
+                    // Data rows start at offset c_strip_width (row 1 in extended buffer)
+                    let last_real_start = real_rows * c_strip_width; // in ext: row (real_rows)
+                    for pad_row in real_rows..c_strip_height {
+                        let dst = (1 + pad_row) * c_strip_width;
+                        ext_cb_a.copy_within(last_real_start..last_real_start + c_strip_width, dst);
+                        ext_cr_a.copy_within(last_real_start..last_real_start + c_strip_width, dst);
+                    }
+                }
+                // Below context = last real data row (now also at last_data_row_start after fixup)
                 ext_cb_a.copy_within(
                     last_data_row_start..last_data_row_start + c_strip_width,
                     below_ctx_start,
@@ -622,6 +656,8 @@ impl<'a> JpegParser<'a> {
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
+                fixup_h_padding(&mut ext_cb_a);
+                fixup_h_padding(&mut ext_cr_a);
                 if use_scratch_upsample {
                     // Fast path: reuse scratch buffer to avoid per-call [0i16; 4096] zeroing
                     upsample_h2v2_i16_fancy_reuse_scratch(

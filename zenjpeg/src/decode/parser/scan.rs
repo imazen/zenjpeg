@@ -1226,6 +1226,31 @@ impl<'a> JpegParser<'a> {
         // ---- Main MCU row loop ----
         let c_data_offset = if need_fancy { c_strip_width } else { 0 };
 
+        // Horizontal chroma padding: libjpeg-turbo's upsampler uses
+        // downsampled_width, not the MCU-padded width. Edge-replicate
+        // the last real column over padding columns so our upsampler
+        // (which uses c_strip_width) doesn't interpolate with padding.
+        let downsampled_w = (width + h_ratio - 1) / h_ratio;
+        let has_h_padding = downsampled_w < c_strip_width;
+
+        // Edge-replicate horizontal padding columns in an extended chroma buffer.
+        // Covers rows [c_data_offset..c_data_offset + c_strip_height * c_strip_width].
+        let fixup_h_padding = |buf: &mut [i16]| {
+            if !has_h_padding {
+                return;
+            }
+            // Also fixup above/below context rows if present
+            let total_rows = if need_fancy { ext_height } else { c_strip_height };
+            let start_offset = 0; // include above context row
+            for row in 0..total_rows {
+                let row_off = start_offset + row * c_strip_width;
+                let last_val = buf[row_off + downsampled_w - 1];
+                for col in downsampled_w..c_strip_width {
+                    buf[row_off + col] = last_val;
+                }
+            }
+        };
+
         if need_fancy {
             // ============================================================
             // Fancy h2v2: double-buffered Y + chroma with 1-row lag
@@ -1280,6 +1305,8 @@ impl<'a> JpegParser<'a> {
                         .copy_from_slice(&cr_b[c_strip_width..2 * c_strip_width]);
 
                     // Output pending MCU row (A has full context now)
+                    fixup_h_padding(&mut cb_a);
+                    fixup_h_padding(&mut cr_a);
                     upsample(
                         &cb_a,
                         c_strip_width,
@@ -1326,11 +1353,33 @@ impl<'a> JpegParser<'a> {
 
             // Flush last pending MCU row (below context = edge replicate)
             if mcu_rows > 0 {
+                // For the last MCU row, edge-replicate from the last REAL chroma
+                // row, not the last padding row. The encoder pads MCU boundaries
+                // by replicating pixel rows before DCT, but IDCT rounding means
+                // decoded padding rows differ slightly from the last real row.
+                // libjpeg-turbo's set_bottom_pointers() does this same truncation.
+                let downsampled_h = (height + v_ratio - 1) / v_ratio;
+                let real_rows_in_strip =
+                    c_strip_height.min(downsampled_h.saturating_sub((mcu_rows - 1) * c_strip_height));
+                if real_rows_in_strip < c_strip_height {
+                    // Edge-replicate last real row over padding rows
+                    // Data rows are at offset c_data_offset (1 row for fancy context)
+                    let last_real = c_data_offset + (real_rows_in_strip - 1) * c_strip_width;
+                    for pad_row in real_rows_in_strip..c_strip_height {
+                        let dst = c_data_offset + pad_row * c_strip_width;
+                        cb_a.copy_within(last_real..last_real + c_strip_width, dst);
+                        cr_a.copy_within(last_real..last_real + c_strip_width, dst);
+                    }
+                }
+
                 let last_data = c_strip_height * c_strip_width;
                 let below_start = (c_strip_height + 1) * c_strip_width;
+                // Now last_data points to the edge-replicated row (== last real row)
                 cb_a.copy_within(last_data..last_data + c_strip_width, below_start);
                 cr_a.copy_within(last_data..last_data + c_strip_width, below_start);
 
+                fixup_h_padding(&mut cb_a);
+                fixup_h_padding(&mut cr_a);
                 upsample(
                     &cb_a,
                     c_strip_width,
