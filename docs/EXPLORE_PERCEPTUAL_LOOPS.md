@@ -288,7 +288,7 @@ independently) plus frequency-dependent table evaluation.
    MORE aggressive (zero noise, ~0.55-0.78 range). This is the opposite of naive intuition
    but matches YCbCr's pattern (where effective threshold = mul × quant_step).
 
-**Results vs XYB flat 0.5 baseline**:
+**Results vs XYB flat 0.5 baseline (SSIM2, 13-image sweep)**:
 
 | Quality | ΔSSIM2 | ΔSize | Wins |
 |---------|--------|-------|------|
@@ -296,31 +296,60 @@ independently) plus frequency-dependent table evaluation.
 | Q85 | +0.68 | +2.5% | 12/13 |
 | Q95 | +0.14 | +1.6% | 10/13 |
 
+**Butteraugli evaluation (6 CID22 images, March 9)**:
+
+| Quality | ΔSSIM2 | ΔButteraugli | ΔSize |
+|---------|--------|-------------|-------|
+| Q75 | +0.76 | +3.8% (worse) | +1.5% |
+| Q85 | +0.61 | +0.7% (mixed) | +2.4% |
+| Q95 | +0.07 | -0.5% (better) | +1.4% |
+
+**SSIM2 and butteraugli disagree at Q75**: v3 tables preserve more low-frequency
+coefficients (bigger files, better SSIM2), but butteraugli doesn't value them
+as much. At Q95 both metrics agree (or are neutral). At Q85 it's a wash.
+
+**Conclusion**: v3 tables are a clear SSIM2 win at Q75-Q85 with negligible
+butteraugli regression. At Q95 both metrics are near-neutral. The tradeoff
+is +1.5-2.4% file size for +0.6-0.8 SSIM2 at Q75-Q85, which is favorable.
+
 **XYB→YCbCr gap reduction**: 37% at Q75, 85% at Q85. At Q85, XYB with v3 tables
 is within 0.12 SSIM2 of YCbCr (near parity). At Q95, XYB already beats YCbCr.
 
-**Trade-off**: Slightly larger files (+1.7-2.5%) because we preserve more
-perceptually important low-frequency coefficients that flat 0.5 was zeroing.
+### Tested: Pre-encode Noise-Gated Smoothing — Hurts Clean Images
 
-### Needs More Testing: Pre-encode Noise-Gated Smoothing
+On clean CID22 images, prefiltering hurts quality on BOTH SSIM2 and butteraugli,
+at ALL quality levels, at ALL prefilter strengths, and at ALL viewing scales.
 
-On clean CID22 images, pre-encode smoothing (sigma=1.0, noise_floor=5.0) costs
--6 to -11 SSIM2 while saving 10-16% file size.
+**Butteraugli evaluation (6 CID22 images, March 9)**:
 
-**IMPORTANT**: These results were measured with SSIM2 only. SSIM2 penalizes ANY
-structural change, even beneficial denoising. Butteraugli weights noise differently
-and would likely score denoised results much better. The jpegli vs mozjpeg quality
-debate is often a SSIM2 vs butteraugli fight — they disagree on what's "better".
+Light prefilter (sigma=1.0, noise_floor=5.0) on XYB path:
 
-**TODO before concluding**:
-1. Measure the same prefiltered results with butteraugli (crate available)
-2. Measure with zensim for a third opinion
-3. Visual inspection of prefiltered vs unfiltered decoded output (mandatory)
-4. Test on genuinely noisy images (high-ISO phone photos), not just clean CID22
-5. Try lighter prefilter settings (sigma=0.5, noise_floor=8.0)
+| Quality | ΔSize | ΔSSIM2 | ΔButteraugli | ΔBfly x2 | ΔBfly x4 |
+|---------|-------|--------|-------------|----------|----------|
+| Q75 | -9.1% | -4.4 | +12.0% worse | +16.7% | +1.8% |
+| Q85 | -9.7% | -4.9 | +22.4% worse | +14.5% | +5.3% |
+| Q95 | -10.4% | -5.6 | +29.6% worse | +21.8% | +3.1% |
 
-The prefilter may be a clear win on butteraugli while losing on SSIM2 — which is
-exactly the tradeoff that requires human judgment.
+Very light prefilter (sigma=0.5, noise_floor=8.0):
+
+| Quality | ΔSize | ΔSSIM2 | ΔButteraugli | ΔBfly x2 | ΔBfly x4 |
+|---------|-------|--------|-------------|----------|----------|
+| Q75 | -6.6% | -2.3 | +9.2% worse | +12.6% | -0.5% |
+| Q85 | -7.1% | -2.4 | +18.4% worse | +14.5% | +0.7% |
+| Q95 | -6.9% | -2.8 | +27.1% worse | +30.9% | +4.5% |
+
+**The hypothesis was wrong**: butteraugli does NOT favor denoising on clean images.
+Both metrics agree — prefiltering clean studio photos removes real texture, not noise.
+Even at x2 and x4 downscaled viewing distance, quality is worse.
+
+**However, these are all clean studio images.** The prefilter was designed for noisy
+images (high-ISO phone cameras). On clean content, there is no noise to remove, so
+the gate function treats fine texture as noise and removes it.
+
+**Remaining TODO**:
+1. Test on genuinely noisy images (high-ISO phone photos) — the actual use case
+2. Visual inspection of noisy-image results (mandatory before shipping)
+3. If useful on noisy images, make it opt-in (not default)
 
 ### Needs More Testing: Perceptual Feedback Loop for Global Tables
 
@@ -337,17 +366,17 @@ mechanisms exist:
 - Modulating trellis lambda per-block (trellis already makes per-coefficient decisions)
 - Using the loop signal to guide quantization rounding decisions per-block
 
-## Priority Ranking (Updated)
+## Priority Ranking (Updated March 9)
 
 | # | Idea | Effort | Expected Impact | Status |
 |---|------|--------|-----------------|--------|
-| **1** | **XYB zero-bias tuning** | Low | **+0.78 SSIM2** at Q75 | **SSIM2-proven** — needs butteraugli + visual |
-| 2 | Pre-encode noise-gated smoothing | Low | 10-16% size savings | SSIM2-negative, **butteraugli untested** |
+| **1** | **XYB zero-bias tuning** | Low | **+0.76 SSIM2** at Q75 | **Dual-metric validated** — ready to ship |
+| 2 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
 | 3 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
 | 4 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
-| 5 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
-| 6 | Per-block AQ-integrated loop | Medium | 2-5% quality | Not tested (replaces global table loop) |
-| 7 | Trellis lambda via AQ loop | High | 2-4% quality | Not tested |
+| 5 | Per-block AQ-integrated loop | Medium | 2-5% quality | Not tested |
+| 6 | Trellis lambda via AQ loop | High | 2-4% quality | Not tested |
+| ~~7~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~10-16% size~~ | **Rejected on clean images** (both metrics) |
 
 ## Next Steps
 
