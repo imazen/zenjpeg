@@ -1,20 +1,24 @@
-//! Exploration: pre-encode denoising, noise-aware zero-bias, and perceptual loops.
+//! Exploration: XYB zero-bias tuning with SSIMULACRA2 evaluation.
 //!
-//! Tests three compression improvement strategies:
-//! 1. Pre-encode noise-gated smoothing (reduce source entropy in flat regions)
-//! 2. Noise-aware zero-bias (per-block noise energy → modulate zero_bias_mul)
-//! 3. Encode-decode-measure loop (perceptual feedback for zero-bias redistribution)
+//! Tests improved XYB zero-bias tables against the hardcoded 0.5 baseline.
+//! Measures quality with SSIMULACRA2 (perceptually calibrated) instead of PSNR.
 //!
-//! Also benchmarks XYB with per-component zero-bias vs the hardcoded 0.5.
+//! Three modes:
+//! 1. `sweep` - Systematic per-component mul sweep to find optimal values
+//! 2. `bench` - Compare pre-encode denoising, tuned tables, and perceptual loop
+//! 3. `prefilter` - Test pre-encode noise-gated smoothing
 //!
 //! Usage:
-//!   cargo run --release --example explore_prefilter -- [image.png ...]
-//!   cargo run --release --example explore_prefilter -- ~/work/codec-corpus/cid22/*.png
+//!   cargo run --release --example explore_prefilter -- sweep image1.png [image2.png ...]
+//!   cargo run --release --example explore_prefilter -- bench image1.png [image2.png ...]
+//!   cargo run --release --example explore_prefilter -- prefilter image1.png [image2.png ...]
 
 use std::env;
 use std::path::Path;
 use std::time::Instant;
 
+use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
+use zenjpeg::encode::tuning::EncodingTables;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 // ============================================================================
@@ -38,13 +42,10 @@ fn gaussian_kernel(sigma: f32) -> Vec<f32> {
     kernel
 }
 
-/// Separable 2D Gaussian blur on a single f32 plane.
-/// `buf` is width×height in row-major order.
 fn gaussian_blur_2d(buf: &[f32], width: usize, height: usize, sigma: f32) -> Vec<f32> {
     let kernel = gaussian_kernel(sigma);
     let radius = kernel.len() / 2;
 
-    // Horizontal pass
     let mut h_out = vec![0.0f32; width * height];
     for y in 0..height {
         for x in 0..width {
@@ -58,7 +59,6 @@ fn gaussian_blur_2d(buf: &[f32], width: usize, height: usize, sigma: f32) -> Vec
         }
     }
 
-    // Vertical pass
     let mut out = vec![0.0f32; width * height];
     for y in 0..height {
         for x in 0..width {
@@ -75,13 +75,9 @@ fn gaussian_blur_2d(buf: &[f32], width: usize, height: usize, sigma: f32) -> Vec
 }
 
 // ============================================================================
-// Idea 1: Pre-encode noise-gated smoothing
+// Pre-encode noise-gated smoothing
 // ============================================================================
 
-/// Noise-gated smoothing on an f32 plane (one channel).
-///
-/// Smooths flat regions where noise dominates, preserves textured regions.
-/// Based on zenfilter's AdaptiveSharpen noise gate pattern.
 fn noise_gated_smooth(
     plane: &[f32],
     width: usize,
@@ -89,22 +85,16 @@ fn noise_gated_smooth(
     sigma: f32,
     noise_floor: f32,
 ) -> Vec<f32> {
-    // 1. Blur to get local average
     let blurred = gaussian_blur_2d(plane, width, height, sigma);
 
-    // 2. Compute detail (high-frequency content)
     let mut detail_sq = vec![0.0f32; width * height];
     for i in 0..plane.len() {
         let d = plane[i] - blurred[i];
         detail_sq[i] = d * d;
     }
 
-    // 3. Estimate local energy = blur(detail^2, sigma*3)
     let energy = gaussian_blur_2d(&detail_sq, width, height, sigma * 3.0);
 
-    // 4. Apply noise gate: gate = sqrt(energy) / (sqrt(energy) + noise_floor)
-    //    gate ≈ 0 → flat region → use blurred (smooth)
-    //    gate ≈ 1 → textured → keep original
     let mut out = vec![0.0f32; width * height];
     for i in 0..plane.len() {
         let e = energy[i].sqrt();
@@ -114,8 +104,6 @@ fn noise_gated_smooth(
     out
 }
 
-/// Apply noise-gated smoothing to RGB pixels (operates per-channel).
-/// Returns modified pixel buffer. `strength` scales noise_floor inversely.
 fn prefilter_rgb(
     pixels: &[u8],
     width: usize,
@@ -125,7 +113,6 @@ fn prefilter_rgb(
 ) -> Vec<u8> {
     let npix = width * height;
 
-    // Separate into channels (f32, 0..255 range)
     let mut r = vec![0.0f32; npix];
     let mut g = vec![0.0f32; npix];
     let mut b = vec![0.0f32; npix];
@@ -135,12 +122,10 @@ fn prefilter_rgb(
         b[i] = pixels[i * 3 + 2] as f32;
     }
 
-    // Apply noise-gated smoothing to each channel
     let r_f = noise_gated_smooth(&r, width, height, sigma, noise_floor);
     let g_f = noise_gated_smooth(&g, width, height, sigma, noise_floor);
     let b_f = noise_gated_smooth(&b, width, height, sigma, noise_floor);
 
-    // Recombine
     let mut out = vec![0u8; npix * 3];
     for i in 0..npix {
         out[i * 3] = r_f[i].round().clamp(0.0, 255.0) as u8;
@@ -151,231 +136,172 @@ fn prefilter_rgb(
 }
 
 // ============================================================================
-// Idea 2: Noise-aware zero-bias modulation for XYB
+// SSIMULACRA2 quality metric
 // ============================================================================
 
-use zenjpeg::encode::tuning::EncodingTables;
+fn bytes_to_linear(data: &[u8], width: usize, height: usize) -> LinearRgbImage {
+    let pixels: Vec<[f32; 3]> = data
+        .chunks_exact(3)
+        .map(|rgb| {
+            [
+                srgb_u8_to_linear(rgb[0]),
+                srgb_u8_to_linear(rgb[1]),
+                srgb_u8_to_linear(rgb[2]),
+            ]
+        })
+        .collect();
+    LinearRgbImage::new(pixels, width, height)
+}
 
-/// Generate per-component, per-frequency XYB zero-bias tables.
+fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    let orig = bytes_to_linear(original, width, height);
+    let dec = bytes_to_linear(decoded, width, height);
+    compute_frame_ssimulacra2(orig, dec).unwrap_or(-99.0)
+}
+
+// ============================================================================
+// XYB zero-bias table generators
+// ============================================================================
+
+/// Frequency-dependent XYB zero-bias tables, v3.
 ///
-/// Instead of flat 0.5 for all AC, use frequency-dependent values:
-/// - Low AC frequencies (perceptually important): lower mul → preserve more
-/// - High AC frequencies (noise-like): higher mul → zero more aggressively
-/// - B channel (subsampled, less sensitive): higher mul overall
-/// - Y channel (most sensitive): lower mul
-fn xyb_tuned_zero_bias(distance: f32) -> EncodingTables {
+/// Sweep results (13 CID22 images) showed:
+/// - Y channel mul is by far the most impactful (±5 SSIM2 range)
+/// - X and B channels have minimal impact (±0.5 SSIM2, B is subsampled)
+/// - At Q75/low quality: higher mul (0.5-0.7) improves SSIM2 by zeroing noise
+/// - At Q95/high quality: lower mul (0.3-0.5) preserves detail
+/// - DC-adjacent coefficients (positions [0,1] and [1,0]) must be very low
+///
+/// Design: HQ tables are LESS aggressive than baseline 0.5 (preserve detail),
+/// LQ tables are MORE aggressive (zero noise). Quality blending interpolates.
+fn xyb_tuned_zero_bias_v2(distance: f32) -> EncodingTables {
     let mut tables = EncodingTables::default_xyb();
 
-    // Frequency importance weights (row-major 8x8 DCT)
-    // Lower = more perceptually important = preserve more
-    // Arranged as 8 rows × 8 columns, top-left = DC (lowest freq)
+    // Quality blending: 0.0 = HQ (distance ≤ 1.0), 1.0 = LQ (distance ≥ 3.0)
+    let lq_mix = ((distance - 1.0) / 2.0).clamp(0.0, 1.0);
+
+    // --- Y channel (component 1 in XYB) ---
+    // Most sensitive. DC-adjacent must be very low.
+    // HQ: below 0.5 baseline to preserve detail at high quality.
+    // LQ: above 0.5 baseline to zero noise at low quality.
     #[rustfmt::skip]
-    let freq_importance: [f32; 64] = [
-        0.0,  0.30, 0.35, 0.40, 0.50, 0.55, 0.60, 0.65,
-        0.30, 0.35, 0.40, 0.50, 0.55, 0.60, 0.65, 0.70,
-        0.35, 0.40, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75,
-        0.40, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80,
-        0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85,
-        0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90,
-        0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95,
-        0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00,
+    let y_hq: [f32; 64] = [
+        0.00, 0.01, 0.08, 0.20, 0.30, 0.35, 0.38, 0.40,
+        0.01, 0.15, 0.25, 0.32, 0.35, 0.38, 0.40, 0.42,
+        0.08, 0.25, 0.35, 0.38, 0.40, 0.42, 0.44, 0.45,
+        0.20, 0.32, 0.38, 0.42, 0.44, 0.45, 0.46, 0.48,
+        0.30, 0.35, 0.40, 0.44, 0.45, 0.46, 0.48, 0.48,
+        0.35, 0.38, 0.42, 0.45, 0.46, 0.48, 0.48, 0.50,
+        0.38, 0.40, 0.44, 0.46, 0.48, 0.48, 0.50, 0.50,
+        0.40, 0.42, 0.45, 0.48, 0.48, 0.50, 0.50, 0.50,
+    ];
+    #[rustfmt::skip]
+    let y_lq: [f32; 64] = [
+        0.00, 0.05, 0.25, 0.45, 0.55, 0.58, 0.62, 0.65,
+        0.05, 0.35, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68,
+        0.25, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70,
+        0.45, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72,
+        0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75,
+        0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75,
+        0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78,
+        0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78, 0.78,
     ];
 
-    // Component sensitivity multipliers
-    // X (red-green): moderate sensitivity → moderately aggressive zero-bias
-    // Y (intensity): highest sensitivity → least aggressive zero-bias
-    // B (blue-yellow, subsampled): lowest sensitivity → most aggressive zero-bias
-    //
-    // These scale AROUND 0.5 (jpegli default), not from 0.
-    // >1.0 = more aggressive than default, <1.0 = less aggressive
-    let component_scale = [1.0f32, 0.85, 1.25]; // X, Y, B
+    // --- X channel (component 0 in XYB) ---
+    // Red-green difference, chroma-like. X has very little impact (sweep shows
+    // ~0.5 SSIM2 range over the full 0.3-1.2 mul sweep), so keep close to 0.5.
+    #[rustfmt::skip]
+    let x_hq: [f32; 64] = [
+        0.00, 0.05, 0.20, 0.35, 0.42, 0.45, 0.48, 0.50,
+        0.05, 0.25, 0.38, 0.42, 0.45, 0.48, 0.50, 0.50,
+        0.20, 0.38, 0.45, 0.48, 0.50, 0.50, 0.52, 0.52,
+        0.35, 0.42, 0.48, 0.50, 0.50, 0.52, 0.52, 0.55,
+        0.42, 0.45, 0.50, 0.50, 0.52, 0.55, 0.55, 0.55,
+        0.45, 0.48, 0.50, 0.52, 0.55, 0.55, 0.55, 0.55,
+        0.48, 0.50, 0.52, 0.52, 0.55, 0.55, 0.55, 0.58,
+        0.50, 0.50, 0.52, 0.55, 0.55, 0.55, 0.58, 0.58,
+    ];
+    #[rustfmt::skip]
+    let x_lq: [f32; 64] = [
+        0.00, 0.08, 0.28, 0.45, 0.52, 0.55, 0.58, 0.60,
+        0.08, 0.35, 0.48, 0.52, 0.55, 0.58, 0.60, 0.62,
+        0.28, 0.48, 0.55, 0.58, 0.60, 0.62, 0.62, 0.65,
+        0.45, 0.52, 0.58, 0.60, 0.62, 0.65, 0.65, 0.68,
+        0.52, 0.55, 0.60, 0.62, 0.65, 0.65, 0.68, 0.68,
+        0.55, 0.58, 0.62, 0.65, 0.65, 0.68, 0.68, 0.70,
+        0.58, 0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70,
+        0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70, 0.72,
+    ];
 
-    // Quality blending: at low quality (high distance), be more aggressive
-    let quality_factor = 0.8 + 0.4 * ((distance - 0.5) / 4.0).clamp(0.0, 1.0);
+    // --- B channel (component 2 in XYB) ---
+    // Blue-yellow, subsampled, least sensitive. Sweep shows B has the least
+    // impact (~0.4 SSIM2 range). Keep slightly above 0.5 to save a few bytes.
+    #[rustfmt::skip]
+    let b_hq: [f32; 64] = [
+        0.00, 0.10, 0.30, 0.42, 0.48, 0.50, 0.52, 0.55,
+        0.10, 0.35, 0.45, 0.48, 0.50, 0.52, 0.55, 0.55,
+        0.30, 0.45, 0.50, 0.52, 0.55, 0.55, 0.58, 0.58,
+        0.42, 0.48, 0.52, 0.55, 0.55, 0.58, 0.58, 0.60,
+        0.48, 0.50, 0.55, 0.55, 0.58, 0.58, 0.60, 0.60,
+        0.50, 0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62,
+        0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62, 0.62,
+        0.55, 0.55, 0.58, 0.60, 0.60, 0.62, 0.62, 0.65,
+    ];
+    #[rustfmt::skip]
+    let b_lq: [f32; 64] = [
+        0.00, 0.15, 0.40, 0.55, 0.62, 0.68, 0.72, 0.75,
+        0.15, 0.45, 0.58, 0.62, 0.68, 0.72, 0.75, 0.78,
+        0.40, 0.58, 0.65, 0.68, 0.72, 0.75, 0.78, 0.80,
+        0.55, 0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82,
+        0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85,
+        0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85,
+        0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88,
+        0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88, 0.88,
+    ];
 
-    for c in 0..3 {
+    let channel_tables = [
+        (&x_hq, &x_lq), // component 0: X
+        (&y_hq, &y_lq), // component 1: Y
+        (&b_hq, &b_lq), // component 2: B
+    ];
+
+    for (c, (hq, lq)) in channel_tables.iter().enumerate() {
         let mul = tables.zero_bias_mul.get_mut(c);
-        for k in 1..64 {
-            // Scale around baseline 0.5, modulated by frequency, component, quality
-            let freq_scale = 0.7 + 0.6 * freq_importance[k]; // 0.7 to 1.3
-            mul[k] = 0.5 * freq_scale * component_scale[c] * quality_factor;
+        for k in 0..64 {
+            mul[k] = hq[k] * (1.0 - lq_mix) + lq[k] * lq_mix;
         }
-        mul[0] = 0.0; // DC always 0
     }
 
-    // Per-component offsets: B is less sensitive, can use higher offset
-    tables.zero_bias_offset_ac = [0.50, 0.45, 0.58]; // X, Y, B
+    // Per-component offsets (like YCbCr's ~0.58-0.59)
+    tables.zero_bias_offset_ac = [0.50, 0.48, 0.55]; // X, Y, B
 
     tables
 }
 
-// ============================================================================
-// Idea 3: Perceptual feedback loop
-// ============================================================================
-
-/// Simple encode-decode-measure loop for zero-bias redistribution.
-///
-/// 1. Encode with current zero-bias
-/// 2. Decode
-/// 3. Compute per-block MSE (proxy for perceptual error)
-/// 4. Redistribute zero-bias: high-error blocks → lower mul (keep more coeffs)
-///
-/// Returns the adjusted EncodingTables after `iters` iterations.
-fn perceptual_loop_xyb(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-    quality: u8,
-    iters: usize,
-) -> EncodingTables {
-    let mut tables = xyb_tuned_zero_bias(quality_to_distance(quality));
-
-    let bw = (width + 7) / 8;
-    let bh = (height + 7) / 8;
-    let num_blocks = bw * bh;
-
-    // Per-block zero-bias scale factors (start at 1.0)
-    let mut block_scales = vec![1.0f32; num_blocks];
-
-    for iter in 0..iters {
-        // Build tables with per-block scaling baked into component 1 (Y) mul
-        // We can't actually do per-block tables in JPEG, so we adjust the
-        // GLOBAL tables based on the AVERAGE error pattern from the previous encode.
-        // The per-block scales inform which frequencies need adjustment.
-
-        // Encode
-        let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
-
-        // Decode
-        let decoded = decode_jpeg_to_rgb_u8(&jpeg);
-        if decoded.len() != pixels.len() {
-            eprintln!(
-                "  loop iter {}: decode size mismatch ({} vs {}), skipping",
-                iter,
-                decoded.len(),
-                pixels.len()
-            );
-            break;
-        }
-
-        // Compute per-block MSE
-        let block_mse = compute_block_mse(pixels, &decoded, width, height);
-
-        // Compute statistics
-        let avg_mse: f32 = block_mse.iter().sum::<f32>() / block_mse.len() as f32;
-        let max_mse = block_mse.iter().copied().fold(0.0f32, f32::max);
-
-        eprintln!(
-            "  loop iter {}: avg_mse={:.1} max_mse={:.1} jpeg_size={}",
-            iter,
-            avg_mse,
-            max_mse,
-            jpeg.len()
-        );
-
-        if avg_mse < 1.0 {
-            break; // Good enough
-        }
-
-        // Sum-preserving redistribution (zensim style)
-        // High MSE blocks → lower zero-bias (keep more coefficients)
-        // Low MSE blocks → higher zero-bias (zero more coefficients)
-        let k_alpha = 0.15;
-        let mut new_scales = vec![0.0f32; num_blocks];
-        let mut sum_before = 0.0f32;
-        let mut sum_after = 0.0f32;
-
-        for bi in 0..num_blocks {
-            sum_before += block_scales[bi];
-
-            let ratio = if avg_mse > 0.0 {
-                block_mse[bi] / avg_mse
-            } else {
-                1.0
-            };
-            // High error → factor > 1 → LOWER zero-bias mul (1/factor applied to mul)
-            let factor = (1.0 + k_alpha * (ratio - 1.0)).clamp(0.5, 2.0);
-            // Invert: high error should reduce zero-bias (keep more coeffs)
-            new_scales[bi] = block_scales[bi] / factor;
-            sum_after += new_scales[bi];
-        }
-
-        // Renormalize to preserve sum (keeps overall file size stable)
-        if sum_after > 0.0 {
-            let renorm = sum_before / sum_after;
-            for v in &mut new_scales {
-                *v *= renorm;
-            }
-        }
-        block_scales = new_scales;
-
-        // Aggregate block_scales into frequency-domain adjustments
-        // Group blocks by error quartile and adjust per-frequency mul
-        adjust_tables_from_block_scales(&mut tables, &block_scales, &block_mse, avg_mse);
+/// Simple uniform per-component scaling for sweep tests.
+fn xyb_uniform_bias(x_mul: f32, y_mul: f32, b_mul: f32) -> EncodingTables {
+    let mut tables = EncodingTables::default_xyb();
+    for k in 1..64 {
+        tables.zero_bias_mul.get_mut(0)[k] = x_mul;
+        tables.zero_bias_mul.get_mut(1)[k] = y_mul;
+        tables.zero_bias_mul.get_mut(2)[k] = b_mul;
     }
-
     tables
 }
 
-/// Adjust EncodingTables based on spatial error pattern.
-///
-/// Blocks with high error tend to have specific frequency patterns.
-/// We measure which frequencies contribute most to high-error blocks
-/// and reduce zero-bias mul for those frequencies.
-fn adjust_tables_from_block_scales(
-    tables: &mut EncodingTables,
-    block_scales: &[f32],
-    block_mse: &[f32],
-    avg_mse: f32,
-) {
-    // Split blocks into high-error and low-error groups
-    let mut high_error_scale_sum = 0.0f32;
-    let mut low_error_scale_sum = 0.0f32;
-    let mut high_count = 0usize;
-    let mut low_count = 0usize;
-
-    for (bi, &mse) in block_mse.iter().enumerate() {
-        if mse > avg_mse * 1.5 {
-            high_error_scale_sum += block_scales[bi];
-            high_count += 1;
-        } else if mse < avg_mse * 0.5 {
-            low_error_scale_sum += block_scales[bi];
-            low_count += 1;
-        }
-    }
-
-    if high_count == 0 || low_count == 0 {
-        return;
-    }
-
-    let high_avg = high_error_scale_sum / high_count as f32;
-    let low_avg = low_error_scale_sum / low_count as f32;
-
-    // If high-error blocks have lower scales (need less zeroing),
-    // globally reduce zero-bias for mid-high frequencies
-    let adjustment = (high_avg / low_avg).clamp(0.8, 1.2);
-
-    for c in 0..3 {
-        let mul = tables.zero_bias_mul.get_mut(c);
-        for k in 8..64 {
-            // Adjust mid-high frequencies based on error pattern
-            mul[k] *= adjustment;
-        }
-    }
-}
-
 // ============================================================================
-// Helpers
+// Encode/decode helpers
 // ============================================================================
 
 fn quality_to_distance(quality: u8) -> f32 {
-    // Approximate jpegli quality → butteraugli distance mapping
-    if quality >= 100 {
+    // Match jpegli's quality_to_distance exactly
+    let q = quality as f32;
+    if q >= 100.0 {
         0.01
-    } else if quality >= 95 {
-        0.1 + (100.0 - quality as f32) * 0.08
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
     } else {
-        0.5 + (95.0 - quality as f32) * 0.1
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
     }
 }
 
@@ -431,6 +357,417 @@ fn decode_jpeg_to_rgb_u8(jpeg: &[u8]) -> Vec<u8> {
     result.pixels_u8().expect("u8 pixels").to_vec()
 }
 
+fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
+    let file = std::fs::File::open(path).expect("open png");
+    let reader = std::io::BufReader::new(file);
+    let decoder = png::Decoder::new(reader);
+    let mut reader = decoder.read_info().expect("read info");
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("output size")];
+    let info = reader.next_frame(&mut buf).expect("read frame");
+    buf.truncate(info.buffer_size());
+
+    let width = info.width as usize;
+    let height = info.height as usize;
+
+    match info.color_type {
+        png::ColorType::Rgb => (buf, width, height),
+        png::ColorType::Rgba => {
+            let mut rgb = vec![0u8; width * height * 3];
+            for i in 0..(width * height) {
+                rgb[i * 3] = buf[i * 4];
+                rgb[i * 3 + 1] = buf[i * 4 + 1];
+                rgb[i * 3 + 2] = buf[i * 4 + 2];
+            }
+            (rgb, width, height)
+        }
+        png::ColorType::Grayscale => {
+            let mut rgb = vec![0u8; width * height * 3];
+            for i in 0..(width * height) {
+                rgb[i * 3] = buf[i];
+                rgb[i * 3 + 1] = buf[i];
+                rgb[i * 3 + 2] = buf[i];
+            }
+            (rgb, width, height)
+        }
+        _ => panic!("Unsupported color type: {:?}", info.color_type),
+    }
+}
+
+// ============================================================================
+// Mode 1: Per-component mul sweep
+// ============================================================================
+
+fn run_sweep(paths: &[String]) {
+    println!("image\tquality\tmode\tx_mul\ty_mul\tb_mul\tsize\tssim2");
+
+    // Sweep values: test a grid of uniform per-component multipliers
+    let mul_values = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2];
+    let qualities = [75u8, 85, 95];
+
+    for path in paths {
+        if !Path::new(path).exists() {
+            eprintln!("Skipping {}: not found", path);
+            continue;
+        }
+
+        let name = Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let (pixels, width, height) = load_png(path);
+        eprintln!("Loaded {} ({}x{})", name, width, height);
+
+        for &q in &qualities {
+            // Baselines
+            let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
+            let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
+            let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            println!(
+                "{}\t{}\tycbcr\t-\t-\t-\t{}\t{:.2}",
+                name,
+                q,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr
+            );
+
+            let jpeg_xyb = encode_xyb(&pixels, width, height, q);
+            let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
+            let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
+            println!(
+                "{}\t{}\txyb_0.5\t0.5\t0.5\t0.5\t{}\t{:.2}",
+                name,
+                q,
+                jpeg_xyb.len(),
+                ss2_xyb
+            );
+
+            // Tuned v2 (frequency-dependent)
+            let tuned = xyb_tuned_zero_bias_v2(quality_to_distance(q));
+            let jpeg_tuned = encode_xyb_with_tables(&pixels, width, height, q, &tuned);
+            let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
+            let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
+            println!(
+                "{}\t{}\txyb_tuned_v2\t-\t-\t-\t{}\t{:.2}",
+                name,
+                q,
+                jpeg_tuned.len(),
+                ss2_tuned
+            );
+
+            // Sweep: vary Y with X=0.6, B=0.9 (based on YCbCr patterns)
+            for &y_mul in &mul_values {
+                let tables = xyb_uniform_bias(0.6, y_mul, 0.9);
+                let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
+                let dec = decode_jpeg_to_rgb_u8(&jpeg);
+                let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                println!(
+                    "{}\t{}\tsweep_y\t0.6\t{:.1}\t0.9\t{}\t{:.2}",
+                    name,
+                    q,
+                    y_mul,
+                    jpeg.len(),
+                    ss2
+                );
+            }
+
+            // Sweep: vary X with Y=0.5, B=0.9
+            for &x_mul in &mul_values {
+                let tables = xyb_uniform_bias(x_mul, 0.5, 0.9);
+                let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
+                let dec = decode_jpeg_to_rgb_u8(&jpeg);
+                let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                println!(
+                    "{}\t{}\tsweep_x\t{:.1}\t0.5\t0.9\t{}\t{:.2}",
+                    name,
+                    q,
+                    x_mul,
+                    jpeg.len(),
+                    ss2
+                );
+            }
+
+            // Sweep: vary B with X=0.6, Y=0.5
+            for &b_mul in &mul_values {
+                let tables = xyb_uniform_bias(0.6, 0.5, b_mul);
+                let jpeg = encode_xyb_with_tables(&pixels, width, height, q, &tables);
+                let dec = decode_jpeg_to_rgb_u8(&jpeg);
+                let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                println!(
+                    "{}\t{}\tsweep_b\t0.6\t0.5\t{:.1}\t{}\t{:.2}",
+                    name,
+                    q,
+                    b_mul,
+                    jpeg.len(),
+                    ss2
+                );
+            }
+
+            eprintln!("  Q{} done", q);
+        }
+    }
+}
+
+// ============================================================================
+// Mode 2: Full benchmark (prefilter + tuned tables + loop)
+// ============================================================================
+
+fn run_benchmark(paths: &[String]) {
+    println!("image\tquality\tmode\tsize\tssim2\tsize_vs_ycbcr\tssim2_vs_ycbcr\tms");
+
+    let qualities = [75u8, 85, 95];
+
+    for path in paths {
+        if !Path::new(path).exists() {
+            eprintln!("Skipping {}: not found", path);
+            continue;
+        }
+
+        let name = Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let (pixels, width, height) = load_png(path);
+        eprintln!("\n=== {} ({}x{}) ===", name, width, height);
+
+        for &q in &qualities {
+            let report = |label: &str, size: usize, ss2: f64, base_size: usize, base_ss2: f64, ms: f64| {
+                let delta_pct = (size as f64 / base_size as f64 - 1.0) * 100.0;
+                let delta_ss2 = ss2 - base_ss2;
+                println!(
+                    "{}\t{}\t{}\t{}\t{:.2}\t{:+.1}%\t{:+.2}\t{:.0}",
+                    name, q, label, size, ss2, delta_pct, delta_ss2, ms
+                );
+            };
+
+            // YCbCr baseline
+            let t0 = Instant::now();
+            let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
+            let t_ycbcr = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
+            let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            report("ycbcr", jpeg_ycbcr.len(), ss2_ycbcr, jpeg_ycbcr.len(), ss2_ycbcr, t_ycbcr);
+
+            // XYB baseline (flat 0.5)
+            let t0 = Instant::now();
+            let jpeg_xyb = encode_xyb(&pixels, width, height, q);
+            let t_xyb = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
+            let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
+            report("xyb_0.5", jpeg_xyb.len(), ss2_xyb, jpeg_ycbcr.len(), ss2_ycbcr, t_xyb);
+
+            // XYB tuned v2 (frequency-dependent, YCbCr-inspired)
+            let t0 = Instant::now();
+            let tuned = xyb_tuned_zero_bias_v2(quality_to_distance(q));
+            let jpeg_tuned = encode_xyb_with_tables(&pixels, width, height, q, &tuned);
+            let t_tuned = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
+            let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
+            report("xyb_tuned_v2", jpeg_tuned.len(), ss2_tuned, jpeg_ycbcr.len(), ss2_ycbcr, t_tuned);
+
+            // Prefilter + XYB baseline
+            let t0 = Instant::now();
+            let filtered = prefilter_rgb(&pixels, width, height, 1.0, 5.0);
+            let jpeg_pf_xyb = encode_xyb(&filtered, width, height, q);
+            let t_pf = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_pf_xyb = decode_jpeg_to_rgb_u8(&jpeg_pf_xyb);
+            // Compare decoded against ORIGINAL pixels
+            let ss2_pf_xyb = compute_ssim2(&pixels, &dec_pf_xyb, width, height);
+            report("prefilter+xyb", jpeg_pf_xyb.len(), ss2_pf_xyb, jpeg_ycbcr.len(), ss2_ycbcr, t_pf);
+
+            // Prefilter + tuned v2
+            let t0 = Instant::now();
+            let jpeg_pf_tuned = encode_xyb_with_tables(&filtered, width, height, q, &tuned);
+            let t_pf_tuned = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_pf_tuned = decode_jpeg_to_rgb_u8(&jpeg_pf_tuned);
+            let ss2_pf_tuned = compute_ssim2(&pixels, &dec_pf_tuned, width, height);
+            report("prefilter+tuned_v2", jpeg_pf_tuned.len(), ss2_pf_tuned, jpeg_ycbcr.len(), ss2_ycbcr, t_pf_tuned);
+
+            // Perceptual loop (2 iterations, using tuned v2 as starting point)
+            let t0 = Instant::now();
+            let loop_tables = perceptual_loop_xyb(&pixels, width, height, q, 2);
+            let jpeg_loop = encode_xyb_with_tables(&pixels, width, height, q, &loop_tables);
+            let t_loop = t0.elapsed().as_secs_f64() * 1000.0;
+            let dec_loop = decode_jpeg_to_rgb_u8(&jpeg_loop);
+            let ss2_loop = compute_ssim2(&pixels, &dec_loop, width, height);
+            report("percept_loop_2", jpeg_loop.len(), ss2_loop, jpeg_ycbcr.len(), ss2_ycbcr, t_loop);
+
+            eprintln!("  Q{} done", q);
+        }
+    }
+}
+
+// ============================================================================
+// Mode 3: Prefilter-only comparison
+// ============================================================================
+
+fn run_prefilter(paths: &[String]) {
+    println!("image\tquality\tmode\tsize\tssim2\tsize_vs_base\tssim2_vs_base");
+
+    let qualities = [75u8, 85, 95];
+    let configs = [
+        ("light", 1.0f32, 5.0f32),
+        ("medium", 1.5, 3.0),
+        ("heavy", 2.0, 2.0),
+    ];
+
+    for path in paths {
+        if !Path::new(path).exists() {
+            continue;
+        }
+
+        let name = Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let (pixels, width, height) = load_png(path);
+        eprintln!("Loaded {} ({}x{})", name, width, height);
+
+        for &q in &qualities {
+            // Baselines
+            let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, q);
+            let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
+            let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
+            println!(
+                "{}\t{}\tycbcr\t{}\t{:.2}\t-\t-",
+                name,
+                q,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr
+            );
+
+            let jpeg_xyb = encode_xyb(&pixels, width, height, q);
+            let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
+            let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
+            println!(
+                "{}\t{}\txyb\t{}\t{:.2}\t-\t-",
+                name,
+                q,
+                jpeg_xyb.len(),
+                ss2_xyb
+            );
+
+            for &(label, sigma, noise_floor) in &configs {
+                let filtered = prefilter_rgb(&pixels, width, height, sigma, noise_floor);
+
+                // Prefilter + YCbCr
+                let jpeg = encode_ycbcr(&filtered, width, height, q);
+                let dec = decode_jpeg_to_rgb_u8(&jpeg);
+                let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let d_size = (jpeg.len() as f64 / jpeg_ycbcr.len() as f64 - 1.0) * 100.0;
+                let d_ss2 = ss2 - ss2_ycbcr;
+                println!(
+                    "{}\t{}\tpf_{}_ycbcr\t{}\t{:.2}\t{:+.1}%\t{:+.2}",
+                    name,
+                    q,
+                    label,
+                    jpeg.len(),
+                    ss2,
+                    d_size,
+                    d_ss2
+                );
+
+                // Prefilter + XYB
+                let jpeg = encode_xyb(&filtered, width, height, q);
+                let dec = decode_jpeg_to_rgb_u8(&jpeg);
+                let ss2 = compute_ssim2(&pixels, &dec, width, height);
+                let d_size = (jpeg.len() as f64 / jpeg_xyb.len() as f64 - 1.0) * 100.0;
+                let d_ss2 = ss2 - ss2_xyb;
+                println!(
+                    "{}\t{}\tpf_{}_xyb\t{}\t{:.2}\t{:+.1}%\t{:+.2}",
+                    name,
+                    q,
+                    label,
+                    jpeg.len(),
+                    ss2,
+                    d_size,
+                    d_ss2
+                );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Perceptual feedback loop
+// ============================================================================
+
+fn perceptual_loop_xyb(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+    iters: usize,
+) -> EncodingTables {
+    let mut tables = xyb_tuned_zero_bias_v2(quality_to_distance(quality));
+
+    let bw = (width + 7) / 8;
+    let bh = (height + 7) / 8;
+    let num_blocks = bw * bh;
+
+    let mut block_scales = vec![1.0f32; num_blocks];
+
+    for iter in 0..iters {
+        let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
+        let decoded = decode_jpeg_to_rgb_u8(&jpeg);
+        if decoded.len() != pixels.len() {
+            eprintln!(
+                "  loop iter {}: decode size mismatch ({} vs {}), skipping",
+                iter,
+                decoded.len(),
+                pixels.len()
+            );
+            break;
+        }
+
+        // Compute per-block MSE
+        let block_mse = compute_block_mse(pixels, &decoded, width, height);
+        let avg_mse: f32 = block_mse.iter().sum::<f32>() / block_mse.len() as f32;
+        let max_mse = block_mse.iter().copied().fold(0.0f32, f32::max);
+
+        eprintln!(
+            "  loop iter {}: avg_mse={:.1} max_mse={:.1} jpeg_size={}",
+            iter, avg_mse, max_mse, jpeg.len()
+        );
+
+        if avg_mse < 1.0 {
+            break;
+        }
+
+        // Sum-preserving redistribution
+        let k_alpha = 0.15;
+        let mut new_scales = vec![0.0f32; num_blocks];
+        let mut sum_before = 0.0f32;
+        let mut sum_after = 0.0f32;
+
+        for bi in 0..num_blocks {
+            sum_before += block_scales[bi];
+            let ratio = if avg_mse > 0.0 {
+                block_mse[bi] / avg_mse
+            } else {
+                1.0
+            };
+            let factor = (1.0 + k_alpha * (ratio - 1.0)).clamp(0.5, 2.0);
+            new_scales[bi] = block_scales[bi] / factor;
+            sum_after += new_scales[bi];
+        }
+
+        if sum_after > 0.0 {
+            let renorm = sum_before / sum_after;
+            for v in &mut new_scales {
+                *v *= renorm;
+            }
+        }
+        block_scales = new_scales;
+
+        adjust_tables_from_block_scales(&mut tables, &block_scales, &block_mse, avg_mse);
+    }
+
+    tables
+}
+
 fn compute_block_mse(
     original: &[u8],
     decoded: &[u8],
@@ -473,203 +810,68 @@ fn compute_block_mse(
     block_mse
 }
 
-fn compute_psnr(original: &[u8], decoded: &[u8]) -> f64 {
-    let mut sum_sq = 0.0f64;
-    for i in 0..original.len() {
-        let diff = original[i] as f64 - decoded[i] as f64;
-        sum_sq += diff * diff;
-    }
-    let mse = sum_sq / original.len() as f64;
-    if mse < 0.001 {
-        99.0
-    } else {
-        10.0 * (255.0 * 255.0 / mse).log10()
-    }
-}
+fn adjust_tables_from_block_scales(
+    tables: &mut EncodingTables,
+    block_scales: &[f32],
+    block_mse: &[f32],
+    avg_mse: f32,
+) {
+    let mut high_error_scale_sum = 0.0f32;
+    let mut low_error_scale_sum = 0.0f32;
+    let mut high_count = 0usize;
+    let mut low_count = 0usize;
 
-fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
-    let file = std::fs::File::open(path).expect("open png");
-    let reader = std::io::BufReader::new(file);
-    let decoder = png::Decoder::new(reader);
-    let mut reader = decoder.read_info().expect("read info");
-    let mut buf = vec![0u8; reader.output_buffer_size().expect("output size")];
-    let info = reader.next_frame(&mut buf).expect("read frame");
-    buf.truncate(info.buffer_size());
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-
-    // Convert to RGB if needed
-    match info.color_type {
-        png::ColorType::Rgb => (buf, width, height),
-        png::ColorType::Rgba => {
-            let mut rgb = vec![0u8; width * height * 3];
-            for i in 0..(width * height) {
-                rgb[i * 3] = buf[i * 4];
-                rgb[i * 3 + 1] = buf[i * 4 + 1];
-                rgb[i * 3 + 2] = buf[i * 4 + 2];
-            }
-            (rgb, width, height)
+    for (bi, &mse) in block_mse.iter().enumerate() {
+        if mse > avg_mse * 1.5 {
+            high_error_scale_sum += block_scales[bi];
+            high_count += 1;
+        } else if mse < avg_mse * 0.5 {
+            low_error_scale_sum += block_scales[bi];
+            low_count += 1;
         }
-        png::ColorType::Grayscale => {
-            let mut rgb = vec![0u8; width * height * 3];
-            for i in 0..(width * height) {
-                rgb[i * 3] = buf[i];
-                rgb[i * 3 + 1] = buf[i];
-                rgb[i * 3 + 2] = buf[i];
-            }
-            (rgb, width, height)
+    }
+
+    if high_count == 0 || low_count == 0 {
+        return;
+    }
+
+    let high_avg = high_error_scale_sum / high_count as f32;
+    let low_avg = low_error_scale_sum / low_count as f32;
+    let adjustment = (high_avg / low_avg).clamp(0.8, 1.2);
+
+    for c in 0..3 {
+        let mul = tables.zero_bias_mul.get_mut(c);
+        for k in 8..64 {
+            mul[k] *= adjustment;
         }
-        _ => panic!("Unsupported color type: {:?}", info.color_type),
     }
 }
 
 // ============================================================================
-// Main benchmark
+// Main
 // ============================================================================
-
-fn run_benchmark(path: &str, quality: u8) {
-    let name = Path::new(path)
-        .file_stem()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-    let (pixels, width, height) = load_png(path);
-
-    eprintln!(
-        "\n=== {} ({}x{}, Q{}) ===",
-        name, width, height, quality
-    );
-
-    // Baseline: standard YCbCr encode
-    let t0 = Instant::now();
-    let jpeg_ycbcr = encode_ycbcr(&pixels, width, height, quality);
-    let t_ycbcr = t0.elapsed();
-    let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
-    let psnr_ycbcr = compute_psnr(&pixels, &dec_ycbcr);
-
-    // Baseline: standard XYB encode
-    let t0 = Instant::now();
-    let jpeg_xyb = encode_xyb(&pixels, width, height, quality);
-    let t_xyb = t0.elapsed();
-    let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
-    let psnr_xyb = compute_psnr(&pixels, &dec_xyb);
-
-    // Idea 1: Pre-encode noise-gated smoothing (light)
-    // sigma=1.0 (small kernel), noise_floor=5.0 (high threshold = only smooth very flat)
-    let t0 = Instant::now();
-    let filtered_light = prefilter_rgb(&pixels, width, height, 1.0, 5.0);
-    let jpeg_prefilter_light = encode_ycbcr(&filtered_light, width, height, quality);
-    let t_prefilter_light = t0.elapsed();
-    let dec_prefilter_light = decode_jpeg_to_rgb_u8(&jpeg_prefilter_light);
-    let psnr_prefilter_light = compute_psnr(&pixels, &dec_prefilter_light);
-
-    // Idea 1b: Pre-encode noise-gated smoothing (medium)
-    let filtered = prefilter_rgb(&pixels, width, height, 1.5, 3.0);
-    let jpeg_prefilter = encode_ycbcr(&filtered, width, height, quality);
-    let dec_prefilter = decode_jpeg_to_rgb_u8(&jpeg_prefilter);
-    // Compare decoded prefiltered against ORIGINAL (not filtered) pixels
-    let psnr_prefilter = compute_psnr(&pixels, &dec_prefilter);
-
-    // Idea 1c: Pre-filter + XYB
-    let jpeg_prefilter_xyb = encode_xyb(&filtered_light, width, height, quality);
-    let dec_prefilter_xyb = decode_jpeg_to_rgb_u8(&jpeg_prefilter_xyb);
-    let psnr_prefilter_xyb = compute_psnr(&pixels, &dec_prefilter_xyb);
-
-    // Idea 2: XYB with tuned zero-bias (per-component, per-frequency)
-    let distance = quality_to_distance(quality);
-    let tuned_tables = xyb_tuned_zero_bias(distance);
-    let t0 = Instant::now();
-    let jpeg_xyb_tuned = encode_xyb_with_tables(&pixels, width, height, quality, &tuned_tables);
-    let t_xyb_tuned = t0.elapsed();
-    let dec_xyb_tuned = decode_jpeg_to_rgb_u8(&jpeg_xyb_tuned);
-    let psnr_xyb_tuned = compute_psnr(&pixels, &dec_xyb_tuned);
-
-    // Idea 3: Perceptual feedback loop (XYB, 2 iterations)
-    let t0 = Instant::now();
-    let loop_tables = perceptual_loop_xyb(&pixels, width, height, quality, 2);
-    let jpeg_loop = encode_xyb_with_tables(&pixels, width, height, quality, &loop_tables);
-    let t_loop = t0.elapsed();
-    let dec_loop = decode_jpeg_to_rgb_u8(&jpeg_loop);
-    let psnr_loop = compute_psnr(&pixels, &dec_loop);
-
-    // Report
-    let base_size = jpeg_ycbcr.len();
-    let report = |label: &str, size: usize, psnr: f64, ms: f64| {
-        let delta_pct = (size as f64 / base_size as f64 - 1.0) * 100.0;
-        let delta_psnr = psnr - psnr_ycbcr;
-        println!(
-            "{:<30} {:>8} ({:+5.1}%)  PSNR {:.2} ({:+.2})  {:.0}ms",
-            label, size, delta_pct, psnr, delta_psnr, ms
-        );
-    };
-
-    println!(
-        "{:<30} {:>8} {:>8}  {:>10} {:>8}  {:>6}",
-        "Mode", "Size", "Δ%", "PSNR", "ΔPSNR", "ms"
-    );
-    println!("{}", "-".repeat(78));
-    report(
-        "YCbCr baseline",
-        jpeg_ycbcr.len(),
-        psnr_ycbcr,
-        t_ycbcr.as_secs_f64() * 1000.0,
-    );
-    report(
-        "XYB baseline",
-        jpeg_xyb.len(),
-        psnr_xyb,
-        t_xyb.as_secs_f64() * 1000.0,
-    );
-    report(
-        "1a: Prefilter light+YCbCr",
-        jpeg_prefilter_light.len(),
-        psnr_prefilter_light,
-        t_prefilter_light.as_secs_f64() * 1000.0,
-    );
-    report(
-        "1b: Prefilter med+YCbCr",
-        jpeg_prefilter.len(),
-        psnr_prefilter,
-        0.0,
-    );
-    report(
-        "1c: Prefilter light+XYB",
-        jpeg_prefilter_xyb.len(),
-        psnr_prefilter_xyb,
-        0.0,
-    );
-    report(
-        "2: XYB tuned zero-bias",
-        jpeg_xyb_tuned.len(),
-        psnr_xyb_tuned,
-        t_xyb_tuned.as_secs_f64() * 1000.0,
-    );
-    report(
-        "3: XYB percept loop (2 iter)",
-        jpeg_loop.len(),
-        psnr_loop,
-        t_loop.as_secs_f64() * 1000.0,
-    );
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: explore_prefilter <image.png> [image2.png ...]");
-        eprintln!("       explore_prefilter ~/work/codec-corpus/cid22/*.png");
+    if args.len() < 3 {
+        eprintln!("Usage: explore_prefilter <mode> <image.png> [image2.png ...]");
+        eprintln!("Modes:");
+        eprintln!("  sweep     - Per-component zero-bias multiplier sweep");
+        eprintln!("  bench     - Full benchmark (prefilter + tuned tables + loop)");
+        eprintln!("  prefilter - Pre-encode noise-gated smoothing comparison");
         std::process::exit(1);
     }
 
-    let qualities = [75, 85, 95];
+    let mode = &args[1];
+    let paths: Vec<String> = args[2..].to_vec();
 
-    for path in &args[1..] {
-        if !Path::new(path).exists() {
-            eprintln!("Skipping {}: not found", path);
-            continue;
-        }
-        for &q in &qualities {
-            run_benchmark(path, q);
+    match mode.as_str() {
+        "sweep" => run_sweep(&paths),
+        "bench" => run_benchmark(&paths),
+        "prefilter" => run_prefilter(&paths),
+        _ => {
+            eprintln!("Unknown mode: {}. Use sweep, bench, or prefilter.", mode);
+            std::process::exit(1);
         }
     }
 }
