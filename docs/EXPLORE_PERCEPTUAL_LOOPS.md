@@ -351,12 +351,12 @@ the gate function treats fine texture as noise and removes it.
 2. Visual inspection of noisy-image results (mandatory before shipping)
 3. If useful on noisy images, make it opt-in (not default)
 
-### Promising: Perceptual Feedback Loop for Global Zero-Bias Tables
+### Promising: MSE-Guided Perceptual Loop for Global Zero-Bias Tables
 
-The perceptual loop (encode→decode→measure per-block MSE→adjust global tables)
+The MSE-guided loop (encode→decode→measure per-block RGB MSE→adjust global tables)
 consistently improves BOTH metrics over v3 tables alone, at modest file size cost.
 
-**Butteraugli evaluation (6 CID22 images, March 9, loop vs v3 tables)**:
+**MSE loop vs v3 tables (6 CID22 images, March 9)**:
 
 | Quality | ΔSize | ΔSSIM2 | ΔButteraugli |
 |---------|-------|--------|-------------|
@@ -373,38 +373,75 @@ then adjusts the global tables to reduce high-frequency zeroing in high-error
 blocks. This is a crude form of content adaptation — it can't adjust per-block
 (JPEG constraint), but it CAN shift the global tables toward the content's needs.
 
-**Limitations**: Only 2 iterations. The MSE-based error measure could be replaced
-with actual butteraugli or SSIM2 per-block error for better perceptual targeting.
-The current approach uses simple RGB MSE which misses perceptual masking.
+### Tested: Butteraugli-Guided Loop — Ineffective
 
-**What could improve further**:
-- Adjusting per-block AQ strength based on perceptual feedback (AQ operates per-block)
-- Modulating trellis lambda per-block (trellis already makes per-coefficient decisions)
-- Using actual butteraugli/SSIM2 diffmap instead of RGB MSE for error measurement
+Replacing MSE with actual butteraugli diffmap as the per-block error signal
+produces nearly zero improvement. The butteraugli loop is a no-op.
+
+**Butteraugli loop vs v3 tables (6 CID22 images, March 9)**:
+
+| Quality | ΔSize | ΔSSIM2 | ΔButteraugli | vs MSE loop |
+|---------|-------|--------|-------------|-------------|
+| Q75 | -0.1% | -0.05 | +0.8% worse | MSE loop is 20x more effective |
+| Q85 | -0.0% | -0.07 | -0.1% (neutral) | MSE loop is 19x more effective |
+| Q95 | -0.0% | -0.02 | +0.8% worse | MSE loop is 3x more effective |
+
+4 iterations (bfly_loop_4) doesn't help either — nearly identical to 2 iterations.
+
+**Why it fails**: The fundamental mismatch is between WHAT butteraugli tells us
+and WHAT we can adjust:
+
+1. **Butteraugli provides spatial information** — WHERE error is concentrated
+   (which 8x8 blocks have high perceptual error)
+2. **JPEG only allows global table adjustment** — WHAT frequencies to keep/zero,
+   but the same table applies to ALL blocks
+3. **Sum-preserving renormalization** neutralizes changes — the loop adjusts
+   zero-bias per-frequency-band based on aggregate block error, but renormalizing
+   to preserve file size means the net effect is tiny (<0.1% table change)
+
+**Why MSE works better**: The MSE loop is more aggressive. It finds blocks with
+high RGB error (simple, but correlated with perceptual error) and shifts global
+tables to preserve more coefficients. Because it doesn't try to be sum-preserving
+in the same way, files grow +1-3% but quality improves substantially. The MSE
+signal is "noisier" (not perceptually weighted) but STRONGER — it drives bigger
+table adjustments that actually change the encoding.
+
+**Key insight**: For a global-table-only encoder like JPEG, the ERROR MAGNITUDE
+matters more than the ERROR PRECISION. MSE's crude-but-strong signal beats
+butteraugli's precise-but-weak signal because the control mechanism (global tables)
+is too coarse to exploit butteraugli's spatial precision.
+
+**Where butteraugli WOULD help**: Per-block controls (JXL's quant field, JPEG's
+AQ strength, trellis lambda). These can exploit spatial information directly.
+The butteraugli diffmap is wasted when collapsed into a global table adjustment.
 
 ## Priority Ranking (Updated March 9)
 
 | # | Idea | Effort | Expected Impact | Status |
 |---|------|--------|-----------------|--------|
-| **1** | **XYB zero-bias tuning** | Low | **+0.76 SSIM2** at Q75 | **Dual-metric validated** — ready to ship |
-| 2 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
-| 3 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
-| 4 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
-| 5 | Per-block AQ-integrated loop | Medium | 2-5% quality | Not tested |
-| 6 | Trellis lambda via AQ loop | High | 2-4% quality | Not tested |
-| ~~7~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~10-16% size~~ | **Rejected on clean images** (both metrics) |
+| **1** | **XYB zero-bias tuning (v3)** | Low | **+0.76 SSIM2** at Q75 | **Dual-metric validated** — ready to ship |
+| **2** | **MSE perceptual loop** | Low | +0.77 SSIM2, -4.8% bfly at Q75 | **Dual-metric validated** — ready to ship |
+| 3 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
+| 4 | Per-block AQ-integrated bfly loop | Medium | 2-5% quality | Not tested — best path for butteraugli |
+| 5 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
+| 6 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
+| 7 | Trellis lambda via bfly loop | High | 2-4% quality | Not tested |
+| ~~8~~ | ~~Butteraugli-guided global table loop~~ | ~~Low~~ | ~~better targeting~~ | **Ineffective** — spatial signal can't steer global tables |
+| ~~9~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~10-16% size~~ | **Rejected on clean images** (both metrics) |
 
 ## Next Steps
 
-1. **Ship v3 tables as XYB default** — replace flat 0.5 with the proven tables
+1. **Ship v3 tables + MSE loop as XYB defaults** — replace flat 0.5 with the proven
+   tables. Gate MSE loop behind effort level (2 encode+decode cycles per iteration).
 2. **CMA-ES optimization** — use the v3 tables as starting point, optimize 3×64=192
    parameters against SSIMULACRA2 on a training corpus. The sweep found Y matters most;
    CMA-ES can find non-obvious frequency interactions.
-3. **DCT-domain noise shaping** — per-block noise estimates modulate zero-bias. Unlike
+3. **Per-block AQ-integrated butteraugli loop** — feed butteraugli diffmap into AQ
+   strength rather than zero-bias tables. AQ operates per-block in JPEG, so it CAN
+   exploit spatial information. This is the correct way to use butteraugli feedback.
+4. **DCT-domain noise shaping** — per-block noise estimates modulate zero-bias. Unlike
    the global loop, this works with JPEG's architecture because it adjusts the coefficient
    rounding decisions during quantization, not the tables.
-4. **AQ-integrated perceptual loop** — feed the encode→decode→measure signal into AQ
-   strength rather than zero-bias tables. AQ operates per-block in JPEG.
 
 ## Measurement Methodology
 
