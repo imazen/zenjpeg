@@ -422,8 +422,10 @@ impl StripProcessor {
                 let last_real = (real_rows - 1) * stride;
                 for pad_row in real_rows..self.chroma_strip_height {
                     let dst = pad_row * stride;
-                    self.cb_strip.copy_within(last_real..last_real + stride, dst);
-                    self.cr_strip.copy_within(last_real..last_real + stride, dst);
+                    self.cb_strip
+                        .copy_within(last_real..last_real + stride, dst);
+                    self.cr_strip
+                        .copy_within(last_real..last_real + stride, dst);
                 }
             }
         }

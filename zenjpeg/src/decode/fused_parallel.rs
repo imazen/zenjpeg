@@ -1901,10 +1901,8 @@ impl<'a> JpegParser<'a> {
                                 c_data_offset + (real_rows_in_strip - 1) * c_strip_width;
                             for pad_row in real_rows_in_strip..c_strip_height {
                                 let dst = c_data_offset + pad_row * c_strip_width;
-                                ext_cb_a
-                                    .copy_within(last_real..last_real + c_strip_width, dst);
-                                ext_cr_a
-                                    .copy_within(last_real..last_real + c_strip_width, dst);
+                                ext_cb_a.copy_within(last_real..last_real + c_strip_width, dst);
+                                ext_cr_a.copy_within(last_real..last_real + c_strip_width, dst);
                             }
                         }
                     }

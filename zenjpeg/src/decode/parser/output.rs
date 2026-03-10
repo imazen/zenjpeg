@@ -583,8 +583,8 @@ impl<'a> JpegParser<'a> {
                 // differences vs the last real row (matching libjpeg-turbo's
                 // set_bottom_pointers behavior).
                 let downsampled_h = (height + v_ratio - 1) / v_ratio;
-                let real_rows = c_strip_height
-                    .min(downsampled_h.saturating_sub(imcu_row * c_strip_height));
+                let real_rows =
+                    c_strip_height.min(downsampled_h.saturating_sub(imcu_row * c_strip_height));
                 // Overwrite padding data rows with last real row
                 if real_rows < c_strip_height {
                     // Data rows start at offset c_strip_width (row 1 in extended buffer)

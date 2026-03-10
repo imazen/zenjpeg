@@ -1240,7 +1240,11 @@ impl<'a> JpegParser<'a> {
                 return;
             }
             // Also fixup above/below context rows if present
-            let total_rows = if need_fancy { ext_height } else { c_strip_height };
+            let total_rows = if need_fancy {
+                ext_height
+            } else {
+                c_strip_height
+            };
             let start_offset = 0; // include above context row
             for row in 0..total_rows {
                 let row_off = start_offset + row * c_strip_width;
@@ -1359,8 +1363,8 @@ impl<'a> JpegParser<'a> {
                 // decoded padding rows differ slightly from the last real row.
                 // libjpeg-turbo's set_bottom_pointers() does this same truncation.
                 let downsampled_h = (height + v_ratio - 1) / v_ratio;
-                let real_rows_in_strip =
-                    c_strip_height.min(downsampled_h.saturating_sub((mcu_rows - 1) * c_strip_height));
+                let real_rows_in_strip = c_strip_height
+                    .min(downsampled_h.saturating_sub((mcu_rows - 1) * c_strip_height));
                 if real_rows_in_strip < c_strip_height {
                     // Edge-replicate last real row over padding rows
                     // Data rows are at offset c_data_offset (1 row for fancy context)
