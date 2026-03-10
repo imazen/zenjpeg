@@ -530,16 +530,28 @@ impl zc::encode::Encoder for JpegEncoder<'_> {
         if let Some((img_w, img_h)) = self.image_size {
             if self.streaming_enc.is_none() {
                 self.check_limits(img_w, img_h, layout)?;
-                // Force baseline for streaming — progressive buffers all coefficients.
-                let baseline_config = self.effective_config.clone().progressive(false);
-                let req = self.build_request_from(&baseline_config);
+                // Force baseline + fixed Huffman for true streaming-through.
+                // Progressive buffers all coefficients; optimized Huffman
+                // buffers all blocks for two-pass frequency counting.
+                // Fixed Huffman writes blocks immediately as they arrive.
+                let streaming_config = self
+                    .effective_config
+                    .clone()
+                    .progressive(false)
+                    .optimize_huffman(false);
+                let req = self.build_request_from(&streaming_config);
                 let enc = req.encode_from_bytes(img_w, img_h, layout)?;
                 self.streaming_enc = Some(enc);
             }
             let enc = self.streaming_enc.as_mut().unwrap();
             let stop = self.stop.unwrap_or(&enough::Unstoppable);
             // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
-            enc.push(rows.as_strided_bytes(), rows.rows() as usize, rows.stride(), stop)?;
+            enc.push(
+                rows.as_strided_bytes(),
+                rows.rows() as usize,
+                rows.stride(),
+                stop,
+            )?;
             return Ok(());
         }
 

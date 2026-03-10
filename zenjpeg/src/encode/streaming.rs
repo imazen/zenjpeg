@@ -241,18 +241,39 @@ impl StreamingEncoder {
             cr_zero_bias,
         );
 
-        // Create strip processor with quant tables provided at construction
-        let mut processor = StripProcessor::with_xyb(
-            width,
-            height,
-            builder.subsampling,
-            builder.pixel_format,
-            builder.chroma_downsampling,
-            builder.restart_interval,
-            builder.use_xyb,
-            quant_ctx,
-            builder.aq_enabled,
-        )?;
+        // Determine if we can use streaming-through encoding early,
+        // so StripProcessor can allocate minimal block storage.
+        let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
+            && builder.mode != JpegMode::Progressive
+            && !builder.use_xyb;
+
+        // Create strip processor with quant tables provided at construction.
+        // In streaming-through mode, only allocate one strip of block storage.
+        let mut processor = if enable_streaming {
+            StripProcessor::with_xyb_streaming(
+                width,
+                height,
+                builder.subsampling,
+                builder.pixel_format,
+                builder.chroma_downsampling,
+                builder.restart_interval,
+                builder.use_xyb,
+                quant_ctx,
+                builder.aq_enabled,
+            )?
+        } else {
+            StripProcessor::with_xyb(
+                width,
+                height,
+                builder.subsampling,
+                builder.pixel_format,
+                builder.chroma_downsampling,
+                builder.restart_interval,
+                builder.use_xyb,
+                quant_ctx,
+                builder.aq_enabled,
+            )?
+        };
 
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
@@ -311,14 +332,6 @@ impl StreamingEncoder {
         if config.restart_interval > 0 {
             config.restart_interval = config.align_restart_to_row(config.restart_interval);
         }
-
-        // Determine if we can use streaming-through encoding:
-        // - Need known Huffman tables (Custom or Fixed)
-        // - Must be sequential (progressive needs multi-pass)
-        // - Not XYB (different header/table structure)
-        let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
-            && builder.mode != JpegMode::Progressive
-            && !builder.use_xyb;
 
         let streaming = if enable_streaming {
             // Get tables: custom if provided, otherwise standard JPEG tables
@@ -555,6 +568,12 @@ impl StreamingEncoder {
 
             // Process directly from input buffer
             self.processor.process_strip(strip_data, self.current_y)?;
+
+            // In streaming mode, encode blocks immediately to avoid accumulation
+            if self.streaming.is_some() {
+                self.encode_new_blocks_streaming()?;
+            }
+
             self.current_y += strip_rows;
 
             data_offset += strip_bytes;
@@ -782,10 +801,9 @@ impl StreamingEncoder {
 
     /// Encodes newly-produced blocks in streaming mode.
     ///
-    /// Takes all blocks from the strip processor and encodes them to the
-    /// BitWriter, freeing the block memory immediately.
+    /// Borrows blocks from the strip processor, encodes them to the
+    /// BitWriter, then clears them (keeping allocation for reuse).
     fn encode_new_blocks_streaming(&mut self) -> Result<()> {
-        let blocks = self.processor.take_blocks();
         let is_color = !self.config.pixel_format.is_grayscale();
         let width = self.width;
         let subsampling = self.config.subsampling;
@@ -793,9 +811,9 @@ impl StreamingEncoder {
 
         let state = self.streaming.as_mut().unwrap();
         crate::entropy::encode_blocks_mcu_order(
-            &blocks.y_blocks,
-            &blocks.cb_blocks,
-            &blocks.cr_blocks,
+            self.processor.y_blocks(),
+            self.processor.cb_blocks(),
+            self.processor.cr_blocks(),
             &state.tables,
             &mut state.writer,
             is_color,
@@ -805,6 +823,8 @@ impl StreamingEncoder {
             restart_interval,
             state.total_mcus,
         )?;
+
+        self.processor.clear_blocks();
 
         Ok(())
     }

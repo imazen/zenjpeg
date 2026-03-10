@@ -483,6 +483,60 @@ impl StripProcessor {
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
+        Self::with_xyb_inner(
+            width,
+            height,
+            subsampling,
+            pixel_format,
+            chroma_downsampling,
+            _restart_interval,
+            use_xyb,
+            quant,
+            aq_enabled,
+            false,
+        )
+    }
+
+    /// Like [`with_xyb`](Self::with_xyb), but when `streaming_through` is true,
+    /// only allocates one strip's worth of block storage instead of the full image.
+    /// Use this when blocks are drained after each strip (streaming-through mode).
+    pub fn with_xyb_streaming(
+        width: usize,
+        height: usize,
+        subsampling: Subsampling,
+        pixel_format: PixelFormat,
+        chroma_downsampling: DownsamplingMethod,
+        _restart_interval: u16,
+        use_xyb: bool,
+        quant: QuantContext,
+        aq_enabled: bool,
+    ) -> Result<Self> {
+        Self::with_xyb_inner(
+            width,
+            height,
+            subsampling,
+            pixel_format,
+            chroma_downsampling,
+            _restart_interval,
+            use_xyb,
+            quant,
+            aq_enabled,
+            true,
+        )
+    }
+
+    fn with_xyb_inner(
+        width: usize,
+        height: usize,
+        subsampling: Subsampling,
+        pixel_format: PixelFormat,
+        chroma_downsampling: DownsamplingMethod,
+        _restart_interval: u16,
+        use_xyb: bool,
+        quant: QuantContext,
+        aq_enabled: bool,
+        streaming_through: bool,
+    ) -> Result<Self> {
         let layout = LayoutParams::new(width, height, subsampling, use_xyb);
 
         let strip_height = layout.strip_height;
@@ -547,15 +601,34 @@ impl StripProcessor {
                 Vec::new()
             },
 
-            // Final i16 block storage (pre-allocated capacity)
-            y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut stats)?,
+            // Final i16 block storage (pre-allocated capacity).
+            // In streaming-through mode, blocks are drained each strip,
+            // so we only need one strip's worth of capacity.
+            y_blocks: {
+                let cap = if streaming_through {
+                    pending_y_capacity
+                } else {
+                    total_y_blocks
+                };
+                try_with_capacity_tracked(cap, "y_blocks", &mut stats)?
+            },
             cb_blocks: if is_color {
-                try_with_capacity_tracked(total_c_blocks, "cb_blocks", &mut stats)?
+                let cap = if streaming_through {
+                    pending_c_capacity
+                } else {
+                    total_c_blocks
+                };
+                try_with_capacity_tracked(cap, "cb_blocks", &mut stats)?
             } else {
                 Vec::new()
             },
             cr_blocks: if is_color {
-                try_with_capacity_tracked(total_c_blocks, "cr_blocks", &mut stats)?
+                let cap = if streaming_through {
+                    pending_c_capacity
+                } else {
+                    total_c_blocks
+                };
+                try_with_capacity_tracked(cap, "cr_blocks", &mut stats)?
             } else {
                 Vec::new()
             },
@@ -594,11 +667,14 @@ impl StripProcessor {
             quant,
 
             // Accumulated AQ strengths (for output)
-            all_aq_strengths: try_with_capacity_tracked(
-                total_y_blocks,
-                "all_aq_strengths",
-                &mut stats,
-            )?,
+            all_aq_strengths: {
+                let cap = if streaming_through {
+                    pending_y_capacity
+                } else {
+                    total_y_blocks
+                };
+                try_with_capacity_tracked(cap, "all_aq_strengths", &mut stats)?
+            },
 
             aq_state,
 
@@ -652,21 +728,43 @@ impl StripProcessor {
         &self.stats
     }
 
-    /// Takes ownership of all quantized blocks, leaving empty vectors.
-    ///
-    /// This is used by bounded-memory streaming to encode accumulated blocks
-    /// and release their storage.
+    /// Borrow the accumulated Y blocks.
+    pub fn y_blocks(&self) -> &[[i16; DCT_BLOCK_SIZE]] {
+        &self.y_blocks
+    }
+
+    /// Borrow the accumulated Cb blocks.
+    pub fn cb_blocks(&self) -> &[[i16; DCT_BLOCK_SIZE]] {
+        &self.cb_blocks
+    }
+
+    /// Borrow the accumulated Cr blocks.
+    pub fn cr_blocks(&self) -> &[[i16; DCT_BLOCK_SIZE]] {
+        &self.cr_blocks
+    }
+
+    /// Clear accumulated blocks, keeping allocations for reuse.
+    pub fn clear_blocks(&mut self) {
+        self.y_blocks.clear();
+        self.cb_blocks.clear();
+        self.cr_blocks.clear();
+        self.all_aq_strengths.clear();
+        self.y_dc_raw.clear();
+        self.cb_dc_raw.clear();
+        self.cr_dc_raw.clear();
+    }
+
     #[must_use]
     pub fn take_blocks(&mut self) -> StripProcessorOutput {
         StripProcessorOutput {
-            y_blocks: std::mem::take(&mut self.y_blocks),
-            cb_blocks: std::mem::take(&mut self.cb_blocks),
-            cr_blocks: std::mem::take(&mut self.cr_blocks),
-            aq_strengths: std::mem::take(&mut self.all_aq_strengths),
+            y_blocks: core::mem::take(&mut self.y_blocks),
+            cb_blocks: core::mem::take(&mut self.cb_blocks),
+            cr_blocks: core::mem::take(&mut self.cr_blocks),
+            aq_strengths: core::mem::take(&mut self.all_aq_strengths),
             stats: EncodeStats::new(), // Fresh stats for remaining work
-            y_dc_raw: std::mem::take(&mut self.y_dc_raw),
-            cb_dc_raw: std::mem::take(&mut self.cb_dc_raw),
-            cr_dc_raw: std::mem::take(&mut self.cr_dc_raw),
+            y_dc_raw: core::mem::take(&mut self.y_dc_raw),
+            cb_dc_raw: core::mem::take(&mut self.cb_dc_raw),
+            cr_dc_raw: core::mem::take(&mut self.cr_dc_raw),
         }
     }
 
