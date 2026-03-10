@@ -302,39 +302,51 @@ is within 0.12 SSIM2 of YCbCr (near parity). At Q95, XYB already beats YCbCr.
 **Trade-off**: Slightly larger files (+1.7-2.5%) because we preserve more
 perceptually important low-frequency coefficients that flat 0.5 was zeroing.
 
-### What Didn't Work: Pre-encode Noise-Gated Smoothing
+### Needs More Testing: Pre-encode Noise-Gated Smoothing
 
-On clean CID22 images, pre-encode smoothing (sigma=1.0, noise_floor=5.0) destroys
-quality: -6 to -11 SSIM2 while saving 10-16% file size. The smoothing removes
-perceptually important texture, not just noise.
+On clean CID22 images, pre-encode smoothing (sigma=1.0, noise_floor=5.0) costs
+-6 to -11 SSIM2 while saving 10-16% file size.
 
-**Conclusion**: Pre-encode denoising should be user-controlled and only applied to
-genuinely noisy images (high-ISO phone photos). Not a universal encoder improvement.
+**IMPORTANT**: These results were measured with SSIM2 only. SSIM2 penalizes ANY
+structural change, even beneficial denoising. Butteraugli weights noise differently
+and would likely score denoised results much better. The jpegli vs mozjpeg quality
+debate is often a SSIM2 vs butteraugli fight — they disagree on what's "better".
 
-### What Didn't Work: Perceptual Feedback Loop for Global Tables
+**TODO before concluding**:
+1. Measure the same prefiltered results with butteraugli (crate available)
+2. Measure with zensim for a third opinion
+3. Visual inspection of prefiltered vs unfiltered decoded output (mandatory)
+4. Test on genuinely noisy images (high-ISO phone photos), not just clean CID22
+5. Try lighter prefilter settings (sigma=0.5, noise_floor=8.0)
+
+The prefilter may be a clear win on butteraugli while losing on SSIM2 — which is
+exactly the tradeoff that requires human judgment.
+
+### Needs More Testing: Perceptual Feedback Loop for Global Tables
 
 JPEG only supports global quant/zero-bias tables, not per-block. The perceptual loop
-(encode→decode→measure per-block MSE→adjust global tables) improves some blocks while
-hurting others. Net result is inconsistent: helps 1/3 images, hurts 2/3.
+(encode→decode→measure per-block MSE→adjust global tables) showed inconsistent results
+on SSIM2: helped 1/3 images, hurt 2/3. But again, only measured with SSIM2.
 
 JXL's butteraugli and zensim loops work because JXL has a per-block quant field.
-JPEG can't replicate this architecture — the feedback has nowhere to go except global
-table adjustments, which is too coarse.
+JPEG can't replicate this architecture for zero-bias tables, but other per-block
+mechanisms exist:
 
-**What might work instead**: Adjusting per-block AQ strength based on the perceptual
-feedback signal, rather than trying to modulate global zero-bias tables. AQ already
-operates per-block.
+**What might work instead**:
+- Adjusting per-block AQ strength based on perceptual feedback (AQ operates per-block)
+- Modulating trellis lambda per-block (trellis already makes per-coefficient decisions)
+- Using the loop signal to guide quantization rounding decisions per-block
 
 ## Priority Ranking (Updated)
 
 | # | Idea | Effort | Expected Impact | Status |
 |---|------|--------|-----------------|--------|
-| **1** | **XYB zero-bias tuning** | Low | **+0.78 SSIM2** at Q75 | **PROVEN** — v3 tables ready |
-| 2 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
-| 3 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
-| 4 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
-| ~~5~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~3-8% size~~ | **REJECTED** — hurts clean images |
-| ~~6~~ | ~~Per-block zero-bias via loop~~ | ~~Medium~~ | ~~2-5% quality~~ | **REJECTED** — JPEG lacks per-block tables |
+| **1** | **XYB zero-bias tuning** | Low | **+0.78 SSIM2** at Q75 | **SSIM2-proven** — needs butteraugli + visual |
+| 2 | Pre-encode noise-gated smoothing | Low | 10-16% size savings | SSIM2-negative, **butteraugli untested** |
+| 3 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
+| 4 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
+| 5 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
+| 6 | Per-block AQ-integrated loop | Medium | 2-5% quality | Not tested (replaces global table loop) |
 | 7 | Trellis lambda via AQ loop | High | 2-4% quality | Not tested |
 
 ## Next Steps
