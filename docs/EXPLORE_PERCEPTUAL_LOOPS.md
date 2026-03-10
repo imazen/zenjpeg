@@ -263,55 +263,104 @@ Only 64-128 values to optimize (1-2 DQT tables), so convergence is fast.
 needs different frequency emphasis than a portrait or a screenshot. Per-image DQT
 tuning adapts to the actual frequency content.
 
-## Priority Ranking
+## Experimental Results (March 2026)
 
-| # | Idea | Effort | Expected Impact | Risk |
-|---|------|--------|-----------------|------|
-| 1 | Pre-encode noise-gated smoothing (1A) | Low | 3-8% size at equal quality | Low — preprocessing only |
-| 2 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Low — extends zero-bias |
-| 3 | Per-block zero-bias via loop (3) | Medium | 2-5% quality improvement | Medium — iteration cost |
-| 4 | Frequency-selective pre-filter (1B) | Medium | 3-6% size | Low |
-| 5 | Noise pattern regularization (2C) | High | Unknown | High — speculative |
-| 6 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Medium — convergence |
-| 7 | Trellis lambda via loop (3 variant) | High | 2-4% quality | Medium — complex integration |
+### What Worked: XYB Zero-Bias Tuning (v3)
 
-## Implementation Plan
+**Summary**: Frequency-dependent, quality-blended XYB zero-bias tables provide a
+consistent SSIMULACRA2 improvement over the flat 0.5 baseline at all quality levels.
 
-### Phase 1: Pre-encode denoising (highest ROI)
+**Method**: Systematic sweep of 13 CID22 512x512 images × 3 quality levels (Q75/Q85/Q95),
+measured with SSIMULACRA2 (fast-ssim2 crate). Per-component mul sweep (X, Y, B channels
+independently) plus frequency-dependent table evaluation.
 
-1. Add optional pre-encode Gaussian smoothing with noise gate
-2. Estimate noise level from image statistics (median of high-freq energy in flat blocks)
-3. Scale smoothing strength by target quality (more smoothing at lower quality)
-4. Benchmark: encode with/without, compare file size at equal SSIM2/butteraugli
-5. Test on CID22 corpus + high-ISO phone photos + clean studio shots
+**Key Findings**:
 
-### Phase 2: Noise pattern regularization
+1. **Y channel (luma) is dominant**: Sweeping Y mul from 0.3 to 1.2 moves SSIM2 by ~5 points.
+   X and B channel sweeps only move it by ~0.5 points. B is subsampled (4:2:0), so few
+   coefficients to zero; X is a difference channel with small dynamic range.
 
-1. DCT-domain noise shaping: per-block noise estimates modulate zero-bias
-2. Block-aligned pre-filtering: test sigma=4 Gaussian (half-block support)
-3. Perceptual noise substitution: denoise + add grid-aligned synthetic noise
-4. Measure entropy reduction in DCT domain with/without each technique
+2. **DC-adjacent coefficients are critical**: Positions [0,1] and [1,0] must have very low
+   mul (0.01-0.15). The flat 0.5 baseline over-zeros these perceptually important frequencies.
 
-### Phase 3: Perceptual feedback loop for zero-bias
+3. **Quality direction matters**: At high quality (Q95), the tables should be LESS aggressive
+   than 0.5 (preserve detail, ~0.30-0.50 range). At low quality (Q75), tables should be
+   MORE aggressive (zero noise, ~0.55-0.78 range). This is the opposite of naive intuition
+   but matches YCbCr's pattern (where effective threshold = mul × quant_step).
 
-1. Add encode-decode-measure iteration
-2. Start with butteraugli diffmap (already have the crate)
-3. Zensim-style sum-preserving redistribution on zero_bias_mul
-4. 2-3 iterations at high effort, gated behind effort level
-5. Benchmark: is the loop worth the iteration cost?
+**Results vs XYB flat 0.5 baseline**:
+
+| Quality | ΔSSIM2 | ΔSize | Wins |
+|---------|--------|-------|------|
+| Q75 | +0.78 | +1.7% | 13/13 |
+| Q85 | +0.68 | +2.5% | 12/13 |
+| Q95 | +0.14 | +1.6% | 10/13 |
+
+**XYB→YCbCr gap reduction**: 37% at Q75, 85% at Q85. At Q85, XYB with v3 tables
+is within 0.12 SSIM2 of YCbCr (near parity). At Q95, XYB already beats YCbCr.
+
+**Trade-off**: Slightly larger files (+1.7-2.5%) because we preserve more
+perceptually important low-frequency coefficients that flat 0.5 was zeroing.
+
+### What Didn't Work: Pre-encode Noise-Gated Smoothing
+
+On clean CID22 images, pre-encode smoothing (sigma=1.0, noise_floor=5.0) destroys
+quality: -6 to -11 SSIM2 while saving 10-16% file size. The smoothing removes
+perceptually important texture, not just noise.
+
+**Conclusion**: Pre-encode denoising should be user-controlled and only applied to
+genuinely noisy images (high-ISO phone photos). Not a universal encoder improvement.
+
+### What Didn't Work: Perceptual Feedback Loop for Global Tables
+
+JPEG only supports global quant/zero-bias tables, not per-block. The perceptual loop
+(encode→decode→measure per-block MSE→adjust global tables) improves some blocks while
+hurting others. Net result is inconsistent: helps 1/3 images, hurts 2/3.
+
+JXL's butteraugli and zensim loops work because JXL has a per-block quant field.
+JPEG can't replicate this architecture — the feedback has nowhere to go except global
+table adjustments, which is too coarse.
+
+**What might work instead**: Adjusting per-block AQ strength based on the perceptual
+feedback signal, rather than trying to modulate global zero-bias tables. AQ already
+operates per-block.
+
+## Priority Ranking (Updated)
+
+| # | Idea | Effort | Expected Impact | Status |
+|---|------|--------|-----------------|--------|
+| **1** | **XYB zero-bias tuning** | Low | **+0.78 SSIM2** at Q75 | **PROVEN** — v3 tables ready |
+| 2 | DCT-domain noise shaping (2A) | Low | 1-4% size reduction | Not tested |
+| 3 | Per-image DQT tuning (4) | Medium | 1-3% beyond SA tables | Not tested |
+| 4 | CMA-ES zero-bias optimization | Medium | +0.2-0.5 SSIM2 beyond v3 | Natural next step |
+| ~~5~~ | ~~Pre-encode noise-gated smoothing~~ | ~~Low~~ | ~~3-8% size~~ | **REJECTED** — hurts clean images |
+| ~~6~~ | ~~Per-block zero-bias via loop~~ | ~~Medium~~ | ~~2-5% quality~~ | **REJECTED** — JPEG lacks per-block tables |
+| 7 | Trellis lambda via AQ loop | High | 2-4% quality | Not tested |
+
+## Next Steps
+
+1. **Ship v3 tables as XYB default** — replace flat 0.5 with the proven tables
+2. **CMA-ES optimization** — use the v3 tables as starting point, optimize 3×64=192
+   parameters against SSIMULACRA2 on a training corpus. The sweep found Y matters most;
+   CMA-ES can find non-obvious frequency interactions.
+3. **DCT-domain noise shaping** — per-block noise estimates modulate zero-bias. Unlike
+   the global loop, this works with JPEG's architecture because it adjusts the coefficient
+   rounding decisions during quantization, not the tables.
+4. **AQ-integrated perceptual loop** — feed the encode→decode→measure signal into AQ
+   strength rather than zero-bias tables. AQ operates per-block in JPEG.
 
 ## Measurement Methodology
 
 All comparisons against jpegli defaults and SA-optimized tables:
-- CID22 corpus (10-20 images), multiple quality levels (Q50, Q75, Q85, Q95)
-- Metrics: file size, SSIM2, butteraugli, DSSIM
+- CID22 corpus (13+ images), multiple quality levels (Q75, Q85, Q95)
+- Primary metric: SSIMULACRA2 (fast-ssim2 crate, perceptually calibrated)
+- Secondary: file size, butteraugli, DSSIM
 - Both 4:2:0 and 4:4:4 subsampling
 - Report per-image AND corpus mean (per-image variation matters)
-- Use `just quality-compare` or equivalent standardized benchmark
 
 ## Dependencies
 
-- `butteraugli` crate (already a dev-dependency)
+- `fast-ssim2` crate (dev-dependency, SSIMULACRA2 computation)
+- `butteraugli` crate (dev-dependency)
 - `zensim` crate (optional, for SSIM2 diffmap)
-- zenfilters is NOT a dependency — we'd port the relevant algorithms (Gaussian blur
-  + noise gate) directly into zenjpeg, they're simple enough
+- zenfilters is NOT a dependency — noise-gated smoothing ported directly (simple)
