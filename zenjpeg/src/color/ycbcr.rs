@@ -18,7 +18,6 @@ use crate::foundation::consts::{
 };
 use crate::types::PixelFormat;
 
-use multiversed::multiversed;
 use wide::{f32x4, f32x8};
 
 #[cfg(target_arch = "x86_64")]
@@ -406,9 +405,99 @@ pub fn ycbcr_planes_to_rgb(
 /// Applies level shift (+128) and clamps to 0-255.
 ///
 /// This is optimized for the decoder which processes planes separately.
-/// Uses SIMD for YCbCr math with efficient interleaved RGB storage.
-#[multiversed]
+/// Dispatches to AVX2+FMA on x86_64, falls back to wide f32x8 (2× SSE2).
 pub fn ycbcr_planes_f32_to_rgb_u8(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [u8],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_ycbcr_planes_f32_to_rgb_u8(token, y_plane, cb_plane, cr_plane, rgb);
+    }
+
+    ycbcr_planes_f32_to_rgb_u8_wide(y_plane, cb_plane, cr_plane, rgb);
+}
+
+/// AVX2+FMA implementation of YCbCr f32 planes → interleaved RGB u8.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_ycbcr_planes_f32_to_rgb_u8(
+    token: archmage::X64V3Token,
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [u8],
+) {
+    use magetypes::simd::f32x8 as mf32x8;
+
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+
+    // BT.601 coefficients
+    let cr_to_r = mf32x8::splat(token, 1.402);
+    let cb_to_g = mf32x8::splat(token, -0.344136);
+    let cr_to_g = mf32x8::splat(token, -0.714136);
+    let cb_to_b = mf32x8::splat(token, 1.772);
+    let offset = mf32x8::splat(token, 128.0);
+    let zero = mf32x8::splat(token, 0.0);
+    let max_val = mf32x8::splat(token, 255.0);
+
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let i = chunk * 8;
+
+        // Load 8 values from each plane
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap());
+        let cb = mf32x8::from_array(token, <[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap());
+        let cr = mf32x8::from_array(token, <[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap());
+
+        let y_off = y + offset;
+
+        // YCbCr to RGB with real FMA (vfmadd instructions)
+        let r = cr_to_r.mul_add(cr, y_off).max(zero).min(max_val);
+        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)).max(zero).min(max_val);
+        let b = cb_to_b.mul_add(cb, y_off).max(zero).min(max_val);
+
+        // Extract to arrays for interleaved store
+        let r_arr = r.to_array();
+        let g_arr = g.to_array();
+        let b_arr = b.to_array();
+
+        // Store interleaved RGB
+        let rgb_chunk = &mut rgb[i * 3..(i + 8) * 3];
+        for j in 0..8 {
+            rgb_chunk[j * 3] = r_arr[j] as u8;
+            rgb_chunk[j * 3 + 1] = g_arr[j] as u8;
+            rgb_chunk[j * 3 + 2] = b_arr[j] as u8;
+        }
+    }
+
+    // Scalar remainder
+    let start = chunks * 8;
+    for i in start..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];
+        let cr = cr_plane[i];
+
+        let r = 1.402f32.mul_add(cr, y);
+        let g = (-0.344136f32).mul_add(cb, (-0.714136f32).mul_add(cr, y));
+        let b_val = 1.772f32.mul_add(cb, y);
+
+        rgb[i * 3] = (r + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[i * 3 + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[i * 3 + 2] = (b_val + 128.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Wide-based fallback for YCbCr f32 planes → interleaved RGB u8.
+/// Uses wide::f32x8 (2× SSE2 on x86_64, portable on other targets).
+fn ycbcr_planes_f32_to_rgb_u8_wide(
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
@@ -434,8 +523,6 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     let zero = f32x8::splat(0.0);
     let max_val = f32x8::splat(255.0);
 
-    // Process chunks of 8 pixels
-    // Use chunks_exact for optimal iteration
     let y_chunks = y_plane.chunks_exact(8);
     let cb_chunks = cb_plane.chunks_exact(8);
     let cr_chunks = cr_plane.chunks_exact(8);
@@ -448,12 +535,10 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     for (((y_chunk, cb_chunk), cr_chunk), rgb_chunk) in
         y_chunks.zip(cb_chunks).zip(cr_chunks).zip(rgb_chunks)
     {
-        // Load planes - chunks_exact guarantees exactly 8 elements
         let y = f32x8::from(<[f32; 8]>::try_from(y_chunk).unwrap());
         let cb = f32x8::from(<[f32; 8]>::try_from(cb_chunk).unwrap());
         let cr = f32x8::from(<[f32; 8]>::try_from(cr_chunk).unwrap());
 
-        // YCbCr to RGB (using FMA)
         let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
         let g = cb_to_g
             .mul_add(cb, cr_to_g.mul_add(cr, y + offset))
@@ -461,39 +546,18 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
             .min(max_val);
         let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);
 
-        // Convert to arrays for interleaved store
         let r_arr: [f32; 8] = r.into();
         let g_arr: [f32; 8] = g.into();
         let b_arr: [f32; 8] = b.into();
 
-        // Store interleaved RGB - slice is guaranteed to be exactly 24 bytes
-        rgb_chunk[0] = r_arr[0] as u8;
-        rgb_chunk[1] = g_arr[0] as u8;
-        rgb_chunk[2] = b_arr[0] as u8;
-        rgb_chunk[3] = r_arr[1] as u8;
-        rgb_chunk[4] = g_arr[1] as u8;
-        rgb_chunk[5] = b_arr[1] as u8;
-        rgb_chunk[6] = r_arr[2] as u8;
-        rgb_chunk[7] = g_arr[2] as u8;
-        rgb_chunk[8] = b_arr[2] as u8;
-        rgb_chunk[9] = r_arr[3] as u8;
-        rgb_chunk[10] = g_arr[3] as u8;
-        rgb_chunk[11] = b_arr[3] as u8;
-        rgb_chunk[12] = r_arr[4] as u8;
-        rgb_chunk[13] = g_arr[4] as u8;
-        rgb_chunk[14] = b_arr[4] as u8;
-        rgb_chunk[15] = r_arr[5] as u8;
-        rgb_chunk[16] = g_arr[5] as u8;
-        rgb_chunk[17] = b_arr[5] as u8;
-        rgb_chunk[18] = r_arr[6] as u8;
-        rgb_chunk[19] = g_arr[6] as u8;
-        rgb_chunk[20] = b_arr[6] as u8;
-        rgb_chunk[21] = r_arr[7] as u8;
-        rgb_chunk[22] = g_arr[7] as u8;
-        rgb_chunk[23] = b_arr[7] as u8;
+        for j in 0..8 {
+            rgb_chunk[j * 3] = r_arr[j] as u8;
+            rgb_chunk[j * 3 + 1] = g_arr[j] as u8;
+            rgb_chunk[j * 3 + 2] = b_arr[j] as u8;
+        }
     }
 
-    // Handle remaining pixels with scalar code
+    // Scalar remainder
     let chunks_processed = (num_pixels / 8) * 8;
     let rgb_start = chunks_processed * 3;
     for (i, ((y, cb), cr)) in y_remainder
@@ -502,7 +566,6 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
         .zip(cr_remainder.iter())
         .enumerate()
     {
-        // Use FMA for scalar remainder
         let r = CR_TO_R.mul_add(*cr, *y);
         let g = CB_TO_G.mul_add(*cb, CR_TO_G.mul_add(*cr, *y));
         let b_val = CB_TO_B.mul_add(*cb, *y);
@@ -520,8 +583,93 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 /// Output: RGB normalized to approximately 0.0-1.0 range. Values may slightly
 /// exceed [0, 1] due to YCbCr→RGB color matrix expansion — this is intentional
 /// to preserve full precision. Callers should clamp only at final output if needed.
-#[inline(never)]
+///
+/// Dispatches to AVX2+FMA on x86_64, falls back to wide f32x8 (2× SSE2).
 pub fn ycbcr_planes_f32_to_rgb_f32(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_ycbcr_planes_f32_to_rgb_f32(token, y_plane, cb_plane, cr_plane, rgb);
+    }
+
+    ycbcr_planes_f32_to_rgb_f32_wide(y_plane, cb_plane, cr_plane, rgb);
+}
+
+/// AVX2+FMA implementation of YCbCr f32 planes → interleaved RGB f32.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_ycbcr_planes_f32_to_rgb_f32(
+    token: archmage::X64V3Token,
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [f32],
+) {
+    use magetypes::simd::f32x8 as mf32x8;
+
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+
+    let cr_to_r = mf32x8::splat(token, 1.402);
+    let cb_to_g = mf32x8::splat(token, -0.344136);
+    let cr_to_g = mf32x8::splat(token, -0.714136);
+    let cb_to_b = mf32x8::splat(token, 1.772);
+    let offset = mf32x8::splat(token, 128.0);
+    let scale = mf32x8::splat(token, 1.0 / 255.0);
+
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let cb = mf32x8::from_array(token, <[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
+        let cr = mf32x8::from_array(token, <[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
+
+        let y_off = y + offset;
+
+        // YCbCr to RGB with real FMA, level shift, normalize — no clamping
+        let r = cr_to_r.mul_add(cr, y_off) * scale;
+        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)) * scale;
+        let b = cb_to_b.mul_add(cb, y_off) * scale;
+
+        let r_arr = r.to_array();
+        let g_arr = g.to_array();
+        let b_arr = b.to_array();
+
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = r_arr[j];
+            rgb[idx + 1] = g_arr[j];
+            rgb[idx + 2] = b_arr[j];
+        }
+    }
+
+    // Scalar remainder
+    for i in (chunks * 8)..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];
+        let cr = cr_plane[i];
+
+        let r = 1.402f32.mul_add(cr, y);
+        let g = (-0.344136f32).mul_add(cb, (-0.714136f32).mul_add(cr, y));
+        let b = 1.772f32.mul_add(cb, y);
+
+        let idx = i * 3;
+        rgb[idx] = (r + 128.0) / 255.0;
+        rgb[idx + 1] = (g + 128.0) / 255.0;
+        rgb[idx + 2] = (b + 128.0) / 255.0;
+    }
+}
+
+/// Wide-based fallback for YCbCr f32 planes → interleaved RGB f32.
+fn ycbcr_planes_f32_to_rgb_f32_wide(
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
@@ -538,120 +686,136 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
     const CR_TO_G: f32 = -0.714136;
     const CB_TO_B: f32 = 1.772;
 
-    {
-        let cr_to_r = f32x8::splat(CR_TO_R);
-        let cb_to_g = f32x8::splat(CB_TO_G);
-        let cr_to_g = f32x8::splat(CR_TO_G);
-        let cb_to_b = f32x8::splat(CB_TO_B);
-        let offset = f32x8::splat(128.0);
-        let scale = f32x8::splat(1.0 / 255.0);
+    let cr_to_r = f32x8::splat(CR_TO_R);
+    let cb_to_g = f32x8::splat(CB_TO_G);
+    let cr_to_g = f32x8::splat(CR_TO_G);
+    let cb_to_b = f32x8::splat(CB_TO_B);
+    let offset = f32x8::splat(128.0);
+    let scale = f32x8::splat(1.0 / 255.0);
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-            let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
-            let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
+        let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
 
-            // YCbCr to RGB, level shift, normalize — no clamping
-            let r = cr_to_r.mul_add(cr, y + offset) * scale;
-            let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale;
-            let b = cb_to_b.mul_add(cb, y + offset) * scale;
+        let r = cr_to_r.mul_add(cr, y + offset) * scale;
+        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale;
+        let b = cb_to_b.mul_add(cb, y + offset) * scale;
 
-            let r_arr: [f32; 8] = r.into();
-            let g_arr: [f32; 8] = g.into();
-            let b_arr: [f32; 8] = b.into();
+        let r_arr: [f32; 8] = r.into();
+        let g_arr: [f32; 8] = g.into();
+        let b_arr: [f32; 8] = b.into();
 
-            for j in 0..8 {
-                let idx = (base + j) * 3;
-                rgb[idx] = r_arr[j];
-                rgb[idx + 1] = g_arr[j];
-                rgb[idx + 2] = b_arr[j];
-            }
-        }
-
-        // Scalar remainder (using FMA)
-        for i in (chunks * 8)..num_pixels {
-            let y = y_plane[i];
-            let cb = cb_plane[i];
-            let cr = cr_plane[i];
-
-            let r = CR_TO_R.mul_add(cr, y);
-            let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
-            let b = CB_TO_B.mul_add(cb, y);
-
-            let idx = i * 3;
-            rgb[idx] = (r + 128.0) / 255.0;
-            rgb[idx + 1] = (g + 128.0) / 255.0;
-            rgb[idx + 2] = (b + 128.0) / 255.0;
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = r_arr[j];
+            rgb[idx + 1] = g_arr[j];
+            rgb[idx + 2] = b_arr[j];
         }
     }
 
-    {
-        for i in 0..num_pixels {
-            let y = y_plane[i];
-            let cb = cb_plane[i];
-            let cr = cr_plane[i];
+    // Scalar remainder
+    for i in (chunks * 8)..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];
+        let cr = cr_plane[i];
 
-            let r = CR_TO_R.mul_add(cr, y);
-            let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
-            let b = CB_TO_B.mul_add(cb, y);
+        let r = CR_TO_R.mul_add(cr, y);
+        let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
+        let b = CB_TO_B.mul_add(cb, y);
 
-            let idx = i * 3;
-            rgb[idx] = (r + 128.0) / 255.0;
-            rgb[idx + 1] = (g + 128.0) / 255.0;
-            rgb[idx + 2] = (b + 128.0) / 255.0;
-        }
+        let idx = i * 3;
+        rgb[idx] = (r + 128.0) / 255.0;
+        rgb[idx + 1] = (g + 128.0) / 255.0;
+        rgb[idx + 2] = (b + 128.0) / 255.0;
     }
 }
 
 /// Batch grayscale to RGB conversion for f32 to u8.
-#[inline(never)]
+///
+/// Dispatches to AVX2 on x86_64, falls back to wide f32x8 (2× SSE2).
 pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_gray_f32_to_rgb_u8(token, y_plane, rgb);
+    }
+
+    gray_f32_to_rgb_u8_wide(y_plane, rgb);
+}
+
+/// AVX2 implementation of grayscale f32 → interleaved RGB u8.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_gray_f32_to_rgb_u8(token: archmage::X64V3Token, y_plane: &[f32], rgb: &mut [u8]) {
+    use magetypes::simd::f32x8 as mf32x8;
+
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
+    let offset = mf32x8::splat(token, 128.0);
+    let zero = mf32x8::splat(token, 0.0);
+    let max_val = mf32x8::splat(token, 255.0);
 
-    {
-        let offset = f32x8::splat(128.0);
-        let zero = f32x8::splat(0.0);
-        let max_val = f32x8::splat(255.0);
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let val = (y + offset).max(zero).min(max_val);
+        let arr = val.to_array();
 
-            let val = (y + offset).max(zero).min(max_val);
-            let arr: [f32; 8] = val.into();
-
-            for j in 0..8 {
-                let idx = (base + j) * 3;
-                let v = arr[j] as u8;
-                rgb[idx] = v;
-                rgb[idx + 1] = v;
-                rgb[idx + 2] = v;
-            }
-        }
-
-        // Remainder
-        for i in (chunks * 8)..num_pixels {
-            let val = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
-            let idx = i * 3;
-            rgb[idx] = val;
-            rgb[idx + 1] = val;
-            rgb[idx + 2] = val;
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            let v = arr[j] as u8;
+            rgb[idx] = v;
+            rgb[idx + 1] = v;
+            rgb[idx + 2] = v;
         }
     }
 
-    {
-        for (i, &y) in y_plane.iter().enumerate() {
-            let val = (y + 128.0).clamp(0.0, 255.0) as u8;
-            let idx = i * 3;
-            rgb[idx] = val;
-            rgb[idx + 1] = val;
-            rgb[idx + 2] = val;
+    for i in (chunks * 8)..num_pixels {
+        let val = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
+    }
+}
+
+/// Wide-based fallback for grayscale f32 → interleaved RGB u8.
+fn gray_f32_to_rgb_u8_wide(y_plane: &[f32], rgb: &mut [u8]) {
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+    let offset = f32x8::splat(128.0);
+    let zero = f32x8::splat(0.0);
+    let max_val = f32x8::splat(255.0);
+
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+
+        let val = (y + offset).max(zero).min(max_val);
+        let arr: [f32; 8] = val.into();
+
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            let v = arr[j] as u8;
+            rgb[idx] = v;
+            rgb[idx + 1] = v;
+            rgb[idx + 2] = v;
         }
+    }
+
+    for i in (chunks * 8)..num_pixels {
+        let val = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
     }
 }
 
@@ -659,88 +823,152 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
 ///
 /// Input: centered grayscale (Y centered around 0 from f32 IDCT).
 /// Output: normalized to approximately 0.0-1.0 range without clamping.
-#[inline(never)]
+///
+/// Dispatches to AVX2 on x86_64, falls back to wide f32x8 (2× SSE2).
 pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_gray_f32_to_rgb_f32(token, y_plane, rgb);
+    }
+
+    gray_f32_to_rgb_f32_wide(y_plane, rgb);
+}
+
+/// AVX2 implementation of grayscale f32 → interleaved RGB f32.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_gray_f32_to_rgb_f32(token: archmage::X64V3Token, y_plane: &[f32], rgb: &mut [f32]) {
+    use magetypes::simd::f32x8 as mf32x8;
+
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
+    let offset = mf32x8::splat(token, 128.0);
+    let scale = mf32x8::splat(token, 1.0 / 255.0);
 
-    {
-        let offset = f32x8::splat(128.0);
-        let scale = f32x8::splat(1.0 / 255.0);
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let val = (y + offset) * scale;
+        let arr = val.to_array();
 
-            let val = (y + offset) * scale;
-            let arr: [f32; 8] = val.into();
-
-            for j in 0..8 {
-                let idx = (base + j) * 3;
-                rgb[idx] = arr[j];
-                rgb[idx + 1] = arr[j];
-                rgb[idx + 2] = arr[j];
-            }
-        }
-
-        // Remainder
-        for i in (chunks * 8)..num_pixels {
-            let val = (y_plane[i] + 128.0) / 255.0;
-            let idx = i * 3;
-            rgb[idx] = val;
-            rgb[idx + 1] = val;
-            rgb[idx + 2] = val;
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = arr[j];
+            rgb[idx + 1] = arr[j];
+            rgb[idx + 2] = arr[j];
         }
     }
 
-    {
-        for (i, &y) in y_plane.iter().enumerate() {
-            let val = (y + 128.0) / 255.0;
-            let idx = i * 3;
-            rgb[idx] = val;
-            rgb[idx + 1] = val;
-            rgb[idx + 2] = val;
+    for i in (chunks * 8)..num_pixels {
+        let val = (y_plane[i] + 128.0) / 255.0;
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
+    }
+}
+
+/// Wide-based fallback for grayscale f32 → interleaved RGB f32.
+fn gray_f32_to_rgb_f32_wide(y_plane: &[f32], rgb: &mut [f32]) {
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+    let offset = f32x8::splat(128.0);
+    let scale = f32x8::splat(1.0 / 255.0);
+
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+
+        let val = (y + offset) * scale;
+        let arr: [f32; 8] = val.into();
+
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = arr[j];
+            rgb[idx + 1] = arr[j];
+            rgb[idx + 2] = arr[j];
         }
+    }
+
+    for i in (chunks * 8)..num_pixels {
+        let val = (y_plane[i] + 128.0) / 255.0;
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
     }
 }
 
 /// Batch level shift for grayscale f32 to u8.
-#[inline(never)]
+///
+/// Dispatches to AVX2 on x86_64, falls back to wide f32x8.
 pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_gray_f32_to_gray_u8(token, y_plane, output);
+    }
+
+    gray_f32_to_gray_u8_wide(y_plane, output);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_gray_f32_to_gray_u8(token: archmage::X64V3Token, y_plane: &[f32], output: &mut [u8]) {
+    use magetypes::simd::f32x8 as mf32x8;
+
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
+    let offset = mf32x8::splat(token, 128.0);
+    let zero = mf32x8::splat(token, 0.0);
+    let max_val = mf32x8::splat(token, 255.0);
 
-    {
-        let offset = f32x8::splat(128.0);
-        let zero = f32x8::splat(0.0);
-        let max_val = f32x8::splat(255.0);
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let val = (y + offset).max(zero).min(max_val);
+        let arr = val.to_array();
 
-            let val = (y + offset).max(zero).min(max_val);
-            let arr: [f32; 8] = val.into();
-
-            for j in 0..8 {
-                output[base + j] = arr[j] as u8;
-            }
-        }
-
-        // Remainder
-        for i in (chunks * 8)..num_pixels {
-            output[i] = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
+        for j in 0..8 {
+            output[base + j] = arr[j] as u8;
         }
     }
 
-    {
-        for (y, out) in y_plane.iter().zip(output.iter_mut()) {
-            *out = (*y + 128.0).clamp(0.0, 255.0) as u8;
+    for i in (chunks * 8)..num_pixels {
+        output[i] = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+fn gray_f32_to_gray_u8_wide(y_plane: &[f32], output: &mut [u8]) {
+    debug_assert_eq!(y_plane.len(), output.len());
+
+    let num_pixels = y_plane.len();
+    let offset = f32x8::splat(128.0);
+    let zero = f32x8::splat(0.0);
+    let max_val = f32x8::splat(255.0);
+
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+
+        let val = (y + offset).max(zero).min(max_val);
+        let arr: [f32; 8] = val.into();
+
+        for j in 0..8 {
+            output[base + j] = arr[j] as u8;
         }
+    }
+
+    for i in (chunks * 8)..num_pixels {
+        output[i] = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
     }
 }
 
@@ -748,36 +976,62 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
 ///
 /// Input: centered grayscale (Y centered around 0 from f32 IDCT).
 /// Output: normalized without clamping to preserve full precision.
-#[inline(never)]
+///
+/// Dispatches to AVX2 on x86_64, falls back to wide f32x8.
 pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        return mage_gray_f32_to_gray_f32(token, y_plane, output);
+    }
+
+    gray_f32_to_gray_f32_wide(y_plane, output);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn mage_gray_f32_to_gray_f32(token: archmage::X64V3Token, y_plane: &[f32], output: &mut [f32]) {
+    use magetypes::simd::f32x8 as mf32x8;
+
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
+    let offset = mf32x8::splat(token, 128.0);
+    let scale = mf32x8::splat(token, 1.0 / 255.0);
 
-    {
-        let offset = f32x8::splat(128.0);
-        let scale = f32x8::splat(1.0 / 255.0);
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-
-            let val = (y + offset) * scale;
-            let arr: [f32; 8] = val.into();
-            output[base..base + 8].copy_from_slice(&arr);
-        }
-
-        // Remainder
-        for i in (chunks * 8)..num_pixels {
-            output[i] = (y_plane[i] + 128.0) / 255.0;
-        }
+        let val = (y + offset) * scale;
+        let arr = val.to_array();
+        output[base..base + 8].copy_from_slice(&arr);
     }
 
-    {
-        for (y, out) in y_plane.iter().zip(output.iter_mut()) {
-            *out = (*y + 128.0) / 255.0;
-        }
+    for i in (chunks * 8)..num_pixels {
+        output[i] = (y_plane[i] + 128.0) / 255.0;
+    }
+}
+
+fn gray_f32_to_gray_f32_wide(y_plane: &[f32], output: &mut [f32]) {
+    debug_assert_eq!(y_plane.len(), output.len());
+
+    let num_pixels = y_plane.len();
+    let offset = f32x8::splat(128.0);
+    let scale = f32x8::splat(1.0 / 255.0);
+
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+
+        let val = (y + offset) * scale;
+        let arr: [f32; 8] = val.into();
+        output[base..base + 8].copy_from_slice(&arr);
+    }
+
+    for i in (chunks * 8)..num_pixels {
+        output[i] = (y_plane[i] + 128.0) / 255.0;
     }
 }
 
