@@ -25,9 +25,9 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use rgb::{Gray, Rgb};
-use zc::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
-use zc::encode::{EncodeCapabilities, EncodeOutput};
-use zc::{ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation};
+use zencodec::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
+use zencodec::encode::{EncodeCapabilities, EncodeOutput};
+use zencodec::{ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation};
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -62,7 +62,7 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_quality_range(0.0, 100.0)
     .with_effort_range(0, 2);
 
-/// JPEG encoder configuration implementing [`zc::encode::EncoderConfig`].
+/// JPEG encoder configuration implementing [`zencodec::encode::EncoderConfig`].
 ///
 /// Wraps [`EncoderConfig`] with the zencodec trait interface.
 /// Defaults to YCbCr 4:2:0 at quality 85.
@@ -149,7 +149,7 @@ impl JpegEncoderConfig {
 
     /// Convenience: encode pixels with this config via the type-erased path.
     pub fn encode(&self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
-        use zc::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
+        use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
         self.job().encoder()?.encode(pixels)
     }
 
@@ -243,7 +243,7 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
     table[table.len() - 1].1
 }
 
-impl zc::encode::EncoderConfig for JpegEncoderConfig {
+impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     type Error = Error;
     type Job<'a> = JpegEncodeJob<'a>;
 
@@ -301,10 +301,10 @@ pub struct JpegEncodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
-    policy: Option<zc::encode::EncodePolicy>,
+    policy: Option<zencodec::encode::EncodePolicy>,
 }
 
-impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
+impl<'a> zencodec::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
     type Error = Error;
     type Enc = JpegEncoder<'a>;
     type FullFrameEnc = ();
@@ -324,7 +324,7 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn with_policy(mut self, policy: zc::encode::EncodePolicy) -> Self {
+    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -347,7 +347,7 @@ impl<'a> zc::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
 
 // ── Encoder ─────────────────────────────────────────────────────────────────
 
-/// Single-image JPEG encoder implementing [`zc::encode::Encoder`].
+/// Single-image JPEG encoder implementing [`zencodec::encode::Encoder`].
 ///
 /// Supports one-shot `encode()`, streaming `push_rows()` + `finish()`,
 /// and the `encode_srgba8()` convenience method.
@@ -356,7 +356,7 @@ pub struct JpegEncoder<'a> {
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
-    policy: Option<zc::encode::EncodePolicy>,
+    policy: Option<zencodec::encode::EncodePolicy>,
     /// Accumulated rows for push_rows path. The native BytesEncoder requires
     /// total height at creation time, which the zc trait doesn't provide upfront,
     /// so we accumulate and then stream through the native encoder in finish().
@@ -455,7 +455,7 @@ impl<'a> JpegEncoder<'a> {
     }
 }
 
-impl zc::encode::Encoder for JpegEncoder<'_> {
+impl zencodec::encode::Encoder for JpegEncoder<'_> {
     type Error = Error;
 
     fn reject(op: UnsupportedOperation) -> Self::Error {
@@ -627,7 +627,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true);
 
-/// JPEG decoder configuration implementing [`zc::decode::DecoderConfig`].
+/// JPEG decoder configuration implementing [`zencodec::decode::DecoderConfig`].
 ///
 /// Wraps [`crate::decode::DecodeConfig`] with the zencodec trait interface.
 #[derive(Clone, Debug)]
@@ -664,19 +664,19 @@ impl JpegDecoderConfig {
 
     /// Convenience: probe image header with this config.
     pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Error> {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         self.job().probe(data)
     }
 
     /// Convenience: probe full image metadata (may be expensive).
     pub fn probe_full_metadata(&self, data: &[u8]) -> Result<ImageInfo, Error> {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         self.job().probe_full(data)
     }
 
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         self.job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 }
@@ -700,7 +700,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::GRAYF32_LINEAR,
 ];
 
-impl zc::decode::DecoderConfig for JpegDecoderConfig {
+impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
     type Error = Error;
     type Job<'a> = JpegDecodeJob<'a>;
 
@@ -722,7 +722,7 @@ impl zc::decode::DecoderConfig for JpegDecoderConfig {
             stop: None,
             limits: ResourceLimits::none(),
             crop_hint: None,
-            orientation: zc::OrientationHint::default(),
+            orientation: zencodec::OrientationHint::default(),
             policy: None,
         }
     }
@@ -739,11 +739,11 @@ pub struct JpegDecodeJob<'a> {
     stop: Option<&'a dyn enough::Stop>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
-    orientation: zc::OrientationHint,
-    policy: Option<zc::decode::DecodePolicy>,
+    orientation: zencodec::OrientationHint,
+    policy: Option<zencodec::decode::DecodePolicy>,
 }
 
-impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
     type Dec = JpegDecoder<'a>;
     type StreamDec = JpegStreamingDecoder<'a>;
@@ -759,7 +759,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
-    fn with_policy(mut self, policy: zc::decode::DecodePolicy) -> Self {
+    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -769,7 +769,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         self
     }
 
-    fn with_orientation(mut self, hint: zc::OrientationHint) -> Self {
+    fn with_orientation(mut self, hint: zencodec::OrientationHint) -> Self {
         self.orientation = hint;
         self
     }
@@ -814,7 +814,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 && let Some(ref exif) = info.exif
                 && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
             {
-                let orient = zc::Orientation::from_exif(orient_val as u16);
+                let orient = zencodec::Orientation::from_exif(orient_val as u16);
                 if orient.swaps_dimensions() {
                     core::mem::swap(&mut w, &mut h);
                 }
@@ -855,7 +855,7 @@ impl<'a> zc::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     fn push_decoder(
         self,
         data: Cow<'a, [u8]>,
-        sink: &mut dyn zc::decode::DecodeRowSink,
+        sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
         #[cfg(feature = "decoder")]
@@ -952,13 +952,13 @@ impl JpegDecodeJob<'_> {
 fn push_decoder_native<'a>(
     job: JpegDecodeJob<'a>,
     data: Cow<'a, [u8]>,
-    sink: &mut dyn zc::decode::DecodeRowSink,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
 ) -> Result<OutputInfo, Error> {
     use imgref::ImgRefMut;
     use zenpixels::{ChannelLayout, ChannelType};
 
-    let wrap = |e: zc::decode::SinkError| Error::io_error(e.to_string());
+    let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
 
     // ScanlineReader borrows data with lifetime 'a.
     let data_ref: &'a [u8] = match data {
@@ -1114,8 +1114,8 @@ fn push_decoder_native<'a>(
 }
 
 /// Whether the given orientation hint means we should auto-orient during decode.
-fn will_auto_orient(hint: zc::OrientationHint) -> bool {
-    use zc::OrientationHint;
+fn will_auto_orient(hint: zencodec::OrientationHint) -> bool {
+    use zencodec::OrientationHint;
     match hint {
         OrientationHint::Preserve => false,
         OrientationHint::Correct | OrientationHint::CorrectAndTransform(_) => true,
@@ -1130,8 +1130,8 @@ fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
-    orientation: zc::OrientationHint,
-    policy: Option<&zc::decode::DecodePolicy>,
+    orientation: zencodec::OrientationHint,
+    policy: Option<&zencodec::decode::DecodePolicy>,
 ) -> crate::decode::DecodeConfig {
     let mut cfg = inner.clone();
     if let Some(max) = limits.max_pixels {
@@ -1149,13 +1149,13 @@ fn build_decode_config(
 
     // Map threading policy
     match limits.threading {
-        zc::ThreadingPolicy::SingleThread => {
+        zencodec::ThreadingPolicy::SingleThread => {
             cfg = cfg.num_threads(1);
         }
-        zc::ThreadingPolicy::LimitOrSingle { max_threads } => {
+        zencodec::ThreadingPolicy::LimitOrSingle { max_threads } => {
             cfg = cfg.num_threads(max_threads as usize);
         }
-        zc::ThreadingPolicy::LimitOrAny {
+        zencodec::ThreadingPolicy::LimitOrAny {
             preferred_max_threads,
         } => {
             cfg = cfg.num_threads(preferred_max_threads as usize);
@@ -1237,19 +1237,19 @@ fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -
 
 // ── Decoder ─────────────────────────────────────────────────────────────────
 
-/// One-shot JPEG decoder implementing [`zc::decode::Decode`].
+/// One-shot JPEG decoder implementing [`zencodec::decode::Decode`].
 pub struct JpegDecoder<'a> {
     config: &'a JpegDecoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
-    orientation: zc::OrientationHint,
-    policy: Option<zc::decode::DecodePolicy>,
+    orientation: zencodec::OrientationHint,
+    policy: Option<zencodec::decode::DecodePolicy>,
     data: Cow<'a, [u8]>,
     preferred: Vec<PixelDescriptor>,
 }
 
-impl zc::decode::Decode for JpegDecoder<'_> {
+impl zencodec::decode::Decode for JpegDecoder<'_> {
     type Error = Error;
 
     fn decode(self) -> Result<DecodeOutput, Error> {
@@ -1301,7 +1301,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
                 }
                 if let Some(exif) = extras.exif() {
                     if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-                        info = info.with_orientation(zc::Orientation::from_exif(orient as u16));
+                        info = info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
                     }
                     info = info.with_exif(exif.to_vec());
                 }
@@ -1413,7 +1413,7 @@ impl zc::decode::Decode for JpegDecoder<'_> {
 
 // ── StreamingDecode ─────────────────────────────────────────────────────────
 
-/// Streaming JPEG decoder implementing [`zc::decode::StreamingDecode`].
+/// Streaming JPEG decoder implementing [`zencodec::decode::StreamingDecode`].
 ///
 /// Wraps zenjpeg's `ScanlineReader` to yield scanline batches via `next_batch()`.
 /// Each batch contains one MCU-row worth of decoded pixels (8 or 16 rows).
@@ -1431,7 +1431,7 @@ pub struct JpegStreamingDecoder<'a> {
     _phantom: core::marker::PhantomData<&'a ()>,
 }
 
-impl zc::decode::StreamingDecode for JpegStreamingDecoder<'_> {
+impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
     type Error = Error;
 
     fn next_batch(&mut self) -> Result<Option<(u32, PixelSlice<'_>)>, Error> {
@@ -1563,7 +1563,7 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     }
     if let Some(ref exif) = info.exif {
         if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-            img_info = img_info.with_orientation(zc::Orientation::from_exif(orient as u16));
+            img_info = img_info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
         }
         img_info = img_info.with_exif(exif.clone());
     }
@@ -1582,7 +1582,7 @@ mod tests {
     use alloc::borrow::Cow;
     use imgref::{Img, ImgExt};
     use rgb::{Gray, Rgb, Rgba};
-    use zc::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
+    use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
 
     #[test]
     fn encoding_default_roundtrip() {
@@ -1628,7 +1628,7 @@ mod tests {
 
         let icc = b"fake icc profile data";
         let meta = Metadata::default().with_icc(icc.as_slice());
-        let policy = zc::encode::EncodePolicy::strict();
+        let policy = zencodec::encode::EncodePolicy::strict();
 
         let output = enc
             .job()
@@ -1711,7 +1711,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn decode_roundtrip() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -1734,7 +1734,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn decode_zero_copy_rgb8() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -1766,7 +1766,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn probe_info() {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels.as_slice(), 10, 10);
@@ -1782,7 +1782,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_roundtrip() {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
 
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
@@ -1819,7 +1819,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn streaming_decode_batches_mcu_rows() {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
 
         // Create a larger image to see MCU batching
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
@@ -1858,7 +1858,7 @@ mod tests {
     // ── Encoder trait roundtrip tests ────────────────────────────────
 
     fn encoder_trait_roundtrip(pixels: zenpixels::PixelSlice<'_>) {
-        use zc::encode::Encoder;
+        use zencodec::encode::Encoder;
         let config = JpegEncoderConfig::new().with_calibrated_quality(75.0);
         let encoder = config.job().encoder().unwrap();
         let output = encoder.encode(pixels).unwrap();
@@ -1977,7 +1977,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_dyn_encoder() {
-        use zc::encode::DynEncoder as _;
+        use zencodec::encode::DynEncoder as _;
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
                 r: 100,
@@ -2001,7 +2001,7 @@ mod tests {
 
     #[test]
     fn capabilities_encode() {
-        use zc::encode::EncoderConfig;
+        use zencodec::encode::EncoderConfig;
         let caps = JpegEncoderConfig::capabilities();
         assert!(caps.icc());
         assert!(caps.exif());
@@ -2023,7 +2023,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn capabilities_decode() {
-        use zc::decode::DecoderConfig;
+        use zencodec::decode::DecoderConfig;
         let caps = JpegDecoderConfig::capabilities();
         assert!(caps.icc());
         assert!(caps.exif());
@@ -2040,7 +2040,7 @@ mod tests {
 
     #[test]
     fn decode_trait_max_width_enforced() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -2068,7 +2068,7 @@ mod tests {
 
     #[test]
     fn decode_trait_max_height_enforced() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -2099,7 +2099,7 @@ mod tests {
 
     #[test]
     fn decode_trait_generous_dimensions_ok() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -2140,7 +2140,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn full_frame_decoder_returns_unsupported() {
-        use zc::decode::{DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
 
         let dec = JpegDecoderConfig::new();
         let result = dec.job().full_frame_decoder(Cow::Borrowed(&[]), &[]);
@@ -2156,7 +2156,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn decode_with_full_descriptor_list_no_alignment_panic() {
-        use zc::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 
         // Encode a small RGB image
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);

@@ -262,7 +262,7 @@ pub enum ErrorKind {
     // === Unsupported codec operation (from zc) ===
     /// Unsupported codec operation.
     #[error("unsupported operation: {0}")]
-    UnsupportedOperation(zc::UnsupportedOperation),
+    UnsupportedOperation(zencodec::UnsupportedOperation),
 }
 
 impl ErrorKind {
@@ -661,10 +661,10 @@ impl From<enough::StopReason> for Error {
     }
 }
 
-impl From<zc::LimitExceeded> for Error {
+impl From<zencodec::LimitExceeded> for Error {
     #[track_caller]
-    fn from(err: zc::LimitExceeded) -> Self {
-        use zc::LimitExceeded;
+    fn from(err: zencodec::LimitExceeded) -> Self {
+        use zencodec::LimitExceeded;
         match err {
             LimitExceeded::Width { actual, .. } => {
                 Self::invalid_dimensions(actual, 0, "width exceeds limit")
@@ -686,9 +686,9 @@ impl From<zc::LimitExceeded> for Error {
     }
 }
 
-impl From<zc::UnsupportedOperation> for Error {
+impl From<zencodec::UnsupportedOperation> for Error {
     #[track_caller]
-    fn from(op: zc::UnsupportedOperation) -> Self {
+    fn from(op: zencodec::UnsupportedOperation) -> Self {
         Self::new(ErrorKind::UnsupportedOperation(op))
     }
 }
