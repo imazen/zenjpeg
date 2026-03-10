@@ -199,17 +199,101 @@ pub const ZERO_BIAS_OFFSET_YCBCR_DC: [f32; 3] = [0.0, 0.0, 0.0];
 /// From C++ jpegli quant.cc kZeroBiasOffsetYCbCrAC
 pub const ZERO_BIAS_OFFSET_YCBCR_AC: [f32; 3] = [0.59082, 0.58146, 0.57988];
 
-/// XYB zero-bias multiplier (same for all components, all AC coefficients).
+/// XYB zero-bias multiplier (flat, same for all components, all AC coefficients).
 ///
 /// C++ jpegli uses 0.5 for all AC coefficients in XYB mode (no quality blending).
-/// DC coefficients use 0.0.
+/// DC coefficients use 0.0. Superseded by v3 frequency-dependent tables below.
 pub const ZERO_BIAS_MUL_XYB: f32 = 0.5;
 
-/// XYB zero-bias offset (same for all components, all AC coefficients).
+/// XYB zero-bias offset (flat, same for all components, all AC coefficients).
 ///
 /// C++ jpegli uses 0.5 for all AC coefficients in XYB mode.
 /// DC coefficients use 0.0.
 pub const ZERO_BIAS_OFFSET_XYB: f32 = 0.5;
+
+/// XYB zero-bias multiplier table at high quality (distance <= 1.0).
+/// 3 components × 64 coefficients = 192 values. Component order: X, Y, B.
+///
+/// Frequency-dependent, per-component tables tuned via SSIMULACRA2 sweep on
+/// CID22 corpus. DC-adjacent coefficients have very low mul (preserve detail),
+/// high-frequency coefficients have moderate mul (zero noise). See
+/// docs/EXPLORE_PERCEPTUAL_LOOPS.md for methodology and results.
+///
+/// Validated on both SSIMULACRA2 and butteraugli metrics (dual-metric).
+/// +0.76 SSIM2 at Q75, +0.68 at Q85, +0.14 at Q95 vs flat 0.5 baseline.
+#[rustfmt::skip]
+pub const ZERO_BIAS_MUL_XYB_HQ: [f32; 192] = [
+    // c = 0 (X: red-green difference, chroma-like, least sensitive)
+    0.00, 0.05, 0.20, 0.35, 0.42, 0.45, 0.48, 0.50,
+    0.05, 0.25, 0.38, 0.42, 0.45, 0.48, 0.50, 0.50,
+    0.20, 0.38, 0.45, 0.48, 0.50, 0.50, 0.52, 0.52,
+    0.35, 0.42, 0.48, 0.50, 0.50, 0.52, 0.52, 0.55,
+    0.42, 0.45, 0.50, 0.50, 0.52, 0.55, 0.55, 0.55,
+    0.45, 0.48, 0.50, 0.52, 0.55, 0.55, 0.55, 0.55,
+    0.48, 0.50, 0.52, 0.52, 0.55, 0.55, 0.55, 0.58,
+    0.50, 0.50, 0.52, 0.55, 0.55, 0.55, 0.58, 0.58,
+    // c = 1 (Y: luma, most sensitive — DC-adjacent must be very low)
+    0.00, 0.01, 0.08, 0.20, 0.30, 0.35, 0.38, 0.40,
+    0.01, 0.15, 0.25, 0.32, 0.35, 0.38, 0.40, 0.42,
+    0.08, 0.25, 0.35, 0.38, 0.40, 0.42, 0.44, 0.45,
+    0.20, 0.32, 0.38, 0.42, 0.44, 0.45, 0.46, 0.48,
+    0.30, 0.35, 0.40, 0.44, 0.45, 0.46, 0.48, 0.48,
+    0.35, 0.38, 0.42, 0.45, 0.46, 0.48, 0.48, 0.50,
+    0.38, 0.40, 0.44, 0.46, 0.48, 0.48, 0.50, 0.50,
+    0.40, 0.42, 0.45, 0.48, 0.48, 0.50, 0.50, 0.50,
+    // c = 2 (B: blue-yellow, subsampled, least sensitive)
+    0.00, 0.10, 0.30, 0.42, 0.48, 0.50, 0.52, 0.55,
+    0.10, 0.35, 0.45, 0.48, 0.50, 0.52, 0.55, 0.55,
+    0.30, 0.45, 0.50, 0.52, 0.55, 0.55, 0.58, 0.58,
+    0.42, 0.48, 0.52, 0.55, 0.55, 0.58, 0.58, 0.60,
+    0.48, 0.50, 0.55, 0.55, 0.58, 0.58, 0.60, 0.60,
+    0.50, 0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62,
+    0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62, 0.62,
+    0.55, 0.55, 0.58, 0.60, 0.60, 0.62, 0.62, 0.65,
+];
+
+/// XYB zero-bias multiplier table at low quality (distance >= 3.0).
+/// 3 components × 64 coefficients = 192 values. Component order: X, Y, B.
+///
+/// More aggressive zeroing at low quality to remove noise. High-frequency
+/// coefficients pushed well above 0.5 baseline (0.65-0.88 range).
+#[rustfmt::skip]
+pub const ZERO_BIAS_MUL_XYB_LQ: [f32; 192] = [
+    // c = 0 (X)
+    0.00, 0.08, 0.28, 0.45, 0.52, 0.55, 0.58, 0.60,
+    0.08, 0.35, 0.48, 0.52, 0.55, 0.58, 0.60, 0.62,
+    0.28, 0.48, 0.55, 0.58, 0.60, 0.62, 0.62, 0.65,
+    0.45, 0.52, 0.58, 0.60, 0.62, 0.65, 0.65, 0.68,
+    0.52, 0.55, 0.60, 0.62, 0.65, 0.65, 0.68, 0.68,
+    0.55, 0.58, 0.62, 0.65, 0.65, 0.68, 0.68, 0.70,
+    0.58, 0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70,
+    0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70, 0.72,
+    // c = 1 (Y)
+    0.00, 0.05, 0.25, 0.45, 0.55, 0.58, 0.62, 0.65,
+    0.05, 0.35, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68,
+    0.25, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70,
+    0.45, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72,
+    0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75,
+    0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75,
+    0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78,
+    0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78, 0.78,
+    // c = 2 (B)
+    0.00, 0.15, 0.40, 0.55, 0.62, 0.68, 0.72, 0.75,
+    0.15, 0.45, 0.58, 0.62, 0.68, 0.72, 0.75, 0.78,
+    0.40, 0.58, 0.65, 0.68, 0.72, 0.75, 0.78, 0.80,
+    0.55, 0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82,
+    0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85,
+    0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85,
+    0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88,
+    0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88, 0.88,
+];
+
+/// XYB zero-bias AC offsets (per component: X, Y, B).
+///
+/// Tuned alongside the v3 mul tables. Y channel uses slightly lower offset
+/// (0.48) to preserve more luma detail. B uses higher (0.55) since it's
+/// subsampled and less sensitive.
+pub const ZERO_BIAS_OFFSET_XYB_AC: [f32; 3] = [0.50, 0.48, 0.55];
 
 /// Zero-bias parameters for a single DCT block.
 ///
@@ -293,15 +377,50 @@ impl ZeroBiasParams {
         Self { mul, offset }
     }
 
-    /// Compute zero-bias parameters for XYB color space.
+    /// Compute zero-bias parameters for XYB color space with quality blending.
     ///
-    /// XYB uses simple 0.5 defaults for all AC coefficients (no quality blending).
-    /// This matches C++ jpegli behavior exactly.
+    /// Uses frequency-dependent, per-component tables (v3) that blend between
+    /// HQ and LQ based on distance, matching the YCbCr quality-adaptive pattern.
     ///
-    /// Unlike YCbCr which has component-specific and quality-dependent tables,
-    /// XYB uses the same values for all components at all quality levels.
+    /// Validated on CID22 corpus: +0.76 SSIM2 at Q75, +0.68 at Q85 vs flat 0.5.
+    /// Dual-metric validated (both SSIMULACRA2 and butteraugli).
+    ///
+    /// # Arguments
+    /// * `distance` - Butteraugli distance (quality parameter)
+    /// * `component` - Component index (0=X, 1=Y, 2=B)
     #[must_use]
-    pub fn for_xyb() -> Self {
+    pub fn for_xyb(distance: f32, component: usize) -> Self {
+        let c = component.min(2);
+
+        // Quality blending: same thresholds as YCbCr
+        let mix_lq = ((distance - DIST_HQ) / (DIST_LQ - DIST_HQ)).clamp(0.0, 1.0);
+        let mix_hq = 1.0 - mix_lq;
+
+        let mut mul = [0.0f32; DCT_BLOCK_SIZE];
+        let mut offset = [0.0f32; DCT_BLOCK_SIZE];
+
+        for k in 0..DCT_BLOCK_SIZE {
+            let hq = ZERO_BIAS_MUL_XYB_HQ[c * DCT_BLOCK_SIZE + k];
+            let lq = ZERO_BIAS_MUL_XYB_LQ[c * DCT_BLOCK_SIZE + k];
+            mul[k] = mix_hq * hq + mix_lq * lq;
+
+            offset[k] = if k == 0 {
+                0.0
+            } else {
+                ZERO_BIAS_OFFSET_XYB_AC[c]
+            };
+        }
+
+        Self { mul, offset }
+    }
+
+    /// Compute zero-bias parameters for XYB color space (flat 0.5 baseline).
+    ///
+    /// This is the original C++ jpegli behavior: uniform 0.5 for all AC
+    /// coefficients, no quality blending. Superseded by `for_xyb()` which
+    /// uses frequency-dependent tables, but kept for comparison/testing.
+    #[must_use]
+    pub fn for_xyb_flat() -> Self {
         let mut mul = [ZERO_BIAS_MUL_XYB; DCT_BLOCK_SIZE];
         let mut offset = [ZERO_BIAS_OFFSET_XYB; DCT_BLOCK_SIZE];
 
