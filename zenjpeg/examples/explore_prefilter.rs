@@ -52,8 +52,8 @@ fn gaussian_blur_2d(buf: &[f32], width: usize, height: usize, sigma: f32) -> Vec
         for x in 0..width {
             let mut sum = 0.0f32;
             for ki in 0..kernel.len() {
-                let sx = (x as isize + ki as isize - radius as isize)
-                    .clamp(0, width as isize - 1) as usize;
+                let sx = (x as isize + ki as isize - radius as isize).clamp(0, width as isize - 1)
+                    as usize;
                 sum += buf[y * width + sx] * kernel[ki];
             }
             h_out[y * width + x] = sum;
@@ -65,8 +65,8 @@ fn gaussian_blur_2d(buf: &[f32], width: usize, height: usize, sigma: f32) -> Vec
         for x in 0..width {
             let mut sum = 0.0f32;
             for ki in 0..kernel.len() {
-                let sy = (y as isize + ki as isize - radius as isize)
-                    .clamp(0, height as isize - 1) as usize;
+                let sy = (y as isize + ki as isize - radius as isize).clamp(0, height as isize - 1)
+                    as usize;
                 sum += h_out[sy * width + x] * kernel[ki];
             }
             out[y * width + x] = sum;
@@ -247,107 +247,16 @@ fn box_downsample(pixels: &[u8], width: usize, height: usize, scale: usize) -> V
 ///
 /// Design: HQ tables are LESS aggressive than baseline 0.5 (preserve detail),
 /// LQ tables are MORE aggressive (zero noise). Quality blending interpolates.
+///
+/// Now uses the library's v3 tables (ZERO_BIAS_MUL_XYB_HQ/LQ) with blending.
 fn xyb_tuned_zero_bias_v2(distance: f32) -> EncodingTables {
     let mut tables = EncodingTables::default_xyb();
-
-    // Quality blending: 0.0 = HQ (distance ≤ 1.0), 1.0 = LQ (distance ≥ 3.0)
-    let lq_mix = ((distance - 1.0) / 2.0).clamp(0.0, 1.0);
-
-    // --- Y channel (component 1 in XYB) ---
-    // Most sensitive. DC-adjacent must be very low.
-    // HQ: below 0.5 baseline to preserve detail at high quality.
-    // LQ: above 0.5 baseline to zero noise at low quality.
-    #[rustfmt::skip]
-    let y_hq: [f32; 64] = [
-        0.00, 0.01, 0.08, 0.20, 0.30, 0.35, 0.38, 0.40,
-        0.01, 0.15, 0.25, 0.32, 0.35, 0.38, 0.40, 0.42,
-        0.08, 0.25, 0.35, 0.38, 0.40, 0.42, 0.44, 0.45,
-        0.20, 0.32, 0.38, 0.42, 0.44, 0.45, 0.46, 0.48,
-        0.30, 0.35, 0.40, 0.44, 0.45, 0.46, 0.48, 0.48,
-        0.35, 0.38, 0.42, 0.45, 0.46, 0.48, 0.48, 0.50,
-        0.38, 0.40, 0.44, 0.46, 0.48, 0.48, 0.50, 0.50,
-        0.40, 0.42, 0.45, 0.48, 0.48, 0.50, 0.50, 0.50,
-    ];
-    #[rustfmt::skip]
-    let y_lq: [f32; 64] = [
-        0.00, 0.05, 0.25, 0.45, 0.55, 0.58, 0.62, 0.65,
-        0.05, 0.35, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68,
-        0.25, 0.48, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70,
-        0.45, 0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72,
-        0.55, 0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75,
-        0.58, 0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75,
-        0.62, 0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78,
-        0.65, 0.68, 0.70, 0.72, 0.75, 0.75, 0.78, 0.78,
-    ];
-
-    // --- X channel (component 0 in XYB) ---
-    // Red-green difference, chroma-like. X has very little impact (sweep shows
-    // ~0.5 SSIM2 range over the full 0.3-1.2 mul sweep), so keep close to 0.5.
-    #[rustfmt::skip]
-    let x_hq: [f32; 64] = [
-        0.00, 0.05, 0.20, 0.35, 0.42, 0.45, 0.48, 0.50,
-        0.05, 0.25, 0.38, 0.42, 0.45, 0.48, 0.50, 0.50,
-        0.20, 0.38, 0.45, 0.48, 0.50, 0.50, 0.52, 0.52,
-        0.35, 0.42, 0.48, 0.50, 0.50, 0.52, 0.52, 0.55,
-        0.42, 0.45, 0.50, 0.50, 0.52, 0.55, 0.55, 0.55,
-        0.45, 0.48, 0.50, 0.52, 0.55, 0.55, 0.55, 0.55,
-        0.48, 0.50, 0.52, 0.52, 0.55, 0.55, 0.55, 0.58,
-        0.50, 0.50, 0.52, 0.55, 0.55, 0.55, 0.58, 0.58,
-    ];
-    #[rustfmt::skip]
-    let x_lq: [f32; 64] = [
-        0.00, 0.08, 0.28, 0.45, 0.52, 0.55, 0.58, 0.60,
-        0.08, 0.35, 0.48, 0.52, 0.55, 0.58, 0.60, 0.62,
-        0.28, 0.48, 0.55, 0.58, 0.60, 0.62, 0.62, 0.65,
-        0.45, 0.52, 0.58, 0.60, 0.62, 0.65, 0.65, 0.68,
-        0.52, 0.55, 0.60, 0.62, 0.65, 0.65, 0.68, 0.68,
-        0.55, 0.58, 0.62, 0.65, 0.65, 0.68, 0.68, 0.70,
-        0.58, 0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70,
-        0.60, 0.62, 0.65, 0.68, 0.68, 0.70, 0.70, 0.72,
-    ];
-
-    // --- B channel (component 2 in XYB) ---
-    // Blue-yellow, subsampled, least sensitive. Sweep shows B has the least
-    // impact (~0.4 SSIM2 range). Keep slightly above 0.5 to save a few bytes.
-    #[rustfmt::skip]
-    let b_hq: [f32; 64] = [
-        0.00, 0.10, 0.30, 0.42, 0.48, 0.50, 0.52, 0.55,
-        0.10, 0.35, 0.45, 0.48, 0.50, 0.52, 0.55, 0.55,
-        0.30, 0.45, 0.50, 0.52, 0.55, 0.55, 0.58, 0.58,
-        0.42, 0.48, 0.52, 0.55, 0.55, 0.58, 0.58, 0.60,
-        0.48, 0.50, 0.55, 0.55, 0.58, 0.58, 0.60, 0.60,
-        0.50, 0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62,
-        0.52, 0.55, 0.58, 0.58, 0.60, 0.60, 0.62, 0.62,
-        0.55, 0.55, 0.58, 0.60, 0.60, 0.62, 0.62, 0.65,
-    ];
-    #[rustfmt::skip]
-    let b_lq: [f32; 64] = [
-        0.00, 0.15, 0.40, 0.55, 0.62, 0.68, 0.72, 0.75,
-        0.15, 0.45, 0.58, 0.62, 0.68, 0.72, 0.75, 0.78,
-        0.40, 0.58, 0.65, 0.68, 0.72, 0.75, 0.78, 0.80,
-        0.55, 0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82,
-        0.62, 0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85,
-        0.68, 0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85,
-        0.72, 0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88,
-        0.75, 0.78, 0.80, 0.82, 0.85, 0.85, 0.88, 0.88,
-    ];
-
-    let channel_tables = [
-        (&x_hq, &x_lq), // component 0: X
-        (&y_hq, &y_lq), // component 1: Y
-        (&b_hq, &b_lq), // component 2: B
-    ];
-
-    for (c, (hq, lq)) in channel_tables.iter().enumerate() {
-        let mul = tables.zero_bias_mul.get_mut(c);
-        for k in 0..64 {
-            mul[k] = hq[k] * (1.0 - lq_mix) + lq[k] * lq_mix;
-        }
-    }
-
-    // Per-component offsets (like YCbCr's ~0.58-0.59)
-    tables.zero_bias_offset_ac = [0.50, 0.48, 0.55]; // X, Y, B
-
+    // default_xyb() stores LQ tables. Blend toward HQ based on distance.
+    let hq = EncodingTables::xyb_hq_zero_bias_mul();
+    let lq = EncodingTables::xyb_lq_zero_bias_mul();
+    // t = 1.0 at distance <= 1.0 (full HQ), t = 0.0 at distance >= 3.0 (full LQ)
+    let t = 1.0 - ((distance - 1.0) / 2.0).clamp(0.0, 1.0);
+    tables.zero_bias_mul = lq.blend(&hq, t);
     tables
 }
 
@@ -499,7 +408,11 @@ fn run_sweep(paths: &[String]) {
             let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
             println!(
                 "{}\t{}\tycbcr\t-\t-\t-\t{}\t{:.2}\t{:.4}",
-                name, q, jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr
+                name,
+                q,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr
             );
 
             let jpeg_xyb = encode_xyb(&pixels, width, height, q);
@@ -508,7 +421,11 @@ fn run_sweep(paths: &[String]) {
             let bfly_xyb = compute_butteraugli(&pixels, &dec_xyb, width, height);
             println!(
                 "{}\t{}\txyb_0.5\t0.5\t0.5\t0.5\t{}\t{:.2}\t{:.4}",
-                name, q, jpeg_xyb.len(), ss2_xyb, bfly_xyb
+                name,
+                q,
+                jpeg_xyb.len(),
+                ss2_xyb,
+                bfly_xyb
             );
 
             // Tuned v3 (frequency-dependent)
@@ -519,7 +436,11 @@ fn run_sweep(paths: &[String]) {
             let bfly_tuned = compute_butteraugli(&pixels, &dec_tuned, width, height);
             println!(
                 "{}\t{}\txyb_tuned_v3\t-\t-\t-\t{}\t{:.2}\t{:.4}",
-                name, q, jpeg_tuned.len(), ss2_tuned, bfly_tuned
+                name,
+                q,
+                jpeg_tuned.len(),
+                ss2_tuned,
+                bfly_tuned
             );
 
             // Sweep: vary Y with X=0.6, B=0.9 (based on YCbCr patterns)
@@ -531,7 +452,12 @@ fn run_sweep(paths: &[String]) {
                 let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
                     "{}\t{}\tsweep_y\t0.6\t{:.1}\t0.9\t{}\t{:.2}\t{:.4}",
-                    name, q, y_mul, jpeg.len(), ss2, bfly
+                    name,
+                    q,
+                    y_mul,
+                    jpeg.len(),
+                    ss2,
+                    bfly
                 );
             }
 
@@ -544,7 +470,12 @@ fn run_sweep(paths: &[String]) {
                 let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
                     "{}\t{}\tsweep_x\t{:.1}\t0.5\t0.9\t{}\t{:.2}\t{:.4}",
-                    name, q, x_mul, jpeg.len(), ss2, bfly
+                    name,
+                    q,
+                    x_mul,
+                    jpeg.len(),
+                    ss2,
+                    bfly
                 );
             }
 
@@ -557,7 +488,12 @@ fn run_sweep(paths: &[String]) {
                 let bfly = compute_butteraugli(&pixels, &dec, width, height);
                 println!(
                     "{}\t{}\tsweep_b\t0.6\t0.5\t{:.1}\t{}\t{:.2}\t{:.4}",
-                    name, q, b_mul, jpeg.len(), ss2, bfly
+                    name,
+                    q,
+                    b_mul,
+                    jpeg.len(),
+                    ss2,
+                    bfly
                 );
             }
 
@@ -571,7 +507,9 @@ fn run_sweep(paths: &[String]) {
 // ============================================================================
 
 fn run_benchmark(paths: &[String]) {
-    println!("image\tquality\tmode\tsize\tssim2\tbfly\tsize_vs_ycbcr\tssim2_vs_ycbcr\tbfly_vs_ycbcr\tms");
+    println!(
+        "image\tquality\tmode\tsize\tssim2\tbfly\tsize_vs_ycbcr\tssim2_vs_ycbcr\tbfly_vs_ycbcr\tms"
+    );
 
     let qualities = [75u8, 85, 95];
 
@@ -590,8 +528,14 @@ fn run_benchmark(paths: &[String]) {
         eprintln!("\n=== {} ({}x{}) ===", name, width, height);
 
         for &q in &qualities {
-            let report = |label: &str, size: usize, ss2: f64, bfly: f64,
-                          base_size: usize, base_ss2: f64, base_bfly: f64, ms: f64| {
+            let report = |label: &str,
+                          size: usize,
+                          ss2: f64,
+                          bfly: f64,
+                          base_size: usize,
+                          base_ss2: f64,
+                          base_bfly: f64,
+                          ms: f64| {
                 let delta_pct = (size as f64 / base_size as f64 - 1.0) * 100.0;
                 let delta_ss2 = ss2 - base_ss2;
                 let delta_bfly = if base_bfly > 0.0 {
@@ -612,8 +556,16 @@ fn run_benchmark(paths: &[String]) {
             let dec_ycbcr = decode_jpeg_to_rgb_u8(&jpeg_ycbcr);
             let ss2_ycbcr = compute_ssim2(&pixels, &dec_ycbcr, width, height);
             let bfly_ycbcr = compute_butteraugli(&pixels, &dec_ycbcr, width, height);
-            report("ycbcr", jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_ycbcr);
+            report(
+                "ycbcr",
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_ycbcr,
+            );
 
             // XYB baseline (flat 0.5)
             let t0 = Instant::now();
@@ -622,8 +574,16 @@ fn run_benchmark(paths: &[String]) {
             let dec_xyb = decode_jpeg_to_rgb_u8(&jpeg_xyb);
             let ss2_xyb = compute_ssim2(&pixels, &dec_xyb, width, height);
             let bfly_xyb = compute_butteraugli(&pixels, &dec_xyb, width, height);
-            report("xyb_0.5", jpeg_xyb.len(), ss2_xyb, bfly_xyb,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_xyb);
+            report(
+                "xyb_0.5",
+                jpeg_xyb.len(),
+                ss2_xyb,
+                bfly_xyb,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_xyb,
+            );
 
             // XYB tuned v3 (frequency-dependent)
             let t0 = Instant::now();
@@ -633,8 +593,16 @@ fn run_benchmark(paths: &[String]) {
             let dec_tuned = decode_jpeg_to_rgb_u8(&jpeg_tuned);
             let ss2_tuned = compute_ssim2(&pixels, &dec_tuned, width, height);
             let bfly_tuned = compute_butteraugli(&pixels, &dec_tuned, width, height);
-            report("xyb_tuned_v3", jpeg_tuned.len(), ss2_tuned, bfly_tuned,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_tuned);
+            report(
+                "xyb_tuned_v3",
+                jpeg_tuned.len(),
+                ss2_tuned,
+                bfly_tuned,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_tuned,
+            );
 
             // Prefilter + XYB baseline
             let t0 = Instant::now();
@@ -645,8 +613,16 @@ fn run_benchmark(paths: &[String]) {
             // Compare decoded against ORIGINAL pixels
             let ss2_pf_xyb = compute_ssim2(&pixels, &dec_pf_xyb, width, height);
             let bfly_pf_xyb = compute_butteraugli(&pixels, &dec_pf_xyb, width, height);
-            report("prefilter+xyb", jpeg_pf_xyb.len(), ss2_pf_xyb, bfly_pf_xyb,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_pf);
+            report(
+                "prefilter+xyb",
+                jpeg_pf_xyb.len(),
+                ss2_pf_xyb,
+                bfly_pf_xyb,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_pf,
+            );
 
             // Prefilter + tuned v3
             let t0 = Instant::now();
@@ -655,8 +631,16 @@ fn run_benchmark(paths: &[String]) {
             let dec_pf_tuned = decode_jpeg_to_rgb_u8(&jpeg_pf_tuned);
             let ss2_pf_tuned = compute_ssim2(&pixels, &dec_pf_tuned, width, height);
             let bfly_pf_tuned = compute_butteraugli(&pixels, &dec_pf_tuned, width, height);
-            report("prefilter+tuned_v3", jpeg_pf_tuned.len(), ss2_pf_tuned, bfly_pf_tuned,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_pf_tuned);
+            report(
+                "prefilter+tuned_v3",
+                jpeg_pf_tuned.len(),
+                ss2_pf_tuned,
+                bfly_pf_tuned,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_pf_tuned,
+            );
 
             // MSE-based perceptual loop (2 iterations)
             let t0 = Instant::now();
@@ -666,30 +650,56 @@ fn run_benchmark(paths: &[String]) {
             let dec_loop = decode_jpeg_to_rgb_u8(&jpeg_loop);
             let ss2_loop = compute_ssim2(&pixels, &dec_loop, width, height);
             let bfly_loop = compute_butteraugli(&pixels, &dec_loop, width, height);
-            report("mse_loop_2", jpeg_loop.len(), ss2_loop, bfly_loop,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_loop);
+            report(
+                "mse_loop_2",
+                jpeg_loop.len(),
+                ss2_loop,
+                bfly_loop,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_loop,
+            );
 
             // Butteraugli-guided perceptual loop (2 iterations)
             let t0 = Instant::now();
             let bfly_loop_tables = perceptual_loop_butteraugli(&pixels, width, height, q, 2);
-            let jpeg_bfly_loop = encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop_tables);
+            let jpeg_bfly_loop =
+                encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop_tables);
             let t_bfly_loop = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_bfly_loop = decode_jpeg_to_rgb_u8(&jpeg_bfly_loop);
             let ss2_bfly_loop = compute_ssim2(&pixels, &dec_bfly_loop, width, height);
             let bfly_bfly_loop = compute_butteraugli(&pixels, &dec_bfly_loop, width, height);
-            report("bfly_loop_2", jpeg_bfly_loop.len(), ss2_bfly_loop, bfly_bfly_loop,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_bfly_loop);
+            report(
+                "bfly_loop_2",
+                jpeg_bfly_loop.len(),
+                ss2_bfly_loop,
+                bfly_bfly_loop,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_bfly_loop,
+            );
 
             // Butteraugli-guided loop with 4 iterations
             let t0 = Instant::now();
             let bfly_loop4_tables = perceptual_loop_butteraugli(&pixels, width, height, q, 4);
-            let jpeg_bfly_loop4 = encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop4_tables);
+            let jpeg_bfly_loop4 =
+                encode_xyb_with_tables(&pixels, width, height, q, &bfly_loop4_tables);
             let t_bfly_loop4 = t0.elapsed().as_secs_f64() * 1000.0;
             let dec_bfly_loop4 = decode_jpeg_to_rgb_u8(&jpeg_bfly_loop4);
             let ss2_bfly_loop4 = compute_ssim2(&pixels, &dec_bfly_loop4, width, height);
             let bfly_bfly_loop4 = compute_butteraugli(&pixels, &dec_bfly_loop4, width, height);
-            report("bfly_loop_4", jpeg_bfly_loop4.len(), ss2_bfly_loop4, bfly_bfly_loop4,
-                   jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, t_bfly_loop4);
+            report(
+                "bfly_loop_4",
+                jpeg_bfly_loop4.len(),
+                ss2_bfly_loop4,
+                bfly_bfly_loop4,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                t_bfly_loop4,
+            );
 
             eprintln!("  Q{} done", q);
         }
@@ -701,7 +711,9 @@ fn run_benchmark(paths: &[String]) {
 // ============================================================================
 
 fn run_prefilter(paths: &[String]) {
-    println!("image\tquality\tmode\tsize\tssim2\tbfly\tbfly_x2\tbfly_x4\tsize_vs_base\tssim2_vs_base\tbfly_vs_base");
+    println!(
+        "image\tquality\tmode\tsize\tssim2\tbfly\tbfly_x2\tbfly_x4\tsize_vs_base\tssim2_vs_base\tbfly_vs_base"
+    );
 
     let qualities = [75u8, 85, 95];
     let configs = [
@@ -734,7 +746,13 @@ fn run_prefilter(paths: &[String]) {
             let bfly_ycbcr_x4 = compute_butteraugli_scaled(&pixels, &dec_ycbcr, width, height, 4);
             println!(
                 "{}\t{}\tycbcr\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t-\t-\t-",
-                name, q, jpeg_ycbcr.len(), ss2_ycbcr, bfly_ycbcr, bfly_ycbcr_x2, bfly_ycbcr_x4
+                name,
+                q,
+                jpeg_ycbcr.len(),
+                ss2_ycbcr,
+                bfly_ycbcr,
+                bfly_ycbcr_x2,
+                bfly_ycbcr_x4
             );
 
             let jpeg_xyb = encode_xyb(&pixels, width, height, q);
@@ -745,7 +763,13 @@ fn run_prefilter(paths: &[String]) {
             let bfly_xyb_x4 = compute_butteraugli_scaled(&pixels, &dec_xyb, width, height, 4);
             println!(
                 "{}\t{}\txyb\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t-\t-\t-",
-                name, q, jpeg_xyb.len(), ss2_xyb, bfly_xyb, bfly_xyb_x2, bfly_xyb_x4
+                name,
+                q,
+                jpeg_xyb.len(),
+                ss2_xyb,
+                bfly_xyb,
+                bfly_xyb_x2,
+                bfly_xyb_x4
             );
 
             for &(label, sigma, noise_floor) in &configs {
@@ -767,7 +791,17 @@ fn run_prefilter(paths: &[String]) {
                 };
                 println!(
                     "{}\t{}\tpf_{}_ycbcr\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%",
-                    name, q, label, jpeg.len(), ss2, bfly, bfly_x2, bfly_x4, d_size, d_ss2, d_bfly
+                    name,
+                    q,
+                    label,
+                    jpeg.len(),
+                    ss2,
+                    bfly,
+                    bfly_x2,
+                    bfly_x4,
+                    d_size,
+                    d_ss2,
+                    d_bfly
                 );
 
                 // Prefilter + XYB
@@ -786,7 +820,17 @@ fn run_prefilter(paths: &[String]) {
                 };
                 println!(
                     "{}\t{}\tpf_{}_xyb\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:+.1}%\t{:+.2}\t{:+.1}%",
-                    name, q, label, jpeg.len(), ss2, bfly, bfly_x2, bfly_x4, d_size, d_ss2, d_bfly
+                    name,
+                    q,
+                    label,
+                    jpeg.len(),
+                    ss2,
+                    bfly,
+                    bfly_x2,
+                    bfly_x4,
+                    d_size,
+                    d_ss2,
+                    d_bfly
                 );
             }
         }
@@ -831,7 +875,10 @@ fn perceptual_loop_xyb(
 
         eprintln!(
             "  mse loop iter {}: avg_mse={:.1} max_mse={:.1} jpeg_size={}",
-            iter, avg_mse, max_mse, jpeg.len()
+            iter,
+            avg_mse,
+            max_mse,
+            jpeg.len()
         );
 
         if avg_mse < 1.0 {
@@ -949,10 +996,7 @@ fn perceptual_loop_butteraugli(
         let jpeg = encode_xyb_with_tables(pixels, width, height, quality, &tables);
         let decoded = decode_jpeg_to_rgb_u8(&jpeg);
         if decoded.len() != pixels.len() {
-            eprintln!(
-                "  bfly loop iter {}: decode size mismatch, skipping",
-                iter,
-            );
+            eprintln!("  bfly loop iter {}: decode size mismatch, skipping", iter,);
             break;
         }
 
@@ -984,7 +1028,11 @@ fn perceptual_loop_butteraugli(
 
         eprintln!(
             "  bfly loop iter {}: score={:.4} avg_block={:.4} max_block={:.4} size={}",
-            iter, result.score, avg_error, max_error, jpeg.len()
+            iter,
+            result.score,
+            avg_error,
+            max_error,
+            jpeg.len()
         );
 
         if avg_error < 0.01 {
@@ -1081,12 +1129,7 @@ fn perceptual_loop_butteraugli(
     tables
 }
 
-fn compute_block_mse(
-    original: &[u8],
-    decoded: &[u8],
-    width: usize,
-    height: usize,
-) -> Vec<f32> {
+fn compute_block_mse(original: &[u8], decoded: &[u8], width: usize, height: usize) -> Vec<f32> {
     let bw = (width + 7) / 8;
     let bh = (height + 7) / 8;
     let mut block_mse = vec![0.0f32; bw * bh];
