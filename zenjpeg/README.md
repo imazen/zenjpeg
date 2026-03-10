@@ -1096,7 +1096,7 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
 | `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
 | `archmage-simd` | N/A | Legacy no-op (archmage is now mandatory) | No effect; kept for backwards compatibility |
-| `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, wide-gamut images |
+| `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, ICC profile application |
 | `cms-moxcms` | ❌ No | Pure Rust color management | `no_std` or avoid C dependencies |
 | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
 | `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |

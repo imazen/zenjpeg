@@ -854,10 +854,10 @@ fn compare_scanline_vs_streaming_standard_444() {
     );
 }
 
-/// Test if Libjpeg IDCT fixes the wide-gamut streaming path diff.
+/// Compare Jpegli vs Libjpeg IDCT on an Adobe RGB image.
 #[test]
 #[ignore = "requires corpus"]
-fn compare_streaming_libjpeg_idct_wide_gamut() {
+fn compare_streaming_libjpeg_idct_adobe_rgb() {
     use imgref::ImgRefMut;
 
     let path = zenjpeg_bench_utils::corpus_builder_dir()
@@ -870,7 +870,7 @@ fn compare_streaming_libjpeg_idct_wide_gamut() {
         }
     };
 
-    println!("\n=== Streaming with Libjpeg IDCT on wide-gamut ===");
+    println!("\n=== Streaming with Libjpeg IDCT on Adobe RGB image ===");
 
     // Default IDCT (Jpegli) streaming — disable ICC to compare raw decode
     let d = zenjpeg::decoder::Decoder::new().apply_icc(false);
@@ -1461,7 +1461,10 @@ fn diagnose_top3_outlier_diffs() {
 
     let files: &[(&str, &str)] = &[
         ("ab713625eeff48e1", "source_jpegs/ab713625eeff48e1.jpg"),
-        ("reddit_ac470c07", "wide-gamut/adobe-rgb/reddit_ac470c0702018bb7.jpg"),
+        (
+            "reddit_ac470c07",
+            "wide-gamut/adobe-rgb/reddit_ac470c0702018bb7.jpg",
+        ),
         ("7ccea196894ff1ad", "source_jpegs/7ccea196894ff1ad.jpg"),
     ];
 
@@ -1623,12 +1626,152 @@ fn diagnose_top3_outlier_diffs() {
         let wi = (cy * w + cx) * 3;
         println!(
             "\n  Worst pixel ({cx},{cy}): mozjpeg=({},{},{}) zen=({},{},{}) diff=({},{},{})",
-            moz_rgb[wi], moz_rgb[wi + 1], moz_rgb[wi + 2],
-            zen_rgb[wi], zen_rgb[wi + 1], zen_rgb[wi + 2],
+            moz_rgb[wi],
+            moz_rgb[wi + 1],
+            moz_rgb[wi + 2],
+            zen_rgb[wi],
+            zen_rgb[wi + 1],
+            zen_rgb[wi + 2],
             zen_rgb[wi] as i32 - moz_rgb[wi] as i32,
             zen_rgb[wi + 1] as i32 - moz_rgb[wi + 1] as i32,
             zen_rgb[wi + 2] as i32 - moz_rgb[wi + 2] as i32,
         );
+    }
+}
+
+/// Diagnose WHERE zen-vs-zune diffs occur on the 4 corpus outlier files.
+/// Are they on MCU boundaries? Image edges? Interior?
+#[test]
+#[ignore = "requires corpus"]
+fn diagnose_zen_vs_zune_outlier_locations() {
+    let corpus = zenjpeg_bench_utils::corpus_builder_dir();
+
+    // The 4 outlier files from corpus comparison (zen-vs-zune max > 10)
+    let files = [
+        "source_jpegs/ab713625eeff48e1.jpg", // max=22
+    ];
+
+    for rel_path in &files {
+        let path = corpus.join(rel_path);
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("SKIP {rel_path}: {e}");
+                continue;
+            }
+        };
+
+        // Decode with zenjpeg (default Jpegli IDCT)
+        let zen_img = zenjpeg::decoder::Decoder::new()
+            .apply_icc(false)
+            .decode(&data, Unstoppable)
+            .unwrap();
+        let w = zen_img.width() as usize;
+        let h = zen_img.height() as usize;
+        let zen_rgb = zen_img.pixels_u8().unwrap();
+
+        // Decode with zenjpeg LibjpegCompat (Libjpeg i64 IDCT)
+        let compat_img = zenjpeg::decoder::Decoder::new()
+            .apply_icc(false)
+            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::LibjpegCompat)
+            .decode(&data, Unstoppable)
+            .unwrap();
+        let compat_rgb = compat_img.pixels_u8().unwrap();
+
+        // Decode with zune-jpeg
+        let mut zdec =
+            zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&data));
+        let zune_rgb = zdec.decode().unwrap();
+
+        // Decode with mozjpeg
+        let (_mw, _mh, moz_rgb) = decode_mozjpeg_rgb(&data);
+
+        println!("\n=== {rel_path} ({w}x{h}) ===");
+        println!(
+            "MCU grid: {}x{}, padding: right={} bottom={}",
+            (w + 15) / 16,
+            (h + 15) / 16,
+            if w % 16 == 0 { 0 } else { 16 - w % 16 },
+            if h % 16 == 0 { 0 } else { 16 - h % 16 },
+        );
+
+        // Compare all pairs
+        let pairs: &[(&str, &[u8], &str, &[u8])] = &[
+            ("zen-default", zen_rgb, "zune", &zune_rgb),
+            ("zen-default", zen_rgb, "mozjpeg", &moz_rgb),
+            ("zen-compat", compat_rgb, "zune", &zune_rgb),
+            ("zen-compat", compat_rgb, "mozjpeg", &moz_rgb),
+            ("mozjpeg", &moz_rgb, "zune", &zune_rgb),
+        ];
+
+        for &(name_a, pix_a, name_b, pix_b) in pairs {
+            if pix_a.len() != pix_b.len() {
+                println!("  {name_a} vs {name_b}: size mismatch");
+                continue;
+            }
+
+            let mut max_d = 0u8;
+            let mut count_gt5 = 0usize;
+            let mut count_gt2 = 0usize;
+            let mut boundary_gt5 = 0usize; // on MCU row/col boundary ±1
+            let mut edge_gt5 = 0usize; // in last MCU row or last MCU col of image
+            let mut worst = Vec::new();
+
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    for ch in 0..3usize {
+                        let d = (pix_a[i + ch] as i16 - pix_b[i + ch] as i16).unsigned_abs() as u8;
+                        if d > max_d {
+                            max_d = d;
+                        }
+                        if d > 2 {
+                            count_gt2 += 1;
+                        }
+                        if d > 5 {
+                            count_gt5 += 1;
+                            let on_h_bnd = y % 16 <= 1 || y % 16 >= 14;
+                            let on_v_bnd = x % 16 <= 1 || x % 16 >= 14;
+                            if on_h_bnd || on_v_bnd {
+                                boundary_gt5 += 1;
+                            }
+                            let on_bottom_edge = y >= h.saturating_sub(16);
+                            let on_right_edge = x >= w.saturating_sub(16);
+                            if on_bottom_edge || on_right_edge {
+                                edge_gt5 += 1;
+                            }
+                            if worst.len() < 20 || d > worst.last().map(|w: &(u8, usize, usize, usize)| w.0).unwrap_or(0) {
+                                worst.push((d, x, y, ch));
+                                worst.sort_by(|a, b| b.0.cmp(&a.0));
+                                worst.truncate(20);
+                            }
+                        }
+                    }
+                }
+            }
+
+            println!("\n  {name_a} vs {name_b}: max={max_d} >2:{count_gt2} >5:{count_gt5}");
+            if count_gt5 > 0 {
+                println!(
+                    "    Of {count_gt5} diffs>5: {boundary_gt5} on MCU boundary, {edge_gt5} on image edge"
+                );
+                let ch_names = ["R", "G", "B"];
+                println!("    Top diffs:");
+                for &(d, x, y, ch) in &worst {
+                    let i = (y * w + x) * 3 + ch;
+                    println!(
+                        "      ({x:4},{y:4}) {}: a={:3} b={:3} diff={d:2} mcu=({},{}) mod16=({},{})",
+                        ch_names[ch],
+                        pix_a[i],
+                        pix_b[i],
+                        x / 16,
+                        y / 16,
+                        x % 16,
+                        y % 16,
+                    );
+                }
+            }
+        }
     }
 }
 

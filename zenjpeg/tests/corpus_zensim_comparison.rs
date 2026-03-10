@@ -28,7 +28,6 @@ const MIN_DIM: u32 = 8;
 
 /// Decode with zenjpeg (no EXIF rotation, no internal ICC transform).
 /// ICC transform is handled separately by normalize_to_srgb() to match mozjpeg path.
-/// Wide-gamut ICC profiles automatically use f32 IDCT to avoid integer overflow.
 fn decode_zenjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
@@ -414,7 +413,7 @@ fn zensim_compare_decoders() {
     let _ = std::fs::write(results_path, &report);
     println!("\nFull results saved to {results_path}");
 
-    // Assertions: only enforce on non-ICC images (wide-gamut has known IDCT overflow)
+    // Assertions: enforce on non-ICC images
     assert!(
         no_icc_min > 90.0,
         "Worst non-ICC zensim score {no_icc_min:.2} is below 90 — decoder regression on sRGB images"
@@ -424,12 +423,10 @@ fn zensim_compare_decoders() {
         "Mean non-ICC zensim score {no_icc_mean:.2} is below 97 — widespread sRGB decoder regression"
     );
 
-    // ICC images: report but don't assert (known IDCT overflow for wide-gamut)
+    // ICC images: report but don't assert (ICC transform differences)
     if icc_min < 70.0 {
         let bad_count = icc_scores.iter().filter(|&&s| s < 70.0).count();
-        println!(
-            "\nWARNING: {bad_count} ICC images have zensim score <70 (known IDCT overflow for wide-gamut)"
-        );
+        println!("\nWARNING: {bad_count} ICC images have zensim score <70");
     }
 }
 

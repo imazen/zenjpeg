@@ -109,10 +109,13 @@ pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {
 /// 13-bit fixed-point constants for the Loeffler IDCT.
 ///
 /// These are i64 to match libjpeg-turbo's `JLONG` type (`long` = 64-bit on
-/// x86_64). The Loeffler algorithm's intermediate products overflow i32 when
-/// dequantized coefficients exceed ~2048 (common with wide-gamut ICC profiles
-/// like ProPhoto RGB, Adobe RGB, Rec.2020). Using i64 throughout both passes
-/// prevents silent wrapping that corrupts pixel values by up to 255.
+/// LP64 systems). Note: on Windows (LLP64), `long` is 32-bit, so libjpeg-turbo
+/// uses i32 there. Additionally, libjpeg-turbo's 8-bit path uses
+/// `MULTIPLY16C16` which truncates intermediates to INT16 before multiplying,
+/// so the JLONG workspace doesn't prevent overflow — both libjpeg-turbo and
+/// our i32 Jpegli IDCT wrap for extreme dequantized values (coefficient × quant
+/// > 32767). Our i64 path is more mathematically correct but produces different
+/// output from libjpeg-turbo on such inputs.
 const LJ_FIX_0_298631336: i64 = 2446;
 const LJ_FIX_0_390180644: i64 = 3196;
 const LJ_FIX_0_541196100: i64 = 4433;
@@ -154,9 +157,9 @@ pub fn idct_int_libjpeg(in_vector: &mut [i32; 64], out_vector: &mut [i16], strid
     assert!(out_vector.len() >= min_len);
     let out_vector = &mut out_vector[..min_len];
 
-    // i64 workspace matches libjpeg-turbo's JLONG (long = 64-bit on x86_64).
-    // i32 workspace overflows when dequantized coefficients exceed ~2048,
-    // which happens with wide-gamut ICC profiles (ProPhoto RGB, Adobe RGB).
+    // i64 workspace. Note: libjpeg-turbo uses JLONG (long) which is 64-bit on
+    // LP64 but 32-bit on Windows. In practice, libjpeg-turbo's 8-bit path also
+    // truncates to INT16 in MULTIPLY16C16, so i64 vs i32 workspace rarely matters.
     let mut workspace = [0i64; 64];
 
     // Pass 1: process columns, store into workspace.
@@ -1193,11 +1196,7 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
 /// libjpeg-compatible tiered IDCT dispatch.
 ///
 /// Uses DC-only fast path for single-coefficient blocks, otherwise
-/// uses `idct_int_libjpeg` for bit-exact matching with libjpeg-turbo.
-///
-/// Uses i64 intermediates (matching libjpeg-turbo's `JLONG = long`) so
-/// wide-gamut dequantized coefficients (up to ±8000) are handled correctly
-/// without overflow.
+/// uses `idct_int_libjpeg` (Loeffler algorithm with i64 intermediates).
 pub fn idct_int_tiered_libjpeg(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
@@ -1489,8 +1488,7 @@ pub fn idct_int_tiered_unclamped(
 
 /// Unclamped libjpeg-compatible tiered IDCT dispatch.
 ///
-/// Uses i64 intermediates (matching libjpeg-turbo's `JLONG = long`) so
-/// wide-gamut dequantized coefficients are handled correctly.
+/// Uses i64 intermediates (Loeffler algorithm). Output is NOT clamped to [0,255].
 pub fn idct_int_tiered_libjpeg_unclamped(
     coeffs: &mut [i32; 64],
     output: &mut [i16],
@@ -1718,14 +1716,13 @@ mod tests {
         }
     }
 
-    /// Verify i64 intermediates handle wide-gamut coefficients without overflow.
-    /// With i32 intermediates, coefficients above ~2048 caused silent wrapping
-    /// in the Loeffler row pass. i64 (matching libjpeg-turbo's JLONG = long on
-    /// x86_64) handles the full range correctly.
+    /// Verify i64 intermediates handle large dequantized coefficients.
+    /// These magnitudes can occur at low quality levels (large quant values ×
+    /// max-category coefficients). The i32 Jpegli IDCT wraps at these magnitudes.
     #[test]
-    fn test_libjpeg_idct_wide_gamut_coefficients() {
-        // Coefficients that exceed i16 range — typical of wide-gamut ICC profiles
-        // (ProPhoto RGB, Adobe RGB). With i64 intermediates these produce valid output.
+    fn test_libjpeg_idct_large_coefficients() {
+        // Coefficients that exceed i16 range — can occur at low quality (Q50 and below)
+        // where quant values are large. With i64 intermediates these produce valid output.
         let mut coeffs = [0i32; 64];
         coeffs[0] = 40000; // DC
         coeffs[1] = -35000; // AC[0,1]
@@ -1789,14 +1786,14 @@ mod tests {
     /// Exhaustive IDCT cross-validation harness.
     ///
     /// Tests all integer IDCT variants against an f64 reference across a wide
-    /// range of coefficient magnitudes (normal JPEG through wide-gamut extremes).
+    /// range of coefficient magnitudes (normal JPEG through extreme values).
     /// Each variant must produce output within `max_err` of the reference.
     #[test]
     fn test_idct_cross_validation_harness() {
         // Coefficient magnitude ranges to test:
         // - Normal JPEG: ±512 (Q90 typical)
         // - Low quality: ±2048 (Q50 typical)
-        // - Wide-gamut: ±8000 (ProPhoto RGB, Adobe RGB)
+        // - Large dequant: ±8000 (low quality with large quant values)
         // - Extreme: ±16000 (worst-case extended sequential)
         let magnitudes = [512, 2048, 4000, 8000, 16000];
 
