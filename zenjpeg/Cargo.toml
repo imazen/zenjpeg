@@ -67,7 +67,7 @@ web-sys = { version = "0.3", features = ["console"], optional = true }
 ultrahdr-core = { workspace = true, optional = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true }
-zenresize = { workspace = true, optional = true }
+zenresize = { workspace = true, optional = true, features = ["layout"] }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies

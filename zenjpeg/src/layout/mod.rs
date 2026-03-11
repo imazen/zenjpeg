@@ -347,8 +347,12 @@ impl<'a> LayoutRequest<'a> {
             });
         }
 
-        // Lossy path: use zenlayout to compute target dimensions
-        let (target_w, target_h) = self.compute_target_dimensions(&commands, src_w, src_h)?;
+        // Lossy path: compute full layout plan via zenlayout
+        let (ideal, request) = self.compute_layout(&commands, src_w, src_h)?;
+        let offer = zenlayout::DecoderOffer::full_decode(src_w, src_h);
+        let plan = ideal.finalize(&request, &offer);
+        let target_w = plan.canvas.width;
+        let target_h = plan.canvas.height;
 
         // Detect if any orientation commands are present (for EXIF orientation reset)
         let has_orientation = commands.iter().any(|cmd| {
@@ -362,8 +366,7 @@ impl<'a> LayoutRequest<'a> {
             self.jpeg_data,
             &info,
             self.config,
-            target_w,
-            target_h,
+            &plan,
             has_orientation,
             self.optimize_for_decode,
             stop,
@@ -424,14 +427,12 @@ impl<'a> LayoutRequest<'a> {
             gm_src_h,
         );
 
-        let gm_transformed = lossy::execute_lossy(
+        let gm_transformed = lossy::resize_simple(
             gm_bytes,
             &gm_info,
             self.config,
             gm_dst_w,
             gm_dst_h,
-            false,
-            false, // gain map doesn't need decode optimization
             stop,
         )?;
 
@@ -458,20 +459,16 @@ impl<'a> LayoutRequest<'a> {
             .collect()
     }
 
-    /// Compute target dimensions using zenlayout.
-    fn compute_target_dimensions(
+    /// Compute full layout via zenlayout, returning the ideal layout and decoder request.
+    fn compute_layout(
         &self,
         commands: &[Command],
         src_w: u32,
         src_h: u32,
-    ) -> Result<(u32, u32)> {
-        let (ideal, _request) =
-            zenlayout::compute_layout(commands, src_w, src_h, None).map_err(|e| {
-                crate::error::Error::invalid_config(alloc::format!("layout error: {e}"))
-            })?;
-
-        let layout = &ideal.layout;
-        Ok((layout.canvas.width, layout.canvas.height))
+    ) -> Result<(zenlayout::IdealLayout, zenlayout::DecoderRequest)> {
+        zenlayout::compute_layout(commands, src_w, src_h, None).map_err(|e| {
+            crate::error::Error::invalid_config(alloc::format!("layout error: {e}"))
+        })
     }
 }
 
