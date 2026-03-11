@@ -89,28 +89,16 @@ fn decode_resize_encode(
     let out_w = plan.canvas.width;
     let out_h = plan.canvas.height;
 
-    // Build resize config from layout plan (handles crop, resize, pad).
-    // Returns None for non-identity orientation — JPEGs with rotation
-    // should have been handled by the lossless DCT-domain path.
-    let resize_config = zenresize::config_from_plan(
+    // Build streaming resizer from layout plan (handles crop, resize, pad, orient).
+    let batch = 8u32;
+    let mut resizer = zenresize::streaming_from_plan_batched(
         src_w,
         src_h,
         plan,
         PixelDescriptor::RGB8_SRGB,
         config.filter,
-    )
-    .unwrap_or_else(|| {
-        // Fallback: if orientation can't be streamed, resize to canvas dims directly.
-        // This loses trim/pad precision but avoids panicking.
-        zenresize::ResizeConfig::builder(src_w, src_h, out_w, out_h)
-            .filter(config.filter)
-            .format(PixelDescriptor::RGB8_SRGB)
-            .linear()
-            .build()
-    });
-
-    let batch = 8u32;
-    let mut resizer = StreamingResize::with_batch_hint(&resize_config, batch);
+        batch,
+    );
 
     // Build encoder with metadata from source.
     // force_baseline overrides progressive AFTER auto_optimize (which enables progressive).
