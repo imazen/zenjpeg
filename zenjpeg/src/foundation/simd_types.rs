@@ -433,16 +433,16 @@ fn mage_quantize_block_zigzag(
     let zero_i32 = mi32x8::zero(token);
     let mut result = [0i16; 64];
 
-    for row in 0..8 {
-        let block_arr: [f32; 8] = block.rows[row].into();
-        let mul_arr: [f32; 8] = mul_rows[row].into();
-        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
-        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
+    let block_rows: &[[f32; 8]; 8] = bytemuck::cast_ref(&block.rows);
+    let mul_f: &[[f32; 8]; 8] = bytemuck::cast_ref(mul_rows);
+    let offset_f: &[[f32; 8]; 8] = bytemuck::cast_ref(&zero_bias.offset_rows);
+    let bias_mul_f: &[[f32; 8]; 8] = bytemuck::cast_ref(&zero_bias.mul_rows);
 
-        let block_m = mf32x8::from_array(token, block_arr);
-        let mul_m = mf32x8::from_array(token, mul_arr);
-        let offset_m = mf32x8::from_array(token, offset_arr);
-        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+    for row in 0..8 {
+        let block_m = mf32x8::load(token, &block_rows[row]);
+        let mul_m = mf32x8::load(token, &mul_f[row]);
+        let offset_m = mf32x8::load(token, &offset_f[row]);
+        let bias_mul_m = mf32x8::load(token, &bias_mul_f[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -486,16 +486,16 @@ fn mage_quantize_block(
     let zero_i32 = mi32x8::zero(token);
     let mut result = [0i16; 64];
 
-    for row in 0..8 {
-        let block_arr: [f32; 8] = block.rows[row].into();
-        let mul_arr: [f32; 8] = mul_rows[row].into();
-        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
-        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
+    let block_rows: &[[f32; 8]; 8] = bytemuck::cast_ref(&block.rows);
+    let mul_f: &[[f32; 8]; 8] = bytemuck::cast_ref(mul_rows);
+    let offset_f: &[[f32; 8]; 8] = bytemuck::cast_ref(&zero_bias.offset_rows);
+    let bias_mul_f: &[[f32; 8]; 8] = bytemuck::cast_ref(&zero_bias.mul_rows);
 
-        let block_m = mf32x8::from_array(token, block_arr);
-        let mul_m = mf32x8::from_array(token, mul_arr);
-        let offset_m = mf32x8::from_array(token, offset_arr);
-        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+    for row in 0..8 {
+        let block_m = mf32x8::load(token, &block_rows[row]);
+        let mul_m = mf32x8::load(token, &mul_f[row]);
+        let offset_m = mf32x8::load(token, &offset_f[row]);
+        let bias_mul_m = mf32x8::load(token, &bias_mul_f[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
