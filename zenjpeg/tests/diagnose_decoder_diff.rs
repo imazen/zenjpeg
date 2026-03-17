@@ -1740,7 +1740,12 @@ fn diagnose_zen_vs_zune_outlier_locations() {
                             if on_bottom_edge || on_right_edge {
                                 edge_gt5 += 1;
                             }
-                            if worst.len() < 20 || d > worst.last().map(|w: &(u8, usize, usize, usize)| w.0).unwrap_or(0) {
+                            if worst.len() < 20
+                                || d > worst
+                                    .last()
+                                    .map(|w: &(u8, usize, usize, usize)| w.0)
+                                    .unwrap_or(0)
+                            {
                                 worst.push((d, x, y, ch));
                                 worst.sort_by(|a, b| b.0.cmp(&a.0));
                                 worst.truncate(20);

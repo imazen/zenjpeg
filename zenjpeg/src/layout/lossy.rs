@@ -42,10 +42,8 @@ pub(crate) fn execute_lossy(
     let target_w = plan.canvas.width;
     let target_h = plan.canvas.height;
 
-    let needs_resize = !plan.resize_is_identity
-        || plan.trim.is_some()
-        || target_w != src_w
-        || target_h != src_h;
+    let needs_resize =
+        !plan.resize_is_identity || plan.trim.is_some() || target_w != src_w || target_h != src_h;
 
     if needs_resize {
         decode_resize_encode(

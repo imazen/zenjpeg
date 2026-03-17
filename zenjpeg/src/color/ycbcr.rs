@@ -461,7 +461,10 @@ fn mage_ycbcr_planes_f32_to_rgb_u8(
 
         // YCbCr to RGB with real FMA (vfmadd instructions)
         let r = cr_to_r.mul_add(cr, y_off).max(zero).min(max_val);
-        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)).max(zero).min(max_val);
+        let g = cb_to_g
+            .mul_add(cb, cr_to_g.mul_add(cr, y_off))
+            .max(zero)
+            .min(max_val);
         let b = cb_to_b.mul_add(cb, y_off).max(zero).min(max_val);
 
         // Extract to arrays for interleaved store
@@ -628,9 +631,18 @@ fn mage_ycbcr_planes_f32_to_rgb_f32(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-        let cb = mf32x8::from_array(token, <[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
-        let cr = mf32x8::from_array(token, <[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
+        let y = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
+        );
+        let cb = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap(),
+        );
+        let cr = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap(),
+        );
 
         let y_off = y + offset;
 
@@ -761,7 +773,10 @@ fn mage_gray_f32_to_rgb_u8(token: archmage::X64V3Token, y_plane: &[f32], rgb: &m
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let y = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
+        );
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
@@ -849,7 +864,10 @@ fn mage_gray_f32_to_rgb_f32(token: archmage::X64V3Token, y_plane: &[f32], rgb: &
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let y = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
+        );
 
         let val = (y + offset) * scale;
         let arr = val.to_array();
@@ -931,7 +949,10 @@ fn mage_gray_f32_to_gray_u8(token: archmage::X64V3Token, y_plane: &[f32], output
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let y = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
+        );
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
@@ -1001,7 +1022,10 @@ fn mage_gray_f32_to_gray_f32(token: archmage::X64V3Token, y_plane: &[f32], outpu
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let y = mf32x8::from_array(
+            token,
+            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
+        );
 
         let val = (y + offset) * scale;
         let arr = val.to_array();

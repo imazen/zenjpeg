@@ -72,6 +72,8 @@ pub use ultrahdr_core::{
     GainMapMetadata,
     PixelFormat as UhdrPixelFormat,
     RawImage as UhdrRawImage,
+    // Fraction types (used by ISO 21496-1 binary format)
+    UnsignedFraction,
     // Cancellation
     Unstoppable,
     // Tonemapping
@@ -85,8 +87,6 @@ pub use ultrahdr_core::{
     // Metadata
     metadata::iso21496::{parse_iso21496, serialize_iso21496},
     metadata::xmp::{generate_xmp, parse_xmp},
-    // Fraction types (used by ISO 21496-1 binary format)
-    UnsignedFraction,
 };
 
 // Re-export the Stop trait from enough (same one used by jpegli)

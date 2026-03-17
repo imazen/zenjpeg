@@ -427,14 +427,8 @@ impl<'a> LayoutRequest<'a> {
             gm_src_h,
         );
 
-        let gm_transformed = lossy::resize_simple(
-            gm_bytes,
-            &gm_info,
-            self.config,
-            gm_dst_w,
-            gm_dst_h,
-            stop,
-        )?;
+        let gm_transformed =
+            lossy::resize_simple(gm_bytes, &gm_info, self.config, gm_dst_w, gm_dst_h, stop)?;
 
         Ok(Some(gm_transformed))
     }
@@ -466,9 +460,8 @@ impl<'a> LayoutRequest<'a> {
         src_w: u32,
         src_h: u32,
     ) -> Result<(zenlayout::IdealLayout, zenlayout::DecoderRequest)> {
-        zenlayout::compute_layout(commands, src_w, src_h, None).map_err(|e| {
-            crate::error::Error::invalid_config(alloc::format!("layout error: {e}"))
-        })
+        zenlayout::compute_layout(commands, src_w, src_h, None)
+            .map_err(|e| crate::error::Error::invalid_config(alloc::format!("layout error: {e}")))
     }
 }
 

@@ -3753,9 +3753,9 @@ mod tests {
 
     #[test]
     fn test_crop_pixel_scanline_444() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 64u32;
         let height = 64u32;
@@ -3795,9 +3795,9 @@ mod tests {
 
     #[test]
     fn test_crop_pixel_scanline_420() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 64u32;
         let height = 64u32;
@@ -3811,7 +3811,10 @@ mod tests {
             }
         }
         let jpeg = encode_rgb_subsampled(
-            width, height, &pixels, 95.0,
+            width,
+            height,
+            &pixels,
+            95.0,
             crate::encode::v2::ChromaSubsampling::Quarter,
         );
         let (cx, cy, cw, ch) = (8u32, 16u32, 32u32, 24u32);
@@ -3840,9 +3843,9 @@ mod tests {
 
     #[test]
     fn test_crop_percent() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 100u32;
         let height = 100u32;
@@ -3865,15 +3868,19 @@ mod tests {
             assert_eq!(result.width(), 50);
             assert_eq!(result.height(), 50);
             let reference = full_decode_and_crop(&jpeg, 25, 25, 50, 50);
-            assert_eq!(result.pixels_u8().unwrap(), &reference[..], "crop percent mismatch at {perm}");
+            assert_eq!(
+                result.pixels_u8().unwrap(),
+                &reference[..],
+                "crop percent mismatch at {perm}"
+            );
         });
     }
 
     #[test]
     fn test_crop_full_image_is_noop() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 48u32;
         let height = 48u32;
@@ -3893,8 +3900,11 @@ mod tests {
                 .unwrap();
             assert_eq!(full.width(), cropped.width());
             assert_eq!(full.height(), cropped.height());
-            assert_eq!(full.pixels_u8().unwrap(), cropped.pixels_u8().unwrap(),
-                "full-image crop noop mismatch at {perm}");
+            assert_eq!(
+                full.pixels_u8().unwrap(),
+                cropped.pixels_u8().unwrap(),
+                "full-image crop noop mismatch at {perm}"
+            );
         });
     }
 
@@ -3931,9 +3941,9 @@ mod tests {
 
     #[test]
     fn test_crop_buffered_progressive() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 64u32;
         let height = 64u32;
@@ -3965,8 +3975,11 @@ mod tests {
                 .unwrap();
             assert_eq!(result.width(), cw);
             assert_eq!(result.height(), ch);
-            assert_eq!(result.pixels_u8().unwrap(), &reference[..],
-                "progressive crop decode() mismatch at {perm}");
+            assert_eq!(
+                result.pixels_u8().unwrap(),
+                &reference[..],
+                "progressive crop decode() mismatch at {perm}"
+            );
 
             // scanline_reader path
             let mut reader = DecodeConfig::new()
@@ -3983,15 +3996,18 @@ mod tests {
                     imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
                 rows_read += reader.read_rows_rgb8(output).unwrap();
             }
-            assert_eq!(out, reference, "progressive crop scanline mismatch at {perm}");
+            assert_eq!(
+                out, reference,
+                "progressive crop scanline mismatch at {perm}"
+            );
         });
     }
 
     #[test]
     fn test_crop_grayscale() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 48u32;
         let height = 48u32;
@@ -4025,16 +4041,19 @@ mod tests {
                 .unwrap();
             assert_eq!(cropped.width(), cw);
             assert_eq!(cropped.height(), ch);
-            assert_eq!(cropped.pixels_u8().unwrap(), &reference[..],
-                "grayscale crop mismatch at {perm}");
+            assert_eq!(
+                cropped.pixels_u8().unwrap(),
+                &reference[..],
+                "grayscale crop mismatch at {perm}"
+            );
         });
     }
 
     #[test]
     fn test_crop_gray8_scanline() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         let width = 48u32;
         let height = 48u32;
@@ -4056,7 +4075,8 @@ mod tests {
             let mut rows_read = 0;
             while !full_reader.is_finished() {
                 let remaining = fh - rows_read;
-                let output = imgref::ImgRefMut::new(&mut full_gray[rows_read * fw..], fw, remaining);
+                let output =
+                    imgref::ImgRefMut::new(&mut full_gray[rows_read * fw..], fw, remaining);
                 rows_read += full_reader.read_rows_gray8(output).unwrap();
             }
             let mut ref_gray = vec![0u8; cw as usize * ch as usize];
@@ -4078,7 +4098,8 @@ mod tests {
             let mut rows_read = 0;
             while !reader.is_finished() {
                 let remaining = out_h - rows_read;
-                let output = imgref::ImgRefMut::new(&mut out[rows_read * out_w..], out_w, remaining);
+                let output =
+                    imgref::ImgRefMut::new(&mut out[rows_read * out_w..], out_w, remaining);
                 rows_read += reader.read_rows_gray8(output).unwrap();
             }
             assert_eq!(out, ref_gray, "gray8 crop scanline mismatch at {perm}");
@@ -4119,9 +4140,9 @@ mod tests {
 
     #[test]
     fn test_crop_non_mcu_boundary() {
-        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
         use crate::decode::DecodeConfig;
         use crate::decode::config::CropRegion;
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
         // Test crop at non-MCU-aligned boundaries with 4:2:0
         // MCU size for 4:2:0 is 16x16

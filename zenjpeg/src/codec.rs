@@ -612,11 +612,11 @@ impl zencodec::encode::Encoder for JpegEncoder<'_> {
     ) -> Result<EncodeOutput, Error> {
         use zenpixels::PixelSliceMut;
 
-        let (img_w, img_h) = self
-            .image_size
-            .ok_or_else(|| Error::unsupported_feature(
+        let (img_w, img_h) = self.image_size.ok_or_else(|| {
+            Error::unsupported_feature(
                 "encode_from requires with_canvas_size (dimensions must be known upfront)",
-            ))?;
+            )
+        })?;
 
         // Determine pixel layout from the first source callback.
         // We use RGBA8/sRGB as the default descriptor for the pull buffer.
@@ -2326,9 +2326,9 @@ mod tests {
         for y in 0..height as usize {
             for x in 0..width as usize {
                 let offset = y * row_bytes + x * bpp;
-                src_pixels[offset] = (x * 255 / 31) as u8;     // R
+                src_pixels[offset] = (x * 255 / 31) as u8; // R
                 src_pixels[offset + 1] = (y * 255 / 31) as u8; // G
-                src_pixels[offset + 2] = 128;                   // B
+                src_pixels[offset + 2] = 128; // B
             }
         }
 
@@ -2346,7 +2346,8 @@ mod tests {
                     }
                     let src_start = src_y as usize * row_bytes;
                     let src_end = src_start + row_bytes;
-                    buf.row_mut(row).copy_from_slice(&src_pixels[src_start..src_end]);
+                    buf.row_mut(row)
+                        .copy_from_slice(&src_pixels[src_start..src_end]);
                 }
                 rows as usize
             })

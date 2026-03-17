@@ -810,10 +810,7 @@ fn mage_linear_rgb_to_scaled_xyb(
 /// AVX2+FMA XYB core transform without JPEG scaling (for non-encoded XYB output).
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-fn mage_linear_rgb_to_xyb_inplace(
-    token: archmage::X64V3Token,
-    pixels: &mut [[f32; 3]],
-) {
+fn mage_linear_rgb_to_xyb_inplace(token: archmage::X64V3Token, pixels: &mut [[f32; 3]]) {
     use magetypes::simd::f32x8 as mf32x8;
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
@@ -1338,11 +1335,8 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
         }
 
         for i in (chunks * 8)..num_pixels {
-            let (x, y, b) = srgb_to_scaled_xyb(
-                bgra_data[i * 4 + 2],
-                bgra_data[i * 4 + 1],
-                bgra_data[i * 4],
-            );
+            let (x, y, b) =
+                srgb_to_scaled_xyb(bgra_data[i * 4 + 2], bgra_data[i * 4 + 1], bgra_data[i * 4]);
             x_plane[i] = x;
             y_plane[i] = y;
             b_plane[i] = b;
@@ -1361,11 +1355,8 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
     }
 
     for i in (chunks * 8)..num_pixels {
-        let (x, y, b) = srgb_to_scaled_xyb(
-            bgra_data[i * 4 + 2],
-            bgra_data[i * 4 + 1],
-            bgra_data[i * 4],
-        );
+        let (x, y, b) =
+            srgb_to_scaled_xyb(bgra_data[i * 4 + 2], bgra_data[i * 4 + 1], bgra_data[i * 4]);
         x_plane[i] = x;
         y_plane[i] = y;
         b_plane[i] = b;
