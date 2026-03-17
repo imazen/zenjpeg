@@ -74,6 +74,11 @@ pub use crate::decode::{
     SegmentType, StandardProfile,
 };
 
+// === Depth map extraction types ===
+pub use crate::decode::{
+    DepthMapData, DepthSource, GDepthFormat, GDepthMeasureType, GDepthMetadata, GDepthUnits,
+};
+
 // === Types used in public structs ===
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, Limits, PixelFormat, Subsampling};
 // Also re-export PixelLayout from encoder for easy conversion

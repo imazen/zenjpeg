@@ -29,6 +29,7 @@ pub mod idct;
 pub mod idct_int;
 
 mod config;
+mod depth;
 mod extras;
 #[cfg(feature = "parallel")]
 mod fused_parallel;
@@ -79,6 +80,12 @@ pub use extras::{
     AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
     MpfDirectory, MpfEntry, MpfImageType, PreserveConfig, PreservedMpfImage, PreservedSegment,
     SegmentType, StandardProfile,
+};
+
+// Re-export depth map types for public API
+#[allow(unused_imports)]
+pub use depth::{
+    DepthMapData, DepthSource, GDepthFormat, GDepthMeasureType, GDepthMetadata, GDepthUnits,
 };
 
 // Re-export types used in public struct fields so users can access them
