@@ -519,7 +519,12 @@ impl DecodedExtras {
             .map(|img| img.data.as_slice())
     }
 
-    /// Get depth/disparity map if present.
+    /// Get MPF depth/disparity map JPEG bytes if present.
+    ///
+    /// Returns raw JPEG bytes of the first MPF secondary image with
+    /// [`MpfImageType::Disparity`] type. For a richer API that also
+    /// checks GDepth XMP and Dynamic Depth Format, use
+    /// [`extract_depth_map()`](Self::extract_depth_map).
     #[must_use]
     pub fn depth_map(&self) -> Option<&[u8]> {
         self.secondary_images

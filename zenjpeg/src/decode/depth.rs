@@ -25,7 +25,7 @@
 //! let result = config.decode(&jpeg_data, enough::Unstoppable)?;
 //! let extras = result.extras().unwrap();
 //!
-//! if let Some(depth) = extras.extract_depth_map(&jpeg_data) {
+//! if let Some(depth) = extras.extract_depth_map(Some(&jpeg_data)) {
 //!     println!("Depth source: {:?}", depth.source);
 //!     println!("Image bytes: {}", depth.data.len());
 //! }
@@ -226,8 +226,7 @@ struct DdfItem {
 /// `file_data` is the complete JPEG file (including appended images).
 pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
     // Check for Dynamic Depth namespace
-    if !xmp.contains("Container:Directory")
-        && !xmp.contains("http://ns.google.com/photos/dd/1.0/")
+    if !xmp.contains("Container:Directory") && !xmp.contains("http://ns.google.com/photos/dd/1.0/")
     {
         return None;
     }
@@ -349,7 +348,9 @@ fn parse_container_directory(xmp: &str) -> Option<Vec<DdfItem>> {
         .find("</Container:Directory>")
         .or_else(|| {
             // Some files use self-closing rdf:Seq
-            dir_section.find("</rdf:Seq>").map(|p| p + "</rdf:Seq>".len())
+            dir_section
+                .find("</rdf:Seq>")
+                .map(|p| p + "</rdf:Seq>".len())
         })
         .unwrap_or(dir_section.len());
     let dir_xml = &dir_section[..dir_end];
@@ -410,14 +411,10 @@ fn find_item_start(xml: &str, from: usize) -> Option<usize> {
         search.find("Item:Semantic"),
     ];
     // Find the enclosing < before the earliest match
-    positions
-        .iter()
-        .filter_map(|p| *p)
-        .min()
-        .and_then(|p| {
-            let before = &search[..p];
-            before.rfind('<').map(|lt| from + lt)
-        })
+    positions.iter().filter_map(|p| *p).min().and_then(|p| {
+        let before = &search[..p];
+        before.rfind('<').map(|lt| from + lt)
+    })
 }
 
 // ============================================================================
@@ -476,10 +473,7 @@ fn extract_xmp_element(xmp: &str, name: &str) -> Option<String> {
 /// optional padding. Returns `None` on invalid input.
 pub(crate) fn base64_decode(input: &str) -> Option<Vec<u8>> {
     // Strip whitespace
-    let clean: Vec<u8> = input
-        .bytes()
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
+    let clean: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
 
     if clean.is_empty() {
         return None;
@@ -516,8 +510,7 @@ pub(crate) fn base64_decode(input: &str) -> Option<Vec<u8>> {
 /// Encode bytes as standard base64.
 #[cfg(test)]
 pub(crate) fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut output = String::with_capacity((input.len() + 2) / 3 * 4);
 
@@ -854,9 +847,8 @@ mod tests {
     fn parse_gdepth_lowercase_prefix() {
         let data = vec![1, 2, 3, 4];
         let b64 = base64_encode(&data);
-        let xmp = alloc::format!(
-            r#"<rdf:Description gdepth:Format="RangeLinear" gdepth:Data="{b64}"/>"#
-        );
+        let xmp =
+            alloc::format!(r#"<rdf:Description gdepth:Format="RangeLinear" gdepth:Data="{b64}"/>"#);
 
         let result = parse_gdepth_xmp(&xmp).expect("should parse lowercase gdepth");
         assert_eq!(result.data, data);
@@ -1068,7 +1060,10 @@ mod tests {
         for typ in types {
             let code = typ.to_type_code();
             let back = MpfImageType::from_type_code(code);
-            assert_eq!(back, typ, "roundtrip failed for {typ:?} (code=0x{code:06X})");
+            assert_eq!(
+                back, typ,
+                "roundtrip failed for {typ:?} (code=0x{code:06X})"
+            );
         }
     }
 
@@ -1189,9 +1184,8 @@ mod tests {
     fn gdepth_format_range_linear() {
         let data = vec![1, 2, 3];
         let b64 = base64_encode(&data);
-        let xmp = alloc::format!(
-            r#"<rdf:Description GDepth:Format="RangeLinear" GDepth:Data="{b64}"/>"#
-        );
+        let xmp =
+            alloc::format!(r#"<rdf:Description GDepth:Format="RangeLinear" GDepth:Data="{b64}"/>"#);
         let result = parse_gdepth_xmp(&xmp).unwrap();
         assert_eq!(result.metadata.unwrap().format, GDepthFormat::RangeLinear);
     }
