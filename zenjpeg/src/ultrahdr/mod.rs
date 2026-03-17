@@ -83,7 +83,10 @@ pub use ultrahdr_core::{
     // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
+    metadata::iso21496::{parse_iso21496, serialize_iso21496},
     metadata::xmp::{generate_xmp, parse_xmp},
+    // Fraction types (used by ISO 21496-1 binary format)
+    UnsignedFraction,
 };
 
 // Re-export the Stop trait from enough (same one used by jpegli)
