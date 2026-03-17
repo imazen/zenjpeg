@@ -3753,7 +3753,10 @@ mod tests {
 
     #[test]
     fn test_crop_pixel_scanline_444() {
-        // Encode a 64x64 image with 4:4:4 (streaming path)
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 64u32;
         let height = 64u32;
         let mut pixels = vec![0u8; (width * height * 3) as usize];
@@ -3766,46 +3769,36 @@ mod tests {
             }
         }
         let jpeg = encode_rgb(width, height, &pixels, 95.0);
-
-        // Crop: 20x20 starting at (10, 10)
         let (cx, cy, cw, ch) = (10u32, 10u32, 20u32, 20u32);
 
-        // Full decode + manual crop (reference)
-        let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
-        // Scanline crop decode
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
-        let mut reader = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .scanline_reader(&jpeg)
-            .unwrap();
-
-        assert_eq!(reader.width(), cw);
-        assert_eq!(reader.height(), ch);
-
-        let out_w = cw as usize;
-        let out_h = ch as usize;
-        let mut out = vec![0u8; out_w * out_h * 3];
-        let mut rows_read = 0;
-        while !reader.is_finished() {
-            let remaining = out_h - rows_read;
-            let output =
-                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
-            let n = reader.read_rows_rgb8(output).unwrap();
-            rows_read += n;
-        }
-
-        assert_eq!(rows_read, out_h);
-        assert_eq!(
-            out, reference,
-            "Cropped scanline output differs from reference"
-        );
+            let mut reader = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .scanline_reader(&jpeg)
+                .unwrap();
+            let out_w = cw as usize;
+            let out_h = ch as usize;
+            let mut out = vec![0u8; out_w * out_h * 3];
+            let mut rows_read = 0;
+            while !reader.is_finished() {
+                let remaining = out_h - rows_read;
+                let output =
+                    imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+                rows_read += reader.read_rows_rgb8(output).unwrap();
+            }
+            assert_eq!(rows_read, out_h);
+            assert_eq!(out, reference, "crop 444 mismatch at {perm}");
+        });
     }
 
     #[test]
     fn test_crop_pixel_scanline_420() {
-        // Encode a 64x64 image with 4:2:0 (streaming subsampled path)
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 64u32;
         let height = 64u32;
         let mut pixels = vec![0u8; (width * height * 3) as usize];
@@ -3818,49 +3811,39 @@ mod tests {
             }
         }
         let jpeg = encode_rgb_subsampled(
-            width,
-            height,
-            &pixels,
-            95.0,
+            width, height, &pixels, 95.0,
             crate::encode::v2::ChromaSubsampling::Quarter,
         );
-
         let (cx, cy, cw, ch) = (8u32, 16u32, 32u32, 24u32);
-        // Use scanline reference (not decode()) so IDCT/upsampling matches
-        let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
-        let mut reader = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .scanline_reader(&jpeg)
-            .unwrap();
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        assert_eq!(reader.width(), cw);
-        assert_eq!(reader.height(), ch);
-
-        let out_w = cw as usize;
-        let out_h = ch as usize;
-        let mut out = vec![0u8; out_w * out_h * 3];
-        let mut rows_read = 0;
-        while !reader.is_finished() {
-            let remaining = out_h - rows_read;
-            let output =
-                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
-            let n = reader.read_rows_rgb8(output).unwrap();
-            rows_read += n;
-        }
-
-        assert_eq!(rows_read, out_h);
-        assert_eq!(
-            out, reference,
-            "4:2:0 cropped output differs from reference"
-        );
+            let mut reader = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .scanline_reader(&jpeg)
+                .unwrap();
+            let out_w = cw as usize;
+            let out_h = ch as usize;
+            let mut out = vec![0u8; out_w * out_h * 3];
+            let mut rows_read = 0;
+            while !reader.is_finished() {
+                let remaining = out_h - rows_read;
+                let output =
+                    imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+                rows_read += reader.read_rows_rgb8(output).unwrap();
+            }
+            assert_eq!(rows_read, out_h);
+            assert_eq!(out, reference, "crop 420 mismatch at {perm}");
+        });
     }
 
     #[test]
     fn test_crop_percent() {
-        // Encode 100x100 image
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 100u32;
         let height = 100u32;
         let mut pixels = vec![0u8; (width * height * 3) as usize];
@@ -3874,26 +3857,24 @@ mod tests {
         }
         let jpeg = encode_rgb(width, height, &pixels, 95.0);
 
-        // Center 50% crop → (25, 25, 50, 50) in pixels
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
-
-        let result = DecodeConfig::new()
-            .crop(CropRegion::percent(0.25, 0.25, 0.5, 0.5))
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
-
-        assert_eq!(result.width(), 50);
-        assert_eq!(result.height(), 50);
-
-        // Compare with manual crop
-        let reference = full_decode_and_crop(&jpeg, 25, 25, 50, 50);
-        assert_eq!(result.pixels_u8().unwrap(), &reference[..]);
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let result = DecodeConfig::new()
+                .crop(CropRegion::percent(0.25, 0.25, 0.5, 0.5))
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(result.width(), 50);
+            assert_eq!(result.height(), 50);
+            let reference = full_decode_and_crop(&jpeg, 25, 25, 50, 50);
+            assert_eq!(result.pixels_u8().unwrap(), &reference[..], "crop percent mismatch at {perm}");
+        });
     }
 
     #[test]
     fn test_crop_full_image_is_noop() {
-        // Full-image crop should produce identical output to no crop
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 48u32;
         let height = 48u32;
         let mut pixels = vec![0u8; (width * height * 3) as usize];
@@ -3902,20 +3883,19 @@ mod tests {
         }
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
-
-        let full = DecodeConfig::new()
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
-        let cropped = DecodeConfig::new()
-            .crop(CropRegion::pixels(0, 0, width, height))
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
-
-        assert_eq!(full.width(), cropped.width());
-        assert_eq!(full.height(), cropped.height());
-        assert_eq!(full.pixels_u8().unwrap(), cropped.pixels_u8().unwrap());
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let full = DecodeConfig::new()
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            let cropped = DecodeConfig::new()
+                .crop(CropRegion::pixels(0, 0, width, height))
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(full.width(), cropped.width());
+            assert_eq!(full.height(), cropped.height());
+            assert_eq!(full.pixels_u8().unwrap(), cropped.pixels_u8().unwrap(),
+                "full-image crop noop mismatch at {perm}");
+        });
     }
 
     #[test]
@@ -3951,7 +3931,10 @@ mod tests {
 
     #[test]
     fn test_crop_buffered_progressive() {
-        // Progressive JPEGs use buffered mode — verify crop works there too
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 64u32;
         let height = 64u32;
         let mut pixels = vec![0u8; (width * height * 3) as usize];
@@ -3963,7 +3946,6 @@ mod tests {
                 pixels[idx + 2] = 100;
             }
         }
-        // Encode as progressive
         use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None).progressive(true);
         let mut enc = config
@@ -3971,48 +3953,46 @@ mod tests {
             .unwrap();
         enc.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
-
         let (cx, cy, cw, ch) = (8u32, 8u32, 32u32, 32u32);
-        let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
-        // Test decode() path
-        let result = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
+            // decode() path
+            let result = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(result.width(), cw);
+            assert_eq!(result.height(), ch);
+            assert_eq!(result.pixels_u8().unwrap(), &reference[..],
+                "progressive crop decode() mismatch at {perm}");
 
-        assert_eq!(result.width(), cw);
-        assert_eq!(result.height(), ch);
-        assert_eq!(result.pixels_u8().unwrap(), &reference[..]);
-
-        // Test scanline_reader path (also buffered for progressive)
-        let mut reader = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .scanline_reader(&jpeg)
-            .unwrap();
-
-        assert_eq!(reader.width(), cw);
-        assert_eq!(reader.height(), ch);
-
-        let out_w = cw as usize;
-        let out_h = ch as usize;
-        let mut out = vec![0u8; out_w * out_h * 3];
-        let mut rows_read = 0;
-        while !reader.is_finished() {
-            let remaining = out_h - rows_read;
-            let output =
-                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
-            rows_read += reader.read_rows_rgb8(output).unwrap();
-        }
-        assert_eq!(out, reference);
+            // scanline_reader path
+            let mut reader = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .scanline_reader(&jpeg)
+                .unwrap();
+            let out_w = cw as usize;
+            let out_h = ch as usize;
+            let mut out = vec![0u8; out_w * out_h * 3];
+            let mut rows_read = 0;
+            while !reader.is_finished() {
+                let remaining = out_h - rows_read;
+                let output =
+                    imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+                rows_read += reader.read_rows_rgb8(output).unwrap();
+            }
+            assert_eq!(out, reference, "progressive crop scanline mismatch at {perm}");
+        });
     }
 
     #[test]
     fn test_crop_grayscale() {
-        // Encode grayscale image
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 48u32;
         let height = 48u32;
         let mut pixels = vec![0u8; (width * height) as usize];
@@ -4022,42 +4002,40 @@ mod tests {
             }
         }
         let jpeg = encode_grayscale(width, height, &pixels, 95.0);
-
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
-
-        // Full decode + manual gray crop
-        let full = DecodeConfig::new()
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
-        let full_pix = full.pixels_u8().unwrap();
-        let full_w = full.width() as usize;
-        let bpp = full.format().bytes_per_pixel();
-        let mut reference = vec![0u8; cw as usize * ch as usize * bpp];
-        for y in 0..ch as usize {
-            let src_off = ((cy as usize + y) * full_w + cx as usize) * bpp;
-            let dst_off = y * cw as usize * bpp;
-            let row_bytes = cw as usize * bpp;
-            reference[dst_off..dst_off + row_bytes]
-                .copy_from_slice(&full_pix[src_off..src_off + row_bytes]);
-        }
-
-        // Crop decode
-        let cropped = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .decode(&jpeg, enough::Unstoppable)
-            .unwrap();
-
-        assert_eq!(cropped.width(), cw);
-        assert_eq!(cropped.height(), ch);
-        assert_eq!(cropped.pixels_u8().unwrap(), &reference[..]);
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let full = DecodeConfig::new()
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            let full_pix = full.pixels_u8().unwrap();
+            let full_w = full.width() as usize;
+            let bpp = full.format().bytes_per_pixel();
+            let mut reference = vec![0u8; cw as usize * ch as usize * bpp];
+            for y in 0..ch as usize {
+                let src_off = ((cy as usize + y) * full_w + cx as usize) * bpp;
+                let dst_off = y * cw as usize * bpp;
+                let row_bytes = cw as usize * bpp;
+                reference[dst_off..dst_off + row_bytes]
+                    .copy_from_slice(&full_pix[src_off..src_off + row_bytes]);
+            }
+            let cropped = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .decode(&jpeg, enough::Unstoppable)
+                .unwrap();
+            assert_eq!(cropped.width(), cw);
+            assert_eq!(cropped.height(), ch);
+            assert_eq!(cropped.pixels_u8().unwrap(), &reference[..],
+                "grayscale crop mismatch at {perm}");
+        });
     }
 
     #[test]
     fn test_crop_gray8_scanline() {
-        // Test read_rows_gray8 with crop
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         let width = 48u32;
         let height = 48u32;
         let mut pixels = vec![0u8; (width * height) as usize];
@@ -4067,52 +4045,44 @@ mod tests {
             }
         }
         let jpeg = encode_grayscale(width, height, &pixels, 95.0);
-
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            // Full scanline decode + manual crop
+            let mut full_reader = DecodeConfig::new().scanline_reader(&jpeg).unwrap();
+            let fw = full_reader.width() as usize;
+            let fh = full_reader.height() as usize;
+            let mut full_gray = vec![0u8; fw * fh];
+            let mut rows_read = 0;
+            while !full_reader.is_finished() {
+                let remaining = fh - rows_read;
+                let output = imgref::ImgRefMut::new(&mut full_gray[rows_read * fw..], fw, remaining);
+                rows_read += full_reader.read_rows_gray8(output).unwrap();
+            }
+            let mut ref_gray = vec![0u8; cw as usize * ch as usize];
+            for y in 0..ch as usize {
+                let src_off = (cy as usize + y) * fw + cx as usize;
+                let dst_off = y * cw as usize;
+                ref_gray[dst_off..dst_off + cw as usize]
+                    .copy_from_slice(&full_gray[src_off..src_off + cw as usize]);
+            }
 
-        // Reference: full scanline decode, manually crop gray
-        let mut full_reader = DecodeConfig::new().scanline_reader(&jpeg).unwrap();
-        let fw = full_reader.width() as usize;
-        let fh = full_reader.height() as usize;
-        let mut full_gray = vec![0u8; fw * fh];
-        let mut rows_read = 0;
-        while !full_reader.is_finished() {
-            let remaining = fh - rows_read;
-            let output = imgref::ImgRefMut::new(&mut full_gray[rows_read * fw..], fw, remaining);
-            rows_read += full_reader.read_rows_gray8(output).unwrap();
-        }
-        // Manually crop
-        let mut ref_gray = vec![0u8; cw as usize * ch as usize];
-        for y in 0..ch as usize {
-            let src_off = (cy as usize + y) * fw + cx as usize;
-            let dst_off = y * cw as usize;
-            ref_gray[dst_off..dst_off + cw as usize]
-                .copy_from_slice(&full_gray[src_off..src_off + cw as usize]);
-        }
-
-        // Crop scanline decode
-        let mut reader = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .scanline_reader(&jpeg)
-            .unwrap();
-
-        let out_w = cw as usize;
-        let out_h = ch as usize;
-        let mut out = vec![0u8; out_w * out_h];
-        let mut rows_read = 0;
-        while !reader.is_finished() {
-            let remaining = out_h - rows_read;
-            let output = imgref::ImgRefMut::new(&mut out[rows_read * out_w..], out_w, remaining);
-            rows_read += reader.read_rows_gray8(output).unwrap();
-        }
-
-        assert_eq!(
-            out, ref_gray,
-            "Cropped gray8 scanline differs from reference"
-        );
+            // Crop scanline decode
+            let mut reader = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .scanline_reader(&jpeg)
+                .unwrap();
+            let out_w = cw as usize;
+            let out_h = ch as usize;
+            let mut out = vec![0u8; out_w * out_h];
+            let mut rows_read = 0;
+            while !reader.is_finished() {
+                let remaining = out_h - rows_read;
+                let output = imgref::ImgRefMut::new(&mut out[rows_read * out_w..], out_w, remaining);
+                rows_read += reader.read_rows_gray8(output).unwrap();
+            }
+            assert_eq!(out, ref_gray, "gray8 crop scanline mismatch at {perm}");
+        });
     }
 
     #[test]
@@ -4149,6 +4119,10 @@ mod tests {
 
     #[test]
     fn test_crop_non_mcu_boundary() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+        use crate::decode::DecodeConfig;
+        use crate::decode::config::CropRegion;
+
         // Test crop at non-MCU-aligned boundaries with 4:2:0
         // MCU size for 4:2:0 is 16x16
         let width = 96u32;
@@ -4172,33 +4146,32 @@ mod tests {
 
         // Non-MCU-aligned crop: (5, 7, 37, 29)
         let (cx, cy, cw, ch) = (5u32, 7u32, 37u32, 29u32);
-        // Use scanline reference so IDCT/upsampling matches
-        let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        use crate::decode::DecodeConfig;
-        use crate::decode::config::CropRegion;
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
-        let mut reader = DecodeConfig::new()
-            .crop(CropRegion::pixels(cx, cy, cw, ch))
-            .scanline_reader(&jpeg)
-            .unwrap();
+            let mut reader = DecodeConfig::new()
+                .crop(CropRegion::pixels(cx, cy, cw, ch))
+                .scanline_reader(&jpeg)
+                .unwrap();
 
-        assert_eq!(reader.width(), cw);
-        assert_eq!(reader.height(), ch);
+            assert_eq!(reader.width(), cw);
+            assert_eq!(reader.height(), ch);
 
-        let out_w = cw as usize;
-        let out_h = ch as usize;
-        let mut out = vec![0u8; out_w * out_h * 3];
-        let mut rows_read = 0;
-        while !reader.is_finished() {
-            let remaining = out_h - rows_read;
-            let output =
-                imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
-            rows_read += reader.read_rows_rgb8(output).unwrap();
-        }
-        assert_eq!(
-            out, reference,
-            "Non-MCU-aligned crop differs from reference"
-        );
+            let out_w = cw as usize;
+            let out_h = ch as usize;
+            let mut out = vec![0u8; out_w * out_h * 3];
+            let mut rows_read = 0;
+            while !reader.is_finished() {
+                let remaining = out_h - rows_read;
+                let output =
+                    imgref::ImgRefMut::new(&mut out[rows_read * out_w * 3..], out_w * 3, remaining);
+                rows_read += reader.read_rows_rgb8(output).unwrap();
+            }
+            assert_eq!(
+                out, reference,
+                "Non-MCU-aligned crop differs from reference at {perm}"
+            );
+        });
     }
 }

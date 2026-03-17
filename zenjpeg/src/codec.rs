@@ -27,7 +27,9 @@ use alloc::vec::Vec;
 use rgb::{Gray, Rgb};
 use zencodec::decode::{DecodeCapabilities, DecodeOutput, OutputInfo};
 use zencodec::encode::{EncodeCapabilities, EncodeOutput};
-use zencodec::{ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation};
+use zencodec::{
+    ImageFormat, ImageInfo, Metadata, ResourceLimits, Unsupported, UnsupportedOperation,
+};
 use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 
 use crate::encode::encoder_config::EncoderConfig;
@@ -608,12 +610,70 @@ impl zencodec::encode::Encoder for JpegEncoder<'_> {
         self,
         source: &mut dyn FnMut(u32, PixelSliceMut<'_>) -> usize,
     ) -> Result<EncodeOutput, Error> {
-        // Pull-based encode: allocate a strip buffer, call source repeatedly,
-        // feed rows to the native streaming encoder.
-        // The challenge: we don't know dimensions upfront from the trait.
-        // Probe with a small buffer to discover width, then accumulate.
-        let _ = source;
-        Err(Self::reject(UnsupportedOperation::PullEncode))
+        use zenpixels::PixelSliceMut;
+
+        let (img_w, img_h) = self
+            .image_size
+            .ok_or_else(|| Error::unsupported_feature(
+                "encode_from requires with_canvas_size (dimensions must be known upfront)",
+            ))?;
+
+        // Determine pixel layout from the first source callback.
+        // We use RGBA8/sRGB as the default descriptor for the pull buffer.
+        // The source fills the buffer; we discover the actual format from
+        // what it produces. For now, use the descriptor from the config's
+        // supported list — JPEG always wants RGB8 or RGBA8.
+        let desc = PixelDescriptor::RGB8_SRGB;
+        let layout = descriptor_to_layout(desc)?;
+        self.check_limits(img_w, img_h, layout)?;
+
+        // Force baseline for streaming (same as push_rows streaming path).
+        let streaming_config = self
+            .effective_config
+            .clone()
+            .progressive(false)
+            .optimize_huffman(false);
+        let req = self.build_request_from(&streaming_config);
+        let mut enc = req.encode_from_bytes(img_w, img_h, layout)?;
+        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+
+        // Allocate strip buffer: preferred_strip_height rows.
+        let strip_h = 16u32.min(img_h); // MCU-aligned strip
+        let bpp = desc.bytes_per_pixel();
+        let stride = img_w as usize * bpp;
+        let buf_size = strip_h as usize * stride;
+        let mut buf = alloc::vec![0u8; buf_size];
+
+        let mut y = 0u32;
+        while y < img_h {
+            let rows_wanted = strip_h.min(img_h - y);
+            let slice_size = rows_wanted as usize * stride;
+
+            let mut pixel_buf =
+                PixelSliceMut::new(&mut buf[..slice_size], img_w, rows_wanted, stride, desc)
+                    .map_err(|e| {
+                        let _ = e;
+                        Error::unsupported_feature("encode_from buffer")
+                    })?;
+
+            let rows_provided = source(y, pixel_buf.sub_rows_mut(0, rows_wanted));
+            if rows_provided == 0 {
+                break;
+            }
+            let actual_rows = (rows_provided as u32).min(rows_wanted);
+
+            enc.push(
+                &buf[..actual_rows as usize * stride],
+                actual_rows as usize,
+                stride,
+                stop,
+            )?;
+            y += actual_rows;
+        }
+
+        let output = enc.finish()?;
+        self.check_output_size(&output)?;
+        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 }
 
@@ -1362,7 +1422,8 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
                 if let Some(exif) = extras.exif() {
                     if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-                        info = info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
+                        info =
+                            info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
                     }
                     info = info.with_exif(exif.to_vec());
                 }
@@ -2246,5 +2307,75 @@ mod tests {
 
         assert_eq!(output.info().width, 8);
         assert_eq!(output.info().height, 8);
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn encode_from_pull_basic() {
+        use zencodec::encode::{EncodeJob as _, Encoder as _};
+        use zenpixels::PixelSliceMut;
+
+        let width = 32u32;
+        let height = 32u32;
+        let bpp = 3; // RGB8
+
+        // Generate test pattern: horizontal gradient
+        let row_bytes = width as usize * bpp;
+        let total_bytes = row_bytes * height as usize;
+        let mut src_pixels = alloc::vec![0u8; total_bytes];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let offset = y * row_bytes + x * bpp;
+                src_pixels[offset] = (x * 255 / 31) as u8;     // R
+                src_pixels[offset + 1] = (y * 255 / 31) as u8; // G
+                src_pixels[offset + 2] = 128;                   // B
+            }
+        }
+
+        let config = JpegEncoderConfig::new().with_generic_quality(85.0);
+        let job = config.job().with_canvas_size(width, height);
+        let encoder = job.encoder().unwrap();
+
+        let encoded = encoder
+            .encode_from(&mut |y, mut buf: PixelSliceMut<'_>| {
+                let rows = buf.rows();
+                for row in 0..rows {
+                    let src_y = y + row;
+                    if src_y >= height {
+                        return row as usize;
+                    }
+                    let src_start = src_y as usize * row_bytes;
+                    let src_end = src_start + row_bytes;
+                    buf.row_mut(row).copy_from_slice(&src_pixels[src_start..src_end]);
+                }
+                rows as usize
+            })
+            .unwrap();
+
+        assert!(!encoded.data().is_empty());
+        assert!(encoded.data().len() > 100); // Sanity: not trivially small
+
+        // Verify roundtrip: decode and check dimensions
+        let dec = JpegDecoderConfig::new();
+        let output = dec
+            .job()
+            .decoder(Cow::Borrowed(encoded.data()), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!(output.info().width, width);
+        assert_eq!(output.info().height, height);
+    }
+
+    #[test]
+    fn encode_from_requires_canvas_size() {
+        use zencodec::encode::{EncodeJob as _, Encoder as _};
+        use zenpixels::PixelSliceMut;
+
+        let config = JpegEncoderConfig::new();
+        // No with_canvas_size — should error
+        let encoder = config.job().encoder().unwrap();
+        let result = encoder.encode_from(&mut |_y, _buf: PixelSliceMut<'_>| 0);
+        assert!(result.is_err());
     }
 }

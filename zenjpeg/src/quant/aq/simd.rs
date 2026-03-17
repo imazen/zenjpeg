@@ -1681,6 +1681,23 @@ pub(crate) mod archmage_impl {
         } else if let Some(token) = X64V3Token::summon() {
             // Fall back to AVX2
             mage_pre_erosion_row_padded(token, row, row_above, row_below, width, output);
+        } else {
+            // Scalar fallback when no SIMD tokens available
+            for x in 0..width {
+                let buf_x = x + 1;
+                let pixel = row[buf_x];
+                let left_val = row[buf_x - 1];
+                let right_val = row[buf_x + 1];
+                let top_val = row_above[buf_x];
+                let bottom_val = row_below[buf_x];
+
+                let base = 0.25 * (left_val + right_val + top_val + bottom_val);
+                let ratio = super::ratio_of_derivatives_scalar(pixel + GAMMA_OFFSET, false);
+                let diff = ratio * (pixel - base);
+                let diff_sq = (diff * diff).min(LIMIT);
+                let masked = super::masking_sqrt_scalar(diff_sq);
+                output[x] += masked;
+            }
         }
     }
 

@@ -606,47 +606,51 @@ mod pipeline_tests {
 
     #[test]
     fn test_roundtrip_identity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
         // Transform with None should produce a valid JPEG that decodes to
         // the same pixels (modulo Huffman table differences)
         let jpeg = create_test_jpeg(64, 64);
 
-        let result = transform(
-            &jpeg,
-            &TransformConfig {
-                transform: LosslessTransform::None,
-                edge_handling: EdgeHandling::TrimPartialBlocks,
-            },
-            Unstoppable,
-        )
-        .unwrap();
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let result = transform(
+                &jpeg,
+                &TransformConfig {
+                    transform: LosslessTransform::None,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+                Unstoppable,
+            )
+            .unwrap();
 
-        // Result should be a valid JPEG
-        assert!(result.len() > 100, "output too small");
-        assert_eq!(result[0], 0xFF);
-        assert_eq!(result[1], 0xD8); // SOI
+            // Result should be a valid JPEG
+            assert!(result.len() > 100, "output too small at {perm}");
+            assert_eq!(result[0], 0xFF);
+            assert_eq!(result[1], 0xD8); // SOI
 
-        // Decode both and compare
-        let decoder = DecodeConfig::new();
-        let orig = decoder.decode(&jpeg, Unstoppable).unwrap();
-        let transformed = decoder.decode(&result, Unstoppable).unwrap();
+            // Decode both and compare
+            let decoder = DecodeConfig::new();
+            let orig = decoder.decode(&jpeg, Unstoppable).unwrap();
+            let transformed = decoder.decode(&result, Unstoppable).unwrap();
 
-        assert_eq!(orig.width(), transformed.width());
-        assert_eq!(orig.height(), transformed.height());
+            assert_eq!(orig.width(), transformed.width());
+            assert_eq!(orig.height(), transformed.height());
 
-        // Pixels should be identical (lossless round-trip of coefficients)
-        let orig_px = orig.pixels_u8().unwrap();
-        let trans_px = transformed.pixels_u8().unwrap();
-        assert_eq!(orig_px.len(), trans_px.len());
+            // Pixels should be identical (lossless round-trip of coefficients)
+            let orig_px = orig.pixels_u8().unwrap();
+            let trans_px = transformed.pixels_u8().unwrap();
+            assert_eq!(orig_px.len(), trans_px.len());
 
-        let mut max_diff = 0u8;
-        for (a, b) in orig_px.iter().zip(trans_px.iter()) {
-            let diff = (*a as i16 - *b as i16).unsigned_abs() as u8;
-            max_diff = max_diff.max(diff);
-        }
-        assert_eq!(
-            max_diff, 0,
-            "identity transform should produce identical pixels"
-        );
+            let mut max_diff = 0u8;
+            for (a, b) in orig_px.iter().zip(trans_px.iter()) {
+                let diff = (*a as i16 - *b as i16).unsigned_abs() as u8;
+                max_diff = max_diff.max(diff);
+            }
+            assert_eq!(
+                max_diff, 0,
+                "identity transform should produce identical pixels at {perm}"
+            );
+        });
     }
 
     #[test]
@@ -694,53 +698,57 @@ mod pipeline_tests {
 
     #[test]
     fn test_double_rotate90_equals_rotate180() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
         let jpeg = create_test_jpeg(64, 64);
 
-        let rot90_1 = transform(
-            &jpeg,
-            &TransformConfig {
-                transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::TrimPartialBlocks,
-            },
-            Unstoppable,
-        )
-        .unwrap();
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let rot90_1 = transform(
+                &jpeg,
+                &TransformConfig {
+                    transform: LosslessTransform::Rotate90,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+                Unstoppable,
+            )
+            .unwrap();
 
-        let rot90_2 = transform(
-            &rot90_1,
-            &TransformConfig {
-                transform: LosslessTransform::Rotate90,
-                edge_handling: EdgeHandling::TrimPartialBlocks,
-            },
-            Unstoppable,
-        )
-        .unwrap();
+            let rot90_2 = transform(
+                &rot90_1,
+                &TransformConfig {
+                    transform: LosslessTransform::Rotate90,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+                Unstoppable,
+            )
+            .unwrap();
 
-        let rot180 = transform(
-            &jpeg,
-            &TransformConfig {
-                transform: LosslessTransform::Rotate180,
-                edge_handling: EdgeHandling::TrimPartialBlocks,
-            },
-            Unstoppable,
-        )
-        .unwrap();
+            let rot180 = transform(
+                &jpeg,
+                &TransformConfig {
+                    transform: LosslessTransform::Rotate180,
+                    edge_handling: EdgeHandling::TrimPartialBlocks,
+                },
+                Unstoppable,
+            )
+            .unwrap();
 
-        // Both should decode to the same pixels
-        let decoder = DecodeConfig::new();
-        let px_2x90 = decoder.decode(&rot90_2, Unstoppable).unwrap();
-        let px_180 = decoder.decode(&rot180, Unstoppable).unwrap();
+            // Both should decode to the same pixels
+            let decoder = DecodeConfig::new();
+            let px_2x90 = decoder.decode(&rot90_2, Unstoppable).unwrap();
+            let px_180 = decoder.decode(&rot180, Unstoppable).unwrap();
 
-        let px_a = px_2x90.pixels_u8().unwrap();
-        let px_b = px_180.pixels_u8().unwrap();
-        assert_eq!(px_a.len(), px_b.len());
+            let px_a = px_2x90.pixels_u8().unwrap();
+            let px_b = px_180.pixels_u8().unwrap();
+            assert_eq!(px_a.len(), px_b.len());
 
-        let mut max_diff = 0u8;
-        for (a, b) in px_a.iter().zip(px_b.iter()) {
-            let diff = (*a as i16 - *b as i16).unsigned_abs() as u8;
-            max_diff = max_diff.max(diff);
-        }
-        assert_eq!(max_diff, 0, "2×rot90 should equal rot180");
+            let mut max_diff = 0u8;
+            for (a, b) in px_a.iter().zip(px_b.iter()) {
+                let diff = (*a as i16 - *b as i16).unsigned_abs() as u8;
+                max_diff = max_diff.max(diff);
+            }
+            assert_eq!(max_diff, 0, "2×rot90 should equal rot180 at {perm}");
+        });
     }
 
     #[test]
@@ -1595,6 +1603,7 @@ fn test_decode_composed_exif_plus_transform() {
 
 #[test]
 fn test_decode_auto_orient_noop() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
     // Orientation=1 should produce same result as no auto_orient
     use crate::decode::DecodeConfig;
     use crate::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation, PixelLayout};
@@ -1612,24 +1621,27 @@ fn test_decode_auto_orient_noop() {
     enc.push_packed(&pixels, Unstoppable).unwrap();
     let jpeg = enc.finish().unwrap();
 
-    let with_orient = DecodeConfig::new()
-        .auto_orient(true)
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let with_orient = DecodeConfig::new()
+            .auto_orient(true)
+            .decode(&jpeg, Unstoppable)
+            .unwrap();
 
-    let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
+        let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
 
-    assert_eq!(with_orient.width(), without_orient.width());
-    assert_eq!(with_orient.height(), without_orient.height());
-    assert_eq!(
-        with_orient.pixels_u8().unwrap(),
-        without_orient.pixels_u8().unwrap(),
-        "orientation=1 + auto_orient should produce identical pixels"
-    );
+        assert_eq!(with_orient.width(), without_orient.width());
+        assert_eq!(with_orient.height(), without_orient.height());
+        assert_eq!(
+            with_orient.pixels_u8().unwrap(),
+            without_orient.pixels_u8().unwrap(),
+            "orientation=1 + auto_orient should produce identical pixels at {perm}"
+        );
+    });
 }
 
 #[test]
 fn test_decode_no_exif_auto_orient() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
     // No EXIF at all — auto_orient should be a no-op
     use crate::decode::DecodeConfig;
     use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
@@ -1645,20 +1657,22 @@ fn test_decode_no_exif_auto_orient() {
     enc.push_packed(&pixels, Unstoppable).unwrap();
     let jpeg = enc.finish().unwrap();
 
-    let with_orient = DecodeConfig::new()
-        .auto_orient(true)
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let with_orient = DecodeConfig::new()
+            .auto_orient(true)
+            .decode(&jpeg, Unstoppable)
+            .unwrap();
 
-    let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
+        let without_orient = DecodeConfig::new().decode(&jpeg, Unstoppable).unwrap();
 
-    assert_eq!(with_orient.width(), without_orient.width());
-    assert_eq!(with_orient.height(), without_orient.height());
-    assert_eq!(
-        with_orient.pixels_u8().unwrap(),
-        without_orient.pixels_u8().unwrap(),
-        "no EXIF + auto_orient should produce identical pixels"
-    );
+        assert_eq!(with_orient.width(), without_orient.width());
+        assert_eq!(with_orient.height(), without_orient.height());
+        assert_eq!(
+            with_orient.pixels_u8().unwrap(),
+            without_orient.pixels_u8().unwrap(),
+            "no EXIF + auto_orient should produce identical pixels at {perm}"
+        );
+    });
 }
 
 #[test]
@@ -2920,6 +2934,8 @@ fn test_15x17_border_pixels_scanline() {
 /// Verify ALL pixels match between DCT-domain and pixel-space transform on 15x17.
 #[test]
 fn test_15x17_all_pixels_lossless() {
+    // Lock prevents permutation tests from changing SIMD tier mid-test.
+    let _lock = archmage::testing::lock_token_testing();
     use crate::decode::DecodeConfig;
 
     let (w, h) = (15u32, 17u32);

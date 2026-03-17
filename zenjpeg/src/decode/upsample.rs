@@ -2581,10 +2581,17 @@ mod tests {
                     let main_row_idx = in_y * 2; // top half output row
                     let main_row = &main_at_tier[main_row_idx * out_width..][..out_width];
 
-                    assert_eq!(
-                        fixup_out, main_row,
-                        "fixup != main at in_y={in_y} (top half), width={in_width}, {perm}"
-                    );
+                    // ±1 tolerance: separable (main) vs non-separable (fixup)
+                    // rounding difference at lower SIMD tiers (same as
+                    // h2v2_fancy_strided_with_padding_dispatch_parity).
+                    for (x, (&f, &m)) in fixup_out.iter().zip(main_row.iter()).enumerate() {
+                        let diff = (f - m).unsigned_abs();
+                        assert!(
+                            diff <= 1,
+                            "fixup != main at in_y={in_y} x={x} (top half), width={in_width}, \
+                             fixup={f} main={m} {perm}"
+                        );
+                    }
 
                     // Bottom half: v_neighbor is below
                     let v_below_y = (in_y + 1).min(in_height - 1);
@@ -2596,10 +2603,14 @@ mod tests {
                     let main_row_idx = in_y * 2 + 1; // bottom half output row
                     let main_row = &main_at_tier[main_row_idx * out_width..][..out_width];
 
-                    assert_eq!(
-                        fixup_out, main_row,
-                        "fixup != main at in_y={in_y} (bottom half), width={in_width}, {perm}"
-                    );
+                    for (x, (&f, &m)) in fixup_out.iter().zip(main_row.iter()).enumerate() {
+                        let diff = (f - m).unsigned_abs();
+                        assert!(
+                            diff <= 1,
+                            "fixup != main at in_y={in_y} x={x} (bottom half), width={in_width}, \
+                             fixup={f} main={m} {perm}"
+                        );
+                    }
                 }
             });
 

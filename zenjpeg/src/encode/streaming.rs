@@ -1524,6 +1524,8 @@ mod tests {
 
     #[test]
     fn test_streaming_matches_oneshot() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
         // Create a small test image
         let width = 32u32;
         let height = 32u32;
@@ -1531,35 +1533,37 @@ mod tests {
             .map(|i| ((i * 17) % 256) as u8)
             .collect();
 
-        // Encode with one-shot method
-        let oneshot_result = StreamingEncoder::new(width, height)
-            .quality(Quality::ApproxJpegli(85.0))
-            .subsampling(Subsampling::S444)
-            .encode(&pixels)
-            .unwrap();
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            // Encode with one-shot method
+            let oneshot_result = StreamingEncoder::new(width, height)
+                .quality(Quality::ApproxJpegli(85.0))
+                .subsampling(Subsampling::S444)
+                .encode(&pixels)
+                .unwrap();
 
-        // Encode with streaming encoder (row by row)
-        let mut streaming = StreamingEncoder::new(width, height)
-            .quality(Quality::ApproxJpegli(85.0))
-            .subsampling(Subsampling::S444)
-            .start()
-            .unwrap();
+            // Encode with streaming encoder (row by row)
+            let mut streaming = StreamingEncoder::new(width, height)
+                .quality(Quality::ApproxJpegli(85.0))
+                .subsampling(Subsampling::S444)
+                .start()
+                .unwrap();
 
-        let row_size = width as usize * 3;
-        for y in 0..height as usize {
-            let start = y * row_size;
-            let end = start + row_size;
-            streaming.push_row(&pixels[start..end]).unwrap();
-        }
-        let streaming_result = streaming.finish().unwrap();
+            let row_size = width as usize * 3;
+            for y in 0..height as usize {
+                let start = y * row_size;
+                let end = start + row_size;
+                streaming.push_row(&pixels[start..end]).unwrap();
+            }
+            let streaming_result = streaming.finish().unwrap();
 
-        // Results should be identical
-        assert_eq!(
-            oneshot_result.len(),
-            streaming_result.len(),
-            "output lengths differ"
-        );
-        assert_eq!(oneshot_result, streaming_result, "outputs differ");
+            // Results should be identical
+            assert_eq!(
+                oneshot_result.len(),
+                streaming_result.len(),
+                "output lengths differ at {perm}"
+            );
+            assert_eq!(oneshot_result, streaming_result, "outputs differ at {perm}");
+        });
     }
 
     // === Streaming-through tests ===
@@ -1888,35 +1892,40 @@ mod tests {
 
     #[test]
     fn test_streaming_row_by_row_matches_encode() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
         // Row-by-row and encode() convenience should produce identical output
         let width = 64;
         let height = 64;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
-        // Path 1: encode() convenience
-        let jpeg_oneshot = StreamingEncoder::new(width as u32, height as u32)
-            .custom_huffman_tables(tables.clone())
-            .encode(&data)
-            .unwrap();
+        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
-        // Path 2: row-by-row
-        let mut encoder = StreamingEncoder::new(width as u32, height as u32)
-            .custom_huffman_tables(tables)
-            .start()
-            .unwrap();
-        let row_bytes = width * 3;
-        for y in 0..height {
-            encoder
-                .push_row(&data[y * row_bytes..(y + 1) * row_bytes])
+            // Path 1: encode() convenience
+            let jpeg_oneshot = StreamingEncoder::new(width as u32, height as u32)
+                .custom_huffman_tables(tables.clone())
+                .encode(&data)
                 .unwrap();
-        }
-        let jpeg_manual = encoder.finish().unwrap();
 
-        assert_eq!(
-            jpeg_oneshot, jpeg_manual,
-            "encode() and row-by-row should produce identical output"
-        );
+            // Path 2: row-by-row
+            let mut encoder = StreamingEncoder::new(width as u32, height as u32)
+                .custom_huffman_tables(tables)
+                .start()
+                .unwrap();
+            let row_bytes = width * 3;
+            for y in 0..height {
+                encoder
+                    .push_row(&data[y * row_bytes..(y + 1) * row_bytes])
+                    .unwrap();
+            }
+            let jpeg_manual = encoder.finish().unwrap();
+
+            assert_eq!(
+                jpeg_oneshot, jpeg_manual,
+                "encode() and row-by-row should produce identical output at {perm}"
+            );
+        });
     }
 
     #[test]

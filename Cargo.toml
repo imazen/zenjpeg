@@ -102,7 +102,7 @@ ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.2.0" }
 
 # Layout + resize pipeline
 zenlayout = "0.2"
-zenresize = "0.1"
+zenresize = { path = "../zenresize" }
 
 [profile.release]
 debug = true

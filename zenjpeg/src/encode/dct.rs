@@ -1191,6 +1191,8 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_mage_dct_matches_scalar() {
+        // Lock prevents permutation tests from disabling AVX2 while we summon tokens.
+        let _lock = archmage::testing::lock_token_testing();
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
             return;
         }

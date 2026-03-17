@@ -3101,8 +3101,6 @@ dependencies = [
 [[package]]
 name = "zenresize"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4210cdf89a9490c5a4c642fb11d295ebec1be8378c60fe1489448f32820415a5"
 dependencies = [
  "archmage 0.9.5",
  "imgref",
@@ -3111,6 +3109,7 @@ dependencies = [
  "magetypes",
  "rgb",
  "safe_unaligned_simd",
+ "whereat 0.1.3",
  "wide 1.1.1",
  "zenlayout",
  "zenpixels",

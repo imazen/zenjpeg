@@ -1,5 +1,13 @@
 # zenjpeg development commands
 
+# Run all lib tests
+test:
+    cargo test -p zenjpeg --lib
+
+# Pre-commit: fmt + clippy + test
+ci:
+    cargo fmt -p zenjpeg -- --check && cargo clippy -p zenjpeg -- -D warnings && just test
+
 # Default test image for profiling
 TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/CID22/CID22-512/validation/1025469.png")
 
