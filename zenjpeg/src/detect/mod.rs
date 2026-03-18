@@ -32,6 +32,8 @@ mod reencode;
 mod scanner;
 
 pub use fingerprint::EncoderFamily;
+#[cfg(test)]
+pub(crate) use fingerprint::generate_ijg_table;
 pub use quality::{Confidence, QualityEstimate, QualityScale};
 pub use reencode::{ReencodeError, ReencodeSettings};
 

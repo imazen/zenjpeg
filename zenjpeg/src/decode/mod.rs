@@ -1904,12 +1904,15 @@ fn find_exif_orientation(data: &[u8]) -> Option<u8> {
 }
 
 /// Finalize extras: inject probe result and strip forced EXIF if needed.
+///
+/// Creates extras if none exist but probe data is available (e.g., for
+/// programmatically-encoded JPEGs with no metadata segments).
 fn finalize_extras(
     extras: Option<DecodedExtras>,
     data: &[u8],
     forced_exif: bool,
 ) -> Option<DecodedExtras> {
-    let mut extras = extras?;
+    let mut extras = extras.unwrap_or_else(DecodedExtras::new);
 
     // Inject probe result (quality estimation, encoder ID, DQT tables).
     // This is a header-only scan (<1us) — no entropy decoding.
@@ -2353,6 +2356,526 @@ mod limits_tests {
         assert!(
             matches!(err.kind(), ErrorKind::TooManyScans { .. }),
             "expected TooManyScans error, got: {err}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod quality_estimation_tests {
+    use super::*;
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    /// Helper: encode an RGB image at the given quality and return the JPEG bytes.
+    fn encode_test_image(quality: f32, width: u32, height: u32) -> Vec<u8> {
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = ((x * 7 + y * 3) % 256) as u8;
+                input[idx + 1] = ((x * 3 + y * 7 + 50) % 256) as u8;
+                input[idx + 2] = ((x * 5 + y * 5 + 100) % 256) as u8;
+            }
+        }
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation");
+        enc.push_packed(&input, Unstoppable).expect("push");
+        enc.finish().expect("finish")
+    }
+
+    #[test]
+    fn test_extras_quality_estimate_available() {
+        let jpeg = encode_test_image(75.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras should be present");
+
+        let estimate = extras
+            .quality_estimate()
+            .expect("quality estimate should be available");
+        // zenjpeg uses jpegli tables, so the estimate should be on the butteraugli scale
+        assert!(
+            estimate.value > 0.0,
+            "quality estimate value should be positive"
+        );
+    }
+
+    #[test]
+    fn test_extras_encoder_detected_as_jpegli() {
+        let jpeg = encode_test_image(80.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let encoder = extras.encoder().expect("encoder should be detected");
+        // zenjpeg uses jpegli internally — should be detected as CjpegliYcbcr
+        assert!(
+            matches!(
+                encoder,
+                crate::detect::EncoderFamily::CjpegliYcbcr
+                    | crate::detect::EncoderFamily::CjpegliXyb
+            ),
+            "expected jpegli encoder family, got: {encoder:?}"
+        );
+    }
+
+    #[test]
+    fn test_extras_dqt_tables_present() {
+        let jpeg = encode_test_image(85.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let tables = extras.dqt_tables().expect("DQT tables should be present");
+        // Color images should have at least 2 DQT tables (jpegli uses 3)
+        assert!(
+            tables.len() >= 2,
+            "expected at least 2 DQT tables, got {}",
+            tables.len()
+        );
+    }
+
+    #[test]
+    fn test_extras_luminance_qt_present() {
+        let jpeg = encode_test_image(90.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let luma_qt = extras
+            .luminance_qt()
+            .expect("luminance QT should be present");
+        // All values should be >= 1 (quantization table values are at least 1)
+        for &v in luma_qt {
+            assert!(v >= 1, "QT value should be >= 1, got {v}");
+        }
+        // At Q90, values should be relatively small
+        assert!(
+            luma_qt[0] < 20,
+            "DC quant at Q90 should be small, got {}",
+            luma_qt[0]
+        );
+    }
+
+    #[test]
+    fn test_extras_probe_full_access() {
+        let jpeg = encode_test_image(75.0, 64, 64);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let probe = extras.probe().expect("probe should be present");
+        assert_eq!(probe.dimensions.width, 64);
+        assert_eq!(probe.dimensions.height, 64);
+        assert_eq!(probe.num_components, 3);
+        assert!(probe.scan_count >= 1);
+    }
+
+    #[test]
+    fn test_extras_quality_range_sweep() {
+        // Encode at various qualities and verify estimates are in reasonable range
+        for q in [10.0, 25.0, 50.0, 75.0, 90.0, 95.0] {
+            let jpeg = encode_test_image(q, 32, 32);
+            let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+            let extras = decoded.extras().expect("extras");
+            let estimate = extras
+                .quality_estimate()
+                .expect("quality estimate should be available");
+
+            // The estimate should be a finite positive number
+            assert!(
+                estimate.value.is_finite() && estimate.value > 0.0,
+                "Q{q}: estimate should be finite positive, got {}",
+                estimate.value
+            );
+        }
+    }
+
+    #[test]
+    fn test_extras_higher_quality_means_smaller_qt_values() {
+        // Higher quality should produce smaller quantization table values
+        let jpeg_low = encode_test_image(50.0, 32, 32);
+        let jpeg_high = encode_test_image(95.0, 32, 32);
+
+        let low = Decoder::new()
+            .decode(&jpeg_low, Unstoppable)
+            .expect("decode");
+        let high = Decoder::new()
+            .decode(&jpeg_high, Unstoppable)
+            .expect("decode");
+
+        let low_qt = low.extras().unwrap().luminance_qt().unwrap();
+        let high_qt = high.extras().unwrap().luminance_qt().unwrap();
+
+        // Sum of QT values should be larger for lower quality
+        let low_sum: u64 = low_qt.iter().map(|&v| v as u64).sum();
+        let high_sum: u64 = high_qt.iter().map(|&v| v as u64).sum();
+        assert!(
+            low_sum > high_sum,
+            "Q50 QT sum ({low_sum}) should be > Q95 QT sum ({high_sum})"
+        );
+    }
+
+    #[test]
+    fn test_extras_chrominance_qt_present_for_color() {
+        let jpeg = encode_test_image(80.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        // Color image should have chrominance QT
+        let chroma_qt = extras.chrominance_qt();
+        assert!(
+            chroma_qt.is_some(),
+            "chrominance QT should be present for color image"
+        );
+    }
+
+    #[test]
+    fn test_extras_grayscale_has_luminance_qt() {
+        // Encode a grayscale image
+        let width = 32u32;
+        let height = 32u32;
+        let mut input = vec![0u8; (width * height) as usize];
+        for i in 0..input.len() {
+            input[i] = (i % 256) as u8;
+        }
+        let config = EncoderConfig::grayscale(80.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder");
+        enc.push_packed(&input, Unstoppable).expect("push");
+        let jpeg = enc.finish().expect("finish");
+
+        let decoded = Decoder::new()
+            .output_format(PixelFormat::Gray)
+            .decode(&jpeg, Unstoppable)
+            .expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        // Grayscale should have luminance QT
+        assert!(extras.luminance_qt().is_some());
+
+        // Probe should report 1 component
+        let probe = extras.probe().expect("probe");
+        assert_eq!(probe.num_components, 1, "grayscale should have 1 component");
+    }
+
+    #[test]
+    fn test_extras_quality_estimate_confidence() {
+        // Build a synthetic JPEG with known IJG Q75 tables and verify exact match
+        let jpeg = build_ijg_synthetic_jpeg(75);
+        let probe = crate::detect::probe(&jpeg).expect("probe should work");
+        assert_eq!(probe.quality.confidence, crate::detect::Confidence::Exact,);
+        assert_eq!(probe.quality.value, 75.0);
+    }
+
+    #[test]
+    fn test_extras_ijg_quality_roundtrip() {
+        // Build synthetic IJG JPEGs at various qualities and verify roundtrip
+        for q in [10, 25, 50, 75, 85, 90, 95, 100] {
+            let jpeg = build_ijg_synthetic_jpeg(q);
+            let probe = crate::detect::probe(&jpeg).expect("probe");
+            assert_eq!(
+                probe.quality.value, q as f32,
+                "IJG Q{q} should roundtrip exactly"
+            );
+            assert_eq!(probe.quality.confidence, crate::detect::Confidence::Exact,);
+            assert_eq!(probe.quality.scale, crate::detect::QualityScale::IjgQuality,);
+        }
+    }
+
+    /// Build a minimal synthetic JPEG with IJG tables at a given quality.
+    /// Produces a valid header but minimal entropy data (not decodable to pixels).
+    fn build_ijg_synthetic_jpeg(quality: u8) -> Vec<u8> {
+        use crate::detect::generate_ijg_table;
+        use crate::foundation::consts::{MARKER_DQT, MARKER_SOF0, MARKER_SOI, MARKER_SOS};
+
+        let mut data = Vec::new();
+
+        // SOI
+        data.extend_from_slice(&[0xFF, MARKER_SOI]);
+
+        // JFIF APP0
+        data.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]);
+        data.extend_from_slice(b"JFIF\0");
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+
+        // DQT table 0 (luminance)
+        let luma = generate_ijg_table(quality, false);
+        data.extend_from_slice(&[0xFF, MARKER_DQT, 0x00, 0x43, 0x00]);
+        for z in 0..64 {
+            let ni = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(luma[ni] as u8);
+        }
+
+        // DQT table 1 (chrominance)
+        let chroma = generate_ijg_table(quality, true);
+        data.extend_from_slice(&[0xFF, MARKER_DQT, 0x00, 0x43, 0x01]);
+        for z in 0..64 {
+            let ni = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(chroma[ni] as u8);
+        }
+
+        // SOF0
+        data.extend_from_slice(&[0xFF, MARKER_SOF0, 0x00, 0x11, 0x08]);
+        data.extend_from_slice(&[0x00, 0x08, 0x00, 0x08]);
+        data.push(0x03);
+        data.extend_from_slice(&[0x01, 0x11, 0x00]);
+        data.extend_from_slice(&[0x02, 0x11, 0x01]);
+        data.extend_from_slice(&[0x03, 0x11, 0x01]);
+
+        // Standard DHT tables (162 AC symbols each → libjpeg-turbo detection)
+        // DC table 0
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x00]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // AC table 0 (162 symbols)
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0xB5, 0x10]);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x7D,
+        ]);
+        for i in 0..162u8 {
+            data.push(i);
+        }
+
+        // DC table 1
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x01]);
+        data.extend_from_slice(&[
+            0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // AC table 1 (162 symbols)
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0xB5, 0x11]);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x02, 0x04, 0x04, 0x03, 0x04, 0x07, 0x05, 0x04, 0x04, 0x00, 0x01,
+            0x02, 0x77,
+        ]);
+        for i in 0..162u8 {
+            data.push(i);
+        }
+
+        // SOS
+        data.extend_from_slice(&[0xFF, MARKER_SOS, 0x00, 0x0C, 0x03]);
+        data.extend_from_slice(&[0x01, 0x00, 0x02, 0x11, 0x03, 0x11]);
+        data.extend_from_slice(&[0x00, 0x3F, 0x00]);
+        data.push(0x00);
+
+        // EOI
+        data.extend_from_slice(&[0xFF, 0xD9]);
+
+        data
+    }
+
+    #[test]
+    fn test_extras_photoshop_detection() {
+        // Build a synthetic JPEG with APP13 (Photoshop 3.0) + APP14 (Adobe) markers
+        // and non-IJG tables to trigger Photoshop detection
+        let jpeg = build_photoshop_jpeg();
+        let probe = crate::detect::probe(&jpeg).expect("probe");
+        assert_eq!(
+            probe.encoder,
+            crate::detect::EncoderFamily::Photoshop,
+            "should detect as Photoshop"
+        );
+    }
+
+    /// Build a synthetic JPEG that mimics Photoshop output:
+    /// non-IJG DQT + APP13 Photoshop 3.0 + APP14 Adobe
+    fn build_photoshop_jpeg() -> Vec<u8> {
+        use crate::foundation::consts::{MARKER_DQT, MARKER_SOF0, MARKER_SOI, MARKER_SOS};
+
+        let mut data = Vec::new();
+
+        // SOI
+        data.extend_from_slice(&[0xFF, MARKER_SOI]);
+
+        // APP0 (JFIF)
+        data.extend_from_slice(&[0xFF, 0xE0]);
+        data.extend_from_slice(&[0x00, 0x10]);
+        data.extend_from_slice(b"JFIF\0");
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+
+        // APP13 (Photoshop 3.0 IPTC)
+        let ps_data = b"Photoshop 3.0\08BIM\x00";
+        let ps_len = (ps_data.len() + 2) as u16;
+        data.extend_from_slice(&[0xFF, 0xED]);
+        data.push((ps_len >> 8) as u8);
+        data.push((ps_len & 0xFF) as u8);
+        data.extend_from_slice(ps_data);
+
+        // APP14 (Adobe)
+        data.extend_from_slice(&[0xFF, 0xEE]);
+        data.extend_from_slice(&[0x00, 0x0E]); // Length 14
+        data.extend_from_slice(b"Adobe");
+        data.extend_from_slice(&[0x00, 0x64]); // Version 100
+        data.extend_from_slice(&[0x00, 0x00]); // Flags0
+        data.extend_from_slice(&[0x00, 0x00]); // Flags1
+        data.push(0x01); // YCbCr color transform
+
+        // DQT table 0 — non-IJG custom table (Photoshop quality 10)
+        // These are NOT generated by the IJG formula
+        let custom_luma: [u8; 64] = [
+            2, 2, 2, 2, 3, 4, 5, 6, 2, 2, 2, 2, 3, 4, 5, 6, 2, 2, 2, 2, 4, 5, 7, 9, 2, 2, 2, 4, 5,
+            7, 9, 12, 3, 3, 4, 5, 8, 10, 12, 12, 4, 4, 5, 7, 10, 12, 12, 12, 5, 5, 7, 9, 12, 12,
+            12, 12, 6, 6, 9, 12, 12, 12, 12, 12,
+        ];
+        data.extend_from_slice(&[0xFF, MARKER_DQT]);
+        data.extend_from_slice(&[0x00, 0x43]); // Length 67
+        data.push(0x00); // Precision 0, table 0
+        // Write in zigzag order
+        for z in 0..64 {
+            let natural_idx = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(custom_luma[natural_idx]);
+        }
+
+        // DQT table 1 — non-IJG custom chrominance
+        let custom_chroma: [u8; 64] = [
+            3, 3, 5, 9, 13, 15, 15, 15, 3, 4, 6, 11, 14, 12, 12, 12, 5, 6, 9, 14, 12, 12, 12, 12,
+            9, 11, 14, 12, 12, 12, 12, 12, 13, 14, 12, 12, 12, 12, 12, 12, 15, 12, 12, 12, 12, 12,
+            12, 12, 15, 12, 12, 12, 12, 12, 12, 12, 15, 12, 12, 12, 12, 12, 12, 12,
+        ];
+        data.extend_from_slice(&[0xFF, MARKER_DQT]);
+        data.extend_from_slice(&[0x00, 0x43]);
+        data.push(0x01);
+        for z in 0..64 {
+            let natural_idx = crate::foundation::consts::JPEG_NATURAL_ORDER[z] as usize;
+            data.push(custom_chroma[natural_idx]);
+        }
+
+        // SOF0
+        data.extend_from_slice(&[0xFF, MARKER_SOF0]);
+        data.extend_from_slice(&[0x00, 0x11, 0x08]);
+        data.extend_from_slice(&[0x00, 0x08, 0x00, 0x08]);
+        data.push(0x03);
+        data.extend_from_slice(&[0x01, 0x11, 0x00]); // Y
+        data.extend_from_slice(&[0x02, 0x11, 0x01]); // Cb
+        data.extend_from_slice(&[0x03, 0x11, 0x01]); // Cr
+
+        // Minimal DHT + SOS + EOI
+        // DHT DC table 0
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x00]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // DHT AC table 0 (100 symbols — not 162 → triggers optimized Huffman)
+        let ac_sym_count: u16 = 100;
+        let ac_len = 2 + 1 + 16 + ac_sym_count;
+        data.extend_from_slice(&[0xFF, 0xC4]);
+        data.push((ac_len >> 8) as u8);
+        data.push((ac_len & 0xFF) as u8);
+        data.push(0x10);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x3F,
+        ]);
+        for i in 0..100u8 {
+            data.push(i);
+        }
+
+        // DHT DC table 1
+        data.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x1F, 0x01]);
+        data.extend_from_slice(&[
+            0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]);
+        data.extend_from_slice(&[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        ]);
+
+        // DHT AC table 1
+        data.extend_from_slice(&[0xFF, 0xC4]);
+        data.push((ac_len >> 8) as u8);
+        data.push((ac_len & 0xFF) as u8);
+        data.push(0x11);
+        data.extend_from_slice(&[
+            0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00,
+            0x01, 0x3F,
+        ]);
+        for i in 0..100u8 {
+            data.push(i);
+        }
+
+        // SOS
+        data.extend_from_slice(&[0xFF, MARKER_SOS]);
+        data.extend_from_slice(&[0x00, 0x0C, 0x03]);
+        data.extend_from_slice(&[0x01, 0x00, 0x02, 0x11, 0x03, 0x11]);
+        data.extend_from_slice(&[0x00, 0x3F, 0x00]);
+        data.push(0x00);
+
+        // EOI
+        data.extend_from_slice(&[0xFF, 0xD9]);
+
+        data
+    }
+
+    #[test]
+    fn test_extras_quality_q1_edge_case() {
+        // Q1 = maximum compression, highest quantization values
+        let jpeg = encode_test_image(1.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+        let estimate = extras.quality_estimate().expect("quality estimate");
+        assert!(
+            estimate.value > 0.0,
+            "Q1 quality estimate should be positive"
+        );
+    }
+
+    #[test]
+    fn test_extras_quality_q100_edge_case() {
+        // Q100 = near-lossless, lowest quantization values
+        let jpeg = encode_test_image(100.0, 32, 32);
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras = decoded.extras().expect("extras");
+
+        let luma_qt = extras.luminance_qt().expect("luma QT");
+        // At Q100, most quantization values should be very small (1-2)
+        let all_ones = luma_qt.iter().all(|&v| v <= 2);
+        assert!(all_ones, "Q100 QT should have very small values");
+    }
+
+    #[test]
+    fn test_extras_probe_matches_standalone_probe() {
+        // Verify that the probe result stored in extras matches
+        // a standalone probe on the same JPEG bytes
+        let jpeg = encode_test_image(75.0, 64, 64);
+
+        let decoded = Decoder::new().decode(&jpeg, Unstoppable).expect("decode");
+        let extras_probe = decoded.extras().unwrap().probe().expect("probe in extras");
+
+        let standalone_probe = crate::detect::probe(&jpeg).expect("standalone probe");
+
+        assert_eq!(extras_probe.encoder, standalone_probe.encoder);
+        assert_eq!(extras_probe.quality.value, standalone_probe.quality.value);
+        assert_eq!(extras_probe.quality.scale, standalone_probe.quality.scale);
+        assert_eq!(
+            extras_probe.quality.confidence,
+            standalone_probe.quality.confidence
+        );
+        assert_eq!(
+            extras_probe.dimensions.width,
+            standalone_probe.dimensions.width
+        );
+        assert_eq!(
+            extras_probe.dimensions.height,
+            standalone_probe.dimensions.height
+        );
+        assert_eq!(
+            extras_probe.dqt_tables.len(),
+            standalone_probe.dqt_tables.len()
         );
     }
 }
