@@ -77,8 +77,9 @@ pub use ultrahdr_reader::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrR
 // Re-export extras types for public API
 #[allow(unused_imports)]
 pub use extras::{
-    AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
-    MpfDirectory, MpfEntry, MpfImageType, PreserveConfig, PreservedMpfImage, PreservedSegment,
+    AdobeColorTransform, AdobeInfo, Confidence, DecodedExtras, DensityUnits, DqtTable,
+    EncoderFamily, IccPreserve, JfifInfo, JpegProbe, MpfDirectory, MpfEntry, MpfImageType,
+    PreserveConfig, PreservedMpfImage, PreservedSegment, QualityEstimate, QualityScale,
     SegmentType, StandardProfile,
 };
 
@@ -1298,7 +1299,7 @@ impl DecodeConfig {
                 (visible_w, visible_h)
             };
 
-            let extras = strip_forced_exif(parser.take_extras(), forced_exif);
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
             let warnings = parser.take_warnings();
             DecodeResult::new_f32(
                 out_w,
@@ -1383,7 +1384,7 @@ impl DecodeConfig {
                 (visible_w, visible_h)
             };
 
-            let extras = strip_forced_exif(parser.take_extras(), forced_exif);
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
             let warnings = parser.take_warnings();
             DecodeResult::new_u8(
                 out_w,
@@ -1624,7 +1625,7 @@ impl DecodeConfig {
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
 
-        let extras = parser.take_extras();
+        let extras = finalize_extras(parser.take_extras(), data, false);
         let coeffs = parser.extract_coefficients()?;
         Ok((coeffs, extras))
     }
@@ -1822,7 +1823,7 @@ impl DecodeConfig {
 
         // Extract extras if preserving metadata
         let extras = if config.preserve_metadata {
-            parser.take_extras()
+            finalize_extras(parser.take_extras(), data, false)
         } else {
             None
         };
@@ -1902,14 +1903,24 @@ fn find_exif_orientation(data: &[u8]) -> Option<u8> {
     None
 }
 
-/// Strip EXIF segments from extras if we only preserved them for auto_orient
-/// but the user's preserve config had exif=false.
-fn strip_forced_exif(extras: Option<DecodedExtras>, forced_exif: bool) -> Option<DecodedExtras> {
-    if !forced_exif {
-        return extras;
-    }
+/// Finalize extras: inject probe result and strip forced EXIF if needed.
+fn finalize_extras(
+    extras: Option<DecodedExtras>,
+    data: &[u8],
+    forced_exif: bool,
+) -> Option<DecodedExtras> {
     let mut extras = extras?;
-    extras.remove_segments_by_type(SegmentType::Exif);
+
+    // Inject probe result (quality estimation, encoder ID, DQT tables).
+    // This is a header-only scan (<1us) — no entropy decoding.
+    if let Ok(probe) = crate::detect::probe(data) {
+        extras.probe = Some(probe);
+    }
+
+    if forced_exif {
+        extras.remove_segments_by_type(SegmentType::Exif);
+    }
+
     Some(extras)
 }
 

@@ -54,7 +54,8 @@ pub(crate) fn estimate_quality(scan: &ScanResult, encoder: &EncoderFamily) -> Qu
 
         EncoderFamily::CjpegliYcbcr | EncoderFamily::CjpegliXyb => estimate_jpegli_quality(scan),
 
-        EncoderFamily::Unknown => estimate_ijg_quality_approximate(scan),
+        // Photoshop uses non-IJG custom tables — match against IJG as a reference
+        EncoderFamily::Photoshop | EncoderFamily::Unknown => estimate_ijg_quality_approximate(scan),
     }
 }
 
@@ -339,6 +340,8 @@ mod tests {
             dht_count: 0,
             has_jfif: false,
             has_icc_profile: false,
+            has_adobe: false,
+            has_photoshop_iptc: false,
             sos_count: 0,
         }
     }

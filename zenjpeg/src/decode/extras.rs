@@ -32,6 +32,11 @@ pub use crate::encode::extras::{
     AdobeColorTransform, AdobeInfo, DensityUnits, JfifInfo, MpfImageType, SegmentType,
 };
 
+// Re-export detect types for quality estimation through extras
+pub use crate::detect::{
+    Confidence, DqtTable, EncoderFamily, JpegProbe, QualityEstimate, QualityScale,
+};
+
 /// Configuration for what to preserve during decode.
 #[derive(Clone)]
 pub struct PreserveConfig {
@@ -355,6 +360,8 @@ pub struct DecodedExtras {
     pub(crate) segments: Vec<PreservedSegment>,
     /// Secondary images extracted from MPF
     pub(crate) secondary_images: Vec<PreservedMpfImage>,
+    /// Probe result from header analysis (encoder ID, quality estimate, DQT tables).
+    pub(crate) probe: Option<JpegProbe>,
 
     // Lazy parse cache
     xmp_cache: OnceLock<Option<String>>,
@@ -367,6 +374,7 @@ impl core::fmt::Debug for DecodedExtras {
         f.debug_struct("DecodedExtras")
             .field("segments", &self.segments.len())
             .field("secondary_images", &self.secondary_images.len())
+            .field("has_probe", &self.probe.is_some())
             .finish()
     }
 }
@@ -376,6 +384,7 @@ impl Clone for DecodedExtras {
         Self {
             segments: self.segments.clone(),
             secondary_images: self.secondary_images.clone(),
+            probe: self.probe.clone(),
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
             mpf_cache: OnceLock::new(),
@@ -389,6 +398,7 @@ impl DecodedExtras {
         Self {
             segments: Vec::new(),
             secondary_images: Vec::new(),
+            probe: None,
             xmp_cache: OnceLock::new(),
             icc_cache: OnceLock::new(),
             mpf_cache: OnceLock::new(),
@@ -485,6 +495,80 @@ impl DecodedExtras {
     pub fn comments(&self) -> impl Iterator<Item = &str> {
         self.segments_by_type(SegmentType::Comment)
             .filter_map(|seg| core::str::from_utf8(&seg.data).ok())
+    }
+
+    // === Quality estimation and encoder identification ===
+
+    /// Full probe result from header analysis.
+    ///
+    /// Contains encoder identification, quality estimate, dimensions,
+    /// subsampling, mode, and raw quantization tables. Available when
+    /// metadata preservation is enabled (the default).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let extras = decoded.extras().unwrap();
+    /// if let Some(probe) = extras.probe() {
+    ///     println!("Encoder: {:?}", probe.encoder);
+    ///     println!("Quality: {:.0} ({:?})", probe.quality.value, probe.quality.scale);
+    /// }
+    /// ```
+    #[must_use]
+    pub fn probe(&self) -> Option<&JpegProbe> {
+        self.probe.as_ref()
+    }
+
+    /// Estimate the encoding quality from quantization tables.
+    ///
+    /// Returns the quality estimate with a value on the appropriate scale
+    /// for the detected encoder (IJG 1-100, mozjpeg 1-100, or butteraugli distance).
+    #[must_use]
+    pub fn quality_estimate(&self) -> Option<&QualityEstimate> {
+        self.probe.as_ref().map(|p| &p.quality)
+    }
+
+    /// Detected encoder family (libjpeg-turbo, mozjpeg, jpegli, Photoshop, etc.).
+    #[must_use]
+    pub fn encoder(&self) -> Option<EncoderFamily> {
+        self.probe.as_ref().map(|p| p.encoder)
+    }
+
+    /// Raw luminance quantization table (64 values in natural/row-major order).
+    ///
+    /// This is DQT table 0, which is typically the luminance (Y) table.
+    /// Values are in the range 1-255 for baseline JPEG, 1-65535 for extended.
+    #[must_use]
+    pub fn luminance_qt(&self) -> Option<&[u16; 64]> {
+        self.probe
+            .as_ref()?
+            .dqt_tables
+            .iter()
+            .find(|t| t.index == 0)
+            .map(|t| &t.values)
+    }
+
+    /// Raw chrominance quantization table (64 values in natural/row-major order).
+    ///
+    /// This is DQT table 1, which is typically the chrominance (Cb/Cr) table.
+    /// Returns `None` for grayscale images (only one DQT table).
+    #[must_use]
+    pub fn chrominance_qt(&self) -> Option<&[u16; 64]> {
+        self.probe
+            .as_ref()?
+            .dqt_tables
+            .iter()
+            .find(|t| t.index == 1)
+            .map(|t| &t.values)
+    }
+
+    /// All quantization tables extracted from the JPEG.
+    ///
+    /// Typically 1 table for grayscale, 2 for standard color, 3 for jpegli.
+    /// Tables are in natural (row-major) order with their original table indices.
+    #[must_use]
+    pub fn dqt_tables(&self) -> Option<&[DqtTable]> {
+        self.probe.as_ref().map(|p| p.dqt_tables.as_slice())
     }
 
     /// MPF directory (parsed from APP2).

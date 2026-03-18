@@ -41,7 +41,7 @@ use crate::types::{Dimensions, JpegMode, Subsampling};
 use alloc::vec::Vec;
 
 /// Result of probing a JPEG file.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JpegProbe {
     /// Identified encoder family.
     pub encoder: EncoderFamily,

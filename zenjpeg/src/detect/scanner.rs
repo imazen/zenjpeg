@@ -25,6 +25,10 @@ pub(crate) struct ScanResult {
     pub has_jfif: bool,
     /// Whether an ICC_PROFILE APP2 marker was found.
     pub has_icc_profile: bool,
+    /// Whether an Adobe APP14 marker was found.
+    pub has_adobe: bool,
+    /// Whether a Photoshop 3.0 APP13 (IPTC) marker was found.
+    pub has_photoshop_iptc: bool,
     /// Number of SOS markers found.
     pub sos_count: u16,
 }
@@ -83,6 +87,8 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
         dht_count: 0,
         has_jfif: false,
         has_icc_profile: false,
+        has_adobe: false,
+        has_photoshop_iptc: false,
         sos_count: 0,
     };
 
@@ -138,6 +144,16 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
             // APP2 (ICC profile check)
             MARKER_APP2 => {
                 pos = parse_app2(data, pos, &mut result)?;
+            }
+
+            // APP13 (IPTC / Photoshop 3.0 check)
+            0xED => {
+                pos = parse_app13(data, pos, &mut result)?;
+            }
+
+            // APP14 (Adobe check, 0xEE)
+            0xEE => {
+                pos = parse_app14(data, pos, &mut result)?;
             }
 
             // Restart markers (0xD0-0xD7) — no length field
@@ -390,6 +406,48 @@ fn parse_app2(data: &[u8], pos: usize, result: &mut ScanResult) -> Result<usize,
         let id = &data[pos + 2..pos + 14];
         if id == b"ICC_PROFILE\0" {
             result.has_icc_profile = true;
+        }
+    }
+
+    Ok(pos + seg_len)
+}
+
+/// Parse APP13 marker — check for Photoshop 3.0 (IPTC) identifier.
+fn parse_app13(data: &[u8], pos: usize, result: &mut ScanResult) -> Result<usize, ScanError> {
+    if pos + 1 >= data.len() {
+        return Err(ScanError::Truncated);
+    }
+    let seg_len = read_u16(data, pos) as usize;
+    if seg_len < 2 || pos + seg_len > data.len() {
+        return Err(ScanError::Truncated);
+    }
+
+    // Check for "Photoshop 3.0\0" identifier at offset 2
+    if seg_len >= 16 && pos + 16 <= data.len() {
+        let id = &data[pos + 2..pos + 16];
+        if id == b"Photoshop 3.0\0" {
+            result.has_photoshop_iptc = true;
+        }
+    }
+
+    Ok(pos + seg_len)
+}
+
+/// Parse APP14 marker — check for Adobe identifier.
+fn parse_app14(data: &[u8], pos: usize, result: &mut ScanResult) -> Result<usize, ScanError> {
+    if pos + 1 >= data.len() {
+        return Err(ScanError::Truncated);
+    }
+    let seg_len = read_u16(data, pos) as usize;
+    if seg_len < 2 || pos + seg_len > data.len() {
+        return Err(ScanError::Truncated);
+    }
+
+    // Check for "Adobe" identifier at offset 2
+    if seg_len >= 7 && pos + 7 <= data.len() {
+        let id = &data[pos + 2..pos + 7];
+        if id == b"Adobe" {
+            result.has_adobe = true;
         }
     }
 

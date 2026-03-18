@@ -34,7 +34,11 @@ pub enum EncoderFamily {
     /// 3 DQT tables + APP2 ICC + component IDs R,G,B (82,71,66).
     CjpegliXyb,
 
-    /// Non-IJG tables, cameras, Photoshop, or other tools.
+    /// Adobe Photoshop: APP14 Adobe marker + APP13 Photoshop 3.0 IPTC,
+    /// non-IJG quantization tables (custom per quality preset 0-12).
+    Photoshop,
+
+    /// Non-IJG tables, cameras, or other tools.
     Unknown,
 }
 
@@ -108,6 +112,11 @@ fn identify_two_table(scan: &ScanResult, sof: &super::scanner::SofInfo) -> Encod
     // Check if DQT matches IJG formula
     if matches_ijg_tables(&table0.values, &table1.values) {
         return identify_ijg_variant(scan, sof);
+    }
+
+    // Check for Photoshop: non-IJG tables + Adobe APP14 + Photoshop 3.0 APP13
+    if scan.has_adobe && scan.has_photoshop_iptc {
+        return EncoderFamily::Photoshop;
     }
 
     EncoderFamily::Unknown
