@@ -61,6 +61,15 @@ jobs:
       - name: Test (zenjpeg --features decoder)
         run: cargo test -p zenjpeg --release --features decoder
 
+      - name: Test (zenjpeg --features decoder,parallel)
+        run: cargo test -p zenjpeg --release --features "decoder,parallel"
+
+      - name: Test (zenjpeg --no-default-features --features std)
+        run: cargo test -p zenjpeg --release --no-default-features --features std
+
+      - name: Test (zenjpeg --features decoder,sharp-yuv)
+        run: cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
+
       - name: Test (zjpeg)
         run: cargo test -p zjpeg --release
 

@@ -75,7 +75,7 @@ fn neon_transpose_4x4_inplace_inner(_token: NeonToken, r: &mut [float32x4_t; 4])
 }
 
 /// Public wrapper for 4x4 transpose.
-#[inline]
+#[arcane]
 pub fn neon_transpose_4x4_inplace(token: NeonToken, r: &mut [float32x4_t; 4]) {
     neon_transpose_4x4_inplace_inner(token, r);
 }
@@ -156,7 +156,7 @@ fn neon_transpose_8x8_inplace_inner(token: NeonToken, data: &mut [f32; 64]) {
 }
 
 /// Public wrapper for 8x8 transpose.
-#[inline]
+#[arcane]
 pub fn neon_transpose_8x8(token: NeonToken, data: &mut [f32; 64]) {
     neon_transpose_8x8_inplace_inner(token, data);
 }

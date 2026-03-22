@@ -139,6 +139,20 @@ wasm-magetypes:
     cargo run --release -p zenjpeg --example wasm_magetypes_bench \
         --target wasm32-wasip1 --no-default-features --features "std,magetypes-simd"
 
+# Check all locally-resolvable feature permutations
+feature-check:
+    cargo test -p zenjpeg --release --no-default-features --features std
+    cargo test -p zenjpeg --release --features decoder
+    cargo test -p zenjpeg --release --features "decoder,parallel"
+    cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
+    cargo test -p zenjpeg --release --features "decoder,trellis"
+    cargo test -p zenjpeg --release --features "decoder,mozjpeg-tables"
+    cargo test -p zenjpeg --release --features "decoder,optimized-tables"
+    cargo test -p zenjpeg --release --features "decoder,parallel,trellis"
+    cargo check -p zenjpeg --no-default-features --features "std,zencodec"
+    cargo check -p zenjpeg --no-default-features --features "std,ultrahdr"
+    cargo check -p zenjpeg --no-default-features --features "std,layout"
+
 # Cross-compile and test on i686 (32-bit x86) via QEMU
 test-i686:
     cross test -p zenjpeg --lib --target i686-unknown-linux-gnu
