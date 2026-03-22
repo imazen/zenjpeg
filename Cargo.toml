@@ -85,6 +85,7 @@ thiserror = { version = "2.0", default-features = false }
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
 zencodec = { path = "../zencodec" }
+zennode = { path = "../zennode/zennode", default-features = false, features = ["derive"] }
 zenpixels = { path = "../zenpixels/zenpixels", default-features = false, features = ["imgref"] }
 
 # Published crates

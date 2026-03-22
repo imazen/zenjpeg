@@ -65,6 +65,8 @@ safe_unaligned_simd = { workspace = true }
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # UltraHDR (HDR gain map) encoding/decoding support
 ultrahdr-core = { workspace = true, optional = true }
+# Self-documenting node definitions for pipeline integration
+zennode = { workspace = true, optional = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true, features = ["layout"] }
@@ -186,6 +188,8 @@ yuv = ["dep:yuv"]
 ultrahdr = ["dep:ultrahdr-core", "decoder", "std"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
+# zennode node definitions (EncodeJpeg schema with RIAPI keys)
+zennode = ["dep:zennode"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode
 # Integrates zenlayout (geometry) and zenresize (resampling)
 layout = ["decoder", "std", "dep:zenlayout", "dep:zenresize"]
