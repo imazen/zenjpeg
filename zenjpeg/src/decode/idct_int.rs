@@ -113,8 +113,8 @@ pub fn is_dc_only_int(coeffs: &[i32; 64]) -> bool {
 /// uses i32 there. Additionally, libjpeg-turbo's 8-bit path uses
 /// `MULTIPLY16C16` which truncates intermediates to INT16 before multiplying,
 /// so the JLONG workspace doesn't prevent overflow — both libjpeg-turbo and
-/// our i32 Jpegli IDCT wrap for extreme dequantized values (coefficient × quant
-/// > 32767). Our i64 path is more mathematically correct but produces different
+/// our i32 Jpegli IDCT wrap for extreme dequantized values (coefficient × quant >
+/// 32767). Our i64 path is more mathematically correct but produces different
 /// output from libjpeg-turbo on such inputs.
 const LJ_FIX_0_298631336: i64 = 2446;
 const LJ_FIX_0_390180644: i64 = 3196;
