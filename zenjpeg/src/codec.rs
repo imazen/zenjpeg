@@ -152,7 +152,7 @@ impl JpegEncoderConfig {
     /// Convenience: encode pixels with this config via the type-erased path.
     pub fn encode(&self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
         use zencodec::encode::{EncodeJob as _, Encoder as _, EncoderConfig as _};
-        self.job().encoder()?.encode(pixels)
+        self.clone().job().encoder()?.encode(pixels)
     }
 
     /// Apply effort level, returning a modified config.
@@ -281,7 +281,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.effort)
     }
 
-    fn job(&self) -> Self::Job<'_> {
+    fn job(self) -> Self::Job<'static> {
         JpegEncodeJob {
             config: self,
             stop: None,
@@ -300,7 +300,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
 /// Created by [`JpegEncoderConfig::job()`]. Borrows temporary data (stop token,
 /// metadata) and is consumed by creating a [`JpegEncoder`].
 pub struct JpegEncodeJob<'a> {
-    config: &'a JpegEncoderConfig,
+    config: JpegEncoderConfig,
     stop: Option<&'a dyn enough::Stop>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
@@ -2109,10 +2109,7 @@ mod tests {
             32 * 32
         ];
         let img = Img::new(pixels.as_slice(), 32, 32);
-        // Use a leaked Box so the config is 'static (dyn_encoder requires 'static Enc)
-        let config: &'static JpegEncoderConfig = Box::leak(Box::new(
-            JpegEncoderConfig::new().with_calibrated_quality(80.0),
-        ));
+        let config = JpegEncoderConfig::new().with_calibrated_quality(80.0);
         let dyn_enc = config.job().dyn_encoder().unwrap();
         let output = dyn_enc
             .encode(zenpixels::PixelSlice::from(img.as_ref()).into())
@@ -2378,5 +2375,44 @@ mod tests {
         let encoder = config.job().encoder().unwrap();
         let result = encoder.encode_from(&mut |_y, _buf: PixelSliceMut<'_>| 0);
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod streaming_test {
+    use super::*;
+    use zencodec::encode::{EncoderConfig, EncodeJob};
+
+    #[test]
+    fn streaming_encode_same_scope() {
+        // The real pattern: config consumed by job, stop borrowed from caller scope.
+        // Encoder lives in same scope as stop. No escape needed.
+        let stop = enough::Unstoppable;
+        let config = JpegEncoderConfig::default();
+        let job = config.job()  // config consumed — no config borrow
+            .with_stop(&stop)   // borrows stop — 'a = this scope
+            .with_canvas_size(64, 64);
+        let mut enc = job.dyn_encoder().unwrap();
+        // enc borrows stop, both in same scope — compiles fine
+        let pixels = vec![128u8; 64 * 64 * 4];
+        let slice = zenpixels::PixelSlice::new(
+            &pixels, 64, 64, 64 * 4,
+            zenpixels::PixelDescriptor::RGBA8_SRGB,
+        ).unwrap();
+        enc.push_rows(&slice).unwrap();
+        let _output = enc.finish().unwrap();
+    }
+
+    fn make_job(w: u32, h: u32) -> JpegEncodeJob<'static> {
+        let config = JpegEncoderConfig::default();
+        // Config is consumed by job() via clone. Job doesn't borrow config.
+        // No stop set, so 'a = 'static.
+        config.job().with_canvas_size(w, h)
+    }
+
+    #[test]
+    fn job_escapes_scope_without_stop() {
+        let job = make_job(64, 64);
+        let _enc = job.dyn_encoder().unwrap();
     }
 }
