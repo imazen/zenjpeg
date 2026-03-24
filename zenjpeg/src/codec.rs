@@ -868,7 +868,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 /// consumed by creating a [`JpegDecoder`] or [`JpegStreamingDecoder`].
 pub struct JpegDecodeJob<'a> {
     config: &'a JpegDecoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
@@ -881,7 +881,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     type StreamDec = JpegStreamingDecoder<'a>;
     type FullFrameDec = Unsupported<Error>;
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -1372,7 +1372,7 @@ fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -
 /// One-shot JPEG decoder implementing [`zencodec::decode::Decode`].
 pub struct JpegDecoder<'a> {
     config: &'a JpegDecoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
@@ -1418,7 +1418,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
             }
 
-            let stop = self.stop.unwrap_or(&enough::Unstoppable);
+            let stop: &dyn enough::Stop = match &self.stop {
+                Some(s) => s,
+                None => &enough::Unstoppable,
+            };
             let mut result = cfg.decode(&data, stop)?;
 
             let w = result.width();
