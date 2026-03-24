@@ -247,7 +247,7 @@ fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
 
 impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     type Error = Error;
-    type Job<'a> = JpegEncodeJob<'a>;
+    type Job = JpegEncodeJob;
 
     fn format() -> ImageFormat {
         ImageFormat::Jpeg
@@ -281,7 +281,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.effort)
     }
 
-    fn job<'a>(self) -> Self::Job<'a> {
+    fn job(self) -> Self::Job {
         JpegEncodeJob {
             config: self,
             stop: None,
@@ -299,9 +299,9 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
 ///
 /// Created by [`JpegEncoderConfig::job()`]. Borrows temporary data (stop token,
 /// metadata) and is consumed by creating a [`JpegEncoder`].
-pub struct JpegEncodeJob<'a> {
+pub struct JpegEncodeJob {
     config: JpegEncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -310,12 +310,12 @@ pub struct JpegEncodeJob<'a> {
     image_size: Option<(u32, u32)>,
 }
 
-impl<'a> zencodec::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
+impl zencodec::encode::EncodeJob for JpegEncodeJob {
     type Error = Error;
-    type Enc = JpegEncoder<'a>;
+    type Enc = JpegEncoder;
     type FullFrameEnc = ();
 
-    fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -340,7 +340,7 @@ impl<'a> zencodec::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
         self
     }
 
-    fn encoder(self) -> Result<Self::Enc, Self::Error> {
+    fn encoder(self) -> Result<JpegEncoder, Self::Error> {
         Ok(JpegEncoder {
             effective_config: self.config.effective_config(),
             stop: self.stop,
@@ -364,9 +364,9 @@ impl<'a> zencodec::encode::EncodeJob<'a> for JpegEncodeJob<'a> {
 ///
 /// Supports one-shot `encode()`, streaming `push_rows()` + `finish()`,
 /// and the `encode_srgba8()` convenience method.
-pub struct JpegEncoder<'a> {
+pub struct JpegEncoder {
     effective_config: EncoderConfig,
-    stop: Option<&'a dyn enough::Stop>,
+    stop: Option<zencodec::StopToken>,
     metadata: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
@@ -389,7 +389,15 @@ struct RowAccumulator {
     descriptor: PixelDescriptor,
 }
 
-impl<'a> JpegEncoder<'a> {
+impl JpegEncoder {
+    /// Get a reference to the stop token, defaulting to Unstoppable.
+    fn stop_ref(&self) -> &dyn enough::Stop {
+        match self.stop {
+            Some(ref s) => s,
+            None => &enough::Unstoppable,
+        }
+    }
+
     /// Build an EncodeRequest from current config + metadata, applying policy.
     fn build_request(&self) -> crate::encode::request::EncodeRequest<'_> {
         self.build_request_from(&self.effective_config)
@@ -419,7 +427,7 @@ impl<'a> JpegEncoder<'a> {
                 }
             }
         }
-        if let Some(stop) = self.stop {
+        if let Some(ref stop) = self.stop {
             req = req.stop(stop);
         }
         req
@@ -470,7 +478,7 @@ impl<'a> JpegEncoder<'a> {
         self.check_limits(acc.width, acc.total_rows, acc.layout)?;
 
         let req = self.build_request();
-        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let stop = self.stop_ref();
         let mut enc = req.encode_from_bytes(acc.width, acc.total_rows, acc.layout)?;
         // Stream through native encoder — it processes MCU rows as they arrive
         enc.push_packed(&acc.data, stop)?;
@@ -480,7 +488,7 @@ impl<'a> JpegEncoder<'a> {
     }
 }
 
-impl zencodec::encode::Encoder for JpegEncoder<'_> {
+impl zencodec::encode::Encoder for JpegEncoder {
     type Error = Error;
 
     fn reject(op: UnsupportedOperation) -> Self::Error {
@@ -515,7 +523,7 @@ impl zencodec::encode::Encoder for JpegEncoder<'_> {
         let layout = PixelLayout::Rgba8Srgb;
         self.check_limits(width, height, layout)?;
         let req = self.build_request();
-        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let stop = self.stop_ref();
         let stride_bytes = stride_pixels as usize * 4;
         let mut enc = req.encode_from_bytes(width, height, layout)?;
         enc.push(data, height as usize, stride_bytes, stop)?;
@@ -545,8 +553,11 @@ impl zencodec::encode::Encoder for JpegEncoder<'_> {
                 let enc = req.encode_from_bytes(img_w, img_h, layout)?;
                 self.streaming_enc = Some(enc);
             }
+            let stop: &dyn enough::Stop = match self.stop {
+                Some(ref s) => s,
+                None => &enough::Unstoppable,
+            };
             let enc = self.streaming_enc.as_mut().unwrap();
-            let stop = self.stop.unwrap_or(&enough::Unstoppable);
             // Use as_strided_bytes for zero-copy; BytesEncoder::push handles stride.
             enc.push(
                 rows.as_strided_bytes(),
@@ -635,7 +646,7 @@ impl zencodec::encode::Encoder for JpegEncoder<'_> {
             .optimize_huffman(false);
         let req = self.build_request_from(&streaming_config);
         let mut enc = req.encode_from_bytes(img_w, img_h, layout)?;
-        let stop = self.stop.unwrap_or(&enough::Unstoppable);
+        let stop = self.stop_ref();
 
         // Allocate strip buffer: preferred_strip_height rows.
         let strip_h = 16u32.min(img_h); // MCU-aligned strip
