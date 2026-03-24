@@ -281,7 +281,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         Some(self.effort)
     }
 
-    fn job(self) -> Self::Job<'static> {
+    fn job<'a>(self) -> Self::Job<'a> {
         JpegEncodeJob {
             config: self,
             stop: None,
