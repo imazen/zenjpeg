@@ -1,7 +1,7 @@
 # JPEG Decoder Strictness Comparison
 
 Comparison of marker parsing and validation behavior across libjpeg-turbo (mozjpeg),
-zune-jpeg, and zenjpeg's three decode paths.
+zune-jpeg, and zenjpeg's four decode strictness levels.
 
 Source analysis from `jdmarker.c`, `jdinput.c` (libjpeg-turbo/mozjpeg),
 `zune-jpeg 0.5.x` (`decoder.rs`, `headers.rs`, `marker.rs`),
@@ -14,8 +14,8 @@ and zenjpeg (`decode/parser/markers.rs`, `decode/parser/scan.rs`, `decode/parser
 | **Language** | C | Rust | Rust |
 | **Input model** | Streaming with suspension | In-memory, `Result` on EOF | In-memory slice, `Result` on EOF |
 | **State machine** | Resumable (`unread_marker` persists) | Single forward pass | Single forward pass |
-| **Strictness config** | None (hardcoded behavior) | `strict_mode()` bool | 3-level `Strictness` enum |
-| **Error recovery** | `WARNMS` (continue) vs `ERREXIT` (fatal) | Always error | `Strict`/`Balanced`/`Lenient` with warning collection |
+| **Strictness config** | None (hardcoded behavior) | `strict_mode()` bool | 4-level `Strictness` enum |
+| **Error recovery** | `WARNMS` (continue) vs `ERREXIT` (fatal) | Always error | `Strict`/`Balanced`/`Lenient`/`Permissive` with warning collection |
 | **Decode paths** | 1 (all modes through same loop) | 1 (baseline + progressive) | 5 (baseline streaming, baseline buffered, parallel fused, progressive, arithmetic) |
 
 ## Supported JPEG Modes
@@ -72,8 +72,8 @@ and zenjpeg (`decode/parser/markers.rs`, `decode/parser/scan.rs`, `decode/parser
 | **Huffman table idx >= 4** | Not validated (table used later) | Not validated per se (index stored) | Fatal |
 | **Ss > 63** | Not checked (deferred to entropy) | Fatal | Fatal |
 | **Se > 63** | Not checked (deferred to entropy) | Fatal | Fatal |
-| **Ah > 13** | Not checked | Fatal | Not checked |
-| **Al > 13** | Not checked | Fatal | Not checked |
+| **Ah > 13** | Not checked | Fatal | Fatal (validated, commit d12d699) |
+| **Al > 13** | Not checked | Fatal | Fatal (validated, commit d12d699) |
 
 ## APP Markers
 
@@ -113,12 +113,17 @@ incompatible JPEG Part 3 extensions"). Both Rust decoders skip them.
 
 | Situation | libjpeg-turbo | zune-jpeg | zenjpeg |
 |---|---|---|---|
-| **Truncated scan data** | Fills zeros via `insufficient_data` | `ExhaustedData` error | **Balanced**: fills zeros, collects `TruncatedScan` warning. **Strict**: error |
-| **Missing Huffman table** | Uses standard tables (compiled in) | Error | **Balanced**: uses ITU-T T.81 K.3 standard tables, warns. **Strict**: error |
-| **Wrong restart marker** | 3-action resync (discard/scan/leave) | Not explicitly handled | Not explicitly handled |
-| **AC index overflow** | Implicit (entropy decoder bounds) | Not recovered | **Lenient only**: treat as EOB, warn |
-| **Invalid Huffman code** | `insufficient_data` flag, fills zeros | Error | **Lenient only**: treat as EOB, warn |
-| **Padding block decode error** | Fills zeros | Error | **Balanced**: fills zeros, warns |
+| **Truncated scan data** | Fills zeros via `insufficient_data` | `ExhaustedData` error | **Balanced/Lenient/Permissive**: fills zeros, collects `TruncatedScan` warning. **Strict**: error |
+| **Missing Huffman table** | Uses standard tables (compiled in) | Error | **Balanced/Lenient/Permissive**: uses ITU-T T.81 K.3 standard tables, warns. **Strict**: error |
+| **Wrong restart marker** | 3-action resync (discard/scan/leave) | Not explicitly handled | **Lenient**: warn. **Permissive**: resync forward. **Strict/Balanced**: error |
+| **RST sequence wrong** | 3-action resync | Not handled | **Permissive**: accept any RST value. **Others**: error |
+| **AC index overflow** | Implicit (entropy decoder bounds) | Not recovered | **Lenient/Permissive**: treat as EOB, warn |
+| **Invalid Huffman code** | `insufficient_data` flag, fills zeros | Error | **Lenient/Permissive**: treat as EOB, warn |
+| **Padding block decode error** | Fills zeros | Error | **Balanced/Lenient/Permissive**: fills zeros, warns |
+| **Zero quant value** | Allowed (division by zero in dequant) | Allowed | **Permissive only**: clamp to 1. **All others**: fatal |
+| **Malformed segment** | Varies | Fatal | **Permissive only**: skip. **All others**: fatal |
+| **Bad Huffman table idx** | Implicit | Fatal | **Permissive only**: clamp to 0. **All others**: fatal |
+| **Malformed DNL** | Skipped | Fatal | **Permissive only**: skip. **All others**: fatal |
 
 ## Summary
 
@@ -130,7 +135,9 @@ extraneous byte tolerance, tables-only streams). "Decode anything that might be 
 no 12-bit, no DNL, no DAC). Validates the most SOS parameters (Ah/Al bounds). Most
 forgiving about unknown markers (skips everything). Fastest path to "too weird, give up."
 
-**zenjpeg**: Three strictness levels with warning collection. Supports the most modes
-(arithmetic sequential/progressive, 12-bit, DNL). Validates the most at the structural
-level (zero quant values, sampling factor bounds, table indices in SOS). `Balanced` targets
-libjpeg-turbo compatibility, `Strict` exceeds it, `Lenient` goes beyond for damaged files.
+**zenjpeg**: Four strictness levels (`Strict`, `Balanced`, `Lenient`, `Permissive`) with
+warning collection. Supports the most modes (arithmetic sequential/progressive, 12-bit, DNL).
+Validates the most at the structural level (zero quant values, sampling factor bounds, table
+indices in SOS). `Balanced` targets libjpeg-turbo compatibility, `Strict` exceeds it,
+`Lenient` goes beyond for damaged files, and `Permissive` clamps/skips errors that would
+be fatal in all other modes (zero quant values, bad Huffman indices, malformed segments).
