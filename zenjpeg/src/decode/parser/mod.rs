@@ -16,11 +16,11 @@ mod progressive;
 mod scan;
 mod transform;
 
+#[cfg(feature = "ultrahdr")]
+use super::extras::MpfImageTypeExt;
 use super::extras::{
     AdobeColorTransform, DecodedExtras, MpfImageType, PreserveConfig, should_preserve_mpf_image,
 };
-#[cfg(feature = "ultrahdr")]
-use super::extras::MpfImageTypeExt;
 use super::{DecodeWarning, JpegInfo, Strictness};
 
 /// Information about a scan needed for scanline reading.
