@@ -800,14 +800,15 @@ impl<'a> JpegParser<'a> {
         };
 
         // Extract metadata from extras if available
-        let (icc_profile, exif, xmp) = if let Some(ref extras) = self.extras {
+        let (icc_profile, exif, xmp, jfif) = if let Some(ref extras) = self.extras {
             (
                 extras.icc_profile().map(|p| p.to_vec()),
                 extras.exif().map(|e| e.to_vec()),
                 extras.xmp().map(|x| x.to_string()),
+                extras.jfif(),
             )
         } else {
-            (self.icc_profile.clone(), None, None)
+            (self.icc_profile.clone(), None, None, None)
         };
 
         let dims = Dimensions {
@@ -828,6 +829,7 @@ impl<'a> JpegParser<'a> {
             icc_profile,
             exif,
             xmp,
+            jfif,
         }
     }
 

@@ -563,6 +563,7 @@ impl DecodeConfig {
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         // Preserve metadata segments for extraction without full decode
         let preserve = PreserveConfig::none()
+            .jfif(true)
             .exif(true)
             .xmp(true)
             .icc(IccPreserve::All);

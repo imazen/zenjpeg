@@ -1189,6 +1189,8 @@ pub struct JpegInfo {
     pub exif: Option<Vec<u8>>,
     /// XMP metadata string. Extracted during header parsing.
     pub xmp: Option<String>,
+    /// JFIF density info (resolution/DPI). Extracted during header parsing.
+    pub jfif: Option<crate::encode::extras::JfifInfo>,
 }
 
 #[cfg(test)]

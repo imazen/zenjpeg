@@ -1779,10 +1779,11 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
         img_info = img_info.with_xmp(xmp.as_bytes().to_vec());
     }
 
-    // TODO: populate resolution from JFIF density. JpegInfo does not carry
-    // JFIF density; the full decode path uses DecodedExtras::jfif() instead.
-    // To support resolution in probe/streaming paths, either extend JpegInfo
-    // with density fields or parse JFIF APP0 separately here.
+    if let Some(ref jfif) = info.jfif
+        && let Some(resolution) = jfif_to_resolution(jfif)
+    {
+        img_info = img_info.with_resolution(resolution);
+    }
 
     img_info
 }
