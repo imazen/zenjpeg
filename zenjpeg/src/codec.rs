@@ -64,10 +64,7 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_enforces_max_memory(true)
     .with_quality_range(0.0, 100.0)
     .with_effort_range(0, 2)
-    .with_threads_supported_range(
-        1,
-        if cfg!(feature = "parallel") { 32 } else { 1 },
-    );
+    .with_threads_supported_range(1, if cfg!(feature = "parallel") { 32 } else { 1 });
 
 /// JPEG encoder configuration implementing [`zencodec::encode::EncoderConfig`].
 ///
@@ -796,10 +793,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_enforces_max_input_bytes(true)
-    .with_threads_supported_range(
-        1,
-        if cfg!(feature = "parallel") { 32 } else { 1 },
-    );
+    .with_threads_supported_range(1, if cfg!(feature = "parallel") { 32 } else { 1 });
 
 /// JPEG decoder configuration implementing [`zencodec::decode::DecoderConfig`].
 ///
@@ -1822,6 +1816,11 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     {
         img_info = img_info.with_resolution(resolution);
     }
+
+    img_info = img_info.with_progressive(matches!(
+        info.mode,
+        crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
+    ));
 
     img_info
 }
