@@ -1039,7 +1039,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 reader,
                 info,
                 descriptor,
-                row_buf: Vec::new(),
+                row_buf: aligned_vec::AVec::new(4),
                 current_row: 0,
                 mcu_height: mcu_height as u32,
             })
@@ -1139,9 +1139,10 @@ fn push_decoder_native<'a>(
     sink.begin(width as u32, height as u32, descriptor)
         .map_err(wrap)?;
 
-    // Allocate a temp buffer for one MCU-row strip
+    // Allocate a temp buffer for one MCU-row strip.
+    // Use aligned_vec for ≥4-byte alignment so f32 casts are safe.
     let strip_bytes = row_bytes * mcu_height;
-    let mut strip_buf: Vec<u8> = Vec::new();
+    let mut strip_buf = aligned_vec::AVec::<u8, aligned_vec::ConstAlign<4>>::new(4);
     strip_buf
         .try_reserve(strip_bytes)
         .map_err(|_| Error::allocation_failed(strip_bytes, "push_decoder strip buffer"))?;
@@ -1559,7 +1560,8 @@ pub struct JpegStreamingDecoder<'a> {
     info: ImageInfo,
     descriptor: PixelDescriptor,
     /// Reusable row buffer for decoded pixel data (sized for MCU-row batches).
-    row_buf: Vec<u8>,
+    /// 4-byte aligned so bytemuck casts to &mut [f32] are safe.
+    row_buf: aligned_vec::AVec<u8, aligned_vec::ConstAlign<4>>,
     current_row: u32,
     /// MCU height in pixels (8 or 16 depending on subsampling).
     mcu_height: u32,
@@ -1628,7 +1630,8 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let float_count = width * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
-                    let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
+                    let float_slice: &mut [f32] =
+                        bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width, batch_rows);
                     self.reader.read_rows_gray_f32(f_out)?
                 }
@@ -1638,7 +1641,8 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let float_count = width * channels * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
-                    let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
+                    let float_slice: &mut [f32] =
+                        bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width * channels, batch_rows);
                     self.reader.read_rows_rgba_f32(f_out)?
                 }
