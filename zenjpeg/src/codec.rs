@@ -63,7 +63,11 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
     .with_quality_range(0.0, 100.0)
-    .with_effort_range(0, 2);
+    .with_effort_range(0, 2)
+    .with_threads_supported_range(
+        1,
+        if cfg!(feature = "parallel") { 32 } else { 1 },
+    );
 
 /// JPEG encoder configuration implementing [`zencodec::encode::EncoderConfig`].
 ///
@@ -350,8 +354,32 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     }
 
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
+        let mut cfg = self.config.effective_config();
+
+        // Map threading policy to parallel encoding config
+        #[cfg(feature = "parallel")]
+        {
+            use zencodec::ThreadingPolicy;
+            match self.limits.threading {
+                ThreadingPolicy::SingleThread => {
+                    // Explicitly do not enable parallel — leave cfg.parallel as None
+                }
+                ThreadingPolicy::LimitOrSingle { max_threads } => {
+                    if max_threads > 1 {
+                        cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
+                    }
+                }
+                ThreadingPolicy::LimitOrAny { .. }
+                | ThreadingPolicy::Balanced
+                | ThreadingPolicy::Unlimited => {
+                    cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
+                }
+                _ => {}
+            }
+        }
+
         Ok(JpegEncoder {
-            effective_config: self.config.effective_config(),
+            effective_config: cfg,
             stop: self.stop,
             metadata: self.metadata,
             limits: self.limits,
@@ -767,7 +795,11 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_f32(true)
     .with_enforces_max_pixels(true)
     .with_enforces_max_memory(true)
-    .with_enforces_max_input_bytes(true);
+    .with_enforces_max_input_bytes(true)
+    .with_threads_supported_range(
+        1,
+        if cfg!(feature = "parallel") { 32 } else { 1 },
+    );
 
 /// JPEG decoder configuration implementing [`zencodec::decode::DecoderConfig`].
 ///
@@ -1183,6 +1215,12 @@ fn push_decoder_native<'a>(
     let mut y = 0u32;
 
     while !reader.is_finished() {
+        // Check cooperative cancellation before decoding each MCU-row strip.
+        if let Some(ref stop) = job.stop {
+            use enough::Stop;
+            stop.check()?;
+        }
+
         // Decode the next batch of rows into our strip buffer
         let remaining = height - y as usize;
         let batch_max = remaining.min(mcu_height);
