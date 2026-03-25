@@ -84,8 +84,8 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { path = "../zencodec" }
-zenpixels = { path = "../zenpixels/zenpixels", default-features = false, features = ["imgref"] }
+zencodec = { version = "0.1.0" }
+zenpixels = { version = "0.2.0", default-features = false, features = ["imgref"] }
 
 # Published crates
 butteraugli = "0.8"
@@ -148,5 +148,3 @@ doc_overindented_list_items = "allow"  # Doc formatting preferences
 manual_div_ceil = "allow"  # Common pattern in ported code
 manual_is_multiple_of = "allow"  # Common pattern in ported code
 
-[patch.crates-io]
-zenpixels = { path = "../zenpixels/zenpixels" }
