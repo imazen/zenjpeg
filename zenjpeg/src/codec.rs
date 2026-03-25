@@ -320,8 +320,8 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
-    fn with_metadata(mut self, meta: &Metadata) -> Self {
-        self.metadata = Some(meta.clone());
+    fn with_metadata(mut self, meta: Metadata) -> Self {
+        self.metadata = Some(meta);
         self
     }
 
@@ -1748,7 +1748,7 @@ mod tests {
         let meta = Metadata::default().with_icc(icc.as_slice());
         let output = enc
             .job()
-            .with_metadata(&meta)
+            .with_metadata(meta)
             .encoder()
             .unwrap()
             .encode(PixelSlice::from(img.as_ref()).into())
@@ -1768,7 +1768,7 @@ mod tests {
 
         let output = enc
             .job()
-            .with_metadata(&meta)
+            .with_metadata(meta)
             .with_policy(policy)
             .encoder()
             .unwrap()
