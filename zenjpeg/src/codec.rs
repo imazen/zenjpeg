@@ -13,12 +13,12 @@
 //! | `EncoderConfig` | [`JpegEncoderConfig`] |
 //! | `EncodeJob<'a>` | [`JpegEncodeJob`] |
 //! | `Encoder` | [`JpegEncoder`] |
-//! | `FullFrameEncoder` | `()` (JPEG has no animation) |
+//! | `AnimationFrameEncoder` | `()` (JPEG has no animation) |
 //! | `DecoderConfig` | [`JpegDecoderConfig`] |
 //! | `DecodeJob<'a>` | [`JpegDecodeJob`] |
 //! | `Decode` | [`JpegDecoder`] |
 //! | `StreamingDecode` | [`JpegStreamingDecoder`] |
-//! | `FullFrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
+//! | `AnimationFrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
 
 extern crate alloc;
 use alloc::borrow::Cow;
@@ -313,7 +313,7 @@ pub struct JpegEncodeJob {
 impl zencodec::encode::EncodeJob for JpegEncodeJob {
     type Error = Error;
     type Enc = JpegEncoder;
-    type FullFrameEnc = ();
+    type AnimationFrameEnc = ();
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -353,7 +353,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         })
     }
 
-    fn full_frame_encoder(self) -> Result<Self::FullFrameEnc, Self::Error> {
+    fn animation_frame_encoder(self) -> Result<Self::AnimationFrameEnc, Self::Error> {
         Err(UnsupportedOperation::AnimationEncode.into())
     }
 }
@@ -879,7 +879,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     type Error = Error;
     type Dec = JpegDecoder<'a>;
     type StreamDec = JpegStreamingDecoder<'a>;
-    type FullFrameDec = Unsupported<Error>;
+    type AnimationFrameDec = Unsupported<Error>;
 
     fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
         self.stop = Some(stop);
@@ -1053,11 +1053,11 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
         }
     }
 
-    fn full_frame_decoder(
+    fn animation_frame_decoder(
         self,
         _data: Cow<'a, [u8]>,
         _preferred: &[PixelDescriptor],
-    ) -> Result<Self::FullFrameDec, Self::Error> {
+    ) -> Result<Self::AnimationFrameDec, Self::Error> {
         Err(UnsupportedOperation::AnimationDecode.into())
     }
 }
@@ -1077,7 +1077,7 @@ impl JpegDecodeJob<'_> {
 /// Native streaming push_decoder using ScanlineReader.
 ///
 /// Decodes MCU rows on the fly and pushes them into the sink, avoiding the
-/// full-image allocation that `push_decoder_via_full_decode` requires.
+/// full-image allocation that `helpers::copy_decode_to_sink` requires.
 /// Peak memory is reduced from full image size to one MCU-row strip
 /// (typically 8 or 16 rows × width × bytes-per-pixel).
 #[cfg(feature = "decoder")]
@@ -2264,19 +2264,19 @@ mod tests {
     }
 
     #[test]
-    fn full_frame_encoder_returns_unsupported() {
+    fn animation_frame_encoder_returns_unsupported() {
         let config = JpegEncoderConfig::new();
-        let result = config.job().full_frame_encoder();
+        let result = config.job().animation_frame_encoder();
         assert!(result.is_err());
     }
 
     #[cfg(feature = "decoder")]
     #[test]
-    fn full_frame_decoder_returns_unsupported() {
+    fn animation_frame_decoder_returns_unsupported() {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
 
         let dec = JpegDecoderConfig::new();
-        let result = dec.job().full_frame_decoder(Cow::Borrowed(&[]), &[]);
+        let result = dec.job().animation_frame_decoder(Cow::Borrowed(&[]), &[]);
         assert!(result.is_err());
     }
 
@@ -2395,7 +2395,7 @@ mod tests {
 #[cfg(test)]
 mod streaming_test {
     use super::*;
-    use zencodec::encode::{EncoderConfig, EncodeJob};
+    use zencodec::encode::{EncodeJob, EncoderConfig};
 
     #[test]
     fn streaming_encode_same_scope() {
@@ -2403,16 +2403,21 @@ mod streaming_test {
         // Encoder lives in same scope as stop. No escape needed.
         let stop = enough::Unstoppable;
         let config = JpegEncoderConfig::default();
-        let job = config.job()  // config consumed — no config borrow
-            .with_stop(&stop)   // borrows stop — 'a = this scope
+        let job = config
+            .job() // config consumed — no config borrow
+            .with_stop(&stop) // borrows stop — 'a = this scope
             .with_canvas_size(64, 64);
         let mut enc = job.dyn_encoder().unwrap();
         // enc borrows stop, both in same scope — compiles fine
         let pixels = vec![128u8; 64 * 64 * 4];
         let slice = zenpixels::PixelSlice::new(
-            &pixels, 64, 64, 64 * 4,
+            &pixels,
+            64,
+            64,
+            64 * 4,
             zenpixels::PixelDescriptor::RGBA8_SRGB,
-        ).unwrap();
+        )
+        .unwrap();
         enc.push_rows(&slice).unwrap();
         let _output = enc.finish().unwrap();
     }
