@@ -23,13 +23,15 @@ Successfully building for all targets with archmage-simd feature:
 - i32x4_shuffle for transpose/interleaving
 - No FMA (2x ops vs ARM/x86)
 
+> **Completed.** The dispatch logic, decode hot paths (IDCT with AVX2/NEON/WASM SIMD128), and AQ SIMD operations listed below have all been implemented.
+
 ## Next Steps
 
-1. **Add dispatch logic** - Wire up platform detection and SIMD path selection
-2. **Implement decode hot paths** - IDCT, color conversion, upsampling (currently stubbed)
-3. **Add AQ operations** - pre_erosion_row, per_block_modulations for all platforms
+1. ~~**Add dispatch logic**~~ - Done. archmage runtime dispatch is wired up for all platforms.
+2. ~~**Implement decode hot paths**~~ - Done. IDCT (AVX2/NEON/WASM SIMD128), color conversion, and upsampling are implemented.
+3. ~~**Add AQ operations**~~ - Done. pre_erosion_row and per_block_modulations use archmage SIMD dispatch.
 4. **Create benchmarks** - Measure actual performance on each platform
-5. **Optimize** - Replace scalar fallbacks with proper SIMD implementations
+5. **Optimize** - Replace any remaining scalar fallbacks with proper SIMD implementations
 
 ## Build Commands
 
