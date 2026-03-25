@@ -394,15 +394,15 @@ pub enum Error {
 
 ## Implementation Checklist
 
-- [ ] **P0-1**: Replace `vec![]` with `try_reserve` pattern in all files
-- [ ] **P0-2**: Add `JPEG_MAX_DIMENSION` and `max_pixels` validation
-- [ ] **P0-3**: Use `checked_mul` for all size calculations
-- [ ] **P1-1**: Add `DecoderConfig::max_memory_bytes`
-- [ ] **P1-2**: Limit ICC profile to 16MB
-- [ ] **P1-3**: Limit scans to 256
-- [ ] **P2-1**: Set up cargo-fuzz infrastructure
-- [ ] **P2-2**: Cap Huffman tree retries at 32
-- [ ] **P2-3**: Validate restart marker sequence
+- [x] **P0-1**: Replace `vec![]` with `try_reserve` pattern in all files
+- [x] **P0-2**: Add `JPEG_MAX_DIMENSION` and `max_pixels` validation
+- [x] **P0-3**: Use `checked_mul` for all size calculations
+- [x] **P1-1**: Add `DecoderConfig::max_memory_bytes`
+- [x] **P1-2**: Limit ICC profile to 16MB
+- [x] **P1-3**: Limit scans to 256
+- [x] **P2-1**: Set up cargo-fuzz infrastructure
+- [x] **P2-2**: Cap Huffman tree retries at 32
+- [x] **P2-3**: Validate restart marker sequence
 - [ ] **P3-1**: Implement allocation tracking
 - [ ] **P3-2**: Add strict mode
 
