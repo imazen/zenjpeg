@@ -56,6 +56,7 @@ static JPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_stop(true)
     .with_lossy(true)
     .with_push_rows(true)
+    .with_encode_from(true)
     .with_native_gray(true)
     .with_native_16bit(true)
     .with_native_f32(true)
@@ -73,6 +74,9 @@ pub struct JpegEncoderConfig {
     inner: EncoderConfig,
     quality: f32,
     effort: i32,
+    /// Original generic quality value passed to `with_generic_quality()`.
+    /// Stored separately because the calibration mapping is not invertible.
+    generic_quality_input: Option<f32>,
 }
 
 impl JpegEncoderConfig {
@@ -83,6 +87,7 @@ impl JpegEncoderConfig {
             inner: EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
             quality: 85.0,
             effort: 1,
+            generic_quality_input: None,
         }
     }
 
@@ -93,6 +98,7 @@ impl JpegEncoderConfig {
             inner: EncoderConfig::ycbcr(quality, subsampling),
             quality,
             effort: 1,
+            generic_quality_input: None,
         }
     }
 
@@ -103,6 +109,7 @@ impl JpegEncoderConfig {
             inner: EncoderConfig::grayscale(quality),
             quality,
             effort: 1,
+            generic_quality_input: None,
         }
     }
 
@@ -262,14 +269,16 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     }
 
     fn with_generic_quality(mut self, quality: f32) -> Self {
-        let q = calibrated_jpeg_quality(quality.clamp(0.0, 100.0));
+        let clamped = quality.clamp(0.0, 100.0);
+        self.generic_quality_input = Some(clamped);
+        let q = calibrated_jpeg_quality(clamped);
         self.quality = q;
         self.inner = self.inner.quality(Quality::ApproxJpegli(q));
         self
     }
 
     fn generic_quality(&self) -> Option<f32> {
-        Some(self.quality)
+        Some(self.generic_quality_input.unwrap_or(self.quality))
     }
 
     fn with_generic_effort(mut self, effort: i32) -> Self {
@@ -757,7 +766,8 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = DecodeCapabilities::new()
     .with_native_gray(true)
     .with_native_f32(true)
     .with_enforces_max_pixels(true)
-    .with_enforces_max_memory(true);
+    .with_enforces_max_memory(true)
+    .with_enforces_max_input_bytes(true);
 
 /// JPEG decoder configuration implementing [`zencodec::decode::DecoderConfig`].
 ///
@@ -1630,8 +1640,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let float_count = width * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
-                    let float_slice: &mut [f32] =
-                        bytemuck::cast_slice_mut(&mut self.row_buf);
+                    let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width, batch_rows);
                     self.reader.read_rows_gray_f32(f_out)?
                 }
@@ -1641,8 +1650,7 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
                     let float_count = width * channels * batch_rows;
                     let float_bytes = float_count * 4;
                     self.row_buf.resize(float_bytes, 0);
-                    let float_slice: &mut [f32] =
-                        bytemuck::cast_slice_mut(&mut self.row_buf);
+                    let float_slice: &mut [f32] = bytemuck::cast_slice_mut(&mut self.row_buf);
                     let f_out = ImgRefMut::new(float_slice, width * channels, batch_rows);
                     self.reader.read_rows_rgba_f32(f_out)?
                 }
@@ -1696,7 +1704,9 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
         info.dimensions.width,
         info.dimensions.height,
         ImageFormat::Jpeg,
-    );
+    )
+    .with_bit_depth(info.precision)
+    .with_channel_count(info.num_components);
 
     if let Some(ref icc) = info.icc_profile {
         img_info = img_info.with_icc_profile(icc.clone());
@@ -1768,7 +1778,7 @@ mod tests {
 
         let icc = b"fake icc profile data";
         let meta = Metadata::default().with_icc(icc.as_slice());
-        let policy = zencodec::encode::EncodePolicy::strict();
+        let policy = zencodec::encode::EncodePolicy::strip_all();
 
         let output = enc
             .job()
@@ -2143,11 +2153,12 @@ mod tests {
         assert!(caps.icc());
         assert!(caps.exif());
         assert!(caps.xmp());
-        assert!(caps.cancel());
+        assert!(caps.stop());
         assert!(caps.lossy());
         assert!(!caps.lossless());
         assert!(!caps.animation());
-        assert!(caps.row_level());
+        assert!(caps.push_rows());
+        assert!(caps.encode_from());
         assert!(caps.native_gray());
         assert!(caps.native_16bit());
         assert!(caps.native_f32());
@@ -2165,13 +2176,14 @@ mod tests {
         assert!(caps.icc());
         assert!(caps.exif());
         assert!(caps.xmp());
-        assert!(caps.cancel());
+        assert!(caps.stop());
         assert!(caps.cheap_probe());
-        assert!(caps.row_level());
+        assert!(caps.streaming());
         assert!(caps.native_gray());
         assert!(caps.native_f32());
         assert!(caps.enforces_max_pixels());
         assert!(caps.enforces_max_memory());
+        assert!(caps.enforces_max_input_bytes());
         assert!(!caps.animation());
     }
 
@@ -2327,6 +2339,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn encode_from_pull_basic() {
+        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         use zencodec::encode::{EncodeJob as _, Encoder as _};
         use zenpixels::PixelSliceMut;
 
@@ -2409,7 +2422,7 @@ mod streaming_test {
         let config = JpegEncoderConfig::default();
         let job = config
             .job() // config consumed — no config borrow
-            .with_stop(&stop) // borrows stop — 'a = this scope
+            .with_stop(zencodec::StopToken::new(stop)) // owned token
             .with_canvas_size(64, 64);
         let mut enc = job.dyn_encoder().unwrap();
         // enc borrows stop, both in same scope — compiles fine
@@ -2422,11 +2435,11 @@ mod streaming_test {
             zenpixels::PixelDescriptor::RGBA8_SRGB,
         )
         .unwrap();
-        enc.push_rows(&slice).unwrap();
+        enc.push_rows(slice).unwrap();
         let _output = enc.finish().unwrap();
     }
 
-    fn make_job(w: u32, h: u32) -> JpegEncodeJob<'static> {
+    fn make_job(w: u32, h: u32) -> JpegEncodeJob {
         let config = JpegEncoderConfig::default();
         // Config is consumed by job() via clone. Job doesn't borrow config.
         // No stop set, so 'a = 'static.
