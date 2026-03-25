@@ -6,7 +6,7 @@
 //! # SIMD Architecture
 //!
 //! - **archmage path** (x86_64): AVX2+FMA via `archmage_idct::mage_inverse_dct_8x8`
-//! - **wide path** (fallback): Portable SIMD via `wide::f32x8` with `#[multiversed]`
+//! - **wide path** (fallback): Portable SIMD via `wide::f32x8` with `#[autoversion]`
 
 #![allow(dead_code)]
 
@@ -43,15 +43,11 @@ fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 // SIMD-optimized implementations (always available via `wide` crate)
 mod simd {
     use super::*;
-    use multiversed::multiversed;
+    use archmage::autoversion;
 
     /// SIMD-optimized 8x8 transpose using wide's built-in transpose.
     /// Accelerated on AVX.
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    #[autoversion]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load all 8 rows
         let rows = [
@@ -257,11 +253,7 @@ mod simd {
     /// Full SIMD-optimized 2D IDCT with f32x8 chaining.
     /// Keeps data in SIMD registers throughout the pipeline to avoid gather/scatter overhead.
     /// Uses only 2 transposes instead of the previous 4 gather/scatter cycles.
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    #[autoversion]
     pub fn inverse_dct_8x8_simd(input: &[f32; 64]) -> [f32; 64] {
         // Load input as rows (each f32x8 is one row of the 8x8 block)
         let rows = [

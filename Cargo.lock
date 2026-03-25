@@ -1477,17 +1477,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multiversed"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dabf9b113e96ba60fa3958fdaf4aba3d8ed9f9b67c14fbcb1b0e99708715ca8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "multiversion"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2966,8 +2955,6 @@ dependencies = [
  "moxcms 0.8.1",
  "mozjpeg-rs",
  "mozjpeg-sys",
- "multiversed",
- "multiversion",
  "png",
  "proptest",
  "rayon",

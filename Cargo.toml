@@ -57,10 +57,6 @@ codec-eval = "0.3"
 libc = "0.2"
 libloading = "0.8"
 
-# Runtime CPU feature detection and dispatch
-multiversion = "0.8"
-multiversed = "0.3"
-
 # no_std compatible lazy initialization
 spin = "0.9"
 

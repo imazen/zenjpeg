@@ -165,7 +165,7 @@ mod idct_scalar {
 
 /// Wide crate portable IDCT using wide::i32x8::transpose
 mod idct_wide {
-    use multiversion::multiversion;
+    use archmage::autoversion;
     use wide::i32x8;
 
     const SCALE_BITS: i32 = 512 + 65536 + (128 << 17);
@@ -186,7 +186,7 @@ mod idct_wide {
 
     /// Portable IDCT using wide crate's i32x8
     /// Uses wide::i32x8::transpose which is AVX2-accelerated but has scalar fallback
-    #[multiversion(targets("x86_64+avx2", "aarch64+neon"))]
+    #[autoversion]
     pub fn idct_int_wide(in_vector: &mut [i32; 64], out_vector: &mut [i16; 64]) {
         // Load 8 rows as i32x8 vectors
         let mut rows: [i32x8; 8] = std::array::from_fn(|i| {

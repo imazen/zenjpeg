@@ -40,8 +40,6 @@ aligned-vec = { workspace = true }
 bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
-multiversion = { workspace = true }
-multiversed = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
 zenpixels = { workspace = true }

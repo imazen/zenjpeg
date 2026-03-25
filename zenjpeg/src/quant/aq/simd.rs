@@ -19,7 +19,7 @@
 #![allow(dead_code)]
 
 use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};
-use multiversed::multiversed;
+use archmage::autoversion;
 use wide::f32x8;
 
 // ============================================================================
@@ -189,11 +189,7 @@ pub fn pre_erosion_pixel_x8(
 /// * `row_above` - Row above (or same row if y=0)
 /// * `row_below` - Row below (or same row if y=height-1)
 /// * `output` - Output buffer to accumulate into (must be same length as row)
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output: &mut [f32]) {
     let width = row.len();
     assert_eq!(row_above.len(), width);
@@ -295,11 +291,7 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 /// * `row_below` - Row below with padding (length = width + 2)
 /// * `width` - Actual data width (without padding)
 /// * `output` - Output buffer to accumulate into (length = width)
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 pub fn pre_erosion_row_padded(
     row: &[f32],
     row_above: &[f32],
@@ -429,11 +421,7 @@ pub fn compute_pre_erosion_simd(
 }
 
 /// Downsample by 4x with sum and scale by 0.25.
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 fn downsample_4x_sum(input: &[f32], output: &mut [f32]) {
     let width = input.len();
     let out_w = output.len();
@@ -715,11 +703,7 @@ pub fn per_block_modulations_simd(
 /// - `block_w`: Number of blocks in row
 /// - `aq_row`: Output AQ values (one per block)
 /// - `mul`, `add`: Final transform coefficients
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 pub fn per_block_modulations_row(
     input: &[f32],
     stride: usize,
@@ -3432,7 +3416,7 @@ mod tests {
             row_below_padded[0] = row_below[0];
             row_below_padded[width + 1] = row_below[width - 1];
 
-            // Wide crate version (multiversed)
+            // Wide crate version (autoversioned)
             let mut output_wide = vec![0.0f32; width];
             pre_erosion_row_padded(
                 &row_padded,

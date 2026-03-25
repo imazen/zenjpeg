@@ -38,7 +38,7 @@ use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed}
 // SIMD implementations for hot paths
 pub mod simd;
 
-// Auto-vectorized implementations using multiversion
+// Auto-vectorized implementations using archmage autoversion
 pub mod autovec;
 
 // Streaming AQ for strip-based encoding

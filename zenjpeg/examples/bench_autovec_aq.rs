@@ -1,8 +1,8 @@
-//! Benchmark: wide crate vs multiversion autovectorization for AQ
+//! Benchmark: wide crate vs autoversion autovectorization for AQ
 //!
 //! This compares two approaches to SIMD:
 //! 1. `wide` crate with explicit f32x8 types (compile-time feature detection)
-//! 2. Pure scalar code with `#[multiversion]` (runtime dispatch, autovectorization)
+//! 2. Pure scalar code with `#[autoversion]` (runtime dispatch, autovectorization)
 //!
 //! Run: cargo run --release -p zenjpeg --example bench_autovec_aq
 

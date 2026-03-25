@@ -467,7 +467,7 @@ impl ComputedConfig {
 
 /// SIMD-accelerated frequency collection using nonzero mask.
 /// Uses `build_nonzero_mask` (with archmage dispatch) for SIMD — no need for
-/// `#[multiversed]` since this function is pure integer bit manipulation.
+/// `#[autoversion]` since this function is pure integer bit manipulation.
 #[inline]
 fn collect_block_frequencies_simd(
     coeffs: &[i16; DCT_BLOCK_SIZE],

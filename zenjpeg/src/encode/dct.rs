@@ -18,7 +18,7 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-use multiversed::multiversed;
+use archmage::autoversion;
 use wide::f32x8;
 
 // ============================================================================
@@ -357,11 +357,7 @@ pub(crate) mod simd {
 
     /// Process 8 rows simultaneously using SIMD with AVX2 transpose.
     /// Uses cache-friendly row loads + fast transpose instead of element-by-element gather.
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    #[autoversion]
     #[allow(dead_code)]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
         // Step 1: Load all 8 rows (cache-friendly sequential access, zero-cost)
@@ -553,12 +549,8 @@ pub(crate) mod simd {
         forward_dct_8x8_simd_chained_fallback(input)
     }
 
-    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by multiversion).
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by autoversion).
+    #[autoversion]
     fn forward_dct_8x8_simd_chained_fallback(input: &[f32; 64]) -> [f32; 64] {
         let rows = [
             f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
@@ -606,12 +598,8 @@ pub(crate) mod simd {
         forward_dct_8x8_wide_fallback(input)
     }
 
-    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by multiversion).
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by autoversion).
+    #[autoversion]
     #[inline]
     fn forward_dct_8x8_wide_fallback(input: &Block8x8f) -> Block8x8f {
         let cols = transpose_vec(input.rows);
@@ -794,7 +782,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 }
 
 /// Fallback for forward DCT using wide crate SIMD (portable to all platforms).
-/// Public so multiversion blocks can call it directly via cfg(target_feature).
+/// Public so autoversion blocks can call it directly via cfg(target_feature).
 #[inline]
 pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     simd::forward_dct_8x8_simd_chained(input)

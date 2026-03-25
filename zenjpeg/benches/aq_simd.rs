@@ -5,7 +5,7 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
-// Import production AQ functions (wide-based, multiversed)
+// Import production AQ functions (wide-based, autoversioned)
 use zenjpeg::quant::aq::simd::{
     per_block_modulations_row, pre_erosion_row, pre_erosion_row_padded,
 };
@@ -89,7 +89,7 @@ fn bench_pre_erosion_row(c: &mut Criterion) {
         let row_below: Vec<f32> = (0..width).map(|i| ((i + 2) % 256) as f32).collect();
         let mut output = vec![0.0f32; width];
 
-        group.bench_function("wide+multiversed", |b| {
+        group.bench_function("wide+autoversion", |b| {
             b.iter(|| {
                 output.fill(0.0);
                 pre_erosion_row(
@@ -152,7 +152,7 @@ fn bench_pre_erosion_row_padded(c: &mut Criterion) {
 
         let mut output = vec![0.0f32; width];
 
-        group.bench_function("wide+multiversed padded", |b| {
+        group.bench_function("wide+autoversion padded", |b| {
             b.iter(|| {
                 output.fill(0.0);
                 pre_erosion_row_padded(
@@ -209,7 +209,7 @@ fn bench_per_block_modulations_row(c: &mut Criterion) {
         let mul = 1.0f32;
         let add = 0.0f32;
 
-        group.bench_function("wide+multiversed", |b| {
+        group.bench_function("wide+autoversion", |b| {
             b.iter(|| {
                 per_block_modulations_row(
                     black_box(&y_data),

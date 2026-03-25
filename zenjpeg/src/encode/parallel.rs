@@ -21,7 +21,7 @@ use crate::entropy::encoder::EntropyEncoder;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
 use crate::huffman::HuffmanEncodeTable;
-use multiversed::multiversed;
+use archmage::autoversion;
 use rayon::prelude::*;
 
 // Re-export from strip.rs to avoid duplication
@@ -45,11 +45,7 @@ const CHUNK_SIZE: usize = 4096;
 ///
 /// This is the workhorse that both Y and chroma DCT functions delegate to.
 /// When `deringing` is `Some(dc_quant)`, applies overshoot deringing before DCT.
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 fn parallel_dct_plane(
     strip: &[f32],
     blocks_w: usize,
@@ -80,11 +76,7 @@ fn parallel_dct_plane(
 }
 
 /// Sequential DCT fallback for small block counts.
-#[multiversed]
-#[cfg_attr(
-    target_arch = "wasm32",
-    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-)]
+#[autoversion]
 #[inline]
 fn sequential_dct_plane(
     strip: &[f32],

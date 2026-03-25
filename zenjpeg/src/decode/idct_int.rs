@@ -8,7 +8,7 @@
 //! # SIMD Implementations
 //!
 //! Three implementations are available:
-//! - **wide**: Portable SIMD using `wide` crate with `multiversion` (recommended)
+//! - **wide**: Portable SIMD using `wide` crate with `#[autoversion]` (recommended)
 //! - **avx2**: AVX2 intrinsics via archmage capability tokens (x86_64 only, kept for reference)
 //! - **scalar**: Pure scalar fallback
 //!
@@ -986,7 +986,7 @@ mod avx2 {
 // Portable SIMD Implementation using `wide` crate
 // =============================================================================
 
-/// Portable SIMD IDCT using `wide` crate with `multiversion` for cross-platform support.
+/// Portable SIMD IDCT using `wide` crate with `#[autoversion]` for cross-platform support.
 ///
 /// This implementation uses `wide::i32x8` for the butterfly operations and
 /// `wide::i32x8::transpose` for the 8x8 matrix transpose.
@@ -996,7 +996,7 @@ mod avx2 {
 /// - aarch64 NEON: 1.11x faster (583.9 ns vs 646.9 ns per block via qemu)
 mod wide_simd {
     use super::SCALE_BITS;
-    use multiversed::multiversed;
+    use archmage::autoversion;
     use wide::i32x8;
 
     /// IDCT constants (fixed-point, 12-bit precision)
@@ -1015,7 +1015,7 @@ mod wide_simd {
 
     /// Portable SIMD IDCT using `wide` crate.
     ///
-    /// IMPORTANT: Uses `#[multiversion]` to enable SIMD on each target.
+    /// IMPORTANT: Uses `#[autoversion]` to enable SIMD on each target.
     /// Without this, `wide` falls back to scalar and is slower!
     ///
     /// Targets (in priority order):
@@ -1023,11 +1023,7 @@ mod wide_simd {
     /// - x86_64+sse4.1: Uses SSE4.1 (i32x8 = 2x __m128i)
     /// - aarch64+neon: Uses NEON for i32x8 ops
     /// - default: Scalar fallback
-    #[multiversed]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
-    )]
+    #[autoversion]
     pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load 8 rows as i32x8 vectors
         let mut rows: [i32x8; 8] = [

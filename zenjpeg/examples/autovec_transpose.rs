@@ -7,14 +7,14 @@
 //! even the naive transpose to use `vunpcklps`, `vinsertf128`, `vshufps` - the
 //! exact same instructions as manual SIMD!
 //!
-//! The `multiversion` crate enables this at runtime without global target flags.
+//! The `archmage::autoversion` macro enables this at runtime without global target flags.
 //!
 //! Run with: cargo asm -p zenjpeg --example autovec_transpose --release transpose_naive
-//! Compare:  cargo asm -p zenjpeg --example autovec_transpose --release transpose_multiversion
+//! Compare:  cargo asm -p zenjpeg --example autovec_transpose --release transpose_autoversion
 
 #![allow(dead_code)]
 
-use multiversion::multiversion;
+use archmage::autoversion;
 
 /// Naive scalar transpose - baseline (won't vectorize)
 #[inline(never)]
@@ -235,12 +235,12 @@ pub fn transpose_memswap(data: &mut [f32; 64]) {
     }
 }
 
-/// Pattern 8: Multiversion - compiles multiple versions, picks best at runtime
+/// Pattern 8: Autoversion - compiles multiple versions, picks best at runtime
 /// This is the KEY technique: same scalar code, but compiled for multiple targets.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 #[inline(never)]
-pub fn transpose_multiversion(input: &[f32; 64], output: &mut [f32; 64]) {
-    // Same naive code, but multiversion compiles separate AVX2/AVX/SSE versions
+pub fn transpose_autoversion(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Same naive code, but autoversion compiles separate AVX2/AVX/SSE versions
     for row in 0..8 {
         for col in 0..8 {
             output[col * 8 + row] = input[row * 8 + col];
@@ -248,10 +248,10 @@ pub fn transpose_multiversion(input: &[f32; 64], output: &mut [f32; 64]) {
     }
 }
 
-/// Pattern 9: Multiversion with explicit chunking hint
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+/// Pattern 9: Autoversion with explicit chunking hint
+#[autoversion]
 #[inline(never)]
-pub fn transpose_multiversion_chunked(input: &[f32; 64], output: &mut [f32; 64]) {
+pub fn transpose_autoversion_chunked(input: &[f32; 64], output: &mut [f32; 64]) {
     let input_rows: &[[f32; 8]; 8] = bytemuck::cast_ref(input);
     let output_rows: &mut [[f32; 8]; 8] = bytemuck::cast_mut(output);
 
@@ -297,12 +297,12 @@ fn main() {
 
     println!("All implementations verified correct.\n");
 
-    // Verify multiversion
-    transpose_multiversion(&input, &mut output);
-    assert_eq!(output, expected, "multiversion mismatch");
+    // Verify autoversion
+    transpose_autoversion(&input, &mut output);
+    assert_eq!(output, expected, "autoversion mismatch");
 
-    transpose_multiversion_chunked(&input, &mut output);
-    assert_eq!(output, expected, "multiversion_chunked mismatch");
+    transpose_autoversion_chunked(&input, &mut output);
+    assert_eq!(output, expected, "autoversion_chunked mismatch");
 
     // Benchmark each
     let benches: &[(&str, fn(&[f32; 64], &mut [f32; 64]))] = &[
@@ -311,8 +311,8 @@ fn main() {
         ("chunked", transpose_chunked),
         ("4x4_blocks", transpose_4x4_blocks),
         ("unrolled", transpose_unrolled),
-        ("multiversion", transpose_multiversion),
-        ("mv_chunked", transpose_multiversion_chunked),
+        ("autoversion", transpose_autoversion),
+        ("av_chunked", transpose_autoversion_chunked),
     ];
 
     for (name, func) in benches {

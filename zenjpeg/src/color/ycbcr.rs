@@ -1537,15 +1537,10 @@ fn ycbcr_to_rgb_i16_x16_avx2(
 
 /// Autovectorized YCbCr to separate R, G, B planes.
 ///
-/// This function is decorated with `#[multiversion]` to generate optimized versions
+/// This function is decorated with `#[autoversion]` to generate optimized versions
 /// for different SIMD instruction sets (AVX2, SSE4.1, NEON) with runtime dispatch.
 /// Writing to separate planes allows better autovectorization than interleaved output.
-#[multiversion::multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx",
-    "x86_64+sse4.1",
-    "aarch64+neon"
-))]
+#[archmage::autoversion]
 fn ycbcr_to_rgb_planes_autovec(
     y_plane: &[i16],
     cb_plane: &[i16],
@@ -1575,12 +1570,7 @@ fn ycbcr_to_rgb_planes_autovec(
 }
 
 /// Interleave R, G, B planes into RGB buffer.
-#[multiversion::multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx",
-    "x86_64+sse4.1",
-    "aarch64+neon"
-))]
+#[archmage::autoversion]
 fn interleave_rgb_planes(r: &[u8], g: &[u8], b: &[u8], rgb: &mut [u8]) {
     let len = r.len();
     for i in 0..len {

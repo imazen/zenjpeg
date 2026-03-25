@@ -1,23 +1,23 @@
-//! Auto-vectorized AQ functions using multiversion.
+//! Auto-vectorized AQ functions using archmage `#[autoversion]`.
 //!
 //! These functions use pure scalar code that the compiler autovectorizes when
-//! the `#[multiversion]` attribute enables AVX2/NEON. This is 2-3x faster than
+//! `#[autoversion]` enables AVX2/NEON target features. This is 2-3x faster than
 //! using the `wide` crate without global target features.
 //!
 //! ## Why not `wide`?
 //!
 //! The `wide` crate uses `cfg(target_feature)` which is compile-time only.
 //! Without `-C target-cpu=x86-64-v3`, it falls back to SSE even inside
-//! `#[multiversed]` functions. The `multiversion` crate uses `#[target_feature]`
+//! autoversioned functions. `#[autoversion]` uses `#[target_feature]`
 //! which enables autovectorization at the function level.
 //!
 //! ## Benchmark (2026-01-21)
 //!
 //! 8x8 f32 transpose (see examples/autovec_transpose.rs):
 //! - Naive scalar: 13.31 ns
-//! - #[multiversion]: 4.73 ns (2.8x faster)
+//! - #[autoversion]: 4.73 ns (2.8x faster)
 
-use multiversion::multiversion;
+use archmage::autoversion;
 
 // ============================================================================
 // Constants (same as simd.rs)
@@ -90,7 +90,7 @@ fn pre_erosion_pixel(pixel: f32, left: f32, right: f32, top: f32, bottom: f32) -
 /// * `row_below` - Row below with same padding
 /// * `width` - Actual image width (not including padding)
 /// * `output` - Output buffer (len = width)
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn pre_erosion_row_autovec(
     row: &[f32],
     row_above: &[f32],
@@ -142,7 +142,7 @@ pub fn pre_erosion_row_autovec(
 
 /// Alternative: Process using iterator chunks for cleaner code.
 /// May or may not autovectorize as well depending on LLVM version.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn pre_erosion_row_autovec_iter(
     row: &[f32],
     row_above: &[f32],
@@ -194,7 +194,7 @@ fn ratio_of_derivatives_inv(val: f32) -> f32 {
 /// * `stride` - Row stride in buffer
 /// * `block_y` - Y coordinate of block start
 /// * `img_height` - Image height for boundary checks
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn gamma_modulation_sum_8x8_autovec(
     block: &[f32],
     stride: usize,
@@ -237,7 +237,7 @@ pub fn gamma_modulation_sum_8x8_autovec(
 /// * `stride` - Row stride in buffer
 /// * `block_y` - Y coordinate of block start
 /// * `img_height` - Image height for boundary checks
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn hf_modulation_sum_8x8_autovec(
     block: &[f32],
     stride: usize,
@@ -338,7 +338,7 @@ fn fast_exp2(x: f32) -> f32 {
 ///
 /// This combines ComputeMask, HfModulation, GammaModulation, and final transform,
 /// using pure scalar code that the compiler autovectorizes.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn per_block_modulations_row_autovec(
     input: &[f32],
     stride: usize,
@@ -474,13 +474,13 @@ fn weighted_min4_of_9_autovec(mut v: [[f32; 8]; 9]) -> [f32; 8] {
 }
 
 /// Compute fuzzy erosion for blocks using autovectorized sorting network.
-/// Uses #[multiversion] for runtime AVX2/SSE/NEON dispatch.
+/// Uses #[autoversion] for runtime AVX2/SSE/NEON dispatch.
 ///
 /// This is the default fast path - provides runtime SIMD dispatch without
 /// requiring `-C target-cpu=native` compile flags.
 ///
 /// Returns the number of blocks processed.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse4.1", "aarch64+neon"))]
+#[autoversion]
 pub fn compute_fuzzy_erosion_blocks_autovec(
     pre_erosion_buffer: &[f32],
     pe_w: usize,
