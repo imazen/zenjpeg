@@ -345,3 +345,7 @@ pub use codec::{
     JpegEncoding,
     JpegStreamingDecoder,
 };
+
+// zennode pipeline node definitions (EncodeJpeg, DecodeJpeg)
+#[cfg(feature = "zennode")]
+pub mod zennode_defs;

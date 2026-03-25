@@ -68,6 +68,8 @@ ultrahdr-core = { workspace = true, optional = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true, features = ["layout"] }
+# Self-documenting node definitions for pipeline integration
+zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies
@@ -189,6 +191,8 @@ zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode
 # Integrates zenlayout (geometry) and zenresize (resampling)
 layout = ["decoder", "std", "dep:zenlayout", "dep:zenresize"]
+# Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
+zennode = ["dep:zennode", "zencodec"]
 
 [[bench]]
 name = "encode"
