@@ -1,5 +1,7 @@
 # Decoder Refactor Design
 
+> **Historical (January 2026).** The benchmark results below predate the streaming decode rewrite. Current zenjpeg decoder performance matches or beats mozjpeg at all sizes. See README.md for current benchmarks.
+
 Status: Draft
 Author: Claude
 Date: 2026-01-22
