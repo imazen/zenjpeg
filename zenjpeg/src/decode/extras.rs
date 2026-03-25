@@ -29,7 +29,8 @@ use std::sync::OnceLock;
 
 // Re-export shared types from encoder extras
 pub use crate::encode::extras::{
-    AdobeColorTransform, AdobeInfo, DensityUnits, JfifInfo, MpfImageType, SegmentType,
+    AdobeColorTransform, AdobeInfo, DensityUnits, JfifInfo, MpfImageType, MpfImageTypeExt,
+    SegmentType,
 };
 
 // Re-export detect types for quality estimation through extras
@@ -1151,6 +1152,6 @@ pub(crate) fn should_preserve_mpf_image(
         MpfImageType::Panorama | MpfImageType::MultiAngle => config.mpf_multiframe,
         MpfImageType::Disparity => config.mpf_depth,
         MpfImageType::BaselinePrimary => false, // Primary is the main decode result
-        MpfImageType::Other(_) => config.app_unknown,
+        MpfImageType::Other(_) | _ => config.app_unknown,
     }
 }

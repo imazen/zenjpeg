@@ -1,7 +1,7 @@
 //! Tests for decoder extras preservation.
 use enough::Unstoppable;
 
-use zenjpeg::decoder::{Decoder, MpfImageType, PreserveConfig, SegmentType};
+use zenjpeg::decoder::{Decoder, MpfImageType, MpfImageTypeExt, PreserveConfig, SegmentType};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Create a simple test image.

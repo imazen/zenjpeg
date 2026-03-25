@@ -70,8 +70,8 @@ pub use crate::decode::{
 // === Metadata preservation types ===
 pub use crate::decode::{
     AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
-    MpfDirectory, MpfEntry, MpfImageType, PreserveConfig, PreservedMpfImage, PreservedSegment,
-    SegmentType, StandardProfile,
+    MpfDirectory, MpfEntry, MpfImageType, MpfImageTypeExt, PreserveConfig, PreservedMpfImage,
+    PreservedSegment, SegmentType, StandardProfile,
 };
 
 // === Depth map extraction types ===

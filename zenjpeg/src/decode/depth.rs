@@ -34,7 +34,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::extras::DecodedExtras;
+use super::extras::{DecodedExtras, MpfImageTypeExt};
 
 // ============================================================================
 // Public types
@@ -209,15 +209,6 @@ pub(crate) fn parse_gdepth_xmp(xmp: &str) -> Option<DepthMapData> {
 // Dynamic Depth Format (DDF) parsing
 // ============================================================================
 
-/// A parsed item from the DDF container directory.
-#[derive(Debug, Clone)]
-struct DdfItem {
-    mime: String,
-    length: usize,
-    /// Semantic label if present (e.g., "Primary", "DepthMap")
-    semantic: Option<String>,
-}
-
 /// Parse Dynamic Depth Format container directory from XMP and extract depth.
 ///
 /// DDF stores metadata in the `http://ns.google.com/photos/dd/1.0/` namespace.
@@ -225,14 +216,19 @@ struct DdfItem {
 ///
 /// `file_data` is the complete JPEG file (including appended images).
 pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
+    use ultrahdr_core::metadata::container::{ItemSemantic, parse_container_items};
+
     // Check for Dynamic Depth namespace
     if !xmp.contains("Container:Directory") && !xmp.contains("http://ns.google.com/photos/dd/1.0/")
     {
         return None;
     }
 
-    // Parse container items from XMP
-    let items = parse_container_directory(xmp)?;
+    // Parse container items from XMP (using shared ultrahdr-core parser)
+    let items = parse_container_items(xmp);
+    if items.is_empty() {
+        return None;
+    }
 
     // Parse DepthMap metadata from XMP (separate from container directory)
     let format = extract_xmp_attr(xmp, "GDepth:Format")
@@ -290,19 +286,14 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
             continue;
         }
 
-        let end = offset.saturating_add(item.length);
+        let length = item.length.unwrap_or(0);
+        let end = offset.saturating_add(length);
         if end > file_data.len() {
             break;
         }
 
-        let is_depth = item
-            .semantic
-            .as_deref()
-            .is_some_and(|s| s.contains("Depth") || s.contains("depth"));
-        let is_confidence = item
-            .semantic
-            .as_deref()
-            .is_some_and(|s| s.contains("Confidence") || s.contains("confidence"));
+        let is_depth = matches!(item.semantic, ItemSemantic::DepthMap);
+        let is_confidence = matches!(item.semantic, ItemSemantic::ConfidenceMap);
 
         if is_depth && depth_data.is_none() {
             depth_data = Some(file_data[offset..end].to_vec());
@@ -330,90 +321,6 @@ pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
         }),
         confidence: confidence_data,
         confidence_mime,
-    })
-}
-
-/// Parse Container:Directory items from XMP.
-///
-/// The container directory describes appended images using an ordered
-/// rdf:Seq of Container:Item elements with Mime, Length, and Semantic.
-fn parse_container_directory(xmp: &str) -> Option<Vec<DdfItem>> {
-    // Find the Container:Directory section
-    // It contains an rdf:Seq of Container:Item elements
-    let dir_start = xmp.find("Container:Directory")?;
-    let dir_section = &xmp[dir_start..];
-
-    // Find the end of the directory (closing tag)
-    let dir_end = dir_section
-        .find("</Container:Directory>")
-        .or_else(|| {
-            // Some files use self-closing rdf:Seq
-            dir_section
-                .find("</rdf:Seq>")
-                .map(|p| p + "</rdf:Seq>".len())
-        })
-        .unwrap_or(dir_section.len());
-    let dir_xml = &dir_section[..dir_end];
-
-    let mut items = Vec::new();
-
-    // Parse each Container:Item (or Item:)
-    // Look for rdf:li elements that contain item descriptions
-    let mut search_pos = 0;
-    while let Some(item_start) = find_item_start(dir_xml, search_pos) {
-        let remaining = &dir_xml[item_start..];
-        let item_end = remaining
-            .find("/>")
-            .map(|p| p + 2)
-            .or_else(|| {
-                remaining
-                    .find("</rdf:li>")
-                    .or_else(|| remaining.find("</Container:Item>"))
-                    .map(|p| p + 1)
-            })
-            .unwrap_or(remaining.len());
-        let item_xml = &remaining[..item_end];
-
-        let mime = extract_xml_attr(item_xml, "Item:Mime")
-            .or_else(|| extract_xml_attr(item_xml, "Container:Mime"))
-            .or_else(|| extract_xml_attr(item_xml, "Mime"))
-            .unwrap_or_else(|| String::from("image/jpeg"));
-
-        let length = extract_xml_attr(item_xml, "Item:Length")
-            .or_else(|| extract_xml_attr(item_xml, "Container:Length"))
-            .or_else(|| extract_xml_attr(item_xml, "Length"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0);
-
-        let semantic = extract_xml_attr(item_xml, "Item:Semantic")
-            .or_else(|| extract_xml_attr(item_xml, "Container:Semantic"))
-            .or_else(|| extract_xml_attr(item_xml, "Semantic"));
-
-        items.push(DdfItem {
-            mime,
-            length,
-            semantic,
-        });
-
-        search_pos = item_start + item_end;
-    }
-
-    if items.is_empty() { None } else { Some(items) }
-}
-
-/// Find the start of a container item element.
-fn find_item_start(xml: &str, from: usize) -> Option<usize> {
-    let search = &xml[from..];
-    // Look for Container:Item or rdf:li with Item attributes
-    let positions = [
-        search.find("Container:Item"),
-        search.find("Item:Mime"),
-        search.find("Item:Semantic"),
-    ];
-    // Find the enclosing < before the earliest match
-    positions.iter().filter_map(|p| *p).min().and_then(|p| {
-        let before = &search[..p];
-        before.rfind('<').map(|lt| from + lt)
     })
 }
 
@@ -912,6 +819,8 @@ mod tests {
 
     #[test]
     fn parse_ddf_container_directory() {
+        use ultrahdr_core::metadata::container::{ItemSemantic, parse_container_items};
+
         let xmp = r#"<x:xmpmeta>
   <rdf:RDF>
     <rdf:Description
@@ -934,14 +843,14 @@ mod tests {
   </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let items = parse_container_directory(xmp).unwrap();
+        let items = parse_container_items(xmp);
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].semantic.as_deref(), Some("Primary"));
+        assert_eq!(items[0].semantic, ItemSemantic::Primary);
         assert_eq!(items[0].mime, "image/jpeg");
-        assert_eq!(items[1].semantic.as_deref(), Some("DepthMap"));
-        assert_eq!(items[1].length, 5000);
-        assert_eq!(items[2].semantic.as_deref(), Some("ConfidenceMap"));
-        assert_eq!(items[2].length, 3000);
+        assert_eq!(items[1].semantic, ItemSemantic::DepthMap);
+        assert_eq!(items[1].length, Some(5000));
+        assert_eq!(items[2].semantic, ItemSemantic::ConfidenceMap);
+        assert_eq!(items[2].length, Some(3000));
         assert_eq!(items[2].mime, "image/png");
     }
 
@@ -1039,7 +948,7 @@ mod tests {
 
     #[test]
     fn mpf_type_disparity() {
-        use crate::encode::extras::MpfImageType;
+        use crate::encode::extras::{MpfImageType, MpfImageTypeExt};
         let typ = MpfImageType::from_type_code(0x020002);
         assert_eq!(typ, MpfImageType::Disparity);
         assert!(typ.is_depth());
@@ -1047,7 +956,7 @@ mod tests {
 
     #[test]
     fn mpf_type_roundtrip() {
-        use crate::encode::extras::MpfImageType;
+        use crate::encode::extras::{MpfImageType, MpfImageTypeExt};
         let types = [
             MpfImageType::Undefined,
             MpfImageType::LargeThumbnailVga,

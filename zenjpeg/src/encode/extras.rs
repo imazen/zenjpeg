@@ -79,80 +79,49 @@ pub enum SegmentType {
 
 /// MPF image type codes (CIPA DC-007).
 ///
+/// Re-exported from `ultrahdr_core` for cross-crate compatibility.
 /// These correspond to the MPF Individual Image Attribute type codes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MpfImageType {
-    /// Undefined (0x000000) - used for gain maps in UltraHDR
-    #[default]
-    Undefined,
-    /// Large thumbnail (class 1, type 1) - VGA resolution
-    LargeThumbnailVga,
-    /// Large thumbnail (class 1, type 2) - Full HD resolution
-    LargeThumbnailFullHd,
-    /// Multi-frame panorama (class 2, type 1)
-    Panorama,
-    /// Multi-frame disparity/depth (class 2, type 2)
-    Disparity,
-    /// Multi-frame multi-angle (class 2, type 3)
-    MultiAngle,
-    /// Baseline primary image (class 3, type 0)
-    BaselinePrimary,
-    /// Unknown type code
-    Other(u32),
-}
+pub use ultrahdr_core::MpImageType as MpfImageType;
 
-impl MpfImageType {
-    /// Create from MPF type code (Individual Image Attribute).
-    #[must_use]
-    pub fn from_type_code(code: u32) -> Self {
-        match code {
-            0x000000 => Self::Undefined,
-            0x030000 => Self::BaselinePrimary,
-            0x010001 => Self::LargeThumbnailVga,
-            0x010002 => Self::LargeThumbnailFullHd,
-            0x020001 => Self::Panorama,
-            0x020002 => Self::Disparity,
-            0x020003 => Self::MultiAngle,
-            _ => Self::Other(code),
-        }
-    }
-
-    /// Convert to MPF type code.
-    #[must_use]
-    pub fn to_type_code(self) -> u32 {
-        match self {
-            Self::Undefined => 0x000000,
-            Self::BaselinePrimary => 0x030000,
-            Self::LargeThumbnailVga => 0x010001,
-            Self::LargeThumbnailFullHd => 0x010002,
-            Self::Panorama => 0x020001,
-            Self::Disparity => 0x020002,
-            Self::MultiAngle => 0x020003,
-            Self::Other(code) => code,
-        }
-    }
+/// Extension methods for [`MpfImageType`] used in zenjpeg.
+///
+/// Provides `to_type_code()` (compat alias for `type_code()`) and
+/// category helpers (`is_gainmap`, `is_thumbnail`, etc.).
+pub trait MpfImageTypeExt {
+    /// Convert to MPF type code (compatibility alias for `type_code()`).
+    fn to_type_code(self) -> u32;
 
     /// Check if this is a gain map type (Undefined).
-    #[must_use]
-    pub fn is_gainmap(&self) -> bool {
+    fn is_gainmap(&self) -> bool;
+
+    /// Check if this is a thumbnail type.
+    fn is_thumbnail(&self) -> bool;
+
+    /// Check if this is a depth/disparity type.
+    fn is_depth(&self) -> bool;
+
+    /// Check if this is a multi-frame type (panorama, multi-angle).
+    fn is_multiframe(&self) -> bool;
+}
+
+impl MpfImageTypeExt for MpfImageType {
+    fn to_type_code(self) -> u32 {
+        self.type_code()
+    }
+
+    fn is_gainmap(&self) -> bool {
         matches!(self, Self::Undefined)
     }
 
-    /// Check if this is a thumbnail type.
-    #[must_use]
-    pub fn is_thumbnail(&self) -> bool {
+    fn is_thumbnail(&self) -> bool {
         matches!(self, Self::LargeThumbnailVga | Self::LargeThumbnailFullHd)
     }
 
-    /// Check if this is a depth/disparity type.
-    #[must_use]
-    pub fn is_depth(&self) -> bool {
+    fn is_depth(&self) -> bool {
         matches!(self, Self::Disparity)
     }
 
-    /// Check if this is a multi-frame type (panorama, multi-angle).
-    #[must_use]
-    pub fn is_multiframe(&self) -> bool {
+    fn is_multiframe(&self) -> bool {
         matches!(self, Self::Panorama | Self::MultiAngle)
     }
 }

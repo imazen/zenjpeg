@@ -1354,9 +1354,9 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f66e11d2bab842db599aaed858bfb0450f58ee9d274d9d478be46bcc6916316"
+checksum = "c4b75067bc1e8c2c28413cab5777c0fe8473499e55f2e09076b9076f344ce9d5"
 dependencies = [
  "archmage 0.9.12",
  "bytemuck",
@@ -2925,9 +2925,9 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef17621ad124f749d37dc97fb7b67cd10915a9c58c2583dee278681e19bda05"
+checksum = "99ba55a38b9c8fcd685bddc640c6b9891108c026aa24ee8af206628d1a3e561b"
 dependencies = [
  "almost-enough",
  "enough",
@@ -2992,6 +2992,7 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenlayout",
+ "zennode",
  "zenpixels",
  "zenresize",
  "zensim",
@@ -3023,6 +3024,22 @@ name = "zenlayout"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e136195598f6c1dc769200888ad1f9071f99d54ac3a91b80be6ba0b164e6b5b"
+
+[[package]]
+name = "zennode"
+version = "0.1.0"
+dependencies = [
+ "zennode-derive",
+]
+
+[[package]]
+name = "zennode-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "zenpixels"

@@ -79,8 +79,8 @@ pub use ultrahdr_reader::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrR
 pub use extras::{
     AdobeColorTransform, AdobeInfo, Confidence, DecodedExtras, DensityUnits, DqtTable,
     EncoderFamily, IccPreserve, JfifInfo, JpegProbe, MpfDirectory, MpfEntry, MpfImageType,
-    PreserveConfig, PreservedMpfImage, PreservedSegment, QualityEstimate, QualityScale,
-    SegmentType, StandardProfile,
+    MpfImageTypeExt, PreserveConfig, PreservedMpfImage, PreservedSegment, QualityEstimate,
+    QualityScale, SegmentType, StandardProfile,
 };
 
 // Re-export depth map types for public API
