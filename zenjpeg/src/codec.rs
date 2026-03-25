@@ -1039,6 +1039,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 self.policy.as_ref(),
             );
             let header = self.config.inner.read_info(data)?;
+            self.check_progressive_policy(header.mode)?;
             let info = to_image_info(&header);
             let reader = cfg.scanline_reader(data)?;
 
@@ -1052,6 +1053,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 row_buf: aligned_vec::AVec::new(4),
                 current_row: 0,
                 mcu_height: mcu_height as u32,
+                stop: self.stop,
             })
         }
         #[cfg(not(feature = "decoder"))]
@@ -1080,6 +1082,25 @@ impl JpegDecodeJob<'_> {
             .map_err(|_| {
                 Error::allocation_failed(data.len(), "input exceeds max_input_bytes limit")
             })?;
+        Ok(())
+    }
+
+    /// Check whether the decode policy allows progressive JPEGs.
+    ///
+    /// Returns an error if the image is progressive and the policy forbids it.
+    #[cfg(feature = "decoder")]
+    fn check_progressive_policy(&self, mode: crate::types::JpegMode) -> Result<(), Error> {
+        if let Some(ref policy) = self.policy {
+            let is_progressive = matches!(
+                mode,
+                crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
+            );
+            if is_progressive && !policy.resolve_progressive(true) {
+                return Err(Error::unsupported_feature(
+                    "progressive JPEG rejected by decode policy",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -1124,6 +1145,7 @@ fn push_decoder_native<'a>(
 
     // Probe header for component count (needed for descriptor selection)
     let header = job.config.inner.read_info(data_ref)?;
+    job.check_progressive_policy(header.mode)?;
 
     // Create the streaming scanline reader
     let mut reader = cfg.scanline_reader(data_ref)?;
@@ -1423,10 +1445,32 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
             }
 
-            // Check max_width/max_height before full decode
-            if limits.max_width.is_some() || limits.max_height.is_some() {
+            // Check dimension limits and progressive policy before full decode.
+            // Header parse is cheap (marker scan only, no entropy decoding).
+            let needs_header = limits.max_width.is_some()
+                || limits.max_height.is_some()
+                || self
+                    .policy
+                    .as_ref()
+                    .is_some_and(|p| p.allow_progressive.is_some());
+            if needs_header {
                 let header = cfg.read_info(&data)?;
-                limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
+                if limits.max_width.is_some() || limits.max_height.is_some() {
+                    limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
+                }
+                let is_progressive = matches!(
+                    header.mode,
+                    crate::types::JpegMode::Progressive
+                        | crate::types::JpegMode::ArithmeticProgressive
+                );
+                if let Some(ref policy) = self.policy
+                    && is_progressive
+                    && !policy.resolve_progressive(true)
+                {
+                    return Err(Error::unsupported_feature(
+                        "progressive JPEG rejected by decode policy",
+                    ));
+                }
             }
 
             let stop: &dyn enough::Stop = match &self.stop {
@@ -1454,6 +1498,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
                 if let Some(xmp) = extras.xmp() {
                     info = info.with_xmp(xmp.as_bytes().to_vec());
+                }
+                // Populate resolution from JFIF APP0 density.
+                if let Some(jfif) = extras.jfif()
+                    && let Some(resolution) = jfif_to_resolution(&jfif)
+                {
+                    info = info.with_resolution(resolution);
                 }
             }
 
@@ -1575,6 +1625,8 @@ pub struct JpegStreamingDecoder<'a> {
     current_row: u32,
     /// MCU height in pixels (8 or 16 depending on subsampling).
     mcu_height: u32,
+    /// Cooperative cancellation token.
+    stop: Option<zencodec::StopToken>,
     #[cfg(not(feature = "decoder"))]
     _phantom: core::marker::PhantomData<&'a ()>,
 }
@@ -1587,6 +1639,12 @@ impl zencodec::decode::StreamingDecode for JpegStreamingDecoder<'_> {
         {
             use imgref::ImgRefMut;
             use zenpixels::{ChannelLayout, ChannelType};
+
+            // Check cooperative cancellation before doing work.
+            if let Some(ref stop) = self.stop {
+                use enough::Stop;
+                stop.check()?;
+            }
 
             if self.reader.is_finished() {
                 return Ok(None);
@@ -1721,7 +1779,37 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
         img_info = img_info.with_xmp(xmp.as_bytes().to_vec());
     }
 
+    // TODO: populate resolution from JFIF density. JpegInfo does not carry
+    // JFIF density; the full decode path uses DecodedExtras::jfif() instead.
+    // To support resolution in probe/streaming paths, either extend JpegInfo
+    // with density fields or parse JFIF APP0 separately here.
+
     img_info
+}
+
+/// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
+///
+/// Returns `None` for aspect-ratio-only density (unit = 0) or zero densities.
+#[cfg(feature = "decoder")]
+fn jfif_to_resolution(jfif: &crate::encode::extras::JfifInfo) -> Option<zencodec::Resolution> {
+    use crate::encode::extras::DensityUnits;
+    use zencodec::ResolutionUnit;
+
+    if jfif.x_density == 0 || jfif.y_density == 0 {
+        return None;
+    }
+
+    let unit = match jfif.density_units {
+        DensityUnits::PixelsPerInch => ResolutionUnit::Inch,
+        DensityUnits::PixelsPerCm => ResolutionUnit::Centimeter,
+        DensityUnits::None => return None, // aspect ratio only, not real DPI
+    };
+
+    Some(zencodec::Resolution {
+        x: jfif.x_density as f64,
+        y: jfif.y_density as f64,
+        unit,
+    })
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
