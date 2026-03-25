@@ -1,5 +1,7 @@
 # JpegEncoder API Design
 
+> **Historical.** This document describes the v0.4 API (`JpegEncoder::new()`, `StreamingEncoderBuilder`). The current API uses `EncoderConfig`/`EncodeRequest`/`RgbEncoder`. See README.md for current API.
+
 ## Current API Surface (v0.4)
 
 ### Configuration (StreamingEncoderBuilder)
