@@ -89,6 +89,61 @@ impl Default for EncodeJpeg {
     }
 }
 
+impl EncodeJpeg {
+    /// Apply this node's explicitly-set params on top of an existing config.
+    ///
+    /// Fields at their default/sentinel value are skipped:
+    /// - `quality` and `jpeg_quality`: `-1` means not set
+    /// - `subsampling`: empty string means not set
+    /// - `progressive` and `trellis`: `false` means not set (default)
+    /// - `jpegli`: `true` is the default, only `false` is an explicit change
+    ///
+    /// Codec-specific `jpeg_quality` is applied AFTER generic `quality`,
+    /// so it takes precedence when both are set.
+    pub fn apply(&self, mut config: crate::JpegEncoderConfig) -> crate::JpegEncoderConfig {
+        use zencodec::encode::EncoderConfig as _;
+
+        // Generic quality first (calibrated mapping)
+        if self.quality >= 0 {
+            config = config.with_generic_quality(self.quality as f32);
+        }
+        // Codec-specific quality override (direct jpegli quality)
+        if self.jpeg_quality >= 1 {
+            config = config.with_calibrated_quality(self.jpeg_quality as f32);
+        }
+        // Progressive encoding
+        if self.progressive {
+            config = config.with_progressive(true);
+        }
+        // Chroma subsampling
+        if !self.subsampling.is_empty() {
+            let sub = match self.subsampling.as_str() {
+                "444" => crate::encoder::ChromaSubsampling::None,
+                "422" => crate::encoder::ChromaSubsampling::HalfHorizontal,
+                "440" => crate::encoder::ChromaSubsampling::HalfVertical,
+                // Default to 4:2:0 for "420" or any other value
+                _ => crate::encoder::ChromaSubsampling::Quarter,
+            };
+            config = config.with_subsampling(sub);
+        }
+        // Jpegli defaults to true; only apply when explicitly disabled
+        if !self.jpegli {
+            // When jpegli is disabled, use effort 0 (JpegliBaseline).
+            config = zencodec::encode::EncoderConfig::with_generic_effort(config, 0);
+        }
+        // Trellis quantization
+        if self.trellis {
+            config = zencodec::encode::EncoderConfig::with_generic_effort(config, 2);
+        }
+        config
+    }
+
+    /// Build a config from scratch using only this node's params.
+    pub fn to_encoder_config(&self) -> crate::JpegEncoderConfig {
+        self.apply(crate::JpegEncoderConfig::new())
+    }
+}
+
 /// Registration function for aggregating crates.
 pub fn register(registry: &mut NodeRegistry) {
     registry.register(&ENCODE_JPEG_NODE);
@@ -204,6 +259,59 @@ mod tests {
         assert_eq!(enc.quality, -1);
         assert_eq!(enc.jpeg_quality, -1);
         assert!(enc.jpegli);
+    }
+
+    #[test]
+    fn to_encoder_config_defaults() {
+        let node = EncodeJpeg::default();
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_generic_quality_only() {
+        let mut node = EncodeJpeg::default();
+        node.quality = 80;
+        let config = node.to_encoder_config();
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn apply_codec_specific_overrides_generic() {
+        let mut node = EncodeJpeg::default();
+        node.quality = 50;
+        node.jpeg_quality = 95;
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_preserves_existing_config() {
+        let base = crate::JpegEncoderConfig::new().with_progressive(true);
+        let node = EncodeJpeg::default();
+        let _config = node.apply(base);
+    }
+
+    #[test]
+    fn apply_subsampling_444() {
+        let mut node = EncodeJpeg::default();
+        node.subsampling = "444".into();
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_trellis_and_progressive() {
+        let mut node = EncodeJpeg::default();
+        node.trellis = true;
+        node.progressive = true;
+        node.quality = 85;
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn apply_jpegli_disabled() {
+        let mut node = EncodeJpeg::default();
+        node.jpegli = false;
+        let _config = node.to_encoder_config();
     }
 
     #[test]
