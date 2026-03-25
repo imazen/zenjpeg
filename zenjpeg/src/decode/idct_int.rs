@@ -1024,6 +1024,10 @@ mod wide_simd {
     /// - aarch64+neon: Uses NEON for i32x8 ops
     /// - default: Scalar fallback
     #[multiversed]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+    )]
     pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load 8 rows as i32x8 vectors
         let mut rows: [i32x8; 8] = [

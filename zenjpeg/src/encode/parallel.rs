@@ -46,6 +46,10 @@ const CHUNK_SIZE: usize = 4096;
 /// This is the workhorse that both Y and chroma DCT functions delegate to.
 /// When `deringing` is `Some(dc_quant)`, applies overshoot deringing before DCT.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 fn parallel_dct_plane(
     strip: &[f32],
     blocks_w: usize,
@@ -77,6 +81,10 @@ fn parallel_dct_plane(
 
 /// Sequential DCT fallback for small block counts.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 #[inline]
 fn sequential_dct_plane(
     strip: &[f32],

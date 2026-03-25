@@ -75,6 +75,10 @@ fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
@@ -591,6 +595,10 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 ///
 /// Uses multiversion for load-time dispatch to optimal SIMD path.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -681,6 +689,10 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
 
 /// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
     y_plane: &mut [f32],
@@ -771,6 +783,10 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
 
 /// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -861,6 +877,10 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
 
 /// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
     y_plane: &mut [f32],
@@ -969,6 +989,10 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
 /// * `y_stride` - Y output stride (typically padded_width)
 /// * `bpp` - Bytes per pixel (3 for RGB)
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -1222,6 +1246,10 @@ pub fn bgr_to_ycbcr_strided_reuse(
 
 /// BGR variant of strided conversion (for BGR/BGRA input).
 #[multiversed]
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 pub fn bgr_to_ycbcr_strided_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],

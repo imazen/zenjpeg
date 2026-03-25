@@ -522,6 +522,10 @@ fn mage_quantize_block(
 }
 
 /// Scalar fallback quantize with zigzag output (wide crate, 2× SSE2).
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 fn scalar_quantize_block_zigzag(
     block: &Block8x8f,
     mul_rows: &[f32x8; 8],
@@ -560,6 +564,10 @@ fn scalar_quantize_block_zigzag(
 }
 
 /// Scalar fallback quantize, natural order output (wide crate, 2× SSE2).
+#[cfg_attr(
+    target_arch = "wasm32",
+    multiversion::multiversion(targets("wasm32+simd128"), dispatcher = "static")
+)]
 fn scalar_quantize_block(
     block: &Block8x8f,
     mul_rows: &[f32x8; 8],
