@@ -68,7 +68,7 @@ spin = "0.9"
 tinyvec = { version = "1.10", features = ["alloc"] }
 
 # Fast linear-sRGB conversion
-linear-srgb = "0.6.3"
+linear-srgb = "0.6.4"
 
 # Token-based safe SIMD intrinsics
 archmage = { version = "0.9.8", features = ["macros", "avx512"] }
@@ -76,7 +76,7 @@ safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
 magetypes = { version = "0.9.8", features = ["avx512"] }
 
 # Error tracing with location tracking
-whereat = "0.1.3"
+whereat = "0.1.4"
 
 # Error derive macros (no_std compatible)
 thiserror = { version = "2.0", default-features = false }
