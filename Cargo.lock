@@ -1355,16 +1355,6 @@ dependencies = [
 [[package]]
 name = "linear-srgb"
 version = "0.6.4"
-dependencies = [
- "archmage 0.9.12",
- "bytemuck",
- "magetypes",
- "num-traits",
-]
-
-[[package]]
-name = "linear-srgb"
-version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f66e11d2bab842db599aaed858bfb0450f58ee9d274d9d478be46bcc6916316"
 dependencies = [
@@ -2333,7 +2323,7 @@ dependencies = [
  "bytemuck",
  "enough",
  "half",
- "linear-srgb 0.6.4",
+ "linear-srgb",
  "magetypes",
  "thiserror",
  "wide 1.2.0",
@@ -2936,6 +2926,8 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef17621ad124f749d37dc97fb7b67cd10915a9c58c2583dee278681e19bda05"
 dependencies = [
  "almost-enough",
  "enough",
@@ -3035,6 +3027,8 @@ checksum = "1e136195598f6c1dc769200888ad1f9071f99d54ac3a91b80be6ba0b164e6b5b"
 [[package]]
 name = "zenpixels"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0828926cd37f826702d167dc46e15dde519279d20a30d458acabc122043c8325"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -3049,7 +3043,7 @@ dependencies = [
  "archmage 0.9.12",
  "imgref",
  "libm",
- "linear-srgb 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "linear-srgb",
  "magetypes",
  "rgb",
  "safe_unaligned_simd",
@@ -3069,7 +3063,7 @@ dependencies = [
  "archmage 0.9.12",
  "bytemuck",
  "imgref",
- "linear-srgb 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "linear-srgb",
  "magetypes",
  "rayon",
  "rgb",
