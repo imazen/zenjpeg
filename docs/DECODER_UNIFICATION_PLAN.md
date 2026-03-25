@@ -1,5 +1,7 @@
 # Decoder Unification Plan
 
+> **Largely completed.** Streaming single-pass decode is implemented for all baseline subsampling modes. Arithmetic JPEG support has been added. The 4x4 IDCT tier was implemented then removed (2-tier dispatch: DC-only vs full 8x8).
+
 ## Problem Statement
 
 The current `ScanlineReader` has two internal modes with **different behaviors**:
