@@ -135,14 +135,13 @@ See [libjxl issue #3512](https://github.com/libjxl/libjxl/issues/3512) for APP14
 
 ## Known Issues
 
-### colorutils-rs Bug (v0.7.5)
+### colorutils-rs XYB Bug (v0.7.5)
 
-The XYB implementation in colorutils-rs v0.7.5 is **completely broken**:
-- Colors with r=0 all produce identical wrong XYB values
+colorutils-rs v0.7.5 has a channel ordering bug in its XYB implementation:
+- Colors with r=0 all produce identical incorrect XYB values
 - Round-trip fails for most colors
-- The bug appears to be a channel ordering issue
 
-Do NOT use colorutils-rs for XYB reference. Use the formulas above instead.
+Use the reference formulas above instead of colorutils-rs for XYB work.
 
 ### jpegli XYB Subsampling Bug
 
@@ -170,7 +169,7 @@ XYB's perceptual quantization allows more efficient bit allocation, especially f
 
 To implement XYB support:
 
-1. **XYB conversion**: Use the formulas above (NOT colorutils-rs)
+1. **XYB conversion**: Use the reference formulas above (colorutils-rs v0.7.5 has a known bug — see Known Issues)
 2. **ICC profile generation**: Create A2B/B2A LUT-based profile
 3. **CLUT resolution**: 17x17x17 or 33x33x33 grid points typical
 4. **APP14 marker**: Include Adobe marker for broad compatibility

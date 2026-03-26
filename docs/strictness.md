@@ -133,7 +133,7 @@ extraneous byte tolerance, tables-only streams). "Decode anything that might be 
 
 **zune-jpeg**: Binary strict/lenient. Rejects the most modes (no arithmetic, no lossless,
 no 12-bit, no DNL, no DAC). Validates the most SOS parameters (Ah/Al bounds). Most
-forgiving about unknown markers (skips everything). Fastest path to "too weird, give up."
+forgiving about unknown markers (skips everything). Prioritizes fast failure on unsupported input.
 
 **zenjpeg**: Four strictness levels (`Strict`, `Balanced`, `Lenient`, `Permissive`) with
 warning collection. Supports the most modes (arithmetic sequential/progressive, 12-bit, DNL).
