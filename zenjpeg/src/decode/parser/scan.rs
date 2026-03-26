@@ -740,19 +740,6 @@ impl<'a> JpegParser<'a> {
             let cols_this_mcu = width.min(strip_width);
             let is_rgb = self.is_rgb_jpeg();
 
-            // Debug: dump first MCU row's first pixel strip values and output
-            if mcu_y == 0 {
-                eprintln!("[DIAG] streaming_rgb MCU row 0: is_rgb={is_rgb} strip[0]: Y={} Cb={} Cr={}", y_strip[0], cb_strip[0], cr_strip[0]);
-                // Manual scalar YCbCr→RGB for verification
-                let y_val = y_strip[0] as i32;
-                let cb_val = cb_strip[0] as i32 - 128;
-                let cr_val = cr_strip[0] as i32 - 128;
-                let r = (y_val as f64 + 1.402 * cr_val as f64).clamp(0.0, 255.0);
-                let g = (y_val as f64 - 0.34414 * cb_val as f64 - 0.71414 * cr_val as f64).clamp(0.0, 255.0);
-                let b = (y_val as f64 + 1.772 * cb_val as f64).clamp(0.0, 255.0);
-                eprintln!("[DIAG] expected RGB: ({:.0},{:.0},{:.0})", r, g, b);
-            }
-
             for row in 0..rows_this_mcu {
                 let strip_offset = row * strip_width;
                 let rgb_offset = (y_start + row) * width * 3;
@@ -773,10 +760,6 @@ impl<'a> JpegParser<'a> {
                         &cr_strip[strip_offset..strip_offset + cols_this_mcu],
                         &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
                     );
-                }
-                // Debug: dump first pixel RGB after color conversion
-                if mcu_y == 0 && row == 0 {
-                    eprintln!("[DIAG] output RGB[0]: ({},{},{})", rgb[0], rgb[1], rgb[2]);
                 }
             }
         }

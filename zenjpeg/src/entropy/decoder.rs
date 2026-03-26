@@ -11,12 +11,7 @@ use crate::huffman::HuffmanDecodeTable;
 
 use super::decode_value;
 
-/// Result of Huffman decode — 2 bytes, no heap allocation, no Result wrapper.
-///
-/// Covers all outcomes: success, end-of-scan, truncation, and invalid codes.
-/// This avoids wrapping in `Result<_, Error>` (48 bytes) on every symbol decode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
+/// Result of lenient Huffman decode - includes flag for invalid code recovery.
 pub(crate) enum HuffmanResult {
     /// Normal symbol decoded.
     Symbol(u8),
@@ -26,8 +21,6 @@ pub(crate) enum HuffmanResult {
     Truncated,
     /// Invalid code recovered as EOB (lenient mode only).
     InvalidCodeRecovered,
-    /// Invalid Huffman code (non-lenient mode). Caller should convert to Error.
-    InvalidCode,
 }
 
 /// Returns a u64 bitmask with bits [lo..=hi] set (0-indexed, both inclusive).
@@ -50,26 +43,22 @@ pub(crate) fn range_bitmap(lo: u8, hi: u8) -> u64 {
 /// This is a standalone function to avoid borrow conflicts in decode_block.
 #[inline(always)]
 fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> ScanResult<u8> {
-    match decode_huffman_symbol_lenient(reader, table, false) {
-        HuffmanResult::Symbol(s) => Ok(ScanRead::Value(s)),
-        HuffmanResult::EndOfScan => Ok(ScanRead::EndOfScan),
-        HuffmanResult::Truncated => Ok(ScanRead::Truncated),
-        HuffmanResult::InvalidCodeRecovered => Ok(ScanRead::EndOfScan),
-        HuffmanResult::InvalidCode => Err(Error::invalid_huffman_table(0, "invalid code")),
-    }
+    decode_huffman_symbol_lenient(reader, table, false).map(|r| match r {
+        HuffmanResult::Symbol(s) => ScanRead::Value(s),
+        HuffmanResult::EndOfScan => ScanRead::EndOfScan,
+        HuffmanResult::Truncated => ScanRead::Truncated,
+        HuffmanResult::InvalidCodeRecovered => ScanRead::EndOfScan, // Shouldn't happen without lenient
+    })
 }
 
 /// Decodes a Huffman symbol with optional lenient mode.
 /// In lenient mode, invalid codes are treated as EOB (symbol 0x00).
-///
-/// Returns `HuffmanResult` directly (2 bytes) instead of `Result<HuffmanResult, Error>`
-/// (48 bytes) to minimize per-symbol overhead in the hot decode loop.
 #[inline(always)]
 fn decode_huffman_symbol_lenient(
     reader: &mut BitReader,
     table: &HuffmanDecodeTable,
     lenient: bool,
-) -> HuffmanResult {
+) -> Result<HuffmanResult> {
     // Try fast lookup first (9-bit table covers ~90% of codes)
     if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
         let lookup = table.fast_lookup[bits as usize];
@@ -77,7 +66,7 @@ fn decode_huffman_symbol_lenient(
             let symbol = (lookup & 0xFF) as u8;
             let len = (lookup >> 8) as u8;
             reader.skip_bits_fast(len);
-            return HuffmanResult::Symbol(symbol);
+            return Ok(HuffmanResult::Symbol(symbol));
         }
     }
 
@@ -86,43 +75,41 @@ fn decode_huffman_symbol_lenient(
         && let Some((symbol, len)) = table.decode_slow(bits16 as i32)
     {
         reader.skip_bits_fast(len);
-        return HuffmanResult::Symbol(symbol);
+        return Ok(HuffmanResult::Symbol(symbol));
     }
 
     // Edge case: near end of scan, can't peek 16 bits.
-    // Note: read_bits never returns Err — it returns Ok(EndOfScan/Truncated) on exhaustion.
     let mut code = 0u32;
     for len in 1..=16 {
-        let bit = match reader.read_bits(1) {
-            Ok(ScanRead::Value(b)) => b,
-            Ok(ScanRead::EndOfScan) => return HuffmanResult::EndOfScan,
-            Ok(ScanRead::Truncated) => return HuffmanResult::Truncated,
-            Err(_) => return HuffmanResult::InvalidCode,
+        let bit = match reader.read_bits(1)? {
+            ScanRead::Value(b) => b,
+            ScanRead::EndOfScan => return Ok(HuffmanResult::EndOfScan),
+            ScanRead::Truncated => return Ok(HuffmanResult::Truncated),
         };
         code = (code << 1) | bit;
         if (code as i32) <= table.maxcode[len] {
             let idx = (code as i32 + table.valoffset[len]) as usize;
             if idx < table.values.len() {
-                return HuffmanResult::Symbol(table.values[idx]);
+                return Ok(HuffmanResult::Symbol(table.values[idx]));
             }
         }
     }
 
     // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
     if reader.is_exhausted() {
-        return if reader.marker_found().is_some() {
+        return Ok(if reader.marker_found().is_some() {
             HuffmanResult::EndOfScan
         } else {
             HuffmanResult::Truncated
-        };
+        });
     }
 
     // Lenient mode: treat invalid Huffman code as end-of-block
     if lenient {
-        return HuffmanResult::InvalidCodeRecovered;
+        return Ok(HuffmanResult::InvalidCodeRecovered);
     }
 
-    HuffmanResult::InvalidCode
+    Err(Error::invalid_huffman_table(0, "invalid code"))
 }
 
 /// Entropy decoder for a single scan.
@@ -410,16 +397,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
             // Slow path for long codes or when not enough bits
             let symbol =
-                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient) {
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
                     HuffmanResult::Symbol(v) => v,
                     HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
                     HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
                     HuffmanResult::InvalidCodeRecovered => {
                         self.had_invalid_huffman = true;
                         break; // Treat as EOB
-                    }
-                    HuffmanResult::InvalidCode => {
-                        return Err(Error::invalid_huffman_table(0, "invalid code"));
                     }
                 };
 
@@ -623,7 +607,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
             // Slow path for long codes or when not enough bits
             let symbol =
-                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient) {
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
                     HuffmanResult::Symbol(v) => v,
                     HuffmanResult::EndOfScan => {
                         self.last_written = DCT_BLOCK_SIZE as u8;
@@ -636,9 +620,6 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     HuffmanResult::InvalidCodeRecovered => {
                         self.had_invalid_huffman = true;
                         break; // Treat as EOB
-                    }
-                    HuffmanResult::InvalidCode => {
-                        return Err(Error::invalid_huffman_table(0, "invalid code"));
                     }
                 };
 
@@ -871,16 +852,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
             // Slow path
             let symbol =
-                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient) {
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
                     HuffmanResult::Symbol(v) => v,
                     HuffmanResult::EndOfScan => return Ok(ScanRead::EndOfScan),
                     HuffmanResult::Truncated => return Ok(ScanRead::Truncated),
                     HuffmanResult::InvalidCodeRecovered => {
                         self.had_invalid_huffman = true;
                         break; // Treat as EOB
-                    }
-                    HuffmanResult::InvalidCode => {
-                        return Err(Error::invalid_huffman_table(0, "invalid code"));
                     }
                 };
 
@@ -1092,15 +1070,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
             // Slow path for long codes
             let symbol =
-                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient) {
+                match decode_huffman_symbol_lenient(&mut self.reader, ac_table, self.lenient)? {
                     HuffmanResult::Symbol(v) => v,
                     HuffmanResult::EndOfScan | HuffmanResult::Truncated => break,
                     HuffmanResult::InvalidCodeRecovered => {
                         self.had_invalid_huffman = true;
                         break; // Treat as EOB
-                    }
-                    HuffmanResult::InvalidCode => {
-                        return Err(Error::invalid_huffman_table(0, "invalid code"));
                     }
                 };
 

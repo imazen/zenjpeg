@@ -1763,11 +1763,6 @@ impl DecodeConfig {
                 &stop,
             )?;
 
-            // Debug: verify pixel data after to_pixels
-            if pixels.len() >= 3 {
-                eprintln!("[DIAG] after to_pixels: RGB[0]=({},{},{}) format={output_format:?} is_xyb={}", pixels[0], pixels[1], pixels[2], info.is_xyb);
-            }
-
             // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
                 let inflated_w = parser.width as usize;
@@ -1833,10 +1828,6 @@ impl DecodeConfig {
 
             let extras = finalize_extras(parser.take_extras(), data, forced_exif);
             let warnings = parser.take_warnings();
-            // Debug right before constructing result
-            if pixels.len() >= 3 {
-                eprintln!("[DIAG] pre-result: RGB[0]=({},{},{}) out_w={out_w} out_h={out_h}", pixels[0], pixels[1], pixels[2]);
-            }
             DecodeResult::new_u8(
                 out_w,
                 out_h,
@@ -1849,12 +1840,6 @@ impl DecodeConfig {
         };
 
         result.set_gain_map(gain_map_result);
-        // Debug: verify final result
-        if let Some(px) = result.pixels_u8() {
-            if px.len() >= 3 {
-                eprintln!("[DIAG] final result: RGB[0]=({},{},{}) w={} h={}", px[0], px[1], px[2], result.width, result.height);
-            }
-        }
         Ok(result)
     }
 
