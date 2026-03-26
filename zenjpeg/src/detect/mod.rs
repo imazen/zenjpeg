@@ -99,7 +99,6 @@ impl core::fmt::Display for ProbeError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ProbeError {}
 
 /// Probe a JPEG from its raw bytes.

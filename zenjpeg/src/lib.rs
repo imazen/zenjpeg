@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![cfg_attr(not(feature = "std"), no_std)]
+// std is unconditionally required — no viable no_std path (752 errors without it).
 
 //! # zenjpeg
 //!
@@ -115,9 +115,9 @@
 //! | Feature | Default | Description | When to Use |
 //! |---------|---------|-------------|-------------|
 //! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
-//! | `std` | ✅ Yes | Standard library support | Disable for `no_std` embedded targets |
+//! | `std` | — | Legacy (std is always required) | Kept so `zenjpeg/std` doesn't break downstream |
 //! | `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, ICC profile application |
-//! | `cms-moxcms` | ❌ No | Pure Rust color management (alternative to lcms2) | `no_std` or avoid C dependencies |
+//! | `cms-moxcms` | ❌ No | Pure Rust color management (alternative to lcms2) | Avoid C dependencies |
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
 //! | `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |
 //! | `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |
@@ -135,8 +135,8 @@
 //! # High-performance server
 //! zenjpeg = { version = "0.6", features = ["decoder", "parallel"] }
 //!
-//! # Embedded / no_std
-//! zenjpeg = { version = "0.6", default-features = false, features = ["cms-moxcms"] }
+//! # Minimal (encode only, no CMS)
+//! zenjpeg = { version = "0.6", default-features = false }
 //!
 //! # UltraHDR support
 //! zenjpeg = { version = "0.6", features = ["decoder", "ultrahdr"] }

@@ -693,7 +693,6 @@ impl From<zencodec::UnsupportedOperation> for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     #[track_caller]
     fn from(err: std::io::Error) -> Self {
@@ -849,7 +848,6 @@ mod tests {
         assert!(err.frame_count() >= 2);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_io_error_conversion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");

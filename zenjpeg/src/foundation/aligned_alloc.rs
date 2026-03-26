@@ -34,7 +34,6 @@ impl core::fmt::Display for AllocError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for AllocError {}
 
 /// Try to allocate an aligned vector with `count` elements, all zeroed.

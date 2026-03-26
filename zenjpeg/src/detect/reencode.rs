@@ -78,7 +78,6 @@ impl core::fmt::Display for ReencodeError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ReencodeError {}
 
 /// Estimated source butteraugli distance from detected quality.

@@ -297,10 +297,8 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
-#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     #[track_caller]
     fn from(err: std::io::Error) -> Self {

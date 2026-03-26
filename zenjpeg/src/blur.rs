@@ -216,31 +216,14 @@ fn blur_plane_general(
     }
 }
 
-// Float math helpers that work in both std and no_std contexts.
-// In no_std, these would need libm; with std they use the intrinsic methods.
-
 #[inline]
 fn exp_f32(x: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-        x.exp()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        libm::expf(x)
-    }
+    x.exp()
 }
 
 #[inline]
 fn ceil_f32(x: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-        x.ceil()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        libm::ceilf(x)
-    }
+    x.ceil()
 }
 
 #[cfg(test)]

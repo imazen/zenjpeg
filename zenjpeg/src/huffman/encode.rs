@@ -76,26 +76,21 @@ static STD_AC_CHROMINANCE_ENC: HuffmanEncodeTable = HuffmanEncodeTable {
 
 // Static standard decode tables - lazily initialized at runtime
 // (Decode tables contain Vec/Box which can't be const)
-// Only available with std feature (LazyLock requires std)
-#[cfg(feature = "std")]
 static STD_DC_LUMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
     std::sync::LazyLock::new(|| {
         HuffmanDecodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
             .expect("standard table should be valid")
     });
-#[cfg(feature = "std")]
 static STD_DC_CHROMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
     std::sync::LazyLock::new(|| {
         HuffmanDecodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
             .expect("standard table should be valid")
     });
-#[cfg(feature = "std")]
 static STD_AC_LUMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
     std::sync::LazyLock::new(|| {
         HuffmanDecodeTable::from_bits_values_ac(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
             .expect("standard table should be valid")
     });
-#[cfg(feature = "std")]
 static STD_AC_CHROMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
     std::sync::LazyLock::new(|| {
         HuffmanDecodeTable::from_bits_values_ac(
@@ -527,32 +522,24 @@ impl HuffmanDecodeTable {
     }
 
     /// Returns a reference to the standard DC luminance decode table (lazily initialized).
-    /// Only available with the `std` feature.
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_dc_luminance() -> &'static Self {
         &STD_DC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard DC chrominance decode table (lazily initialized).
-    /// Only available with the `std` feature.
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_dc_chrominance() -> &'static Self {
         &STD_DC_CHROMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC luminance decode table (lazily initialized).
-    /// Only available with the `std` feature.
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_ac_luminance() -> &'static Self {
         &STD_AC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC chrominance decode table (lazily initialized).
-    /// Only available with the `std` feature.
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_ac_chrominance() -> &'static Self {
         &STD_AC_CHROMINANCE_DEC

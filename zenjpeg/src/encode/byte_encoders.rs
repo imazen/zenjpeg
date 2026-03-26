@@ -2,7 +2,6 @@
 
 use core::marker::PhantomData;
 
-#[cfg(feature = "std")]
 use std::io::Write;
 
 use enough::Stop;
@@ -403,7 +402,6 @@ impl BytesEncoder {
     }
 
     /// Finish encoding to Write destination.
-    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
         let mut jpeg = Vec::new();
         self.finish_into(&mut jpeg)?;
@@ -853,7 +851,6 @@ impl<P: Pixel> RgbEncoder<P> {
     }
 
     /// Finish encoding to Write destination.
-    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
     }
@@ -1379,7 +1376,6 @@ impl YCbCrPlanarEncoder {
     }
 
     /// Finish encoding to Write destination.
-    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
         let mut jpeg = Vec::new();
         self.finish_into(&mut jpeg)?;

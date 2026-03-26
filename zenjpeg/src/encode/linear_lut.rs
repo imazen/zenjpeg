@@ -362,7 +362,6 @@ mod tests {
 
     /// Benchmark-style test to compare performance
     #[test]
-    #[cfg(feature = "std")]
     fn bench_conversion_methods() {
         use std::time::Instant;
 

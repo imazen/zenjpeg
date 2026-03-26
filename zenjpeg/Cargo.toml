@@ -130,14 +130,14 @@ zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["std", "yuv", "trellis"]
-# Enable std library support (io::Write, std::error::Error impl).
-# Disable for no_std environments - only requires core + alloc.
+default = ["yuv", "trellis"]
+# Legacy feature — std is now unconditionally required.
+# Kept as an empty feature so downstream `zenjpeg/std` doesn't break.
 std = []
 # Enable the decoder API. The decoder is still in prerelease with frequent breaking changes.
 # When disabled, no decoder types or functions are available in the public API.
 decoder = []
-parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
+parallel = ["dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
 # Legacy feature flag — archmage/magetypes are now mandatory dependencies.
 # Kept for backwards compatibility with downstream Cargo.toml files.
 archmage-simd = []
@@ -160,10 +160,10 @@ debug-tokens = []
 profile = []
 # Enable Vec allocation instrumentation (logs utilization on drop)
 # Use for profiling allocation patterns - zero overhead when disabled
-alloc-instrument = ["std"]
+alloc-instrument = []
 # Enable test utilities (image generation, quality verification)
 # Requires std for file path operations
-test-utils = ["std"]
+test-utils = []
 # Enable WASM SIMD128 tests (requires wasm runtime with SIMD support)
 # Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
 # Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
@@ -183,12 +183,12 @@ wasm-trace = ["dep:web-sys"]
 yuv = ["dep:yuv"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
-ultrahdr = ["decoder", "std", "ultrahdr-core/std", "ultrahdr-core/transfer"]
+ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode
 # Integrates zenlayout (geometry) and zenresize (resampling)
-layout = ["decoder", "std", "dep:zenlayout", "dep:zenresize"]
+layout = ["decoder", "dep:zenlayout", "dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 zennode = ["dep:zennode", "zencodec"]
 
