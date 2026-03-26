@@ -395,7 +395,7 @@ impl Error {
     /// Convert into the error kind, discarding the trace.
     #[inline]
     pub fn into_kind(self) -> ErrorKind {
-        self.0.into_inner()
+        self.0.decompose().0
     }
 
     /// Access the inner `At<ErrorKind>` for trace inspection.

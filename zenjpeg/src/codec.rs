@@ -351,6 +351,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
     }
 
     fn encoder(self) -> Result<JpegEncoder, Self::Error> {
+        #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
 
         // Map threading policy to parallel encoding config
