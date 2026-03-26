@@ -28,164 +28,155 @@ use crate::encode::encoder_types::{
 /// [`to_encoder_config()`](EncodeJpeg::to_encoder_config).
 ///
 /// **RIAPI**: `?jpeg.quality=85&jpeg.subsampling=quarter&jpeg.progressive=progressive`
-#[derive(Node, Clone, Debug)]
+#[derive(Node, Clone, Debug, Default)]
 #[node(id = "zenjpeg.encode", group = Encode, role = Encode)]
 #[node(tags("jpeg", "jpg", "encode", "lossy"))]
 pub struct EncodeJpeg {
-    /// Quality level (0-100, jpegli native scale).
+    /// Quality level (0-100, jpegli native scale). None = use base config's quality.
     #[param(range(0.0..=100.0), default = 85.0, step = 1.0)]
     #[param(section = "Quality", label = "Quality")]
     #[kv("jpeg.quality", "jpeg.q")]
-    pub quality: f32,
+    pub quality: Option<f32>,
 
     /// Encoding effort (0 = fast baseline, 1 = progressive, 2 = max compression).
+    /// None = use base config's effort.
     #[param(range(0..=2), default = 1)]
     #[param(section = "Quality", label = "Effort")]
     #[kv("jpeg.effort")]
-    pub effort: i32,
+    pub effort: Option<i32>,
 
-    /// Color space: "ycbcr", "xyb", or "grayscale".
+    /// Color space: "ycbcr", "xyb", or "grayscale". None = use base config's color space.
     #[param(default = "ycbcr")]
     #[param(section = "Color", label = "Color Space")]
     #[kv("jpeg.colorspace")]
-    pub color_space: String,
+    pub color_space: Option<String>,
 
     /// Chroma subsampling: "none"/"444", "quarter"/"420",
     /// "half_horizontal"/"422", "half_vertical"/"440".
+    /// None = use base config's subsampling.
     #[param(default = "quarter")]
     #[param(section = "Color", label = "Chroma Subsampling")]
     #[kv("jpeg.subsampling", "jpeg.ss")]
-    pub subsampling: String,
+    pub subsampling: Option<String>,
 
     /// Chroma downsampling method: "average"/"box", "gamma_aware", "sharp_yuv".
+    /// None = use base config's method.
     #[param(default = "average")]
     #[param(section = "Color", label = "Chroma Downsampling")]
     #[kv("jpeg.chroma_method")]
-    pub chroma_downsampling: String,
+    pub chroma_downsampling: Option<String>,
 
     /// Scan mode: "baseline", "progressive", "progressive_mozjpeg", "progressive_search".
+    /// None = use base config's scan mode.
     #[param(default = "progressive")]
     #[param(section = "Encoding", label = "Scan Mode")]
     #[kv("jpeg.progressive", "jpeg.mode")]
-    pub scan_mode: String,
+    pub scan_mode: Option<String>,
 
     /// Quantization table source: "jpegli", "jpegli_shared", "mozjpeg".
+    /// None = use base config's tables.
     #[param(default = "jpegli")]
     #[param(section = "Encoding", label = "Quantization Tables")]
     #[kv("jpeg.tables")]
-    pub quant_tables: String,
+    pub quant_tables: Option<String>,
 
     /// Enable overshoot deringing (reduces ringing on white backgrounds).
+    /// None = use base config's setting.
     #[param(default = true)]
     #[param(section = "Advanced")]
     #[kv("jpeg.deringing")]
-    pub deringing: bool,
+    pub deringing: Option<bool>,
 
     /// Enable adaptive quantization (per-block AQ from luminance data).
+    /// None = use base config's setting.
     #[param(default = true)]
     #[param(section = "Advanced", label = "Adaptive Quantization")]
     #[kv("jpeg.aq")]
-    pub aq: bool,
-}
-
-impl Default for EncodeJpeg {
-    fn default() -> Self {
-        Self {
-            quality: 85.0,
-            effort: 1,
-            color_space: String::from("ycbcr"),
-            subsampling: String::from("quarter"),
-            chroma_downsampling: String::from("average"),
-            scan_mode: String::from("progressive"),
-            quant_tables: String::from("jpegli"),
-            deringing: true,
-            aq: true,
-        }
-    }
+    pub aq: Option<bool>,
 }
 
 impl EncodeJpeg {
     /// Apply this node's explicitly-set params on top of an existing
     /// [`JpegEncoderConfig`](crate::JpegEncoderConfig).
     ///
-    /// Fields at their default value are skipped, so the base config's
-    /// values are preserved. Only params the user explicitly changed
-    /// take effect.
+    /// `None` fields are skipped, so the base config's values are preserved.
+    /// Only params the user explicitly set (via `Some(value)`) take effect.
+    /// This correctly handles users explicitly choosing the default value.
     ///
     /// Application order:
-    /// 1. Quality (if != 85.0) via `with_generic_quality`
-    /// 2. Effort (if != 1) via `with_generic_effort`
-    /// 3. Color space / subsampling (if != defaults) via `inner_mut()`
-    /// 4. Chroma downsampling method (if != "average")
+    /// 1. Quality via `with_generic_quality`
+    /// 2. Effort via `with_generic_effort`
+    /// 3. Color space / subsampling via `inner_mut()`
+    /// 4. Chroma downsampling method
     /// 5. Scan mode, quant tables, deringing, aq on inner config
     pub fn apply(&self, mut config: crate::JpegEncoderConfig) -> crate::JpegEncoderConfig {
         use zencodec::encode::EncoderConfig as _;
 
-        let defaults = Self::default();
-
         // Quality
-        if (self.quality - defaults.quality).abs() > f32::EPSILON {
-            config = config.with_generic_quality(self.quality);
+        if let Some(quality) = self.quality {
+            config = config.with_generic_quality(quality);
         }
         // Effort
-        if self.effort != defaults.effort {
-            config = config.with_generic_effort(self.effort);
+        if let Some(effort) = self.effort {
+            config = config.with_generic_effort(effort);
         }
-        // Color space — rebuild inner if changed from default
-        if self.color_space != defaults.color_space {
-            let subsampling = self.parse_subsampling();
-            match self.color_space.to_ascii_lowercase().as_str() {
+        // Color space — rebuild inner if set
+        if let Some(ref color_space) = self.color_space {
+            let quality = self.quality.unwrap_or(85.0);
+            match color_space.to_ascii_lowercase().as_str() {
                 "grayscale" | "gray" | "grey" => {
-                    config = crate::JpegEncoderConfig::grayscale(self.quality);
+                    config = crate::JpegEncoderConfig::grayscale(quality);
                     // Re-apply effort
-                    if self.effort != defaults.effort {
-                        config = config.with_generic_effort(self.effort);
+                    if let Some(effort) = self.effort {
+                        config = config.with_generic_effort(effort);
                     }
                 }
                 "xyb" => {
                     let mut new_config = crate::JpegEncoderConfig::new();
                     *new_config.inner_mut() = EncoderConfig::xyb(
-                        crate::encode::encoder_types::Quality::ApproxJpegli(self.quality),
+                        crate::encode::encoder_types::Quality::ApproxJpegli(quality),
                         self.parse_xyb_subsampling(),
                     );
                     config = new_config;
-                    if self.effort != defaults.effort {
-                        config = config.with_generic_effort(self.effort);
+                    if let Some(effort) = self.effort {
+                        config = config.with_generic_effort(effort);
                     }
                 }
                 _ => {
                     // Non-default color space string but not gray/xyb — treat as ycbcr
-                    config = config.with_subsampling(subsampling);
+                    if let Some(subsampling) = self.parse_subsampling() {
+                        config = config.with_subsampling(subsampling);
+                    }
                 }
             }
-        } else if self.subsampling != defaults.subsampling {
-            // Color space is default but subsampling changed
-            config = config.with_subsampling(self.parse_subsampling());
+        } else if let Some(subsampling) = self.parse_subsampling() {
+            // Color space not set but subsampling is
+            config = config.with_subsampling(subsampling);
         }
 
         // Chroma downsampling method
-        if self.chroma_downsampling != defaults.chroma_downsampling {
-            config.inner_mut().downsampling_method = self.parse_downsampling();
+        if let Some(method) = self.parse_downsampling() {
+            config.inner_mut().downsampling_method = method;
         }
 
         // Scan mode (on inner config)
-        if self.scan_mode != defaults.scan_mode {
-            config.inner_mut().scan_mode = self.parse_scan_mode();
+        if let Some(mode) = self.parse_scan_mode() {
+            config.inner_mut().scan_mode = mode;
         }
 
         // Quant tables (on inner config)
-        if self.quant_tables != defaults.quant_tables {
-            config.inner_mut().quant_table_config = self.parse_quant_tables();
+        if let Some(tables) = self.parse_quant_tables() {
+            config.inner_mut().quant_table_config = tables;
         }
 
-        // Deringing (default is true, so only apply if explicitly set to false)
-        if self.deringing != defaults.deringing {
-            config.inner_mut().deringing = self.deringing;
+        // Deringing
+        if let Some(deringing) = self.deringing {
+            config.inner_mut().deringing = deringing;
         }
 
-        // AQ (default is true, so only apply if explicitly set to false)
-        if self.aq != defaults.aq {
-            config.inner_mut().aq_enabled = self.aq;
+        // AQ
+        if let Some(aq) = self.aq {
+            config.inner_mut().aq_enabled = aq;
         }
 
         config
@@ -198,6 +189,8 @@ impl EncodeJpeg {
     /// color space, subsampling, and chroma downsampling are applied to the
     /// inner [`EncoderConfig`] and always respected.
     ///
+    /// `None` fields use sensible defaults (quality=85, effort=1, ycbcr, etc.).
+    ///
     /// Note: `scan_mode`, `quant_tables`, `deringing`, and `aq` are set on
     /// the inner config but may be overridden by the effort preset at encode
     /// time. Use [`to_inner_encoder_config()`](Self::to_inner_encoder_config)
@@ -205,33 +198,43 @@ impl EncodeJpeg {
     pub fn to_encoder_config(&self) -> crate::JpegEncoderConfig {
         use zencodec::encode::EncoderConfig as _;
 
-        let subsampling = self.parse_subsampling();
+        let quality = self.quality.unwrap_or(85.0);
+        let effort = self.effort.unwrap_or(1);
+        let subsampling = self
+            .parse_subsampling()
+            .unwrap_or(ChromaSubsampling::Quarter);
 
         // Build JpegEncoderConfig with the right color space constructor.
         // JpegEncoderConfig only has ycbcr() and grayscale() constructors;
         // for XYB we start with a default config and replace the inner.
-        let config = match self.color_space.to_ascii_lowercase().as_str() {
-            "grayscale" | "gray" | "grey" => crate::JpegEncoderConfig::grayscale(self.quality),
+        let color_space = self
+            .color_space
+            .as_deref()
+            .unwrap_or("ycbcr")
+            .to_ascii_lowercase();
+        let config = match color_space.as_str() {
+            "grayscale" | "gray" | "grey" => crate::JpegEncoderConfig::grayscale(quality),
             "xyb" => {
                 // No XYB constructor on JpegEncoderConfig; build inner directly
                 let mut config = crate::JpegEncoderConfig::new();
                 *config.inner_mut() = EncoderConfig::xyb(
-                    Quality::ApproxJpegli(self.quality),
+                    Quality::ApproxJpegli(quality),
                     self.parse_xyb_subsampling(),
                 );
                 config
             }
-            _ => crate::JpegEncoderConfig::ycbcr(self.quality, subsampling),
+            _ => crate::JpegEncoderConfig::ycbcr(quality, subsampling),
         };
 
         // Apply effort (drives the optimization preset at encode time)
-        let mut config = config.with_generic_effort(self.effort);
+        let mut config = config.with_generic_effort(effort);
 
         // Apply settings that are NOT overridden by effort presets:
         // color space, quality, subsampling (already set above),
         // and chroma downsampling method.
-        let inner = config.inner_mut();
-        inner.downsampling_method = self.parse_downsampling();
+        if let Some(method) = self.parse_downsampling() {
+            config.inner_mut().downsampling_method = method;
+        }
 
         config
     }
@@ -242,78 +245,110 @@ impl EncodeJpeg {
     /// the native zenjpeg config with explicit control over every parameter.
     /// No effort preset is applied — `scan_mode`, `quant_tables`, `deringing`,
     /// and `aq` are set exactly as specified.
+    ///
+    /// `None` fields use sensible defaults.
     pub fn to_inner_encoder_config(&self) -> EncoderConfig {
-        let subsampling = self.parse_subsampling();
+        let quality = self.quality.unwrap_or(85.0);
+        let subsampling = self
+            .parse_subsampling()
+            .unwrap_or(ChromaSubsampling::Quarter);
         let xyb_subsampling = self.parse_xyb_subsampling();
 
         // Build the EncoderConfig based on color space
-        let config = match self.color_space.to_ascii_lowercase().as_str() {
-            "xyb" => EncoderConfig::xyb(Quality::ApproxJpegli(self.quality), xyb_subsampling),
+        let color_space = self
+            .color_space
+            .as_deref()
+            .unwrap_or("ycbcr")
+            .to_ascii_lowercase();
+        let mut config = match color_space.as_str() {
+            "xyb" => EncoderConfig::xyb(Quality::ApproxJpegli(quality), xyb_subsampling),
             "grayscale" | "gray" | "grey" => {
-                EncoderConfig::grayscale(Quality::ApproxJpegli(self.quality))
+                EncoderConfig::grayscale(Quality::ApproxJpegli(quality))
             }
-            _ => EncoderConfig::ycbcr(Quality::ApproxJpegli(self.quality), subsampling),
+            _ => EncoderConfig::ycbcr(Quality::ApproxJpegli(quality), subsampling),
         };
 
+        if let Some(mode) = self.parse_scan_mode() {
+            config = config.progressive(mode);
+        }
+        if let Some(method) = self.parse_downsampling() {
+            config = config.downsampling_method(method);
+        }
+        if let Some(tables) = self.parse_quant_tables() {
+            config = config.quant_table_config(tables);
+        }
+        if let Some(deringing) = self.deringing {
+            config = config.deringing(deringing);
+        }
+        if let Some(aq) = self.aq {
+            config = config.aq_enabled(aq);
+        }
+
         config
-            .progressive(self.parse_scan_mode())
-            .downsampling_method(self.parse_downsampling())
-            .quant_table_config(self.parse_quant_tables())
-            .deringing(self.deringing)
-            .aq_enabled(self.aq)
     }
 
     /// Parse subsampling string to [`ChromaSubsampling`].
-    fn parse_subsampling(&self) -> ChromaSubsampling {
-        match self.subsampling.to_ascii_lowercase().as_str() {
+    /// Returns `None` if the field is unset.
+    fn parse_subsampling(&self) -> Option<ChromaSubsampling> {
+        let s = self.subsampling.as_deref()?;
+        Some(match s.to_ascii_lowercase().as_str() {
             "none" | "444" | "full" => ChromaSubsampling::None,
             "half_horizontal" | "422" => ChromaSubsampling::HalfHorizontal,
             "half_vertical" | "440" => ChromaSubsampling::HalfVertical,
             // Default: quarter/420
             _ => ChromaSubsampling::Quarter,
-        }
+        })
     }
 
     /// Parse subsampling string to [`XybSubsampling`] (for XYB color space).
+    /// Returns `BQuarter` as default when subsampling is unset.
     fn parse_xyb_subsampling(&self) -> XybSubsampling {
-        match self.subsampling.to_ascii_lowercase().as_str() {
-            "none" | "444" | "full" => XybSubsampling::Full,
-            // Default: BQuarter
-            _ => XybSubsampling::BQuarter,
+        match self.subsampling.as_deref() {
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "none" | "444" | "full" => XybSubsampling::Full,
+                _ => XybSubsampling::BQuarter,
+            },
+            None => XybSubsampling::BQuarter,
         }
     }
 
     /// Parse scan mode string to [`ProgressiveScanMode`].
-    fn parse_scan_mode(&self) -> ProgressiveScanMode {
-        match self.scan_mode.to_ascii_lowercase().as_str() {
+    /// Returns `None` if the field is unset.
+    fn parse_scan_mode(&self) -> Option<ProgressiveScanMode> {
+        let s = self.scan_mode.as_deref()?;
+        Some(match s.to_ascii_lowercase().as_str() {
             "baseline" | "sequential" | "false" => ProgressiveScanMode::Baseline,
             "progressive_mozjpeg" | "mozjpeg" => ProgressiveScanMode::ProgressiveMozjpeg,
             "progressive_search" | "search" => ProgressiveScanMode::ProgressiveSearch,
             // Default: progressive
             _ => ProgressiveScanMode::Progressive,
-        }
+        })
     }
 
     /// Parse chroma downsampling method string to [`DownsamplingMethod`].
-    fn parse_downsampling(&self) -> DownsamplingMethod {
-        match self.chroma_downsampling.to_ascii_lowercase().as_str() {
+    /// Returns `None` if the field is unset.
+    fn parse_downsampling(&self) -> Option<DownsamplingMethod> {
+        let s = self.chroma_downsampling.as_deref()?;
+        Some(match s.to_ascii_lowercase().as_str() {
             "gamma_aware" | "gamma" => DownsamplingMethod::GammaAware,
             "sharp_yuv" | "iterative" | "gamma_aware_iterative" => {
                 DownsamplingMethod::GammaAwareIterative
             }
             // Default: box/average
             _ => DownsamplingMethod::Box,
-        }
+        })
     }
 
     /// Parse quantization table config string to [`QuantTableConfig`].
-    fn parse_quant_tables(&self) -> QuantTableConfig {
-        match self.quant_tables.to_ascii_lowercase().as_str() {
+    /// Returns `None` if the field is unset.
+    fn parse_quant_tables(&self) -> Option<QuantTableConfig> {
+        let s = self.quant_tables.as_deref()?;
+        Some(match s.to_ascii_lowercase().as_str() {
             "jpegli_shared" | "jpegli_shared_chroma" => QuantTableConfig::JpegliSharedChroma,
             "mozjpeg" | "robidoux" | "mozjpeg_robidoux" => QuantTableConfig::MozjpegRobidoux,
             // Default: jpegli (3 separate tables)
             _ => QuantTableConfig::Jpegli,
-        }
+        })
     }
 }
 
@@ -343,11 +378,11 @@ pub struct DecodeJpeg {
     #[kv("jpeg.orient", "jpeg.auto_orient")]
     pub auto_orient: bool,
 
-    /// Maximum image size in megapixels (0 = unlimited, default 100 MP).
+    /// Maximum image size in megapixels. None = use decoder default (100 MP).
     #[param(range(0..=10000), default = 100)]
     #[param(unit = "MP", section = "Limits")]
     #[kv("jpeg.max_megapixels")]
-    pub max_megapixels: u32,
+    pub max_megapixels: Option<u32>,
 }
 
 impl Default for DecodeJpeg {
@@ -355,7 +390,7 @@ impl Default for DecodeJpeg {
         Self {
             strictness: String::from("balanced"),
             auto_orient: true,
-            max_megapixels: 100,
+            max_megapixels: None,
         }
     }
 }
@@ -364,6 +399,7 @@ impl DecodeJpeg {
     /// Convert this node into a [`JpegDecoderConfig`](crate::JpegDecoderConfig).
     ///
     /// Applies strictness, auto-orient, and megapixel limit settings.
+    /// `None` for `max_megapixels` leaves the decoder's default limit unchanged.
     pub fn to_decoder_config(&self) -> crate::JpegDecoderConfig {
         let mut config = crate::JpegDecoderConfig::new();
 
@@ -383,11 +419,14 @@ impl DecodeJpeg {
             inner.strictness = strictness;
             inner.auto_orient = self.auto_orient;
 
-            if self.max_megapixels > 0 {
-                inner.max_pixels = self.max_megapixels as u64 * 1_000_000;
-            } else {
-                inner.max_pixels = 0; // unlimited
+            if let Some(mp) = self.max_megapixels {
+                if mp > 0 {
+                    inner.max_pixels = mp as u64 * 1_000_000;
+                } else {
+                    inner.max_pixels = 0; // unlimited
+                }
             }
+            // None: leave inner.max_pixels at its default
         }
 
         config
@@ -421,18 +460,19 @@ mod tests {
     #[test]
     fn encode_default_values() {
         let node = ENCODE_JPEG_NODE.create_default().unwrap();
-        assert_eq!(node.get_param("quality"), Some(ParamValue::F32(85.0)));
-        assert_eq!(node.get_param("effort"), Some(ParamValue::I32(1)));
+        // All optional fields default to None
+        assert_eq!(node.get_param("quality"), Some(ParamValue::None));
+        assert_eq!(node.get_param("effort"), Some(ParamValue::None));
+        assert_eq!(node.get_param("color_space"), Some(ParamValue::None));
+        assert_eq!(node.get_param("subsampling"), Some(ParamValue::None));
         assert_eq!(
-            node.get_param("color_space"),
-            Some(ParamValue::Str("ycbcr".into()))
+            node.get_param("chroma_downsampling"),
+            Some(ParamValue::None)
         );
-        assert_eq!(
-            node.get_param("subsampling"),
-            Some(ParamValue::Str("quarter".into()))
-        );
-        assert_eq!(node.get_param("deringing"), Some(ParamValue::Bool(true)));
-        assert_eq!(node.get_param("aq"), Some(ParamValue::Bool(true)));
+        assert_eq!(node.get_param("scan_mode"), Some(ParamValue::None));
+        assert_eq!(node.get_param("quant_tables"), Some(ParamValue::None));
+        assert_eq!(node.get_param("deringing"), Some(ParamValue::None));
+        assert_eq!(node.get_param("aq"), Some(ParamValue::None));
     }
 
     #[test]
@@ -450,9 +490,9 @@ mod tests {
     #[test]
     fn encode_to_config_ycbcr() {
         let node = EncodeJpeg {
-            quality: 90.0,
-            subsampling: String::from("none"),
-            scan_mode: String::from("baseline"),
+            quality: Some(90.0),
+            subsampling: Some(String::from("none")),
+            scan_mode: Some(String::from("baseline")),
             ..Default::default()
         };
         let _config = node.to_encoder_config();
@@ -463,7 +503,7 @@ mod tests {
     #[test]
     fn encode_to_config_grayscale() {
         let node = EncodeJpeg {
-            color_space: String::from("grayscale"),
+            color_space: Some(String::from("grayscale")),
             ..Default::default()
         };
         let _config = node.to_encoder_config();
@@ -487,7 +527,8 @@ mod tests {
             Some(ParamValue::Str("balanced".into()))
         );
         assert_eq!(node.get_param("auto_orient"), Some(ParamValue::Bool(true)));
-        assert_eq!(node.get_param("max_megapixels"), Some(ParamValue::U32(100)));
+        // max_megapixels is optional, defaults to None
+        assert_eq!(node.get_param("max_megapixels"), Some(ParamValue::None));
     }
 
     #[test]
@@ -509,7 +550,7 @@ mod tests {
         let node = DecodeJpeg {
             strictness: String::from("lenient"),
             auto_orient: false,
-            max_megapixels: 50,
+            max_megapixels: Some(50),
         };
         let _config = node.to_decoder_config();
     }
@@ -534,7 +575,7 @@ mod tests {
     fn apply_quality_only() {
         let base = crate::JpegEncoderConfig::new();
         let node = EncodeJpeg {
-            quality: 50.0,
+            quality: Some(50.0),
             ..Default::default()
         };
         let config = node.apply(base);
@@ -546,7 +587,7 @@ mod tests {
     fn apply_effort_only() {
         let base = crate::JpegEncoderConfig::new();
         let node = EncodeJpeg {
-            effort: 2,
+            effort: Some(2),
             ..Default::default()
         };
         let config = node.apply(base);
@@ -557,7 +598,7 @@ mod tests {
     #[test]
     fn apply_aq_false() {
         let node = EncodeJpeg {
-            aq: false,
+            aq: Some(false),
             ..Default::default()
         };
         let config = node.apply(crate::JpegEncoderConfig::new());
@@ -565,10 +606,24 @@ mod tests {
     }
 
     #[test]
+    fn apply_explicit_default_quality() {
+        // Setting quality to 85.0 explicitly should apply it, unlike before
+        // where it was indistinguishable from "unset"
+        let base = crate::JpegEncoderConfig::new();
+        let node = EncodeJpeg {
+            quality: Some(85.0),
+            ..Default::default()
+        };
+        let config = node.apply(base);
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert!(q.is_some());
+    }
+
+    #[test]
     fn to_encoder_config_matches_apply_on_default() {
         let node = EncodeJpeg {
-            quality: 70.0,
-            effort: 0,
+            quality: Some(70.0),
+            effort: Some(0),
             ..Default::default()
         };
         // to_encoder_config should produce a valid config
