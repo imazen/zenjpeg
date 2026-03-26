@@ -887,7 +887,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
     type Error = Error;
-    type Job = JpegDecodeJob;
+    type Job<'a> = JpegDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::Jpeg]
@@ -901,7 +901,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         &JPEG_DECODE_CAPS
     }
 
-    fn job(self) -> Self::Job {
+    fn job<'a>(self) -> Self::Job<'a> {
         JpegDecodeJob {
             config: self,
             stop: None,
