@@ -446,20 +446,20 @@ impl JpegEncoder {
         let mut req = config.request();
         if let Some(ref meta) = self.metadata {
             let policy = self.policy.unwrap_or_default();
-            if policy.resolve_icc(true) {
-                if let Some(ref icc) = meta.icc_profile {
-                    req = req.icc_profile(icc);
-                }
+            if policy.resolve_icc(true)
+                && let Some(ref icc) = meta.icc_profile
+            {
+                req = req.icc_profile(icc);
             }
-            if policy.resolve_exif(true) {
-                if let Some(ref exif) = meta.exif {
-                    req = req.exif(Exif::raw(exif.to_vec()));
-                }
+            if policy.resolve_exif(true)
+                && let Some(ref exif) = meta.exif
+            {
+                req = req.exif(Exif::raw(exif.to_vec()));
             }
-            if policy.resolve_xmp(true) {
-                if let Some(ref xmp) = meta.xmp {
-                    req = req.xmp(xmp);
-                }
+            if policy.resolve_xmp(true)
+                && let Some(ref xmp) = meta.xmp
+            {
+                req = req.xmp(xmp);
             }
         }
         if let Some(ref stop) = self.stop {
@@ -1363,10 +1363,10 @@ fn build_decode_config(
 
     // Map decode policy to strictness and metadata preservation
     if let Some(pol) = policy {
-        if let Some(strict) = pol.strict {
-            if strict {
-                cfg = cfg.strict();
-            }
+        if let Some(strict) = pol.strict
+            && strict
+        {
+            cfg = cfg.strict();
         }
         if let Some(false) = pol.allow_truncated {
             cfg = cfg.strict();
@@ -1565,7 +1565,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                             let raw_bytes = bytemuck::cast_slice::<f32, u8>(&pixels_f32).to_vec();
                             PixelBuffer::from_vec(raw_bytes, w, h, PixelDescriptor::RGBF32_LINEAR)
                                 .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                                .into()
                         } else {
                             // RGBA f32 fallback
                             let rgb: Vec<Rgb<f32>> = pixels_f32
@@ -1590,13 +1589,11 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         // Zero-copy: Vec<u8> is already Gray8 layout
                         PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::GRAY8_SRGB)
                             .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                            .into()
                     }
                     PixelFormat::Rgb => {
                         // Zero-copy: Vec<u8> is already packed RGB8 layout
                         PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::RGB8_SRGB)
                             .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                            .into()
                     }
                     _ => {
                         // Other formats (Rgba, Bgra, etc.) — pass raw bytes
@@ -1607,7 +1604,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         };
                         PixelBuffer::from_vec(pixels_u8, w, h, desc)
                             .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                            .into()
                     }
                 }
             };
