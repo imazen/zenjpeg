@@ -887,7 +887,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 
     fn job(&self) -> Self::Job<'_> {
         JpegDecodeJob {
-            config: self,
+            config: self.clone(),
             stop: None,
             limits: ResourceLimits::none(),
             crop_hint: None,
@@ -904,7 +904,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 /// Created by [`JpegDecoderConfig::job()`]. Borrows a stop token and is
 /// consumed by creating a [`JpegDecoder`] or [`JpegStreamingDecoder`].
 pub struct JpegDecodeJob<'a> {
-    config: &'a JpegDecoderConfig,
+    config: JpegDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
@@ -1431,7 +1431,7 @@ fn select_decode_descriptor(preferred: &[PixelDescriptor], num_components: u8) -
 
 /// One-shot JPEG decoder implementing [`zencodec::decode::Decode`].
 pub struct JpegDecoder<'a> {
-    config: &'a JpegDecoderConfig,
+    config: JpegDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
