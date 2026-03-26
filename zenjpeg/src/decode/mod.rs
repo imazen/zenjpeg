@@ -842,18 +842,439 @@ impl DecodeConfig {
         Ok(reader)
     }
 
-    /// Try to create a wave-parallel scanline reader.
+    /// Like [`scanline_reader`](Self::scanline_reader), but accepts a `Cow` for
+    /// the input data. When `Cow::Owned`, the returned reader owns the JPEG data
+    /// and can be effectively `'static` (no external borrow).
     ///
-    /// Returns `Ok(Some(reader))` if wave parallel is eligible and activated,
-    /// `Ok(None)` to fall through to the sequential streaming path.
-    ///
-    /// Eligibility: baseline 4:2:0, box filter, MCU-row-aligned DRI, enough segments.
-    #[cfg(feature = "parallel")]
-    fn try_wave_parallel<'a>(
+    /// `Cow::Borrowed` delegates to [`scanline_reader`](Self::scanline_reader).
+    pub fn scanline_reader_cow<'a>(
         &self,
-        scan_data: &parser::ParsedScanData<'a>,
+        data: alloc::borrow::Cow<'a, [u8]>,
+    ) -> Result<ScanlineReader<'a>> {
+        use alloc::borrow::Cow;
+
+        match data {
+            Cow::Borrowed(slice) => self.scanline_reader(slice),
+            Cow::Owned(vec) => self.scanline_reader_owned(vec),
+        }
+    }
+
+    /// Internal: create a scanline reader that owns its JPEG data.
+    ///
+    /// The parser borrows `&vec` temporarily for header parsing, then the
+    /// reader stores `Cow::Owned(vec)` for ongoing entropy decoding.
+    fn scanline_reader_owned<'a>(&self, vec: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
+        use crate::types::JpegMode;
+        use alloc::borrow::Cow;
+
+        // Check if we need a transform
+        let effective_transform = self.compute_effective_transform_from_data(&vec);
+        if effective_transform != crate::lossless::LosslessTransform::None {
+            return self.scanline_reader_with_transform_owned(vec, effective_transform);
+        }
+
+        // Phase 1: parse the JPEG data, extract everything we need.
+        // The parser borrows &vec; we must drop all parser-derived borrows
+        // before moving vec into Cow::Owned.
+        #[allow(clippy::large_enum_variant)]
+        enum ParseResult {
+            Buffered {
+                width: u32,
+                height: u32,
+                num_components: u8,
+                subsampling: Subsampling,
+                pixels: alloc::vec::Vec<u8>,
+                is_xyb: bool,
+                mcu_height: usize,
+            },
+            Streaming {
+                scan_data: parser::ParsedScanData<'static>,
+                width: u32,
+                height: u32,
+                mcu_height: usize,
+                #[cfg(feature = "parallel")]
+                wave_info: Option<(fused_parallel::WaveParallelState, bool)>,
+            },
+        }
+
+        let parse_result = {
+            let mut parser =
+                JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+            parser.read_header()?;
+
+            if parser.height == 0 {
+                return Err(Error::unsupported_feature(
+                    "scanline reader does not support DNL mode (height=0 in SOF)",
+                ));
+            }
+
+            if parser.precision != 8 {
+                return Err(Error::unsupported_feature(
+                    "12-bit precision JPEG (Extended Sequential) is not yet supported. \
+                     Only 8-bit precision is currently implemented.",
+                ));
+            }
+
+            if parser.num_components != 1
+                && parser.num_components != 3
+                && parser.num_components != 4
+            {
+                return Err(Error::unsupported_feature(
+                    "scanline reader requires 1, 3, or 4 component image",
+                ));
+            }
+
+            let is_grayscale = parser.num_components == 1;
+            let is_cmyk = parser.num_components == 4;
+            let is_xyb = parser.info().is_xyb;
+
+            let max_v_samp = parser.components[..parser.num_components as usize]
+                .iter()
+                .map(|c| c.v_samp_factor as usize)
+                .max()
+                .unwrap_or(1);
+            let mcu_height = max_v_samp * 8;
+
+            let needs_buffered = matches!(
+                parser.mode,
+                JpegMode::Progressive
+                    | JpegMode::ArithmeticSequential
+                    | JpegMode::ArithmeticProgressive
+            ) || is_cmyk;
+
+            if needs_buffered {
+                let width = parser.width;
+                let height = parser.height;
+                let num_components = parser.num_components;
+
+                parser.chroma_upsampling = self.chroma_upsampling;
+                parser.idct_method = self.effective_idct_method();
+                parser.decode(&Unstoppable)?;
+
+                let subsampling = compute_subsampling(&parser.components, num_components);
+
+                let output_format = if is_grayscale {
+                    PixelFormat::Gray
+                } else {
+                    PixelFormat::Rgb
+                };
+                let pixels = parser.to_pixels(
+                    output_format,
+                    is_xyb,
+                    self.chroma_upsampling,
+                    OutputTarget::Srgb8,
+                    &Unstoppable,
+                )?;
+
+                ParseResult::Buffered {
+                    width,
+                    height,
+                    num_components,
+                    subsampling,
+                    pixels,
+                    is_xyb,
+                    mcu_height,
+                }
+            } else {
+                // Check for exotic sampling
+                let max_h = parser.components[..parser.num_components as usize]
+                    .iter()
+                    .map(|c| c.h_samp_factor)
+                    .max()
+                    .unwrap_or(1);
+
+                let needs_buffered_sampling = if is_grayscale || parser.num_components < 3 {
+                    max_h > 2 || max_v_samp > 2
+                } else {
+                    let comps = &parser.components[..parser.num_components as usize];
+                    let cb_h = comps[1].h_samp_factor;
+                    let cb_v = comps[1].v_samp_factor;
+                    let cr_h = comps[2].h_samp_factor;
+                    let cr_v = comps[2].v_samp_factor;
+                    max_h > 2
+                        || max_v_samp > 2
+                        || cb_h != cr_h
+                        || cb_v != cr_v
+                        || cb_h > comps[0].h_samp_factor
+                        || cb_v > comps[0].v_samp_factor
+                };
+
+                if needs_buffered_sampling {
+                    let width = parser.width;
+                    let height = parser.height;
+                    let num_components = parser.num_components;
+                    let subsampling = subsampling_from_max(max_h, max_v_samp as u8, is_grayscale);
+
+                    parser.chroma_upsampling = self.chroma_upsampling;
+                    parser.idct_method = self.effective_idct_method();
+                    parser.decode(&Unstoppable)?;
+
+                    let output_format = if is_grayscale {
+                        PixelFormat::Gray
+                    } else {
+                        PixelFormat::Rgb
+                    };
+                    let pixels = parser.to_pixels(
+                        output_format,
+                        is_xyb,
+                        self.chroma_upsampling,
+                        OutputTarget::Srgb8,
+                        &Unstoppable,
+                    )?;
+
+                    ParseResult::Buffered {
+                        width,
+                        height,
+                        num_components,
+                        subsampling,
+                        pixels,
+                        is_xyb,
+                        mcu_height,
+                    }
+                } else {
+                    // Baseline streaming mode
+                    let scan_data = parser.into_scan_data(is_grayscale)?;
+                    let width = scan_data.width;
+                    let height = scan_data.height;
+
+                    // Try wave-parallel — only extract the WaveParallelState,
+                    // not a full ScanlineReader (which would borrow vec).
+                    #[cfg(feature = "parallel")]
+                    let wave_info = if self.num_threads != 1 {
+                        self.compute_wave_state(&scan_data, mcu_height)?
+                    } else {
+                        None
+                    };
+
+                    // Release the borrow on vec by converting to owned scan data
+                    let scan_data = scan_data.into_owned();
+
+                    ParseResult::Streaming {
+                        scan_data,
+                        width,
+                        height,
+                        mcu_height,
+                        #[cfg(feature = "parallel")]
+                        wave_info,
+                    }
+                }
+            }
+        };
+        // parser and all borrows of vec are now dropped.
+
+        // Phase 2: construct the reader with owned data.
+        match parse_result {
+            ParseResult::Buffered {
+                width,
+                height,
+                num_components,
+                subsampling,
+                pixels,
+                is_xyb,
+                mcu_height,
+            } => {
+                let mut reader = ScanlineReader::new_buffered_cow(
+                    Cow::Owned(vec),
+                    width,
+                    height,
+                    num_components,
+                    subsampling,
+                    pixels,
+                    is_xyb,
+                );
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+            ParseResult::Streaming {
+                scan_data,
+                width,
+                height,
+                mcu_height,
+                #[cfg(feature = "parallel")]
+                wave_info,
+            } => {
+                #[cfg(feature = "parallel")]
+                if let Some((wave_state, is_wave_only)) = wave_info {
+                    if is_wave_only {
+                        // Wave-only: create reader from wave state with owned data
+                        let mut reader =
+                            ScanlineReader::new_wave_parallel_cow(Cow::Owned(vec), wave_state);
+                        self.apply_crop(&mut reader, width, height, mcu_height)?;
+                        return Ok(reader);
+                    } else {
+                        let mut reader = ScanlineReader::from_scan_data_cow(
+                            scan_data,
+                            Cow::Owned(vec),
+                            self.chroma_upsampling,
+                            self.effective_idct_method(),
+                            self.output_target,
+                        )?;
+                        reader.attach_wave_state(wave_state);
+                        self.apply_crop(&mut reader, width, height, mcu_height)?;
+                        return Ok(reader);
+                    }
+                }
+
+                let mut reader = ScanlineReader::from_scan_data_cow(
+                    scan_data,
+                    Cow::Owned(vec),
+                    self.chroma_upsampling,
+                    self.effective_idct_method(),
+                    self.output_target,
+                )?;
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+        }
+    }
+
+    /// Transform path for owned data: fully decodes and stores owned data.
+    fn scanline_reader_with_transform_owned<'a>(
+        &self,
+        vec: alloc::vec::Vec<u8>,
+        transform: crate::lossless::LosslessTransform,
+    ) -> Result<ScanlineReader<'a>> {
+        use crate::lossless::LosslessTransform;
+        use crate::types::Subsampling;
+        use alloc::borrow::Cow;
+
+        enum TransformResult {
+            Buffered {
+                vis_w: u32,
+                vis_h: u32,
+                num_components: u8,
+                pixels: alloc::vec::Vec<u8>,
+                mcu_height: usize,
+            },
+            Coefficient {
+                coefficients: DecodedCoefficients,
+                width: u32,
+                height: u32,
+                mcu_height: usize,
+            },
+        }
+
+        let result = {
+            let mut parser =
+                JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+            parser.decode_mode = parser::DecodeMode::Coefficient;
+            parser.chroma_upsampling = self.chroma_upsampling;
+            parser.idct_method = self.effective_idct_method();
+            parser.decode(&Unstoppable)?;
+
+            let max_v_samp = parser.components[..parser.num_components as usize]
+                .iter()
+                .map(|c| c.v_samp_factor as usize)
+                .max()
+                .unwrap_or(1);
+            let mcu_height = max_v_samp * 8;
+
+            let orig_w = parser.width as usize;
+            let orig_h = parser.height as usize;
+            let pad_x = ((orig_w + 7) / 8) * 8 - orig_w;
+            let pad_y = ((orig_h + 7) / 8) * 8 - orig_h;
+
+            let (crop_x, crop_y) = match transform {
+                LosslessTransform::None => (0, 0),
+                LosslessTransform::FlipHorizontal => (pad_x, 0),
+                LosslessTransform::FlipVertical => (0, pad_y),
+                LosslessTransform::Rotate180 => (pad_x, pad_y),
+                LosslessTransform::Transpose => (0, 0),
+                LosslessTransform::Rotate90 => (pad_y, 0),
+                LosslessTransform::Rotate270 => (0, pad_x),
+                LosslessTransform::Transverse => (pad_y, pad_x),
+            };
+
+            parser.apply_dct_transform(transform);
+
+            let is_cmyk = parser.num_components == 4;
+
+            if crop_x > 0 || crop_y > 0 || transform.swaps_dimensions() || is_cmyk {
+                let mut config_no_crop = self.clone();
+                config_no_crop.crop_region = None;
+                let result = config_no_crop.decode(&vec, Unstoppable)?;
+                let vis_w = result.width();
+                let vis_h = result.height();
+                let num_components = result.format().num_channels() as u8;
+                let pixels = result
+                    .into_pixels_u8()
+                    .ok_or_else(|| Error::internal("expected u8 pixel data for scanline crop"))?;
+
+                TransformResult::Buffered {
+                    vis_w,
+                    vis_h,
+                    num_components,
+                    pixels,
+                    mcu_height,
+                }
+            } else {
+                let coefficients = parser.extract_coefficients()?;
+                let width = parser.width;
+                let height = parser.height;
+
+                TransformResult::Coefficient {
+                    coefficients,
+                    width,
+                    height,
+                    mcu_height,
+                }
+            }
+        };
+        // parser dropped, borrow on vec released.
+
+        match result {
+            TransformResult::Buffered {
+                vis_w,
+                vis_h,
+                num_components,
+                pixels,
+                mcu_height,
+            } => {
+                let mut reader = ScanlineReader::new_buffered_cow(
+                    Cow::Owned(vec),
+                    vis_w,
+                    vis_h,
+                    num_components,
+                    Subsampling::S444,
+                    pixels,
+                    false,
+                );
+                self.apply_crop(&mut reader, vis_w, vis_h, mcu_height)?;
+                Ok(reader)
+            }
+            TransformResult::Coefficient {
+                coefficients,
+                width,
+                height,
+                mcu_height,
+            } => {
+                let mut reader = ScanlineReader::from_coefficients(
+                    coefficients,
+                    self.chroma_upsampling,
+                    self.effective_idct_method(),
+                    self.output_target,
+                )?;
+                reader.replace_data(Cow::Owned(vec));
+                self.apply_crop(&mut reader, width, height, mcu_height)?;
+                Ok(reader)
+            }
+        }
+    }
+
+    /// Compute wave-parallel state from scan data without creating a reader.
+    ///
+    /// Returns `Ok(Some((wave_state, is_wave_only)))` if wave parallel is
+    /// eligible. `is_wave_only` is true when the wave decode can serve all
+    /// output paths (box filter 4:2:0).
+    ///
+    /// This is the core computation shared by [`try_wave_parallel`] and the
+    /// owned-data path.
+    #[cfg(feature = "parallel")]
+    fn compute_wave_state(
+        &self,
+        scan_data: &parser::ParsedScanData<'_>,
         mcu_height: usize,
-    ) -> Result<Option<WaveResult<'a>>> {
+    ) -> Result<Option<(fused_parallel::WaveParallelState, bool)>> {
         use fused_parallel::{WaveParallelState, build_huffman_tables_from_scan_data};
         use rst_scan::{compute_segments, scan_rst_markers};
 
@@ -956,12 +1377,32 @@ impl DecodeConfig {
         let is_subsampled_color = num_comps == 3
             && (scan_data.h_samp[1] != scan_data.h_samp[0]
                 || scan_data.v_samp[1] != scan_data.v_samp[0]);
-        let supports_rgb_box = is_box_filter && is_subsampled_color;
+        let is_wave_only = is_box_filter && is_subsampled_color;
+
+        Ok(Some((wave_state, is_wave_only)))
+    }
+
+    /// Try to create a wave-parallel scanline reader.
+    ///
+    /// Returns `Ok(Some(reader))` if wave parallel is eligible and activated,
+    /// `Ok(None)` to fall through to the sequential streaming path.
+    ///
+    /// Eligibility: baseline 4:2:0, box filter, MCU-row-aligned DRI, enough segments.
+    #[cfg(feature = "parallel")]
+    fn try_wave_parallel<'a>(
+        &self,
+        scan_data: &parser::ParsedScanData<'a>,
+        mcu_height: usize,
+    ) -> Result<Option<WaveResult<'a>>> {
+        let Some((wave_state, is_wave_only)) = self.compute_wave_state(scan_data, mcu_height)?
+        else {
+            return Ok(None);
+        };
 
         let width = scan_data.width;
         let height = scan_data.height;
 
-        if supports_rgb_box {
+        if is_wave_only {
             // Wave-only reader: both RGB and planar served from wave decode
             let mut reader = ScanlineReader::new_wave_parallel(scan_data.data, wave_state);
             self.apply_crop(&mut reader, width, height, mcu_height)?;

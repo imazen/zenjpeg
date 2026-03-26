@@ -1047,17 +1047,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     ) -> Result<Self::StreamDec, Self::Error> {
         #[cfg(feature = "decoder")]
         {
-            // ScanlineReader borrows data with lifetime 'a, so we need &'a [u8].
-            // Cow::Borrowed carries &'a [u8]; Cow::Owned can't provide 'a.
-            let data: &'a [u8] = match data {
-                Cow::Borrowed(slice) => slice,
-                Cow::Owned(_) => {
-                    return Err(Error::unsupported_feature(
-                        "streaming decode requires borrowed data (use Cow::Borrowed)",
-                    ));
-                }
-            };
-            self.check_input_size(data)?;
+            self.check_input_size(&data)?;
             let cfg = build_decode_config(
                 &self.config.inner,
                 &self.limits,
@@ -1065,10 +1055,14 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
                 self.orientation,
                 self.policy.as_ref(),
             );
-            let header = self.config.inner.read_info(data)?;
+            // read_info borrows data temporarily and returns owned JpegInfo.
+            let header = self.config.inner.read_info(&data)?;
             self.check_progressive_policy(header.mode)?;
             let info = to_image_info(&header);
-            let reader = cfg.scanline_reader(data)?;
+
+            // scanline_reader_cow accepts both Borrowed and Owned data.
+            // When Owned, the reader stores the Vec internally.
+            let reader = cfg.scanline_reader_cow(data)?;
 
             let descriptor = select_decode_descriptor(preferred, header.num_components);
             let mcu_height = reader.luma_rows_per_mcu();
@@ -2126,6 +2120,97 @@ mod tests {
             batch_count < 64,
             "expected MCU-row batching, got {batch_count} batches for 64 rows"
         );
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn streaming_decode_cow_owned() {
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
+
+        // Encode a test image
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 200,
+                g: 100,
+                b: 50,
+            };
+            32 * 32
+        ];
+        let img = Img::new(pixels.as_slice(), 32, 32);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+
+        // First decode with Cow::Borrowed as reference
+        let dec = JpegDecoderConfig::new();
+        let mut borrowed_stream = dec
+            .job()
+            .streaming_decoder(Cow::Borrowed(encoded.data()), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap();
+
+        let mut borrowed_pixels = Vec::new();
+        while let Some((_y, batch)) = borrowed_stream.next_batch().unwrap() {
+            borrowed_pixels.extend_from_slice(batch.as_strided_bytes());
+        }
+
+        // Now decode with Cow::Owned — the key test
+        let owned_data = encoded.data().to_vec();
+        let mut owned_stream = dec
+            .job()
+            .streaming_decoder(Cow::Owned(owned_data), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap();
+
+        assert_eq!(owned_stream.info().width, 32);
+        assert_eq!(owned_stream.info().height, 32);
+
+        let mut owned_pixels = Vec::new();
+        let mut total_rows = 0u32;
+        while let Some((y, batch)) = owned_stream.next_batch().unwrap() {
+            assert_eq!(y, total_rows);
+            owned_pixels.extend_from_slice(batch.as_strided_bytes());
+            total_rows += batch.rows();
+        }
+        assert_eq!(total_rows, 32);
+
+        // Owned and borrowed paths must produce identical output
+        assert_eq!(
+            owned_pixels, borrowed_pixels,
+            "Cow::Owned output differs from Cow::Borrowed"
+        );
+    }
+
+    #[cfg(feature = "decoder")]
+    #[test]
+    fn streaming_decode_cow_owned_is_effectively_static() {
+        use zencodec::decode::{DecodeJob as _, DecoderConfig as _, StreamingDecode as _};
+
+        // Encode a test image
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 128,
+                g: 64,
+                b: 32,
+            };
+            16 * 16
+        ];
+        let img = Img::new(pixels.as_slice(), 16, 16);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+
+        // Create streaming decoder with owned data inside a scope,
+        // then use it outside that scope (proves no external borrow).
+        let owned_data = encoded.data().to_vec();
+        let dec = JpegDecoderConfig::new();
+        let mut stream = dec
+            .job()
+            .streaming_decoder(Cow::Owned(owned_data), &[PixelDescriptor::RGB8_SRGB])
+            .unwrap();
+
+        // The stream should work after the owned_data variable is consumed
+        let mut total_rows = 0u32;
+        while let Some((_y, batch)) = stream.next_batch().unwrap() {
+            total_rows += batch.rows();
+        }
+        assert_eq!(total_rows, 16);
     }
 
     // ── Encoder trait roundtrip tests ────────────────────────────────

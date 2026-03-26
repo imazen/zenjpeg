@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+use alloc::borrow::Cow;
+
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
 use super::pool::PoolGuard;
@@ -57,8 +59,10 @@ pub struct ScanlineInfo {
 /// from a buffer, since progressive encoding requires all scans to be
 /// processed before final pixels are available.
 pub struct ScanlineReader<'a> {
-    // Raw JPEG data (unused in buffered mode)
-    data: &'a [u8],
+    // Raw JPEG data (unused in buffered mode).
+    // `Cow::Borrowed` when created from a slice; `Cow::Owned` when the caller
+    // donates a `Vec<u8>` so the reader can be `'static`.
+    data: Cow<'a, [u8]>,
 
     // Image dimensions
     width: u32,
@@ -168,8 +172,30 @@ impl<'a> ScanlineReader<'a> {
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
     ) -> Result<Self> {
+        let data_cow = Cow::Borrowed(scan.data);
+        Self::from_scan_data_cow(
+            scan,
+            data_cow,
+            chroma_upsampling,
+            idct_method,
+            output_target,
+        )
+    }
+
+    /// Like [`from_scan_data`](Self::from_scan_data), but accepts a `Cow` for
+    /// the raw JPEG data. When `Cow::Owned`, the reader owns the data and can
+    /// be `'static`.
+    ///
+    /// `scan_data`'s `.data` field is ignored — `data_cow` is stored instead.
+    pub(super) fn from_scan_data_cow(
+        scan: super::parser::ParsedScanData<'_>,
+        data_cow: Cow<'a, [u8]>,
+        chroma_upsampling: super::ChromaUpsampling,
+        idct_method: super::IdctMethod,
+        output_target: super::OutputTarget,
+    ) -> Result<Self> {
         let super::parser::ParsedScanData {
-            data,
+            data: _,
             width,
             height,
             num_components,
@@ -197,7 +223,7 @@ impl<'a> ScanlineReader<'a> {
         )?;
 
         Ok(Self {
-            data,
+            data: data_cow,
             width,
             height,
             num_components,
@@ -261,6 +287,76 @@ impl<'a> ScanlineReader<'a> {
     /// rows from the pre-decoded buffer.
     pub(crate) fn new_buffered(
         data: &'a [u8],
+        width: u32,
+        height: u32,
+        num_components: u8,
+        subsampling: Subsampling,
+        pixels: Vec<u8>,
+        is_xyb: bool,
+    ) -> Self {
+        Self {
+            data: Cow::Borrowed(data),
+            width,
+            height,
+            num_components,
+            buffered_rgb: Some(pixels),
+            strip: StripProcessor::new_dummy(subsampling),
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables: [None, None, None, None],
+            quant_indices: [0, 0, 0],
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb,
+            is_rgb: false,
+            stored_coeffs: None,
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            #[cfg(feature = "parallel")]
+            wave_state: None,
+            #[cfg(feature = "parallel")]
+            wave_buf: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_first_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_row_count: 0,
+            #[cfg(feature = "parallel")]
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
+        }
+    }
+
+    /// Like [`new_buffered`](Self::new_buffered), but accepts a `Cow` for the
+    /// raw JPEG data. When `Cow::Owned`, the reader owns the data.
+    pub(crate) fn new_buffered_cow(
+        data: Cow<'a, [u8]>,
         width: u32,
         height: u32,
         num_components: u8,
@@ -394,7 +490,7 @@ impl<'a> ScanlineReader<'a> {
         )?;
 
         Ok(Self {
-            data: &[], // No raw data needed
+            data: Cow::Borrowed(&[]), // No raw data needed
             width,
             height,
             num_components,
@@ -459,6 +555,14 @@ impl<'a> ScanlineReader<'a> {
         self.crop = Some(crop);
     }
 
+    /// Replace the raw JPEG data storage.
+    ///
+    /// Used to swap in `Cow::Owned` data after constructing the reader with
+    /// a temporary borrow, enabling the reader to own its input data.
+    pub(crate) fn replace_data(&mut self, data: Cow<'a, [u8]>) {
+        self.data = data;
+    }
+
     /// Creates a scanline reader in wave-parallel mode.
     ///
     /// Instead of decoding one MCU row at a time (streaming) or the full image
@@ -476,6 +580,75 @@ impl<'a> ScanlineReader<'a> {
         let height = wave_state.height as u32;
 
         // Pre-allocate wave buffer for wave_size segments
+        let rgb_row_bytes = wave_state.width * 3;
+        let seg_rgb_bytes = wave_state.pixel_rows_per_seg * rgb_row_bytes;
+        let wave_buf_size = wave_state.wave_size * seg_rgb_bytes;
+        let wave_buf = vec![0u8; wave_buf_size];
+
+        Self {
+            data: Cow::Borrowed(data),
+            width,
+            height,
+            num_components: 3,
+            buffered_rgb: None,
+            strip: StripProcessor::new_dummy(Subsampling::S420),
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            quant_tables: [None, None, None, None],
+            quant_indices: [0, 0, 0],
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb: false,
+            is_rgb: false,
+            stored_coeffs: None,
+            next_mcu_preloaded: false,
+            crop: None,
+            crop_skip_done: false,
+            wave_state: Some(wave_state),
+            wave_buf,
+            wave_first_row: 0,
+            wave_row_count: 0,
+            wave_next_seg: 0,
+            #[cfg(feature = "parallel")]
+            wave_y: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cb: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_cr: Vec::new(),
+            #[cfg(feature = "parallel")]
+            wave_planar_first_luma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_luma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_first_chroma_row: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_chroma_rows: 0,
+            #[cfg(feature = "parallel")]
+            wave_planar_next_seg: 0,
+            pool_guard: None,
+        }
+    }
+
+    /// Like [`new_wave_parallel`](Self::new_wave_parallel), but accepts a `Cow`
+    /// for the raw JPEG data. When `Cow::Owned`, the reader owns the data.
+    #[cfg(feature = "parallel")]
+    pub(super) fn new_wave_parallel_cow(
+        data: Cow<'a, [u8]>,
+        wave_state: super::fused_parallel::WaveParallelState,
+    ) -> Self {
+        let width = wave_state.width as u32;
+        let height = wave_state.height as u32;
+
         let rgb_row_bytes = wave_state.width * 3;
         let seg_rgb_bytes = wave_state.pixel_rows_per_seg * rgb_row_bytes;
         let wave_buf_size = wave_state.wave_size * seg_rgb_bytes;
@@ -690,17 +863,17 @@ impl<'a> ScanlineReader<'a> {
     /// This allows streaming decoders to detect and access gain maps without
     /// requiring the full `ultrahdr_reader()` API.
     #[cfg(feature = "ultrahdr")]
-    pub fn gain_map_jpeg(&self) -> Option<&'a [u8]> {
+    pub fn gain_map_jpeg(&self) -> Option<&[u8]> {
         // Parse the JPEG header markers to find gain map
         // We need a temporary parser just for marker scanning
-        let mut parser = match super::parser::JpegParser::new(self.data, u64::MAX, None) {
+        let mut parser = match super::parser::JpegParser::new(&self.data, u64::MAX, None) {
             Ok(p) => p,
             Err(_) => return None,
         };
         if parser.read_header().is_err() {
             return None;
         }
-        let (range, _metadata) = parser.extract_gainmap_early(self.data).ok()?;
+        let (range, _metadata) = parser.extract_gainmap_early(&self.data).ok()?;
         let (start, end) = range?;
         Some(&self.data[start..end])
     }
@@ -1501,7 +1674,8 @@ impl<'a> ScanlineReader<'a> {
         let wave_count = seg_end - seg_start;
         let _ = wave_count;
 
-        let row_count = state.decode_wave_box(self.data, seg_start, seg_end, &mut self.wave_buf)?;
+        let row_count =
+            state.decode_wave_box(&self.data, seg_start, seg_end, &mut self.wave_buf)?;
 
         self.wave_first_row = seg_start * state.pixel_rows_per_seg;
         self.wave_row_count = row_count;
@@ -1625,7 +1799,7 @@ impl<'a> ScanlineReader<'a> {
         let chroma_rows_per_seg = state.chroma_rows_per_seg();
 
         let (luma_rows, chroma_rows) = state.decode_wave_planar(
-            self.data,
+            &self.data,
             seg_start,
             seg_end,
             &mut self.wave_y,

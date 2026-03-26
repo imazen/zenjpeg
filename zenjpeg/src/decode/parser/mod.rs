@@ -81,6 +81,33 @@ pub(super) struct ParsedScanData<'a> {
     pub is_rgb: bool,
 }
 
+impl<'a> ParsedScanData<'a> {
+    /// Release the borrow on the underlying data by replacing it with an
+    /// empty slice, returning a `ParsedScanData<'static>`.
+    ///
+    /// All non-data fields are preserved. This is used when the caller will
+    /// supply owned data separately (via `ScanlineReader::from_scan_data_cow`).
+    pub(super) fn into_owned(self) -> ParsedScanData<'static> {
+        ParsedScanData {
+            data: &[],
+            width: self.width,
+            height: self.height,
+            num_components: self.num_components,
+            h_samp: self.h_samp,
+            v_samp: self.v_samp,
+            quant_tables: self.quant_tables,
+            quant_indices: self.quant_indices,
+            dc_tables: self.dc_tables,
+            ac_tables: self.ac_tables,
+            table_mapping: self.table_mapping,
+            scan_data_start: self.scan_data_start,
+            restart_interval: self.restart_interval,
+            is_xyb: self.is_xyb,
+            is_rgb: self.is_rgb,
+        }
+    }
+}
+
 /// Controls which decode path the parser uses.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) enum DecodeMode {
