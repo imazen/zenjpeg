@@ -818,14 +818,12 @@ impl JpegDecoderConfig {
         }
     }
 
-    /// Create a `'static` decode job by consuming (not borrowing) this config.
+    /// Create a decode job by consuming this config.
     ///
-    /// Unlike [`DecoderConfig::job(&self)`] which borrows the config and ties
-    /// the job lifetime to it, this method moves the config into the job.
-    /// Combined with `Cow::Owned` data, this produces a `'static` streaming
-    /// decoder suitable for `Box<dyn DynStreamingDecoder + 'static>`.
+    /// This is equivalent to [`DecoderConfig::job(self)`] but available
+    /// without importing the trait.
     #[must_use]
-    pub fn job_static(self) -> JpegDecodeJob<'static> {
+    pub fn job_static(self) -> JpegDecodeJob {
         JpegDecodeJob {
             config: self,
             stop: None,
@@ -833,7 +831,6 @@ impl JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
-            _lifetime: core::marker::PhantomData,
         }
     }
 
@@ -853,19 +850,19 @@ impl JpegDecoderConfig {
     /// Convenience: probe image header with this config.
     pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Error> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
-        self.job().probe(data)
+        self.clone().job().probe(data)
     }
 
     /// Convenience: probe full image metadata (may be expensive).
     pub fn probe_full_metadata(&self, data: &[u8]) -> Result<ImageInfo, Error> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
-        self.job().probe_full(data)
+        self.clone().job().probe_full(data)
     }
 
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-        self.job().decoder(Cow::Borrowed(data), &[])?.decode()
+        self.clone().job().decoder(Cow::Borrowed(data), &[])?.decode()
     }
 }
 
@@ -890,7 +887,7 @@ static DECODE_DESCRIPTORS: &[PixelDescriptor] = &[
 
 impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
     type Error = Error;
-    type Job<'a> = JpegDecodeJob<'a>;
+    type Job = JpegDecodeJob;
 
     fn formats() -> &'static [ImageFormat] {
         &[ImageFormat::Jpeg]
@@ -904,15 +901,14 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         &JPEG_DECODE_CAPS
     }
 
-    fn job(&self) -> Self::Job<'_> {
+    fn job(self) -> Self::Job {
         JpegDecodeJob {
-            config: self.clone(),
+            config: self,
             stop: None,
             limits: ResourceLimits::none(),
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
-            _lifetime: core::marker::PhantomData,
         }
     }
 }
@@ -921,19 +917,18 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
 
 /// Per-operation JPEG decode job.
 ///
-/// Created by [`JpegDecoderConfig::job()`]. Borrows a stop token and is
-/// consumed by creating a [`JpegDecoder`] or [`JpegStreamingDecoder`].
-pub struct JpegDecodeJob<'a> {
+/// Created by [`JpegDecoderConfig::job()`]. Consumed by creating a
+/// [`JpegDecoder`] or [`JpegStreamingDecoder`].
+pub struct JpegDecodeJob {
     config: JpegDecoderConfig,
     stop: Option<zencodec::StopToken>,
     limits: ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
     policy: Option<zencodec::decode::DecodePolicy>,
-    _lifetime: core::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
+impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     type Error = Error;
     type Dec = JpegDecoder<'a>;
     type StreamDec = JpegStreamingDecoder<'a>;
@@ -1116,7 +1111,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
     }
 }
 
-impl JpegDecodeJob<'_> {
+impl JpegDecodeJob {
     /// Check input data size against limits.
     fn check_input_size(&self, data: &[u8]) -> Result<(), Error> {
         self.limits
@@ -1155,7 +1150,7 @@ impl JpegDecodeJob<'_> {
 /// (typically 8 or 16 rows × width × bytes-per-pixel).
 #[cfg(feature = "decoder")]
 fn push_decoder_native<'a>(
-    job: JpegDecodeJob<'a>,
+    job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
