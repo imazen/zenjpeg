@@ -2914,9 +2914,9 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99ba55a38b9c8fcd685bddc640c6b9891108c026aa24ee8af206628d1a3e561b"
+checksum = "16a3e836a037c010fe01f7a5f7c66bf16138194856ef96f2ae2697a9e71e6f70"
 dependencies = [
  "almost-enough",
  "enough",
@@ -3052,9 +3052,9 @@ dependencies = [
  "rgb",
  "safe_unaligned_simd",
  "whereat",
- "wide 1.2.0",
  "zenblend",
  "zenlayout",
+ "zennode",
  "zenpixels",
 ]
 

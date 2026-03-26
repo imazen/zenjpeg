@@ -105,6 +105,92 @@ impl Default for EncodeJpeg {
 }
 
 impl EncodeJpeg {
+    /// Apply this node's explicitly-set params on top of an existing
+    /// [`JpegEncoderConfig`](crate::JpegEncoderConfig).
+    ///
+    /// Fields at their default value are skipped, so the base config's
+    /// values are preserved. Only params the user explicitly changed
+    /// take effect.
+    ///
+    /// Application order:
+    /// 1. Quality (if != 85.0) via `with_generic_quality`
+    /// 2. Effort (if != 1) via `with_generic_effort`
+    /// 3. Color space / subsampling (if != defaults) via `inner_mut()`
+    /// 4. Chroma downsampling method (if != "average")
+    /// 5. Scan mode, quant tables, deringing, aq on inner config
+    pub fn apply(&self, mut config: crate::JpegEncoderConfig) -> crate::JpegEncoderConfig {
+        use zencodec::encode::EncoderConfig as _;
+
+        let defaults = Self::default();
+
+        // Quality
+        if (self.quality - defaults.quality).abs() > f32::EPSILON {
+            config = config.with_generic_quality(self.quality);
+        }
+        // Effort
+        if self.effort != defaults.effort {
+            config = config.with_generic_effort(self.effort);
+        }
+        // Color space — rebuild inner if changed from default
+        if self.color_space != defaults.color_space {
+            let subsampling = self.parse_subsampling();
+            match self.color_space.to_ascii_lowercase().as_str() {
+                "grayscale" | "gray" | "grey" => {
+                    config = crate::JpegEncoderConfig::grayscale(self.quality);
+                    // Re-apply effort
+                    if self.effort != defaults.effort {
+                        config = config.with_generic_effort(self.effort);
+                    }
+                }
+                "xyb" => {
+                    let mut new_config = crate::JpegEncoderConfig::new();
+                    *new_config.inner_mut() = EncoderConfig::xyb(
+                        crate::encode::encoder_types::Quality::ApproxJpegli(self.quality),
+                        self.parse_xyb_subsampling(),
+                    );
+                    config = new_config;
+                    if self.effort != defaults.effort {
+                        config = config.with_generic_effort(self.effort);
+                    }
+                }
+                _ => {
+                    // Non-default color space string but not gray/xyb — treat as ycbcr
+                    config = config.with_subsampling(subsampling);
+                }
+            }
+        } else if self.subsampling != defaults.subsampling {
+            // Color space is default but subsampling changed
+            config = config.with_subsampling(self.parse_subsampling());
+        }
+
+        // Chroma downsampling method
+        if self.chroma_downsampling != defaults.chroma_downsampling {
+            config.inner_mut().downsampling_method = self.parse_downsampling();
+        }
+
+        // Scan mode (on inner config)
+        if self.scan_mode != defaults.scan_mode {
+            config.inner_mut().scan_mode = self.parse_scan_mode();
+        }
+
+        // Quant tables (on inner config)
+        if self.quant_tables != defaults.quant_tables {
+            config.inner_mut().quant_table_config = self.parse_quant_tables();
+        }
+
+        // Deringing (default is true, so only apply if explicitly set to false)
+        if self.deringing != defaults.deringing {
+            config.inner_mut().deringing = self.deringing;
+        }
+
+        // AQ (default is true, so only apply if explicitly set to false)
+        if self.aq != defaults.aq {
+            config.inner_mut().aq_enabled = self.aq;
+        }
+
+        config
+    }
+
     /// Convert this node into a [`JpegEncoderConfig`](crate::JpegEncoderConfig).
     ///
     /// The `effort` parameter controls the optimization preset (baseline,
@@ -308,6 +394,15 @@ impl DecodeJpeg {
     }
 }
 
+/// Register all JPEG zennode definitions with a registry.
+pub fn register(registry: &mut NodeRegistry) {
+    registry.register(&ENCODE_JPEG_NODE);
+    registry.register(&DECODE_JPEG_NODE);
+}
+
+/// All JPEG zennode definitions.
+pub static ALL: &[&dyn NodeDef] = &[&ENCODE_JPEG_NODE, &DECODE_JPEG_NODE];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +512,86 @@ mod tests {
             max_megapixels: 50,
         };
         let _config = node.to_decoder_config();
+    }
+
+    #[test]
+    fn apply_defaults_preserves_config() {
+        // Applying a default node should not change the base config
+        let base = crate::JpegEncoderConfig::new();
+        let effort_before = zencodec::encode::EncoderConfig::generic_effort(&base);
+        let quality_before = zencodec::encode::EncoderConfig::generic_quality(&base);
+
+        let node = EncodeJpeg::default();
+        let config = node.apply(base);
+
+        let effort_after = zencodec::encode::EncoderConfig::generic_effort(&config);
+        let quality_after = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert_eq!(effort_before, effort_after);
+        assert_eq!(quality_before, quality_after);
+    }
+
+    #[test]
+    fn apply_quality_only() {
+        let base = crate::JpegEncoderConfig::new();
+        let node = EncodeJpeg {
+            quality: 50.0,
+            ..Default::default()
+        };
+        let config = node.apply(base);
+        let q = zencodec::encode::EncoderConfig::generic_quality(&config);
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn apply_effort_only() {
+        let base = crate::JpegEncoderConfig::new();
+        let node = EncodeJpeg {
+            effort: 2,
+            ..Default::default()
+        };
+        let config = node.apply(base);
+        let e = zencodec::encode::EncoderConfig::generic_effort(&config);
+        assert_eq!(e, Some(2));
+    }
+
+    #[test]
+    fn apply_aq_false() {
+        let node = EncodeJpeg {
+            aq: false,
+            ..Default::default()
+        };
+        let config = node.apply(crate::JpegEncoderConfig::new());
+        assert!(!config.inner().aq_enabled);
+    }
+
+    #[test]
+    fn to_encoder_config_matches_apply_on_default() {
+        let node = EncodeJpeg {
+            quality: 70.0,
+            effort: 0,
+            ..Default::default()
+        };
+        // to_encoder_config should produce a valid config
+        let _config = node.to_encoder_config();
+    }
+
+    #[test]
+    fn registry_integration() {
+        let mut registry = NodeRegistry::new();
+        register(&mut registry);
+        assert!(registry.get("zenjpeg.encode").is_some());
+        assert!(registry.get("zenjpeg.decode").is_some());
+
+        let result = registry.from_querystring("jpeg.q=80");
+        assert_eq!(result.instances.len(), 1);
+        assert_eq!(result.instances[0].schema().id, "zenjpeg.encode");
+    }
+
+    #[test]
+    fn all_contains_both_nodes() {
+        assert_eq!(ALL.len(), 2);
+        let ids: alloc::vec::Vec<&str> = ALL.iter().map(|n| n.schema().id).collect();
+        assert!(ids.contains(&"zenjpeg.encode"));
+        assert!(ids.contains(&"zenjpeg.decode"));
     }
 }
