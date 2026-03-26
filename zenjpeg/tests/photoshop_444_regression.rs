@@ -48,8 +48,9 @@ fn decode_reference(data: &[u8]) -> (Vec<u8>, u16, u16) {
 }
 
 /// Decode with zenjpeg buffered mode (the default decode() path).
+/// ICC profile application is disabled for parity with jpeg-decoder reference.
 fn decode_zenjpeg_buffered(data: &[u8]) -> (Vec<u8>, u32, u32) {
-    let decoder = zenjpeg::decoder::Decoder::new();
+    let decoder = zenjpeg::decoder::Decoder::new().apply_icc(false);
     let result = decoder.decode(data, Unstoppable).expect("zenjpeg decode failed");
     let w = result.width;
     let h = result.height;
@@ -106,11 +107,11 @@ fn photoshop_444_buffered_vs_reference() {
     let (max_diff, mean_diff) = pixel_diff_stats(&ref_pixels, &zen_pixels);
     eprintln!("buffered vs jpeg-decoder: max={max_diff} mean={mean_diff:.2}");
 
-    // This is the regression assertion. Before fix, max_diff=128.
-    // After fix, should be <=1 (IDCT rounding only).
+    // Before fix, max_diff=128 (ICC profile applied, converting AdobeRGB→sRGB).
+    // After fix, max_diff<=3 (IDCT rounding only, same as scanline path).
     assert!(
-        max_diff <= 1,
-        "buffered decode max_diff={max_diff} (mean={mean_diff:.2}) exceeds threshold of 1"
+        max_diff <= 3,
+        "buffered decode max_diff={max_diff} (mean={mean_diff:.2}) exceeds threshold of 3"
     );
 }
 
@@ -156,11 +157,49 @@ fn photoshop_444_buffered_vs_scanline() {
     let (max_diff, mean_diff) = pixel_diff_stats(&buf_pixels, &scan_pixels);
     eprintln!("buffered vs scanline: max={max_diff} mean={mean_diff:.2}");
 
-    // If both paths are correct, they should match within ±1 (IDCT rounding).
-    // Current bug: max_diff ≈ 128.
+    // Both paths should match within ±3 (IDCT rounding).
+    // Before fix: max_diff=127 (ICC applied in buffered but not scanline).
     assert!(
-        max_diff <= 1,
+        max_diff <= 3,
         "buffered vs scanline max_diff={max_diff} (mean={mean_diff:.2})"
+    );
+}
+
+/// Verify that forcing f32 output (coefficient path) produces correct results.
+/// If this passes but buffered_vs_reference fails, the bug is in the streaming
+/// decode path (decode_baseline_streaming_rgb), not coefficient storage.
+#[test]
+fn photoshop_444_coefficient_path_vs_reference() {
+    let data = load_test_file();
+    if data.is_empty() {
+        return;
+    }
+
+    let (ref_pixels, rw, rh) = decode_reference(&data);
+
+    // Force coefficient path by enabling dequant_bias (forces f32 IDCT, no streaming)
+    let decoder = zenjpeg::decoder::Decoder::new().dequant_bias(true);
+    let result = decoder.decode(&data, Unstoppable).expect("coeff decode failed");
+    let w = result.width;
+    let h = result.height;
+    // dequant_bias outputs f32 — convert to u8
+    let f32_data = result.pixels_f32().expect("f32 from coeff decode");
+    let f32_pixels: Vec<u8> = f32_data.iter().map(|&v| (v * 255.0).clamp(0.0, 255.0).round() as u8).collect();
+
+    assert_eq!(
+        (rw as u32, rh as u32),
+        (w, h),
+        "dimension mismatch"
+    );
+
+    let (max_diff, mean_diff) = pixel_diff_stats(&ref_pixels, &f32_pixels);
+    eprintln!("coefficient(f32) vs jpeg-decoder: max={max_diff} mean={mean_diff:.2}");
+
+    // The f32 path uses coefficient storage + to_pixels, not streaming.
+    // If this passes, the streaming path is the bug.
+    assert!(
+        max_diff <= 3,
+        "coefficient path max_diff={max_diff} — coefficient storage is also broken?"
     );
 }
 

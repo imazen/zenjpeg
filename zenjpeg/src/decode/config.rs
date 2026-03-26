@@ -797,8 +797,11 @@ impl Default for DecodeConfig {
             gain_map: GainMapHandling::default(),
             chroma_upsampling: ChromaUpsampling::default(),
             block_smoothing: false,
-            // Apply ICC by default when CMS is available
-            apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
+            // ICC is opt-in: scanline reader doesn't apply ICC, and reference
+            // decoders (jpeg-decoder, libjpeg-turbo) don't either. Applying ICC
+            // by default caused issue #2 (AdobeRGB→sRGB conversion creating
+            // max pixel diffs of 128 vs reference decoders).
+            apply_icc: false,
             icc_target: IccTarget::default(),
             max_pixels: DEFAULT_MAX_PIXELS,
             max_memory: DEFAULT_MAX_MEMORY,
