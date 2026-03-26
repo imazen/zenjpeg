@@ -818,6 +818,25 @@ impl JpegDecoderConfig {
         }
     }
 
+    /// Create a `'static` decode job by consuming (not borrowing) this config.
+    ///
+    /// Unlike [`DecoderConfig::job(&self)`] which borrows the config and ties
+    /// the job lifetime to it, this method moves the config into the job.
+    /// Combined with `Cow::Owned` data, this produces a `'static` streaming
+    /// decoder suitable for `Box<dyn DynStreamingDecoder + 'static>`.
+    #[must_use]
+    pub fn job_static(self) -> JpegDecodeJob<'static> {
+        JpegDecodeJob {
+            config: self,
+            stop: None,
+            limits: ResourceLimits::none(),
+            crop_hint: None,
+            orientation: zencodec::OrientationHint::default(),
+            policy: None,
+            _lifetime: core::marker::PhantomData,
+        }
+    }
+
     /// Access the underlying [`DecodeConfig`](crate::decode::DecodeConfig).
     #[cfg(feature = "decoder")]
     #[must_use]
@@ -893,6 +912,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
+            _lifetime: core::marker::PhantomData,
         }
     }
 }
@@ -910,6 +930,7 @@ pub struct JpegDecodeJob<'a> {
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
     policy: Option<zencodec::decode::DecodePolicy>,
+    _lifetime: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob<'a> {
