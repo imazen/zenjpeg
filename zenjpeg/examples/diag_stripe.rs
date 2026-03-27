@@ -59,7 +59,7 @@ unsafe fn encode_mozjpeg(pixels: &[u8], w: u32, h: u32, q: i32) -> Vec<u8> {
         let row_stride = w as usize * 3;
         while cinfo.next_scanline < h {
             let offset = cinfo.next_scanline as usize * row_stride;
-            let mut row_ptr = pixels[offset..].as_ptr();
+            let row_ptr = pixels[offset..].as_ptr();
             jpeg_write_scanlines(&mut cinfo, &row_ptr, 1);
         }
 
