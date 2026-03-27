@@ -58,7 +58,9 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
@@ -110,7 +112,9 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
@@ -153,7 +157,9 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
@@ -195,7 +201,9 @@ jobs:
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
 
       - name: Format check
@@ -232,7 +240,9 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
@@ -272,7 +282,9 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
             -e '/^layout = /d' \
+            -e '/^zennode = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
