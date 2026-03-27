@@ -10,7 +10,7 @@ description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
 keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
 categories = ["multimedia::images", "encoding"]
 authors = ["Lilith River <lilith@imazen.io>"]
-rust-version = "1.92"
+rust-version = "1.93"
 exclude = [
     "tests/",
     "test_cache/",
