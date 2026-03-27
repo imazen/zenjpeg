@@ -57,10 +57,10 @@ unsafe fn encode_mozjpeg(pixels: &[u8], w: u32, h: u32, q: i32) -> Vec<u8> {
         jpeg_start_compress(&mut cinfo, true as boolean);
 
         let row_stride = w as usize * 3;
-        while (cinfo.next_scanline as u32) < h {
+        while cinfo.next_scanline < h {
             let offset = cinfo.next_scanline as usize * row_stride;
             let mut row_ptr = pixels[offset..].as_ptr();
-            jpeg_write_scanlines(&mut cinfo, &mut row_ptr, 1);
+            jpeg_write_scanlines(&mut cinfo, &row_ptr, 1);
         }
 
         jpeg_finish_compress(&mut cinfo);
@@ -108,6 +108,7 @@ fn decode_zune(jpeg: &[u8]) -> Vec<u8> {
     dec.decode().unwrap()
 }
 
+#[allow(dead_code)]
 fn decode_jpd(jpeg: &[u8]) -> Vec<u8> {
     let mut dec = jpeg_decoder::Decoder::new(jpeg);
     dec.decode().unwrap()
@@ -184,6 +185,7 @@ fn row_diff_count(a: &[u8], b: &[u8], y: usize, w: usize, thresh: u32) -> usize 
         .count()
 }
 
+#[allow(dead_code)]
 struct AnalyzeResult {
     boundary_max: u32,
     interior_max: u32,
