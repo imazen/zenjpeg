@@ -851,9 +851,8 @@ sensitivity tables, and preset baselines.
    At Q50, 2 of 3 quant tables exceed 255, requiring 16-bit DQT entries (+128 bytes).
    Scan data is identical — only DQT marker overhead changed. Hashes updated.
 
-4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)** - `baseline_xyb_opt Q50`
-   size mismatch (292993 vs 288338). Confirmed pre-existing on branch before any changes.
-   Not related to mozjpeg table fix (XYB uses jpegli tables, not MozjpegRobidoux).
+~~4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)**~~ — **FIXED (2026-03-27).**
+   All XYB hashes updated. The stale hashes were from before archmage XYB cbrt_midp() changes.
 
 5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
    always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
