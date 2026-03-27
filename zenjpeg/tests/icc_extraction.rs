@@ -30,10 +30,15 @@ fn read_or_skip(path: &str) -> Vec<u8> {
 #[test]
 fn extract_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let result = extract_icc_profile(&data);
-    assert!(result.is_some(), "extract_icc_profile returned None for Rec.2020 PQ JPEG");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for Rec.2020 PQ JPEG"
+    );
     let icc = result.unwrap();
     eprintln!("Rec.2020 ICC: {} bytes", icc.len());
     assert!(icc.len() > 100, "ICC too short: {} bytes", icc.len());
@@ -42,10 +47,15 @@ fn extract_icc_rec2020() {
 #[test]
 fn extract_icc_display_p3() {
     let data = read_or_skip(DISPLAY_P3_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let result = extract_icc_profile(&data);
-    assert!(result.is_some(), "extract_icc_profile returned None for Display P3 JPEG");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for Display P3 JPEG"
+    );
     let icc = result.unwrap();
     eprintln!("Display P3 ICC: {} bytes", icc.len());
     assert!(icc.len() > 100, "ICC too short: {} bytes", icc.len());
@@ -54,10 +64,15 @@ fn extract_icc_display_p3() {
 #[test]
 fn extract_icc_adobe_rgb() {
     let data = read_or_skip(ADOBE_RGB_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let result = extract_icc_profile(&data);
-    assert!(result.is_some(), "extract_icc_profile returned None for Adobe RGB JPEG");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for Adobe RGB JPEG"
+    );
     let icc = result.unwrap();
     eprintln!("Adobe RGB ICC: {} bytes", icc.len());
     assert!(icc.len() > 100, "ICC too short: {} bytes", icc.len());
@@ -66,10 +81,15 @@ fn extract_icc_adobe_rgb() {
 #[test]
 fn extract_icc_canon_srgb() {
     let data = read_or_skip(CANON_SRGB_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let result = extract_icc_profile(&data);
-    assert!(result.is_some(), "extract_icc_profile returned None for Canon sRGB JPEG");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for Canon sRGB JPEG"
+    );
     let icc = result.unwrap();
     eprintln!("Canon sRGB ICC: {} bytes", icc.len());
     assert!(icc.len() > 100, "ICC too short: {} bytes", icc.len());
@@ -82,11 +102,17 @@ fn extract_icc_canon_srgb() {
 #[test]
 fn read_info_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let decoder = zenjpeg::decoder::Decoder::new();
     let info = decoder.read_info(&data).expect("read_info failed");
-    eprintln!("read_info: has_icc={}, icc.is_some()={}", info.has_icc_profile, info.icc_profile.is_some());
+    eprintln!(
+        "read_info: has_icc={}, icc.is_some()={}",
+        info.has_icc_profile,
+        info.icc_profile.is_some()
+    );
     if let Some(ref icc) = info.icc_profile {
         eprintln!("read_info ICC: {} bytes", icc.len());
     }
@@ -99,7 +125,9 @@ fn read_info_returns_icc_rec2020() {
 #[test]
 fn read_info_returns_icc_display_p3() {
     let data = read_or_skip(DISPLAY_P3_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let decoder = zenjpeg::decoder::Decoder::new();
     let info = decoder.read_info(&data).expect("read_info failed");
@@ -112,7 +140,9 @@ fn read_info_returns_icc_display_p3() {
 #[test]
 fn read_info_returns_icc_adobe_rgb() {
     let data = read_or_skip(ADOBE_RGB_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let decoder = zenjpeg::decoder::Decoder::new();
     let info = decoder.read_info(&data).expect("read_info failed");
@@ -131,11 +161,16 @@ fn read_info_returns_icc_adobe_rgb() {
 #[test]
 fn zencodec_probe_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let config = zenjpeg::JpegDecoderConfig::new();
     let info = config.probe_header(&data).expect("probe_header failed");
-    eprintln!("probe: icc.is_some() = {}", info.source_color.icc_profile.is_some());
+    eprintln!(
+        "probe: icc.is_some() = {}",
+        info.source_color.icc_profile.is_some()
+    );
     if let Some(ref icc) = info.source_color.icc_profile {
         eprintln!("probe ICC: {} bytes", icc.len());
     }
@@ -154,7 +189,9 @@ fn zencodec_probe_returns_icc_rec2020() {
 #[test]
 fn zencodec_decode_returns_icc_rec2020() {
     let data = read_or_skip(REC2020_PATH);
-    if data.is_empty() { return; }
+    if data.is_empty() {
+        return;
+    }
 
     let config = zenjpeg::JpegDecoderConfig::new();
     let output = config.decode(&data).expect("decode failed");
@@ -210,7 +247,10 @@ fn extract_icc_synthetic_single_chunk() {
     let jpeg = build_jpeg_with_icc(&icc_payload);
 
     let result = extract_icc_profile(&jpeg);
-    assert!(result.is_some(), "extract_icc_profile returned None for synthetic JPEG");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for synthetic JPEG"
+    );
     let extracted = result.unwrap();
     assert_eq!(extracted.len(), icc_payload.len());
     assert_eq!(extracted, icc_payload);
@@ -253,7 +293,10 @@ fn extract_icc_synthetic_multi_chunk() {
     let jpeg = build_jpeg_with_multi_chunk_icc(&icc_payload, 2200);
 
     let result = extract_icc_profile(&jpeg);
-    assert!(result.is_some(), "extract_icc_profile returned None for multi-chunk ICC");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile returned None for multi-chunk ICC"
+    );
     let extracted = result.unwrap();
     assert_eq!(extracted.len(), icc_payload.len());
     assert_eq!(extracted, icc_payload);
@@ -294,6 +337,9 @@ fn extract_icc_with_interleaved_app1() {
     jpeg.extend_from_slice(&[0xFF, 0xD9]);
 
     let result = extract_icc_profile(&jpeg);
-    assert!(result.is_some(), "extract_icc_profile failed with APP1 before APP2");
+    assert!(
+        result.is_some(),
+        "extract_icc_profile failed with APP1 before APP2"
+    );
     assert_eq!(result.unwrap().len(), icc_payload.len());
 }
