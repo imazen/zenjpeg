@@ -1,6 +1,8 @@
 comparison_outputs/
 reports/
 *.testdata
+# Large test images (load at runtime, skip if missing)
+zenjpeg/tests/testdata/photoshop-444-scrubbed.jpg
 coverage-html/
 worktrees/
 
