@@ -116,9 +116,9 @@ impl JpegEncoderConfig {
 
     /// Create from a named optimization preset.
     ///
-    /// Presets: `"mozjpeg_baseline"`, `"mozjpeg_progressive"`, `"mozjpeg_max"`,
-    /// `"jpegli_baseline"`, `"jpegli_progressive"`, `"hybrid_baseline"`,
-    /// `"hybrid_progressive"`, `"hybrid_max"`.
+    /// Available presets: `"mozjpeg_baseline"`, `"mozjpeg_progressive"`,
+    /// `"mozjpeg_max"`, `"jpegli_baseline"`, `"jpegli_progressive"`,
+    /// `"hybrid_baseline"`, `"hybrid_progressive"`, `"hybrid_max"`.
     ///
     /// Returns `None` for unrecognized preset names.
     #[must_use]
@@ -900,7 +900,10 @@ impl JpegDecoderConfig {
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-        self.clone().job().decoder(Cow::Borrowed(data), &[])?.decode()
+        self.clone()
+            .job()
+            .decoder(Cow::Borrowed(data), &[])?
+            .decode()
     }
 }
 
