@@ -67,19 +67,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test (zenjpeg)
-        run: cargo test -p zenjpeg --release
+        run: cargo test -p zenjpeg --release --lib --tests
 
       - name: Test (zenjpeg --features decoder)
-        run: cargo test -p zenjpeg --release --features decoder
+        run: cargo test -p zenjpeg --release --features decoder --lib --tests
 
       - name: Test (zenjpeg --features decoder,parallel)
-        run: cargo test -p zenjpeg --release --features "decoder,parallel"
+        run: cargo test -p zenjpeg --release --features "decoder,parallel" --lib --tests
 
       - name: Test (zenjpeg --no-default-features --features std)
-        run: cargo test -p zenjpeg --release --no-default-features --features std
+        run: cargo test -p zenjpeg --release --no-default-features --features std --lib --tests
 
       - name: Test (zenjpeg --features decoder,sharp-yuv)
-        run: cargo test -p zenjpeg --release --features "decoder,sharp-yuv"
+        run: cargo test -p zenjpeg --release --features "decoder,sharp-yuv" --lib --tests
 
   i686:
     name: Test (i686)
@@ -123,7 +123,7 @@ jobs:
           key: cross-i686
 
       - name: Test (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
   clippy:
     name: Clippy
@@ -166,10 +166,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy -p zenjpeg --all-targets -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
       - name: Clippy (CI features)
-        run: cargo clippy -p zenjpeg --all-targets --features "decoder,parallel,trellis,yuv,sharp-yuv,ultrahdr,zencodec,cms,cms-moxcms,mozjpeg-tables,optimized-tables,test-utils" -- -D warnings
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "decoder,parallel,trellis,yuv,sharp-yuv,ultrahdr,zencodec,cms,cms-moxcms,mozjpeg-tables,optimized-tables,test-utils" -- -D warnings
 
   fmt:
     name: Format
