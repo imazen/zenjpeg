@@ -49,8 +49,8 @@ jobs:
             -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
-            -e '/^layout = /d' \
-            -e '/^zennode = /d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
