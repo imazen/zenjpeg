@@ -114,6 +114,44 @@ impl JpegEncoderConfig {
         }
     }
 
+    /// Create from a named optimization preset.
+    ///
+    /// Available presets: `"mozjpeg_baseline"`, `"mozjpeg_progressive"`,
+    /// `"mozjpeg_max"`, `"jpegli_baseline"`, `"jpegli_progressive"`,
+    /// `"hybrid_baseline"`, `"hybrid_progressive"`, `"hybrid_max"`.
+    ///
+    /// Returns `None` for unrecognized preset names.
+    #[must_use]
+    pub fn from_preset(preset_name: &str, quality: f32) -> Option<Self> {
+        use crate::encode::encoder_types::OptimizationPreset;
+        use crate::encode::search::ExpertConfig;
+
+        let preset = match preset_name {
+            "mozjpeg_baseline" => OptimizationPreset::MozjpegBaseline,
+            "mozjpeg_progressive" => OptimizationPreset::MozjpegProgressive,
+            "mozjpeg_max" => OptimizationPreset::MozjpegMaxCompression,
+            "jpegli_baseline" => OptimizationPreset::JpegliBaseline,
+            "jpegli_progressive" => OptimizationPreset::JpegliProgressive,
+            "hybrid_baseline" => OptimizationPreset::HybridBaseline,
+            "hybrid_progressive" => OptimizationPreset::HybridProgressive,
+            "hybrid_max" => OptimizationPreset::HybridMaxCompression,
+            _ => return None,
+        };
+
+        let expert = ExpertConfig::from_preset(preset, quality);
+        let color_mode = crate::encode::encoder_types::ColorMode::YCbCr {
+            subsampling: ChromaSubsampling::Quarter,
+        };
+        let inner = expert.to_encoder_config(color_mode);
+
+        Some(Self {
+            inner,
+            quality,
+            effort: 1,
+            generic_quality_input: None,
+        })
+    }
+
     /// Enable progressive JPEG encoding.
     #[must_use]
     pub fn with_progressive(mut self, enable: bool) -> Self {
@@ -862,7 +900,10 @@ impl JpegDecoderConfig {
     /// Convenience: decode image with this config.
     pub fn decode(&self, data: &[u8]) -> Result<DecodeOutput, Error> {
         use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-        self.clone().job().decoder(Cow::Borrowed(data), &[])?.decode()
+        self.clone()
+            .job()
+            .decoder(Cow::Borrowed(data), &[])?
+            .decode()
     }
 }
 

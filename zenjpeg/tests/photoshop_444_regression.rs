@@ -50,7 +50,9 @@ fn decode_reference(data: &[u8]) -> (Vec<u8>, u16, u16) {
 /// Decode with zenjpeg buffered mode (the default decode() path).
 fn decode_zenjpeg_buffered(data: &[u8]) -> (Vec<u8>, u32, u32) {
     let decoder = zenjpeg::decoder::Decoder::new();
-    let result = decoder.decode(data, Unstoppable).expect("zenjpeg decode failed");
+    let result = decoder
+        .decode(data, Unstoppable)
+        .expect("zenjpeg decode failed");
     let w = result.width;
     let h = result.height;
     (result.into_pixels_u8().unwrap(), w, h)
@@ -66,9 +68,7 @@ fn decode_zenjpeg_scanline(data: &[u8]) -> (Vec<u8>, u32, u32) {
     let stride = w as usize * 3;
     let mut pixels = vec![0u8; stride * h as usize];
     let out = imgref::ImgRefMut::new(&mut pixels, stride, h as usize);
-    reader
-        .read_rows_rgb8(out)
-        .expect("read_rows_rgb8 failed");
+    reader.read_rows_rgb8(out).expect("read_rows_rgb8 failed");
     (pixels, w, h)
 }
 
@@ -125,11 +125,7 @@ fn photoshop_444_scanline_vs_reference() {
     let (ref_pixels, rw, rh) = decode_reference(&data);
     let (zen_pixels, zw, zh) = decode_zenjpeg_scanline(&data);
 
-    assert_eq!(
-        (rw as u32, rh as u32),
-        (zw, zh),
-        "dimension mismatch"
-    );
+    assert_eq!((rw as u32, rh as u32), (zw, zh), "dimension mismatch");
 
     let (max_diff, mean_diff) = pixel_diff_stats(&ref_pixels, &zen_pixels);
     eprintln!("scanline vs jpeg-decoder: max={max_diff} mean={mean_diff:.2}");
@@ -175,11 +171,7 @@ fn photoshop_444_zune_vs_reference() {
     let (ref_pixels, rw, rh) = decode_reference(&data);
     let (zune_pixels, zw, zh) = decode_zune(&data);
 
-    assert_eq!(
-        (rw, rh),
-        (zw, zh),
-        "dimension mismatch"
-    );
+    assert_eq!((rw, rh), (zw, zh), "dimension mismatch");
 
     let (max_diff, mean_diff) = pixel_diff_stats(&ref_pixels, &zune_pixels);
     eprintln!("zune vs jpeg-decoder: max={max_diff} mean={mean_diff:.2}");
