@@ -282,6 +282,18 @@ name = "knobs_vs_jpegli"
 required-features = ["trellis", "decoder"]
 
 [[example]]
+name = "mozjpeg_parity_regress"
+required-features = ["trellis", "decoder"]
+
+[[example]]
+name = "mozjpeg_parity_tuning"
+required-features = ["trellis", "decoder"]
+
+[[example]]
+name = "mozjpeg_quality_vs_original"
+required-features = ["trellis", "decoder"]
+
+[[example]]
 name = "ssim2_pareto_sweep"
 required-features = ["trellis"]
 

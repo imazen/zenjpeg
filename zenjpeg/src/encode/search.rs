@@ -446,9 +446,10 @@ impl ExpertConfig {
         // Determine base tables and zero-bias endpoints
         let (tables, zero_bias_hq, zero_bias_lq) = match preset {
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
-                let q_internal = quality.to_internal();
+                // Use for_mozjpeg_tables() to preserve the original mozjpeg quality.
+                // to_internal() remaps for jpegli's distance system, producing wrong tables.
                 let mozjpeg_tables = super::tables::robidoux::generate_mozjpeg_default_tables(
-                    q_internal as u8,
+                    quality.for_mozjpeg_tables(),
                     false,
                 );
                 // Mozjpeg uses neutral zero-bias (mul=0, offset=0.5), so

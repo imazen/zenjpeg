@@ -60,6 +60,23 @@ impl Quality {
         }
     }
 
+    /// Quality value for mozjpeg's Robidoux table scaling formula.
+    ///
+    /// For `ApproxMozjpeg(q)`, returns `q` unchanged — the user specified a
+    /// mozjpeg quality and expects tables matching `jpeg_set_quality(q)` with
+    /// Robidoux base tables.
+    ///
+    /// For other variants, falls back to `to_internal()` as a best-effort
+    /// mapping. This is imprecise (jpegli and mozjpeg quality scales differ
+    /// substantially) but there's no lossless conversion between them.
+    #[must_use]
+    pub fn for_mozjpeg_tables(&self) -> u8 {
+        match self {
+            Quality::ApproxMozjpeg(q) => *q,
+            _ => self.to_internal().round().clamp(1.0, 100.0) as u8,
+        }
+    }
+
     /// Convert to butteraugli distance.
     ///
     /// Uses the exact same formula as C++ jpegli's `jpegli_quality_to_distance`.
