@@ -58,14 +58,14 @@ fn decode_mozjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
         jpeg_start_decompress(&mut cinfo);
 
-        let width = cinfo.output_width as u32;
-        let height = cinfo.output_height as u32;
+        let width = cinfo.output_width;
+        let height = cinfo.output_height;
         let components = cinfo.output_components as usize;
         let row_stride = width as usize * components;
 
         let mut output = vec![0u8; height as usize * row_stride];
 
-        while (cinfo.output_scanline as u32) < height {
+        while cinfo.output_scanline < height {
             let offset = cinfo.output_scanline as usize * row_stride;
             let mut row_ptr = output[offset..].as_mut_ptr();
             jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
