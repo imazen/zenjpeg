@@ -49,7 +49,7 @@ fn decode_mozjpeg_impl(data: &[u8], fancy: bool) -> (u32, u32, Vec<u8>) {
         let h = ci.output_height;
         let stride = w as usize * ci.output_components as usize;
         let mut out = vec![0u8; h as usize * stride];
-        while (ci.output_scanline as u32) < h {
+        while ci.output_scanline < h {
             let off = ci.output_scanline as usize * stride;
             let mut p = out[off..].as_mut_ptr();
             jpeg_read_scanlines(&mut ci, &mut p, 1);
