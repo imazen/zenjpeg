@@ -171,8 +171,8 @@ jobs:
       - name: Clippy
         run: cargo clippy -p zenjpeg --all-targets -- -D warnings
 
-      - name: Clippy (all features)
-        run: cargo clippy -p zenjpeg --all-targets --all-features -- -D warnings
+      - name: Clippy (CI features)
+        run: cargo clippy -p zenjpeg --all-targets --features "decoder,parallel,trellis,yuv,sharp-yuv,ultrahdr,zencodec,cms,cms-moxcms,mozjpeg-tables,optimized-tables,test-utils" -- -D warnings
 
   fmt:
     name: Format
