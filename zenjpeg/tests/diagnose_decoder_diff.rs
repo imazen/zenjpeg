@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! Diagnose the root cause of zenjpeg vs reference decoder pixel differences.
 //!
 //! KEY FINDING: decode_to_ycbcr_f32 (coefficient path) has max diff = 1 vs mozjpeg

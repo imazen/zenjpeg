@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! Tests for grayscale JPEG decoding with both streaming and non-streaming interfaces.
 //!
 //! This tests the decoder with:

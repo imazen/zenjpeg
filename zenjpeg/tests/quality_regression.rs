@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! Quality regression tests using zensim-regress with real photographic images.
 //!
 //! Uses codec-corpus (gb82, CID22) for test images. Never uses synthetic images

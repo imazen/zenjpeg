@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! Verify arithmetic decoder produces identical coefficients to Huffman transcode.
 use enough::Unstoppable;
 

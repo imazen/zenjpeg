@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! Edge-specific SSIMULACRA2 comparison: Rust vs C++ jpegli
 //!
 //! Isolates edge handling quality by:

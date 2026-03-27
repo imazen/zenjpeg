@@ -1,3 +1,4 @@
+#![cfg(feature = "ffi-tests")]
 //! AC Refinement Scan C++ Comparison Test
 //!
 //! This test compares Rust AC refinement tokenization against C++ jpegli output.
