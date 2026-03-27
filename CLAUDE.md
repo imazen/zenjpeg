@@ -794,6 +794,27 @@ Memory bandwidth reduction per block:
 
 ## Investigation Notes
 
+**Mozjpeg Parity Investigation (2026-03-26, commit 1aba86cf):**
+
+`Quality::ApproxMozjpeg(q)` + `MozjpegRobidoux` tables had a double-conversion bug:
+`to_internal()` remapped mozjpeg Q85→jpegli Q83, then that remapped value fed the
+Robidoux table generator. Fix: `Quality::for_mozjpeg_tables()` returns original `q`
+unchanged for `ApproxMozjpeg`, falls back to `to_internal()` for other variants.
+
+After fix, measured on 25 gb82 images at Q50-Q98 (MozjpegProgressive preset, 4:2:0):
+- **Size**: zen/moz ratio 0.99-1.01x (was 0.90-0.95x before fix)
+- **Zensim vs mozjpeg decoded**: 84-93 mean (was 75-91, +5 pts from table fix)
+- **Zensim vs original**: zen +0.01 to +0.66 better than mozjpeg (f32 DCT wins)
+- **Wins/ties/losses**: 110/66/24 out of 200 comparisons (zen wins 55%)
+- Integer DCT is NOT needed — f32 produces measurably better quality at same size
+
+Remaining zen-vs-moz gap (zensim 84-93 instead of 100) is the f32 vs 13-bit fixed-point
+DCT constant divergence. The integer constants differ by 10-160 ppm from f32, producing
+systematically different coefficients — NOT just precision loss. Color conversion contributes
+negligibly (only 0.06% of all RGB values differ by ±1 between f32 FMA and 16-bit fixed-point).
+
+Examples: `mozjpeg_parity_regress`, `mozjpeg_parity_tuning`, `mozjpeg_quality_vs_original`.
+
 **DCT Coefficient Parity (VERIFIED):** Coefficient differences are normal +/-1 rounding from
 SIMD float precision, not systematic bugs. AQ maps are 100% identical between Rust and C++
 when using matching quant tables (`jpegli_set_distance()`). Remaining ~0.2% size difference
@@ -830,7 +851,11 @@ sensitivity tables, and preset baselines.
    At Q50, 2 of 3 quant tables exceed 255, requiring 16-bit DQT entries (+128 bytes).
    Scan data is identical — only DQT marker overhead changed. Hashes updated.
 
-4. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
+4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)** - `baseline_xyb_opt Q50`
+   size mismatch (292993 vs 288338). Confirmed pre-existing on branch before any changes.
+   Not related to mozjpeg table fix (XYB uses jpegli tables, not MozjpegRobidoux).
+
+5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
    always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
    Both documented in config doc comments. Low priority — parameters have no effect.
 
