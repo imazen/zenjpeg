@@ -9,7 +9,7 @@
 //! cargo test --release -p zenjpeg --test dequant_bias_comparison --features decoder -- --nocapture --ignored
 //! ```
 
-#[cfg(feature = "decoder")]
+#[cfg(all(feature = "decoder", feature = "ffi-tests"))]
 mod comparison {
     use enough::Unstoppable;
     use fast_ssim2::compute_ssimulacra2;
