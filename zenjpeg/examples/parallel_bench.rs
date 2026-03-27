@@ -70,7 +70,7 @@ fn benchmark_dct(width: usize, height: usize) -> BenchResult {
 
     // Warm up
     let mut warmup_output = Vec::new();
-    parallel_dct_y_blocks(&strip, blocks_w, blocks_h, padded_width, &mut warmup_output);
+    parallel_dct_y_blocks(&strip, blocks_w, blocks_h, padded_width, None, &mut warmup_output);
     drop(warmup_output);
 
     // Benchmark sequential
@@ -95,7 +95,7 @@ fn benchmark_dct(width: usize, height: usize) -> BenchResult {
     let par_start = Instant::now();
     for _ in 0..iterations {
         let mut output = Vec::new();
-        parallel_dct_y_blocks(&strip, blocks_w, blocks_h, padded_width, &mut output);
+        parallel_dct_y_blocks(&strip, blocks_w, blocks_h, padded_width, None, &mut output);
         std::hint::black_box(&output);
     }
     let par_elapsed = par_start.elapsed();

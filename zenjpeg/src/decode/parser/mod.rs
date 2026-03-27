@@ -833,7 +833,10 @@ impl<'a> JpegParser<'a> {
             (
                 // Prefer extras ICC (from preserved APP2 segments), fall back to
                 // parser's direct extraction if extras didn't capture it.
-                extras.icc_profile().map(|p| p.to_vec()).or_else(|| self.icc_profile.clone()),
+                extras
+                    .icc_profile()
+                    .map(|p| p.to_vec())
+                    .or_else(|| self.icc_profile.clone()),
                 extras.exif().map(|e| e.to_vec()),
                 extras.xmp().map(|x| x.to_string()),
                 extras.jfif(),
