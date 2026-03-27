@@ -70,7 +70,14 @@ fn benchmark_dct(width: usize, height: usize) -> BenchResult {
 
     // Warm up
     let mut warmup_output = Vec::new();
-    parallel_dct_y_blocks(&strip, blocks_w, blocks_h, padded_width, None, &mut warmup_output);
+    parallel_dct_y_blocks(
+        &strip,
+        blocks_w,
+        blocks_h,
+        padded_width,
+        None,
+        &mut warmup_output,
+    );
     drop(warmup_output);
 
     // Benchmark sequential
