@@ -22,7 +22,7 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 
 /// Decode JPEG data using C++ jpegli FFI (libjpeg-compatible API).
 /// Returns RGB pixel data.
-#[cfg(feature = "decoder")]
+#[cfg(all(feature = "decoder", feature = "ffi-tests"))]
 unsafe fn decode_with_cjpegli(data: &[u8]) -> Vec<u8> {
     unsafe {
         use jpegli_internals_sys::*;
@@ -247,7 +247,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli baseline
-        #[cfg(feature = "decoder")]
+        #[cfg(all(feature = "decoder", feature = "ffi-tests"))]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-baseline", format!("{}x{}", width, height)),
             &jpeg_baseline,
@@ -310,7 +310,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli progressive
-        #[cfg(feature = "decoder")]
+        #[cfg(all(feature = "decoder", feature = "ffi-tests"))]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-progressive", format!("{}x{}", width, height)),
             &jpeg_progressive,
@@ -488,7 +488,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
         );
 
         // C++ jpegli 4:4:4
-        #[cfg(feature = "decoder")]
+        #[cfg(all(feature = "decoder", feature = "ffi-tests"))]
         group.bench_with_input(
             BenchmarkId::new("cjpegli-baseline-444", format!("{}x{}", width, height)),
             &jpeg_444,
