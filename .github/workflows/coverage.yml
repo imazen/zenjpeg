@@ -28,8 +28,6 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - uses: Swatinem/rust-cache@v2
-
       - name: Clone sibling repos
         shell: bash
         run: |
@@ -39,15 +37,23 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
-      - name: Remove non-CI workspace members and deps
+      - name: Strip non-CI workspace members and deps
         shell: bash
         run: |
-          sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/^layout = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Generate coverage (lib + integration tests)
         run: |
@@ -91,8 +97,6 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - uses: Swatinem/rust-cache@v2
-
       - name: Clone sibling repos
         shell: bash
         run: |
@@ -102,15 +106,23 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
 
-      - name: Remove non-CI workspace members and deps
+      - name: Strip non-CI workspace members and deps
         shell: bash
         run: |
-          sed -e '/"internal\/jpegli-internals-sys"/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/ultrahdr-rs.*workspace/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/^layout = /d' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run codec coverage tests
         run: |

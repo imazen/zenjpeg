@@ -19,9 +19,39 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/ultrahdr.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/ultrahdr-rs.*workspace/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/^layout = /d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Verify version matches tag
@@ -35,7 +65,7 @@ jobs:
           fi
 
       - name: Run tests
-        run: cargo test -p zenjpeg --all-features
+        run: cargo test -p zenjpeg --all-features --release
 
       - name: Build docs
         run: cargo doc -p zenjpeg --all-features --no-deps
@@ -43,6 +73,12 @@ jobs:
       - name: Publish (dry run)
         if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'
         run: cargo publish -p zenjpeg --dry-run
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
+        run: gh release create ${{ github.ref_name }} --title "${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
