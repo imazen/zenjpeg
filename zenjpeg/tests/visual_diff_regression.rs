@@ -190,7 +190,7 @@ fn make_noise_patches_image(width: usize, height: usize) -> Vec<u8> {
             let b = (((x + y) * 128) / (width + height).max(1)) as u8;
             // Add pseudo-noise from hash mixing
             let hash = (x.wrapping_mul(2654435761) ^ y.wrapping_mul(2246822519)) as u32;
-            let noise_r = ((hash >> 0) & 0x1F) as u8; // 0..31
+            let noise_r = (hash & 0x1F) as u8; // 0..31
             let noise_g = ((hash >> 5) & 0x1F) as u8;
             let noise_b = ((hash >> 10) & 0x1F) as u8;
             data[idx] = r.saturating_add(noise_r);

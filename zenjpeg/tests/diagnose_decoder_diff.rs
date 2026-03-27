@@ -532,7 +532,7 @@ fn compare_streaming_vs_coefficient_ycbcr() {
 #[test]
 #[ignore = "requires corpus"]
 fn compare_streaming_rgb_vs_manual_scalar_rgb() {
-    use imgref::ImgRefMut;
+    
 
     let path = zenjpeg_bench_utils::corpus_builder_dir()
         .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
@@ -671,7 +671,7 @@ fn compare_streaming_rgb_vs_manual_scalar_rgb() {
 #[test]
 #[ignore = "requires corpus"]
 fn test_simd_color_conversion_in_isolation() {
-    use imgref::ImgRefMut;
+    
     use zenjpeg::color::ycbcr::ycbcr_planes_i16_to_rgb_u8;
 
     let path = zenjpeg_bench_utils::corpus_builder_dir()

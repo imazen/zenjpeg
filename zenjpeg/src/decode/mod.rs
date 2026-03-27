@@ -2749,8 +2749,8 @@ mod limits_tests {
         let mut first_scan_end = None;
         let mut i = 0;
         while i < jpeg.len() - 1 {
-            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA {
-                if first_sos.is_none() {
+            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA
+                && first_sos.is_none() {
                     first_sos = Some(i);
                     // Skip past the SOS marker and scan the entropy data
                     // to find the next marker (0xFF followed by non-0x00).
@@ -2770,7 +2770,6 @@ mod limits_tests {
                     }
                     break;
                 }
-            }
             i += 1;
         }
 

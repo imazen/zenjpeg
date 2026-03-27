@@ -83,12 +83,12 @@ fn test_encode_decode_roundtrip() {
         .expect("Should have metadata")
         .expect("Metadata parsing should succeed");
 
-    // Verify metadata has reasonable values (max_content_boost is [f32; 3] per channel)
+    // Verify metadata has reasonable values (gain_map_max is log2 [f64; 3] per channel)
     assert!(
-        metadata.max_content_boost[0] > 1.0
-            || metadata.max_content_boost[1] > 1.0
-            || metadata.max_content_boost[2] > 1.0,
-        "HDR should have max_content_boost > 1.0 in at least one channel"
+        metadata.gain_map_max[0] > 0.0
+            || metadata.gain_map_max[1] > 0.0
+            || metadata.gain_map_max[2] > 0.0,
+        "HDR should have gain_map_max > 0.0 (log2 boost > 1.0) in at least one channel"
     );
 
     // Decode gain map

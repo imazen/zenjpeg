@@ -476,8 +476,7 @@ mod full_encode {
             .tables(tables)
             .progressive(progressive)
             .separate_chroma_tables(false) // mozjpeg uses shared Cb/Cr table
-            .allow_16bit_quant_tables(false) // match mozjpeg baseline clamping
-            .expect("ycbcr supports baseline");
+            .allow_16bit_quant_tables(false); // match mozjpeg baseline clamping
         if let Some(t) = trellis {
             config = config.trellis(t);
         }

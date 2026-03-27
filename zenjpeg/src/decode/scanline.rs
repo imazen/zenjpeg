@@ -3945,7 +3945,7 @@ mod tests {
         let jpeg = encode_rgb(width, height, &pixels, 95.0);
         let (cx, cy, cw, ch) = (10u32, 10u32, 20u32, 20u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
             let mut reader = DecodeConfig::new()
@@ -3993,7 +3993,7 @@ mod tests {
         );
         let (cx, cy, cw, ch) = (8u32, 16u32, 32u32, 24u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
             let mut reader = DecodeConfig::new()
@@ -4034,7 +4034,7 @@ mod tests {
         }
         let jpeg = encode_rgb(width, height, &pixels, 95.0);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let result = DecodeConfig::new()
                 .crop(CropRegion::percent(0.25, 0.25, 0.5, 0.5))
                 .decode(&jpeg, enough::Unstoppable)
@@ -4064,7 +4064,7 @@ mod tests {
         }
         let jpeg = encode_rgb(width, height, &pixels, 90.0);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let full = DecodeConfig::new()
                 .decode(&jpeg, enough::Unstoppable)
                 .unwrap();
@@ -4139,7 +4139,7 @@ mod tests {
         let jpeg = enc.finish().unwrap();
         let (cx, cy, cw, ch) = (8u32, 8u32, 32u32, 32u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let reference = full_decode_and_crop(&jpeg, cx, cy, cw, ch);
 
             // decode() path
@@ -4194,7 +4194,7 @@ mod tests {
         let jpeg = encode_grayscale(width, height, &pixels, 95.0);
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let full = DecodeConfig::new()
                 .decode(&jpeg, enough::Unstoppable)
                 .unwrap();
@@ -4240,7 +4240,7 @@ mod tests {
         let jpeg = encode_grayscale(width, height, &pixels, 95.0);
         let (cx, cy, cw, ch) = (4u32, 4u32, 24u32, 24u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             // Full scanline decode + manual crop
             let mut full_reader = DecodeConfig::new().scanline_reader(&jpeg).unwrap();
             let fw = full_reader.width() as usize;
@@ -4342,7 +4342,7 @@ mod tests {
         // Non-MCU-aligned crop: (5, 7, 37, 29)
         let (cx, cy, cw, ch) = (5u32, 7u32, 37u32, 29u32);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let reference = full_scanline_and_crop(&jpeg, cx, cy, cw, ch);
 
             let mut reader = DecodeConfig::new()

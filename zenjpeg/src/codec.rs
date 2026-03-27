@@ -2035,7 +2035,6 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn decode_roundtrip() {
-        use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
         let enc = JpegEncoderConfig::new().with_calibrated_quality(95.0);
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
@@ -2090,7 +2089,7 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn probe_info() {
-        use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+        
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels.as_slice(), 10, 10);
@@ -2211,7 +2210,8 @@ mod tests {
 
         // Now decode with Cow::Owned — the key test
         let owned_data = encoded.data().to_vec();
-        let mut owned_stream = dec
+        let dec2 = JpegDecoderConfig::new();
+        let mut owned_stream = dec2
             .job()
             .streaming_decoder(Cow::Owned(owned_data), &[PixelDescriptor::RGB8_SRGB])
             .unwrap();
@@ -2392,7 +2392,6 @@ mod tests {
 
     #[test]
     fn encoder_trait_dyn_encoder() {
-        use zencodec::encode::DynEncoder as _;
         let pixels: Vec<Rgb<u8>> = vec![
             Rgb {
                 r: 100,

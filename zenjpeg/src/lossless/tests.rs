@@ -612,7 +612,7 @@ mod pipeline_tests {
         // the same pixels (modulo Huffman table differences)
         let jpeg = create_test_jpeg(64, 64);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let result = transform(
                 &jpeg,
                 &TransformConfig {
@@ -702,7 +702,7 @@ mod pipeline_tests {
 
         let jpeg = create_test_jpeg(64, 64);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let rot90_1 = transform(
                 &jpeg,
                 &TransformConfig {
@@ -1621,7 +1621,7 @@ fn test_decode_auto_orient_noop() {
     enc.push_packed(&pixels, Unstoppable).unwrap();
     let jpeg = enc.finish().unwrap();
 
-    for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+    let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let with_orient = DecodeConfig::new()
             .auto_orient(true)
             .decode(&jpeg, Unstoppable)
@@ -1657,7 +1657,7 @@ fn test_decode_no_exif_auto_orient() {
     enc.push_packed(&pixels, Unstoppable).unwrap();
     let jpeg = enc.finish().unwrap();
 
-    for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+    let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let with_orient = DecodeConfig::new()
             .auto_orient(true)
             .decode(&jpeg, Unstoppable)

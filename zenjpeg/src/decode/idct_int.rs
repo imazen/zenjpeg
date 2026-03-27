@@ -1815,8 +1815,8 @@ mod tests {
             for _trial in 0..200 {
                 // Generate random coefficient block scaled to magnitude
                 let coeffs: [i32; 64] = core::array::from_fn(|_| {
-                    let raw = next() % (2 * mag + 1) - mag;
-                    raw
+                    
+                    next() % (2 * mag + 1) - mag
                 });
 
                 // f64 reference (textbook precision)

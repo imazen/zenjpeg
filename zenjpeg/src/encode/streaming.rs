@@ -1535,7 +1535,7 @@ mod tests {
             .map(|i| ((i * 17) % 256) as u8)
             .collect();
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             // Encode with one-shot method
             let oneshot_result = StreamingEncoder::new(width, height)
                 .quality(Quality::ApproxJpegli(85.0))
@@ -1901,7 +1901,7 @@ mod tests {
         let height = 64;
         let data = make_test_image(width, height);
 
-        for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
             // Path 1: encode() convenience
