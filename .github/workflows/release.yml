@@ -51,6 +51,7 @@ jobs:
             -e '/zennode.*path/d' \
             -e '/^layout = /d' \
             -e '/^zennode = /d' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
