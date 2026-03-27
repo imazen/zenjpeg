@@ -56,7 +56,6 @@ jobs:
           # Remove non-CI deps from zenjpeg
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
             -e 's/^layout = .*/layout = []/' \
@@ -111,7 +110,6 @@ jobs:
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
             -e 's/^layout = .*/layout = []/' \
@@ -157,7 +155,6 @@ jobs:
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
             -e 's/^layout = .*/layout = []/' \
@@ -242,7 +239,6 @@ jobs:
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
             -e 's/^layout = .*/layout = []/' \
@@ -285,7 +281,6 @@ jobs:
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
-            -e '/ultrahdr-rs.*workspace/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
             -e 's/^layout = .*/layout = []/' \
