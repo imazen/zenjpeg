@@ -319,33 +319,39 @@ pub fn neon_forward_dct_8x8(token: NeonToken, input: &[f32; 64], output: &mut [f
 mod tests {
     use super::*;
 
+    /// Helper: run transpose test inside #[arcane] so NEON intrinsics are safe.
+    #[arcane]
+    fn transpose_4x4_test_inner(_token: NeonToken) {
+        let input = [
+            safe_simd::vld1q_f32(&[0.0, 1.0, 2.0, 3.0]),
+            safe_simd::vld1q_f32(&[4.0, 5.0, 6.0, 7.0]),
+            safe_simd::vld1q_f32(&[8.0, 9.0, 10.0, 11.0]),
+            safe_simd::vld1q_f32(&[12.0, 13.0, 14.0, 15.0]),
+        ];
+
+        let mut r = input;
+        neon_transpose_4x4_inplace(_token, &mut r);
+
+        let mut col0 = [0.0f32; 4];
+        let mut col1 = [0.0f32; 4];
+        let mut col2 = [0.0f32; 4];
+        let mut col3 = [0.0f32; 4];
+
+        safe_simd::vst1q_f32((&mut col0[0..4]).try_into().unwrap(), r[0]);
+        safe_simd::vst1q_f32((&mut col1[0..4]).try_into().unwrap(), r[1]);
+        safe_simd::vst1q_f32((&mut col2[0..4]).try_into().unwrap(), r[2]);
+        safe_simd::vst1q_f32((&mut col3[0..4]).try_into().unwrap(), r[3]);
+
+        assert_eq!(col0, [0.0, 4.0, 8.0, 12.0]);
+        assert_eq!(col1, [1.0, 5.0, 9.0, 13.0]);
+        assert_eq!(col2, [2.0, 6.0, 10.0, 14.0]);
+        assert_eq!(col3, [3.0, 7.0, 11.0, 15.0]);
+    }
+
     #[test]
     fn test_neon_transpose_4x4() {
         if let Some(token) = NeonToken::summon() {
-            let input = [
-                safe_simd::vld1q_f32(&[0.0, 1.0, 2.0, 3.0]),
-                safe_simd::vld1q_f32(&[4.0, 5.0, 6.0, 7.0]),
-                safe_simd::vld1q_f32(&[8.0, 9.0, 10.0, 11.0]),
-                safe_simd::vld1q_f32(&[12.0, 13.0, 14.0, 15.0]),
-            ];
-
-            let mut r = input;
-            neon_transpose_4x4_inplace(token, &mut r);
-
-            let mut col0 = [0.0f32; 4];
-            let mut col1 = [0.0f32; 4];
-            let mut col2 = [0.0f32; 4];
-            let mut col3 = [0.0f32; 4];
-
-            safe_simd::vst1q_f32((&mut col0[0..4]).try_into().unwrap(), r[0]);
-            safe_simd::vst1q_f32((&mut col1[0..4]).try_into().unwrap(), r[1]);
-            safe_simd::vst1q_f32((&mut col2[0..4]).try_into().unwrap(), r[2]);
-            safe_simd::vst1q_f32((&mut col3[0..4]).try_into().unwrap(), r[3]);
-
-            assert_eq!(col0, [0.0, 4.0, 8.0, 12.0]);
-            assert_eq!(col1, [1.0, 5.0, 9.0, 13.0]);
-            assert_eq!(col2, [2.0, 6.0, 10.0, 14.0]);
-            assert_eq!(col3, [3.0, 7.0, 11.0, 15.0]);
+            transpose_4x4_test_inner(token);
         }
     }
 
