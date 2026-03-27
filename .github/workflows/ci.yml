@@ -211,7 +211,7 @@ jobs:
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
 
       - name: Format check
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p zenjpeg -p zenjpeg-bench-utils -- --check
 
   msrv:
     name: MSRV

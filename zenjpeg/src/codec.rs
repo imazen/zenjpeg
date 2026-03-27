@@ -2089,7 +2089,6 @@ mod tests {
     #[cfg(feature = "decoder")]
     #[test]
     fn probe_info() {
-        
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 0, g: 0, b: 0 }; 100];
         let img = Img::new(pixels.as_slice(), 10, 10);

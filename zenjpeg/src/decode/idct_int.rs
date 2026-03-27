@@ -1814,10 +1814,7 @@ mod tests {
         for &mag in &magnitudes {
             for _trial in 0..200 {
                 // Generate random coefficient block scaled to magnitude
-                let coeffs: [i32; 64] = core::array::from_fn(|_| {
-                    
-                    next() % (2 * mag + 1) - mag
-                });
+                let coeffs: [i32; 64] = core::array::from_fn(|_| next() % (2 * mag + 1) - mag);
 
                 // f64 reference (textbook precision)
                 let ref_output = reference_idct_f64(&coeffs);

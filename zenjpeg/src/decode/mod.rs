@@ -2749,27 +2749,26 @@ mod limits_tests {
         let mut first_scan_end = None;
         let mut i = 0;
         while i < jpeg.len() - 1 {
-            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA
-                && first_sos.is_none() {
-                    first_sos = Some(i);
-                    // Skip past the SOS marker and scan the entropy data
-                    // to find the next marker (0xFF followed by non-0x00).
-                    let mut j = i + 2;
-                    // Read the SOS segment length
-                    if j + 2 <= jpeg.len() {
-                        let seg_len = ((jpeg[j] as usize) << 8) | (jpeg[j + 1] as usize);
-                        j += seg_len; // Skip past the SOS segment header
-                    }
-                    // Now scan the entropy-coded data
-                    while j < jpeg.len() - 1 {
-                        if jpeg[j] == 0xFF && jpeg[j + 1] != 0x00 {
-                            first_scan_end = Some(j);
-                            break;
-                        }
-                        j += 1;
-                    }
-                    break;
+            if jpeg[i] == 0xFF && jpeg[i + 1] == 0xDA && first_sos.is_none() {
+                first_sos = Some(i);
+                // Skip past the SOS marker and scan the entropy data
+                // to find the next marker (0xFF followed by non-0x00).
+                let mut j = i + 2;
+                // Read the SOS segment length
+                if j + 2 <= jpeg.len() {
+                    let seg_len = ((jpeg[j] as usize) << 8) | (jpeg[j + 1] as usize);
+                    j += seg_len; // Skip past the SOS segment header
                 }
+                // Now scan the entropy-coded data
+                while j < jpeg.len() - 1 {
+                    if jpeg[j] == 0xFF && jpeg[j + 1] != 0x00 {
+                        first_scan_end = Some(j);
+                        break;
+                    }
+                    j += 1;
+                }
+                break;
+            }
             i += 1;
         }
 

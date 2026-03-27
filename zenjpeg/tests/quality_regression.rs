@@ -71,9 +71,10 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 fn get_gb82_dir() -> Option<PathBuf> {
     // Try codec-corpus crate
     if let Ok(corpus) = codec_corpus::Corpus::new()
-        && let Ok(dir) = corpus.get("gb82") {
-            return Some(dir);
-        }
+        && let Ok(dir) = corpus.get("gb82")
+    {
+        return Some(dir);
+    }
     // Fallback to known local path
     let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata");
     // gb82 may not be there, but check common locations
