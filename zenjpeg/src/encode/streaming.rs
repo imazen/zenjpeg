@@ -165,7 +165,9 @@ impl StreamingEncoder {
             } else if builder.quant_source == super::encoder_types::QuantTableSource::MozjpegDefault
             {
                 // Branch 2: Mozjpeg Robidoux tables with quality scaling
-                let quality_u8 = builder.quality.to_internal().round().clamp(1.0, 100.0) as u8;
+                // Use for_mozjpeg_tables() to preserve the original mozjpeg quality.
+                // to_internal() remaps for jpegli's distance system, producing wrong tables.
+                let quality_u8 = builder.quality.for_mozjpeg_tables();
                 let force_baseline = !allow_16bit;
                 let tables = super::tables::robidoux::generate_mozjpeg_default_tables(
                     quality_u8,
