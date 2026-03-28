@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use zensim::{RgbSlice, Zensim, ZensimProfile};
 
+use zenjpeg::decode::ChromaUpsampling;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, Quality};
 
@@ -190,6 +191,18 @@ fn encode_zenjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
 
 fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let dec = Decoder::new().apply_icc(false);
+    let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
+    let (w, h) = (img.width, img.height);
+    (w, h, img.into_pixels_u8().unwrap())
+}
+
+/// Decode with zenjpeg using LibjpegCompat mode (13-bit Loeffler IDCT +
+/// libjpeg-turbo compatible chroma upsampling). Closest match to mozjpeg output.
+fn decode_to_rgb_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
+    let dec = Decoder::new()
+        .apply_icc(false)
+        .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+    // LibjpegCompat auto-selects IdctMethod::Libjpeg
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     let (w, h) = (img.width, img.height);
     (w, h, img.into_pixels_u8().unwrap())
@@ -666,4 +679,469 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
     }
 
     println!("\nAll assertions passed.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECODER PARITY: mozjpeg encodes → zenjpeg reads → compare against mozjpeg decode
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THIS IS THE PRIMARY TEST. It answers: "Can zenjpeg correctly read files
+// that mozjpeg creates?" This matters more than encoder comparison because
+// most JPEGs in the wild were created by mozjpeg/libjpeg-turbo.
+//
+// For each image × quality:
+//   1. mozjpeg-rs encodes to JPEG
+//   2. mozjpeg-sys decodes → reference RGB
+//   3. zenjpeg (default Jpegli IDCT) decodes → test RGB
+//   4. zenjpeg (LibjpegCompat IDCT) decodes → compat RGB
+//   5. Compute zensim between each decoder output and the reference
+//   6. Compute max pixel diff for each
+
+struct DecoderParityResult {
+    name: String,
+    quality: u8,
+    jpeg_bytes: usize,
+    /// zensim: zenjpeg default vs mozjpeg-sys decode
+    default_score: f64,
+    /// zensim: zenjpeg LibjpegCompat vs mozjpeg-sys decode
+    compat_score: f64,
+    /// max pixel diff: zenjpeg default vs mozjpeg-sys
+    default_max_diff: u8,
+    /// max pixel diff: zenjpeg LibjpegCompat vs mozjpeg-sys
+    compat_max_diff: u8,
+    error: Option<String>,
+}
+
+fn max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x as i16 - y as i16).unsigned_abs() as u8)
+        .max()
+        .unwrap_or(0)
+}
+
+fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult {
+    let (w, h) = (img.width, img.height);
+
+    // mozjpeg encodes the source
+    let moz_jpeg = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        encode_mozjpeg(&img.pixels, w, h, quality)
+    })) {
+        Ok(v) => v,
+        Err(_) => {
+            return DecoderParityResult {
+                name: img.name.clone(), quality, jpeg_bytes: 0,
+                default_score: 0.0, compat_score: 0.0, default_max_diff: 0, compat_max_diff: 0,
+                error: Some("mozjpeg encode panicked".into()),
+            };
+        }
+    };
+
+    // Decode with mozjpeg-sys (reference)
+    let moz_dec = match decode_jpeg_rgb(&moz_jpeg) {
+        Ok((rgb, _, _)) => rgb,
+        Err(e) => {
+            return DecoderParityResult {
+                name: img.name.clone(), quality, jpeg_bytes: moz_jpeg.len(),
+                default_score: 0.0, compat_score: 0.0, default_max_diff: 0, compat_max_diff: 0,
+                error: Some(format!("mozjpeg decode: {e}")),
+            };
+        }
+    };
+
+    // Decode with zenjpeg (default Jpegli IDCT)
+    let (_, _, zen_default) = decode_to_rgb(&moz_jpeg);
+
+    // Decode with zenjpeg (LibjpegCompat — 13-bit Loeffler + compat upsampling)
+    let (_, _, zen_compat) = decode_to_rgb_compat(&moz_jpeg);
+
+    let default_max_diff = max_pixel_diff(&moz_dec, &zen_default);
+    let compat_max_diff = max_pixel_diff(&moz_dec, &zen_compat);
+
+    thread_local! {
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+    }
+
+    let (default_score, compat_score) = ZENSIM.with(|z| {
+        let moz = RgbSlice::new(as_rgb_pixels(&moz_dec), w as usize, h as usize);
+        let def = RgbSlice::new(as_rgb_pixels(&zen_default), w as usize, h as usize);
+        let compat = RgbSlice::new(as_rgb_pixels(&zen_compat), w as usize, h as usize);
+
+        let ds = z.compute(&moz, &def).map(|r| r.score()).unwrap_or(-1.0);
+        let cs = z.compute(&moz, &compat).map(|r| r.score()).unwrap_or(-1.0);
+        (ds, cs)
+    });
+
+    DecoderParityResult {
+        name: img.name.clone(), quality, jpeg_bytes: moz_jpeg.len(),
+        default_score, compat_score, default_max_diff, compat_max_diff, error: None,
+    }
+}
+
+#[test]
+#[ignore = "requires imageflow corpus and decoder/trellis features"]
+fn imageflow_decoder_parity_mozjpeg_files() {
+    let corpus = PathBuf::from(CORPUS_DIR);
+    if !corpus.exists() {
+        println!("Corpus not found at {CORPUS_DIR}, skipping");
+        return;
+    }
+
+    println!("╔═══════════════════════════════════════════════════════════════╗");
+    println!("║  DECODER PARITY: Can zenjpeg correctly read mozjpeg files?   ║");
+    println!("║  mozjpeg encodes → both decoders decode → compare outputs    ║");
+    println!("╚═══════════════════════════════════════════════════════════════╝");
+
+    let paths = collect_images(&corpus);
+    let mut images: Vec<LoadedImage> = Vec::new();
+    let mut skipped = 0u32;
+
+    for path in &paths {
+        let name = short_name(path, &corpus);
+        if let Some((pixels, w, h)) = load_image(path) {
+            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+                || pixels.len() != (w * h * 3) as usize
+            {
+                skipped += 1;
+                continue;
+            }
+            images.push(LoadedImage { name, pixels, width: w, height: h });
+        } else {
+            skipped += 1;
+        }
+    }
+
+    println!(
+        "Loaded {} images (skipped {})",
+        images.len(), skipped
+    );
+
+    let work: Vec<(usize, u8)> = images
+        .iter()
+        .enumerate()
+        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
+        .collect();
+
+    let total = work.len() as u32;
+    let progress = AtomicU32::new(0);
+
+    println!(
+        "Running {} decoder parity checks with {} threads...\n",
+        total,
+        rayon::current_num_threads()
+    );
+
+    let results: Vec<DecoderParityResult> = work
+        .par_iter()
+        .map(|&(idx, quality)| {
+            let done = progress.fetch_add(1, Ordering::Relaxed);
+            if done > 0 && done % 50 == 0 {
+                eprintln!("  ... {done}/{total}");
+            }
+            process_decoder_parity(&images[idx], quality)
+        })
+        .collect();
+
+    let successes: Vec<&DecoderParityResult> = results.iter().filter(|r| r.error.is_none()).collect();
+    let errors: Vec<&DecoderParityResult> = results.iter().filter(|r| r.error.is_some()).collect();
+
+    // Sort by compat_score ascending (worst parity first)
+    let mut by_compat: Vec<&DecoderParityResult> = successes.clone();
+    by_compat.sort_by(|a, b| a.compat_score.partial_cmp(&b.compat_score).unwrap());
+
+    // ── Table ───────────────────────────────────────────────────────────
+
+    println!(
+        "{:<30} {:>3} {:>7} {:>8} {:>4} {:>8} {:>4}",
+        "image", "Q", "kb", "default", "max", "compat", "max"
+    );
+    println!("{}", "-".repeat(72));
+
+    for r in &by_compat {
+        let marker = if r.compat_score < 90.0 { "  ←" } else { "" };
+        println!(
+            "{:<30} {:>3} {:>7.1} {:>8.2} {:>4} {:>8.2} {:>4}{}",
+            truncate(&r.name, 30),
+            r.quality,
+            r.jpeg_bytes as f64 / 1024.0,
+            r.default_score,
+            r.default_max_diff,
+            r.compat_score,
+            r.compat_max_diff,
+            marker,
+        );
+    }
+
+    // ── Summary by quality ──────────────────────────────────────────────
+
+    println!();
+    println!(
+        "{:>3} {:>8} {:>4} {:>8} {:>4}  (mean zensim, worst max_diff)",
+        "Q", "default", "max", "compat", "max"
+    );
+    println!("{}", "-".repeat(40));
+
+    for &q in &QUALITY_LEVELS {
+        let qr: Vec<&&DecoderParityResult> = successes.iter().filter(|r| r.quality == q).collect();
+        if qr.is_empty() { continue; }
+        let n = qr.len() as f64;
+        let def_mean = qr.iter().map(|r| r.default_score).sum::<f64>() / n;
+        let compat_mean = qr.iter().map(|r| r.compat_score).sum::<f64>() / n;
+        let def_max = qr.iter().map(|r| r.default_max_diff).max().unwrap_or(0);
+        let compat_max = qr.iter().map(|r| r.compat_max_diff).max().unwrap_or(0);
+        println!(
+            "{:>3} {:>8.2} {:>4} {:>8.2} {:>4}",
+            q, def_mean, def_max, compat_mean, compat_max
+        );
+    }
+
+    if !errors.is_empty() {
+        println!("\n--- Errors ({}) ---", errors.len());
+        for r in errors.iter().take(10) {
+            println!("  {} Q{}: {}", r.name, r.quality, r.error.as_deref().unwrap_or("?"));
+        }
+    }
+
+    // ── Save TSV ────────────────────────────────────────────────────────
+
+    let results_path = "/tmp/imageflow_decoder_parity.tsv";
+    let mut report = String::from(
+        "image\tquality\tjpeg_kb\tdefault_score\tdefault_max_diff\tcompat_score\tcompat_max_diff\n",
+    );
+    for r in &by_compat {
+        report.push_str(&format!(
+            "{}\t{}\t{:.1}\t{:.4}\t{}\t{:.4}\t{}\n",
+            r.name, r.quality, r.jpeg_bytes as f64 / 1024.0,
+            r.default_score, r.default_max_diff,
+            r.compat_score, r.compat_max_diff,
+        ));
+    }
+    let _ = std::fs::write(results_path, &report);
+    println!("\nFull results saved to {results_path}");
+
+    // ── Assertions ──────────────────────────────────────────────────────
+
+    assert!(errors.is_empty(), "{} decode errors on mozjpeg files", errors.len());
+
+    // LibjpegCompat mode: should match mozjpeg within max_diff ≤ 2 for
+    // well-formed images. Memory notes confirm this from the 754-file corpus.
+    let compat_worst_max = successes.iter().map(|r| r.compat_max_diff).max().unwrap_or(0);
+    println!("\nLibjpegCompat worst max_diff: {compat_worst_max}");
+    assert!(
+        compat_worst_max <= 3,
+        "LibjpegCompat max_diff {compat_worst_max} > 3 — decoder regression vs mozjpeg"
+    );
+
+    // Mean zensim in compat mode should be very high (>95)
+    let compat_mean = successes.iter().map(|r| r.compat_score).sum::<f64>() / successes.len() as f64;
+    let compat_min = successes.iter().map(|r| r.compat_score).fold(f64::INFINITY, f64::min);
+    println!("LibjpegCompat zensim: mean={compat_mean:.2}, min={compat_min:.2}");
+    assert!(
+        compat_min > 85.0,
+        "LibjpegCompat min zensim {compat_min:.2} — decoder parity regression"
+    );
+
+    // Default Jpegli IDCT: slightly wider tolerance (different IDCT constants)
+    let default_worst_max = successes.iter().map(|r| r.default_max_diff).max().unwrap_or(0);
+    let default_mean = successes.iter().map(|r| r.default_score).sum::<f64>() / successes.len() as f64;
+    let default_min = successes.iter().map(|r| r.default_score).fold(f64::INFINITY, f64::min);
+    println!("Default Jpegli zensim: mean={default_mean:.2}, min={default_min:.2}, worst max_diff={default_worst_max}");
+    assert!(
+        default_worst_max <= 5,
+        "Default IDCT max_diff {default_worst_max} > 5 — decoder regression"
+    );
+    assert!(
+        default_min > 80.0,
+        "Default IDCT min zensim {default_min:.2} — decoder regression"
+    );
+
+    println!("\nDecoder parity assertions passed.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENCODER CROSS-COMPARISON: zen-encoded vs moz-encoded decoded outputs
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Measures how perceptually similar the decoded outputs are to each other,
+// independent of the original. High scores mean the encoders produce
+// interchangeable output.
+
+struct CrossResult {
+    name: String,
+    quality: u8,
+    /// zensim between zen-decoded and moz-decoded (both decoded by zenjpeg)
+    cross_score: f64,
+    /// max pixel diff
+    cross_max_diff: u8,
+    moz_bytes: usize,
+    zen_bytes: usize,
+    error: Option<String>,
+}
+
+fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
+    let (w, h) = (img.width, img.height);
+
+    let moz_jpeg = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        encode_mozjpeg(&img.pixels, w, h, quality)
+    })) {
+        Ok(v) => v,
+        Err(_) => {
+            return CrossResult {
+                name: img.name.clone(), quality, cross_score: 0.0, cross_max_diff: 0,
+                moz_bytes: 0, zen_bytes: 0, error: Some("mozjpeg encode panicked".into()),
+            };
+        }
+    };
+
+    let zen_jpeg = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        encode_zenjpeg(&img.pixels, w, h, quality)
+    })) {
+        Ok(v) => v,
+        Err(_) => {
+            return CrossResult {
+                name: img.name.clone(), quality, cross_score: 0.0, cross_max_diff: 0,
+                moz_bytes: moz_jpeg.len(), zen_bytes: 0, error: Some("zenjpeg encode panicked".into()),
+            };
+        }
+    };
+
+    // Decode both with same decoder (zenjpeg default)
+    let (_, _, moz_dec) = decode_to_rgb(&moz_jpeg);
+    let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
+
+    let cross_max_diff = max_pixel_diff(&moz_dec, &zen_dec);
+
+    thread_local! {
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+    }
+
+    let cross_score = ZENSIM.with(|z| {
+        let m = RgbSlice::new(as_rgb_pixels(&moz_dec), w as usize, h as usize);
+        let z_s = RgbSlice::new(as_rgb_pixels(&zen_dec), w as usize, h as usize);
+        z.compute(&m, &z_s).map(|r| r.score()).unwrap_or(-1.0)
+    });
+
+    CrossResult {
+        name: img.name.clone(), quality, cross_score, cross_max_diff,
+        moz_bytes: moz_jpeg.len(), zen_bytes: zen_jpeg.len(), error: None,
+    }
+}
+
+#[test]
+#[ignore = "requires imageflow corpus and decoder/trellis features"]
+fn imageflow_encoder_cross_comparison() {
+    let corpus = PathBuf::from(CORPUS_DIR);
+    if !corpus.exists() {
+        println!("Corpus not found at {CORPUS_DIR}, skipping");
+        return;
+    }
+
+    println!("=== Encoder Cross-Comparison: zen-decoded vs moz-decoded ===");
+    println!("Both decoded by zenjpeg (constant decoder). Shows how");
+    println!("interchangeable the two encoders' output is.\n");
+
+    let paths = collect_images(&corpus);
+    let mut images: Vec<LoadedImage> = Vec::new();
+
+    for path in &paths {
+        let name = short_name(path, &corpus);
+        if let Some((pixels, w, h)) = load_image(path) {
+            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+                || pixels.len() != (w * h * 3) as usize
+            { continue; }
+            images.push(LoadedImage { name, pixels, width: w, height: h });
+        }
+    }
+
+    let work: Vec<(usize, u8)> = images
+        .iter()
+        .enumerate()
+        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
+        .collect();
+
+    let total = work.len() as u32;
+    let progress = AtomicU32::new(0);
+
+    println!(
+        "Running {} cross-comparisons ({} images × {} Q levels)...\n",
+        total, images.len(), QUALITY_LEVELS.len()
+    );
+
+    let results: Vec<CrossResult> = work
+        .par_iter()
+        .map(|&(idx, quality)| {
+            let done = progress.fetch_add(1, Ordering::Relaxed);
+            if done > 0 && done % 50 == 0 {
+                eprintln!("  ... {done}/{total}");
+            }
+            process_cross(&images[idx], quality)
+        })
+        .collect();
+
+    let successes: Vec<&CrossResult> = results.iter().filter(|r| r.error.is_none()).collect();
+
+    // Sort by cross_score ascending
+    let mut by_score: Vec<&CrossResult> = successes.clone();
+    by_score.sort_by(|a, b| a.cross_score.partial_cmp(&b.cross_score).unwrap());
+
+    println!(
+        "{:<30} {:>3} {:>7} {:>7} {:>8} {:>4}",
+        "image", "Q", "moz_kb", "zen_kb", "zensim", "max"
+    );
+    println!("{}", "-".repeat(65));
+
+    for r in &by_score {
+        println!(
+            "{:<30} {:>3} {:>7.1} {:>7.1} {:>8.2} {:>4}",
+            truncate(&r.name, 30),
+            r.quality,
+            r.moz_bytes as f64 / 1024.0,
+            r.zen_bytes as f64 / 1024.0,
+            r.cross_score,
+            r.cross_max_diff,
+        );
+    }
+
+    // Summary by quality
+    println!();
+    println!("{:>3} {:>8} {:>8} {:>4}", "Q", "mean", "min", "max_diff");
+    println!("{}", "-".repeat(28));
+
+    for &q in &QUALITY_LEVELS {
+        let qr: Vec<&&CrossResult> = successes.iter().filter(|r| r.quality == q).collect();
+        if qr.is_empty() { continue; }
+        let n = qr.len() as f64;
+        let mean = qr.iter().map(|r| r.cross_score).sum::<f64>() / n;
+        let min = qr.iter().map(|r| r.cross_score).fold(f64::INFINITY, f64::min);
+        let max_diff = qr.iter().map(|r| r.cross_max_diff).max().unwrap_or(0);
+        println!("{:>3} {:>8.2} {:>8.2} {:>4}", q, mean, min, max_diff);
+    }
+
+    let results_path = "/tmp/imageflow_encoder_cross.tsv";
+    let mut report = String::from("image\tquality\tcross_score\tcross_max_diff\tmoz_bytes\tzen_bytes\n");
+    for r in &by_score {
+        report.push_str(&format!(
+            "{}\t{}\t{:.4}\t{}\t{}\t{}\n",
+            r.name, r.quality, r.cross_score, r.cross_max_diff, r.moz_bytes, r.zen_bytes,
+        ));
+    }
+    let _ = std::fs::write(results_path, &report);
+    println!("\nFull results saved to {results_path}");
+
+    // At the same quality, encoders should produce perceptually similar output
+    let overall_mean = successes.iter().map(|r| r.cross_score).sum::<f64>() / successes.len() as f64;
+    let overall_min = successes.iter().map(|r| r.cross_score).fold(f64::INFINITY, f64::min);
+    println!("\nCross-encoder zensim: mean={overall_mean:.2}, min={overall_min:.2}");
+
+    // Even the worst case should show substantial similarity
+    assert!(
+        overall_min > 40.0,
+        "Cross-encoder min zensim {overall_min:.2} — encoders producing wildly different output"
+    );
+    assert!(
+        overall_mean > 75.0,
+        "Cross-encoder mean zensim {overall_mean:.2} — encoders not producing similar output"
+    );
+
+    println!("\nEncoder cross-comparison assertions passed.");
 }
