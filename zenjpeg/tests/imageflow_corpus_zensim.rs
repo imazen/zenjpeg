@@ -1145,3 +1145,315 @@ fn imageflow_encoder_cross_comparison() {
 
     println!("\nEncoder cross-comparison assertions passed.");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIZE-MATCHED QUALITY: at identical file sizes, which encoder wins?
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The Q-parameter comparison (test 3) is slightly unfair because the same Q
+// produces different file sizes from each encoder. This test binary-searches
+// zenjpeg's quality parameter to match mozjpeg's output size within ±2%,
+// then compares quality at matched sizes.
+//
+// For each image × target quality:
+//   1. mozjpeg encodes at Q → target_bytes
+//   2. Binary search zenjpeg Q to produce ≈target_bytes (within ±2%)
+//   3. Decode both with zenjpeg, compute zensim vs original
+//   4. Report delta at matched file size
+
+/// Binary-search zenjpeg quality to match a target file size within ±2%.
+/// Returns (quality_used, jpeg_bytes, jpeg_data) or None if no match found.
+fn encode_zenjpeg_size_match(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    target_bytes: usize,
+) -> Option<(u8, Vec<u8>)> {
+    let tolerance = 0.02; // ±2%
+    let lo_bound = (target_bytes as f64 * (1.0 - tolerance)) as usize;
+    let hi_bound = (target_bytes as f64 * (1.0 + tolerance)) as usize;
+
+    // Quick check: try a few quality levels to find the range
+    let mut lo: u8 = 1;
+    let mut hi: u8 = 100;
+    let mut best: Option<(u8, Vec<u8>)> = None;
+    let mut best_dist: usize = usize::MAX;
+
+    for _ in 0..15 {
+        if lo > hi { break; }
+        let mid = lo + (hi - lo) / 2;
+        let jpeg = encode_zenjpeg(pixels, w, h, mid);
+        let sz = jpeg.len();
+        let dist = sz.abs_diff(target_bytes);
+
+        if dist < best_dist {
+            best_dist = dist;
+            best = Some((mid, jpeg));
+        }
+
+        if sz >= lo_bound && sz <= hi_bound {
+            return best;
+        }
+
+        if sz < target_bytes {
+            lo = mid.saturating_add(1);
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+    }
+
+    // Accept best if within 5% (relaxed for edge cases)
+    let relaxed_lo = (target_bytes as f64 * 0.95) as usize;
+    let relaxed_hi = (target_bytes as f64 * 1.05) as usize;
+    if let Some((_, ref data)) = best {
+        if data.len() >= relaxed_lo && data.len() <= relaxed_hi {
+            return best;
+        }
+    }
+    None
+}
+
+struct SizeMatchResult {
+    name: String,
+    moz_quality: u8,
+    zen_quality: u8,
+    moz_bytes: usize,
+    zen_bytes: usize,
+    size_err_pct: f64,
+    moz_vs_orig: f64,
+    zen_vs_orig: f64,
+    delta: f64,     // zen - moz (positive = zen better at same size)
+    error: Option<String>,
+}
+
+fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
+    let (w, h) = (img.width, img.height);
+
+    let moz_jpeg = encode_mozjpeg(&img.pixels, w, h, moz_quality);
+    let target_bytes = moz_jpeg.len();
+
+    let zen_match = encode_zenjpeg_size_match(&img.pixels, w, h, target_bytes);
+
+    let (zen_quality, zen_jpeg) = match zen_match {
+        Some(v) => v,
+        None => {
+            return SizeMatchResult {
+                name: img.name.clone(), moz_quality, zen_quality: 0,
+                moz_bytes: target_bytes, zen_bytes: 0, size_err_pct: 0.0,
+                moz_vs_orig: 0.0, zen_vs_orig: 0.0, delta: 0.0,
+                error: Some("no size match found".into()),
+            };
+        }
+    };
+
+    let size_err_pct = (zen_jpeg.len() as f64 / target_bytes as f64 - 1.0) * 100.0;
+
+    // Decode both, measure quality vs original
+    let (_, _, moz_dec) = decode_to_rgb(&moz_jpeg);
+    let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
+
+    thread_local! {
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+    }
+
+    let (moz_score, zen_score) = ZENSIM.with(|z| {
+        let orig = RgbSlice::new(as_rgb_pixels(&img.pixels), w as usize, h as usize);
+        let m = RgbSlice::new(as_rgb_pixels(&moz_dec), w as usize, h as usize);
+        let zs = RgbSlice::new(as_rgb_pixels(&zen_dec), w as usize, h as usize);
+        let ms = z.compute(&orig, &m).map(|r| r.score()).unwrap_or(-1.0);
+        let zsc = z.compute(&orig, &zs).map(|r| r.score()).unwrap_or(-1.0);
+        (ms, zsc)
+    });
+
+    SizeMatchResult {
+        name: img.name.clone(), moz_quality, zen_quality,
+        moz_bytes: target_bytes, zen_bytes: zen_jpeg.len(), size_err_pct,
+        moz_vs_orig: moz_score, zen_vs_orig: zen_score,
+        delta: zen_score - moz_score, error: None,
+    }
+}
+
+#[test]
+#[ignore = "requires imageflow corpus and decoder/trellis features"]
+fn imageflow_size_matched_quality() {
+    let corpus = PathBuf::from(CORPUS_DIR);
+    if !corpus.exists() {
+        println!("Corpus not found at {CORPUS_DIR}, skipping");
+        return;
+    }
+
+    println!("=== Size-Matched Quality: zenjpeg vs mozjpeg at equal file size ===");
+    println!("Binary-search zenjpeg Q to match mozjpeg output size (±2%).");
+    println!("Fair comparison: same bits → who produces better quality?\n");
+
+    let paths = collect_images(&corpus);
+    let mut images: Vec<LoadedImage> = Vec::new();
+
+    for path in &paths {
+        let name = short_name(path, &corpus);
+        if let Some((pixels, w, h)) = load_image(path) {
+            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+                || pixels.len() != (w * h * 3) as usize
+            { continue; }
+            images.push(LoadedImage { name, pixels, width: w, height: h });
+        }
+    }
+
+    let work: Vec<(usize, u8)> = images
+        .iter()
+        .enumerate()
+        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
+        .collect();
+
+    let total = work.len() as u32;
+    let progress = AtomicU32::new(0);
+
+    println!(
+        "Running {} size-matched comparisons ({} images × {} Q levels)...\n",
+        total, images.len(), QUALITY_LEVELS.len()
+    );
+
+    let results: Vec<SizeMatchResult> = work
+        .par_iter()
+        .map(|&(idx, quality)| {
+            let done = progress.fetch_add(1, Ordering::Relaxed);
+            if done > 0 && done % 50 == 0 {
+                eprintln!("  ... {done}/{total}");
+            }
+            process_size_match(&images[idx], quality)
+        })
+        .collect();
+
+    let successes: Vec<&SizeMatchResult> = results.iter().filter(|r| r.error.is_none()).collect();
+    let errors: Vec<&SizeMatchResult> = results.iter().filter(|r| r.error.is_some()).collect();
+
+    // Sort by delta ascending (worst first)
+    let mut by_delta: Vec<&SizeMatchResult> = successes.clone();
+    by_delta.sort_by(|a, b| a.delta.partial_cmp(&b.delta).unwrap());
+
+    println!(
+        "{:<30} {:>3} {:>3} {:>7} {:>7} {:>5} {:>8} {:>8} {:>7}",
+        "image", "mQ", "zQ", "moz_kb", "zen_kb", "sz%", "moz→orig", "zen→orig", "Δ(z-m)"
+    );
+    println!("{}", "-".repeat(95));
+
+    for r in &by_delta {
+        let marker = if r.delta < -1.0 { "  ←" } else { "" };
+        println!(
+            "{:<30} {:>3} {:>3} {:>7.1} {:>7.1} {:>+4.1}% {:>8.2} {:>8.2} {:>+7.2}{}",
+            truncate(&r.name, 30),
+            r.moz_quality,
+            r.zen_quality,
+            r.moz_bytes as f64 / 1024.0,
+            r.zen_bytes as f64 / 1024.0,
+            r.size_err_pct,
+            r.moz_vs_orig,
+            r.zen_vs_orig,
+            r.delta,
+            marker,
+        );
+    }
+
+    // Summary by quality
+    println!();
+    println!(
+        "{:>3} {:>4} {:>7} {:>8} {:>8} {:>7} {:>5}/{:>4}/{:>5}",
+        "mQ", "zQ", "sz_err", "moz→orig", "zen→orig", "Δ(z-m)", "win", "tie", "loss"
+    );
+    println!("{}", "-".repeat(65));
+
+    for &q in &QUALITY_LEVELS {
+        let qr: Vec<&&SizeMatchResult> = successes.iter().filter(|r| r.moz_quality == q).collect();
+        if qr.is_empty() { continue; }
+        let n = qr.len() as f64;
+        let avg_zq = qr.iter().map(|r| r.zen_quality as f64).sum::<f64>() / n;
+        let avg_err = qr.iter().map(|r| r.size_err_pct).sum::<f64>() / n;
+        let moz_s = qr.iter().map(|r| r.moz_vs_orig).sum::<f64>() / n;
+        let zen_s = qr.iter().map(|r| r.zen_vs_orig).sum::<f64>() / n;
+        let delta = qr.iter().map(|r| r.delta).sum::<f64>() / n;
+        let wins = qr.iter().filter(|r| r.delta > 0.1).count();
+        let losses = qr.iter().filter(|r| r.delta < -0.1).count();
+        let ties = qr.len() - wins - losses;
+
+        println!(
+            "{:>3} {:>4.0} {:>+6.1}% {:>8.2} {:>8.2} {:>+7.2} {:>5}/{:>4}/{:>5}",
+            q, avg_zq, avg_err, moz_s, zen_s, delta, wins, ties, losses
+        );
+    }
+
+    if !errors.is_empty() {
+        println!("\n--- No size match found ({}) ---", errors.len());
+        for r in errors.iter().take(10) {
+            println!("  {} mQ{}: {}", r.name, r.moz_quality, r.error.as_deref().unwrap_or("?"));
+        }
+        if errors.len() > 10 {
+            println!("  ... and {} more", errors.len() - 10);
+        }
+    }
+
+    let results_path = "/tmp/imageflow_size_matched.tsv";
+    let mut report = String::from(
+        "image\tmoz_quality\tzen_quality\tmoz_bytes\tzen_bytes\tsize_err_pct\tmoz_vs_orig\tzen_vs_orig\tdelta\n",
+    );
+    for r in &by_delta {
+        report.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{:+.2}\t{:.4}\t{:.4}\t{:+.4}\n",
+            r.name, r.moz_quality, r.zen_quality, r.moz_bytes, r.zen_bytes,
+            r.size_err_pct, r.moz_vs_orig, r.zen_vs_orig, r.delta,
+        ));
+    }
+    let _ = std::fs::write(results_path, &report);
+    println!("\nFull results saved to {results_path}");
+
+    // ── Assertions ──────────────────────────────────────────────────────
+    //
+    // Edge cases (shirt_transparent, whitespace-issue) produce large deltas
+    // because alpha-stripped/mostly-empty content compresses pathologically
+    // differently between encoders. Assert on photographic content only.
+
+    let mean_delta = successes.iter().map(|r| r.delta).sum::<f64>() / successes.len() as f64;
+    let total_wins = successes.iter().filter(|r| r.delta > 0.1).count();
+    let total_losses = successes.iter().filter(|r| r.delta < -0.1).count();
+    let total_ties = successes.len() - total_wins - total_losses;
+
+    println!(
+        "\nSize-matched: mean Δ={mean_delta:+.3}, {} wins / {} ties / {} losses",
+        total_wins, total_ties, total_losses
+    );
+
+    // Overall mean should be roughly competitive
+    assert!(
+        mean_delta > -2.0,
+        "Size-matched mean delta {mean_delta:+.3} — zenjpeg >2 pts worse at same file size"
+    );
+
+    // Photographic images: no regression > 5 pts at matched size
+    let mut photo_failures: Vec<String> = Vec::new();
+    for r in &successes {
+        let is_edge_case = r.name.contains("transparent")
+            || r.name.contains("whitespace")
+            || r.name.contains("gradient")
+            || r.name.contains("gamma_test")
+            || r.name.contains("dct_overflow")
+            || r.name.contains("pngsuite");
+        if !is_edge_case && r.delta < -5.0 {
+            photo_failures.push(format!(
+                "{} mQ{} zQ{}: delta={:+.2} (moz={:.2}, zen={:.2})",
+                r.name, r.moz_quality, r.zen_quality, r.delta, r.moz_vs_orig, r.zen_vs_orig
+            ));
+        }
+    }
+    if !photo_failures.is_empty() {
+        println!("\n--- Photographic regressions >5 pts at matched size ---");
+        for f in &photo_failures {
+            println!("  {f}");
+        }
+    }
+    assert!(
+        photo_failures.is_empty(),
+        "{} photographic images regressed >5 pts at matched file size",
+        photo_failures.len()
+    );
+
+    println!("\nSize-matched quality assertions passed.");
+}
