@@ -1924,13 +1924,13 @@ fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode:
 fn decode_descriptor(
     preferred: &[PixelDescriptor],
     header: &crate::decode::JpegInfo,
-    correct_color: Option<&crate::color::TargetColorSpace>,
+    correct_color: Option<&crate::color::icc::TargetColorSpace>,
 ) -> PixelDescriptor {
     let base = select_decode_descriptor(preferred, header.num_components);
     let sc = source_color_from_header(header);
     let corrected_cicp = correct_color.map(|_| zenpixels::Cicp::SRGB);
     zencodec::helpers::descriptor_for_decoded_pixels(
-        base.format(),
+        base.pixel_format(),
         &sc,
         corrected_cicp.as_ref(),
     )
