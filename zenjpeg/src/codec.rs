@@ -1044,10 +1044,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         {
             self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
-            let native_format = match info.num_components {
-                1 => PixelDescriptor::GRAY8_SRGB,
-                _ => PixelDescriptor::RGB8_SRGB,
-            };
+            let native_format = decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
             let mut w = info.dimensions.width;
             let mut h = info.dimensions.height;
 
@@ -1133,13 +1130,18 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             // read_info borrows data temporarily and returns owned JpegInfo.
             let header = self.config.inner.read_info(&data)?;
             self.check_progressive_policy(header.mode)?;
-            let info = to_image_info(&header);
+            let mut info = to_image_info(&header);
+
+            // If auto-orient was applied, report Identity orientation
+            if will_auto_orient(self.orientation) {
+                info = info.with_orientation(zencodec::Orientation::Identity);
+            }
 
             // scanline_reader_cow accepts both Borrowed and Owned data.
             // When Owned, the reader stores the Vec internally.
             let reader = cfg.scanline_reader_cow(data)?;
 
-            let descriptor = select_decode_descriptor(preferred, header.num_components);
+            let descriptor = decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
             let mcu_height = reader.luma_rows_per_mcu();
 
             Ok(JpegStreamingDecoder {
@@ -1248,7 +1250,7 @@ fn push_decoder_native<'a>(
 
     let width = reader.width() as usize;
     let height = reader.height() as usize;
-    let mut descriptor = select_decode_descriptor(preferred, header.num_components);
+    let mut descriptor = decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
     let mcu_height = reader.luma_rows_per_mcu();
 
     let ch_type = descriptor.channel_type();
@@ -1373,11 +1375,22 @@ fn push_decoder_native<'a>(
 
     sink.finish().map_err(wrap)?;
 
-    Ok(OutputInfo::full_decode(
-        width as u32,
-        height as u32,
-        descriptor,
-    ))
+    let mut out = OutputInfo::full_decode(width as u32, height as u32, descriptor);
+
+    // Report orientation if auto-orient was applied
+    if will_auto_orient(job.orientation)
+        && let Some(ref exif) = header.exif
+        && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
+    {
+        let orient = zencodec::Orientation::from_exif(orient_val).unwrap_or_default();
+        out = out.with_orientation_applied(orient);
+    }
+
+    if let Some((x, y, cw, ch)) = job.crop_hint {
+        out = out.with_crop_applied([x, y, cw, ch]);
+    }
+
+    Ok(out)
 }
 
 /// Whether the given orientation hint means we should auto-orient during decode.
@@ -1593,9 +1606,14 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
                 if let Some(exif) = extras.exif() {
                     if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-                        info = info.with_orientation(
-                            zencodec::Orientation::from_exif(orient).unwrap_or_default(),
-                        );
+                        // If auto-orient was applied, report Identity; else source
+                        if will_auto_orient(self.orientation) {
+                            info = info.with_orientation(zencodec::Orientation::Identity);
+                        } else {
+                            info = info.with_orientation(
+                                zencodec::Orientation::from_exif(orient).unwrap_or_default(),
+                            );
+                        }
                     }
                     info = info.with_exif(exif.to_vec());
                 }
@@ -1612,31 +1630,37 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
 
             let jpeg_extras = result.take_extras();
 
+            // Derive correct pixel format descriptor from source color metadata.
+            let corrected_cicp = self.config.inner.correct_color.as_ref().map(|_| zenpixels::Cicp::SRGB);
+
             // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
                 let pixels_f32 = result.into_pixels_f32().unwrap_or_default();
                 match format {
                     PixelFormat::Gray => {
-                        // Gray<f32> is repr(transparent) over f32 — safe to reinterpret
+                        let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                            zenpixels::PixelFormat::GrayF32, &info.source_color, corrected_cicp.as_ref(),
+                        ).with_transfer(zenpixels::TransferFunction::Linear);
                         let gray: Vec<Gray<f32>> =
                             pixels_f32.iter().map(|&v| Gray::new(v)).collect();
                         PixelBuffer::from_pixels(gray, w, h)
                             .map_err(|_| Error::internal("pixel count mismatch"))?
-                            .with_descriptor(PixelDescriptor::GRAYF32_LINEAR)
+                            .with_descriptor(desc)
                             .into()
                     }
                     _ => {
-                        // f32 RGB: 3 floats per pixel, reinterpret as Rgb<f32>
                         let pixel_count = (w as usize) * (h as usize);
                         if pixels_f32.len() == pixel_count * 3 {
-                            // Reinterpret f32 slice as u8 slice, then copy.
-                            // cast_slice requires target alignment (1) divides source (4) — always true.
-                            // cast_vec would require equal alignment (4 != 1) — always panics.
+                            let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                                zenpixels::PixelFormat::RgbF32, &info.source_color, corrected_cicp.as_ref(),
+                            ).with_transfer(zenpixels::TransferFunction::Linear);
                             let raw_bytes = bytemuck::cast_slice::<f32, u8>(&pixels_f32).to_vec();
-                            PixelBuffer::from_vec(raw_bytes, w, h, PixelDescriptor::RGBF32_LINEAR)
+                            PixelBuffer::from_vec(raw_bytes, w, h, desc)
                                 .map_err(|_| Error::internal("pixel buffer creation failed"))?
                         } else {
-                            // RGBA f32 fallback
+                            let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                                zenpixels::PixelFormat::RgbaF32, &info.source_color, corrected_cicp.as_ref(),
+                            ).with_transfer(zenpixels::TransferFunction::Linear);
                             let rgb: Vec<Rgb<f32>> = pixels_f32
                                 .chunks_exact(3)
                                 .map(|c| Rgb {
@@ -1647,35 +1671,24 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                                 .collect();
                             PixelBuffer::from_pixels(rgb, w, h)
                                 .map_err(|_| Error::internal("pixel count mismatch"))?
-                                .with_descriptor(PixelDescriptor::RGBF32_LINEAR)
+                                .with_descriptor(desc)
                                 .into()
                         }
                     }
                 }
             } else {
                 let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
-                match format {
-                    PixelFormat::Gray => {
-                        // Zero-copy: Vec<u8> is already Gray8 layout
-                        PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::GRAY8_SRGB)
-                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                    }
-                    PixelFormat::Rgb => {
-                        // Zero-copy: Vec<u8> is already packed RGB8 layout
-                        PixelBuffer::from_vec(pixels_u8, w, h, PixelDescriptor::RGB8_SRGB)
-                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                    }
-                    _ => {
-                        // Other formats (Rgba, Bgra, etc.) — pass raw bytes
-                        let desc = match format {
-                            PixelFormat::Rgba => PixelDescriptor::RGBA8_SRGB,
-                            PixelFormat::Bgra => PixelDescriptor::BGRA8_SRGB,
-                            _ => PixelDescriptor::RGB8_SRGB,
-                        };
-                        PixelBuffer::from_vec(pixels_u8, w, h, desc)
-                            .map_err(|_| Error::internal("pixel buffer creation failed"))?
-                    }
-                }
+                let pf = match format {
+                    PixelFormat::Gray => zenpixels::PixelFormat::Gray8,
+                    PixelFormat::Rgba => zenpixels::PixelFormat::Rgba8,
+                    PixelFormat::Bgra => zenpixels::PixelFormat::Bgra8,
+                    _ => zenpixels::PixelFormat::Rgb8,
+                };
+                let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                    pf, &info.source_color, corrected_cicp.as_ref(),
+                );
+                PixelBuffer::from_vec(pixels_u8, w, h, desc)
+                    .map_err(|_| Error::internal("pixel buffer creation failed"))?
             };
 
             let mut output = DecodeOutput::new(buf, info);
@@ -1891,6 +1904,36 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     ));
 
     img_info
+}
+
+/// Build a [`SourceColor`] from a JPEG header for descriptor derivation.
+#[cfg(feature = "decoder")]
+fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode::SourceColor {
+    let mut sc = zencodec::decode::SourceColor::default();
+    if let Some(ref icc) = info.icc_profile {
+        sc = sc.with_icc_profile(icc.clone());
+    }
+    sc
+}
+
+/// Derive the correct [`PixelDescriptor`] for decoded JPEG pixels.
+///
+/// Uses the shared zencodec utility to map source color metadata to a
+/// descriptor that accurately reflects the pixel data's color space.
+#[cfg(feature = "decoder")]
+fn decode_descriptor(
+    preferred: &[PixelDescriptor],
+    header: &crate::decode::JpegInfo,
+    correct_color: Option<&crate::color::TargetColorSpace>,
+) -> PixelDescriptor {
+    let base = select_decode_descriptor(preferred, header.num_components);
+    let sc = source_color_from_header(header);
+    let corrected_cicp = correct_color.map(|_| zenpixels::Cicp::SRGB);
+    zencodec::helpers::descriptor_for_decoded_pixels(
+        base.format(),
+        &sc,
+        corrected_cicp.as_ref(),
+    )
 }
 
 /// Convert JFIF density info to a zencodec [`Resolution`](zencodec::Resolution).
