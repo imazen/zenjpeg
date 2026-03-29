@@ -471,7 +471,7 @@ fn dequant_bias_shortcut() {
 fn chroma_upsampling_triangle() {
     let jpeg = test_jpeg_420();
     let result = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::SeparableBiased)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .unwrap();
     assert!(result.pixels_u8().is_some());

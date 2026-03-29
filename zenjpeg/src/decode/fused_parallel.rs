@@ -231,11 +231,8 @@ impl<'a> JpegParser<'a> {
                 group_stride,
                 idct_method,
             )?
-        } else if matches!(
-            chroma_upsampling,
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy
-        ) {
-            // 4:2:0 + box/hfancy filter — single pass (no vertical context needed)
+        } else if matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor) {
+            // 4:2:0 + box filter — single pass (no vertical context needed)
             self.decode_fused_subsampled_box(
                 scan_components,
                 scan_data,
@@ -750,10 +747,7 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
-        use crate::color::ycbcr::{
-            fused_h2v2_box_ycbcr_to_rgb_u8, fused_h2v2_hfancy_ycbcr_to_rgb_u8,
-        };
-        let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
+        use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -870,23 +864,13 @@ impl<'a> JpegParser<'a> {
                         if rgb_off + cols_this * 3 > rgb_chunk.len() {
                             break;
                         }
-                        if use_hfancy {
-                            fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-                                &y_strip[y_off..y_off + cols_this],
-                                &cb_strip[c_off..],
-                                &cr_strip[c_off..],
-                                &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                                cols_this,
-                            );
-                        } else {
-                            fused_h2v2_box_ycbcr_to_rgb_u8(
-                                &y_strip[y_off..y_off + cols_this],
-                                &cb_strip[c_off..],
-                                &cr_strip[c_off..],
-                                &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
-                                cols_this,
-                            );
-                        }
+                        fused_h2v2_box_ycbcr_to_rgb_u8(
+                            &y_strip[y_off..y_off + cols_this],
+                            &cb_strip[c_off..],
+                            &cr_strip[c_off..],
+                            &mut rgb_chunk[rgb_off..rgb_off + cols_this * 3],
+                            cols_this,
+                        );
                     }
                 };
 
@@ -1064,9 +1048,7 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
-        use super::upsample::{
-            upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-        };
+        use super::upsample::{upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest};
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -1094,7 +1076,6 @@ impl<'a> JpegParser<'a> {
         let upsample_fn: UpsampleFn = match chroma_upsampling {
             ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
             ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
-            _ => upsample_h2v1_i16_fancy,
         };
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
@@ -1408,10 +1389,7 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
-        use super::upsample::{
-            upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
-            upsample_h2v2_i16_libjpeg, upsample_row_h2v2_fixup,
-        };
+        use super::upsample::upsample_h2v2_i16_libjpeg;
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -1439,15 +1417,9 @@ impl<'a> JpegParser<'a> {
             IdctMethod::Jpegli => idct_int_tiered,
         };
 
-        // Select upsample function
+        // Only Triangle reaches this path (NearestNeighbor uses box path)
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let upsample_fn: UpsampleFn = match chroma_upsampling {
-            ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
-            _ => upsample_h2v2_i16_fancy,
-        };
-        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased)
-            && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
-        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased);
+        let upsample_fn: UpsampleFn = upsample_h2v2_i16_libjpeg;
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 
@@ -1589,43 +1561,23 @@ impl<'a> JpegParser<'a> {
                      cr_up: &mut [i16],
                      scratch: &mut [i16; MAX_UPSAMPLE_SCRATCH],
                      rgb_chunk: &mut [u8]| {
-                        if use_scratch_upsample {
-                            upsample_h2v2_i16_fancy_reuse_scratch(
-                                ext_cb,
-                                c_strip_width,
-                                ext_height,
-                                cb_up,
-                                y_strip_width,
-                                upsample_out_height,
-                                scratch,
-                            );
-                            upsample_h2v2_i16_fancy_reuse_scratch(
-                                ext_cr,
-                                c_strip_width,
-                                ext_height,
-                                cr_up,
-                                y_strip_width,
-                                upsample_out_height,
-                                scratch,
-                            );
-                        } else {
-                            upsample_fn(
-                                ext_cb,
-                                c_strip_width,
-                                ext_height,
-                                cb_up,
-                                y_strip_width,
-                                upsample_out_height,
-                            );
-                            upsample_fn(
-                                ext_cr,
-                                c_strip_width,
-                                ext_height,
-                                cr_up,
-                                y_strip_width,
-                                upsample_out_height,
-                            );
-                        }
+                        let _ = scratch; // scratch unused after SeparableBiased removal
+                        upsample_fn(
+                            ext_cb,
+                            c_strip_width,
+                            ext_height,
+                            cb_up,
+                            y_strip_width,
+                            upsample_out_height,
+                        );
+                        upsample_fn(
+                            ext_cr,
+                            c_strip_width,
+                            ext_height,
+                            cr_up,
+                            y_strip_width,
+                            upsample_out_height,
+                        );
 
                         let pixel_row_start =
                             (mcu_row * mcu_pixel_height).saturating_sub(group_first_pixel_row);
@@ -1962,77 +1914,10 @@ impl<'a> JpegParser<'a> {
         let (any_ac, any_huff, first_trunc, any_pad) =
             Self::aggregate_fused_warnings(seg_warnings)?;
 
-        // Boundary fixup pass: correct the 2 pixel rows per segment junction
-        // where edge replication was used instead of real adjacent chroma.
-        let boundary_count = seg_boundaries.len();
-        if do_fixup && boundary_count > 1 {
-            let mut cb_up_row = vec![0i16; y_strip_width];
-            let mut cr_up_row = vec![0i16; y_strip_width];
-
-            for junc in 0..boundary_count - 1 {
-                let seg_n = &seg_boundaries[junc];
-                let seg_n1 = &seg_boundaries[junc + 1];
-
-                if seg_n.last_cb_row.is_empty() || seg_n1.first_cb_row.is_empty() {
-                    continue;
-                }
-
-                // Compute MCU row boundaries for these raw segments
-                let seg_n_last = ((junc + 1) * mcu_rows_per_ri - 1).min(mcu_rows - 1);
-                let seg_n1_first = (junc + 1) * mcu_rows_per_ri;
-
-                // Fix bottom pixel row of segment N's last MCU row
-                // This is the last output pixel row: mcu_pixel_height - 1 within the MCU
-                let fix_row_bottom = (seg_n_last + 1) * mcu_pixel_height - 1;
-                if fix_row_bottom < height {
-                    // Re-upsample with correct below context, using the same
-                    // formula as the main upsampler to avoid boundary artifacts.
-                    upsample_row_h2v2_fixup(
-                        &seg_n.last_cb_row,
-                        &seg_n1.first_cb_row,
-                        c_strip_width,
-                        &mut cb_up_row,
-                    );
-                    upsample_row_h2v2_fixup(
-                        &seg_n.last_cr_row,
-                        &seg_n1.first_cr_row,
-                        c_strip_width,
-                        &mut cr_up_row,
-                    );
-                    let rgb_off = fix_row_bottom * rgb_row_bytes;
-                    crate::color::ycbcr_planes_i16_to_rgb_u8(
-                        &seg_n.last_y_row[..y_cols_this_image],
-                        &cb_up_row[..y_cols_this_image],
-                        &cr_up_row[..y_cols_this_image],
-                        &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
-                    );
-                }
-
-                // Fix top pixel row of segment N+1's first MCU row
-                let fix_row_top = seg_n1_first * mcu_pixel_height;
-                if fix_row_top < height {
-                    upsample_row_h2v2_fixup(
-                        &seg_n1.first_cb_row,
-                        &seg_n.last_cb_row,
-                        c_strip_width,
-                        &mut cb_up_row,
-                    );
-                    upsample_row_h2v2_fixup(
-                        &seg_n1.first_cr_row,
-                        &seg_n.last_cr_row,
-                        c_strip_width,
-                        &mut cr_up_row,
-                    );
-                    let rgb_off = fix_row_top * rgb_row_bytes;
-                    crate::color::ycbcr_planes_i16_to_rgb_u8(
-                        &seg_n1.first_y_row[..y_cols_this_image],
-                        &cb_up_row[..y_cols_this_image],
-                        &cr_up_row[..y_cols_this_image],
-                        &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
-                    );
-                }
-            }
-        }
+        // Note: boundary fixup was only needed for SeparableBiased (removed).
+        // Triangle uses the extended-buffer approach which handles boundaries
+        // correctly without a separate fixup pass.
+        let _ = seg_boundaries;
 
         Ok((
             FusedResult(rgb),

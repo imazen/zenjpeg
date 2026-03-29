@@ -21,7 +21,6 @@ use super::extras::{DecodedExtras, PreserveConfig};
 /// | Method | Matches |
 /// |--------|---------|
 /// | `Triangle` | libjpeg-turbo, mozjpeg, djpeg (default) |
-/// | `SeparableBiased` | Legacy (lower quality, see docs) |
 /// | `NearestNeighbor` | fastest, lowest quality |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -43,23 +42,6 @@ pub enum ChromaUpsampling {
     /// overhead.
     #[default]
     Triangle,
-
-    /// Separable triangle filter with fixed `+8` rounding bias. Lower quality
-    /// than [`Triangle`](Self::Triangle) due to systematic upward rounding and
-    /// an intermediate rounding step from the two-pass (horizontal then vertical)
-    /// implementation. Matches the C++ jpegli decoder's upsampling behavior.
-    SeparableBiased,
-
-    /// Horizontal-only triangle filter with vertical box (nearest-neighbor).
-    ///
-    /// Applies 3:1 bilinear interpolation horizontally, but duplicates rows
-    /// vertically. This eliminates vertical context dependencies, making
-    /// parallel decode trivially independent per MCU row (no boundary fixup),
-    /// while still smoothing horizontal chroma transitions.
-    ///
-    /// Quality is between `NearestNeighbor` and `Triangle` — horizontal edges
-    /// are smoothed but vertical edges are stairstepped.
-    HorizontalFancy,
 }
 
 /// Integer IDCT algorithm selection.

@@ -13,11 +13,10 @@ use super::idct_int::{
     idct_int_tiered_libjpeg_unclamped, idct_int_tiered_unclamped,
 };
 use super::upsample::{
-    upsample_h1v2_i16_fancy_strided, upsample_h1v2_i16_libjpeg_strided,
-    upsample_h1v2_i16_nearest_strided, upsample_h2v1_i16_fancy_strided,
+    upsample_h1v2_i16_libjpeg_strided, upsample_h1v2_i16_nearest_strided,
     upsample_h2v1_i16_libjpeg_strided, upsample_h2v1_i16_nearest_strided,
-    upsample_h2v2_i16_fancy_strided, upsample_h2v2_i16_libjpeg_strided,
-    upsample_h2v2_i16_nearest_strided, upsample_h2v2_libjpeg_row, upsample_row_h2v2_fixup,
+    upsample_h2v2_i16_libjpeg_strided, upsample_h2v2_i16_nearest_strided,
+    upsample_h2v2_libjpeg_row,
 };
 use crate::error::Result;
 use crate::foundation::alloc::try_alloc_maybeuninit;
@@ -564,9 +563,6 @@ impl StripProcessor {
     fn upsample_h2v1(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased | ChromaUpsampling::HorizontalFancy => {
-                upsample_h2v1_i16_fancy_strided
-            }
             ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg_strided,
             ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest_strided,
         };
@@ -577,11 +573,8 @@ impl StripProcessor {
     fn upsample_h1v2(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => upsample_h1v2_i16_fancy_strided,
             ChromaUpsampling::Triangle => upsample_h1v2_i16_libjpeg_strided,
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
-                upsample_h1v2_i16_nearest_strided
-            }
+            ChromaUpsampling::NearestNeighbor => upsample_h1v2_i16_nearest_strided,
         };
         self.upsample_both_channels(upsample_fn);
     }
@@ -590,11 +583,8 @@ impl StripProcessor {
     fn upsample_h2v2(&mut self) {
         type StridedFn = fn(&[i16], usize, usize, usize, &mut [i16], usize, usize, usize);
         let upsample_fn: StridedFn = match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => upsample_h2v2_i16_fancy_strided,
             ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg_strided,
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
-                upsample_h2v2_i16_nearest_strided
-            }
+            ChromaUpsampling::NearestNeighbor => upsample_h2v2_i16_nearest_strided,
         };
         self.upsample_both_channels(upsample_fn);
     }
@@ -667,24 +657,6 @@ impl StripProcessor {
         let last_chroma_offset = (self.chroma_strip_height - 1) * self.chroma_strip_stride;
 
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                // Re-compute last output row with correct vertical neighbor.
-                // Uses upsample_row_h2v2_fixup to match the main upsampler's formula.
-                let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_width];
-                upsample_row_h2v2_fixup(
-                    &self.cb_strip[last_chroma_offset..last_chroma_offset + in_width],
-                    &self.next_cb_row[..in_width],
-                    in_width,
-                    cb_out,
-                );
-                let cr_out = &mut self.cr_upsampled[last_out_offset..last_out_offset + out_width];
-                upsample_row_h2v2_fixup(
-                    &self.cr_strip[last_chroma_offset..last_chroma_offset + in_width],
-                    &self.next_cr_row[..in_width],
-                    in_width,
-                    cr_out,
-                );
-            }
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[last_out_offset..last_out_offset + out_stride];
                 upsample_h2v2_libjpeg_row(
@@ -705,7 +677,7 @@ impl StripProcessor {
                     false,
                 );
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No interpolation vertically, no fixup needed
             }
         }
@@ -718,20 +690,6 @@ impl StripProcessor {
         let last_chroma_offset = (self.chroma_strip_height - 1) * self.chroma_strip_stride;
 
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                // h1v2 fancy: (3 * curr + neighbor + 2) >> 2
-                for x in 0..w {
-                    let curr_cb = self.cb_strip[last_chroma_offset + x] as i32;
-                    let next_cb = self.next_cb_row[x] as i32;
-                    self.cb_upsampled[last_out_offset + x] =
-                        ((3 * curr_cb + next_cb + 2) >> 2) as i16;
-
-                    let curr_cr = self.cr_strip[last_chroma_offset + x] as i32;
-                    let next_cr = self.next_cr_row[x] as i32;
-                    self.cr_upsampled[last_out_offset + x] =
-                        ((3 * curr_cr + next_cr + 2) >> 2) as i16;
-                }
-            }
             ChromaUpsampling::Triangle => {
                 // h1v2 libjpeg: (near * 3 + far + bias) >> 2, bias=2 for lower
                 for x in 0..w {
@@ -746,7 +704,7 @@ impl StripProcessor {
                         ((near_cr * 3 + far_cr + 2) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No interpolation vertically, no fixup needed
             }
         }
@@ -780,25 +738,6 @@ impl StripProcessor {
     /// Compute deferred h2v2 bottom row.
     fn compute_deferred_h2v2(&mut self, in_width: usize, out_width: usize) {
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                // prev_cb_row = last chroma row of previous MCU (the one we're fixing)
-                // cb_strip[0..] = first chroma row of next MCU (just decoded)
-                // Uses upsample_row_h2v2_fixup to match the main upsampler's formula.
-                let cb_out = &mut self.deferred_cb_row[..out_width];
-                upsample_row_h2v2_fixup(
-                    &self.prev_cb_row[..in_width],
-                    &self.cb_strip[..in_width],
-                    in_width,
-                    cb_out,
-                );
-                let cr_out = &mut self.deferred_cr_row[..out_width];
-                upsample_row_h2v2_fixup(
-                    &self.prev_cr_row[..in_width],
-                    &self.cr_strip[..in_width],
-                    in_width,
-                    cr_out,
-                );
-            }
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.deferred_cb_row[..out_width];
                 upsample_h2v2_libjpeg_row(
@@ -819,7 +758,7 @@ impl StripProcessor {
                     false,
                 );
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No vertical interpolation, just copy from upsampled
                 let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
                 self.deferred_cb_row[..out_width].copy_from_slice(
@@ -837,17 +776,6 @@ impl StripProcessor {
         let w = in_width.min(out_width);
 
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                for x in 0..w {
-                    let curr_cb = self.prev_cb_row[x] as i32;
-                    let next_cb = self.cb_strip[x] as i32;
-                    self.deferred_cb_row[x] = ((3 * curr_cb + next_cb + 2) >> 2) as i16;
-
-                    let curr_cr = self.prev_cr_row[x] as i32;
-                    let next_cr = self.cr_strip[x] as i32;
-                    self.deferred_cr_row[x] = ((3 * curr_cr + next_cr + 2) >> 2) as i16;
-                }
-            }
             ChromaUpsampling::Triangle => {
                 for x in 0..w {
                     let near_cb = self.prev_cb_row[x] as i32;
@@ -859,7 +787,7 @@ impl StripProcessor {
                     self.deferred_cr_row[x] = ((near_cr * 3 + far_cr + 2) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No vertical interpolation, just copy from upsampled
                 let last_out_offset = (self.mcu_height - 1) * self.strip_stride;
                 self.deferred_cb_row[..out_width].copy_from_slice(
@@ -926,25 +854,6 @@ impl StripProcessor {
     /// temporary buffer is needed.
     fn fixup_h2v2_row0(&mut self, in_width: usize, out_width: usize, out_stride: usize) {
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                // Re-compute output row 0 with correct vertical neighbor.
-                // Uses upsample_row_h2v2_fixup to match the main upsampler's
-                // formula (separable on AVX2, non-separable on scalar).
-                let cb_out = &mut self.cb_upsampled[..out_width];
-                upsample_row_h2v2_fixup(
-                    &self.cb_strip[..in_width],
-                    &self.prev_cb_row[..in_width],
-                    in_width,
-                    cb_out,
-                );
-                let cr_out = &mut self.cr_upsampled[..out_width];
-                upsample_row_h2v2_fixup(
-                    &self.cr_strip[..in_width],
-                    &self.prev_cr_row[..in_width],
-                    in_width,
-                    cr_out,
-                );
-            }
             ChromaUpsampling::Triangle => {
                 let cb_out = &mut self.cb_upsampled[..out_stride];
                 upsample_h2v2_libjpeg_row(
@@ -965,7 +874,7 @@ impl StripProcessor {
                     true,
                 );
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No vertical interpolation, no fixup needed
             }
         }
@@ -977,18 +886,6 @@ impl StripProcessor {
         let w = in_width.min(out_width);
 
         match self.chroma_upsampling {
-            ChromaUpsampling::SeparableBiased => {
-                // h1v2 fancy: (3 * curr + neighbor + 2) >> 2
-                for x in 0..w {
-                    let curr_cb = self.cb_strip[x] as i32;
-                    let prev_cb = self.prev_cb_row[x] as i32;
-                    self.cb_upsampled[x] = ((3 * curr_cb + prev_cb + 2) >> 2) as i16;
-
-                    let curr_cr = self.cr_strip[x] as i32;
-                    let prev_cr = self.prev_cr_row[x] as i32;
-                    self.cr_upsampled[x] = ((3 * curr_cr + prev_cr + 2) >> 2) as i16;
-                }
-            }
             ChromaUpsampling::Triangle => {
                 // h1v2 libjpeg: (near * 3 + far + bias) >> 2, bias=1 for upper
                 for x in 0..w {
@@ -1001,7 +898,7 @@ impl StripProcessor {
                     self.cr_upsampled[x] = ((near_cr * 3 + far_cr + 1) >> 2) as i16;
                 }
             }
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+            ChromaUpsampling::NearestNeighbor => {
                 // No vertical interpolation, no fixup needed
             }
         }

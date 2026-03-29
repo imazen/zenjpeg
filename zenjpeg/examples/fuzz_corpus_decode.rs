@@ -288,11 +288,9 @@ fn main() {
                     OutputTarget::SrgbF32Precise,
                     ChromaUpsampling::Triangle,
                 ),
-                Mode::BufferedTriangle => decode_buffered(
-                    data_ref,
-                    OutputTarget::Srgb8,
-                    ChromaUpsampling::SeparableBiased,
-                ),
+                Mode::BufferedTriangle => {
+                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Triangle)
+                }
                 Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::Triangle),
                 Mode::ScanlineFast => decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor),
             }));

@@ -25,7 +25,7 @@ use super::super::idct::inverse_dct_8x8;
 use super::super::idct_int::{
     idct_int_auto, idct_int_libjpeg, idct_int_tiered, idct_int_tiered_libjpeg,
 };
-use super::super::upsample::{upsample_fancy, upsample_libjpeg_f32, upsample_nearest_f32};
+use super::super::upsample::{upsample_libjpeg_f32, upsample_nearest_f32};
 use crate::color::{
     cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
     gray_f32_to_rgb_u8,
@@ -46,7 +46,6 @@ use crate::quant::{
 use crate::types::PixelFormat;
 use enough::Stop;
 
-use super::super::upsample::MAX_UPSAMPLE_SCRATCH;
 use super::{CompInfo, JpegParser};
 use output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 
@@ -330,10 +329,8 @@ impl<'a> JpegParser<'a> {
     ) -> Result<Vec<u8>> {
         use super::super::ChromaUpsampling;
         use crate::decode::upsample::{
-            upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
-            upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-            upsample_h2v2_i16_fancy, upsample_h2v2_i16_fancy_reuse_scratch,
-            upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+            upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
+            upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
         // Select IDCT function based on configured method
@@ -387,12 +384,9 @@ impl<'a> JpegParser<'a> {
 
         // Select upsampling function based on method
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let needs_full_upsample = !matches!(
-            chroma_upsampling,
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy
-        ) || h_ratio != 2
+        let needs_full_upsample = !matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor)
+            || h_ratio != 2
             || v_ratio != 2;
-        let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
 
         let (upsample_fn, _): (UpsampleFn, ()) = if needs_full_upsample {
             let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
@@ -400,17 +394,12 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
-                ChromaUpsampling::SeparableBiased => (
-                    upsample_h2v2_i16_fancy,
-                    upsample_h2v1_i16_fancy,
-                    upsample_h1v2_i16_fancy,
-                ),
                 ChromaUpsampling::Triangle => (
                     upsample_h2v2_i16_libjpeg,
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
                 ),
-                ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => (
+                ChromaUpsampling::NearestNeighbor => (
                     upsample_h2v2_i16_nearest,
                     upsample_h2v1_i16_nearest,
                     upsample_h1v2_i16_nearest,
@@ -542,12 +531,7 @@ impl<'a> JpegParser<'a> {
         // to avoid re-zeroing [0i16; 4096] on every upsample call (saves ~3M instr/decode).
         // Only used for h2v2 triangle-filter path; the scratch is written by the vertical
         // pass before the horizontal pass reads it, so it doesn't need re-zeroing.
-        let use_scratch_upsample = needs_full_upsample
-            && h_ratio == 2
-            && v_ratio == 2
-            && matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased)
-            && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
-        let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
+        // Note: scratch upsample was only used for removed SeparableBiased path
 
         // Horizontal chroma padding fixup (same as scan.rs streaming path)
         let downsampled_w = (width + h_ratio - 1) / h_ratio;
@@ -636,67 +620,34 @@ impl<'a> JpegParser<'a> {
                     let c_offset = (1 + c_row) * c_strip_width;
                     let rgb_offset = (y_start + row) * width * 3;
 
-                    if use_hfancy {
-                        crate::color::ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-                            &y_strip[y_offset..y_offset + y_cols_this_image],
-                            &ext_cb_a[c_offset..c_offset + c_cols],
-                            &ext_cr_a[c_offset..c_offset + c_cols],
-                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                            y_cols_this_image,
-                        );
-                    } else {
-                        fused_h2v2_box_ycbcr_to_rgb_u8(
-                            &y_strip[y_offset..y_offset + y_cols_this_image],
-                            &ext_cb_a[c_offset..c_offset + c_cols],
-                            &ext_cr_a[c_offset..c_offset + c_cols],
-                            &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                            y_cols_this_image,
-                        );
-                    }
+                    fused_h2v2_box_ycbcr_to_rgb_u8(
+                        &y_strip[y_offset..y_offset + y_cols_this_image],
+                        &ext_cb_a[c_offset..c_offset + c_cols],
+                        &ext_cr_a[c_offset..c_offset + c_cols],
+                        &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                        y_cols_this_image,
+                    );
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
                 fixup_h_padding(&mut ext_cb_a);
                 fixup_h_padding(&mut ext_cr_a);
-                if use_scratch_upsample {
-                    // Fast path: reuse scratch buffer to avoid per-call [0i16; 4096] zeroing
-                    upsample_h2v2_i16_fancy_reuse_scratch(
-                        &ext_cb_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cb_up,
-                        y_strip_width,
-                        upsample_out_height,
-                        &mut upsample_scratch,
-                    );
-                    upsample_h2v2_i16_fancy_reuse_scratch(
-                        &ext_cr_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cr_up,
-                        y_strip_width,
-                        upsample_out_height,
-                        &mut upsample_scratch,
-                    );
-                } else {
-                    // Generic upsample path (other methods or very wide images)
-                    upsample_fn(
-                        &ext_cb_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cb_up,
-                        y_strip_width,
-                        upsample_out_height,
-                    );
-                    upsample_fn(
-                        &ext_cr_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cr_up,
-                        y_strip_width,
-                        upsample_out_height,
-                    );
-                }
+                upsample_fn(
+                    &ext_cb_a,
+                    c_strip_width,
+                    ext_height,
+                    &mut cb_up,
+                    y_strip_width,
+                    upsample_out_height,
+                );
+                upsample_fn(
+                    &ext_cr_a,
+                    c_strip_width,
+                    ext_height,
+                    &mut cr_up,
+                    y_strip_width,
+                    upsample_out_height,
+                );
 
                 // Use upsampled rows starting at offset v_ratio (skip context rows)
                 for row in 0..y_rows_this_mcu {
@@ -955,15 +906,6 @@ impl<'a> JpegParser<'a> {
                 let scale_y = max_v_samp as usize / info.v_samp;
 
                 match chroma_upsampling {
-                    super::super::ChromaUpsampling::SeparableBiased => upsample_fancy(
-                        comp_plane,
-                        info.comp_width,
-                        info.comp_height,
-                        width,
-                        height,
-                        scale_x,
-                        scale_y,
-                    ),
                     super::super::ChromaUpsampling::Triangle => upsample_libjpeg_f32(
                         comp_plane,
                         info.comp_width,
@@ -973,8 +915,7 @@ impl<'a> JpegParser<'a> {
                         scale_x,
                         scale_y,
                     ),
-                    super::super::ChromaUpsampling::NearestNeighbor
-                    | super::super::ChromaUpsampling::HorizontalFancy => {
+                    super::super::ChromaUpsampling::NearestNeighbor => {
                         let mut upsampled = vec![0.0f32; output_size];
                         upsample_nearest_f32(
                             comp_plane,

@@ -16,9 +16,8 @@
 use crate::color::ycbcr::{fused_h2v2_box_ycbcr_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8};
 use crate::decode::idct_int::{idct_int_tiered, idct_int_tiered_libjpeg};
 use crate::decode::upsample::{
-    upsample_h1v2_i16_fancy, upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest,
-    upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-    upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
+    upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
+    upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
 };
 use crate::decode::{ChromaUpsampling, IdctMethod};
 use crate::error::{Error, Result};
@@ -225,12 +224,9 @@ impl<'a> JpegParser<'a> {
 
         // Select upsampling function
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
-        let needs_full_upsample = !matches!(
-            chroma_upsampling,
-            ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy
-        ) || h_ratio != 2
+        let needs_full_upsample = !matches!(chroma_upsampling, ChromaUpsampling::NearestNeighbor)
+            || h_ratio != 2
             || v_ratio != 2;
-        let use_hfancy = matches!(chroma_upsampling, ChromaUpsampling::HorizontalFancy);
 
         let upsample_fn: UpsampleFn = if needs_full_upsample {
             let (upsample_h2v2, upsample_h2v1, upsample_h1v2): (
@@ -238,17 +234,12 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
-                ChromaUpsampling::SeparableBiased => (
-                    upsample_h2v2_i16_fancy,
-                    upsample_h2v1_i16_fancy,
-                    upsample_h1v2_i16_fancy,
-                ),
                 ChromaUpsampling::Triangle => (
                     upsample_h2v2_i16_libjpeg,
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
                 ),
-                ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => (
+                ChromaUpsampling::NearestNeighbor => (
                     upsample_h2v2_i16_nearest,
                     upsample_h2v1_i16_nearest,
                     upsample_h1v2_i16_nearest,
@@ -469,23 +460,13 @@ impl<'a> JpegParser<'a> {
                             let c_offset = (1 + c_row) * c_strip_width;
                             let rgb_offset = local_rgb_offset + row * rgb_row_stride;
 
-                            if use_hfancy {
-                                crate::color::ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-                                    &y_strip[y_offset..y_offset + y_cols_this_image],
-                                    &ext_cb_a[c_offset..c_offset + c_cols],
-                                    &ext_cr_a[c_offset..c_offset + c_cols],
-                                    &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                                    y_cols_this_image,
-                                );
-                            } else {
-                                fused_h2v2_box_ycbcr_to_rgb_u8(
-                                    &y_strip[y_offset..y_offset + y_cols_this_image],
-                                    &ext_cb_a[c_offset..c_offset + c_cols],
-                                    &ext_cr_a[c_offset..c_offset + c_cols],
-                                    &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                                    y_cols_this_image,
-                                );
-                            }
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_offset..y_offset + y_cols_this_image],
+                                &ext_cb_a[c_offset..c_offset + c_cols],
+                                &ext_cr_a[c_offset..c_offset + c_cols],
+                                &mut rgb_batch[rgb_offset..rgb_offset + y_cols_this_image * 3],
+                                y_cols_this_image,
+                            );
                         }
                     } else {
                         // Upsample extended strip → reusable upsample buffers

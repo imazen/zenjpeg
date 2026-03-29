@@ -571,7 +571,7 @@ mod decode_coverage {
 
         let decoder = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .chroma_upsampling(ChromaUpsampling::SeparableBiased)
+            .chroma_upsampling(ChromaUpsampling::Triangle)
             .block_smoothing(true)
             .apply_icc(false)
             .max_pixels(1000000)

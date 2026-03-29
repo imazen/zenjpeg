@@ -139,8 +139,8 @@ fn test_fused_444_correctness() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:4:4 DRI=1row");
 }
@@ -151,8 +151,8 @@ fn test_fused_444_dri4() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 4);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:4:4 DRI=4row");
 }
@@ -183,8 +183,8 @@ fn test_fused_420_triangle_correctness() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:0 Triangle DRI=1row");
 }
@@ -213,8 +213,8 @@ fn test_fused_non_aligned_dimensions() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:0 Triangle 300x300 (non-aligned)");
 }
@@ -227,8 +227,8 @@ fn test_fused_non_aligned_444() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:4:4 333x257 (non-aligned)");
 }
@@ -243,8 +243,8 @@ fn test_fused_420_dri4_triangle() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:0 Triangle DRI=4row");
 }
@@ -259,8 +259,8 @@ fn test_fused_large_420() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:0 Triangle 1024x768");
 }
@@ -277,8 +277,8 @@ fn test_non_aligned_dri_fallback() {
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 0);
 
     // Both paths should decode identically (neither uses fused)
-    let result1 = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let result2 = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let result1 = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let result2 = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&result1, &result2, "no DRI (sequential only)");
 }
@@ -299,8 +299,8 @@ fn test_hashlock_multisize_triangle_dri1() {
     for (w, h) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048)] {
         let pixels = generate_test_pixels(w, h);
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
-        let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-        let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
         assert_pixels_equal(
             &fused,
             &sequential,
@@ -315,8 +315,8 @@ fn test_hashlock_multisize_triangle_dri4() {
     for (w, h) in [(256, 256), (512, 512), (1024, 1024), (2048, 2048)] {
         let pixels = generate_test_pixels(w, h);
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 4);
-        let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-        let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
         assert_pixels_equal(
             &fused,
             &sequential,
@@ -333,8 +333,8 @@ fn test_hashlock_non_mcu_aligned_triangle() {
     for (w, h) in [(513, 513), (1000, 1000), (257, 129), (1023, 767)] {
         let pixels = generate_test_pixels(w, h);
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
-        let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-        let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
         assert_pixels_equal(
             &fused,
             &sequential,
@@ -381,8 +381,8 @@ fn test_fused_422_triangle_correctness() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:2 Triangle DRI=1row");
 }
@@ -417,8 +417,8 @@ fn test_fused_422_dri4_triangle() {
     let pixels = generate_test_pixels(w, h);
     let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 4);
 
-    let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-    let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+    let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+    let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
 
     assert_pixels_equal(&fused, &sequential, "4:2:2 Triangle DRI=4row");
 }
@@ -435,8 +435,8 @@ fn test_hashlock_multisize_422_triangle() {
     ] {
         let pixels = generate_test_pixels(w, h);
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::HalfHorizontal, 1);
-        let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-        let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
         assert_pixels_equal(&fused, &sequential, &format!("4:2:2 Triangle {w}x{h}"));
     }
 }
@@ -474,10 +474,7 @@ fn test_debug_stride_comparison() {
     let pixels = generate_test_pixels(w, h);
     let mut any_failed = false;
 
-    for upsampling in [
-        ChromaUpsampling::Triangle,
-        ChromaUpsampling::SeparableBiased,
-    ] {
+    for upsampling in [ChromaUpsampling::Triangle, ChromaUpsampling::Triangle] {
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
 
         // Use 1 thread to eliminate concurrency as a variable
@@ -562,8 +559,8 @@ fn test_hashlock_multisize_444() {
     for (w, h) in [(256, 256), (512, 512), (1024, 1024), (513, 513)] {
         let pixels = generate_test_pixels(w, h);
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::None, 1);
-        let fused = decode_fused(&jpeg, ChromaUpsampling::SeparableBiased);
-        let sequential = decode_sequential(&jpeg, ChromaUpsampling::SeparableBiased);
+        let fused = decode_fused(&jpeg, ChromaUpsampling::Triangle);
+        let sequential = decode_sequential(&jpeg, ChromaUpsampling::Triangle);
         assert_pixels_equal(&fused, &sequential, &format!("4:4:4 {w}x{h}"));
     }
 }

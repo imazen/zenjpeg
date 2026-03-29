@@ -926,13 +926,11 @@ impl<'a> JpegParser<'a> {
         // ---- Buffer allocation ----
 
         // Fancy h2v2 needs double-buffered Y and chroma strips (1-row lag for context)
-        // HorizontalFancy uses box vertical, so no double-buffering needed
         let need_fancy = !is_grayscale
             && v_ratio == 2
             && !matches!(
                 self.chroma_upsampling,
                 super::super::ChromaUpsampling::NearestNeighbor
-                    | super::super::ChromaUpsampling::HorizontalFancy
             );
 
         let y_strip_size = y_strip_width * y_strip_height;
@@ -1014,19 +1012,14 @@ impl<'a> JpegParser<'a> {
 
         let is_rgb = !is_grayscale && self.is_rgb_jpeg();
 
-        // Use fused box kernel for h2v2+NearestNeighbor or h2v2+HorizontalFancy
+        // Use fused box kernel for h2v2+NearestNeighbor
         let use_fused_box = !is_grayscale
             && h_ratio == 2
             && v_ratio == 2
             && matches!(
                 self.chroma_upsampling,
                 super::super::ChromaUpsampling::NearestNeighbor
-                    | super::super::ChromaUpsampling::HorizontalFancy
             );
-        let use_hfancy = matches!(
-            self.chroma_upsampling,
-            super::super::ChromaUpsampling::HorizontalFancy
-        );
 
         // Select upsample function
         let upsample_fn: Option<fn(&[i16], usize, usize, &mut [i16], usize, usize)> =
@@ -1035,21 +1028,16 @@ impl<'a> JpegParser<'a> {
             } else {
                 use super::super::ChromaUpsampling;
                 use crate::decode::upsample::{
-                    upsample_h2v1_i16_fancy, upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest,
-                    upsample_h2v2_i16_fancy, upsample_h2v2_i16_libjpeg,
+                    upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg,
                 };
                 Some(match (h_ratio, v_ratio) {
                     (2, 2) => match self.chroma_upsampling {
-                        ChromaUpsampling::SeparableBiased => upsample_h2v2_i16_fancy,
                         ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
-                        ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
+                        ChromaUpsampling::NearestNeighbor => {
                             unreachable!()
                         }
                     },
                     (2, 1) => match self.chroma_upsampling {
-                        ChromaUpsampling::SeparableBiased | ChromaUpsampling::HorizontalFancy => {
-                            upsample_h2v1_i16_fancy
-                        }
                         ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
                         ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
                     },
@@ -1477,14 +1465,6 @@ impl<'a> JpegParser<'a> {
                                 rgb[rgb_off + px * 3 + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
                                 rgb[rgb_off + px * 3 + 2] = cr_a[c_off + cx].clamp(0, 255) as u8;
                             }
-                        } else if use_hfancy {
-                            crate::color::ycbcr::fused_h2v2_hfancy_ycbcr_to_rgb_u8(
-                                &y_strip_a[y_off..y_off + cols],
-                                &cb_a[c_off..c_off + (cols + 1) / 2],
-                                &cr_a[c_off..c_off + (cols + 1) / 2],
-                                &mut rgb[rgb_off..rgb_off + cols * 3],
-                                cols,
-                            );
                         } else {
                             fused_h2v2_box_ycbcr_to_rgb_u8(
                                 &y_strip_a[y_off..y_off + cols],
