@@ -161,7 +161,10 @@ pub fn apply_icc_transform(
             Layout::Rgb,
             &output_profile,
             Layout::Rgb,
-            TransformOptions::default(),
+            TransformOptions {
+                allow_use_cicp_transfer: false,
+                ..Default::default()
+            },
         )
         .map_err(|e| Error::icc_error(format!("moxcms transform: {e:?}")))?;
 
@@ -216,7 +219,10 @@ pub fn apply_icc_transform_f32(
             Layout::Rgb,
             &output_profile,
             Layout::Rgb,
-            TransformOptions::default(),
+            TransformOptions {
+                allow_use_cicp_transfer: false,
+                ..Default::default()
+            },
         )
         .map_err(|e| Error::icc_error(format!("moxcms f32 transform: {e:?}")))?;
 
