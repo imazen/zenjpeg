@@ -209,6 +209,31 @@ fn bench_decode(suite: &mut Suite) {
             })
         });
 
+        // Isolate: LibjpegCompat upsample but Jpegli IDCT
+        g.bench("zenjpeg LibjpegCompat + Jpegli IDCT", |b| {
+            let dec = Decoder::new()
+                .apply_icc(false)
+                .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+                .idct_method(zenjpeg::decode::IdctMethod::Jpegli);
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
+            })
+        });
+
+        // Isolate: Triangle upsample but Libjpeg IDCT
+        g.bench("zenjpeg Triangle + Libjpeg IDCT", |b| {
+            let dec = Decoder::new()
+                .apply_icc(false)
+                .idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
+            })
+        });
+
         g.bench("zenjpeg NearestNeighbor (box filter)", |b| {
             let dec = Decoder::new()
                 .apply_icc(false)

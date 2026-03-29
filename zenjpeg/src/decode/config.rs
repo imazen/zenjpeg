@@ -45,7 +45,9 @@ pub enum ChromaUpsampling {
     /// bias (`+1`/`+2` for 1D, `+7`/`+8` for 2D). This avoids both systematic
     /// rounding bias and intermediate rounding errors from separable passes.
     ///
-    /// Use this mode when you need pixel-exact match with `djpeg` or mozjpeg output.
+    /// Produces output within max_diff ≤ 3 of mozjpeg/libjpeg-turbo. For pixel-exact
+    /// matching (max_diff ≤ 2), also set `.idct_method(IdctMethod::Libjpeg)` — but
+    /// note this adds ~37% decode overhead.
     LibjpegCompat,
 
     /// Horizontal-only triangle filter with vertical box (nearest-neighbor).

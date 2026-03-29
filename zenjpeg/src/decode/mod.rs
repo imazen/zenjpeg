@@ -252,17 +252,16 @@ impl DecodeConfig {
     /// and chroma upsampling mode.
     ///
     /// - Explicit `idct_method()` always wins
-    /// - `LibjpegCompat` upsampling defaults to `Libjpeg` IDCT
-    /// - Everything else defaults to `Jpegli` IDCT
+    /// - Default is `Jpegli` for all upsampling modes
+    ///
+    /// Previous behavior: `LibjpegCompat` upsampling auto-selected `Libjpeg` IDCT
+    /// for pixel-exact mozjpeg matching. This caused a 37% speed penalty. Now
+    /// decoupled: use `.idct_method(IdctMethod::Libjpeg)` explicitly if you need
+    /// pixel-exact IDCT matching with mozjpeg/libjpeg-turbo. LibjpegCompat
+    /// upsampling alone gets within max_diff=3 of mozjpeg (vs max_diff=2 with
+    /// both Libjpeg IDCT and LibjpegCompat upsampling).
     pub(crate) fn effective_idct_method(&self) -> IdctMethod {
-        if let Some(method) = self.idct_method {
-            return method;
-        }
-        if self.chroma_upsampling == ChromaUpsampling::LibjpegCompat {
-            IdctMethod::Libjpeg
-        } else {
-            IdctMethod::Jpegli
-        }
+        self.idct_method.unwrap_or(IdctMethod::Jpegli)
     }
 
     /// Enable post-decode deblocking to reduce JPEG block artifacts.
