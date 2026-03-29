@@ -92,6 +92,67 @@ pub enum IdctMethod {
     Libjpeg,
 }
 
+/// Post-decode deblocking mode.
+///
+/// Controls whether and how deblocking filters are applied after JPEG decoding
+/// to reduce 8x8 block boundary artifacts. Deblocking is most effective at low
+/// quality levels (Q5-Q50) where blocking artifacts are most visible.
+///
+/// # Strategies
+///
+/// | Mode | Description | Best for |
+/// |------|-------------|----------|
+/// | `Off` | No deblocking (default) | Fastest, pixel-exact decode |
+/// | `Auto` | Content-aware strategy selection | General use |
+/// | `Boundary4Tap` | H.264-style pixel-domain filter | All quality levels |
+/// | `Knusperli` | DCT-domain boundary correction | Low quality (Q5-Q30) |
+///
+/// `Auto` uses [`detect::content::recommend_deblock()`](crate::detect::content::recommend_deblock)
+/// to pick the optimal strategy based on content type (photo vs screenshot),
+/// encoder family, and quality level. Screenshots are skipped at Q10+ because
+/// deblocking harms synthetic content.
+///
+/// # Performance
+///
+/// Boundary 4-tap adds ~5-15% decode time. Knusperli adds ~20-40% due to
+/// extra IDCT work. Both modes force the coefficient decode path (no streaming),
+/// since they need access to quantization tables and/or raw DCT coefficients.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenjpeg::decode::{Decoder, DeblockMode};
+///
+/// let result = Decoder::new()
+///     .deblock(DeblockMode::Auto)
+///     .decode(&jpeg_data, enough::Unstoppable)?;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum DeblockMode {
+    /// No deblocking (default). Fastest, pixel-exact decode output.
+    #[default]
+    Off,
+    /// Auto-detect: use content classification and quality to pick the best strategy.
+    ///
+    /// Uses [`detect::content::recommend_deblock()`](crate::detect::content::recommend_deblock)
+    /// internally. For photos at Q5-Q30, this typically applies Knusperli
+    /// (DCT-domain correction). For Q30+, it uses boundary 4-tap filtering.
+    /// Screenshots at Q10+ are skipped (deblocking hurts synthetic content).
+    Auto,
+    /// Always apply H.264-style 4-tap boundary filter.
+    ///
+    /// Operates in the pixel domain at 8x8 block boundaries. Effective across
+    /// all quality levels with moderate cost (~5-15% decode time).
+    Boundary4Tap,
+    /// Always apply Knusperli DCT-domain correction.
+    ///
+    /// Analytically computes boundary discontinuities and distributes corrections
+    /// across low-frequency DCT coefficients. Best at low quality (Q5-Q30);
+    /// may slightly hurt at high quality levels.
+    Knusperli,
+}
+
 /// Controls how restart segments are mapped to rayon tasks during parallel decode.
 ///
 /// When DRI is MCU-row-aligned, the decoder can parallelize across restart
@@ -763,6 +824,12 @@ pub struct DecodeConfig {
     ///
     /// Set explicitly to override this automatic selection.
     pub(crate) idct_method: Option<IdctMethod>,
+    /// Post-decode deblocking mode.
+    ///
+    /// Default: [`DeblockMode::Off`]. When set to a non-Off mode, forces
+    /// coefficient decode path (no streaming) since deblocking needs access
+    /// to quantization tables and/or raw DCT coefficients.
+    pub(crate) deblock_mode: DeblockMode,
 }
 
 impl core::fmt::Debug for DecodeConfig {
@@ -785,6 +852,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("num_threads", &self.num_threads)
             .field("parallel_strategy", &self.parallel_strategy)
             .field("idct_method", &self.idct_method)
+            .field("deblock_mode", &self.deblock_mode)
             .finish()
     }
 }
@@ -811,6 +879,7 @@ impl Default for DecodeConfig {
             num_threads: 0,
             parallel_strategy: ParallelStrategy::default(),
             idct_method: None,
+            deblock_mode: DeblockMode::default(),
         }
     }
 }

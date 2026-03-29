@@ -857,6 +857,80 @@ impl<'a> JpegParser<'a> {
         }
     }
 
+    /// Apply deblocking filters to component planes in-place.
+    ///
+    /// Planes are centered around 0 (IDCT output: [-128, 127]). Boundary 4-tap
+    /// expects [0, 255], so we level-shift before filtering and shift back after.
+    /// Knusperli replaces the plane entirely (it does its own IDCT from coefficients).
+    fn apply_deblock_to_planes(
+        &self,
+        comp_planes: &mut [Vec<f32>],
+        comp_infos: &[CompInfo],
+        mode: super::super::DeblockMode,
+    ) -> Result<()> {
+        use super::super::DeblockMode;
+
+        if mode == DeblockMode::Off {
+            return Ok(());
+        }
+
+        for (comp_idx, info) in comp_infos.iter().enumerate() {
+            let quant = self.quant_tables[info.quant_idx]
+                .as_ref()
+                .ok_or(Error::internal("missing quant table for deblock"))?;
+            let dc_quant = quant[0];
+
+            // Decide strategy per-component
+            let use_knusperli = match mode {
+                DeblockMode::Off => unreachable!(),
+                DeblockMode::Knusperli => true,
+                DeblockMode::Boundary4Tap => false,
+                DeblockMode::Auto => {
+                    // Simple heuristic: knusperli at low Q (high DC quant), boundary otherwise
+                    dc_quant >= 27
+                }
+            };
+
+            if use_knusperli && comp_idx < self.coeffs.len() {
+                // Knusperli: replace plane with its own IDCT + boundary correction.
+                // Output is [0, 255] range; shift to [-128, 127] to match pipeline.
+                // Coefficients are stored as Vec<[i16; 64]>; flatten to &[i16] for knusperli.
+                let flat_coeffs: &[i16] = bytemuck::cast_slice(&self.coeffs[comp_idx]);
+                let mut plane = crate::deblock::knusperli::process_component(
+                    flat_coeffs,
+                    info.comp_blocks_h,
+                    info.comp_blocks_v,
+                    quant,
+                );
+                // Level-shift from [0, 255] to [-128, 127] to match the rest of the pipeline
+                for v in &mut plane {
+                    *v -= 128.0;
+                }
+                comp_planes[comp_idx] = plane;
+            } else {
+                // Boundary 4-tap: level-shift to [0, 255], filter in-place, shift back.
+                let plane = &mut comp_planes[comp_idx];
+                let (w, h) = (info.comp_width, info.comp_height);
+
+                // Shift to [0, 255]
+                for v in plane.iter_mut() {
+                    *v += 128.0;
+                }
+
+                let strength =
+                    crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
+                crate::deblock::filter_plane_boundary_4tap(plane, w, h, strength);
+
+                // Shift back to [-128, 127]
+                for v in plane.iter_mut() {
+                    *v -= 128.0;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Upsample component f32 planes to full image resolution.
     ///
     /// Handles all chroma upsampling modes (Triangle, LibjpegCompat, NearestNeighbor).
@@ -1256,6 +1330,38 @@ impl<'a> JpegParser<'a> {
         chroma_upsampling: super::super::ChromaUpsampling,
         _stop: &impl Stop,
     ) -> Result<Vec<f32>> {
+        self.to_pixels_f32_inner(
+            format,
+            is_xyb,
+            chroma_upsampling,
+            super::super::DeblockMode::Off,
+            _stop,
+        )
+    }
+
+    /// Internal f32 pixel conversion with optional deblocking.
+    ///
+    /// When `deblock_mode` is not `Off`, deblocking is applied to component
+    /// planes after IDCT but before chroma upsampling and color conversion.
+    pub(in crate::decode) fn to_pixels_f32_deblock(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        deblock_mode: super::super::DeblockMode,
+        _stop: &impl Stop,
+    ) -> Result<Vec<f32>> {
+        self.to_pixels_f32_inner(format, is_xyb, chroma_upsampling, deblock_mode, _stop)
+    }
+
+    fn to_pixels_f32_inner(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        deblock_mode: super::super::DeblockMode,
+        _stop: &impl Stop,
+    ) -> Result<Vec<f32>> {
         if self.coeffs.is_empty() {
             return Err(Error::internal("no decoded data"));
         }
@@ -1328,6 +1434,11 @@ impl<'a> JpegParser<'a> {
                 }
             }
         }
+
+        // Apply deblocking to component planes (between IDCT and upsampling).
+        // Deblocking operates in [0, 255] pixel domain, so we level-shift
+        // the centered IDCT output (+128), filter, then shift back (-128).
+        self.apply_deblock_to_planes(&mut comp_planes_f32, &comp_infos, deblock_mode)?;
 
         // Upsample and convert to output format
         let planes_f32 = self.upsample_planes_f32(

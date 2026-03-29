@@ -152,7 +152,7 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 }
 
 // Re-export config types (defined in config.rs, public API preserved)
-pub use config::{ChromaUpsampling, DecodeWarning, IdctMethod, JpegInfo, Strictness};
+pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
 use crate::color::icc::IccTarget;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -263,6 +263,36 @@ impl DecodeConfig {
         } else {
             IdctMethod::Jpegli
         }
+    }
+
+    /// Enable post-decode deblocking to reduce JPEG block artifacts.
+    ///
+    /// Deblocking improves visual quality by smoothing 8x8 block boundaries.
+    /// The effect is strongest at low quality levels (Q5-Q50) where blocking
+    /// artifacts are most visible.
+    ///
+    /// [`DeblockMode::Auto`] uses content classification to pick the optimal
+    /// strategy. For photos at Q5-Q30, this typically applies Knusperli
+    /// (DCT-domain correction). For Q30+, it uses boundary 4-tap filtering.
+    /// Screenshots are skipped (deblocking hurts synthetic content).
+    ///
+    /// Performance: boundary 4-tap adds ~5-15% decode time. Knusperli adds
+    /// ~20-40% due to extra IDCT work. Both modes force the coefficient decode
+    /// path (no streaming).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, DeblockMode};
+    ///
+    /// let result = Decoder::new()
+    ///     .deblock(DeblockMode::Auto)
+    ///     .decode(&jpeg_data, enough::Unstoppable)?;
+    /// ```
+    #[must_use]
+    pub fn deblock(mut self, mode: DeblockMode) -> Self {
+        self.deblock_mode = mode;
+        self
     }
 
     /// Enables inter-block smoothing for progressive JPEGs.
@@ -1577,13 +1607,15 @@ impl DecodeConfig {
             JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
 
         // Streaming decode produces RGB u8 directly — disable it when the output
-        // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats).
+        // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats,
+        // or deblocking).
         {
             let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
             let needs_coefficients = self.output_target.is_f32()
                 || self.output_target.is_precise()
                 || self.output_target.uses_dequant_bias()
                 || effective_transform != crate::lossless::LosslessTransform::None
+                || self.deblock_mode != DeblockMode::Off
                 || !matches!(
                     output_format,
                     PixelFormat::Rgb
@@ -1670,8 +1702,11 @@ impl DecodeConfig {
         let mut result = if self.output_target.is_f32() {
             // f32 output path
             #[allow(unused_mut)]
-            let mut pixels =
-                parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?;
+            let mut pixels = if self.deblock_mode != DeblockMode::Off {
+                parser.to_pixels_f32_deblock(output_format, info.is_xyb, self.chroma_upsampling, self.deblock_mode, &stop)?
+            } else {
+                parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
+            };
 
             // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
@@ -1752,8 +1787,69 @@ impl DecodeConfig {
                 extras,
                 warnings,
             )
+        } else if self.deblock_mode != DeblockMode::Off {
+            // u8 output with deblocking: route through f32 deblock path, convert to u8.
+            // The f32 path applies deblocking between IDCT and color conversion.
+            let f32_pixels = parser.to_pixels_f32_deblock(
+                output_format, info.is_xyb, self.chroma_upsampling, self.deblock_mode, &stop,
+            )?;
+            #[allow(unused_mut)]
+            let mut pixels: Vec<u8> = f32_pixels.iter()
+                .map(|&v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8)
+                .collect();
+
+            // Crop to visible region if transform introduced a crop offset
+            if crop_x > 0 || crop_y > 0 {
+                let inflated_w = parser.width as usize;
+                let vis_w = visible_w as usize;
+                let vis_h = visible_h as usize;
+                let bpp = output_format.bytes_per_pixel();
+                let mut cropped = vec![0u8; vis_w * vis_h * bpp];
+                for y in 0..vis_h {
+                    let src_off = ((crop_y + y) * inflated_w + crop_x) * bpp;
+                    let dst_off = y * vis_w * bpp;
+                    let row_bytes = vis_w * bpp;
+                    cropped[dst_off..dst_off + row_bytes]
+                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+                }
+                pixels = cropped;
+            }
+
+            let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
+                let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
+                let cw = resolved.width as usize;
+                let ch = resolved.height as usize;
+                let cx = resolved.x as usize;
+                let cy = resolved.y as usize;
+                let src_w = visible_w as usize;
+                let bpp = output_format.bytes_per_pixel();
+                let mut cropped = vec![0u8; cw * ch * bpp];
+                for y in 0..ch {
+                    let src_off = ((cy + y) * src_w + cx) * bpp;
+                    let dst_off = y * cw * bpp;
+                    let row_bytes = cw * bpp;
+                    cropped[dst_off..dst_off + row_bytes]
+                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+                }
+                pixels = cropped;
+                (resolved.width, resolved.height)
+            } else {
+                (visible_w, visible_h)
+            };
+
+            let extras = finalize_extras(parser.take_extras(), data, forced_exif);
+            let warnings = parser.take_warnings();
+            DecodeResult::new_u8(
+                out_w,
+                out_h,
+                output_format,
+                self.output_target,
+                pixels,
+                extras,
+                warnings,
+            )
         } else {
-            // u8 output path
+            // u8 output path (fast, no deblocking)
             #[allow(unused_mut)]
             let mut pixels = parser.to_pixels(
                 output_format,
