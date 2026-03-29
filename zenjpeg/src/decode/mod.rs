@@ -1804,10 +1804,12 @@ impl DecodeConfig {
                 pixels = cropped;
             }
 
-            // Apply ICC profile if enabled and present
+            // Apply ICC profile if enabled and present.
+            // At this point pixels are always RGB (CMYK/YCCK already converted).
+            // The ICC profile may describe any source color space (sRGB, Adobe RGB,
+            // CMYK working space) — moxcms handles the transform to the target.
             #[cfg(feature = "moxcms")]
             if let Some(target) = self.correct_color
-                && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile
             {
                 match apply_icc_transform_f32(
@@ -1987,10 +1989,10 @@ impl DecodeConfig {
                 pixels = cropped;
             }
 
-            // Apply ICC profile if enabled and present
+            // Apply ICC profile if enabled and present.
+            // Pixels are always RGB here (CMYK/YCCK converted earlier in output.rs).
             #[cfg(feature = "moxcms")]
             if let Some(target) = self.correct_color
-                && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile
             {
                 match apply_icc_transform(
