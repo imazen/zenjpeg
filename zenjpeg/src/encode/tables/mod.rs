@@ -54,7 +54,6 @@ pub(crate) mod robidoux;
 /// (Robidoux, MSSIM, Klein, etc.) with the standard quality scaling formula.
 ///
 /// Requires the `mozjpeg-tables` feature flag.
-#[cfg(feature = "mozjpeg-tables")]
 pub mod presets;
 
 /// Glassa low-BPP optimized quantization tables for extreme compression.

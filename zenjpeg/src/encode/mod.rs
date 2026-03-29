@@ -162,7 +162,6 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 pub use optimized_tables::OptimizedTables;
 #[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
-#[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};
 

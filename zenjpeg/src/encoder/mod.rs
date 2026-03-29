@@ -168,7 +168,6 @@ pub use crate::encode::tables;
 pub use crate::encode::encoder_types::ParallelEncoding;
 
 // === mozjpeg-compatible quantization tables ===
-#[cfg(feature = "mozjpeg-tables")]
 pub use crate::encode::tables::presets::{MozjpegTables, QuantTablePreset};
 
 // === SA-optimized piecewise quantization tables ===
