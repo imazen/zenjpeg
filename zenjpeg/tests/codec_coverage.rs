@@ -572,7 +572,6 @@ mod decode_coverage {
         let decoder = Decoder::new()
             .output_format(PixelFormat::Rgb)
             .chroma_upsampling(ChromaUpsampling::Triangle)
-            
             .max_pixels(1000000)
             .max_memory(100 * 1024 * 1024);
 

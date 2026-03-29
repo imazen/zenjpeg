@@ -213,8 +213,7 @@ fn main() {
         .output_format(PixelFormat::Rgb)
         .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
 
-    let decoder_fancy = Decoder::new()
-        .output_format(PixelFormat::Rgb)
+    let decoder_fancy = Decoder::new().output_format(PixelFormat::Rgb);
 
     // Shared pools (created once, reused)
     let pool_2 = Arc::new(DecodePool::new().parallel_threshold(2));

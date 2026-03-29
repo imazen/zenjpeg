@@ -395,7 +395,8 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 b.iter(|| {
                     use imgref::ImgRefMut;
                     use zenjpeg::decode::Decoder;
-                    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                    let decoder =
+                        Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     let mut reader = decoder
                         .scanline_reader(black_box(data))
                         .expect("scanline_reader failed");
@@ -427,7 +428,9 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 b.iter(|| {
                     use imgref::ImgRefMut;
                     use zenjpeg::decode::Decoder;
-                    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor).num_threads(1); // Force sequential
+                    let decoder = Decoder::new()
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
+                        .num_threads(1); // Force sequential
                     let mut reader = decoder
                         .scanline_reader(black_box(data))
                         .expect("scanline_reader failed");

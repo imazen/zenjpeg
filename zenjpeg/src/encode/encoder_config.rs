@@ -365,9 +365,7 @@ impl EncoderConfig {
             #[cfg(feature = "trellis")]
             MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
             #[cfg(feature = "trellis")]
-            MozjpegMaxCompression | HybridMaxCompression => {
-                ProgressiveScanMode::ProgressiveSearch
-            }
+            MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
         };
 
         // Quant table config: bundles source + chroma layout

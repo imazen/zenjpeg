@@ -2584,8 +2584,7 @@ mod tests {
 
     #[test]
     fn test_decoder_creation() {
-        let decoder = Decoder::new()
-            .output_format(PixelFormat::Rgb);
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
 
         assert_eq!(decoder.output_format, Some(PixelFormat::Rgb));
         assert_eq!(decoder.chroma_upsampling, ChromaUpsampling::Triangle);

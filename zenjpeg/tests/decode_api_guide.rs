@@ -512,9 +512,7 @@ fn fancy_upsampling_toggle() {
         .unwrap();
 
     // true → Triangle (default quality)
-    let fancy = Decoder::new()
-        .decode(&jpeg, Unstoppable)
-        .unwrap();
+    let fancy = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
 
     // Both succeed with valid output
     assert!(!fast.pixels_u8().unwrap().is_empty());
@@ -1349,14 +1347,10 @@ fn scanline_reader_info() {
 fn block_smoothing() {
     let jpeg = test_jpeg_420();
     // Just verify it doesn't crash
-    let result = Decoder::new()
-        
-        .decode(&jpeg, Unstoppable);
+    let result = Decoder::new().decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 
-    let result = Decoder::new()
-        
-        .decode(&jpeg, Unstoppable);
+    let result = Decoder::new().decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 }
 
@@ -1485,8 +1479,7 @@ fn decode_progressive() {
 /// Same decoder config can decode multiple images.
 #[test]
 fn config_reuse() {
-    let decoder = Decoder::new()
-        .output_format(PixelFormat::Rgb);
+    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
 
     let jpeg_a = test_jpeg_420();
     let jpeg_b = test_jpeg_444();

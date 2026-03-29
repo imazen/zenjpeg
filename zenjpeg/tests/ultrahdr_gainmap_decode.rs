@@ -56,9 +56,8 @@ use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
-    create_hdr_reconstructor, encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrColorGamut,
-    UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage, UltraHdrExtras, UltraHdrMode,
-    UltraHdrReaderConfig,
+    GainMapConfig, ToneMapConfig, UhdrColorGamut, UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage,
+    UltraHdrExtras, UltraHdrMode, UltraHdrReaderConfig, create_hdr_reconstructor, encode_ultrahdr,
 };
 
 // ---------------------------------------------------------------------------

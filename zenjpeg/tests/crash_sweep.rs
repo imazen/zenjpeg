@@ -115,8 +115,7 @@ fn test_file(path: &Path) -> TestResult {
 
     // Test with fancy upsampling enabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        Decoder::new()
-            .decode(&data, Unstoppable)
+        Decoder::new().decode(&data, Unstoppable)
     }));
     if let Err(e) = result {
         return TestResult::Panic(format!("fancy_upsampling(true): {}", panic_message(e)));

@@ -58,8 +58,7 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
 
     // With fancy upsampling enabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        Decoder::new()
-            .decode(data, Unstoppable)
+        Decoder::new().decode(data, Unstoppable)
     }));
     if let Err(e) = result {
         let msg = e

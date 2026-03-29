@@ -1004,9 +1004,7 @@ impl OptimizationPreset {
         match self {
             Self::JpegliBaseline | Self::JpegliProgressive => true,
             #[cfg(feature = "trellis")]
-            Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => {
-                false
-            }
+            Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => false,
             #[cfg(feature = "trellis")]
             Self::HybridBaseline | Self::HybridProgressive | Self::HybridMaxCompression => true,
         }
