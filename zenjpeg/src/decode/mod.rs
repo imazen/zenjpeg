@@ -239,9 +239,8 @@ impl DecodeConfig {
     /// - [`IdctMethod::Jpegli`] (default): 12-bit fixed-point, matches jpegli
     /// - [`IdctMethod::Libjpeg`]: 13-bit Loeffler, matches libjpeg-turbo/mozjpeg
     ///
-    /// When [`ChromaUpsampling::Triangle`] is set and no explicit IDCT method
-    /// is configured, the decoder automatically uses [`IdctMethod::Libjpeg`].
-    /// Calling this method overrides that automatic selection.
+    /// The default IDCT is `Jpegli` regardless of upsampling mode.
+    /// Set `Libjpeg` for pixel-exact mozjpeg matching (adds ~37% overhead).
     #[must_use]
     pub fn idct_method(mut self, method: IdctMethod) -> Self {
         self.idct_method = Some(method);

@@ -73,8 +73,8 @@ pub enum ChromaUpsampling {
 /// | `Jpegli` | 12-bit fixed-point | jpegli (Google JPEG XL project) |
 /// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg |
 ///
-/// The default is `Jpegli`. Setting [`ChromaUpsampling::Triangle`] on the
-/// decoder automatically switches to `Libjpeg` unless explicitly overridden.
+/// The default is `Jpegli`. For pixel-exact mozjpeg matching, set
+/// `.idct_method(IdctMethod::Libjpeg)` explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum IdctMethod {
@@ -833,11 +833,8 @@ pub struct DecodeConfig {
     pub(crate) parallel_strategy: ParallelStrategy,
     /// Integer IDCT algorithm override.
     ///
-    /// When `None` (default), the IDCT is chosen automatically:
-    /// - `ChromaUpsampling::Triangle` → `IdctMethod::Libjpeg`
-    /// - All other upsampling modes → `IdctMethod::Jpegli`
-    ///
-    /// Set explicitly to override this automatic selection.
+    /// When `None` (default), `IdctMethod::Jpegli` is used for all upsampling
+    /// modes. Set to `IdctMethod::Libjpeg` for pixel-exact mozjpeg matching.
     pub(crate) idct_method: Option<IdctMethod>,
     /// Post-decode deblocking mode.
     ///
