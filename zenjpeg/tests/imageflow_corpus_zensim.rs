@@ -1,17 +1,36 @@
 //! Comprehensive zensim regression testing: zenjpeg vs mozjpeg across the entire
 //! imageflow codec corpus.
 //!
-//! For each loadable image in the imageflow test_inputs corpus, encodes with both
-//! zenjpeg (MozjpegProgressive preset) and mozjpeg-rs, decodes both, and computes
-//! zensim similarity of each decoded output against the uncompressed original.
+//! **zenjpeg is always configured in mozjpeg-mimicry mode** throughout this file:
+//!   - Encoder: `Quality::ApproxMozjpeg(q)` + `OptimizationPreset::MozjpegProgressive` + 4:2:0
+//!   - This means zenjpeg uses mozjpeg-compatible quant tables and progressive scan scripts.
 //!
-//! This catches:
-//! - Quality regressions where zenjpeg produces worse output than mozjpeg
-//! - Catastrophic encoding failures on unusual image dimensions/content
-//! - Size ratio regressions (zenjpeg producing significantly larger files)
+//! Four tests, each with fully specified encoder/decoder/mode:
 //!
-//! Images are loaded from PNG (direct) and JPEG (decoded to RGB first via mozjpeg-sys).
-//! CMYK, corrupt, and tiny images are skipped with warnings.
+//! 1. **imageflow_corpus_zensim_vs_mozjpeg** — Encoder quality vs original
+//!    - Encoder A: mozjpeg-rs (ProgressiveSmallest, 4:2:0)
+//!    - Encoder B: zenjpeg (ApproxMozjpeg + MozjpegProgressive, 4:2:0)
+//!    - Decoder: zenjpeg default (Jpegli IDCT, Triangle upsampling) for BOTH
+//!    - Compare: each decoded output vs uncompressed original via zensim
+//!
+//! 2. **imageflow_decoder_parity_mozjpeg_files** — Decoder accuracy (PRIMARY)
+//!    - Encoder: mozjpeg-rs (ProgressiveSmallest, 4:2:0)
+//!    - Decoder A: mozjpeg-sys / libjpeg-turbo FFI (JCS_RGB output)
+//!    - Decoder B: zenjpeg default (Jpegli IDCT, Triangle upsampling)
+//!    - Decoder C: zenjpeg LibjpegCompat (Libjpeg IDCT, LibjpegCompat upsampling)
+//!    - Compare: B vs A, C vs A (zensim + max pixel diff)
+//!
+//! 3. **imageflow_encoder_cross_comparison** — Encoder output similarity
+//!    - Encoder A: mozjpeg-rs (ProgressiveSmallest, 4:2:0)
+//!    - Encoder B: zenjpeg (ApproxMozjpeg + MozjpegProgressive, 4:2:0)
+//!    - Decoder: zenjpeg default (Jpegli IDCT, Triangle upsampling) for BOTH
+//!    - Compare: decoded-A vs decoded-B via zensim
+//!
+//! 4. **imageflow_size_matched_quality** — Fair quality comparison at matched file size
+//!    - Encoder A: mozjpeg-rs (ProgressiveSmallest, 4:2:0) at target Q
+//!    - Encoder B: zenjpeg (ApproxMozjpeg + MozjpegProgressive, 4:2:0) Q bisected to match size ±2%
+//!    - Decoder: zenjpeg default (Jpegli IDCT, Triangle upsampling) for BOTH
+//!    - Compare: each decoded output vs uncompressed original via zensim
 //!
 //! Run:
 //! ```bash
@@ -171,6 +190,8 @@ fn load_image(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 // ── Encoding ────────────────────────────────────────────────────────────────
 
+/// Encode with **mozjpeg-rs** (C library via Rust wrapper).
+/// Mode: ProgressiveSmallest, 4:2:0, mozjpeg quality scale.
 fn encode_mozjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
     mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::ProgressiveSmallest)
         .quality(quality)
@@ -179,6 +200,9 @@ fn encode_mozjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
         .expect("mozjpeg-rs encode failed")
 }
 
+/// Encode with **zenjpeg in mozjpeg-mimicry mode**.
+/// Mode: ApproxMozjpeg(q) quality + MozjpegProgressive optimization + 4:2:0.
+/// This uses mozjpeg-compatible quant tables and progressive scan scripts.
 fn encode_zenjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(Quality::ApproxMozjpeg(quality), ChromaSubsampling::Quarter)
         .optimization(OptimizationPreset::MozjpegProgressive);
@@ -189,6 +213,11 @@ fn encode_zenjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
     enc.finish().expect("finish failed")
 }
 
+// ── Decoding ────────────────────────────────────────────────────────────────
+
+/// Decode with **zenjpeg default mode**.
+/// IDCT: Jpegli (12-bit fixed-point). Upsampling: Triangle (jpegli-style).
+/// No ICC transform.
 fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let dec = Decoder::new().apply_icc(false);
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
@@ -196,16 +225,24 @@ fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     (w, h, img.into_pixels_u8().unwrap())
 }
 
-/// Decode with zenjpeg using LibjpegCompat mode (13-bit Loeffler IDCT +
-/// libjpeg-turbo compatible chroma upsampling). Closest match to mozjpeg output.
+/// Decode with **zenjpeg LibjpegCompat mode** (closest match to mozjpeg/libjpeg-turbo).
+/// IDCT: Libjpeg (13-bit Loeffler, auto-selected by LibjpegCompat).
+/// Upsampling: LibjpegCompat (fused 2D filter with alternating rounding bias).
+/// No ICC transform.
 fn decode_to_rgb_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let dec = Decoder::new()
         .apply_icc(false)
         .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
-    // LibjpegCompat auto-selects IdctMethod::Libjpeg
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     let (w, h) = (img.width, img.height);
     (w, h, img.into_pixels_u8().unwrap())
+}
+
+/// Decode with **mozjpeg-sys** (libjpeg-turbo C library via FFI).
+/// IDCT: libjpeg-turbo islow (13-bit Loeffler). Upsampling: libjpeg fancy.
+/// This is the reference decoder for parity testing.
+fn decode_jpeg_rgb_mozjpeg(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    decode_jpeg_rgb(data)
 }
 
 // ── Comparison result ───────────────────────────────────────────────────────
@@ -280,7 +317,8 @@ fn process_image_quality(
         }
     };
 
-    // Decode both with zenjpeg (constant decoder isolates encoder differences)
+    // Decode both with zenjpeg default (Jpegli IDCT, Triangle upsampling).
+    // Same decoder for both → differences are purely encoder-side.
     let (_, _, moz_dec) = decode_to_rgb(&moz_jpeg);
     let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
 
@@ -374,6 +412,13 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
         println!("Corpus not found at {CORPUS_DIR}, skipping");
         return;
     }
+
+    println!("=== Encoder Quality vs Original (same Q parameter) ===");
+    println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0");
+    println!("  Encoder B: zenjpeg   | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0");
+    println!("  Decoder:   zenjpeg   | Jpegli IDCT | Triangle upsampling | no ICC");
+    println!("  Metric:    zensim(decoded, original) for each encoder");
+    println!();
 
     // Collect and load images
     println!("Collecting images from {CORPUS_DIR}...");
@@ -682,20 +727,19 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DECODER PARITY: mozjpeg encodes → zenjpeg reads → compare against mozjpeg decode
+// TEST 2: DECODER PARITY (PRIMARY)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // THIS IS THE PRIMARY TEST. It answers: "Can zenjpeg correctly read files
 // that mozjpeg creates?" This matters more than encoder comparison because
 // most JPEGs in the wild were created by mozjpeg/libjpeg-turbo.
 //
-// For each image × quality:
-//   1. mozjpeg-rs encodes to JPEG
-//   2. mozjpeg-sys decodes → reference RGB
-//   3. zenjpeg (default Jpegli IDCT) decodes → test RGB
-//   4. zenjpeg (LibjpegCompat IDCT) decodes → compat RGB
-//   5. Compute zensim between each decoder output and the reference
-//   6. Compute max pixel diff for each
+// Pipeline:
+//   Encoder:    mozjpeg-rs | ProgressiveSmallest | 4:2:0
+//   Decoder A:  mozjpeg-sys (libjpeg-turbo FFI) | islow IDCT | fancy upsample
+//   Decoder B:  zenjpeg default | Jpegli IDCT (12-bit) | Triangle upsampling
+//   Decoder C:  zenjpeg LibjpegCompat | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample
+//   Metric:     zensim(B vs A), zensim(C vs A), max pixel diff
 
 struct DecoderParityResult {
     name: String,
@@ -737,8 +781,8 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
         }
     };
 
-    // Decode with mozjpeg-sys (reference)
-    let moz_dec = match decode_jpeg_rgb(&moz_jpeg) {
+    // Decode with mozjpeg-sys / libjpeg-turbo (reference: islow IDCT, fancy upsample)
+    let moz_dec = match decode_jpeg_rgb_mozjpeg(&moz_jpeg) {
         Ok((rgb, _, _)) => rgb,
         Err(e) => {
             return DecoderParityResult {
@@ -787,10 +831,15 @@ fn imageflow_decoder_parity_mozjpeg_files() {
         return;
     }
 
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║  DECODER PARITY: Can zenjpeg correctly read mozjpeg files?   ║");
-    println!("║  mozjpeg encodes → both decoders decode → compare outputs    ║");
-    println!("╚═══════════════════════════════════════════════════════════════╝");
+    println!("╔═══════════════════════════════════════════════════════════════════╗");
+    println!("║  DECODER PARITY: Can zenjpeg correctly read mozjpeg files?      ║");
+    println!("╚═══════════════════════════════════════════════════════════════════╝");
+    println!("  Encoder:    mozjpeg-rs  | ProgressiveSmallest | 4:2:0");
+    println!("  Decoder A:  mozjpeg-sys | libjpeg-turbo FFI | islow IDCT | fancy upsample");
+    println!("  Decoder B:  zenjpeg     | Jpegli IDCT (12-bit) | Triangle upsampling");
+    println!("  Decoder C:  zenjpeg     | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample");
+    println!("  Metric:     zensim(B vs A) and zensim(C vs A) + max pixel diff");
+    println!();
 
     let paths = collect_images(&corpus);
     let mut images: Vec<LoadedImage> = Vec::new();
@@ -959,12 +1008,17 @@ fn imageflow_decoder_parity_mozjpeg_files() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENCODER CROSS-COMPARISON: zen-encoded vs moz-encoded decoded outputs
+// TEST 3: ENCODER CROSS-COMPARISON
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Measures how perceptually similar the decoded outputs are to each other,
-// independent of the original. High scores mean the encoders produce
-// interchangeable output.
+// How perceptually similar are the decoded outputs to each other?
+// High scores mean the encoders produce interchangeable output.
+//
+// Pipeline:
+//   Encoder A:  mozjpeg-rs | ProgressiveSmallest | 4:2:0
+//   Encoder B:  zenjpeg | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0
+//   Decoder:    zenjpeg default | Jpegli IDCT | Triangle upsampling | no ICC
+//   Metric:     zensim(decoded-A, decoded-B) + max pixel diff
 
 struct CrossResult {
     name: String,
@@ -1005,7 +1059,8 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
         }
     };
 
-    // Decode both with same decoder (zenjpeg default)
+    // Decode both with zenjpeg default (Jpegli IDCT, Triangle upsampling).
+    // Same decoder for both → differences are purely encoder-side.
     let (_, _, moz_dec) = decode_to_rgb(&moz_jpeg);
     let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
 
@@ -1036,9 +1091,12 @@ fn imageflow_encoder_cross_comparison() {
         return;
     }
 
-    println!("=== Encoder Cross-Comparison: zen-decoded vs moz-decoded ===");
-    println!("Both decoded by zenjpeg (constant decoder). Shows how");
-    println!("interchangeable the two encoders' output is.\n");
+    println!("=== Encoder Cross-Comparison: decoded outputs compared to each other ===");
+    println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0");
+    println!("  Encoder B: zenjpeg   | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0");
+    println!("  Decoder:   zenjpeg   | Jpegli IDCT | Triangle upsampling | no ICC");
+    println!("  Metric:    zensim(decoded-A, decoded-B) + max pixel diff");
+    println!("  Same decoder for both → differences are purely encoder-side.\n");
 
     let paths = collect_images(&corpus);
     let mut images: Vec<LoadedImage> = Vec::new();
@@ -1147,19 +1205,19 @@ fn imageflow_encoder_cross_comparison() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SIZE-MATCHED QUALITY: at identical file sizes, which encoder wins?
+// TEST 4: SIZE-MATCHED QUALITY (fair comparison)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// The Q-parameter comparison (test 3) is slightly unfair because the same Q
+// The Q-parameter comparison (test 1) is slightly unfair because the same Q
 // produces different file sizes from each encoder. This test binary-searches
 // zenjpeg's quality parameter to match mozjpeg's output size within ±2%,
 // then compares quality at matched sizes.
 //
-// For each image × target quality:
-//   1. mozjpeg encodes at Q → target_bytes
-//   2. Binary search zenjpeg Q to produce ≈target_bytes (within ±2%)
-//   3. Decode both with zenjpeg, compute zensim vs original
-//   4. Report delta at matched file size
+// Pipeline:
+//   Encoder A:  mozjpeg-rs | ProgressiveSmallest | 4:2:0 | Q as given
+//   Encoder B:  zenjpeg | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0 | Q bisected to match A's size
+//   Decoder:    zenjpeg default | Jpegli IDCT | Triangle upsampling | no ICC
+//   Metric:     zensim(decoded, original) for each at matched file size
 
 /// Binary-search zenjpeg quality to match a target file size within ±2%.
 /// Returns (quality_used, jpeg_bytes, jpeg_data) or None if no match found.
@@ -1248,7 +1306,8 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
 
     let size_err_pct = (zen_jpeg.len() as f64 / target_bytes as f64 - 1.0) * 100.0;
 
-    // Decode both, measure quality vs original
+    // Decode both with zenjpeg default (Jpegli IDCT, Triangle upsampling).
+    // Same decoder for both → differences are purely encoder-side.
     let (_, _, moz_dec) = decode_to_rgb(&moz_jpeg);
     let (_, _, zen_dec) = decode_to_rgb(&zen_jpeg);
 
@@ -1282,9 +1341,11 @@ fn imageflow_size_matched_quality() {
         return;
     }
 
-    println!("=== Size-Matched Quality: zenjpeg vs mozjpeg at equal file size ===");
-    println!("Binary-search zenjpeg Q to match mozjpeg output size (±2%).");
-    println!("Fair comparison: same bits → who produces better quality?\n");
+    println!("=== Size-Matched Quality: fair comparison at equal file size ===");
+    println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0 | Q as given");
+    println!("  Encoder B: zenjpeg   | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0 | Q bisected to match A's size ±2%");
+    println!("  Decoder:   zenjpeg   | Jpegli IDCT | Triangle upsampling | no ICC");
+    println!("  Metric:    zensim(decoded, original) for each — same bits, who wins?\n");
 
     let paths = collect_images(&corpus);
     let mut images: Vec<LoadedImage> = Vec::new();
