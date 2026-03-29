@@ -47,7 +47,7 @@ tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 # linear-srgb = { workspace = true }  # Disabled: incompatible with archmage 0.9 (not used in lib)
 whereat = { workspace = true }  # Error tracing with location tracking
 thiserror = { workspace = true }  # Error derive macros
-lcms2 = { workspace = true, optional = true }
+# lcms2 removed — use moxcms (pure Rust) instead
 moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
@@ -67,7 +67,7 @@ ultrahdr-core = { workspace = true }
 zenlayout = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true, features = ["layout"] }
 # Self-documenting node definitions for pipeline integration
-zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
+# zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies
@@ -131,30 +131,20 @@ zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["yuv", "trellis"]
-# Legacy feature — std is now unconditionally required.
-# Kept as an empty feature so downstream `zenjpeg/std` doesn't break.
-std = []
-# Enable the decoder API. The decoder is still in prerelease with frequent breaking changes.
-# When disabled, no decoder types or functions are available in the public API.
+default = ["yuv", "trellis", "decoder"]
+# Enable the decoder API.
 decoder = []
-parallel = ["dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
-# Legacy feature flag — archmage/magetypes are now mandatory dependencies.
-# Kept for backwards compatibility with downstream Cargo.toml files.
-archmage-simd = []
+# Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
+parallel = ["dep:rayon"]
 # Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
 # with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
-# When disabled, the encoder uses standard zero-bias quantization.
 trellis = []
-cms = ["cms-lcms2"]  # Default CMS backend
-# FFI tests against C++ jpegli for parity verification (local development only)
-# Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
-# Tests check for this feature with #[cfg(feature = "ffi-tests")]
+# Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
+moxcms = ["dep:moxcms", "dep:zune-jpeg"]
+# Dev-only: FFI tests against C++ jpegli (requires git submodule + cmake)
 ffi-tests = []
-# Enable corpus comparison tests (requires local codec-corpus directory)
+# Dev-only: corpus comparison tests (requires local codec-corpus)
 corpus-tests = []
-cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
-cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison
 debug-tokens = []
 # Enable internal profiling instrumentation (scope timers)
@@ -191,7 +181,7 @@ zencodec = ["decoder"]
 # Integrates zenlayout (geometry) and zenresize (resampling)
 layout = ["decoder", "dep:zenlayout", "dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
-zennode = ["dep:zennode", "zencodec"]
+# zennode = ["dep:zennode", "zencodec"]
 
 [[bench]]
 name = "encode"

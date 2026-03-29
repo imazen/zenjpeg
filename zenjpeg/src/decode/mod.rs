@@ -14,7 +14,7 @@
 //! # ICC Profile Support
 //!
 //! The decoder can extract and apply embedded ICC profiles, including XYB profiles
-//! used by jpegli. ICC profile support requires enabling `cms-lcms2` or `cms-moxcms` feature.
+//! used by jpegli. ICC profile support requires enabling `moxcms` feature.
 //!
 //! ```ignore
 //! use zenjpeg::decode::Decoder;
@@ -158,9 +158,9 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
 use crate::color::icc::TargetColorSpace;
-#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+#[cfg(feature = "moxcms")]
 use crate::color::icc::apply_icc_transform;
-#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+#[cfg(feature = "moxcms")]
 use crate::color::icc::apply_icc_transform_f32;
 
 impl DecodeConfig {
@@ -294,7 +294,7 @@ impl DecodeConfig {
     /// no color conversion is performed — pixels are returned in the JPEG's
     /// native color space.
     ///
-    /// Requires the `cms-lcms2` or `cms-moxcms` feature. Without a CMS feature,
+    /// Requires the `moxcms` feature. Without a CMS feature,
     /// this setting has no effect.
     ///
     /// # Example
@@ -1805,7 +1805,7 @@ impl DecodeConfig {
             }
 
             // Apply ICC profile if enabled and present
-            #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+            #[cfg(feature = "moxcms")]
             if let Some(target) = self.correct_color
                 && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile
@@ -1988,7 +1988,7 @@ impl DecodeConfig {
             }
 
             // Apply ICC profile if enabled and present
-            #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+            #[cfg(feature = "moxcms")]
             if let Some(target) = self.correct_color
                 && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile

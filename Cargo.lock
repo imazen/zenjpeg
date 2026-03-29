@@ -936,33 +936,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "foreign-types"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d737d9aa519fb7b749cbc3b962edcf310a8dd1f4b67c91c4f83975dbdd17d965"
-dependencies = [
- "foreign-types-macros",
- "foreign-types-shared",
-]
-
-[[package]]
-name = "foreign-types-macros"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a5c6c585bc94aaf2c7b51dd4c2ba22680844aba4c687be581871a6f518c5742"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "foreign-types-shared"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
 name = "fs2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,29 +1267,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1130d80c7374efad55a117d715a3af9368f0fa7a2c54573afc15a188cd984837"
 dependencies = [
  "mutate_once",
-]
-
-[[package]]
-name = "lcms2"
-version = "6.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b75877b724685dd49310bdbadbf973fc69b1d01992a6d4a861b928fc3943f87b"
-dependencies = [
- "bytemuck",
- "foreign-types",
- "lcms2-sys",
-]
-
-[[package]]
-name = "lcms2-sys"
-version = "4.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c2604b23848ca80b2add60f0fb2270fd980e622c25029b6597fa01cfd5f8d5f"
-dependencies = [
- "cc",
- "dunce",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -1689,12 +1639,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pkg-config"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "plotters"
@@ -3066,7 +3010,6 @@ dependencies = [
  "jpeg-decoder",
  "jpegli-internals-sys",
  "kamadak-exif",
- "lcms2",
  "magetypes",
  "moxcms 0.8.1",
  "mozjpeg-rs",
@@ -3096,7 +3039,6 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenlayout",
- "zennode",
  "zenpixels",
  "zenresize",
  "zensim",
@@ -3130,22 +3072,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e136195598f6c1dc769200888ad1f9071f99d54ac3a91b80be6ba0b164e6b5b"
 
 [[package]]
-name = "zennode"
-version = "0.1.0"
-dependencies = [
- "zennode-derive",
-]
-
-[[package]]
-name = "zennode-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "zenpixels"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3171,7 +3097,6 @@ dependencies = [
  "whereat",
  "zenblend",
  "zenlayout",
- "zennode",
  "zenpixels",
 ]
 

@@ -21,7 +21,7 @@
 //! - `decoder` - Enable JPEG decoding (required for `zenjpeg::decoder` module)
 //! - `parallel` - Multi-threaded encoding via rayon
 
-//! - `cms-lcms2` - ICC color management via lcms2 (default)
+//! - `moxcms` - ICC color management via moxcms (pure Rust)
 //! - `ultrahdr` - UltraHDR gain map support
 //!
 //! See [Feature Flags](#feature-flags) section below for details.
@@ -116,8 +116,7 @@
 //! |---------|---------|-------------|-------------|
 //! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
 //! | `std` | — | Legacy (std is always required) | Kept so `zenjpeg/std` doesn't break downstream |
-//! | `cms-lcms2` | ✅ Yes | ICC color management via lcms2 | XYB decoding, ICC profile application |
-//! | `cms-moxcms` | ❌ No | Pure Rust color management (alternative to lcms2) | Avoid C dependencies |
+//! - `moxcms` - ICC color management via moxcms (pure Rust)
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
 //! | `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |
 //! | `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |
@@ -347,5 +346,5 @@ pub use codec::{
 };
 
 // zennode pipeline node definitions (EncodeJpeg, DecodeJpeg)
-#[cfg(feature = "zennode")]
-pub mod zennode_defs;
+// #[cfg(feature = "zennode")]
+// pub mod zennode_defs;

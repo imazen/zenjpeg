@@ -5,8 +5,7 @@
 //!
 //! # Features
 //!
-//! - `cms-lcms2`: Use Little CMS 2 (mature C library bindings)
-//! - `cms-moxcms`: Use moxcms (pure Rust with SIMD)
+//! - `moxcms`: Enable color management via moxcms (pure Rust with SIMD)
 //!
 //! # Example
 //!
@@ -138,47 +137,8 @@ pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
 /// Apply ICC profile transformation to RGB image data.
 ///
 /// Converts from the input profile's color space to the specified target.
-#[cfg(feature = "cms-lcms2")]
-pub fn apply_icc_transform(
-    rgb_data: &[u8],
-    _width: usize,
-    _height: usize,
-    icc_profile: &[u8],
-    _target: TargetColorSpace,
-) -> Result<Vec<u8>> {
-    use lcms2::{Intent, PixelFormat, Profile, Transform};
-
-    let input_profile =
-        Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
-
-    // lcms2 only has new_srgb(); P3/Rec2020 would need custom ICC profile bytes.
-    // For now, always use sRGB target with lcms2 backend.
-    let output_profile = Profile::new_srgb();
-
-    // Use RelativeColorimetric for best accuracy with XYB profiles
-    // Testing showed Perceptual intent adds ~14% more error vs RelativeColorimetric
-    let transform = Transform::new(
-        &input_profile,
-        PixelFormat::RGB_8,
-        &output_profile,
-        PixelFormat::RGB_8,
-        Intent::RelativeColorimetric,
-    )
-    .map_err(|e| Error::icc_error(format!("lcms2 transform: {e}")))?;
-
-    let pixels: Vec<[u8; 3]> = rgb_data
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
-
-    let mut output = vec![[0u8; 3]; pixels.len()];
-    transform.transform_pixels(&pixels, &mut output);
-
-    Ok(output.into_iter().flatten().collect())
-}
-
 /// Apply ICC profile transformation using moxcms (pure Rust).
-#[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
+#[cfg(feature = "moxcms")]
 pub fn apply_icc_transform(
     rgb_data: &[u8],
     _width: usize,
@@ -211,7 +171,7 @@ pub fn apply_icc_transform(
 }
 
 /// Fallback when no CMS feature is enabled.
-#[cfg(not(any(feature = "cms-lcms2", feature = "cms-moxcms")))]
+#[cfg(not(feature = "moxcms"))]
 pub fn apply_icc_transform(
     rgb_data: &[u8],
     _width: usize,
@@ -220,7 +180,7 @@ pub fn apply_icc_transform(
     _target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
     // No CMS available - return data unchanged
-    // User should enable cms-lcms2 or cms-moxcms feature for ICC support
+    // User should enable moxcms feature for ICC support
     Ok(rgb_data.to_vec())
 }
 
@@ -232,44 +192,8 @@ pub fn apply_icc_transform(
 ///
 /// Input and output are interleaved RGB f32 in [0.0, 1.0] range.
 /// Converts from the input profile's color space to the specified target.
-#[cfg(feature = "cms-lcms2")]
-pub fn apply_icc_transform_f32(
-    rgb_data: &[f32],
-    _width: usize,
-    _height: usize,
-    icc_profile: &[u8],
-    _target: TargetColorSpace,
-) -> Result<Vec<f32>> {
-    use lcms2::{Intent, PixelFormat, Profile, Transform};
-
-    let input_profile =
-        Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
-
-    // lcms2 only has new_srgb(); P3/Rec2020 would need custom ICC profile bytes.
-    let output_profile = Profile::new_srgb();
-
-    let transform = Transform::new(
-        &input_profile,
-        PixelFormat::RGB_FLT,
-        &output_profile,
-        PixelFormat::RGB_FLT,
-        Intent::RelativeColorimetric,
-    )
-    .map_err(|e| Error::icc_error(format!("lcms2 f32 transform: {e}")))?;
-
-    let pixels: Vec<[f32; 3]> = rgb_data
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
-
-    let mut output = vec![[0f32; 3]; pixels.len()];
-    transform.transform_pixels(&pixels, &mut output);
-
-    Ok(output.into_iter().flatten().collect())
-}
-
 /// Apply ICC profile transformation to f32 using moxcms (pure Rust).
-#[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
+#[cfg(feature = "moxcms")]
 pub fn apply_icc_transform_f32(
     rgb_data: &[f32],
     _width: usize,
@@ -302,7 +226,7 @@ pub fn apply_icc_transform_f32(
 }
 
 /// Fallback when no CMS feature is enabled.
-#[cfg(not(any(feature = "cms-lcms2", feature = "cms-moxcms")))]
+#[cfg(not(feature = "moxcms"))]
 pub fn apply_icc_transform_f32(
     rgb_data: &[f32],
     _width: usize,
@@ -314,7 +238,7 @@ pub fn apply_icc_transform_f32(
 }
 
 /// Create a moxcms `ColorProfile` for the given target.
-#[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
+#[cfg(feature = "moxcms")]
 fn make_moxcms_target(target: TargetColorSpace) -> moxcms::ColorProfile {
     match target {
         TargetColorSpace::Srgb => moxcms::ColorProfile::new_srgb(),
@@ -356,8 +280,8 @@ pub fn srgb_to_linear_inplace(pixels: &mut [f32]) {
 /// 2. Extracts any embedded ICC profile
 /// 3. Applies the ICC transform if present and CMS is available
 ///
-/// Available when `cms-lcms2` or `cms-moxcms` feature is enabled.
-#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+/// Available when `moxcms` feature is enabled.
+#[cfg(feature = "moxcms")]
 pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)> {
     // Extract ICC profile first
     let icc_profile = extract_icc_profile(jpeg_data);
