@@ -135,17 +135,14 @@ pub enum DeblockMode {
     Off,
     /// Auto-detect: pick the best deblocking strategy based on quality level.
     ///
-    /// With [`decode()`](super::DecodeConfig::decode): uses Knusperli (DCT-domain
-    /// correction) when DC quant ≥ 27 (roughly Q5–Q50), Boundary4Tap otherwise.
+    /// Uses Knusperli (DCT-domain correction) when DC quant ≥ 27 (roughly
+    /// Q5–Q50), Boundary4Tap otherwise.
     ///
-    /// With [`scanline_reader()`](super::DecodeConfig::scanline_reader): always
-    /// resolves to [`Boundary4Tap`](Self::Boundary4Tap) because Knusperli requires
-    /// full coefficient access unavailable in streaming mode.
-    ///
-    /// **Consistency note:** At low quality (approximately Q5–Q50), `Auto` produces
-    /// different output depending on whether you call `decode()` or `scanline_reader()`.
-    /// If you need identical output from both paths, use an explicit mode
-    /// (`Boundary4Tap` or `Knusperli`) instead of `Auto`.
+    /// When used with [`scanline_reader()`](super::DecodeConfig::scanline_reader)
+    /// and the image needs Knusperli, the scanline reader transparently falls
+    /// back to coefficient-based decoding (same as [`decode()`](super::DecodeConfig::decode))
+    /// to produce correct deblocked output. This means `Auto` produces consistent
+    /// output regardless of which decode path you use.
     Auto,
     /// Always apply H.264-style 4-tap boundary filter.
     ///
@@ -157,6 +154,9 @@ pub enum DeblockMode {
     /// Analytically computes boundary discontinuities and distributes corrections
     /// across low-frequency DCT coefficients. Best at low quality (Q5-Q30);
     /// may slightly hurt at high quality levels.
+    ///
+    /// Requires coefficient access. In [`scanline_reader()`](super::DecodeConfig::scanline_reader),
+    /// transparently falls back to coefficient-based decoding (buffers full image).
     Knusperli,
 }
 

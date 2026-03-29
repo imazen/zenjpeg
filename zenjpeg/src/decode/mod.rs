@@ -277,15 +277,13 @@ impl DecodeConfig {
     /// |------|-----------|-------------------|
     /// | `Off` | no-op | no-op (zero overhead) |
     /// | `Boundary4Tap` | f32 planes | i16 planes (streaming) |
-    /// | `Knusperli` | DCT-domain | **error** (needs coefficients) |
-    /// | `Auto` | knusperli at low Q, boundary otherwise | always boundary_4tap |
+    /// | `Knusperli` | DCT-domain | fallback to `decode()` internally |
+    /// | `Auto` | knusperli at low Q, boundary otherwise | same (falls back when needed) |
     ///
-    /// # Auto mode inconsistency
-    ///
-    /// [`DeblockMode::Auto`] selects different strategies depending on the decode
-    /// path. At low quality (approximately Q5-Q50, DC quant ≥ 27), `decode()` uses
-    /// Knusperli while `scanline_reader()` uses Boundary4Tap. For consistent output
-    /// across both paths, use an explicit mode instead of `Auto`.
+    /// `Knusperli` and `Auto` (when it picks Knusperli) work in `scanline_reader()`
+    /// by transparently falling back to coefficient-based decoding. Output is
+    /// consistent regardless of which decode path you use; only memory behavior
+    /// differs (fallback buffers the full image).
     ///
     /// # Performance
     ///
@@ -687,15 +685,6 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        // Knusperli requires full coefficient access — not available in streaming mode.
-        // Boundary4Tap and Auto (which resolves to Boundary4Tap) are supported.
-        if self.deblock_mode == DeblockMode::Knusperli {
-            return Err(Error::unsupported_feature(
-                "Knusperli deblocking requires coefficient access and is not supported in \
-                 scanline_reader (use .decode() instead, or use DeblockMode::Boundary4Tap)",
-            ));
-        }
-
         // Check if we need a transform — if so, use coefficient-based path
         let effective_transform = self.compute_effective_transform_from_data(data);
         if effective_transform != crate::lossless::LosslessTransform::None {
@@ -704,6 +693,24 @@ impl DecodeConfig {
 
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
+
+        // Knusperli needs full coefficient access. When requested (explicitly or
+        // via Auto at low Q), fall back to decode() + buffered scanline reader
+        // transparently — the caller gets correct deblocked output without
+        // streaming memory savings.
+        let needs_coefficient_deblock = match self.deblock_mode {
+            DeblockMode::Knusperli => true,
+            DeblockMode::Auto => {
+                let dc_quant = parser.quant_tables.iter()
+                    .find_map(|qt| qt.as_ref().map(|t| t[0]))
+                    .unwrap_or(0);
+                dc_quant >= 27
+            }
+            _ => false,
+        };
+        if needs_coefficient_deblock {
+            return self.scanline_reader_deblock_fallback(data);
+        }
 
         // DNL mode (height=0 in SOF) not supported - scanline reader needs dimensions upfront
         if parser.height == 0 {
@@ -920,14 +927,6 @@ impl DecodeConfig {
         use crate::types::JpegMode;
         use alloc::borrow::Cow;
 
-        // Knusperli requires full coefficient access — not available in streaming mode.
-        if self.deblock_mode == DeblockMode::Knusperli {
-            return Err(Error::unsupported_feature(
-                "Knusperli deblocking requires coefficient access and is not supported in \
-                 scanline_reader (use .decode() instead, or use DeblockMode::Boundary4Tap)",
-            ));
-        }
-
         // Check if we need a transform
         let effective_transform = self.compute_effective_transform_from_data(&vec);
         if effective_transform != crate::lossless::LosslessTransform::None {
@@ -956,6 +955,25 @@ impl DecodeConfig {
                 #[cfg(feature = "parallel")]
                 wave_info: Option<(fused_parallel::WaveParallelState, bool)>,
             },
+        }
+
+        // Check if deblock mode needs coefficient path (Knusperli or Auto at low Q)
+        {
+            let needs_coefficient_deblock = match self.deblock_mode {
+                DeblockMode::Knusperli => true,
+                DeblockMode::Auto => {
+                    let mut peek = JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+                    peek.read_header()?;
+                    let dc_quant = peek.quant_tables.iter()
+                        .find_map(|qt| qt.as_ref().map(|t| t[0]))
+                        .unwrap_or(0);
+                    dc_quant >= 27
+                }
+                _ => false,
+            };
+            if needs_coefficient_deblock {
+                return self.scanline_reader_deblock_fallback_owned(vec);
+            }
         }
 
         let parse_result = {
@@ -1480,6 +1498,27 @@ impl DecodeConfig {
     ///
     /// Does a full coefficient decode + transform, then creates a reader
     /// that streams pixels from the transformed coefficients.
+    /// Fallback for deblock modes that need coefficient access (Knusperli, Auto at low Q).
+    /// Runs full `decode()` then wraps the result in a buffered `ScanlineReader`.
+    fn scanline_reader_deblock_fallback<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        let result = self.decode(data, Unstoppable)?;
+        let (vis_w, vis_h, num_ch) = (result.width(), result.height(), result.format().num_channels() as u8);
+        let pixels = result.into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
+        Ok(ScanlineReader::new_buffered(data, vis_w, vis_h, num_ch, Subsampling::S444, pixels, false))
+    }
+
+    /// Owned-data variant of deblock fallback.
+    fn scanline_reader_deblock_fallback_owned<'a>(&self, data: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
+        let result = self.decode(&data, Unstoppable)?;
+        let (vis_w, vis_h, num_ch) = (result.width(), result.height(), result.format().num_channels() as u8);
+        let pixels = result.into_pixels_u8()
+            .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
+        Ok(ScanlineReader::new_buffered_cow(
+            alloc::borrow::Cow::Owned(data), vis_w, vis_h, num_ch, Subsampling::S444, pixels, false,
+        ))
+    }
+
     ///
     /// For non-MCU-aligned images where the transform moves padding to a visible
     /// edge, falls back to a buffered decode + crop approach (same as `decode()`).

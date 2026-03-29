@@ -128,16 +128,17 @@ fn deblock_auto_works() {
 }
 
 #[test]
-fn deblock_scanline_reader_rejects_knusperli() {
+fn deblock_scanline_knusperli_falls_back_to_buffered() {
     let jpeg = make_baseline_test_jpeg(50);
-    let result = Decoder::new()
+    // Knusperli in scanline_reader transparently falls back to decode() + buffered
+    let mut reader = Decoder::new()
         .apply_icc(false)
         .deblock(DeblockMode::Knusperli)
-        .scanline_reader(&jpeg);
-    assert!(
-        result.is_err(),
-        "scanline_reader should reject Knusperli (requires coefficient access)"
-    );
+        .scanline_reader(&jpeg)
+        .expect("Knusperli should work via fallback, not error");
+    let mut buf = vec![0u8; 128 * 128 * 3];
+    let rows = reader.read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 128 * 3, 128)).unwrap();
+    assert_eq!(rows, 128);
 }
 
 #[test]
