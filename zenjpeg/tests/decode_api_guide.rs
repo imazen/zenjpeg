@@ -471,7 +471,7 @@ fn dequant_bias_shortcut() {
 fn chroma_upsampling_triangle() {
     let jpeg = test_jpeg_420();
     let result = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::Triangle)
+        .chroma_upsampling(ChromaUpsampling::Jpegli)
         .decode(&jpeg, Unstoppable)
         .unwrap();
     assert!(result.pixels_u8().is_some());
@@ -493,7 +493,7 @@ fn chroma_upsampling_nearest() {
 fn chroma_upsampling_libjpeg_compat() {
     let jpeg = test_jpeg_420();
     let result = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .unwrap();
     assert!(result.pixels_u8().is_some());

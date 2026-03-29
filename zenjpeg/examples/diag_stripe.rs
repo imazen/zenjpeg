@@ -390,7 +390,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::Triangle,
+            ChromaUpsampling::Jpegli,
             false,
         ) {
             total_stripes += 1;
@@ -416,7 +416,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::Triangle,
+            ChromaUpsampling::Jpegli,
             w <= 129,
         ) {
             total_stripes += 1;
@@ -434,7 +434,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::Triangle,
+            ChromaUpsampling::Jpegli,
             true,
         ) {
             total_stripes += 1;
@@ -452,7 +452,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::Triangle,
+            ChromaUpsampling::Jpegli,
             w <= 255,
         ) {
             total_stripes += 1;
@@ -470,7 +470,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::LibjpegCompat,
+            ChromaUpsampling::Triangle,
             true,
         ) {
             total_stripes += 1;
@@ -488,7 +488,7 @@ fn main() {
             &jpeg,
             w as usize,
             h as usize,
-            ChromaUpsampling::Triangle,
+            ChromaUpsampling::Jpegli,
             false,
         ) {
             total_stripes += 1;

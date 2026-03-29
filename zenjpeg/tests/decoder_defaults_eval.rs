@@ -92,7 +92,7 @@ fn dec_default(jpeg: &[u8]) -> Vec<u8> {
 fn dec_compat(jpeg: &[u8]) -> Vec<u8> {
     Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(jpeg, Unstoppable)
         .expect("decode")
         .into_pixels_u8()
@@ -113,7 +113,7 @@ fn dec_bias_compat(jpeg: &[u8]) -> Vec<u8> {
     let img = Decoder::new()
         .apply_icc(false)
         .dequant_bias(true)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(jpeg, Unstoppable)
         .expect("decode");
     f32_pixels_to_u8(

@@ -400,12 +400,12 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
-                ChromaUpsampling::Triangle => (
+                ChromaUpsampling::Jpegli => (
                     upsample_h2v2_i16_fancy,
                     upsample_h2v1_i16_fancy,
                     upsample_h1v2_i16_fancy,
                 ),
-                ChromaUpsampling::LibjpegCompat => (
+                ChromaUpsampling::Triangle => (
                     upsample_h2v2_i16_libjpeg,
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,
@@ -545,7 +545,7 @@ impl<'a> JpegParser<'a> {
         let use_scratch_upsample = needs_full_upsample
             && h_ratio == 2
             && v_ratio == 2
-            && matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+            && matches!(chroma_upsampling, ChromaUpsampling::Jpegli)
             && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
         let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
@@ -932,7 +932,7 @@ impl<'a> JpegParser<'a> {
 
     /// Upsample component f32 planes to full image resolution.
     ///
-    /// Handles all chroma upsampling modes (Triangle, LibjpegCompat, NearestNeighbor).
+    /// Handles all chroma upsampling modes (Triangle, Jpegli, NearestNeighbor).
     /// Full-res components are clipped to image dimensions without interpolation.
     fn upsample_planes_f32(
         &self,
@@ -955,7 +955,7 @@ impl<'a> JpegParser<'a> {
                 let scale_y = max_v_samp as usize / info.v_samp;
 
                 match chroma_upsampling {
-                    super::super::ChromaUpsampling::Triangle => upsample_fancy(
+                    super::super::ChromaUpsampling::Jpegli => upsample_fancy(
                         comp_plane,
                         info.comp_width,
                         info.comp_height,
@@ -964,7 +964,7 @@ impl<'a> JpegParser<'a> {
                         scale_x,
                         scale_y,
                     ),
-                    super::super::ChromaUpsampling::LibjpegCompat => upsample_libjpeg_f32(
+                    super::super::ChromaUpsampling::Triangle => upsample_libjpeg_f32(
                         comp_plane,
                         info.comp_width,
                         info.comp_height,
@@ -1185,7 +1185,7 @@ impl<'a> JpegParser<'a> {
                             let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
                             let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
                             match chroma_upsampling {
-                                super::super::ChromaUpsampling::LibjpegCompat => {
+                                super::super::ChromaUpsampling::Triangle => {
                                     idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
                                 }
                                 _ => {
@@ -1573,7 +1573,7 @@ impl<'a> JpegParser<'a> {
                         let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
                         let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
                         match chroma_upsampling {
-                            super::super::ChromaUpsampling::LibjpegCompat => {
+                            super::super::ChromaUpsampling::Triangle => {
                                 idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
                             }
                             _ => {

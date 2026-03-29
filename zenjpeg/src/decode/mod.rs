@@ -205,8 +205,8 @@ impl DecodeConfig {
     /// Controls how subsampled chroma channels (4:2:0, 4:2:2, 4:4:0) are
     /// upsampled to match luma resolution.
     ///
-    /// - [`ChromaUpsampling::Triangle`] (default): jpegli-style separable filter
-    /// - [`ChromaUpsampling::LibjpegCompat`]: exact libjpeg-turbo/mozjpeg match
+    /// - [`ChromaUpsampling::Triangle`] (default): fused 2D filter, matches libjpeg-turbo/mozjpeg
+    /// - [`ChromaUpsampling::Jpegli`]: separable filter with fixed rounding (jpegli-style)
     /// - [`ChromaUpsampling::NearestNeighbor`]: fastest, lowest quality
     #[must_use]
     pub fn chroma_upsampling(mut self, method: ChromaUpsampling) -> Self {
@@ -239,7 +239,7 @@ impl DecodeConfig {
     /// - [`IdctMethod::Jpegli`] (default): 12-bit fixed-point, matches jpegli
     /// - [`IdctMethod::Libjpeg`]: 13-bit Loeffler, matches libjpeg-turbo/mozjpeg
     ///
-    /// When [`ChromaUpsampling::LibjpegCompat`] is set and no explicit IDCT method
+    /// When [`ChromaUpsampling::Triangle`] is set and no explicit IDCT method
     /// is configured, the decoder automatically uses [`IdctMethod::Libjpeg`].
     /// Calling this method overrides that automatic selection.
     #[must_use]
@@ -254,12 +254,9 @@ impl DecodeConfig {
     /// - Explicit `idct_method()` always wins
     /// - Default is `Jpegli` for all upsampling modes
     ///
-    /// Previous behavior: `LibjpegCompat` upsampling auto-selected `Libjpeg` IDCT
-    /// for pixel-exact mozjpeg matching. This caused a 37% speed penalty. Now
-    /// decoupled: use `.idct_method(IdctMethod::Libjpeg)` explicitly if you need
-    /// pixel-exact IDCT matching with mozjpeg/libjpeg-turbo. LibjpegCompat
-    /// upsampling alone gets within max_diff=3 of mozjpeg (vs max_diff=2 with
-    /// both Libjpeg IDCT and LibjpegCompat upsampling).
+    /// The default `Triangle` upsampling matches libjpeg-turbo/mozjpeg within
+    /// max_diff ≤ 3. For pixel-exact matching (max_diff ≤ 2), also set
+    /// `.idct_method(IdctMethod::Libjpeg)` — adds ~37% decode overhead.
     pub(crate) fn effective_idct_method(&self) -> IdctMethod {
         self.idct_method.unwrap_or(IdctMethod::Jpegli)
     }

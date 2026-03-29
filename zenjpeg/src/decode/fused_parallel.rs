@@ -1093,7 +1093,7 @@ impl<'a> JpegParser<'a> {
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
         let upsample_fn: UpsampleFn = match chroma_upsampling {
             ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
-            ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg,
+            ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
             _ => upsample_h2v1_i16_fancy,
         };
 
@@ -1442,12 +1442,12 @@ impl<'a> JpegParser<'a> {
         // Select upsample function
         type UpsampleFn = fn(&[i16], usize, usize, &mut [i16], usize, usize);
         let upsample_fn: UpsampleFn = match chroma_upsampling {
-            ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg,
+            ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
             _ => upsample_h2v2_i16_fancy,
         };
-        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::Triangle)
+        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::Jpegli)
             && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
-        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::Triangle);
+        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::Jpegli);
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 

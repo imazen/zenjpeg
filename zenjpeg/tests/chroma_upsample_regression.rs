@@ -87,7 +87,7 @@ fn decode_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
 /// Decode with zenjpeg using LibjpegCompat upsampling.
 fn decode_zenjpeg_libjpeg_compat(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
     use zenjpeg::decode::ChromaUpsampling;
-    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let img = decoder.decode(jpeg, Unstoppable).expect("decode");
     let w = img.width as usize;
     let h = img.height as usize;

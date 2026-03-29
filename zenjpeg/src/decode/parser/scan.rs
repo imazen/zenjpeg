@@ -1040,17 +1040,17 @@ impl<'a> JpegParser<'a> {
                 };
                 Some(match (h_ratio, v_ratio) {
                     (2, 2) => match self.chroma_upsampling {
-                        ChromaUpsampling::Triangle => upsample_h2v2_i16_fancy,
-                        ChromaUpsampling::LibjpegCompat => upsample_h2v2_i16_libjpeg,
+                        ChromaUpsampling::Jpegli => upsample_h2v2_i16_fancy,
+                        ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
                         ChromaUpsampling::NearestNeighbor | ChromaUpsampling::HorizontalFancy => {
                             unreachable!()
                         }
                     },
                     (2, 1) => match self.chroma_upsampling {
-                        ChromaUpsampling::Triangle | ChromaUpsampling::HorizontalFancy => {
+                        ChromaUpsampling::Jpegli | ChromaUpsampling::HorizontalFancy => {
                             upsample_h2v1_i16_fancy
                         }
-                        ChromaUpsampling::LibjpegCompat => upsample_h2v1_i16_libjpeg,
+                        ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
                         ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
                     },
                     _ => {

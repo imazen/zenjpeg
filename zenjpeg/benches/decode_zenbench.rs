@@ -201,7 +201,7 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg LibjpegCompat (Libjpeg IDCT)", |b| {
             let dec = Decoder::new()
                 .apply_icc(false)
-                .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+                .chroma_upsampling(ChromaUpsampling::Triangle);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -213,7 +213,7 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg LibjpegCompat + Jpegli IDCT", |b| {
             let dec = Decoder::new()
                 .apply_icc(false)
-                .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+                .chroma_upsampling(ChromaUpsampling::Triangle)
                 .idct_method(zenjpeg::decode::IdctMethod::Jpegli);
             b.iter(|| {
                 for img in get_images() {

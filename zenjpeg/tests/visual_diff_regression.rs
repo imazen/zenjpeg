@@ -103,7 +103,7 @@ fn decode_zen_scanline(data: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Decode with zenjpeg LibjpegCompat upsampling (should match mozjpeg closely).
 fn decode_zen_libjpeg_compat(data: &[u8]) -> (u32, u32, Vec<u8>) {
     use zenjpeg::decode::ChromaUpsampling;
-    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let img = decoder
         .decode(data, Unstoppable)
         .expect("zen libjpeg_compat decode");
@@ -616,7 +616,7 @@ fn test_idct_method_libjpeg_compat_matches_mozjpeg() {
         let jpeg = encode_420(&pixels, w as u32, h as u32, 85.0);
 
         // LibjpegCompat defaults to Libjpeg IDCT (via effective_idct_method)
-        let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+        let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
         let img = decoder.decode(&jpeg, Unstoppable).expect("decode");
         let zen_rgb = img.into_pixels_u8().unwrap();
 

@@ -295,7 +295,7 @@ fn decode_zen_default(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 fn decode_zen_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let dec = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+        .chroma_upsampling(ChromaUpsampling::Triangle);
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     (img.width, img.height, img.into_pixels_u8().unwrap())
 }

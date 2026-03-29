@@ -41,7 +41,7 @@ fn decode_mozjpeg(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 fn decode_zenjpeg_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let result = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(jpeg, Unstoppable)
         .expect("zenjpeg decode failed");
     let w = result.width();
@@ -234,7 +234,7 @@ fn issue7_scanline_reader_path() {
     // Decode via scanline_reader with LibjpegCompat
     let decoder = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+        .chroma_upsampling(ChromaUpsampling::Triangle);
     let mut reader = decoder
         .scanline_reader(&jpeg)
         .expect("scanline_reader failed");
@@ -296,7 +296,7 @@ fn issue7_with_icc_enabled() {
     // Decode with apply_icc(true) — default when cms feature is on
     let result = Decoder::new()
         .apply_icc(true)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
     let w = result.width();
@@ -349,7 +349,7 @@ fn issue7_coefficient_path() {
     // Force coefficient path by requesting f32 output
     let result = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .output_target(OutputTarget::SrgbF32)
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
@@ -405,7 +405,7 @@ fn issue7_dequant_bias_path() {
     let result = Decoder::new()
         .apply_icc(false)
         .dequant_bias(true)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
     let w = result.width();
@@ -451,7 +451,7 @@ fn issue7_cross_path_consistency() {
     // Path 1: decode() - streaming
     let result1 = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .expect("decode");
     let p1 = result1.into_pixels_u8().unwrap();
@@ -459,7 +459,7 @@ fn issue7_cross_path_consistency() {
     // Path 2: scanline_reader() - streaming
     let decoder2 = Decoder::new()
         .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
+        .chroma_upsampling(ChromaUpsampling::Triangle);
     let mut reader = decoder2.scanline_reader(&jpeg).expect("scanline_reader");
     let w = reader.width() as usize;
     let h = reader.height() as usize;

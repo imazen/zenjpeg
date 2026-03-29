@@ -1494,7 +1494,7 @@ fn diagnose_top3_outlier_diffs() {
         // Decode with zenjpeg LibjpegCompat (Libjpeg IDCT, no ICC)
         let zen_compat = zenjpeg::decoder::Decoder::new()
             .apply_icc(false)
-            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::LibjpegCompat)
+            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::Triangle)
             .decode(&data, Unstoppable)
             .unwrap();
         let compat_rgb = zen_compat.pixels_u8().unwrap();
@@ -1671,7 +1671,7 @@ fn diagnose_zen_vs_zune_outlier_locations() {
         // Decode with zenjpeg LibjpegCompat (Libjpeg i64 IDCT)
         let compat_img = zenjpeg::decoder::Decoder::new()
             .apply_icc(false)
-            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::LibjpegCompat)
+            .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::Triangle)
             .decode(&data, Unstoppable)
             .unwrap();
         let compat_rgb = compat_img.pixels_u8().unwrap();

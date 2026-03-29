@@ -238,12 +238,12 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
-                ChromaUpsampling::Triangle => (
+                ChromaUpsampling::Jpegli => (
                     upsample_h2v2_i16_fancy,
                     upsample_h2v1_i16_fancy,
                     upsample_h1v2_i16_fancy,
                 ),
-                ChromaUpsampling::LibjpegCompat => (
+                ChromaUpsampling::Triangle => (
                     upsample_h2v2_i16_libjpeg,
                     upsample_h2v1_i16_libjpeg,
                     upsample_h1v2_i16_libjpeg,

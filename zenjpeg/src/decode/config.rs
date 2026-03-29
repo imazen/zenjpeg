@@ -20,8 +20,8 @@ use super::extras::{DecodedExtras, PreserveConfig};
 ///
 /// | Method | Matches |
 /// |--------|---------|
-/// | `Triangle` | jpegli (default zenjpeg behavior) |
-/// | `LibjpegCompat` | libjpeg-turbo, mozjpeg, djpeg |
+/// | `Triangle` | libjpeg-turbo, mozjpeg, djpeg (default) |
+/// | `Jpegli` | C++ jpegli decoder |
 /// | `NearestNeighbor` | fastest, lowest quality |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -32,23 +32,28 @@ pub enum ChromaUpsampling {
     /// No interpolation is performed.
     NearestNeighbor,
 
-    /// Separable triangle filter with uniform `+2` rounding bias (jpegli-style).
+    /// Fused 2D triangle filter with alternating rounding bias (default).
     ///
-    /// Applies horizontal then vertical 3:1 interpolation. This is the default
-    /// and matches jpegli's upsampling behavior.
+    /// Uses fused vertical+horizontal interpolation with alternating `+7`/`+8`
+    /// rounding bias, avoiding systematic bias and intermediate rounding errors.
+    /// Matches libjpeg-turbo/mozjpeg upsampling within max_diff ≤ 3.
+    ///
+    /// For pixel-exact matching (max_diff ≤ 2), also set
+    /// `.idct_method(IdctMethod::Libjpeg)` — but note this adds ~37% decode
+    /// overhead.
     #[default]
     Triangle,
 
-    /// Exact libjpeg-turbo/mozjpeg compatible triangle filter.
+    /// Separable triangle filter with uniform `+8` rounding bias (jpegli-style).
     ///
-    /// Uses a fused 2D filter for h2v2 (not separable) with alternating rounding
-    /// bias (`+1`/`+2` for 1D, `+7`/`+8` for 2D). This avoids both systematic
-    /// rounding bias and intermediate rounding errors from separable passes.
+    /// Applies horizontal then vertical 3:1 interpolation in separate passes.
+    /// The fixed `+8` bias introduces systematic upward rounding; the separable
+    /// passes add an intermediate rounding step. Slightly lower quality than
+    /// the default fused [`Triangle`](Self::Triangle).
     ///
-    /// Produces output within max_diff ≤ 3 of mozjpeg/libjpeg-turbo. For pixel-exact
-    /// matching (max_diff ≤ 2), also set `.idct_method(IdctMethod::Libjpeg)` — but
-    /// note this adds ~37% decode overhead.
-    LibjpegCompat,
+    /// Retained for compatibility with output from earlier zenjpeg versions
+    /// and the C++ jpegli decoder.
+    Jpegli,
 
     /// Horizontal-only triangle filter with vertical box (nearest-neighbor).
     ///
@@ -73,7 +78,7 @@ pub enum ChromaUpsampling {
 /// | `Jpegli` | 12-bit fixed-point | jpegli (Google JPEG XL project) |
 /// | `Libjpeg` | 13-bit Loeffler | libjpeg-turbo, mozjpeg, djpeg |
 ///
-/// The default is `Jpegli`. Setting [`ChromaUpsampling::LibjpegCompat`] on the
+/// The default is `Jpegli`. Setting [`ChromaUpsampling::Triangle`] on the
 /// decoder automatically switches to `Libjpeg` unless explicitly overridden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -834,7 +839,7 @@ pub struct DecodeConfig {
     /// Integer IDCT algorithm override.
     ///
     /// When `None` (default), the IDCT is chosen automatically:
-    /// - `ChromaUpsampling::LibjpegCompat` → `IdctMethod::Libjpeg`
+    /// - `ChromaUpsampling::Triangle` → `IdctMethod::Libjpeg`
     /// - All other upsampling modes → `IdctMethod::Jpegli`
     ///
     /// Set explicitly to override this automatic selection.

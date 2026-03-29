@@ -283,17 +283,17 @@ fn main() {
                 Mode::BufferedInt => decode_buffered(
                     data_ref,
                     OutputTarget::Srgb8,
-                    ChromaUpsampling::LibjpegCompat,
+                    ChromaUpsampling::Triangle,
                 ),
                 Mode::BufferedF32 => decode_buffered(
                     data_ref,
                     OutputTarget::SrgbF32Precise,
-                    ChromaUpsampling::LibjpegCompat,
+                    ChromaUpsampling::Triangle,
                 ),
                 Mode::BufferedTriangle => {
-                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Triangle)
+                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Jpegli)
                 }
-                Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::LibjpegCompat),
+                Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::Triangle),
                 Mode::ScanlineFast => decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor),
             }));
 

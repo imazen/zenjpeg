@@ -391,9 +391,9 @@ fn decode_paths_dispatch_parity() {
 
     let cases = test_cases();
     let upsampling_modes = [
-        ("Triangle", ChromaUpsampling::Triangle),
+        ("Triangle", ChromaUpsampling::Jpegli),
         ("NearestNeighbor", ChromaUpsampling::NearestNeighbor),
-        ("LibjpegCompat", ChromaUpsampling::LibjpegCompat),
+        ("LibjpegCompat", ChromaUpsampling::Triangle),
     ];
 
     let mut first_report = true;
@@ -423,7 +423,7 @@ fn decode_paths_dispatch_parity() {
             for &(upsample_name, upsampling) in &upsampling_modes {
                 // Skip upsampling modes that don't matter for 4:4:4
                 if tc.subsampling == ChromaSubsampling::None
-                    && upsampling != ChromaUpsampling::Triangle
+                    && upsampling != ChromaUpsampling::Jpegli
                 {
                     continue;
                 }
@@ -518,8 +518,8 @@ fn coefficient_vs_streaming_dispatch_parity() {
         let pixels = make_red_blue_blocks(w as usize, h as usize);
         let jpeg = encode_jpeg(&pixels, w, h, ChromaSubsampling::Quarter, 85.0, false, 0);
 
-        let ref_streaming = decode_full(&jpeg, ChromaUpsampling::Triangle);
-        let ref_coeff = decode_coefficient_f32_to_u8(&jpeg, ChromaUpsampling::Triangle);
+        let ref_streaming = decode_full(&jpeg, ChromaUpsampling::Jpegli);
+        let ref_coeff = decode_coefficient_f32_to_u8(&jpeg, ChromaUpsampling::Jpegli);
 
         // Coefficient vs streaming at native tier
         // f32 IDCT vs i16 IDCT differ due to precision: i16 uses 12-bit fixed-point
@@ -532,8 +532,8 @@ fn coefficient_vs_streaming_dispatch_parity() {
         );
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-            let streaming = decode_full(&jpeg, ChromaUpsampling::Triangle);
-            let coeff = decode_coefficient_f32_to_u8(&jpeg, ChromaUpsampling::Triangle);
+            let streaming = decode_full(&jpeg, ChromaUpsampling::Jpegli);
+            let coeff = decode_coefficient_f32_to_u8(&jpeg, ChromaUpsampling::Jpegli);
 
             // Both paths stable across tiers (±2 for upsampling formula + color conversion)
             let s_diff = max_diff(&streaming, &ref_streaming);
@@ -592,8 +592,8 @@ fn external_reference_dispatch_parity() {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             // Triangle vs zune (both use triangle filter, should be close)
             {
-                let full = decode_full(&jpeg_420, ChromaUpsampling::Triangle);
-                let scanline = decode_scanline(&jpeg_420, ChromaUpsampling::Triangle);
+                let full = decode_full(&jpeg_420, ChromaUpsampling::Jpegli);
+                let scanline = decode_scanline(&jpeg_420, ChromaUpsampling::Jpegli);
 
                 let full_vs_zune = max_diff(&full, &zune_ref);
                 let scanline_vs_zune = max_diff(&scanline, &zune_ref);
@@ -631,7 +631,7 @@ fn external_reference_dispatch_parity() {
 
             // LibjpegCompat vs jpeg-decoder (should be closest match)
             {
-                let ljc = decode_full(&jpeg_420, ChromaUpsampling::LibjpegCompat);
+                let ljc = decode_full(&jpeg_420, ChromaUpsampling::Triangle);
                 let ljc_vs_jpd = max_diff(&ljc, &jpd_ref);
                 assert!(
                     ljc_vs_jpd <= 4,
@@ -672,8 +672,8 @@ fn mcu_boundary_no_systematic_shift() {
         let zune_ref = decode_zune(&jpeg);
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-            let full = decode_full(&jpeg, ChromaUpsampling::Triangle);
-            let scanline = decode_scanline(&jpeg, ChromaUpsampling::Triangle);
+            let full = decode_full(&jpeg, ChromaUpsampling::Jpegli);
+            let scanline = decode_scanline(&jpeg, ChromaUpsampling::Jpegli);
 
             let ww = w as usize;
             let hh = h as usize;
@@ -739,12 +739,12 @@ fn h2v1_decode_dispatch_parity() {
                 0,
             );
 
-            let ref_full = decode_full(&jpeg, ChromaUpsampling::Triangle);
+            let ref_full = decode_full(&jpeg, ChromaUpsampling::Jpegli);
             let zune_ref = decode_zune(&jpeg);
 
             let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-                let full = decode_full(&jpeg, ChromaUpsampling::Triangle);
-                let scanline = decode_scanline(&jpeg, ChromaUpsampling::Triangle);
+                let full = decode_full(&jpeg, ChromaUpsampling::Jpegli);
+                let scanline = decode_scanline(&jpeg, ChromaUpsampling::Jpegli);
 
                 // Internal consistency (±2 for horizontal padding rounding)
                 let path_diff = max_diff(&full, &scanline);
@@ -797,12 +797,12 @@ fn s444_decode_dispatch_parity() {
         ] {
             let jpeg = encode_jpeg(&pixels, w, h, ChromaSubsampling::None, 85.0, false, 0);
 
-            let ref_full = decode_full(&jpeg, ChromaUpsampling::Triangle);
+            let ref_full = decode_full(&jpeg, ChromaUpsampling::Jpegli);
             let zune_ref = decode_zune(&jpeg);
 
             let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-                let full = decode_full(&jpeg, ChromaUpsampling::Triangle);
-                let scanline = decode_scanline(&jpeg, ChromaUpsampling::Triangle);
+                let full = decode_full(&jpeg, ChromaUpsampling::Jpegli);
+                let scanline = decode_scanline(&jpeg, ChromaUpsampling::Jpegli);
 
                 // 4:4:4: no chroma upsampling, so paths should be very close
                 let path_diff = max_diff(&full, &scanline);
@@ -863,7 +863,7 @@ fn progressive_420_dispatch_parity() {
         );
 
         for &(upsample_name, upsampling) in &[
-            ("Triangle", ChromaUpsampling::Triangle),
+            ("Triangle", ChromaUpsampling::Jpegli),
             ("NearestNeighbor", ChromaUpsampling::NearestNeighbor),
         ] {
             let ref_full = decode_full(&jpeg, upsampling);

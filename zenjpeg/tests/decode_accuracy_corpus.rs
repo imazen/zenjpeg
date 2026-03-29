@@ -69,7 +69,7 @@ fn decode_zenjpeg_libjpeg_compat(data: &[u8]) -> Option<DecodeResult> {
     use zenjpeg::decode::ChromaUpsampling;
     use zenjpeg::decoder::Decoder;
     let img = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(data, Unstoppable)
         .ok()?;
     let w = img.width as usize;
@@ -764,7 +764,7 @@ fn investigate_rst_diff() {
 
     // Decode with libjpeg-compat mode
     let ljc = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::LibjpegCompat)
+        .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&data, Unstoppable)
         .expect("decode");
 

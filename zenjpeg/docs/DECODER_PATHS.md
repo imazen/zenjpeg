@@ -31,7 +31,7 @@ Runs when: Path A conditions + `parallel` feature + DRI restart markers aligned 
 ```rust
 // Path C: coefficient → fast i16. Pixel-exact with mozjpeg/libjpeg-turbo.
 let img = Decoder::new()
-    .chroma_upsampling(ChromaUpsampling::LibjpegCompat) // auto-selects Libjpeg IDCT
+    .chroma_upsampling(ChromaUpsampling::Triangle) // auto-selects Libjpeg IDCT
     .decode(&jpeg, stop)?;
 ```
 
