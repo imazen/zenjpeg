@@ -1051,8 +1051,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
                 && let Some(ref exif) = info.exif
                 && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
             {
-                let orient = zencodec::Orientation::from_exif(orient_val as u16);
-                if orient.swaps_dimensions() {
+                let orient = zencodec::Orientation::from_exif(orient_val).unwrap_or_default();
+                if orient.swaps_axes() {
                     core::mem::swap(&mut w, &mut h);
                 }
                 out = OutputInfo::full_decode(w, h, native_format).with_orientation_applied(orient);
