@@ -1,158 +1,222 @@
 # Decoder Path Matrix
 
-Every decode goes through a series of decisions that select the code path. This doc maps every combination and what image/config properties trigger it.
+Every decode goes through a series of decisions that select the code path. This doc maps the user-facing API to the internal pipeline that runs.
 
-## Decision layers
+## Quick reference: what you write → what runs
 
-| # | Decision | Options | Key condition |
-|---|----------|---------|---------------|
-| 1 | Entry point | `decode()` / `scanline_reader()` | User's API call |
-| 2 | Output precision | u8 / f32 | `output_target` (Srgb8 vs SrgbF32/LinearF32/Precise) |
-| 3 | JPEG mode | Baseline / Progressive / Arithmetic | SOF marker in file |
-| 4 | Parallel | Fused parallel / Sequential | `parallel` feature + DRI aligned + MCU count ≥ 1024 |
-| 5 | Streaming | Direct RGB / Coefficient buffer | Baseline + 3-comp + standard sampling + no transforms/deblock/f32 |
-| 6 | IDCT | Jpegli (12-bit) / Libjpeg (13-bit) / f32 | `idct_method`, `LibjpegCompat`, XYB, dequant_bias |
-| 7 | Chroma upsample | Nearest / Triangle / LibjpegCompat / HorizontalFancy | `chroma_upsampling` config |
-| 8 | Deblock | Off / Boundary4Tap / Knusperli | `deblock_mode` config |
-| 9 | Transform | None / 8 lossless transforms | EXIF orientation + `auto_orient` |
-| 10 | Color space | YCbCr / XYB / Grayscale / CMYK | Image content |
-| 11 | ICC | Apply / Skip | `apply_icc` + embedded profile |
-| 12 | Crop | Full / Region | `crop_region` config |
+### Fastest (streaming, zero-copy)
 
-## Major code paths
+```rust
+// Path A: streaming baseline. ~0.5ms for 512x512.
+let img = Decoder::new().decode(&jpeg, stop)?;
+let pixels: &[u8] = img.pixels_u8().unwrap();
+```
 
-### Path A: Streaming baseline (fastest)
+Runs when: baseline JPEG + YCbCr 3-component + standard sampling (4:4:4, 4:2:0, 4:2:2) + u8 output. No coefficient storage. This is what most web JPEGs hit.
 
-**Trigger:** Baseline + 3-component YCbCr + standard sampling (4:4:4 / 4:2:0 / 4:2:2) + u8 output + no transforms + no f32 requirements + deblock Off or Boundary4Tap
+### Parallel (large images)
 
-**Pipeline:** Entropy → IDCT → color convert → RGB u8 (single MCU-row pass, no coefficient storage)
+```rust
+// Path B: fused parallel. ~6ms for 4096x4096 (vs 60ms sequential).
+// Activates automatically when conditions are met.
+let img = Decoder::new()
+    .num_threads(0) // 0 = auto (default)
+    .decode(&jpeg, stop)?;
+```
 
-**Files:** `scan.rs:decode_baseline_streaming()`, `scan.rs:534-800`
+Runs when: Path A conditions + `parallel` feature + DRI restart markers aligned to MCU rows + image ≥ 1024 MCU blocks. Transparent — same API, same output.
 
-### Path B: Fused parallel baseline
+### mozjpeg-compatible
 
-**Trigger:** Path A conditions + `parallel` feature + DRI MCU-row-aligned + MCU count ≥ 1024 + `num_threads != 1`
+```rust
+// Path C: coefficient → fast i16. Pixel-exact with mozjpeg/libjpeg-turbo.
+let img = Decoder::new()
+    .chroma_upsampling(ChromaUpsampling::LibjpegCompat) // auto-selects Libjpeg IDCT
+    .decode(&jpeg, stop)?;
+```
 
-**Pipeline:** Parallel entropy → IDCT → color convert per restart segment
+Uses 13-bit Loeffler IDCT + libjpeg-turbo-compatible chroma upsampling. Max pixel diff ≤ 2 vs mozjpeg on all tested images.
 
-**Files:** `fused_parallel.rs`
+### Deblocked (reduce artifacts)
 
-### Path C: Coefficient → fast i16 output
+```rust
+// Path D2/F: boundary filter. +1-10 zensim at low Q.
+let img = Decoder::new()
+    .deblock(DeblockMode::Auto)
+    .decode(&jpeg, stop)?;
 
-**Trigger:** Progressive OR arithmetic OR streaming ineligible, but u8 output + non-XYB + no dequant_bias + RGB family format
+// Also works with scanline_reader (streaming when possible,
+// falls back to buffered when Knusperli needed at low Q):
+let mut reader = Decoder::new()
+    .deblock(DeblockMode::Auto)
+    .scanline_reader(&jpeg)?;
+```
 
-**Sub-paths:**
-- C1: 4:4:4 → `to_pixels_fast_i16()`
-- C2: 4:2:0/4:2:2 → `to_pixels_fast_i16_subsampled()`
-- C3: Parallel variants of C1/C2
+| DeblockMode | Quality sweet spot | Speed overhead | Streaming? |
+|-------------|-------------------|---------------|------------|
+| `Off` | — | 0% | yes |
+| `Boundary4Tap` | All Q levels | 5-15% | yes |
+| `Knusperli` | Q5-Q30 | 20-40% | fallback to buffered |
+| `Auto` | Picks best | varies | falls back when needed |
+| `AutoStreamable` | All Q levels | 5-15% | always streaming |
 
-**Files:** `output.rs:212-327` (fast i16), `output.rs:1088-1096` (selection)
+### Maximum reconstruction quality
 
-### Path D: Coefficient → f32 output
+```rust
+// Path D4: dequant bias. +0.4 zensim at Q95, slower.
+let img = Decoder::new()
+    .dequant_bias(true) // forces f32 IDCT + Laplacian bias
+    .decode(&jpeg, stop)?;
+// Output is f32 [0,1]:
+let pixels: &[f32] = img.pixels_f32().unwrap();
+```
 
-**Trigger:** f32 output target OR dequant_bias OR XYB OR deblock != Off OR non-RGB format
+Only helps at Q85+. Hurts at Q50 and below. 5-14x slower than default.
 
-**Pipeline:** Coefficient storage → f32 IDCT per block → optional deblock → upsample f32 → color convert
+### f32 output (HDR, compositing)
 
-**Sub-paths:**
-- D1: Standard f32 (no deblock)
-- D2: f32 + Boundary4Tap deblock
-- D3: f32 + Knusperli deblock (replaces IDCT output)
-- D4: f32 + dequant_bias (Laplacian bias before IDCT)
-- D5: XYB (always f32 IDCT, special color convert)
+```rust
+// Path D1: f32 coefficient decode.
+let img = Decoder::new()
+    .output_target(OutputTarget::SrgbF32) // or LinearF32
+    .decode(&jpeg, stop)?;
+let pixels: &[f32] = img.pixels_f32().unwrap(); // [0.0, 1.0] range
+```
 
-**Files:** `output.rs:1356-1516` (to_pixels_f32_inner)
+### XYB color space
 
-### Path E: Buffered scanline fallback
+```rust
+// Path D5: XYB always uses f32 IDCT.
+let img = Decoder::new()
+    .apply_icc(true) // convert XYB → sRGB
+    .decode(&xyb_jpeg, stop)?;
+```
 
-**Trigger:** `scanline_reader()` + (progressive / arithmetic / CMYK / exotic sampling / Knusperli deblock / transform)
+XYB images (from cjpegli) are auto-detected via ICC profile. Always coefficient path + f32 IDCT.
 
-**Pipeline:** Full `decode()` → wrap pixels in buffered `ScanlineReader`
+### Scanline (streaming rows on demand)
 
-**Files:** `mod.rs:scanline_reader_deblock_fallback()`, `mod.rs:scanline_reader_with_transform()`
+```rust
+// Path A/F: streaming scanline reader.
+let mut reader = Decoder::new()
+    .deblock(DeblockMode::AutoStreamable) // guaranteed streaming
+    .scanline_reader(&jpeg)?;
 
-### Path F: Streaming scanline with deblock
+let mut row_buf = vec![0u8; reader.width() as usize * 3];
+while reader.rows_remaining() > 0 {
+    let n = reader.read_rows_rgb8(
+        imgref::ImgRefMut::new(&mut row_buf, reader.width() as usize * 3, 1)
+    )?;
+}
+```
 
-**Trigger:** `scanline_reader()` + Boundary4Tap/AutoStreamable + baseline + standard sampling
+Falls back to buffered decode for: progressive, arithmetic, CMYK, EXIF transforms, or Knusperli deblock.
 
-**Pipeline:** Streaming decode → i16 boundary filter per MCU row → color convert → RGB u8
+### Lossless transforms
 
-**Files:** `scanline.rs:apply_boundary_deblock()`
+```rust
+// Path E (scanline) or D+transform (decode): DCT-domain rotation.
+let img = Decoder::new()
+    .auto_orient(true) // default: apply EXIF orientation
+    .decode(&jpeg, stop)?;
+```
 
-## What triggers what
+Transforms happen in DCT domain (no generation loss). Forces coefficient path.
 
-### By image property
+### Crop region
 
-| Image property | Paths affected |
-|----------------|---------------|
-| **Baseline JPEG** | A, B, C, D possible |
-| **Progressive JPEG** | C, D only (no streaming) |
-| **Arithmetic JPEG** | C, D only (no streaming) |
-| **4:4:4** | A (streaming), C1 (fast i16) |
-| **4:2:0** | A (streaming), C2 (fast i16 subsampled) |
-| **4:2:2** | A (streaming), C2 (fast i16 subsampled) |
-| **4:4:0 or exotic** | C, D only (no streaming) |
-| **Grayscale** | C, D only (streaming requires 3-comp) |
-| **CMYK (4-comp)** | D only (coefficient + f32 convert) |
-| **XYB color space** | D5 only (forces f32 IDCT) |
-| **With DRI + ≥1024 MCUs** | B possible (fused parallel) |
-| **No DRI or <1024 MCUs** | A (sequential streaming) |
-| **Width/height not 8-aligned** | Same paths, MCU padding handled |
-| **12-bit precision** | Error (unsupported in scanline) |
-| **DNL (height=0 in SOF)** | Error in scanline, supported in decode |
+```rust
+use zenjpeg::decode::CropRegion;
 
-### By config option
+let img = Decoder::new()
+    .crop(CropRegion::absolute(100, 100, 200, 200))
+    .decode(&jpeg, stop)?;
+```
 
-| Config | Effect on path |
-|--------|---------------|
-| `output_target: Srgb8` (default) | u8 paths (A, B, C) preferred |
-| `output_target: SrgbF32` | Forces D (f32 coefficient path) |
-| `output_target: SrgbF32Precise` | Forces D4 (dequant_bias) |
-| `deblock(Off)` (default) | No effect (zero overhead) |
-| `deblock(Boundary4Tap)` | decode(): D2. scanline: F |
-| `deblock(Knusperli)` | decode(): D3. scanline: E (fallback) |
-| `deblock(Auto)` | Low Q → D3/E. High Q → D2/F |
-| `deblock(AutoStreamable)` | Always D2/F (never falls back) |
-| `chroma_upsampling(Triangle)` (default) | Jpegli-style filter |
-| `chroma_upsampling(LibjpegCompat)` | Libjpeg IDCT auto-selected |
-| `chroma_upsampling(NearestNeighbor)` | Box filter (fastest) |
-| `idct_method(Jpegli)` (default) | 12-bit fixed-point |
-| `idct_method(Libjpeg)` | 13-bit Loeffler |
-| `apply_icc(true)` | Post-decode ICC transform |
-| `auto_orient(true)` (default) | EXIF rotation → Path E in scanline |
-| `crop_region(Some(...))` | Post-decode pixel crop |
-| `num_threads(1)` | Disables parallel (B→A) |
+Entropy decode runs for full image (DC predictor chain), but IDCT only runs for the crop region.
 
-## Coverage test matrix
+## Complete API surface
 
-To exercise every major path, test with:
+### Builder methods on `Decoder::new()`
 
-| Test case | Entry | Image | Config | Path |
-|-----------|-------|-------|--------|------|
-| 1 | decode | baseline 4:2:0 | defaults | A→streaming |
-| 2 | decode | baseline 4:4:4 | defaults | A→streaming |
-| 3 | decode | baseline 4:2:2 | defaults | A→streaming |
-| 4 | decode | progressive 4:2:0 | defaults | C2 |
-| 5 | decode | baseline 4:2:0 | deblock=Boundary4Tap | D2 |
-| 6 | decode | baseline 4:2:0 | deblock=Knusperli | D3 |
-| 7 | decode | baseline 4:2:0 | deblock=Auto, Q20 | D3 (knusperli) |
-| 8 | decode | baseline 4:2:0 | deblock=Auto, Q85 | D2 (boundary) |
-| 9 | decode | baseline 4:2:0 | dequant_bias=true | D4 |
-| 10 | decode | baseline 4:2:0 | output_target=SrgbF32 | D1 |
-| 11 | decode | baseline 4:2:0 | chroma=LibjpegCompat | C2 (libjpeg IDCT) |
-| 12 | decode | baseline 4:2:0 | chroma=NearestNeighbor | C2 (box filter) |
-| 13 | decode | grayscale | defaults | C (no streaming) |
-| 14 | decode | CMYK | defaults | D (coefficient) |
-| 15 | decode | XYB | defaults | D5 |
-| 16 | decode | baseline + EXIF rotation | auto_orient=true | D + transform |
-| 17 | decode | baseline + ICC profile | apply_icc=true | A + ICC |
-| 18 | decode | baseline 4:2:0 | crop_region | A + crop |
-| 19 | scanline | baseline 4:2:0 | defaults | A→streaming |
-| 20 | scanline | progressive 4:2:0 | defaults | E (buffered fallback) |
-| 21 | scanline | baseline 4:2:0 | deblock=Boundary4Tap | F |
-| 22 | scanline | baseline 4:2:0 | deblock=Knusperli | E (fallback) |
-| 23 | scanline | baseline 4:2:0 | deblock=AutoStreamable | F |
-| 24 | scanline | baseline + EXIF rotation | auto_orient=true | E (transform fallback) |
-| 25 | scanline | CMYK | defaults | E (buffered fallback) |
-| 26 | decode | baseline 4:2:0 + DRI | parallel feature | B |
-| 27 | decode | arithmetic sequential | defaults | C |
+| Method | Default | Effect on path |
+|--------|---------|---------------|
+| `.output_format(PixelFormat)` | `Rgb` | Gray/CMYK force coefficient path |
+| `.output_target(OutputTarget)` | `Srgb8` | f32 targets force coefficient path |
+| `.chroma_upsampling(ChromaUpsampling)` | `Triangle` | `LibjpegCompat` auto-selects Libjpeg IDCT |
+| `.fancy_upsampling(bool)` | `true` | `false` → `NearestNeighbor` |
+| `.idct_method(IdctMethod)` | auto | Overrides IDCT selection |
+| `.deblock(DeblockMode)` | `Off` | Non-Off forces coefficient or streaming deblock |
+| `.dequant_bias(bool)` | `false` | `true` forces f32 precise output |
+| `.apply_icc(bool)` | feature-dependent | Post-decode ICC color management |
+| `.auto_orient(bool)` | `true` | EXIF rotation in DCT domain |
+| `.crop(CropRegion)` | none | Pixel-level crop of output |
+| `.num_threads(usize)` | `0` (auto) | `1` disables parallel |
+| `.strictness(Strictness)` | `Balanced` | Error tolerance for malformed JPEGs |
+| `.max_pixels(u64)` | 256M | Resource limit |
+| `.block_smoothing(bool)` | `false` | Progressive rendering smoothing (no effect on final output) |
+
+### Entry points
+
+| Method | Returns | When to use |
+|--------|---------|------------|
+| `.decode(data, stop)` | `DecodeResult` | Full image decode |
+| `.scanline_reader(data)` | `ScanlineReader` | Row-by-row streaming |
+| `.scanline_reader_cow(data)` | `ScanlineReader` | Owned or borrowed data |
+| `.decode_rows(data, callback)` | per-row callback | Push-style streaming |
+| `.decode_rows_f32(data, callback)` | per-row f32 callback | Push-style f32 |
+| `.decode_coefficients(data, stop)` | `DecodedCoefficients` | Raw DCT access |
+| `.decode_to_ycbcr_f32(data, stop)` | `DecodedYCbCr` | YCbCr planes |
+
+### Output types
+
+| `OutputTarget` | Pixel type | Precision | Speed |
+|---------------|------------|-----------|-------|
+| `Srgb8` (default) | `u8` | Standard | Fastest |
+| `SrgbF32` | `f32` | Standard | ~same |
+| `LinearF32` | `f32` | Standard + linearize | ~same |
+| `SrgbF32Precise` | `f32` | Laplacian dequant bias | 1.5-2x slower |
+| `LinearF32Precise` | `f32` | Laplacian + linearize | 1.5-2x slower |
+
+### Pixel formats
+
+| `PixelFormat` | Bytes/pixel | Notes |
+|--------------|-------------|-------|
+| `Rgb` (default) | 3 | Fast path |
+| `Rgba` | 4 | Alpha = 255 |
+| `Bgr` | 3 | Fast path |
+| `Bgra` | 4 | Alpha = 255 |
+| `Bgrx` | 4 | Padding byte |
+| `Gray` | 1 | Forces coefficient path |
+
+## Decision flow
+
+```
+User calls decode() or scanline_reader()
+│
+├─ output_target is f32? ─────────── yes ──→ Path D (coefficient → f32)
+├─ dequant_bias? ─────────────────── yes ──→ Path D4 (f32 + bias)
+├─ deblock != Off? ────────────────── yes ──→ Path D2/D3 (decode) or F (scanline streaming)
+├─ transform (EXIF)? ──────────────── yes ──→ Path D + DCT transform
+├─ XYB? ──────────────────────────── yes ──→ Path D5 (f32 XYB)
+├─ format is Gray/CMYK? ──────────── yes ──→ Path D (coefficient)
+├─ progressive/arithmetic? ────────── yes ──→ Path C (fast i16) or D
+├─ exotic sampling? ──────────────── yes ──→ Path C/D (coefficient)
+│
+├─ parallel eligible? ─────────────── yes ──→ Path B (fused parallel)
+│
+└─ none of the above ──────────────────────→ Path A (streaming baseline)
+```
+
+The default `Decoder::new().decode(&jpeg, stop)` hits Path A for most web JPEGs — the fastest path with no coefficient storage.
+
+## Path properties
+
+| Path | Coefficient storage | IDCT type | Memory | Speed |
+|------|-------------------|-----------|--------|-------|
+| A: Streaming | none | i16 fused | O(MCU row) | fastest |
+| B: Parallel | none | i16 fused | O(MCU row × threads) | fastest large |
+| C: Fast i16 | full image | i16 batch | O(image) | fast |
+| D: f32 coeff | full image | f32 per-block | O(image) | moderate |
+| E: Buffered fallback | full image | varies | O(image × 2) | moderate |
+| F: Streaming + deblock | none + 1 row | i16 fused + filter | O(MCU row) | fast |
