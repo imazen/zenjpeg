@@ -2,6 +2,7 @@
 //! Uses zenjpeg decoder for YCbCr, Python/Pillow for XYB (ICC handling)
 //! Compares both DSSIM and Butteraugli metrics
 use enough::Unstoppable;
+use zenjpeg::color::icc::TargetColorSpace;
 
 use butteraugli::ButteraugliParams;
 use dssim_core::Dssim;
@@ -45,7 +46,7 @@ fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize
 
 /// Decode JPEG using zenjpeg decoder (works for YCbCr)
 fn decode_jpegli(data: &[u8]) -> Option<Vec<u8>> {
-    let decoder = zenjpeg::decoder::Decoder::new().apply_icc(true);
+    let decoder = zenjpeg::decoder::Decoder::new().correct_color(Some(TargetColorSpace::Srgb));
     decoder
         .decode(data, Unstoppable)
         .ok()

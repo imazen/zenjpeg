@@ -19,6 +19,7 @@
 
 use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::path::{Path, PathBuf};
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // Re-use old types for FFI compatibility
@@ -525,7 +526,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 /// Decode using zenjpeg with ICC profile support (required for XYB)
 fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
     zenjpeg::decoder::Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .decode(data, enough::Unstoppable)
         .expect("jpegli decode failed")
         .into_pixels_u8()

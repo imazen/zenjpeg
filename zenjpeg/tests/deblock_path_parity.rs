@@ -97,7 +97,6 @@ fn deblock_path_quality_comparison() {
 
             // Plain decode (no deblock)
             let plain = Decoder::new()
-                .apply_icc(false)
                 .decode(&jpeg, Unstoppable)
                 .unwrap()
                 .into_pixels_u8()
@@ -105,7 +104,6 @@ fn deblock_path_quality_comparison() {
 
             // decode() path with Boundary4Tap (f32 planes)
             let f32_debl = Decoder::new()
-                .apply_icc(false)
                 .deblock(DeblockMode::Boundary4Tap)
                 .decode(&jpeg, Unstoppable)
                 .unwrap()
@@ -114,7 +112,6 @@ fn deblock_path_quality_comparison() {
 
             // scanline_reader() path with Boundary4Tap (i16 planes)
             let mut sr = Decoder::new()
-                .apply_icc(false)
                 .deblock(DeblockMode::Boundary4Tap)
                 .scanline_reader(&jpeg)
                 .unwrap();

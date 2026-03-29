@@ -217,7 +217,7 @@ impl<'a> Decoder<'a> {
 
     // Configuration
     pub fn fancy_upsampling(self, enable: bool) -> Self;
-    pub fn apply_icc(self, enable: bool) -> Self;
+    pub fn correct_color(self, target: Option<TargetColorSpace>) -> Self;
     pub fn max_memory(self, bytes: usize) -> Self;
 
     // Output

@@ -85,6 +85,6 @@ pub use crate::types::{ColorSpace, Dimensions, JpegMode, Limits, PixelFormat, Su
 pub use crate::encode::encoder_types::PixelLayout;
 
 // === ICC profile support ===
-pub use crate::color::icc::IccTarget;
+pub use crate::color::icc::TargetColorSpace;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 pub use crate::color::icc::{decode_jpeg_with_icc, extract_icc_profile};

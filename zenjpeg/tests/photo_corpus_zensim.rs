@@ -285,7 +285,7 @@ fn encode_with_config(pixels: &[u8], w: u32, h: u32, config: EncoderConfig) -> V
 /// Decode with **zenjpeg default mode**.
 /// IDCT: Jpegli (12-bit fixed-point). Upsampling: Triangle (jpegli-style). No ICC.
 fn decode_zen_default(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let dec = Decoder::new().apply_icc(false);
+    let dec = Decoder::new();
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     (img.width, img.height, img.into_pixels_u8().unwrap())
 }
@@ -293,9 +293,7 @@ fn decode_zen_default(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Decode with **zenjpeg LibjpegCompat mode** (closest to mozjpeg/libjpeg-turbo).
 /// IDCT: Libjpeg (13-bit Loeffler, auto-selected). Upsampling: LibjpegCompat. No ICC.
 fn decode_zen_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let dec = Decoder::new()
-        .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::Triangle);
+    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     (img.width, img.height, img.into_pixels_u8().unwrap())
 }

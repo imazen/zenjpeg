@@ -49,10 +49,7 @@ struct DecodeResult {
 fn decode_zenjpeg(data: &[u8]) -> Option<DecodeResult> {
     use zenjpeg::decoder::Decoder;
     // Disable ICC to compare raw decode output against reference decoders
-    let img = Decoder::new()
-        .apply_icc(false)
-        .decode(data, Unstoppable)
-        .ok()?;
+    let img = Decoder::new().decode(data, Unstoppable).ok()?;
     let w = img.width as usize;
     let h = img.height as usize;
     let pixels = img.into_pixels_u8().unwrap();

@@ -57,14 +57,8 @@ fn main() {
         println!();
 
         // Decode both WITHOUT ICC (raw XYB data)
-        let rust_decoded_raw = Decoder::new()
-            .apply_icc(false)
-            .decode(&rust_xyb, Unstoppable)
-            .unwrap();
-        let cpp_decoded_raw = Decoder::new()
-            .apply_icc(false)
-            .decode(&cpp_xyb, Unstoppable)
-            .unwrap();
+        let rust_decoded_raw = Decoder::new().decode(&rust_xyb, Unstoppable).unwrap();
+        let cpp_decoded_raw = Decoder::new().decode(&cpp_xyb, Unstoppable).unwrap();
 
         // Check if raw XYB data matches
         let mut max_diff = 0i16;
@@ -91,14 +85,8 @@ fn main() {
         );
 
         // Try decoding with libjpeg-turbo (doesn't understand XYB ICC, treats as regular JPEG)
-        let rust_decoded = Decoder::new()
-            .apply_icc(false)
-            .decode(&rust_xyb, Unstoppable)
-            .unwrap();
-        let cpp_decoded = Decoder::new()
-            .apply_icc(false)
-            .decode(&cpp_xyb, Unstoppable)
-            .unwrap();
+        let rust_decoded = Decoder::new().decode(&rust_xyb, Unstoppable).unwrap();
+        let cpp_decoded = Decoder::new().decode(&cpp_xyb, Unstoppable).unwrap();
 
         // Compute quality metrics on the incorrectly-decoded XYB
         // (This is what SSIM2 sees since it doesn't understand XYB)

@@ -225,7 +225,7 @@ fn encode_zenjpeg(pixels: &[u8], w: u32, h: u32, quality: u8) -> Vec<u8> {
 /// IDCT: Jpegli (12-bit fixed-point). Upsampling: Triangle (jpegli-style).
 /// No ICC transform.
 fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let dec = Decoder::new().apply_icc(false);
+    let dec = Decoder::new();
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     let (w, h) = (img.width, img.height);
     (w, h, img.into_pixels_u8().unwrap())
@@ -236,9 +236,7 @@ fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Upsampling: LibjpegCompat (fused 2D filter with alternating rounding bias).
 /// No ICC transform.
 fn decode_to_rgb_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let dec = Decoder::new()
-        .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::Triangle);
+    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let img = dec.decode(jpeg, Unstoppable).expect("decode failed");
     let (w, h) = (img.width, img.height);
     (w, h, img.into_pixels_u8().unwrap())

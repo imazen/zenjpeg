@@ -9,6 +9,7 @@ mod test_utils;
 
 use test_utils::{generate_gradient_d, generate_noise};
 use zenjpeg::{
+    color::icc::TargetColorSpace,
     decoder::{ChromaUpsampling, ColorSpace, Decoder, Dimensions, OutputTarget},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
@@ -395,7 +396,7 @@ mod decode_coverage {
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         // Decode with ICC application (requires cms feature)
-        let decoder = Decoder::new().apply_icc(true);
+        let decoder = Decoder::new().correct_color(Some(TargetColorSpace::Srgb));
 
         let decoded = decoder
             .decode(&jpeg, Unstoppable)

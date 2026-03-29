@@ -173,7 +173,7 @@ fn encode_zenjpeg(pixels: &[u8], w: usize, h: usize, quality: u8, preset: &Prese
 }
 
 fn decode_to_rgb(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let decoder = Decoder::new().apply_icc(false);
+    let decoder = Decoder::new();
     let img = decoder.decode(jpeg, Unstoppable).expect("decode failed");
     let (w, h) = (img.width, img.height);
     (w, h, img.into_pixels_u8().unwrap())

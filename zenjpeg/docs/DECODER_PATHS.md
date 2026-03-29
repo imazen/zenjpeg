@@ -88,7 +88,7 @@ let pixels: &[f32] = img.pixels_f32().unwrap(); // [0.0, 1.0] range
 ```rust
 // Path D5: XYB always uses f32 IDCT.
 let img = Decoder::new()
-    .apply_icc(true) // convert XYB → sRGB
+    .correct_color(Some(TargetColorSpace::Srgb)) // convert XYB → sRGB
     .decode(&xyb_jpeg, stop)?;
 ```
 
@@ -148,7 +148,7 @@ Entropy decode runs for full image (DC predictor chain), but IDCT only runs for 
 | `.idct_method(IdctMethod)` | auto | Overrides IDCT selection |
 | `.deblock(DeblockMode)` | `Off` | Non-Off forces coefficient or streaming deblock |
 | `.dequant_bias(bool)` | `false` | `true` forces f32 precise output |
-| `.apply_icc(bool)` | feature-dependent | Post-decode ICC color management |
+| `.correct_color(Option<TargetColorSpace>)` | `None` | Post-decode ICC color management |
 | `.auto_orient(bool)` | `true` | EXIF rotation in DCT domain |
 | `.crop(CropRegion)` | none | Pixel-level crop of output |
 | `.num_threads(usize)` | `0` (auto) | `1` disables parallel |

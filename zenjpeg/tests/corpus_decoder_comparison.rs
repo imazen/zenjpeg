@@ -26,7 +26,7 @@ fn decode_zenjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     // Disable ICC to compare raw decode output against mozjpeg/zune
     // (which don't apply ICC). Otherwise wide-gamut images show large
     // diffs from the Adobe RGB → sRGB transform, not from decoder bugs.
-    let decoder = Decoder::new().apply_icc(false);
+    let decoder = Decoder::new();
     let decoded = decoder
         .decode(data, Unstoppable)
         .map_err(|e| format!("{e}"))?;

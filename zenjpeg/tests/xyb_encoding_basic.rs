@@ -4,6 +4,7 @@
 use enough::Unstoppable;
 
 use zenjpeg::{
+    color::icc::TargetColorSpace,
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout, XybSubsampling},
 };
@@ -86,7 +87,7 @@ fn test_xyb_output_quality() {
 
     // Decode and measure quality
     let decoded = Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 

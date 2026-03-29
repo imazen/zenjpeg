@@ -38,13 +38,11 @@ fn make_baseline_test_jpeg(quality: u8) -> Vec<u8> {
 fn deblock_off_matches_default() {
     let jpeg = make_test_jpeg(50);
     let default = Decoder::new()
-        .apply_icc(false)
         .decode(&jpeg, Unstoppable)
         .unwrap()
         .into_pixels_u8()
         .unwrap();
     let off = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Off)
         .decode(&jpeg, Unstoppable)
         .unwrap()
@@ -57,13 +55,11 @@ fn deblock_off_matches_default() {
 fn deblock_boundary_produces_different_output() {
     let jpeg = make_test_jpeg(20); // Low Q to make blocking visible
     let plain = Decoder::new()
-        .apply_icc(false)
         .decode(&jpeg, Unstoppable)
         .unwrap()
         .into_pixels_u8()
         .unwrap();
     let deblocked = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Boundary4Tap)
         .decode(&jpeg, Unstoppable)
         .unwrap()
@@ -88,13 +84,11 @@ fn deblock_boundary_produces_different_output() {
 fn deblock_knusperli_produces_different_output() {
     let jpeg = make_test_jpeg(10); // Very low Q
     let plain = Decoder::new()
-        .apply_icc(false)
         .decode(&jpeg, Unstoppable)
         .unwrap()
         .into_pixels_u8()
         .unwrap();
     let deblocked = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Knusperli)
         .decode(&jpeg, Unstoppable)
         .unwrap()
@@ -119,7 +113,6 @@ fn deblock_knusperli_produces_different_output() {
 fn deblock_auto_works() {
     let jpeg = make_test_jpeg(30);
     let result = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Auto)
         .decode(&jpeg, Unstoppable)
         .unwrap();
@@ -132,7 +125,6 @@ fn deblock_scanline_knusperli_falls_back_to_buffered() {
     let jpeg = make_baseline_test_jpeg(50);
     // Knusperli in scanline_reader transparently falls back to decode() + buffered
     let mut reader = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Knusperli)
         .scanline_reader(&jpeg)
         .expect("Knusperli should work via fallback, not error");
@@ -147,7 +139,6 @@ fn deblock_scanline_knusperli_falls_back_to_buffered() {
 fn deblock_scanline_boundary4tap_succeeds() {
     let jpeg = make_baseline_test_jpeg(20); // Low Q baseline so deblocking has effect
     let mut reader = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Boundary4Tap)
         .scanline_reader(&jpeg)
         .expect("Boundary4Tap should be supported in scanline_reader");
@@ -172,7 +163,6 @@ fn deblock_scanline_boundary4tap_succeeds() {
 fn deblock_scanline_auto_succeeds() {
     let jpeg = make_baseline_test_jpeg(30);
     let mut reader = Decoder::new()
-        .apply_icc(false)
         .deblock(DeblockMode::Auto)
         .scanline_reader(&jpeg)
         .expect("Auto should be supported in scanline_reader (resolves to Boundary4Tap)");
@@ -195,11 +185,7 @@ fn deblock_scanline_off_matches_default_scanline() {
     let jpeg = make_baseline_test_jpeg(50);
 
     let decode_scanline = |mode: DeblockMode| -> Vec<u8> {
-        let mut reader = Decoder::new()
-            .apply_icc(false)
-            .deblock(mode)
-            .scanline_reader(&jpeg)
-            .unwrap();
+        let mut reader = Decoder::new().deblock(mode).scanline_reader(&jpeg).unwrap();
         let w = reader.width() as usize;
         let h = reader.height() as usize;
         let mut pixels = vec![0u8; w * h * 3];
@@ -214,10 +200,7 @@ fn deblock_scanline_off_matches_default_scanline() {
 
     let default_pixels = decode_scanline(DeblockMode::Off);
     let no_deblock = {
-        let mut reader = Decoder::new()
-            .apply_icc(false)
-            .scanline_reader(&jpeg)
-            .unwrap();
+        let mut reader = Decoder::new().scanline_reader(&jpeg).unwrap();
         let w = reader.width() as usize;
         let h = reader.height() as usize;
         let mut pixels = vec![0u8; w * h * 3];
@@ -241,11 +224,7 @@ fn deblock_scanline_boundary_differs_from_off() {
     let jpeg = make_baseline_test_jpeg(5); // Very low Q baseline for maximum blocking
 
     let decode_scanline = |mode: DeblockMode| -> Vec<u8> {
-        let mut reader = Decoder::new()
-            .apply_icc(false)
-            .deblock(mode)
-            .scanline_reader(&jpeg)
-            .unwrap();
+        let mut reader = Decoder::new().deblock(mode).scanline_reader(&jpeg).unwrap();
         let w = reader.width() as usize;
         let h = reader.height() as usize;
         let mut pixels = vec![0u8; w * h * 3];
@@ -291,7 +270,6 @@ fn deblock_all_modes_same_dimensions() {
     let mut sizes: Vec<(DeblockMode, usize)> = Vec::new();
     for mode in modes {
         let result = Decoder::new()
-            .apply_icc(false)
             .deblock(mode)
             .decode(&jpeg, Unstoppable)
             .unwrap();

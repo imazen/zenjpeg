@@ -26,13 +26,13 @@ use crate::error::{Error, Result};
 /// ICC profile signature in APP2 marker
 pub const ICC_PROFILE_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";
 
-/// Target color space for ICC profile conversion.
+/// Target color space for ICC profile conversion during decoding.
 ///
-/// When [`DecodeConfig::apply_icc`](crate::decoder::DecodeConfig) is enabled,
-/// embedded ICC profiles are converted to this target color space.
+/// When [`Decoder::correct_color`](crate::decode::Decoder::correct_color) is set
+/// to `Some(target)`, embedded ICC profiles are converted to this target color space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum IccTarget {
+pub enum TargetColorSpace {
     /// sRGB (IEC 61966-2-1). The universal web/display standard.
     #[default]
     Srgb,
@@ -144,7 +144,7 @@ pub fn apply_icc_transform(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
-    _target: IccTarget,
+    _target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
     use lcms2::{Intent, PixelFormat, Profile, Transform};
 
@@ -184,7 +184,7 @@ pub fn apply_icc_transform(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
-    target: IccTarget,
+    target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
     use moxcms::{ColorProfile, Layout, TransformOptions};
 
@@ -217,7 +217,7 @@ pub fn apply_icc_transform(
     _width: usize,
     _height: usize,
     _icc_profile: &[u8],
-    _target: IccTarget,
+    _target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
     // No CMS available - return data unchanged
     // User should enable cms-lcms2 or cms-moxcms feature for ICC support
@@ -238,7 +238,7 @@ pub fn apply_icc_transform_f32(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
-    _target: IccTarget,
+    _target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
     use lcms2::{Intent, PixelFormat, Profile, Transform};
 
@@ -275,7 +275,7 @@ pub fn apply_icc_transform_f32(
     _width: usize,
     _height: usize,
     icc_profile: &[u8],
-    target: IccTarget,
+    target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
     use moxcms::{ColorProfile, Layout, TransformOptions};
 
@@ -308,18 +308,18 @@ pub fn apply_icc_transform_f32(
     _width: usize,
     _height: usize,
     _icc_profile: &[u8],
-    _target: IccTarget,
+    _target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
     Ok(rgb_data.to_vec())
 }
 
 /// Create a moxcms `ColorProfile` for the given target.
 #[cfg(all(feature = "cms-moxcms", not(feature = "cms-lcms2")))]
-fn make_moxcms_target(target: IccTarget) -> moxcms::ColorProfile {
+fn make_moxcms_target(target: TargetColorSpace) -> moxcms::ColorProfile {
     match target {
-        IccTarget::Srgb => moxcms::ColorProfile::new_srgb(),
-        IccTarget::DisplayP3 => moxcms::ColorProfile::new_display_p3(),
-        IccTarget::Rec2020 => moxcms::ColorProfile::new_bt2020(),
+        TargetColorSpace::Srgb => moxcms::ColorProfile::new_srgb(),
+        TargetColorSpace::DisplayP3 => moxcms::ColorProfile::new_display_p3(),
+        TargetColorSpace::Rec2020 => moxcms::ColorProfile::new_bt2020(),
     }
 }
 
@@ -378,7 +378,7 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
 
     // Apply ICC if present (default to sRGB target)
     let output = if let Some(ref profile) = icc_profile {
-        apply_icc_transform(&pixels, width, height, profile, IccTarget::Srgb)?
+        apply_icc_transform(&pixels, width, height, profile, TargetColorSpace::Srgb)?
     } else {
         pixels
     };

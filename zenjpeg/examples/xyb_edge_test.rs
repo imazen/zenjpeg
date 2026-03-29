@@ -2,6 +2,7 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -77,7 +78,7 @@ fn main() {
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
                 let decoded = zenjpeg::decoder::Decoder::new()
-                    .apply_icc(true)
+                    .correct_color(Some(TargetColorSpace::Srgb))
                     .decode(&jpeg, Unstoppable)
                     .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, decoded.pixels_u8().unwrap(), width, height);
@@ -126,7 +127,7 @@ fn main() {
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
                 let decoded = zenjpeg::decoder::Decoder::new()
-                    .apply_icc(true)
+                    .correct_color(Some(TargetColorSpace::Srgb))
                     .decode(&jpeg, Unstoppable)
                     .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, decoded.pixels_u8().unwrap(), width, height);

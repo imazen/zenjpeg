@@ -4,6 +4,7 @@
 
 use enough::Unstoppable;
 use std::process::Command;
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
@@ -101,7 +102,7 @@ fn main() {
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     // Use ICC-aware decoder for proper XYB→sRGB conversion
     Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .decode(data, Unstoppable)
         .expect("decode")
         .into_pixels_u8()

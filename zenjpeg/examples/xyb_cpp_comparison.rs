@@ -2,6 +2,7 @@
 
 use enough::Unstoppable;
 use std::process::Command;
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
@@ -138,7 +139,7 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
     // Load compressed (JPEG) with ICC support for XYB
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");
     let decoded = Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .decode(&jpeg_data, Unstoppable)
         .expect("decode jpeg");
 

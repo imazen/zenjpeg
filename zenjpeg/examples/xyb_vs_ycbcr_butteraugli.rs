@@ -12,6 +12,7 @@
 use butteraugli::ButteraugliParams;
 use enough::Unstoppable;
 use std::path::Path;
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
@@ -92,7 +93,7 @@ fn main() {
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     // Use jpegli decoder which applies ICC profiles for XYB images
-    let decoder = zenjpeg::decode::Decoder::new().apply_icc(true);
+    let decoder = zenjpeg::decode::Decoder::new().correct_color(Some(TargetColorSpace::Srgb));
     match decoder.decode(data, Unstoppable) {
         Ok(img) => {
             // eprintln!("  jpegli decode OK, {} bytes", img.data.len());

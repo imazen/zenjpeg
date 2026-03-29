@@ -14,7 +14,7 @@
 //!     │   ├── .fancy_upsampling()    convenience bool
 //!     │   ├── .block_smoothing()     smooth progressive display
 //!     │   ├── .dequant_bias()        Laplacian dequantization
-//!     │   ├── .apply_icc()           apply embedded ICC profile
+//!     │   ├── .correct_color()       apply embedded ICC profile
 //!     │   ├── .strictness()          error handling (Strict, Balanced, Lenient)
 //!     │   ├── .strict() / .lenient() convenience shortcuts
 //!     │   ├── .preserve()            metadata preservation
@@ -54,6 +54,7 @@ mod test_utils;
 use enough::Unstoppable;
 use test_utils::generate_checkerboard;
 use zenjpeg::{
+    color::icc::TargetColorSpace,
     decoder::{
         ChromaUpsampling, DecodeResult, DecodeWarning, Decoder, GainMapHandling, OutputTarget,
         PixelFormat, PreserveConfig, ScanlineReader, Strictness,
@@ -1364,15 +1365,17 @@ fn block_smoothing() {
 // 25. Apply ICC
 // ============================================================================
 
-/// `.apply_icc()` enables ICC profile application.
+/// `.correct_color()` enables ICC profile application.
 /// (Actual transform requires cms feature; without it, this is a no-op.)
 #[test]
-fn apply_icc_toggle() {
+fn correct_color_toggle() {
     let jpeg = test_jpeg_with_icc();
-    let result = Decoder::new().apply_icc(true).decode(&jpeg, Unstoppable);
+    let result = Decoder::new()
+        .correct_color(Some(TargetColorSpace::Srgb))
+        .decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 
-    let result = Decoder::new().apply_icc(false).decode(&jpeg, Unstoppable);
+    let result = Decoder::new().decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 }
 

@@ -573,7 +573,6 @@ mod decode_coverage {
             .output_format(PixelFormat::Rgb)
             .chroma_upsampling(ChromaUpsampling::Triangle)
             .block_smoothing(true)
-            .apply_icc(false)
             .max_pixels(1000000)
             .max_memory(100 * 1024 * 1024);
 

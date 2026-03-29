@@ -3,7 +3,7 @@
 //! This module contains the configuration enums and structs used to control
 //! JPEG decoding behavior.
 
-use crate::color::icc::IccTarget;
+use crate::color::icc::TargetColorSpace;
 use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 use crate::lossless::LosslessTransform;
 use crate::types::Dimensions;
@@ -768,11 +768,12 @@ pub struct DecodeConfig {
     pub chroma_upsampling: ChromaUpsampling,
     /// Whether to apply block smoothing
     pub block_smoothing: bool,
-    /// Whether to apply embedded ICC profile (requires cms feature)
-    pub apply_icc: bool,
-    /// Target color space for ICC conversion.
-    /// Only used when `apply_icc` is `true`.
-    pub icc_target: IccTarget,
+    /// Convert embedded ICC color profile to a target color space.
+    ///
+    /// When `Some(target)`, the decoder applies the embedded ICC profile
+    /// to convert pixel data to the specified color space. When `None`
+    /// (default), no color conversion is performed.
+    pub correct_color: Option<TargetColorSpace>,
     /// Maximum pixels allowed (for DoS protection).
     /// Default is 100 megapixels. Set to 0 for unlimited.
     /// Use `max_pixels()` method to set.
@@ -834,8 +835,7 @@ impl core::fmt::Debug for DecodeConfig {
             .field("gain_map", &self.gain_map)
             .field("chroma_upsampling", &self.chroma_upsampling)
             .field("block_smoothing", &self.block_smoothing)
-            .field("apply_icc", &self.apply_icc)
-            .field("icc_target", &self.icc_target)
+            .field("correct_color", &self.correct_color)
             .field("max_pixels", &self.max_pixels)
             .field("max_memory", &self.max_memory)
             .field("preserve", &self.preserve)
@@ -859,9 +859,7 @@ impl Default for DecodeConfig {
             gain_map: GainMapHandling::default(),
             chroma_upsampling: ChromaUpsampling::default(),
             block_smoothing: false,
-            // Apply ICC by default when CMS is available
-            apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
-            icc_target: IccTarget::default(),
+            correct_color: None,
             max_pixels: DEFAULT_MAX_PIXELS,
             max_memory: DEFAULT_MAX_MEMORY,
             preserve: PreserveConfig::default(),

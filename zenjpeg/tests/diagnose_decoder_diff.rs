@@ -871,16 +871,14 @@ fn compare_streaming_libjpeg_idct_adobe_rgb() {
     println!("\n=== Streaming with Libjpeg IDCT on Adobe RGB image ===");
 
     // Default IDCT (Jpegli) streaming — disable ICC to compare raw decode
-    let d = zenjpeg::decoder::Decoder::new().apply_icc(false);
+    let d = zenjpeg::decoder::Decoder::new();
     let result_jpegli = d.decode(&data, Unstoppable).unwrap();
     let jpegli_rgb = result_jpegli.pixels_u8().unwrap();
     let w = result_jpegli.width() as usize;
     let h = result_jpegli.height() as usize;
 
     // Libjpeg IDCT streaming — disable ICC to compare raw decode
-    let d = zenjpeg::decoder::Decoder::new()
-        .apply_icc(false)
-        .idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
+    let d = zenjpeg::decoder::Decoder::new().idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
     let result_lj = d.decode(&data, Unstoppable).unwrap();
     let lj_rgb = result_lj.pixels_u8().unwrap();
 
@@ -960,7 +958,7 @@ fn compare_scanline_rgb8_vs_streaming_decode() {
 
     // Path 1: decode() — uses streaming path
     // Disable ICC to compare raw decode output (not ICC-corrected)
-    let d = zenjpeg::decoder::Decoder::new().apply_icc(false);
+    let d = zenjpeg::decoder::Decoder::new();
     let result = d.decode(&data, Unstoppable).unwrap();
     let streaming_rgb = result.pixels_u8().unwrap();
     let w = result.width() as usize;
@@ -1486,14 +1484,12 @@ fn diagnose_top3_outlier_diffs() {
 
         // Decode with zenjpeg default (Jpegli IDCT, no ICC)
         let zen_default = zenjpeg::decoder::Decoder::new()
-            .apply_icc(false)
             .decode(&data, Unstoppable)
             .unwrap();
         let zen_rgb = zen_default.pixels_u8().unwrap();
 
         // Decode with zenjpeg LibjpegCompat (Libjpeg IDCT, no ICC)
         let zen_compat = zenjpeg::decoder::Decoder::new()
-            .apply_icc(false)
             .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::Triangle)
             .decode(&data, Unstoppable)
             .unwrap();
@@ -1661,7 +1657,6 @@ fn diagnose_zen_vs_zune_outlier_locations() {
 
         // Decode with zenjpeg (default Jpegli IDCT)
         let zen_img = zenjpeg::decoder::Decoder::new()
-            .apply_icc(false)
             .decode(&data, Unstoppable)
             .unwrap();
         let w = zen_img.width() as usize;
@@ -1670,7 +1665,6 @@ fn diagnose_zen_vs_zune_outlier_locations() {
 
         // Decode with zenjpeg LibjpegCompat (Libjpeg i64 IDCT)
         let compat_img = zenjpeg::decoder::Decoder::new()
-            .apply_icc(false)
             .chroma_upsampling(zenjpeg::decoder::ChromaUpsampling::Triangle)
             .decode(&data, Unstoppable)
             .unwrap();

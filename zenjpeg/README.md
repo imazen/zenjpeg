@@ -474,7 +474,7 @@ println!("{}x{}, {} components", info.width, info.height, info.num_components);
 | `.num_threads(0)` | Parallel decode (auto thread count) | `0` (auto) |
 | `.output_format(fmt)` | Output pixel format | `Rgb` |
 | `.fancy_upsampling(bool)` | Smooth chroma upsampling | `true` |
-| `.apply_icc(bool)` | Apply embedded ICC profile | `true` |
+| `.correct_color(target)` | Apply embedded ICC profile | `None` |
 | `.auto_orient(bool)` | Apply EXIF orientation in DCT domain | `false` |
 | `.transform(t)` | Lossless transform during decode (see below) | None |
 | `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
@@ -516,7 +516,7 @@ use zenjpeg::decoder::{Decoder, DecoderConfig};
 let image = Decoder::new()
     .fancy_upsampling(true)
     .block_smoothing(false)
-    .apply_icc(true)
+    .correct_color(Some(TargetColorSpace::Srgb))
     .dequant_bias(false)
     .max_pixels(100_000_000)
     .max_memory(512 * 1024 * 1024)

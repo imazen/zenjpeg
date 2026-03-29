@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use zenjpeg::deblock::{BoundaryStrength, filter_plane_boundary_4tap};
 use zenjpeg::decoder::{
-    DecodeConfig, IccTarget, OutputTarget, PreserveConfig, SegmentType, Subsampling,
+    DecodeConfig, OutputTarget, PreserveConfig, SegmentType, Subsampling, TargetColorSpace,
 };
 use zenjpeg::detect::content::{DeblockAction, classify_from_probe, recommend_deblock};
 use zenjpeg::detect::{self, QualityScale};
@@ -147,12 +147,7 @@ fn optimize_inner(
         decoder.output_target = OutputTarget::LinearF32;
     }
     // ICC profile: preserve by default. Only convert when --apply-icc is specified.
-    if let Some(icc_target) = args.apply_icc {
-        decoder.apply_icc = true;
-        decoder.icc_target = convert_icc_target(icc_target);
-    } else {
-        decoder.apply_icc = false;
-    }
+    decoder.correct_color = args.apply_icc.map(|t| convert_icc_target(t));
     if args.auto_orient {
         decoder = decoder.auto_orient(true);
     }
@@ -283,11 +278,11 @@ fn convert_subsampling(sub: SubsamplingArg) -> ChromaSubsampling {
     }
 }
 
-fn convert_icc_target(target: IccTargetArg) -> IccTarget {
+fn convert_icc_target(target: IccTargetArg) -> TargetColorSpace {
     match target {
-        IccTargetArg::Srgb => IccTarget::Srgb,
-        IccTargetArg::P3 => IccTarget::DisplayP3,
-        IccTargetArg::Rec2020 => IccTarget::Rec2020,
+        IccTargetArg::Srgb => TargetColorSpace::Srgb,
+        IccTargetArg::P3 => TargetColorSpace::DisplayP3,
+        IccTargetArg::Rec2020 => TargetColorSpace::Rec2020,
     }
 }
 

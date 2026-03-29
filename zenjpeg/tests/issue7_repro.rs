@@ -6,6 +6,7 @@
 //! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
 
 use enough::Unstoppable;
+use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decode::{ChromaUpsampling, Decoder};
 
 /// Decode JPEG with mozjpeg-sys (libjpeg-turbo FFI) — the reference implementation.
@@ -40,7 +41,6 @@ fn decode_mozjpeg(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Decode JPEG with zenjpeg in LibjpegCompat mode.
 fn decode_zenjpeg_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let result = Decoder::new()
-        .apply_icc(false)
         .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(jpeg, Unstoppable)
         .expect("zenjpeg decode failed");
@@ -53,7 +53,6 @@ fn decode_zenjpeg_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Decode JPEG with zenjpeg using default (Triangle) upsampling.
 fn decode_zenjpeg_default(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let result = Decoder::new()
-        .apply_icc(false)
         .decode(jpeg, Unstoppable)
         .expect("zenjpeg decode failed");
     let w = result.width();
@@ -232,9 +231,7 @@ fn issue7_scanline_reader_path() {
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
     // Decode via scanline_reader with LibjpegCompat
-    let decoder = Decoder::new()
-        .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::Triangle);
+    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let mut reader = decoder
         .scanline_reader(&jpeg)
         .expect("scanline_reader failed");
@@ -277,7 +274,7 @@ fn issue7_scanline_reader_path() {
     );
 }
 
-/// Test with apply_icc(true) — the default when CMS is enabled.
+/// Test with correct_color(Some(Srgb)) — explicit ICC color correction.
 /// This was the likely original cause: ICC transform being applied
 /// when both sides should be sRGB-to-sRGB (identity).
 #[test]
@@ -293,9 +290,9 @@ fn issue7_with_icc_enabled() {
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
-    // Decode with apply_icc(true) — default when cms feature is on
+    // Decode with correct_color(Some(Srgb)) — explicit ICC color correction
     let result = Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
@@ -320,12 +317,12 @@ fn issue7_with_icc_enabled() {
         max_delta = max_delta.max(d);
     }
 
-    println!("\nLibjpegCompat + apply_icc max delta vs mozjpeg: {max_delta}");
+    println!("\nLibjpegCompat + correct_color max delta vs mozjpeg: {max_delta}");
     // With ICC enabled and sRGB profile, should still be small
-    // but if CMS is not compiled in, this is the same as apply_icc(false)
+    // but if CMS is not compiled in, correct_color has no effect
     if max_delta > 2 {
         eprintln!(
-            "WARNING: apply_icc(true) produces delta={max_delta} — CMS transform may be the cause"
+            "WARNING: correct_color(Srgb) produces delta={max_delta} — CMS transform may be the cause"
         );
     }
 }
@@ -348,7 +345,6 @@ fn issue7_coefficient_path() {
 
     // Force coefficient path by requesting f32 output
     let result = Decoder::new()
-        .apply_icc(false)
         .chroma_upsampling(ChromaUpsampling::Triangle)
         .output_target(OutputTarget::SrgbF32)
         .decode(&jpeg, Unstoppable)
@@ -403,7 +399,6 @@ fn issue7_dequant_bias_path() {
 
     // Decode with dequant_bias — forces f32 IDCT
     let result = Decoder::new()
-        .apply_icc(false)
         .dequant_bias(true)
         .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
@@ -450,16 +445,13 @@ fn issue7_cross_path_consistency() {
 
     // Path 1: decode() - streaming
     let result1 = Decoder::new()
-        .apply_icc(false)
         .chroma_upsampling(ChromaUpsampling::Triangle)
         .decode(&jpeg, Unstoppable)
         .expect("decode");
     let p1 = result1.into_pixels_u8().unwrap();
 
     // Path 2: scanline_reader() - streaming
-    let decoder2 = Decoder::new()
-        .apply_icc(false)
-        .chroma_upsampling(ChromaUpsampling::Triangle);
+    let decoder2 = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
     let mut reader = decoder2.scanline_reader(&jpeg).expect("scanline_reader");
     let w = reader.width() as usize;
     let h = reader.height() as usize;

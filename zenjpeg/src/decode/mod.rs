@@ -19,7 +19,10 @@
 //! ```ignore
 //! use zenjpeg::decode::Decoder;
 //!
-//! let result = Decoder::new().apply_icc(true).decode(&jpeg_data, enough::Unstoppable)?;
+//! use zenjpeg::color::icc::TargetColorSpace;
+//! let result = Decoder::new()
+//!     .correct_color(Some(TargetColorSpace::Srgb))
+//!     .decode(&jpeg_data, enough::Unstoppable)?;
 //! ```
 
 // IDCT modules (decoder-only)
@@ -154,7 +157,7 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 // Re-export config types (defined in config.rs, public API preserved)
 pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
-use crate::color::icc::IccTarget;
+use crate::color::icc::TargetColorSpace;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -317,27 +320,28 @@ impl DecodeConfig {
         self
     }
 
-    /// Enables ICC profile application.
+    /// Convert embedded ICC color profile to a target color space during decode.
     ///
-    /// When enabled, embedded ICC profiles will be applied to convert
-    /// the image to sRGB. This is required for correct display of
-    /// XYB-encoded images.
+    /// When set to `Some(target)`, the decoder applies the embedded ICC profile
+    /// to convert pixel data to the specified color space. When `None` (default),
+    /// no color conversion is performed — pixels are returned in the JPEG's
+    /// native color space.
     ///
-    /// Note: Requires `cms-lcms2` or `cms-moxcms` feature to be enabled.
-    /// Without a CMS feature, this setting has no effect.
+    /// Requires the `cms-lcms2` or `cms-moxcms` feature. Without a CMS feature,
+    /// this setting has no effect.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::color::icc::TargetColorSpace;
+    ///
+    /// let img = Decoder::new()
+    ///     .correct_color(Some(TargetColorSpace::Srgb))
+    ///     .decode(&jpeg, stop)?;
+    /// ```
     #[must_use]
-    pub fn apply_icc(mut self, enable: bool) -> Self {
-        self.apply_icc = enable;
-        self
-    }
-
-    /// Sets the target color space for ICC profile conversion.
-    ///
-    /// Only used when [`apply_icc`](Self::apply_icc) is enabled.
-    /// Default is [`IccTarget::Srgb`].
-    #[must_use]
-    pub fn icc_target(mut self, target: IccTarget) -> Self {
-        self.icc_target = target;
+    pub fn correct_color(mut self, target: Option<TargetColorSpace>) -> Self {
+        self.correct_color = target;
         self
     }
 
@@ -1835,7 +1839,7 @@ impl DecodeConfig {
 
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-            if self.apply_icc
+            if let Some(target) = self.correct_color
                 && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile
             {
@@ -1844,7 +1848,7 @@ impl DecodeConfig {
                     visible_w as usize,
                     visible_h as usize,
                     icc_profile,
-                    self.icc_target,
+                    target,
                 ) {
                     Ok(transformed) => pixels = transformed,
                     Err(_e) => {
@@ -2018,7 +2022,7 @@ impl DecodeConfig {
 
             // Apply ICC profile if enabled and present
             #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-            if self.apply_icc
+            if let Some(target) = self.correct_color
                 && output_format == PixelFormat::Rgb
                 && let Some(ref icc_profile) = parser.icc_profile
             {
@@ -2027,7 +2031,7 @@ impl DecodeConfig {
                     visible_w as usize,
                     visible_h as usize,
                     icc_profile,
-                    self.icc_target,
+                    target,
                 ) {
                     Ok(transformed) => pixels = transformed,
                     Err(_e) => {

@@ -190,7 +190,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg default (Jpegli IDCT, Triangle)", |b| {
-            let dec = Decoder::new().apply_icc(false);
+            let dec = Decoder::new();
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -199,9 +199,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg LibjpegCompat (Libjpeg IDCT)", |b| {
-            let dec = Decoder::new()
-                .apply_icc(false)
-                .chroma_upsampling(ChromaUpsampling::Triangle);
+            let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -212,7 +210,6 @@ fn bench_decode(suite: &mut Suite) {
         // Isolate: LibjpegCompat upsample but Jpegli IDCT
         g.bench("zenjpeg LibjpegCompat + Jpegli IDCT", |b| {
             let dec = Decoder::new()
-                .apply_icc(false)
                 .chroma_upsampling(ChromaUpsampling::Triangle)
                 .idct_method(zenjpeg::decode::IdctMethod::Jpegli);
             b.iter(|| {
@@ -224,9 +221,7 @@ fn bench_decode(suite: &mut Suite) {
 
         // Isolate: Triangle upsample but Libjpeg IDCT
         g.bench("zenjpeg Triangle + Libjpeg IDCT", |b| {
-            let dec = Decoder::new()
-                .apply_icc(false)
-                .idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
+            let dec = Decoder::new().idct_method(zenjpeg::decode::IdctMethod::Libjpeg);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -235,9 +230,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg NearestNeighbor (box filter)", |b| {
-            let dec = Decoder::new()
-                .apply_icc(false)
-                .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+            let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -268,7 +261,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg default", |b| {
-            let dec = Decoder::new().apply_icc(false);
+            let dec = Decoder::new();
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.progressive_q85, Unstoppable).unwrap();
@@ -283,7 +276,7 @@ fn bench_decode(suite: &mut Suite) {
         g.throughput(Throughput::Bytes(total_lowq_bytes as u64));
 
         g.bench("zenjpeg Off (no deblock)", |b| {
-            let dec = Decoder::new().apply_icc(false);
+            let dec = Decoder::new();
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q20, Unstoppable).unwrap();
@@ -292,9 +285,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg Boundary4Tap", |b| {
-            let dec = Decoder::new()
-                .apply_icc(false)
-                .deblock(DeblockMode::Boundary4Tap);
+            let dec = Decoder::new().deblock(DeblockMode::Boundary4Tap);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q20, Unstoppable).unwrap();
@@ -303,9 +294,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg Knusperli", |b| {
-            let dec = Decoder::new()
-                .apply_icc(false)
-                .deblock(DeblockMode::Knusperli);
+            let dec = Decoder::new().deblock(DeblockMode::Knusperli);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q20, Unstoppable).unwrap();
@@ -314,7 +303,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg Auto", |b| {
-            let dec = Decoder::new().apply_icc(false).deblock(DeblockMode::Auto);
+            let dec = Decoder::new().deblock(DeblockMode::Auto);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q20, Unstoppable).unwrap();
@@ -331,10 +320,7 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg scanline Off", |b| {
             b.iter(|| {
                 for img in get_images() {
-                    let mut reader = Decoder::new()
-                        .apply_icc(false)
-                        .scanline_reader(&img.baseline_q85)
-                        .unwrap();
+                    let mut reader = Decoder::new().scanline_reader(&img.baseline_q85).unwrap();
                     let mut buf = vec![0u8; 512 * 512 * 3];
                     reader
                         .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 512 * 3, 512))
@@ -347,7 +333,6 @@ fn bench_decode(suite: &mut Suite) {
             b.iter(|| {
                 for img in get_images() {
                     let mut reader = Decoder::new()
-                        .apply_icc(false)
                         .deblock(DeblockMode::Boundary4Tap)
                         .scanline_reader(&img.baseline_q85)
                         .unwrap();
@@ -366,7 +351,7 @@ fn bench_decode(suite: &mut Suite) {
         g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
 
         g.bench("zenjpeg default (no bias)", |b| {
-            let dec = Decoder::new().apply_icc(false);
+            let dec = Decoder::new();
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();
@@ -375,7 +360,7 @@ fn bench_decode(suite: &mut Suite) {
         });
 
         g.bench("zenjpeg dequant_bias", |b| {
-            let dec = Decoder::new().apply_icc(false).dequant_bias(true);
+            let dec = Decoder::new().dequant_bias(true);
             b.iter(|| {
                 for img in get_images() {
                     dec.decode(&img.baseline_q85, Unstoppable).unwrap();

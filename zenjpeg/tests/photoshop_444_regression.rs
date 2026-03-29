@@ -49,9 +49,9 @@ fn decode_reference(data: &[u8]) -> (Vec<u8>, u16, u16) {
 
 /// Decode with zenjpeg buffered mode (the default decode() path).
 fn decode_zenjpeg_buffered(data: &[u8]) -> (Vec<u8>, u32, u32) {
-    // apply_icc(false): bench-utils enables cms-moxcms, which makes apply_icc
-    // default to true. AdobeRGB→sRGB ICC transform would corrupt the comparison.
-    let decoder = zenjpeg::decoder::Decoder::new().apply_icc(false);
+    // correct_color defaults to None, so no ICC transform is applied.
+    // Previously bench-utils enabled cms-moxcms which auto-enabled ICC.
+    let decoder = zenjpeg::decoder::Decoder::new();
     let result = decoder
         .decode(data, Unstoppable)
         .expect("zenjpeg decode failed");
@@ -63,7 +63,6 @@ fn decode_zenjpeg_buffered(data: &[u8]) -> (Vec<u8>, u32, u32) {
 /// Decode with zenjpeg scanline mode.
 fn decode_zenjpeg_scanline(data: &[u8]) -> (Vec<u8>, u32, u32) {
     let mut reader = zenjpeg::decoder::Decoder::new()
-        .apply_icc(false)
         .scanline_reader(data)
         .expect("scanline_reader failed");
     let w = reader.width();

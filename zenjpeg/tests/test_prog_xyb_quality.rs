@@ -1,5 +1,6 @@
 use enough::Unstoppable;
 use zenjpeg::{
+    color::icc::TargetColorSpace,
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling},
 };
@@ -32,7 +33,9 @@ fn test_progressive_xyb_all_quality_levels() {
         println!("Q{}: encoded {} bytes", quality, jpeg.len());
 
         // Decode
-        let result = Decoder::new().apply_icc(true).decode(&jpeg, Unstoppable);
+        let result = Decoder::new()
+            .correct_color(Some(TargetColorSpace::Srgb))
+            .decode(&jpeg, Unstoppable);
 
         match result {
             Ok(img) => println!("Q{}: decoded {}x{}", quality, img.width, img.height),
@@ -97,7 +100,9 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     }
 
     // Decode with zenjpeg
-    let result = Decoder::new().apply_icc(true).decode(&jpeg, Unstoppable);
+    let result = Decoder::new()
+        .correct_color(Some(TargetColorSpace::Srgb))
+        .decode(&jpeg, Unstoppable);
 
     match result {
         Ok(img) => println!("Q{}: zenjpeg decoded {}x{}", quality, img.width, img.height),

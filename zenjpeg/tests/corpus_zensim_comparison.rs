@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use zenjpeg::color::icc::{IccTarget, apply_icc_transform, extract_icc_profile};
+use zenjpeg::color::icc::{TargetColorSpace, apply_icc_transform, extract_icc_profile};
 use zensim::{RgbSlice, Zensim, ZensimProfile};
 
 fn corpus_dir() -> PathBuf {
@@ -32,7 +32,7 @@ fn decode_zenjpeg(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     use enough::Unstoppable;
     use zenjpeg::decoder::Decoder;
 
-    let decoder = Decoder::new().auto_orient(false).apply_icc(false);
+    let decoder = Decoder::new().auto_orient(false);
     let decoded = decoder
         .decode(data, Unstoppable)
         .map_err(|e| format!("{e}"))?;
@@ -94,7 +94,7 @@ fn normalize_to_srgb(pixels: &[u8], width: u32, height: u32, icc: Option<&[u8]>)
             width as usize,
             height as usize,
             profile,
-            IccTarget::Srgb,
+            TargetColorSpace::Srgb,
         )
         .unwrap_or_else(|_| pixels.to_vec()),
         None => pixels.to_vec(),

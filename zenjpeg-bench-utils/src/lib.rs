@@ -33,6 +33,7 @@
 use imgref::{ImgRef, ImgVec};
 use rgb::{RGB8, RGBA8};
 use std::path::PathBuf;
+use zenjpeg::color::icc::TargetColorSpace;
 
 // ============================================================================
 // Path Helpers — resolve directories and tool binaries via env vars
@@ -1310,7 +1311,7 @@ pub fn decode_jpeg_to_rgb(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
 pub fn decode_jpeg_with_icc(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
     use enough::Unstoppable;
     let decoded = zenjpeg::decoder::Decoder::new()
-        .apply_icc(true)
+        .correct_color(Some(TargetColorSpace::Srgb))
         .decode(data, Unstoppable)
         .map_err(|e| JpegDecodeError::Decode(format!("{:?}", e)))?;
 
