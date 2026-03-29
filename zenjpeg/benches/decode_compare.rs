@@ -15,6 +15,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use enough::Unstoppable;
 use std::hint::black_box;
 use std::io::Cursor;
+use zenjpeg::decode::ChromaUpsampling;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::colorspace::ColorSpace;

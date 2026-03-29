@@ -1,3 +1,4 @@
+#![cfg(feature = "trellis")]
 //! Integration tests for the layout pipeline module.
 //!
 //! Tests lossless path (DCT-domain transforms), lossy path (decode→resize→encode),

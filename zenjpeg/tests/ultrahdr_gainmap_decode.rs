@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::len_zero, clippy::print_literal)]
 //! Comprehensive tests for zenjpeg's UltraHDR gain map decoding API.
 //!
 //! UltraHDR (ISO 21496-1) is a backward-compatible HDR image format built on JPEG.

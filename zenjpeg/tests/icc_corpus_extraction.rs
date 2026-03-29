@@ -1,3 +1,4 @@
+#![allow(dead_code, clippy::collapsible_if)]
 //! Comprehensive ICC profile extraction tests against imageflow's test corpus.
 //!
 //! Walks all ICC-containing JPEGs from the imageflow image cache and verifies

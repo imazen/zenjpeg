@@ -95,6 +95,7 @@ fn decode_zune(jpeg: &[u8]) -> Vec<u8> {
 
 // ── Load corpus ─────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 struct TestImage {
     name: String,
     baseline_q85: Vec<u8>,

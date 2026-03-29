@@ -180,7 +180,7 @@ fn bench_decode_mozjpeg(c: &mut Criterion) {
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
-                    use zenjpeg::decode::Decoder;
+                    use zenjpeg::decode::{ChromaUpsampling, Decoder};
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)

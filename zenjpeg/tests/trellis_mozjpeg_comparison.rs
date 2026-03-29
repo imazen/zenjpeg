@@ -17,7 +17,6 @@
 //! Run full-encode (requires CID22 corpus + mozjpeg-tables feature):
 //!   cargo test --release -p zenjpeg --features mozjpeg-tables --test trellis_mozjpeg_comparison -- --nocapture --ignored
 
-#[cfg(feature = "mozjpeg-tables")]
 use std::path::{Path, PathBuf};
 
 // zenjpeg internalized trellis
@@ -405,7 +404,6 @@ fn trellis_block_parity_edge_cases() {
 // Full-encode comparison (requires CID22 corpus + mozjpeg-tables)
 // ============================================================================
 
-#[cfg(feature = "mozjpeg-tables")]
 mod full_encode {
     use super::*;
     use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
