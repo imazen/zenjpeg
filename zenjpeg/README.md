@@ -64,12 +64,12 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `decoder` | yes | JPEG decoder (streaming, parallel, deblocking) |
-| `trellis` | no | Trellis quantization, `auto_optimize()`, mozjpeg presets |
+| `decoder` | **yes** | JPEG decoder (streaming, parallel, deblocking) |
+| `trellis` | no | Trellis quantization, `auto_optimize()`, mozjpeg/hybrid presets |
 | `parallel` | no | Multi-threaded encode/decode via rayon |
-| `moxcms` | no | Color management (pure Rust). Required for `.correct_color()` and XYB decode |
+| `moxcms` | no | Color management (pure Rust). Required for `.correct_color()` and XYB |
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
-| `yuv` | yes | Internal flag for YCbCr SIMD paths (empty, kept for cfg gates) |
+| `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
 
 `decoder` is on by default. The decoder API is prerelease; expect breaking changes.
 
@@ -192,7 +192,7 @@ Request builder methods: `.icc_profile()`, `.exif()`, `.xmp()`, `.stop()`, `.lim
 
 | Method | Default | Effect |
 |--------|---------|--------|
-| `.chroma_upsampling(method)` | `Triangle` | `NearestNeighbor` for speed, `Triangle` matches libjpeg-turbo |
+| `.chroma_upsampling(method)` | `Triangle` | `NearestNeighbor` for speed. Default matches libjpeg-turbo within max_diff ≤ 3 |
 | `.idct_method(method)` | `Jpegli` | `Libjpeg` for pixel-exact mozjpeg match (adds ~37% overhead) |
 | `.deblock(mode)` | `Off` | Reduce block artifacts (see [Deblocking](#deblocking)) |
 | `.dequant_bias(true)` | `false` | f32 IDCT + Laplacian bias for max reconstruction quality |
@@ -251,7 +251,7 @@ let result = Decoder::new()
 | DeblockMode | When it helps | Speed overhead | Streaming? |
 |-------------|--------------|---------------|------------|
 | `Off` | -- | 0% | yes |
-| `Boundary4Tap` | All Q levels (+1-10 zensim at low Q) | 5-15% | yes |
+| `Boundary4Tap` | All Q levels (+1-10 zensim at low Q) | +2% scanline, +2.8x decode() | yes |
 | `Knusperli` | Q5-Q30 (DCT-domain correction) | 20-40% | falls back to buffered |
 | `Auto` | Picks best for quality level | varies | falls back when needed |
 | `AutoStreamable` | Like Auto, always streaming | 5-15% | always |
@@ -340,14 +340,15 @@ Progressive produces ~3% smaller files at the same quality, takes ~2x longer to 
 
 ### Decode
 
-Baseline 4:2:0 throughput (zenbench, CID22 corpus, Ryzen 9 7950X):
+Baseline 4:2:0 throughput (zenbench, 10 CID22 photos, Ryzen 9 7950X):
 
 | Decoder | Throughput | vs libjpeg-turbo |
 |---------|-----------|-----------------|
-| libjpeg-turbo/mozjpeg (C+NASM) | 86.8 MiB/s | -- |
-| zenjpeg (default) | 73.4 MiB/s | 0.85x |
+| libjpeg-turbo/mozjpeg (C+NASM) | 78.1 MiB/s | -- |
+| zenjpeg default (Triangle) | 73.8 MiB/s | 0.94x |
+| zenjpeg NearestNeighbor | 80.4 MiB/s | 1.03x |
 
-zenjpeg is 15% slower than C+NASM on baseline. On progressive JPEGs, zenjpeg is 1.35x faster (46 vs 34 MiB/s) due to the fused single-pass architecture.
+6% slower than C+NASM on baseline with the default Triangle upsampling (libjpeg-turbo compatible rounding). NearestNeighbor (box filter) matches or beats C. On progressive JPEGs, zenjpeg is **1.35x faster** (46 vs 34 MiB/s) due to the fused single-pass architecture.
 
 Parallel decode (baseline with DRI, `--features parallel`):
 
@@ -361,7 +362,7 @@ Parallel activates automatically with DRI and 1024+ MCU blocks. Use `num_threads
 
 ## Known Limitations
 
-- **Baseline decode speed**: 15% slower than libjpeg-turbo (C+NASM) on baseline JPEGs. Faster on progressive.
+- **Baseline decode speed**: 6% slower than libjpeg-turbo (C+NASM) on baseline JPEGs. Faster on progressive.
 - **XYB decode speed**: XYB images use the f32 pipeline; standard JPEGs use fast integer IDCT.
 - **XYB file size**: Baseline mode is 2-3% larger than C++ jpegli. Progressive mode matches or beats.
 - **Trellis is opt-in**: `auto_optimize()` and mozjpeg presets require `features = ["trellis"]`.
@@ -397,7 +398,7 @@ When comparing: always use `jpegli_set_distance()`, not `jpeg_set_quality()`. Th
 ## Development
 
 ```bash
-cargo test --release                    # ~340 tests, no external deps
+cargo test --release                    # ~930 tests, no external deps
 cargo test --release --test cpp_parity_locked  # Quick C++ parity check
 cargo test --release -- --ignored       # Full suite (needs C++ build + corpus)
 ```
@@ -421,4 +422,4 @@ an independent project that shares ideas but little code with the original.
 ## AI Disclosure
 
 Developed with assistance from Claude (Anthropic). Extensively tested against
-C++ reference with 340+ tests. Report issues at https://github.com/imazen/zenjpeg/issues
+C++ reference with 930+ tests. Report issues at https://github.com/imazen/zenjpeg/issues
