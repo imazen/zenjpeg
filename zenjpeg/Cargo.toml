@@ -52,7 +52,8 @@ moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
-yuv = { workspace = true, optional = true }
+# Mandatory dependency — will be replaced with archmage-based code eventually.
+yuv = { workspace = true }
 # Token-based safe SIMD intrinsics (mandatory — always compiled in)
 archmage = { workspace = true }
 # Token-gated SIMD types (wraps archmage tokens)
@@ -131,7 +132,10 @@ zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["yuv", "trellis", "decoder"]
+default = ["trellis", "decoder", "yuv"]
+# Legacy flag — yuv crate is now a mandatory dependency. Kept so cfg(feature = "yuv")
+# gates compile correctly. Will be removed when yuv is replaced with archmage code.
+yuv = []
 # Enable the decoder API.
 decoder = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
@@ -169,9 +173,6 @@ mozjpeg-tables = []
 optimized-tables = []
 # Enable WASM console tracing for debugging browser-specific issues
 wasm-trace = ["dep:web-sys"]
-# Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
-# Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
-yuv = ["dep:yuv"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer"]

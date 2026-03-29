@@ -11,7 +11,7 @@ name = "zjpeg"
 path = "src/main.rs"
 
 [dependencies]
-zenjpeg = { path = "../zenjpeg", features = ["decoder", "trellis", "yuv", "moxcms"] }
+zenjpeg = { path = "../zenjpeg", features = ["decoder", "trellis", "moxcms"] }
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 rayon = { workspace = true }
 indicatif = "0.17"
