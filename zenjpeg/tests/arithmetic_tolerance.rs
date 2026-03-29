@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Test arithmetic decoding with tolerance for rounding differences.
 use enough::Unstoppable;
 

@@ -219,7 +219,7 @@ fn rust_2iter(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 // C++ XYB via FFI
 // ============================================================================
 
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 fn cpp_linear_rgb_to_xyb(linear_rgb: &[[f32; 3]], intensity_target: f32) -> Vec<[f32; 3]> {
     use jpegli_internals_sys::jpegli_linear_to_xyb;
 
@@ -240,7 +240,7 @@ fn cpp_linear_rgb_to_xyb(linear_rgb: &[[f32; 3]], intensity_target: f32) -> Vec<
     flat_output.chunks(3).map(|c| [c[0], c[1], c[2]]).collect()
 }
 
-#[cfg(not(feature = "ffi-tests"))]
+#[cfg(not(feature = "__ffi-tests"))]
 fn cpp_linear_rgb_to_xyb(_linear_rgb: &[[f32; 3]], _intensity_target: f32) -> Vec<[f32; 3]> {
     vec![]
 }

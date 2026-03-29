@@ -63,7 +63,7 @@ impl Token {
     }
 
     /// Serializes to JSON format for C++ comparison.
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub fn to_debug_json(&self) -> String {
         format!(
             r#"{{"context":{},"symbol":{},"extra_bits":{},"num_extra":{}}}"#,
@@ -115,7 +115,7 @@ impl RefToken {
     }
 
     /// Serializes to JSON format for C++ comparison.
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub fn to_debug_json(&self) -> String {
         format!(r#"{{"symbol":{},"refbits":{}}}"#, self.symbol, self.refbits)
     }

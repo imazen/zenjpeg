@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Trace the first few arithmetic decode operations.
 use enough::Unstoppable;
 

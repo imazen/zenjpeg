@@ -3,7 +3,7 @@
 //! The C++ jpegli uses fast approximations (FastLog2f, FastPow2f) that differ
 //! from std::log2/std::exp2. These tests quantify the difference to verify
 //! if this is causing the AQ divergence.
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 
 /// Test that we can call the C++ fast math functions
 #[test]

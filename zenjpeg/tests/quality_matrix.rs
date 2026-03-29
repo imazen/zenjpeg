@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 // Quality matrix tests comparing Rust vs C++ jpegli across all configurations.
 //
 // Requires `ffi-tests` feature due to libjpeg FFI linkage requirements.
@@ -262,7 +262,7 @@ fn encode_rust(
 /// Uses the standard libjpeg API exposed by jpegli for accurate speed comparison.
 /// Struct layouts now match jpegli's JPEG_LIB_VERSION 62 exactly.
 /// Note: XYB mode is not supported via standard libjpeg API and falls back to CLI.
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 #[allow(dead_code)]
 fn encode_cpp_ffi(
     rgb: &[u8],
@@ -410,7 +410,7 @@ fn encode_cpp_ffi(
 }
 
 /// Fallback to CLI for XYB mode (not supported via standard libjpeg API)
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 fn encode_cpp_cli(
     rgb: &[u8],
     width: u32,
@@ -492,7 +492,7 @@ fn encode_cpp_cli(
 /// For accurate benchmarking, we use CLI which is slower due to process spawn
 /// overhead but produces correct output. The speed comparison still shows
 /// relative performance since both use the same CLI overhead for C++.
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 fn encode_cpp(
     rgb: &[u8],
     width: u32,
@@ -591,7 +591,7 @@ fn test_configuration(
         let rust_ssim2 = compute_ssim2(rgb, &rust_decoded, width, height);
 
         // Get C++ result (live or reference)
-        #[cfg(feature = "ffi-tests")]
+        #[cfg(feature = "__ffi-tests")]
         let (cpp_ssim2, cpp_size) = {
             if let Some(cpp_jpeg) = encode_cpp(
                 rgb,
@@ -615,7 +615,7 @@ fn test_configuration(
             }
         };
 
-        #[cfg(not(feature = "ffi-tests"))]
+        #[cfg(not(feature = "__ffi-tests"))]
         let (cpp_ssim2, cpp_size) = (reference[i].2, reference[i].4);
 
         // Compare against reference size (use Rust reference if cpp_size is 0)
@@ -1042,7 +1042,7 @@ fn generate_reference_values() {
             let rust_ssim2 = compute_ssim2(&rgb, &rust_decoded, width, height);
             let rust_size = rust_jpeg.len();
 
-            #[cfg(feature = "ffi-tests")]
+            #[cfg(feature = "__ffi-tests")]
             let (cpp_ssim2, cpp_size) = {
                 if let Some(cpp_jpeg) = encode_cpp(
                     &rgb,
@@ -1061,7 +1061,7 @@ fn generate_reference_values() {
                 }
             };
 
-            #[cfg(not(feature = "ffi-tests"))]
+            #[cfg(not(feature = "__ffi-tests"))]
             let (cpp_ssim2, cpp_size) = (rust_ssim2, rust_size);
 
             println!(
@@ -1099,7 +1099,7 @@ fn generate_reference_values() {
 /// ```
 #[test]
 #[ignore = "Requires ffi-tests feature and C++ jpegli build"]
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 fn benchmark_rust_vs_cpp() {
     use std::time::Instant;
     use zenjpeg_bench_utils::{
@@ -1313,7 +1313,7 @@ fn benchmark_rust_vs_cpp() {
 /// Quick benchmark stub when ffi-tests is not enabled
 #[test]
 #[ignore = "Requires ffi-tests feature"]
-#[cfg(not(feature = "ffi-tests"))]
+#[cfg(not(feature = "__ffi-tests"))]
 fn benchmark_rust_vs_cpp() {
     println!("Benchmark requires --features ffi-tests");
     println!(
@@ -1323,7 +1323,7 @@ fn benchmark_rust_vs_cpp() {
 
 /// Quick test to verify FFI encoding produces valid JPEG output
 #[test]
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 fn test_ffi_encoding_works() {
     // Simple 64x64 RGB test image (gradient pattern)
     let width = 64u32;

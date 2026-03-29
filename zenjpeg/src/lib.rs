@@ -260,57 +260,57 @@ pub mod ultrahdr;
 // ============================================================================
 
 // Internal encoder implementation (exposed via test-utils for benchmarks)
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod encode;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod encode;
 
 // Internal decoder implementation
-#[cfg(all(feature = "decoder", feature = "test-utils"))]
+#[cfg(all(feature = "decoder", feature = "__test-utils"))]
 pub mod decode;
-#[cfg(all(feature = "decoder", not(feature = "test-utils")))]
+#[cfg(all(feature = "decoder", not(feature = "__test-utils")))]
 pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
 pub(crate) mod error;
 
 // Internal modules (exposed via test-utils for debugging tools and benchmarks)
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod color;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod color;
 
 pub(crate) mod encode_simd;
 
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod entropy;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod entropy;
 
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod foundation;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod foundation;
 
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod huffman;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod huffman;
 
 // Make quant accessible for benchmarks when test-utils enabled
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 #[doc(hidden)]
 pub mod quant;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod quant;
 
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod types;
-#[cfg(not(feature = "test-utils"))]
+#[cfg(not(feature = "__test-utils"))]
 pub(crate) mod types;
 
 // Test utilities - only compiled when feature enabled (requires std)
-#[cfg(feature = "test-utils")]
+#[cfg(feature = "__test-utils")]
 pub mod test_utils;
 
 // Post-decode deblocking filters (requires decoder for coefficient access)

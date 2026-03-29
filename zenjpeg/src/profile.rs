@@ -12,35 +12,35 @@
 //! ProfileStats::print_summary();
 //! ```
 
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 use std::cell::RefCell;
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 use std::collections::HashMap;
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 use std::time::{Duration, Instant};
 
 // Stub Duration for non-profile builds (only used in no-op functions)
-#[cfg(not(feature = "profile"))]
+#[cfg(not(feature = "__profile"))]
 use core::time::Duration;
 
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 thread_local! {
     static STATS: RefCell<ProfileStats> = RefCell::new(ProfileStats::new());
     static STACK: RefCell<Vec<(&'static str, Instant)>> = const { RefCell::new(Vec::new()) };
 }
 
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 #[derive(Default)]
 pub struct ProfileStats {
     timings: HashMap<&'static str, Timing>,
     call_order: Vec<&'static str>,
 }
 
-#[cfg(not(feature = "profile"))]
+#[cfg(not(feature = "__profile"))]
 #[derive(Default)]
 pub struct ProfileStats;
 
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 #[derive(Default, Clone)]
 struct Timing {
     total: Duration,
@@ -50,17 +50,17 @@ struct Timing {
 }
 
 impl ProfileStats {
-    #[cfg(feature = "profile")]
+    #[cfg(feature = "__profile")]
     pub fn new() -> Self {
         Self::default()
     }
 
-    #[cfg(not(feature = "profile"))]
+    #[cfg(not(feature = "__profile"))]
     pub fn new() -> Self {
         Self
     }
 
-    #[cfg(feature = "profile")]
+    #[cfg(feature = "__profile")]
     pub fn record(name: &'static str, elapsed: Duration) {
         STATS.with(|stats| {
             let mut stats = stats.borrow_mut();
@@ -80,7 +80,7 @@ impl ProfileStats {
         });
     }
 
-    #[cfg(feature = "profile")]
+    #[cfg(feature = "__profile")]
     pub fn print_summary() {
         STATS.with(|stats| {
             let stats = stats.borrow();
@@ -124,38 +124,38 @@ impl ProfileStats {
         });
     }
 
-    #[cfg(feature = "profile")]
+    #[cfg(feature = "__profile")]
     pub fn reset() {
         STATS.with(|stats| {
             *stats.borrow_mut() = ProfileStats::new();
         });
     }
 
-    #[cfg(not(feature = "profile"))]
+    #[cfg(not(feature = "__profile"))]
     #[inline(always)]
     pub fn record(_name: &'static str, _elapsed: Duration) {}
 
-    #[cfg(not(feature = "profile"))]
+    #[cfg(not(feature = "__profile"))]
     #[inline(always)]
     pub fn print_summary() {}
 
-    #[cfg(not(feature = "profile"))]
+    #[cfg(not(feature = "__profile"))]
     #[inline(always)]
     pub fn reset() {}
 }
 
 /// RAII guard for timing a scope
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 pub struct ProfileGuard {
     name: &'static str,
     start: Instant,
 }
 
-#[cfg(not(feature = "profile"))]
+#[cfg(not(feature = "__profile"))]
 pub struct ProfileGuard;
 
 impl ProfileGuard {
-    #[cfg(feature = "profile")]
+    #[cfg(feature = "__profile")]
     #[inline]
     pub fn new(name: &'static str) -> Self {
         Self {
@@ -164,21 +164,21 @@ impl ProfileGuard {
         }
     }
 
-    #[cfg(not(feature = "profile"))]
+    #[cfg(not(feature = "__profile"))]
     #[inline(always)]
     pub fn new(_name: &'static str) -> Self {
         Self
     }
 }
 
-#[cfg(feature = "profile")]
+#[cfg(feature = "__profile")]
 impl Drop for ProfileGuard {
     fn drop(&mut self) {
         ProfileStats::record(self.name, self.start.elapsed());
     }
 }
 
-#[cfg(not(feature = "profile"))]
+#[cfg(not(feature = "__profile"))]
 impl Drop for ProfileGuard {
     #[inline(always)]
     fn drop(&mut self) {}

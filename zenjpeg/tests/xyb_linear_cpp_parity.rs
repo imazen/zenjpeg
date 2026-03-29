@@ -3,7 +3,7 @@
 //! Tests that our Rust XYB conversion matches C++ jpegli exactly.
 //! Requires the ffi-tests feature and jpegli-internals-sys dev dependency.
 
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 
 use zenjpeg::color::xyb::{linear_rgb_to_xyb, linear_rgb_to_xyb_simd};
 

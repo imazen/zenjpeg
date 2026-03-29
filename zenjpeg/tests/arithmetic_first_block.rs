@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Compare first block pixels.
 use enough::Unstoppable;
 

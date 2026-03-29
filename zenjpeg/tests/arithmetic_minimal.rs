@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Minimal arithmetic decode test with reference comparison.
 use enough::Unstoppable;
 

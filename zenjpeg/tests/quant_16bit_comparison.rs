@@ -344,7 +344,7 @@ fn test_16bit_tables_when_enabled() {
 // C++ Comparison Tests (require cjpegli binary)
 // ============================================================================
 
-#[cfg(feature = "ffi-tests")]
+#[cfg(feature = "__ffi-tests")]
 mod cpp_comparison {
     use super::*;
     use std::process::Command;

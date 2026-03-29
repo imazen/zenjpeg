@@ -117,8 +117,6 @@ pub mod trellis;
 /// annealing on CID22 training corpus using butteraugli as metric.
 ///
 /// Requires the `optimized-tables` feature flag.
-#[cfg(feature = "optimized-tables")]
-pub mod optimized_tables;
 
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
@@ -157,9 +155,7 @@ pub use enough::Stop;
 pub use exif::{Exif, ExifFields, Orientation};
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
-#[cfg(feature = "optimized-tables")]
 #[allow(unused_imports)] // Public API re-export
-pub use optimized_tables::OptimizedTables;
 #[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
 #[allow(unused_imports)] // Public API re-exports

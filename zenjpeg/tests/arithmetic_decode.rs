@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Tests for arithmetic-coded JPEG decoding.
 use enough::Unstoppable;
 

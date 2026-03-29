@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Regression test: fancy chroma upsampling vs zune-jpeg reference.
 //!
 //! Encodes high-contrast 4:2:0 test images with zenjpeg, then decodes with both

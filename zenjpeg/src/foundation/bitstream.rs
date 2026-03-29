@@ -223,7 +223,7 @@ impl BitWriter {
     #[allow(clippy::useless_conversion)] // ProfiledVec<u8> = InstrumentedVec<u8> when alloc-instrument enabled
     pub fn into_bytes(mut self) -> Vec<u8> {
         self.flush();
-        #[cfg(feature = "alloc-instrument")]
+        #[cfg(feature = "__alloc-instrument")]
         {
             let stats = self.buffer.stats();
             let wasted = stats.wasted_bytes();

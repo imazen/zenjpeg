@@ -24,7 +24,7 @@ pub struct ClusterResult {
     /// Maps cluster index to JPEG DHT table slot.
     pub slot_ids: Vec<usize>,
     /// Merge log for debugging (context pairs that were merged)
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub merge_log: Vec<(usize, usize, f64)>, // (ctx_a, ctx_b, cost_delta)
 }
 
@@ -36,7 +36,7 @@ impl ClusterResult {
             cluster_histograms: Vec::new(),
             num_clusters: 0,
             slot_ids: Vec::new(),
-            #[cfg(feature = "debug-tokens")]
+            #[cfg(feature = "__debug-tokens")]
             merge_log: Vec::new(),
         }
     }
@@ -49,7 +49,7 @@ impl ClusterResult {
     }
 
     /// Dumps the merge log to a file for debugging.
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub fn dump_merge_log(&self, path: &str) -> std::io::Result<()> {
         use std::io::Write;
         let mut file = std::fs::File::create(path)?;
@@ -202,7 +202,7 @@ pub fn cluster_histograms(
         max_clusters // Don't cap - allow more clusters to enable on-demand DHT emission
     };
 
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     let mut merge_log = Vec::new();
 
     for (ctx_idx, histo) in histograms.iter().enumerate() {
@@ -272,14 +272,14 @@ pub fn cluster_histograms(
 
             // slot_id already assigned to this cluster
 
-            #[cfg(feature = "debug-tokens")]
+            #[cfg(feature = "__debug-tokens")]
             merge_log.push((ctx_idx, target_slot, best_cost));
         }
     }
 
     result.num_clusters = result.cluster_histograms.len();
 
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     {
         result.merge_log = merge_log;
     }

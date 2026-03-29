@@ -3,7 +3,7 @@
 //! Compares Rust jpegli against C++ jpegli on a large corpus.
 //! Run with: cargo test --test corpus_cpp_comparison --features corpus-tests -- --ignored --nocapture
 
-#![cfg(feature = "corpus-tests")]
+#![cfg(feature = "__corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
 use std::path::{Path, PathBuf};

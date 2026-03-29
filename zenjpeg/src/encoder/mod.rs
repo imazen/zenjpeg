@@ -170,10 +170,6 @@ pub use crate::encode::encoder_types::ParallelEncoding;
 // === mozjpeg-compatible quantization tables ===
 pub use crate::encode::tables::presets::{MozjpegTables, QuantTablePreset};
 
-// === SA-optimized piecewise quantization tables ===
-#[cfg(feature = "optimized-tables")]
-pub use crate::encode::optimized_tables::OptimizedTables;
-
 // === Huffman table types ===
 /// Pre-built Huffman table set for single-pass encoding.
 ///

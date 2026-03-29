@@ -276,43 +276,6 @@ pub fn srgb_to_linear_inplace(pixels: &mut [f32]) {
     }
 }
 
-/// Decode JPEG with automatic ICC profile application.
-///
-/// This is a convenience function that:
-/// 1. Decodes the JPEG using our own decoder
-/// 2. Extracts any embedded ICC profile
-/// 3. Applies the ICC transform if present and CMS is available
-///
-/// Available when `moxcms` feature is enabled.
-#[cfg(feature = "moxcms")]
-pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)> {
-    // Extract ICC profile first
-    let icc_profile = extract_icc_profile(jpeg_data);
-
-    // Decode JPEG using zune-jpeg
-    use zune_jpeg::JpegDecoder;
-    use zune_jpeg::zune_core::bytestream::ZCursor;
-
-    let cursor = ZCursor::new(jpeg_data);
-    let mut decoder = JpegDecoder::new(cursor);
-    let pixels = decoder
-        .decode()
-        .map_err(|e| Error::decode_error(format!("jpeg decode: {e:?}")))?;
-
-    let (width, height) = decoder
-        .dimensions()
-        .ok_or_else(|| Error::decode_error("no image dimensions".to_string()))?;
-
-    // Apply ICC if present (default to sRGB target)
-    let output = if let Some(ref profile) = icc_profile {
-        apply_icc_transform(&pixels, width, height, profile, TargetColorSpace::Srgb)?
-    } else {
-        pixels
-    };
-
-    Ok((output, width, height))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

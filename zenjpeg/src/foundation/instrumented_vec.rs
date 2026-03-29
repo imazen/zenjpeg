@@ -25,10 +25,10 @@ use core::ops::{Deref, DerefMut};
 ///
 /// When `alloc-instrument` feature is enabled, logs utilization on drop.
 /// Otherwise, this is just `Vec<T>` with zero overhead.
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 pub type ProfiledVec<T> = InstrumentedVec<T>;
 
-#[cfg(not(feature = "alloc-instrument"))]
+#[cfg(not(feature = "__alloc-instrument"))]
 pub type ProfiledVec<T> = Vec<T>;
 
 // ============================================================================
@@ -44,7 +44,7 @@ pub trait ProfiledVecExt<T> {
     fn new_profiled(context: &'static str) -> Self;
 }
 
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 impl<T> ProfiledVecExt<T> for ProfiledVec<T> {
     fn with_capacity_profiled(capacity: usize, context: &'static str) -> Self {
         InstrumentedVec::with_capacity(capacity, context)
@@ -55,7 +55,7 @@ impl<T> ProfiledVecExt<T> for ProfiledVec<T> {
     }
 }
 
-#[cfg(not(feature = "alloc-instrument"))]
+#[cfg(not(feature = "__alloc-instrument"))]
 impl<T> ProfiledVecExt<T> for ProfiledVec<T> {
     #[inline]
     fn with_capacity_profiled(capacity: usize, _context: &'static str) -> Self {
@@ -104,22 +104,22 @@ impl VecStats {
 // Global stats control
 // ============================================================================
 
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 static STATS_ENABLED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 
 /// Minimum wasted bytes to report (avoids noise from small allocations).
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 static MIN_WASTE_REPORT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(1024); // 1KB default
 
 /// Enable or disable stats logging.
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 pub fn set_stats_enabled(enabled: bool) {
     STATS_ENABLED.store(enabled, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// Set minimum wasted bytes threshold for reporting.
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 pub fn set_min_waste_report(bytes: usize) {
     MIN_WASTE_REPORT.store(bytes, core::sync::atomic::Ordering::Relaxed);
 }
@@ -271,7 +271,7 @@ impl<T> From<InstrumentedVec<T>> for Vec<T> {
     }
 }
 
-#[cfg(feature = "alloc-instrument")]
+#[cfg(feature = "__alloc-instrument")]
 impl<T> Drop for InstrumentedVec<T> {
     fn drop(&mut self) {
         if !STATS_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -299,7 +299,7 @@ impl<T> Drop for InstrumentedVec<T> {
     }
 }
 
-#[cfg(not(feature = "alloc-instrument"))]
+#[cfg(not(feature = "__alloc-instrument"))]
 impl<T> Drop for InstrumentedVec<T> {
     fn drop(&mut self) {
         // No-op

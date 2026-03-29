@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! Comprehensive edge handling comparison: Strip encoder vs C++ cjpegli
 //!
 //! Uses REAL corpus images cropped to partial MCU dimensions.

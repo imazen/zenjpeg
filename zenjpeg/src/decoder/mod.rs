@@ -87,4 +87,4 @@ pub use crate::encode::encoder_types::PixelLayout;
 // === ICC profile support ===
 pub use crate::color::icc::TargetColorSpace;
 #[cfg(feature = "moxcms")]
-pub use crate::color::icc::{decode_jpeg_with_icc, extract_icc_profile};
+pub use crate::color::icc::extract_icc_profile;

@@ -145,32 +145,22 @@ parallel = ["dep:rayon"]
 # with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
 trellis = []
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
-# Dev-only: FFI tests against C++ jpegli (requires git submodule + cmake)
-ffi-tests = []
-# Dev-only: corpus comparison tests (requires local codec-corpus)
-corpus-tests = []
-# Enable debug token serialization for C++ comparison
-debug-tokens = []
-# Enable internal profiling instrumentation (scope timers)
-profile = []
-# Enable Vec allocation instrumentation (logs utilization on drop)
-# Use for profiling allocation patterns - zero overhead when disabled
-alloc-instrument = []
-# Enable test utilities (image generation, quality verification)
-# Requires std for file path operations
-test-utils = []
-# Enable WASM SIMD128 tests (requires wasm runtime with SIMD support)
-# Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
-# Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
-wasm-simd = []
-# Enable sharp-yuv comparison tests (requires yuv crate, not in default deps)
-sharp-yuv = []
-# Enable SA-optimized piecewise quantization tables (+6.5 mean pareto vs jpegli defaults)
-# Provides OptimizedTables::generate() with 20-anchor interpolated tables
-optimized-tables = []
-# Enable WASM console tracing for debugging browser-specific issues
-wasm-trace = ["dep:web-sys"]
+moxcms = ["dep:moxcms"]
+# ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
+# FFI tests against C++ jpegli (requires git submodule + cmake + C++ toolchain)
+__ffi-tests = []
+# Corpus comparison tests (requires local codec-corpus directory)
+__corpus-tests = []
+# Debug token serialization for C++ comparison
+__debug-tokens = []
+# Internal profiling instrumentation (scope timers)
+__profile = []
+# Vec allocation instrumentation (logs utilization on drop)
+__alloc-instrument = []
+# Test utilities (image generation, quality verification)
+__test-utils = []
+# WASM SIMD128 tests (requires wasm runtime with SIMD support)
+__wasm-simd = []
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer"]
@@ -234,7 +224,7 @@ harness = false
 [[bench]]
 name = "aq_simd"
 harness = false
-required-features = ["test-utils"]
+required-features = ["__test-utils"]
 
 [[bench]]
 name = "decode_compare"
@@ -257,11 +247,11 @@ workspace = true
 # Examples that require test-utils feature
 [[example]]
 name = "generate_cpp_reference"
-required-features = ["test-utils"]
+required-features = ["__test-utils"]
 
 [[example]]
 name = "low_q_report"
-required-features = ["test-utils"]
+required-features = ["__test-utils"]
 
 # Examples requiring trellis feature
 [[example]]
@@ -303,17 +293,17 @@ required-features = ["trellis"]
 # C++ comparison tools
 [[example]]
 name = "cpp_parity_matrix"
-required-features = ["decoder", "test-utils", "cms"]
+required-features = ["decoder", "__test-utils", "moxcms"]
 
 # Tests requiring FFI (libjpeg linkage)
 [[test]]
 name = "quality_matrix"
-required-features = ["ffi-tests"]
+required-features = ["__ffi-tests"]
 
 # XYB debugging tools (for investigating quality gap vs C++ jpegli)
 [[example]]
 name = "compare_xyb_constants"
-required-features = ["test-utils", "ffi-tests"]
+required-features = ["__test-utils", "__ffi-tests"]
 
 [[example]]
 name = "debug_ultrahdr_detection"

@@ -406,7 +406,7 @@ impl ProgressiveTokenBuffer {
     }
 
     /// Dumps all tokens to a JSON file for C++ comparison.
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub fn dump_tokens(&self, path: &str) -> std::io::Result<()> {
         use std::io::Write;
         let mut file = std::fs::File::create(path)?;
@@ -420,7 +420,7 @@ impl ProgressiveTokenBuffer {
     }
 
     /// Dumps histograms to a JSON file for C++ comparison.
-    #[cfg(feature = "debug-tokens")]
+    #[cfg(feature = "__debug-tokens")]
     pub fn dump_histograms(&self, path: &str) -> std::io::Result<()> {
         use std::io::Write;
         let mut file = std::fs::File::create(path)?;

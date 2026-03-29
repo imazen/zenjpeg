@@ -1,4 +1,4 @@
-#![cfg(feature = "ffi-tests")]
+#![cfg(feature = "__ffi-tests")]
 //! AC Refinement Scan Comparison Across Image Types
 //!
 //! Tests Rust vs C++ progressive encoding on various image types to identify
