@@ -158,9 +158,9 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
 
 #[cfg(feature = "moxcms")]
-use crate::color::icc::{apply_icc_transform, TargetColorSpace};
-#[cfg(feature = "moxcms")]
 use crate::color::icc::apply_icc_transform_f32;
+#[cfg(feature = "moxcms")]
+use crate::color::icc::{TargetColorSpace, apply_icc_transform};
 
 impl DecodeConfig {
     /// Creates a new decoder configuration with default settings.
