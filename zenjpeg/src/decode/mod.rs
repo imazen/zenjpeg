@@ -701,7 +701,9 @@ impl DecodeConfig {
         let needs_coefficient_deblock = match self.deblock_mode {
             DeblockMode::Knusperli => true,
             DeblockMode::Auto => {
-                let dc_quant = parser.quant_tables.iter()
+                let dc_quant = parser
+                    .quant_tables
+                    .iter()
                     .find_map(|qt| qt.as_ref().map(|t| t[0]))
                     .unwrap_or(0);
                 dc_quant >= 27
@@ -962,9 +964,12 @@ impl DecodeConfig {
             let needs_coefficient_deblock = match self.deblock_mode {
                 DeblockMode::Knusperli => true,
                 DeblockMode::Auto => {
-                    let mut peek = JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
+                    let mut peek =
+                        JpegParser::with_strictness(&vec, self.max_pixels, None, self.strictness)?;
                     peek.read_header()?;
-                    let dc_quant = peek.quant_tables.iter()
+                    let dc_quant = peek
+                        .quant_tables
+                        .iter()
                         .find_map(|qt| qt.as_ref().map(|t| t[0]))
                         .unwrap_or(0);
                     dc_quant >= 27
@@ -1502,20 +1507,47 @@ impl DecodeConfig {
     /// Runs full `decode()` then wraps the result in a buffered `ScanlineReader`.
     fn scanline_reader_deblock_fallback<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
         let result = self.decode(data, Unstoppable)?;
-        let (vis_w, vis_h, num_ch) = (result.width(), result.height(), result.format().num_channels() as u8);
-        let pixels = result.into_pixels_u8()
+        let (vis_w, vis_h, num_ch) = (
+            result.width(),
+            result.height(),
+            result.format().num_channels() as u8,
+        );
+        let pixels = result
+            .into_pixels_u8()
             .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
-        Ok(ScanlineReader::new_buffered(data, vis_w, vis_h, num_ch, Subsampling::S444, pixels, false))
+        Ok(ScanlineReader::new_buffered(
+            data,
+            vis_w,
+            vis_h,
+            num_ch,
+            Subsampling::S444,
+            pixels,
+            false,
+        ))
     }
 
     /// Owned-data variant of deblock fallback.
-    fn scanline_reader_deblock_fallback_owned<'a>(&self, data: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
+    fn scanline_reader_deblock_fallback_owned<'a>(
+        &self,
+        data: alloc::vec::Vec<u8>,
+    ) -> Result<ScanlineReader<'a>> {
         let result = self.decode(&data, Unstoppable)?;
-        let (vis_w, vis_h, num_ch) = (result.width(), result.height(), result.format().num_channels() as u8);
-        let pixels = result.into_pixels_u8()
+        let (vis_w, vis_h, num_ch) = (
+            result.width(),
+            result.height(),
+            result.format().num_channels() as u8,
+        );
+        let pixels = result
+            .into_pixels_u8()
             .ok_or_else(|| Error::internal("expected u8 pixels from deblock fallback"))?;
         Ok(ScanlineReader::new_buffered_cow(
-            alloc::borrow::Cow::Owned(data), vis_w, vis_h, num_ch, Subsampling::S444, pixels, false,
+            alloc::borrow::Cow::Owned(data),
+            vis_w,
+            vis_h,
+            num_ch,
+            Subsampling::S444,
+            pixels,
+            false,
         ))
     }
 
