@@ -467,11 +467,14 @@ println!("{}x{}, {} components", info.width, info.height, info.num_components);
 
 | Method | Description | Default |
 |--------|-------------|---------|
+| `.chroma_upsampling(LibjpegCompat)` | Pixel-exact mozjpeg/libjpeg-turbo match | `Triangle` |
+| `.deblock(DeblockMode::Auto)` | Reduce blocking artifacts (see [Deblocking](#deblocking)) | `Off` |
+| `.dequant_bias(true)` | Maximum reconstruction quality (f32 IDCT + Laplacian bias) | `false` |
+| `.output_target(SrgbF32)` | f32 output (for HDR, compositing) | `Srgb8` |
+| `.num_threads(0)` | Parallel decode (auto thread count) | `0` (auto) |
 | `.output_format(fmt)` | Output pixel format | `Rgb` |
 | `.fancy_upsampling(bool)` | Smooth chroma upsampling | `true` |
-| `.block_smoothing(bool)` | DCT block edge smoothing | `false` |
 | `.apply_icc(bool)` | Apply embedded ICC profile | `true` |
-| `.dequant_bias(bool)` | Laplacian dequantization biases (see below) | `false` |
 | `.auto_orient(bool)` | Apply EXIF orientation in DCT domain | `false` |
 | `.transform(t)` | Lossless transform during decode (see below) | None |
 | `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
@@ -554,6 +557,83 @@ while !reader.is_finished() {
 | `read_rows_rgba_f32()` | 16 | Linear f32 RGBA |
 | `read_rows_gray8()` | 1 | Grayscale u8 |
 | `read_rows_gray_f32()` | 4 | Grayscale f32 |
+
+#### Deblocking
+
+JPEG's 8x8 block structure creates visible grid artifacts, especially at low quality.
+The decoder can reduce these with post-decode filtering.
+
+```rust
+use zenjpeg::decoder::{Decoder, DeblockMode};
+
+let result = Decoder::new()
+    .deblock(DeblockMode::Auto)
+    .decode(&jpeg_data, enough::Unstoppable)?;
+```
+
+| DeblockMode | What it does | Speed overhead | Streaming? |
+|-------------|-------------|---------------|------------|
+| `Off` | Nothing (default) | 0% | yes |
+| `Boundary4Tap` | H.264-style boundary filter | 5-15% | yes |
+| `Knusperli` | DCT-domain correction | 20-40% | falls back to buffered |
+| `Auto` | Picks best for the quality level | varies | falls back when needed |
+| `AutoStreamable` | Like Auto, but never buffers | 5-15% | always |
+
+`Boundary4Tap` works at all quality levels. `Knusperli` gives the largest improvement
+at low quality (Q5-Q30) but requires coefficient access, so the scanline reader falls
+back to buffered decode. `AutoStreamable` guarantees streaming behavior at the cost of
+skipping Knusperli when it would help most.
+
+Deblocking also works with the scanline reader:
+
+```rust
+let mut reader = Decoder::new()
+    .deblock(DeblockMode::AutoStreamable)
+    .scanline_reader(&jpeg_data)?;
+```
+
+#### Decoding Performance
+
+Pure safe Rust, no C dependencies, `#![forbid(unsafe_code)]`. SIMD via archmage tokens
+on x86_64 and aarch64.
+
+**Baseline 4:2:0** (sequential, streaming, Ryzen 9 7950X):
+
+| Size | libjpeg-turbo (C+NASM) | zenjpeg | ratio |
+|------|----------------------|---------|-------|
+| 512 | 271us | 217us | **0.80x** |
+| 1024 | 3.86ms | 3.66ms | **0.95x** |
+| 2048 | 15.8ms | 14.8ms | **0.94x** |
+| 4096 | 65.3ms | 61.9ms | **0.95x** |
+
+zenjpeg beats libjpeg-turbo at all sizes on baseline. The streaming single-pass
+architecture (entropy, IDCT, color convert, output in one MCU-row pass) eliminates
+the coefficient storage overhead that slows most decoders.
+
+**Progressive 4:2:0** (sequential, no DRI):
+
+| Size | libjpeg-turbo | zenjpeg | ratio |
+|------|--------------|---------|-------|
+| 512 | 785us | 486us | **0.62x** |
+| 1024 | 12.1ms | 7.34ms | **0.61x** |
+| 2048 | 49.8ms | 31.0ms | **0.62x** |
+| 4096 | 225ms | 156ms | **0.69x** |
+
+1.4-1.6x faster than libjpeg-turbo on progressive JPEGs.
+
+**Parallel decode** (`--features parallel`, baseline 4:2:0 with DRI):
+
+| Size | libjpeg-turbo | zenjpeg parallel | ratio |
+|------|--------------|-----------------|-------|
+| 1024 | 3.86ms | 1.56ms | **0.40x** |
+| 2048 | 15.8ms | 3.05ms | **0.19x** |
+| 4096 | 65.3ms | 8.74ms | **0.13x** |
+
+Parallel activates automatically when DRI restart markers are present and the image
+has 1024+ MCU blocks. Use `num_threads(1)` to force sequential.
+
+See `docs/DECODER_PATHS.md` for the full path matrix, decision flow, and internal
+architecture details.
 
 ---
 
@@ -691,15 +771,11 @@ let ceiling = JpegProbe::quality_ceiling(2.0);  // 2x downscale → Q90 ceiling
 
 ### Decoding Speed
 
-The default decode path uses fast integer IDCT (matching zune-jpeg performance).
-The f32 pipeline is used for XYB images or when `dequant_bias(true)` is enabled.
+See [Decoding Performance](#decoding-performance) in the Decoder API section for
+full benchmark tables (baseline, progressive, parallel) against libjpeg-turbo.
 
-| Mode | 2048x2048 | vs zune-jpeg | Notes |
-|------|-----------|--------------|-------|
-| Scanline 4:2:0 | 4.03ms | **0.99x** | Matches zune-jpeg |
-| Scanline 4:4:4 | 5.78ms | **0.91x** | Beats zune-jpeg |
-| Buffered fast | 4.72ms | 1.15x | Two-pass overhead |
-| Buffered default | 5.51ms | 1.35x | f32 upsampling |
+Summary: 0.80-0.95x libjpeg-turbo on baseline, 1.4-1.6x faster on progressive,
+up to 7x faster with parallel decode on 4K images.
 
 #### Dequantization Bias
 
