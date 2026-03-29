@@ -74,6 +74,15 @@ fn deblock_auto_works() {
 }
 
 #[test]
+#[test]
+fn deblock_scanline_reader_rejects() {
+    let jpeg = make_test_jpeg(50);
+    let result = Decoder::new().apply_icc(false).deblock(DeblockMode::Boundary4Tap)
+        .scanline_reader(&jpeg);
+    assert!(result.is_err(), "scanline_reader should reject deblock mode");
+}
+
+#[test]
 fn deblock_all_modes_same_dimensions() {
     let jpeg = make_test_jpeg(50);
     let modes = [DeblockMode::Off, DeblockMode::Boundary4Tap, DeblockMode::Knusperli, DeblockMode::Auto];

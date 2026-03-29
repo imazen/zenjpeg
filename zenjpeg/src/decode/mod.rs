@@ -675,6 +675,13 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        // Deblocking requires coefficient access — not available in streaming mode
+        if self.deblock_mode != DeblockMode::Off {
+            return Err(Error::unsupported_feature(
+                "deblocking is not supported in scanline_reader (use .decode() instead)",
+            ));
+        }
+
         // Check if we need a transform — if so, use coefficient-based path
         let effective_transform = self.compute_effective_transform_from_data(data);
         if effective_transform != crate::lossless::LosslessTransform::None {
