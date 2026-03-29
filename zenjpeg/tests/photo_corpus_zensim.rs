@@ -56,8 +56,49 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, Pixe
 
 const QUALITY_LEVELS: [u8; 6] = [50, 70, 80, 85, 90, 95];
 
+/// Extended quality range for reconstruction test — includes low Q.
+const RECON_QUALITY_LEVELS: [u8; 11] = [5, 10, 20, 30, 40, 50, 70, 80, 85, 90, 95];
+
 /// Maximum pixel count — CLIC images are ~2048px, all fit comfortably.
 const MAX_PIXELS: u64 = 6_000_000;
+
+// ── Shared infrastructure ───────────────────────────────────────────────────
+
+thread_local! {
+    static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+}
+
+/// Load corpus, or return empty vec (test will skip).
+fn load_corpus_or_skip() -> Vec<LoadedImage> {
+    let images = load_all_corpora();
+    if images.is_empty() {
+        println!("No corpora found, skipping");
+    }
+    images
+}
+
+/// Run a function over (image, quality) pairs in parallel with progress reporting.
+fn run_par<T: Send>(
+    images: &[LoadedImage],
+    quality_levels: &[u8],
+    desc: &str,
+    f: impl Fn(&LoadedImage, u8) -> T + Sync,
+) -> Vec<T> {
+    let work: Vec<(usize, u8)> = images.iter().enumerate()
+        .flat_map(|(i, _)| quality_levels.iter().map(move |&q| (i, q)))
+        .collect();
+    let total = work.len() as u32;
+    let progress = AtomicU32::new(0);
+    println!("Running {total} {desc}...\n");
+
+    work.par_iter().map(|&(idx, q)| {
+        let done = progress.fetch_add(1, Ordering::Relaxed);
+        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
+        f(&images[idx], q)
+    }).collect()
+}
+
+
 
 // ── Image loading ───────────────────────────────────────────────────────────
 
@@ -124,39 +165,36 @@ fn collect_pngs(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Load all corpora. Returns images tagged with corpus name.
+/// Load all corpora via `codec_corpus` crate (auto-downloads if not cached).
 fn load_all_corpora() -> Vec<LoadedImage> {
-    let base = PathBuf::from("/home/lilith/work/codec-eval/codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("codec-corpus init failed: {e}");
+            return Vec::new();
+        }
+    };
+
     let mut images = Vec::new();
-    let mut loaded = |dir: &Path, corpus: &'static str, max: usize| {
-        let paths = collect_pngs(dir);
-        let count = paths.len().min(max);
-        for path in paths.into_iter().take(count) {
-            let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let mut load_sub = |subpath: &str, tag: &'static str| {
+        let dir = match corpus.get(subpath) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        for path in collect_pngs(&dir) {
             if let Some((pixels, w, h)) = load_png_rgb(&path) {
                 if (w as u64) * (h as u64) <= MAX_PIXELS && pixels.len() == (w * h * 3) as usize {
-                    let _ = name; // used for diagnostics if needed
-                    images.push(LoadedImage { corpus, pixels, width: w, height: h });
+                    images.push(LoadedImage { corpus: tag, pixels, width: w, height: h });
                 }
             }
         }
     };
 
-    // CID22-512: 250 diverse photographs at 512x512
-    let cid22_train = base.join("CID22/CID22-512/training");
-    let cid22_val = base.join("CID22/CID22-512/validation");
-    if cid22_train.exists() { loaded(&cid22_train, "CID22", usize::MAX); }
-    if cid22_val.exists() { loaded(&cid22_val, "CID22", usize::MAX); }
-
-    // CLIC 2025: high-resolution photographs (~2048px)
-    let clic_test = base.join("clic2025/final-test");
-    let clic_train = base.join("clic2025/training");
-    if clic_test.exists() { loaded(&clic_test, "CLIC", usize::MAX); }
-    if clic_train.exists() { loaded(&clic_train, "CLIC", usize::MAX); }
-
-    // gb82: 25 photographic test images
-    let gb82 = base.join("gb82");
-    if gb82.exists() { loaded(&gb82, "gb82", usize::MAX); }
+    load_sub("CID22/CID22-512/training", "CID22");
+    load_sub("CID22/CID22-512/validation", "CID22");
+    load_sub("clic2025/final-test", "CLIC");
+    load_sub("clic2025/training", "CLIC");
+    load_sub("gb82", "gb82");
 
     images
 }
@@ -353,11 +391,11 @@ fn process_quality(img: &LoadedImage, quality: u8) -> QualityResult {
     ];
 
     // Decode ALL with zenjpeg default (Jpegli IDCT, Triangle upsampling)
-    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
+
     let scores: Vec<_> = jpegs.into_iter().map(|(label, jpeg)| {
         let sz = jpeg.len();
         let (_, _, dec) = decode_zen_default(&jpeg);
-        let score = Z.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
+        let score = ZENSIM.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
         (label, sz, score)
     }).collect();
 
@@ -367,8 +405,8 @@ fn process_quality(img: &LoadedImage, quality: u8) -> QualityResult {
 #[test]
 #[ignore = "requires photo corpora and decoder/trellis features"]
 fn photo_encoder_quality_vs_original() {
-    let images = load_all_corpora();
-    if images.is_empty() { println!("No corpora found, skipping"); return; }
+    let images = load_corpus_or_skip();
+    if images.is_empty() { return; }
 
     println!("=== All Encoder Modes vs Original (same Q parameter) ===");
     println!("  {}: {}", MODE_MOZJPEG.label, MODE_MOZJPEG.desc);
@@ -380,18 +418,7 @@ fn photo_encoder_quality_vs_original() {
     println!();
     print_corpus_info(&images);
 
-    let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
-        .collect();
-    let total = work.len() as u32;
-    let progress = AtomicU32::new(0);
-    println!("Running {total} images × 4 modes...\n");
-
-    let results: Vec<QualityResult> = work.par_iter().map(|&(idx, q)| {
-        let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
-        process_quality(&images[idx], q)
-    }).collect();
+    let results = run_par(&images, &QUALITY_LEVELS, "images × 4 modes", process_quality);
 
     let labels = [MODE_MOZJPEG.label, MODE_ZEN_MOZ.label, MODE_ZEN_JPEGLI.label, MODE_ZEN_AUTO.label];
 
@@ -457,8 +484,8 @@ fn process_parity(img: &LoadedImage, quality: u8) -> ParityResult {
     let (_, _, zen_def) = decode_zen_default(&moz_jpeg);
     let (_, _, zen_compat) = decode_zen_compat(&moz_jpeg);
 
-    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
-    let (ds, cs) = Z.with(|z| {
+
+    let (ds, cs) = ZENSIM.with(|z| {
         (zensim_score(z, &moz_dec, &zen_def, w as usize, h as usize),
          zensim_score(z, &moz_dec, &zen_compat, w as usize, h as usize))
     });
@@ -474,8 +501,8 @@ fn process_parity(img: &LoadedImage, quality: u8) -> ParityResult {
 #[test]
 #[ignore = "requires photo corpora and decoder/trellis features"]
 fn photo_decoder_parity() {
-    let images = load_all_corpora();
-    if images.is_empty() { println!("No corpora found, skipping"); return; }
+    let images = load_corpus_or_skip();
+    if images.is_empty() { return; }
 
     println!("╔══════════════════════════════════════════════════════════════════════╗");
     println!("║  DECODER PARITY: Can zenjpeg correctly read mozjpeg files?          ║");
@@ -488,18 +515,7 @@ fn photo_decoder_parity() {
     println!();
     print_corpus_info(&images);
 
-    let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
-        .collect();
-    let total = work.len() as u32;
-    let progress = AtomicU32::new(0);
-    println!("Running {total} decoder parity checks...\n");
-
-    let results: Vec<ParityResult> = work.par_iter().map(|&(idx, q)| {
-        let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
-        process_parity(&images[idx], q)
-    }).collect();
+    let results = run_par(&images, &QUALITY_LEVELS, "decoder parity checks", process_parity);
 
     // Per-quality summary
     println!("  Q   default_zensim  max_diff  compat_zensim  max_diff");
@@ -558,9 +574,6 @@ fn photo_decoder_parity() {
 //   zen-compat:  zenjpeg | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample
 // Metric: zensim(decoded, original) for each (encoder × decoder) cell
 
-/// Extended quality range for reconstruction test — includes low Q.
-const RECON_QUALITY_LEVELS: [u8; 11] = [5, 10, 20, 30, 40, 50, 70, 80, 85, 90, 95];
-
 struct ReconRow {
     quality: u8,
     /// For each encoder: (label, [(decoder_label, zensim_vs_orig)])
@@ -577,14 +590,14 @@ fn process_recon(img: &LoadedImage, quality: u8) -> ReconRow {
         (MODE_ZEN_AUTO.label, encode_zen_auto(px, w, h, quality)),
     ];
 
-    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
+
 
     let cells: Vec<_> = encoders.into_iter().map(|(enc_label, jpeg)| {
         let (_, _, dec_moz) = decode_mozjpeg_sys(&jpeg).expect("mozjpeg decode");
         let (_, _, dec_def) = decode_zen_default(&jpeg);
         let (_, _, dec_compat) = decode_zen_compat(&jpeg);
 
-        let scores = Z.with(|z| vec![
+        let scores = ZENSIM.with(|z| vec![
             ("moz-sys", zensim_score(z, px, &dec_moz, w as usize, h as usize)),
             ("zen-def", zensim_score(z, px, &dec_def, w as usize, h as usize)),
             ("zen-cmp", zensim_score(z, px, &dec_compat, w as usize, h as usize)),
@@ -598,8 +611,8 @@ fn process_recon(img: &LoadedImage, quality: u8) -> ReconRow {
 #[test]
 #[ignore = "requires photo corpora and decoder/trellis features"]
 fn photo_decoder_reconstruction_vs_original() {
-    let images = load_all_corpora();
-    if images.is_empty() { println!("No corpora found, skipping"); return; }
+    let images = load_corpus_or_skip();
+    if images.is_empty() { return; }
 
     println!("=== Decoder Reconstruction vs Original (all encoders × all decoders) ===");
     println!("  Encoders:");
@@ -615,18 +628,7 @@ fn photo_decoder_reconstruction_vs_original() {
     println!();
     print_corpus_info(&images);
 
-    let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| RECON_QUALITY_LEVELS.iter().map(move |&q| (i, q)))
-        .collect();
-    let total = work.len() as u32;
-    let progress = AtomicU32::new(0);
-    println!("Running {total} images × 3 encoders × 3 decoders...\n");
-
-    let results: Vec<ReconRow> = work.par_iter().map(|&(idx, q)| {
-        let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 300 == 0 { eprintln!("  ... {done}/{total}"); }
-        process_recon(&images[idx], q)
-    }).collect();
+    let results = run_par(&images, &RECON_QUALITY_LEVELS, "images × 3 encoders × 3 decoders", process_recon);
 
     let enc_labels = [MODE_MOZJPEG.label, MODE_ZEN_JPEGLI.label, MODE_ZEN_AUTO.label];
     let dec_labels = ["moz-sys", "zen-def", "zen-cmp"];
@@ -697,8 +699,8 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
     let (_, _, moz_dec) = decode_zen_default(&moz);
     let (_, _, zen_dec) = decode_zen_default(&zen);
 
-    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
-    let score = Z.with(|z| zensim_score(z, &moz_dec, &zen_dec, w as usize, h as usize));
+
+    let score = ZENSIM.with(|z| zensim_score(z, &moz_dec, &zen_dec, w as usize, h as usize));
 
     CrossResult {
         corpus: img.corpus, quality,
@@ -710,8 +712,8 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
 #[test]
 #[ignore = "requires photo corpora and decoder/trellis features"]
 fn photo_encoder_cross_comparison() {
-    let images = load_all_corpora();
-    if images.is_empty() { println!("No corpora found, skipping"); return; }
+    let images = load_corpus_or_skip();
+    if images.is_empty() { return; }
 
     println!("=== Encoder Cross-Comparison: decoded outputs compared to each other ===");
     println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0");
@@ -722,18 +724,7 @@ fn photo_encoder_cross_comparison() {
     println!();
     print_corpus_info(&images);
 
-    let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
-        .collect();
-    let total = work.len() as u32;
-    let progress = AtomicU32::new(0);
-    println!("Running {total} cross-comparisons...\n");
-
-    let results: Vec<CrossResult> = work.par_iter().map(|&(idx, q)| {
-        let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
-        process_cross(&images[idx], q)
-    }).collect();
+    let results = run_par(&images, &QUALITY_LEVELS, "cross-comparisons", process_cross);
 
     println!("  Q   mean_zensim  min_zensim  worst_max_diff");
     println!("  {}", "-".repeat(48));
@@ -812,8 +803,8 @@ fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
 
     // Decode mozjpeg, score vs original (zensim + butteraugli)
     let (_, _, moz_dec) = decode_zen_default(&moz_jpeg);
-    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
-    let moz_zensim = Z.with(|z| zensim_score(z, px, &moz_dec, w as usize, h as usize));
+
+    let moz_zensim = ZENSIM.with(|z| zensim_score(z, px, &moz_dec, w as usize, h as usize));
     let moz_bfly = butteraugli_score(px, &moz_dec, w as usize, h as usize);
 
     // Bisect each zen mode to match mozjpeg's size
@@ -827,7 +818,7 @@ fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
     for (label, enc_fn) in modes {
         if let Some((q, jpeg)) = bisect_quality(px, w, h, target, enc_fn) {
             let (_, _, dec) = decode_zen_default(&jpeg);
-            let zscore = Z.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
+            let zscore = ZENSIM.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
             let bfly = butteraugli_score(px, &dec, w as usize, h as usize);
             zen_modes.push((label, q, jpeg.len(), zscore, bfly));
         }
@@ -839,8 +830,8 @@ fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
 #[test]
 #[ignore = "requires photo corpora and decoder/trellis features"]
 fn photo_size_matched_quality() {
-    let images = load_all_corpora();
-    if images.is_empty() { println!("No corpora found, skipping"); return; }
+    let images = load_corpus_or_skip();
+    if images.is_empty() { return; }
 
     println!("=== Size-Matched Quality: all modes at equal file size ===");
     println!("  Reference: mozjpeg-rs | ProgressiveSmallest | 4:2:0 | Q as given");
@@ -853,18 +844,7 @@ fn photo_size_matched_quality() {
     println!();
     print_corpus_info(&images);
 
-    let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
-        .collect();
-    let total = work.len() as u32;
-    let progress = AtomicU32::new(0);
-    println!("Running {total} images × 3 modes bisection...\n");
-
-    let results: Vec<SizeMatchRow> = work.par_iter().map(|&(idx, q)| {
-        let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
-        process_size_match_all(&images[idx], q)
-    }).collect();
+    let results = run_par(&images, &QUALITY_LEVELS, "images × 3 modes bisection", process_size_match_all);
 
     let labels = [MODE_ZEN_MOZ.label, MODE_ZEN_JPEGLI.label, MODE_ZEN_AUTO.label];
 
