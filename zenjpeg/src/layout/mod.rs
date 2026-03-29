@@ -124,9 +124,11 @@ impl LayoutConfig {
 
     /// Build an `EncoderConfig` from layout settings.
     pub(crate) fn build_encoder_config(&self) -> EncoderConfig {
-        EncoderConfig::ycbcr(self.quality, self.subsampling)
-            .progressive(self.progressive)
-            .auto_optimize(self.auto_optimize)
+        let config = EncoderConfig::ycbcr(self.quality, self.subsampling)
+            .progressive(self.progressive);
+        #[cfg(feature = "trellis")]
+        let config = config.auto_optimize(self.auto_optimize);
+        config
     }
 }
 

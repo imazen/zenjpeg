@@ -121,6 +121,9 @@ impl JpegEncoderConfig {
     /// `"hybrid_baseline"`, `"hybrid_progressive"`, `"hybrid_max"`.
     ///
     /// Returns `None` for unrecognized preset names.
+    ///
+    /// Requires the `trellis` feature (uses [`ExpertConfig`](crate::encode::search::ExpertConfig)).
+    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn from_preset(preset_name: &str, quality: f32) -> Option<Self> {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -206,8 +209,12 @@ impl JpegEncoderConfig {
         use crate::encode::encoder_types::OptimizationPreset;
         let preset = match self.effort {
             0 => OptimizationPreset::JpegliBaseline,
+            #[cfg(feature = "trellis")]
             2 => OptimizationPreset::HybridMaxCompression,
+            #[cfg(feature = "trellis")]
             _ => OptimizationPreset::HybridProgressive,
+            #[cfg(not(feature = "trellis"))]
+            _ => OptimizationPreset::JpegliProgressive,
         };
         self.inner.clone().optimization(preset)
     }

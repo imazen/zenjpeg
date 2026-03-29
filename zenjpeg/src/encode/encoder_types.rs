@@ -546,9 +546,12 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_all_has_8_variants() {
+    fn test_optimization_preset_all_variants() {
         let all: Vec<_> = OptimizationPreset::all().collect();
+        #[cfg(feature = "trellis")]
         assert_eq!(all.len(), 8);
+        #[cfg(not(feature = "trellis"))]
+        assert_eq!(all.len(), 2);
         // No duplicates
         let mut set = std::collections::HashSet::new();
         for p in &all {
@@ -557,9 +560,14 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_progressive() {
+    fn test_optimization_preset_progressive_jpegli() {
         assert!(!OptimizationPreset::JpegliBaseline.is_progressive());
         assert!(OptimizationPreset::JpegliProgressive.is_progressive());
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_progressive_trellis() {
         assert!(!OptimizationPreset::MozjpegBaseline.is_progressive());
         assert!(OptimizationPreset::MozjpegProgressive.is_progressive());
         assert!(OptimizationPreset::MozjpegMaxCompression.is_progressive());
@@ -569,9 +577,14 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_trellis() {
+    fn test_optimization_preset_trellis_jpegli() {
         assert!(!OptimizationPreset::JpegliBaseline.uses_trellis());
         assert!(!OptimizationPreset::JpegliProgressive.uses_trellis());
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_trellis() {
         assert!(OptimizationPreset::MozjpegBaseline.uses_trellis());
         assert!(OptimizationPreset::MozjpegProgressive.uses_trellis());
         assert!(OptimizationPreset::MozjpegMaxCompression.uses_trellis());
@@ -581,9 +594,14 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_aq() {
+    fn test_optimization_preset_aq_jpegli() {
         assert!(OptimizationPreset::JpegliBaseline.uses_aq());
         assert!(OptimizationPreset::JpegliProgressive.uses_aq());
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_aq_trellis() {
         assert!(!OptimizationPreset::MozjpegBaseline.uses_aq());
         assert!(!OptimizationPreset::MozjpegProgressive.uses_aq());
         assert!(!OptimizationPreset::MozjpegMaxCompression.uses_aq());
@@ -593,11 +611,16 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_scan_strategy() {
+    fn test_optimization_preset_scan_strategy_jpegli() {
         assert_eq!(
             OptimizationPreset::JpegliBaseline.scan_strategy(),
             ScanStrategy::Default
         );
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_scan_strategy_trellis() {
         assert_eq!(
             OptimizationPreset::MozjpegProgressive.scan_strategy(),
             ScanStrategy::Mozjpeg
@@ -613,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn test_optimization_preset_quant_table_source() {
+    fn test_optimization_preset_quant_table_source_jpegli() {
         assert_eq!(
             OptimizationPreset::JpegliBaseline.quant_table_source(),
             QuantTableSource::Jpegli
@@ -622,6 +645,11 @@ mod tests {
             OptimizationPreset::JpegliProgressive.quant_table_source(),
             QuantTableSource::Jpegli
         );
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_quant_table_source_trellis() {
         assert_eq!(
             OptimizationPreset::MozjpegBaseline.quant_table_source(),
             QuantTableSource::MozjpegDefault
@@ -659,6 +687,11 @@ mod tests {
             OptimizationPreset::JpegliBaseline.to_string(),
             "jpegli-baseline"
         );
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_optimization_preset_display_trellis() {
         assert_eq!(
             OptimizationPreset::HybridMaxCompression.to_string(),
             "hybrid-max"
@@ -817,29 +850,47 @@ pub enum OptimizationPreset {
     /// Baseline JPEG, optimized Huffman, trellis (full search). No jpegli AQ.
     /// 2 quant tables (shared chroma), Robidoux tables. No deringing.
     /// Matches C mozjpeg default profile with baseline output.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     MozjpegBaseline,
 
     /// Progressive with mozjpeg scan script (freq split at 8/9, no chroma SA).
     /// Trellis (full search). No AQ. No deringing. 2 quant tables, Robidoux.
     /// Matches C mozjpeg default profile with progressive output.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     MozjpegProgressive,
 
     /// Mozjpeg progressive + scan search (64 candidates). Trellis (full search).
     /// No AQ. Deringing enabled. 2 quant tables, Robidoux.
     /// Matches C mozjpeg `JCP_MAX_COMPRESSION` profile.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     MozjpegMaxCompression,
 
     // === Hybrid lineage (zenjpeg-unique) ===
     /// Baseline JPEG with jpegli AQ + trellis (Adaptive speed) + deringing.
     /// 3 quant tables (separate chroma), jpegli perceptual tables.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     HybridBaseline,
 
     /// Jpegli AQ + trellis (Adaptive) + deringing + jpegli scan script.
     /// 3 quant tables. Typically the best quality/size tradeoff.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     HybridProgressive,
 
     /// AQ + trellis (full search) + deringing + scan search (64 candidates).
     /// 3 quant tables. Slowest, smallest files.
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     HybridMaxCompression,
 }
 
@@ -857,10 +908,16 @@ pub enum Effort {
 
     /// Balanced quality/speed: AQ + adaptive trellis + progressive.
     /// Maps to [`OptimizationPreset::HybridProgressive`].
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     Balanced,
 
     /// Maximum compression: thorough trellis + scan optimization.
     /// Maps to [`OptimizationPreset::HybridMaxCompression`].
+    ///
+    /// Requires the `trellis` feature.
+    #[cfg(feature = "trellis")]
     Max,
 }
 
@@ -870,13 +927,16 @@ impl Effort {
     pub const fn to_preset(self) -> OptimizationPreset {
         match self {
             Self::Fast => OptimizationPreset::JpegliBaseline,
+            #[cfg(feature = "trellis")]
             Self::Balanced => OptimizationPreset::HybridProgressive,
+            #[cfg(feature = "trellis")]
             Self::Max => OptimizationPreset::HybridMaxCompression,
         }
     }
 }
 
 /// All preset variants in a fixed array for iteration.
+#[cfg(feature = "trellis")]
 const ALL_PRESETS: [OptimizationPreset; 8] = [
     OptimizationPreset::JpegliBaseline,
     OptimizationPreset::JpegliProgressive,
@@ -886,6 +946,13 @@ const ALL_PRESETS: [OptimizationPreset; 8] = [
     OptimizationPreset::HybridBaseline,
     OptimizationPreset::HybridProgressive,
     OptimizationPreset::HybridMaxCompression,
+];
+
+/// All preset variants in a fixed array for iteration (without trellis).
+#[cfg(not(feature = "trellis"))]
+const ALL_PRESETS: [OptimizationPreset; 2] = [
+    OptimizationPreset::JpegliBaseline,
+    OptimizationPreset::JpegliProgressive,
 ];
 
 impl OptimizationPreset {
@@ -898,47 +965,58 @@ impl OptimizationPreset {
     /// Returns true if this preset uses progressive encoding.
     #[must_use]
     pub const fn is_progressive(self) -> bool {
-        matches!(
-            self,
-            Self::JpegliProgressive
-                | Self::MozjpegProgressive
-                | Self::MozjpegMaxCompression
-                | Self::HybridProgressive
-                | Self::HybridMaxCompression
-        )
+        match self {
+            Self::JpegliBaseline => false,
+            Self::JpegliProgressive => true,
+            #[cfg(feature = "trellis")]
+            Self::MozjpegBaseline => false,
+            #[cfg(feature = "trellis")]
+            Self::MozjpegProgressive => true,
+            #[cfg(feature = "trellis")]
+            Self::MozjpegMaxCompression => true,
+            #[cfg(feature = "trellis")]
+            Self::HybridBaseline => false,
+            #[cfg(feature = "trellis")]
+            Self::HybridProgressive => true,
+            #[cfg(feature = "trellis")]
+            Self::HybridMaxCompression => true,
+        }
     }
 
     /// Returns true if this preset enables trellis quantization.
     #[must_use]
     pub const fn uses_trellis(self) -> bool {
-        matches!(
-            self,
+        match self {
+            Self::JpegliBaseline | Self::JpegliProgressive => false,
+            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline
-                | Self::MozjpegProgressive
-                | Self::MozjpegMaxCompression
-                | Self::HybridBaseline
-                | Self::HybridProgressive
-                | Self::HybridMaxCompression
-        )
+            | Self::MozjpegProgressive
+            | Self::MozjpegMaxCompression
+            | Self::HybridBaseline
+            | Self::HybridProgressive
+            | Self::HybridMaxCompression => true,
+        }
     }
 
     /// Returns true if this preset uses jpegli AQ (adaptive quantization).
     #[must_use]
     pub const fn uses_aq(self) -> bool {
-        matches!(
-            self,
-            Self::JpegliBaseline
-                | Self::JpegliProgressive
-                | Self::HybridBaseline
-                | Self::HybridProgressive
-                | Self::HybridMaxCompression
-        )
+        match self {
+            Self::JpegliBaseline | Self::JpegliProgressive => true,
+            #[cfg(feature = "trellis")]
+            Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => {
+                false
+            }
+            #[cfg(feature = "trellis")]
+            Self::HybridBaseline | Self::HybridProgressive | Self::HybridMaxCompression => true,
+        }
     }
 
     /// Returns the quantization table source for this preset.
     #[must_use]
     pub const fn quant_table_source(self) -> QuantTableSource {
         match self {
+            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => {
                 QuantTableSource::MozjpegDefault
             }
@@ -950,11 +1028,15 @@ impl OptimizationPreset {
     #[must_use]
     pub const fn scan_strategy(self) -> ScanStrategy {
         match self {
-            Self::JpegliBaseline | Self::MozjpegBaseline | Self::HybridBaseline => {
-                ScanStrategy::Default
-            }
-            Self::JpegliProgressive | Self::HybridProgressive => ScanStrategy::Default,
+            Self::JpegliBaseline => ScanStrategy::Default,
+            Self::JpegliProgressive => ScanStrategy::Default,
+            #[cfg(feature = "trellis")]
+            Self::MozjpegBaseline | Self::HybridBaseline => ScanStrategy::Default,
+            #[cfg(feature = "trellis")]
+            Self::HybridProgressive => ScanStrategy::Default,
+            #[cfg(feature = "trellis")]
             Self::MozjpegProgressive => ScanStrategy::Mozjpeg,
+            #[cfg(feature = "trellis")]
             Self::MozjpegMaxCompression | Self::HybridMaxCompression => ScanStrategy::Search,
         }
     }
@@ -965,11 +1047,17 @@ impl OptimizationPreset {
         match self {
             Self::JpegliBaseline => "jpegli-baseline",
             Self::JpegliProgressive => "jpegli-progressive",
+            #[cfg(feature = "trellis")]
             Self::MozjpegBaseline => "mozjpeg-baseline",
+            #[cfg(feature = "trellis")]
             Self::MozjpegProgressive => "mozjpeg-progressive",
+            #[cfg(feature = "trellis")]
             Self::MozjpegMaxCompression => "mozjpeg-max",
+            #[cfg(feature = "trellis")]
             Self::HybridBaseline => "hybrid-baseline",
+            #[cfg(feature = "trellis")]
             Self::HybridProgressive => "hybrid-progressive",
+            #[cfg(feature = "trellis")]
             Self::HybridMaxCompression => "hybrid-max",
         }
     }

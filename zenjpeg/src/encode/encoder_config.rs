@@ -356,18 +356,28 @@ impl EncoderConfig {
 
         // Scan mode: bundles progressive + script strategy
         let scan_mode = match preset {
-            JpegliBaseline | MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
-            JpegliProgressive | HybridProgressive => ProgressiveScanMode::Progressive,
+            JpegliBaseline => ProgressiveScanMode::Baseline,
+            JpegliProgressive => ProgressiveScanMode::Progressive,
+            #[cfg(feature = "trellis")]
+            MozjpegBaseline | HybridBaseline => ProgressiveScanMode::Baseline,
+            #[cfg(feature = "trellis")]
+            HybridProgressive => ProgressiveScanMode::Progressive,
+            #[cfg(feature = "trellis")]
             MozjpegProgressive => ProgressiveScanMode::ProgressiveMozjpeg,
-            MozjpegMaxCompression | HybridMaxCompression => ProgressiveScanMode::ProgressiveSearch,
+            #[cfg(feature = "trellis")]
+            MozjpegMaxCompression | HybridMaxCompression => {
+                ProgressiveScanMode::ProgressiveSearch
+            }
         };
 
         // Quant table config: bundles source + chroma layout
         let quant_table_config = match preset {
             JpegliBaseline | JpegliProgressive => QuantTableConfig::Jpegli,
+            #[cfg(feature = "trellis")]
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                 QuantTableConfig::MozjpegRobidoux
             }
+            #[cfg(feature = "trellis")]
             HybridBaseline | HybridProgressive | HybridMaxCompression => QuantTableConfig::Jpegli,
         };
 
@@ -396,8 +406,11 @@ impl EncoderConfig {
         // to match C mozjpeg's default profile.
         let deringing = match preset {
             JpegliBaseline | JpegliProgressive => true,
+            #[cfg(feature = "trellis")]
             MozjpegBaseline | MozjpegProgressive => false,
+            #[cfg(feature = "trellis")]
             MozjpegMaxCompression => true,
+            #[cfg(feature = "trellis")]
             HybridBaseline | HybridProgressive | HybridMaxCompression => true,
         };
 
@@ -777,7 +790,7 @@ impl EncoderConfig {
     /// - vs cjpegli-444: **+1.6 SSIM2** and **-0.3 Butteraugli**
     ///
     /// Uses jpegli quant tables with hybrid trellis λ=14.5 and progressive encoding.
-    /// Requires the `trellis` feature. Without it, this method only enables progressive.
+    /// Requires the `trellis` feature. Without it, this method is not available.
     ///
     /// Quality thresholds (below these, falls back to defaults):
     /// - 4:2:0: q50+ (distance < 5.0)
@@ -790,6 +803,7 @@ impl EncoderConfig {
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .auto_optimize(true);
     /// ```
+    #[cfg(feature = "trellis")]
     #[must_use]
     pub fn auto_optimize(mut self, enable: bool) -> Self {
         if !enable {
@@ -807,7 +821,6 @@ impl EncoderConfig {
 
         // Enable hybrid trellis with λ=14.5 (best R-D tradeoff from benchmarks)
         // Uses default jpegli quant tables - NOT CMA-ES scaling (incompatible)
-        #[cfg(feature = "trellis")]
         if should_use_hybrid {
             self.hybrid_config = super::trellis::HybridConfig {
                 enabled: true,
@@ -1534,7 +1547,7 @@ mod tests {
     fn test_optimization_preset_preserves_quality() {
         use crate::encode::encoder_types::OptimizationPreset;
         let config = EncoderConfig::ycbcr(42.0, ChromaSubsampling::None)
-            .optimization(OptimizationPreset::MozjpegBaseline);
+            .optimization(OptimizationPreset::JpegliBaseline);
         assert!(matches!(config.quality, Quality::ApproxJpegli(q) if (q - 42.0).abs() < 0.01));
         assert!(matches!(
             config.color_mode,
@@ -1544,6 +1557,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_optimization_preset_overridable() {
         use crate::encode::encoder_types::{OptimizationPreset, ProgressiveScanMode};
@@ -1553,7 +1567,6 @@ mod tests {
             .progressive(false);
         assert_eq!(config.scan_mode, ProgressiveScanMode::Baseline);
         // Trellis should still be set from the preset
-        #[cfg(feature = "trellis")]
         assert!(config.trellis.is_some());
     }
 
@@ -1608,6 +1621,7 @@ mod tests {
         assert!(config.is_aq_enabled(), "AQ should be enabled by default");
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_aq_enabled_mozjpeg_preset() {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -1636,6 +1650,7 @@ mod tests {
         assert!(config.is_aq_enabled());
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_aq_enabled_hybrid_preset() {
         use crate::encode::encoder_types::OptimizationPreset;
@@ -1658,12 +1673,18 @@ mod tests {
     }
 
     #[test]
-    fn test_effort_constructors() {
+    fn test_effort_constructors_fast() {
         use crate::encode::encoder_types::Effort;
 
         let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Fast);
         assert!(config.is_aq_enabled()); // JpegliBaseline uses AQ
         assert!(!config.scan_mode.is_progressive()); // Baseline
+    }
+
+    #[cfg(feature = "trellis")]
+    #[test]
+    fn test_effort_constructors_trellis() {
+        use crate::encode::encoder_types::Effort;
 
         let config = EncoderConfig::ycbcr_effort(85, ChromaSubsampling::Quarter, Effort::Balanced);
         assert!(config.is_aq_enabled()); // HybridProgressive uses AQ
@@ -1700,6 +1721,7 @@ mod tests {
         enc.finish().unwrap()
     }
 
+    #[cfg(feature = "trellis")]
     #[test]
     fn test_mozjpeg_aq_disabled_identical_output() {
         use crate::encode::encoder_types::OptimizationPreset;
