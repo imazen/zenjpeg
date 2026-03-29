@@ -60,8 +60,8 @@ jobs:
       - name: Generate coverage (lib + integration tests)
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report -p zenjpeg --lib --all-features
-          cargo llvm-cov --no-report -p zenjpeg --tests --all-features -- --skip ignored
+          cargo llvm-cov --no-report -p zenjpeg --lib --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils"
+          cargo llvm-cov --no-report -p zenjpeg --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- --skip ignored
           cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
@@ -131,7 +131,7 @@ jobs:
       - name: Run codec coverage tests
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report -p zenjpeg --test codec_coverage --all-features
+          cargo llvm-cov --no-report -p zenjpeg --test codec_coverage --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils"
           cargo llvm-cov report --json --output-path codec-coverage.json
 
       - name: Check encode/decode coverage
