@@ -50,7 +50,9 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, Pixe
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const CORPUS_DIR: &str = "/home/lilith/work/codec-eval/codec-corpus/imageflow/test_inputs";
+fn corpus_dir() -> Option<PathBuf> {
+    codec_corpus::Corpus::new().ok()?.get("imageflow").ok().map(|p| p.join("test_inputs"))
+}
 
 /// Quality levels spanning the useful range.
 const QUALITY_LEVELS: [u8; 6] = [50, 70, 80, 85, 90, 95];
@@ -407,11 +409,10 @@ fn truncate(s: &str, max: usize) -> String {
 #[test]
 #[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_corpus_zensim_vs_mozjpeg() {
-    let corpus = PathBuf::from(CORPUS_DIR);
-    if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
-        return;
-    }
+    let corpus = match corpus_dir() {
+        Some(d) if d.exists() => d,
+        _ => { println!("imageflow corpus not found, skipping"); return; }
+    };
 
     println!("=== Encoder Quality vs Original (same Q parameter) ===");
     println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0");
@@ -421,7 +422,7 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
     println!();
 
     // Collect and load images
-    println!("Collecting images from {CORPUS_DIR}...");
+    println!("Collecting images from {}...", corpus.display());
     let paths = collect_images(&corpus);
     println!("Found {} image files", paths.len());
 
@@ -825,11 +826,10 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
 #[test]
 #[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_decoder_parity_mozjpeg_files() {
-    let corpus = PathBuf::from(CORPUS_DIR);
-    if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
-        return;
-    }
+    let corpus = match corpus_dir() {
+        Some(d) if d.exists() => d,
+        _ => { println!("imageflow corpus not found, skipping"); return; }
+    };
 
     println!("╔═══════════════════════════════════════════════════════════════════╗");
     println!("║  DECODER PARITY: Can zenjpeg correctly read mozjpeg files?      ║");
@@ -1085,11 +1085,10 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
 #[test]
 #[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_encoder_cross_comparison() {
-    let corpus = PathBuf::from(CORPUS_DIR);
-    if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
-        return;
-    }
+    let corpus = match corpus_dir() {
+        Some(d) if d.exists() => d,
+        _ => { println!("imageflow corpus not found, skipping"); return; }
+    };
 
     println!("=== Encoder Cross-Comparison: decoded outputs compared to each other ===");
     println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0");
@@ -1335,11 +1334,10 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
 #[test]
 #[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_size_matched_quality() {
-    let corpus = PathBuf::from(CORPUS_DIR);
-    if !corpus.exists() {
-        println!("Corpus not found at {CORPUS_DIR}, skipping");
-        return;
-    }
+    let corpus = match corpus_dir() {
+        Some(d) if d.exists() => d,
+        _ => { println!("imageflow corpus not found, skipping"); return; }
+    };
 
     println!("=== Size-Matched Quality: fair comparison at equal file size ===");
     println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0 | Q as given");
