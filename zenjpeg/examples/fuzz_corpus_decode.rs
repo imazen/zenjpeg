@@ -280,19 +280,19 @@ fn main() {
         for (mi, mode) in Mode::ALL.iter().enumerate() {
             let data_ref = &data;
             let result = panic::catch_unwind(panic::AssertUnwindSafe(|| match mode {
-                Mode::BufferedInt => decode_buffered(
-                    data_ref,
-                    OutputTarget::Srgb8,
-                    ChromaUpsampling::Triangle,
-                ),
+                Mode::BufferedInt => {
+                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Triangle)
+                }
                 Mode::BufferedF32 => decode_buffered(
                     data_ref,
                     OutputTarget::SrgbF32Precise,
                     ChromaUpsampling::Triangle,
                 ),
-                Mode::BufferedTriangle => {
-                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::SeparableBiased)
-                }
+                Mode::BufferedTriangle => decode_buffered(
+                    data_ref,
+                    OutputTarget::Srgb8,
+                    ChromaUpsampling::SeparableBiased,
+                ),
                 Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::Triangle),
                 Mode::ScanlineFast => decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor),
             }));

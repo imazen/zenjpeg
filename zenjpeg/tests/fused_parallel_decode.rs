@@ -474,7 +474,10 @@ fn test_debug_stride_comparison() {
     let pixels = generate_test_pixels(w, h);
     let mut any_failed = false;
 
-    for upsampling in [ChromaUpsampling::Triangle, ChromaUpsampling::SeparableBiased] {
+    for upsampling in [
+        ChromaUpsampling::Triangle,
+        ChromaUpsampling::SeparableBiased,
+    ] {
         let jpeg = encode_with_dri(&pixels, w, h, ChromaSubsampling::Quarter, 1);
 
         // Use 1 thread to eliminate concurrency as a variable

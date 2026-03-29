@@ -1987,13 +1987,16 @@ impl DecodeConfig {
                 // bytes_per_pixel gives the interleaved channel count (3 for RGB, 4 for RGBA)
                 let channels = output_format.bytes_per_pixel();
                 // Use luma DC quant for strength — it's the dominant visual component.
-                let dc_quant = parser
-                    .quant_tables[parser.components[0].quant_table_idx as usize]
+                let dc_quant = parser.quant_tables[parser.components[0].quant_table_idx as usize]
                     .map(|qt| qt[0])
                     .unwrap_or(1);
                 let strength = crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
                 crate::deblock::filter_interleaved_u8_boundary_4tap(
-                    &mut pixels, width, height, channels, strength,
+                    &mut pixels,
+                    width,
+                    height,
+                    channels,
+                    strength,
                 );
             }
 
