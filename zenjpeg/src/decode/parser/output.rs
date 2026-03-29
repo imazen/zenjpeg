@@ -884,7 +884,7 @@ impl<'a> JpegParser<'a> {
             let use_knusperli = match mode {
                 DeblockMode::Off => unreachable!(),
                 DeblockMode::Knusperli => true,
-                DeblockMode::Boundary4Tap => false,
+                DeblockMode::Boundary4Tap | DeblockMode::AutoStreamable => false,
                 DeblockMode::Auto => {
                     // Simple heuristic: knusperli at low Q (high DC quant), boundary otherwise
                     dc_quant >= 27

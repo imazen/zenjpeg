@@ -284,6 +284,7 @@ fn deblock_all_modes_same_dimensions() {
         DeblockMode::Boundary4Tap,
         DeblockMode::Knusperli,
         DeblockMode::Auto,
+        DeblockMode::AutoStreamable,
     ];
     let mut sizes: Vec<(DeblockMode, usize)> = Vec::new();
     for mode in modes {

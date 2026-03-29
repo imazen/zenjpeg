@@ -243,10 +243,11 @@ impl<'a> ScanlineReader<'a> {
             output_target,
         )?;
 
-        // Resolve deblock mode: Auto selects Boundary4Tap in streaming
-        // (Knusperli requires coefficients, not available here).
+        // Resolve deblock mode: Auto/AutoStreamable select Boundary4Tap in streaming.
+        // (Knusperli requires coefficients, not available here — but Auto with Knusperli
+        // is caught earlier and routed through the coefficient fallback path.)
         let effective_deblock = match deblock_mode {
-            DeblockMode::Auto => DeblockMode::Boundary4Tap,
+            DeblockMode::Auto | DeblockMode::AutoStreamable => DeblockMode::Boundary4Tap,
             other => other,
         };
 

@@ -144,6 +144,12 @@ pub enum DeblockMode {
     /// to produce correct deblocked output. This means `Auto` produces consistent
     /// output regardless of which decode path you use.
     Auto,
+    /// Like [`Auto`](Self::Auto), but only picks strategies that work in streaming
+    /// mode. Never falls back to coefficient-based decoding.
+    ///
+    /// Currently equivalent to [`Boundary4Tap`](Self::Boundary4Tap), but future
+    /// streaming-compatible filters will be eligible for selection.
+    AutoStreamable,
     /// Always apply H.264-style 4-tap boundary filter.
     ///
     /// Operates in the pixel domain at 8x8 block boundaries. Effective across
