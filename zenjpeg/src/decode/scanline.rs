@@ -712,6 +712,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: DeblockMode::Off,
+            deblock_strength: None,
+            deblock_prev_rows: Vec::new(),
+            deblock_has_prev: false,
         }
     }
 
@@ -781,6 +785,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: DeblockMode::Off,
+            deblock_strength: None,
+            deblock_prev_rows: Vec::new(),
+            deblock_has_prev: false,
         }
     }
 

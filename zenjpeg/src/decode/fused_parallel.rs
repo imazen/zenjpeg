@@ -746,7 +746,7 @@ impl<'a> JpegParser<'a> {
         max_v_samp: usize,
         ri: usize,
         group_stride: usize,
-        chroma_upsampling: ChromaUpsampling,
+        _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
@@ -1388,7 +1388,7 @@ impl<'a> JpegParser<'a> {
         _max_v_samp: usize,
         ri: usize,
         group_stride: usize,
-        chroma_upsampling: ChromaUpsampling,
+        _chroma_upsampling: ChromaUpsampling,
         idct_method: IdctMethod,
     ) -> FusedDecodeResult {
         use super::upsample::upsample_h2v2_i16_libjpeg;
