@@ -248,13 +248,13 @@ let result = Decoder::new()
     .decode(&jpeg_data, enough::Unstoppable)?;
 ```
 
-| DeblockMode | When it helps | Speed overhead | Streaming? |
-|-------------|--------------|---------------|------------|
-| `Off` | -- | 0% | yes |
-| `Boundary4Tap` | All Q levels (+1-10 zensim at low Q) | +2% scanline, +2.8x decode() | yes |
-| `Knusperli` | Q5-Q30 (DCT-domain correction) | 20-40% | falls back to buffered |
-| `Auto` | Picks best for quality level | varies | falls back when needed |
-| `AutoStreamable` | Like Auto, always streaming | 5-15% | always |
+| DeblockMode | Quality gain (zensim vs original) | Speed | Streaming? |
+|-------------|----------------------------------|-------|------------|
+| `Off` | — | 0% overhead | yes |
+| `Boundary4Tap` | +0.5 at Q90, +2 at Q50, +10 at Q10 | +2% scanline | yes |
+| `Knusperli` | +14 at Q5-Q10, hurts at Q70+ | 20-40% slower | falls back to buffered |
+| `Auto` | Picks best per quality level | varies | falls back when needed |
+| `AutoStreamable` | Boundary4Tap only (streaming-safe) | +2% scanline | always |
 
 All modes work with both `decode()` and `scanline_reader()`. When `scanline_reader()` needs Knusperli, it transparently falls back to coefficient-based decoding.
 
