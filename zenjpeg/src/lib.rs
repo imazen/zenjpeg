@@ -116,7 +116,7 @@
 //! |---------|---------|-------------|-------------|
 //! | `decoder` | ❌ No | **JPEG decoding** - Enables `zenjpeg::decoder` module | **Required** for any decode operations |
 //! | `std` | — | Legacy (std is always required) | Kept so `zenjpeg/std` doesn't break downstream |
-//! - `moxcms` - ICC color management via moxcms (pure Rust)
+//! | `moxcms` | ❌ No | ICC color management via moxcms (pure Rust) | Color-managed decode pipelines |
 //! | `parallel` | ❌ No | Multi-threaded encoding via rayon | Large images (4K+), server workloads |
 //! | `ultrahdr` | ❌ No | UltraHDR HDR gain map support | Encoding/decoding HDR JPEGs |
 //! | `trellis` | ✅ Yes | Trellis quantization (mozjpeg-style) | Keep enabled for best compression |

@@ -156,7 +156,6 @@ pub use exif::{Exif, ExifFields, Orientation};
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[allow(unused_imports)] // Public API re-export
-#[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
 #[allow(unused_imports)] // Public API re-exports
 pub use tables::presets::{MozjpegTables, QuantTablePreset};

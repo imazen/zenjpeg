@@ -30,7 +30,9 @@ use crate::quant::dequantize_unzigzag_i32_into_partial;
 
 use super::idct_int::{idct_int_dc_only, idct_int_tiered, idct_int_tiered_libjpeg};
 use super::rst_scan::compute_segments;
-use super::upsample::MAX_UPSAMPLE_SCRATCH;
+/// Max chroma strip width for stack-allocated scratch in triangle upsampling.
+/// Covers images up to 8192px wide (chroma width 4096 at 4:2:0).
+const MAX_UPSAMPLE_SCRATCH: usize = 4096;
 use super::{ChromaUpsampling, DecodeWarning, IdctMethod, Strictness};
 
 use super::parser::JpegParser;
