@@ -108,6 +108,7 @@ chrono = "0.4"
 approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
+zenbench = { workspace = true }
 png = { workspace = true }
 # zenpng = { workspace = true }  # Temporarily disabled: zencodec/zenpixels API mismatch
 dssim-core = { workspace = true }
@@ -248,6 +249,11 @@ required-features = ["test-utils"]
 
 [[bench]]
 name = "decode_compare"
+harness = false
+required-features = ["decoder"]
+
+[[bench]]
+name = "decode_zenbench"
 harness = false
 required-features = ["decoder"]
 
