@@ -13,6 +13,7 @@
 use enough::Unstoppable;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use zenjpeg::decode::ChromaUpsampling;
 use zenjpeg::decode::Decoder;
 
 // ============================================================================

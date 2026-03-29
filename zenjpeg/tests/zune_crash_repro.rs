@@ -13,6 +13,7 @@
 
 use enough::Unstoppable;
 use std::panic::{self, AssertUnwindSafe};
+use zenjpeg::decode::ChromaUpsampling;
 use zenjpeg::decode::Decoder;
 
 /// Helper: decode must not panic. Returns Ok if decode succeeded or returned

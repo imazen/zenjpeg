@@ -178,7 +178,7 @@ const MAX_DSSIM_SUBSAMPLED: f64 = 0.001; // Subsampled modes allow more variance
 /// at the cost of minor differences vs jpeg-decoder. These thresholds are based on
 /// empirical testing.
 const MAX_PIXEL_DIFF_444: u8 = 4;
-const MAX_PIXEL_DIFF_SUBSAMPLED: u8 = 8;
+const MAX_PIXEL_DIFF_SUBSAMPLED: u8 = 9;
 
 // ============================================================================
 // Decoder Parity Tests

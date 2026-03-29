@@ -920,6 +920,7 @@ mod quality_sweep {
 mod scanline_reader_tests {
     use super::*;
     use imgref::ImgRefMut;
+    use zenjpeg::decode::ChromaUpsampling;
 
     #[test]
     fn scanline_reader_basic() {

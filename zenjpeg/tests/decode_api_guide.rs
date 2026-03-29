@@ -1486,7 +1486,7 @@ fn decode_progressive() {
 #[test]
 fn config_reuse() {
     let decoder = Decoder::new()
-        .output_format(PixelFormat::Rgb)
+        .output_format(PixelFormat::Rgb);
 
     let jpeg_a = test_jpeg_420();
     let jpeg_b = test_jpeg_444();
