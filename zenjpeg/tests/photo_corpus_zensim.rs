@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use zensim::{RgbSlice, Zensim, ZensimProfile};
 
+use butteraugli::ButteraugliParams;
 use zenjpeg::decode::ChromaUpsampling;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout, Quality};
@@ -305,6 +306,20 @@ fn zensim_score(z: &Zensim, a: &[u8], b: &[u8], w: usize, h: usize) -> f64 {
     z.compute(&sa, &sb).map(|r| r.score()).unwrap_or(-1.0)
 }
 
+/// Butteraugli distance (lower = better, <1.0 = good).
+fn butteraugli_score(original: &[u8], decoded: &[u8], w: usize, h: usize) -> f64 {
+    let to_img = |data: &[u8]| -> imgref::ImgVec<rgb::RGB8> {
+        let pixels: Vec<rgb::RGB8> = data
+            .chunks_exact(3)
+            .map(|c| rgb::RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        imgref::ImgVec::new(pixels, w, h)
+    };
+    butteraugli::butteraugli(to_img(original).as_ref(), to_img(decoded).as_ref(), &ButteraugliParams::default())
+        .expect("butteraugli failed")
+        .score
+}
+
 /// Print corpus composition.
 fn print_corpus_info(images: &[LoadedImage]) {
     let cid22 = images.iter().filter(|i| i.corpus == "CID22").count();
@@ -526,6 +541,114 @@ fn photo_decoder_parity() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TEST 2.5: DECODER RECONSTRUCTION QUALITY vs ORIGINAL
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Given a mozjpeg-encoded JPEG, which decoder produces the best
+// reconstruction of the original? This is different from test 2 (parity):
+// test 2 measures how close to mozjpeg-sys; this measures how close to truth.
+//
+// Pipeline:
+//   Encoder:   mozjpeg-rs | ProgressiveSmallest | 4:2:0
+//   Decoder A: mozjpeg-sys | libjpeg-turbo FFI | islow IDCT | fancy upsample
+//   Decoder B: zenjpeg    | Jpegli IDCT (12-bit) | Triangle upsampling
+//   Decoder C: zenjpeg    | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample
+//   Metric:    zensim(decoder_output, original) for each decoder
+
+struct ReconResult {
+    corpus: &'static str,
+    quality: u8,
+    /// zensim vs original for each decoder
+    mozjpeg_sys_score: f64,
+    zen_default_score: f64,
+    zen_compat_score: f64,
+}
+
+fn process_recon(img: &LoadedImage, quality: u8) -> ReconResult {
+    let (w, h, px) = (img.width, img.height, &img.pixels);
+    let moz_jpeg = encode_mozjpeg(px, w, h, quality);
+
+    let (_, _, dec_moz) = decode_mozjpeg_sys(&moz_jpeg).expect("mozjpeg decode");
+    let (_, _, dec_def) = decode_zen_default(&moz_jpeg);
+    let (_, _, dec_compat) = decode_zen_compat(&moz_jpeg);
+
+    thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
+    let (ms, ds, cs) = Z.with(|z| {
+        (zensim_score(z, px, &dec_moz, w as usize, h as usize),
+         zensim_score(z, px, &dec_def, w as usize, h as usize),
+         zensim_score(z, px, &dec_compat, w as usize, h as usize))
+    });
+
+    ReconResult {
+        corpus: img.corpus, quality,
+        mozjpeg_sys_score: ms, zen_default_score: ds, zen_compat_score: cs,
+    }
+}
+
+#[test]
+#[ignore = "requires photo corpora and decoder/trellis features"]
+fn photo_decoder_reconstruction_vs_original() {
+    let images = load_all_corpora();
+    if images.is_empty() { println!("No corpora found, skipping"); return; }
+
+    println!("=== Decoder Reconstruction Quality vs Original ===");
+    println!("  Encoder:   mozjpeg-rs | ProgressiveSmallest | 4:2:0");
+    println!("  Decoder A: mozjpeg-sys | libjpeg-turbo FFI | islow IDCT | fancy upsample");
+    println!("  Decoder B: zenjpeg    | Jpegli IDCT (12-bit) | Triangle upsampling");
+    println!("  Decoder C: zenjpeg    | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample");
+    println!("  Metric:    zensim(decoded, original) — which decoder best reconstructs the source?");
+    println!();
+    print_corpus_info(&images);
+
+    let work: Vec<(usize, u8)> = images.iter().enumerate()
+        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
+        .collect();
+    let total = work.len() as u32;
+    let progress = AtomicU32::new(0);
+    println!("Running {total} reconstruction checks...\n");
+
+    let results: Vec<ReconResult> = work.par_iter().map(|&(idx, q)| {
+        let done = progress.fetch_add(1, Ordering::Relaxed);
+        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
+        process_recon(&images[idx], q)
+    }).collect();
+
+    println!("  {:>3}  {:>12}  {:>12}  {:>12}  {:>6}  {:>6}", "Q", "mozjpeg-sys", "zen-default", "zen-compat", "Δ def", "Δ cmp");
+    println!("  {}", "-".repeat(68));
+
+    for &q in &QUALITY_LEVELS {
+        let qr: Vec<&ReconResult> = results.iter().filter(|r| r.quality == q).collect();
+        let n = qr.len() as f64;
+        let ms = qr.iter().map(|r| r.mozjpeg_sys_score).sum::<f64>() / n;
+        let ds = qr.iter().map(|r| r.zen_default_score).sum::<f64>() / n;
+        let cs = qr.iter().map(|r| r.zen_compat_score).sum::<f64>() / n;
+        println!("  Q{q:<2}  {ms:>12.2}  {ds:>12.2}  {cs:>12.2}  {:.2}  {:.2}", ds - ms, cs - ms);
+    }
+
+    // Per-corpus
+    for corpus in ["CID22", "CLIC", "gb82"] {
+        let cr: Vec<&ReconResult> = results.iter().filter(|r| r.corpus == corpus).collect();
+        if cr.is_empty() { continue; }
+        let n = cr.len() as f64;
+        let ms = cr.iter().map(|r| r.mozjpeg_sys_score).sum::<f64>() / n;
+        let ds = cr.iter().map(|r| r.zen_default_score).sum::<f64>() / n;
+        let cs = cr.iter().map(|r| r.zen_compat_score).sum::<f64>() / n;
+        println!("  {corpus:<5}: moz-sys={ms:.2}, default={ds:.2} ({:+.2}), compat={cs:.2} ({:+.2})",
+                 ds - ms, cs - ms);
+    }
+
+    // Which decoder wins most often (vs original)?
+    let def_wins = results.iter().filter(|r| r.zen_default_score > r.mozjpeg_sys_score + 0.01).count();
+    let moz_wins = results.iter().filter(|r| r.mozjpeg_sys_score > r.zen_default_score + 0.01).count();
+    let compat_wins = results.iter().filter(|r| r.zen_compat_score > r.mozjpeg_sys_score + 0.01).count();
+    println!("\n  zen-default beats mozjpeg-sys: {def_wins} / {} (vs original)", results.len());
+    println!("  zen-compat beats mozjpeg-sys: {compat_wins} / {} (vs original)", results.len());
+    println!("  mozjpeg-sys beats zen-default: {moz_wins} / {} (vs original)", results.len());
+
+    println!("PASS");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TEST 3: ENCODER CROSS-COMPARISON
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -646,9 +769,10 @@ fn bisect_quality(
 
 struct SizeMatchRow {
     quality: u8,
-    moz_score: f64,
-    /// (label, quality_used, bytes, zensim_vs_orig) for each zen mode that matched
-    zen_modes: Vec<(&'static str, u8, usize, f64)>,
+    moz_zensim: f64,
+    moz_bfly: f64,
+    /// (label, quality_used, bytes, zensim_vs_orig, butteraugli_vs_orig)
+    zen_modes: Vec<(&'static str, u8, usize, f64, f64)>,
 }
 
 fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
@@ -656,10 +780,11 @@ fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
     let moz_jpeg = encode_mozjpeg(px, w, h, moz_quality);
     let target = moz_jpeg.len();
 
-    // Decode mozjpeg, score vs original
+    // Decode mozjpeg, score vs original (zensim + butteraugli)
     let (_, _, moz_dec) = decode_zen_default(&moz_jpeg);
     thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
-    let moz_score = Z.with(|z| zensim_score(z, px, &moz_dec, w as usize, h as usize));
+    let moz_zensim = Z.with(|z| zensim_score(z, px, &moz_dec, w as usize, h as usize));
+    let moz_bfly = butteraugli_score(px, &moz_dec, w as usize, h as usize);
 
     // Bisect each zen mode to match mozjpeg's size
     let modes: Vec<(&str, fn(&[u8], u32, u32, u8) -> Vec<u8>)> = vec![
@@ -672,12 +797,13 @@ fn process_size_match_all(img: &LoadedImage, moz_quality: u8) -> SizeMatchRow {
     for (label, enc_fn) in modes {
         if let Some((q, jpeg)) = bisect_quality(px, w, h, target, enc_fn) {
             let (_, _, dec) = decode_zen_default(&jpeg);
-            let score = Z.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
-            zen_modes.push((label, q, jpeg.len(), score));
+            let zscore = Z.with(|z| zensim_score(z, px, &dec, w as usize, h as usize));
+            let bfly = butteraugli_score(px, &dec, w as usize, h as usize);
+            zen_modes.push((label, q, jpeg.len(), zscore, bfly));
         }
     }
 
-    SizeMatchRow { quality: moz_quality, moz_score, zen_modes }
+    SizeMatchRow { quality: moz_quality, moz_zensim, moz_bfly, zen_modes }
 }
 
 #[test]
@@ -712,46 +838,75 @@ fn photo_size_matched_quality() {
 
     let labels = [MODE_ZEN_MOZ.label, MODE_ZEN_JPEGLI.label, MODE_ZEN_AUTO.label];
 
-    // Per-quality summary: for each mode, mean delta vs mozjpeg at matched size
-    println!(
-        "  {:>3}  {:>8}  {:>10} {:>5}  {:>10} {:>5}  {:>10} {:>5}",
-        "Q", "mozjpeg", labels[0], "Δ", labels[1], "Δ", labels[2], "Δ"
-    );
-    println!("  {}", "-".repeat(72));
+    // Per-quality summary: zensim table
+    println!("  ZENSIM (higher = better):");
+    println!("  {:>3}  {:>8}  {:>10} {:>6}  {:>10} {:>6}  {:>10} {:>6}",
+        "Q", "mozjpeg", labels[0], "Δ", labels[1], "Δ", labels[2], "Δ");
+    println!("  {}", "-".repeat(78));
 
     for &q in &QUALITY_LEVELS {
         let qr: Vec<&SizeMatchRow> = results.iter().filter(|r| r.quality == q).collect();
         let n = qr.len() as f64;
-        let moz_m = qr.iter().map(|r| r.moz_score).sum::<f64>() / n;
+        let moz_m = qr.iter().map(|r| r.moz_zensim).sum::<f64>() / n;
 
-        let mut mode_means: Vec<String> = Vec::new();
+        let mut cols: Vec<String> = Vec::new();
         for (li, label) in labels.iter().enumerate() {
             let matched: Vec<f64> = qr.iter()
-                .filter_map(|r| r.zen_modes.get(li).map(|(l, _, _, s)| {
-                    if *l == *label { Some(*s) } else { None }
-                }).flatten())
+                .filter_map(|r| r.zen_modes.get(li).and_then(|&(l, _, _, s, _)| {
+                    if l == *label { Some(s) } else { None }
+                }))
                 .collect();
             if matched.is_empty() {
-                mode_means.push(format!("{:>10} {:>+5}", "—", "—"));
+                cols.push(format!("{:>10} {:>+6}", "—", "—"));
             } else {
                 let m = matched.iter().sum::<f64>() / matched.len() as f64;
-                let d = m - moz_m;
-                mode_means.push(format!("{m:>10.2} {d:>+5.2}"));
+                cols.push(format!("{m:>10.2} {:>+6.2}", m - moz_m));
             }
         }
-        println!("  Q{q:<2}  {moz_m:>8.2}  {}", mode_means.join("  "));
+        println!("  Q{q:<2}  {moz_m:>8.2}  {}", cols.join("  "));
     }
 
-    // Overall win/loss for each mode
+    // Per-quality summary: butteraugli table
     println!();
+    println!("  BUTTERAUGLI (lower = better):");
+    println!("  {:>3}  {:>8}  {:>10} {:>6}  {:>10} {:>6}  {:>10} {:>6}",
+        "Q", "mozjpeg", labels[0], "Δ", labels[1], "Δ", labels[2], "Δ");
+    println!("  {}", "-".repeat(78));
+
+    for &q in &QUALITY_LEVELS {
+        let qr: Vec<&SizeMatchRow> = results.iter().filter(|r| r.quality == q).collect();
+        let n = qr.len() as f64;
+        let moz_b = qr.iter().map(|r| r.moz_bfly).sum::<f64>() / n;
+
+        let mut cols: Vec<String> = Vec::new();
+        for (li, label) in labels.iter().enumerate() {
+            let matched: Vec<f64> = qr.iter()
+                .filter_map(|r| r.zen_modes.get(li).and_then(|&(l, _, _, _, b)| {
+                    if l == *label { Some(b) } else { None }
+                }))
+                .collect();
+            if matched.is_empty() {
+                cols.push(format!("{:>10} {:>+6}", "—", "—"));
+            } else {
+                let m = matched.iter().sum::<f64>() / matched.len() as f64;
+                // For butteraugli, negative delta = better (lower distance)
+                cols.push(format!("{m:>10.3} {:>+6.3}", m - moz_b));
+            }
+        }
+        println!("  Q{q:<2}  {moz_b:>8.3}  {}", cols.join("  "));
+    }
+
+    // Overall win/loss for each mode (zensim)
+    println!();
+    println!("  Size-matched win/loss (zensim, higher=better):");
     for (li, label) in labels.iter().enumerate() {
         let mut wins = 0usize;
         let mut losses = 0usize;
         let mut deltas: Vec<f64> = Vec::new();
         for r in &results {
-            if let Some(&(l, _, _, s)) = r.zen_modes.get(li) {
+            if let Some(&(l, _, _, s, _)) = r.zen_modes.get(li) {
                 if l == *label {
-                    let d = s - r.moz_score;
+                    let d = s - r.moz_zensim;
                     deltas.push(d);
                     if d > 0.1 { wins += 1; }
                     if d < -0.1 { losses += 1; }
@@ -761,20 +916,45 @@ fn photo_size_matched_quality() {
         if !deltas.is_empty() {
             let mean_d = deltas.iter().sum::<f64>() / deltas.len() as f64;
             let ties = deltas.len() - wins - losses;
-            println!("  {label} vs mozjpeg (size-matched): Δ={mean_d:>+.3}, {wins}w/{ties}t/{losses}l");
+            println!("  {label}: Δ={mean_d:>+.3} zensim, {wins}w/{ties}t/{losses}l");
+        }
+    }
+
+    // Overall win/loss for each mode (butteraugli)
+    println!();
+    println!("  Size-matched win/loss (butteraugli, lower=better):");
+    for (li, label) in labels.iter().enumerate() {
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut deltas: Vec<f64> = Vec::new();
+        for r in &results {
+            if let Some(&(l, _, _, _, b)) = r.zen_modes.get(li) {
+                if l == *label {
+                    // Negative delta = zen is better (lower butteraugli)
+                    let d = b - r.moz_bfly;
+                    deltas.push(d);
+                    if d < -0.01 { wins += 1; }  // zen lower = zen wins
+                    if d > 0.01 { losses += 1; } // zen higher = zen loses
+                }
+            }
+        }
+        if !deltas.is_empty() {
+            let mean_d = deltas.iter().sum::<f64>() / deltas.len() as f64;
+            let ties = deltas.len() - wins - losses;
+            println!("  {label}: Δ={mean_d:>+.4} bfly, {wins}w/{ties}t/{losses}l");
         }
     }
 
     // zen-auto at matched size must be competitive
-    let auto_deltas: Vec<f64> = results.iter()
-        .filter_map(|r| r.zen_modes.get(2).and_then(|&(l, _, _, s)| {
-            if l == MODE_ZEN_AUTO.label { Some(s - r.moz_score) } else { None }
+    let auto_zensim_deltas: Vec<f64> = results.iter()
+        .filter_map(|r| r.zen_modes.get(2).and_then(|&(l, _, _, s, _)| {
+            if l == MODE_ZEN_AUTO.label { Some(s - r.moz_zensim) } else { None }
         }))
         .collect();
-    let auto_mean = if auto_deltas.is_empty() { 0.0 } else {
-        auto_deltas.iter().sum::<f64>() / auto_deltas.len() as f64
+    let auto_mean = if auto_zensim_deltas.is_empty() { 0.0 } else {
+        auto_zensim_deltas.iter().sum::<f64>() / auto_zensim_deltas.len() as f64
     };
-    println!("\nzen-auto size-matched mean Δ vs mozjpeg: {auto_mean:+.3}");
+    println!("\nzen-auto size-matched mean Δ vs mozjpeg: {auto_mean:+.3} zensim");
     assert!(auto_mean > -2.0, "zen-auto size-matched mean delta {auto_mean:+.3} — regression");
     println!("PASS");
 }
