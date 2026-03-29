@@ -1739,8 +1739,32 @@ pub fn upsample_h2v2_i16_libjpeg(
 /// Process one output row of fused h2v2 libjpeg-compat upsampling.
 ///
 /// `is_upper` controls the rounding bias alternation pattern.
+///
+/// Dispatches to AVX2 SIMD on x86_64 when available, with scalar fallback.
 #[inline]
 pub(super) fn upsample_h2v2_libjpeg_row(
+    near: &[i16],
+    far: &[i16],
+    output: &mut [i16],
+    in_width: usize,
+    out_width: usize,
+    is_upper: bool,
+) {
+    // Try AVX2 SIMD path on x86_64
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            upsample_h2v2_libjpeg_row_avx2(token, near, far, output, in_width, out_width, is_upper);
+            return;
+        }
+    }
+
+    upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, is_upper);
+}
+
+/// Scalar implementation of one output row of fused h2v2 libjpeg-compat upsampling.
+#[inline]
+fn upsample_h2v2_libjpeg_row_scalar(
     near: &[i16],
     far: &[i16],
     output: &mut [i16],
@@ -1804,6 +1828,167 @@ pub(super) fn upsample_h2v2_libjpeg_row(
     }
     if right_out < out_width {
         output[right_out] = ((this_colsum * 4 + bias_right) >> 4) as i16;
+    }
+}
+
+/// AVX2 SIMD implementation of one output row of fused h2v2 libjpeg-compat upsampling.
+///
+/// Processes 16 input chroma samples at a time → 32 output pixels.
+/// Produces bit-exact output matching the scalar `upsample_h2v2_libjpeg_row_scalar`.
+///
+/// All arithmetic stays within i16 range: colsum max magnitude is 8192
+/// (`2048*3 + 2048`), and `colsum*3 + colsum_neighbor + 8` max is 32760.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn upsample_h2v2_libjpeg_row_avx2(
+    _token: archmage::X64V3Token,
+    near: &[i16],
+    far: &[i16],
+    output: &mut [i16],
+    in_width: usize,
+    out_width: usize,
+    is_upper: bool,
+) {
+    use core::arch::x86_64::*;
+
+    // For very small widths, fall back to scalar (not worth SIMD overhead)
+    if in_width < 18 {
+        upsample_h2v2_libjpeg_row_scalar(near, far, output, in_width, out_width, is_upper);
+        return;
+    }
+
+    let (bias_left, bias_right) = if is_upper { (8i16, 7i16) } else { (7i16, 8i16) };
+
+    let v_three = _mm256_set1_epi16(3);
+    let v_bias_left = _mm256_set1_epi16(bias_left);
+    let v_bias_right = _mm256_set1_epi16(bias_right);
+
+    // --- First column (scalar, special edge handling) ---
+    let colsum_0 = near[0] as i32 * 3 + far[0] as i32;
+    let colsum_1 = near[1] as i32 * 3 + far[1] as i32;
+    output[0] = ((colsum_0 * 4 + 8) >> 4) as i16;
+    if out_width > 1 {
+        output[1] = ((colsum_0 * 3 + colsum_1 + bias_right as i32) >> 4) as i16;
+    }
+
+    // --- Interior: SIMD processing ---
+    // Process chunks of 16 input pixels starting from position 1.
+    // For each chunk we need colsum[x-1..x+16] and colsum[x..x+17],
+    // so we need near/far[x-1..x+17] accessible. We process up to
+    // the point where x+17 <= in_width (i.e., x <= in_width - 17).
+    let simd_start = 1usize;
+    let simd_end_exclusive = if in_width >= 17 {
+        // Last chunk starts at x where x+16 <= in_width-1 (need next neighbor)
+        // i.e., x <= in_width - 17
+        let max_start = in_width - 17;
+        // Round down to chunk boundary relative to simd_start
+        let num_chunks = (max_start - simd_start + 16) / 16;
+        simd_start + num_chunks * 16
+    } else {
+        simd_start
+    };
+
+    let mut x = simd_start;
+    while x + 16 <= simd_end_exclusive {
+        let out_base = x * 2;
+        if out_base + 32 > out_width {
+            break;
+        }
+
+        // Load near[x..x+16], far[x..x+16] → colsum[x..x+16]
+        let v_near =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x..x + 16]).unwrap());
+        let v_far = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x..x + 16]).unwrap());
+        let v_colsum = _mm256_add_epi16(_mm256_mullo_epi16(v_near, v_three), v_far);
+
+        // Load colsum for x-1 (prev neighbor)
+        let v_near_prev =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x - 1..x + 15]).unwrap());
+        let v_far_prev =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x - 1..x + 15]).unwrap());
+        let v_colsum_prev = _mm256_add_epi16(_mm256_mullo_epi16(v_near_prev, v_three), v_far_prev);
+
+        // Load colsum for x+1 (next neighbor)
+        let v_near_next =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x + 1..x + 17]).unwrap());
+        let v_far_next =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x + 1..x + 17]).unwrap());
+        let v_colsum_next = _mm256_add_epi16(_mm256_mullo_epi16(v_near_next, v_three), v_far_next);
+
+        // colsum * 3
+        let v_colsum3 = _mm256_mullo_epi16(v_colsum, v_three);
+
+        // Left output: (colsum*3 + colsum_prev + bias_left) >> 4
+        let v_left = _mm256_srai_epi16(
+            _mm256_add_epi16(_mm256_add_epi16(v_colsum3, v_colsum_prev), v_bias_left),
+            4,
+        );
+
+        // Right output: (colsum*3 + colsum_next + bias_right) >> 4
+        let v_right = _mm256_srai_epi16(
+            _mm256_add_epi16(_mm256_add_epi16(v_colsum3, v_colsum_next), v_bias_right),
+            4,
+        );
+
+        // Interleave left and right: [L0, R0, L1, R1, ...]
+        // unpacklo/hi work on 128-bit lanes, so we need permute to fix order
+        let lo = _mm256_unpacklo_epi16(v_left, v_right);
+        let hi = _mm256_unpackhi_epi16(v_left, v_right);
+        let out0 = _mm256_permute2x128_si256(lo, hi, 0x20);
+        let out1 = _mm256_permute2x128_si256(lo, hi, 0x31);
+
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_base..out_base + 16]).unwrap(),
+            out0,
+        );
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_base + 16..out_base + 32]).unwrap(),
+            out1,
+        );
+
+        x += 16;
+    }
+
+    // --- Scalar remainder for interior pixels not covered by SIMD ---
+    let mut last_colsum_i32 = if x > 1 {
+        near[x - 1] as i32 * 3 + far[x - 1] as i32
+    } else {
+        colsum_0
+    };
+
+    for in_x in x..in_width.saturating_sub(1) {
+        let this_colsum = near[in_x] as i32 * 3 + far[in_x] as i32;
+        let next_colsum = near[in_x + 1] as i32 * 3 + far[in_x + 1] as i32;
+
+        let left_out = in_x * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[left_out] = ((this_colsum * 3 + last_colsum_i32 + bias_left as i32) >> 4) as i16;
+        }
+        if right_out < out_width {
+            output[right_out] = ((this_colsum * 3 + next_colsum + bias_right as i32) >> 4) as i16;
+        }
+        last_colsum_i32 = this_colsum;
+    }
+
+    // --- Last column (scalar, special edge handling) ---
+    let last = in_width - 1;
+    if last >= x || x == simd_start {
+        // Only emit last column if not already covered
+        let this_colsum = near[last] as i32 * 3 + far[last] as i32;
+        let prev_colsum = if last > 0 {
+            near[last - 1] as i32 * 3 + far[last - 1] as i32
+        } else {
+            this_colsum
+        };
+        let left_out = last * 2;
+        let right_out = left_out + 1;
+        if left_out < out_width {
+            output[left_out] = ((this_colsum * 3 + prev_colsum + bias_left as i32) >> 4) as i16;
+        }
+        if right_out < out_width {
+            output[right_out] = ((this_colsum * 4 + bias_right as i32) >> 4) as i16;
+        }
     }
 }
 
@@ -2697,6 +2882,155 @@ mod tests {
                     report.permutations_run >= 2,
                     "expected at least 2 permutations"
                 );
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_libjpeg_row_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Test that AVX2 and scalar paths produce identical output for
+        // the libjpeg-compat h2v2 fused row upsampler.
+        let widths: &[usize] = &[2, 4, 8, 15, 16, 17, 18, 32, 33, 64, 128, 255, 256, 512];
+
+        for &in_width in widths {
+            let out_width = in_width * 2;
+
+            for (label, near_data, far_data) in [
+                (
+                    "gradient",
+                    (0..in_width)
+                        .map(|x| (x as i32 * 37 % 500 - 250) as i16)
+                        .collect::<Vec<_>>(),
+                    (0..in_width)
+                        .map(|x| (x as i32 * 53 % 500 - 250) as i16)
+                        .collect::<Vec<_>>(),
+                ),
+                (
+                    "extreme",
+                    (0..in_width)
+                        .map(|x| if x % 2 == 0 { 2000i16 } else { -2000 })
+                        .collect(),
+                    (0..in_width)
+                        .map(|x| if x % 2 == 0 { -2000i16 } else { 2000 })
+                        .collect(),
+                ),
+                ("constant", vec![1000i16; in_width], vec![500i16; in_width]),
+            ] {
+                for is_upper in [true, false] {
+                    // Compute reference using scalar path
+                    let mut reference = vec![0i16; out_width];
+                    upsample_h2v2_libjpeg_row_scalar(
+                        &near_data,
+                        &far_data,
+                        &mut reference,
+                        in_width,
+                        out_width,
+                        is_upper,
+                    );
+
+                    let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                        let mut result = vec![0i16; out_width];
+                        upsample_h2v2_libjpeg_row(
+                            &near_data,
+                            &far_data,
+                            &mut result,
+                            in_width,
+                            out_width,
+                            is_upper,
+                        );
+
+                        assert_eq!(
+                            result, reference,
+                            "h2v2_libjpeg_row mismatch: {label} width={in_width} \
+                             is_upper={is_upper} at {perm}"
+                        );
+                    });
+
+                    if label == "gradient" && in_width == 32 && is_upper {
+                        eprintln!("h2v2_libjpeg_row dispatch: {report}");
+                        assert!(
+                            report.permutations_run >= 2,
+                            "expected at least 2 permutations"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn h2v2_libjpeg_full_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        // Test the full h2v2 libjpeg upsampler (multiple rows) for SIMD parity.
+        let sizes: &[(usize, usize)] = &[
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (17, 9),
+            (32, 32),
+            (64, 16),
+            (33, 33),
+            (128, 64),
+        ];
+
+        for &(in_w, in_h) in sizes {
+            let out_w = in_w * 2;
+            let out_h = in_h * 2;
+
+            for (label, input) in [
+                ("gradient", gradient_test_data(in_w, in_h)),
+                ("extreme", extreme_test_data(in_w, in_h)),
+                ("constant", vec![1000i16; in_w * in_h]),
+            ] {
+                // Compute reference using scalar path directly
+                let mut reference = vec![0i16; out_w * out_h];
+                for out_y in 0..out_h {
+                    let in_y = out_y / 2;
+                    let in_y_clamped = in_y.min(in_h.saturating_sub(1));
+                    let is_upper = out_y % 2 == 0;
+
+                    let far_y = if is_upper {
+                        in_y_clamped.saturating_sub(1)
+                    } else {
+                        (in_y + 1).min(in_h.saturating_sub(1))
+                    };
+
+                    let near_row = in_y_clamped * in_w;
+                    let far_row = far_y * in_w;
+                    let out_row = out_y * out_w;
+
+                    upsample_h2v2_libjpeg_row_scalar(
+                        &input[near_row..near_row + in_w],
+                        &input[far_row..far_row + in_w],
+                        &mut reference[out_row..],
+                        in_w,
+                        out_w,
+                        is_upper,
+                    );
+                }
+
+                let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                    let mut result = vec![0i16; out_w * out_h];
+                    upsample_h2v2_i16_libjpeg(&input, in_w, in_h, &mut result, out_w, out_h);
+
+                    assert_eq!(
+                        result, reference,
+                        "h2v2_libjpeg_full mismatch: {label} {in_w}x{in_h} at {perm}"
+                    );
+                });
+
+                if label == "gradient" && in_w == 32 {
+                    eprintln!("h2v2_libjpeg_full dispatch: {report}");
+                    assert!(
+                        report.permutations_run >= 2,
+                        "expected at least 2 permutations"
+                    );
+                }
             }
         }
     }
