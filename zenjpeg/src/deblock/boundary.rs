@@ -201,6 +201,142 @@ fn filter_horizontal_boundaries(
     }
 }
 
+/// Apply 4-tap boundary deblocking to interleaved u8 pixel data in-place.
+///
+/// Operates on packed multi-channel data (e.g., RGB or RGBA) by filtering each
+/// channel independently at 8-pixel block boundaries. This is the post-decode
+/// variant for the streaming path where pixel data is already in interleaved u8
+/// format rather than per-component f32 planes.
+///
+/// The filter runs two passes: vertical boundaries (columns at multiples of 8)
+/// then horizontal boundaries (rows at multiples of 8). Within each pass, all
+/// channels at a given boundary pixel are processed independently.
+///
+/// # Arguments
+/// * `pixels` — Mutable pixel data in row-major, channel-interleaved order
+///   (e.g., `[R,G,B, R,G,B, ...]`). Length must be >= `width * height * channels`.
+/// * `width` — Image width in pixels (not bytes)
+/// * `height` — Image height in pixels
+/// * `channels` — Number of channels per pixel (e.g., 3 for RGB, 4 for RGBA)
+/// * `strength` — Filter strength parameters (derived from DC quantization value)
+///
+/// # Panics
+/// Panics if `pixels.len() < width * height * channels`.
+pub fn filter_interleaved_u8_boundary_4tap(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    strength: BoundaryStrength,
+) {
+    debug_assert!(pixels.len() >= width * height * channels);
+
+    if strength.max_delta < 0.5 || width < 16 || height < 16 || channels == 0 {
+        return;
+    }
+
+    filter_vertical_boundaries_u8(pixels, width, height, channels, &strength);
+    filter_horizontal_boundaries_u8(pixels, width, height, channels, &strength);
+}
+
+/// Filter vertical boundaries (columns at multiples of 8) on interleaved u8 data.
+#[inline(never)]
+fn filter_vertical_boundaries_u8(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    strength: &BoundaryStrength,
+) {
+    let thresh = strength.threshold;
+    let max_d = strength.max_delta;
+    let stride = width * channels;
+    let num_boundaries = width / 8;
+
+    for bx in 1..num_boundaries {
+        let col = bx * 8;
+        if col + 1 >= width || col < 2 {
+            continue;
+        }
+
+        let base_p1 = (col - 2) * channels;
+        let base_p0 = (col - 1) * channels;
+        let base_q0 = col * channels;
+        let base_q1 = (col + 1) * channels;
+
+        for y in 0..height {
+            let row_off = y * stride;
+            for c in 0..channels {
+                let p1 = pixels[row_off + base_p1 + c] as f32;
+                let p0 = pixels[row_off + base_p0 + c] as f32;
+                let q0 = pixels[row_off + base_q0 + c] as f32;
+                let q1 = pixels[row_off + base_q1 + c] as f32;
+
+                let disc = (p0 - q0).abs();
+                if disc < thresh {
+                    continue;
+                }
+
+                let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
+                let delta_p = (avg - p0).clamp(-max_d, max_d);
+                let delta_q = (avg - q0).clamp(-max_d, max_d);
+
+                pixels[row_off + base_p0 + c] = (p0 + delta_p).clamp(0.0, 255.0) as u8;
+                pixels[row_off + base_q0 + c] = (q0 + delta_q).clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
+/// Filter horizontal boundaries (rows at multiples of 8) on interleaved u8 data.
+#[inline(never)]
+fn filter_horizontal_boundaries_u8(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    strength: &BoundaryStrength,
+) {
+    let thresh = strength.threshold;
+    let max_d = strength.max_delta;
+    let stride = width * channels;
+    let num_boundaries = height / 8;
+
+    for by in 1..num_boundaries {
+        let row = by * 8;
+        if row + 1 >= height || row < 2 {
+            continue;
+        }
+
+        let off_p1 = (row - 2) * stride;
+        let off_p0 = (row - 1) * stride;
+        let off_q0 = row * stride;
+        let off_q1 = (row + 1) * stride;
+
+        for x in 0..width {
+            let px = x * channels;
+            for c in 0..channels {
+                let p1 = pixels[off_p1 + px + c] as f32;
+                let p0 = pixels[off_p0 + px + c] as f32;
+                let q0 = pixels[off_q0 + px + c] as f32;
+                let q1 = pixels[off_q1 + px + c] as f32;
+
+                let disc = (p0 - q0).abs();
+                if disc < thresh {
+                    continue;
+                }
+
+                let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
+                let delta_p = (avg - p0).clamp(-max_d, max_d);
+                let delta_q = (avg - q0).clamp(-max_d, max_d);
+
+                pixels[off_p0 + px + c] = (p0 + delta_p).clamp(0.0, 255.0) as u8;
+                pixels[off_q0 + px + c] = (q0 + delta_q).clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

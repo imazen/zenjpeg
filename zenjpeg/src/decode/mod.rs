@@ -1712,14 +1712,18 @@ impl DecodeConfig {
 
         // Streaming decode produces RGB u8 directly — disable it when the output
         // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats,
-        // or deblocking).
+        // or Knusperli deblocking which requires DCT coefficients).
+        //
+        // Boundary4Tap, Auto, and AutoStreamable do NOT need coefficient storage —
+        // they operate in the pixel domain after IDCT and are applied as a post-decode
+        // pass on the u8 output. Only Knusperli needs raw coefficients.
         {
             let output_format = self.output_format.unwrap_or(PixelFormat::Rgb);
             let needs_coefficients = self.output_target.is_f32()
                 || self.output_target.is_precise()
                 || self.output_target.uses_dequant_bias()
                 || effective_transform != crate::lossless::LosslessTransform::None
-                || self.deblock_mode != DeblockMode::Off
+                || self.deblock_mode == DeblockMode::Knusperli
                 || !matches!(
                     output_format,
                     PixelFormat::Rgb
@@ -1897,9 +1901,9 @@ impl DecodeConfig {
                 extras,
                 warnings,
             )
-        } else if self.deblock_mode != DeblockMode::Off {
-            // u8 output with deblocking: route through f32 deblock path, convert to u8.
-            // The f32 path applies deblocking between IDCT and color conversion.
+        } else if self.deblock_mode == DeblockMode::Knusperli {
+            // u8 output with Knusperli deblocking: route through f32 deblock path.
+            // Knusperli requires raw DCT coefficients, so it must use the coefficient path.
             let f32_pixels = parser.to_pixels_f32_deblock(
                 output_format,
                 info.is_xyb,
@@ -1964,7 +1968,8 @@ impl DecodeConfig {
                 warnings,
             )
         } else {
-            // u8 output path (fast, no deblocking)
+            // u8 output path (fast streaming decode).
+            // Boundary4Tap/Auto/AutoStreamable deblocking is applied post-decode.
             #[allow(unused_mut)]
             let mut pixels = parser.to_pixels(
                 output_format,
@@ -1973,6 +1978,29 @@ impl DecodeConfig {
                 self.output_target,
                 &stop,
             )?;
+
+            // Apply boundary 4-tap deblock as post-processing on interleaved u8 data.
+            // This handles Boundary4Tap, Auto (resolved to Boundary4Tap in streaming),
+            // and AutoStreamable modes. The filter operates per-channel at 8-pixel block
+            // boundaries in the RGB domain, using luma DC quant for filter strength.
+            if matches!(
+                self.deblock_mode,
+                DeblockMode::Boundary4Tap | DeblockMode::Auto | DeblockMode::AutoStreamable
+            ) {
+                let width = visible_w as usize;
+                let height = visible_h as usize;
+                // bytes_per_pixel gives the interleaved channel count (3 for RGB, 4 for RGBA)
+                let channels = output_format.bytes_per_pixel();
+                // Use luma DC quant for strength — it's the dominant visual component.
+                let dc_quant = parser
+                    .quant_tables[parser.components[0].quant_table_idx as usize]
+                    .map(|qt| qt[0])
+                    .unwrap_or(1);
+                let strength = crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
+                crate::deblock::filter_interleaved_u8_boundary_4tap(
+                    &mut pixels, width, height, channels, strength,
+                );
+            }
 
             // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
