@@ -137,7 +137,9 @@ fn deblock_scanline_knusperli_falls_back_to_buffered() {
         .scanline_reader(&jpeg)
         .expect("Knusperli should work via fallback, not error");
     let mut buf = vec![0u8; 128 * 128 * 3];
-    let rows = reader.read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 128 * 3, 128)).unwrap();
+    let rows = reader
+        .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 128 * 3, 128))
+        .unwrap();
     assert_eq!(rows, 128);
 }
 

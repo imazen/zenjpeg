@@ -51,7 +51,11 @@ use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, OptimizationPreset, Pixe
 // ── Constants ───────────────────────────────────────────────────────────────
 
 fn corpus_dir() -> Option<PathBuf> {
-    codec_corpus::Corpus::new().ok()?.get("imageflow").ok().map(|p| p.join("test_inputs"))
+    codec_corpus::Corpus::new()
+        .ok()?
+        .get("imageflow")
+        .ok()
+        .map(|p| p.join("test_inputs"))
 }
 
 /// Quality levels spanning the useful range.
@@ -68,10 +72,10 @@ const MAX_PIXELS: u64 = 8_000_000;
 
 /// Files to skip (corrupt, CMYK, non-image, or palette-indexed).
 const SKIP_FILES: &[&str] = &[
-    "corrupt.jpg",       // intentionally corrupt
-    "cmyk_logo.jpg",     // CMYK colorspace, not RGB
-    "rings2.png",        // palette-indexed PNG (64 colors), png crate returns Indexed
-    "mountain_800.gif",  // GIF, not PNG/JPEG
+    "corrupt.jpg",      // intentionally corrupt
+    "cmyk_logo.jpg",    // CMYK colorspace, not RGB
+    "rings2.png",       // palette-indexed PNG (64 colors), png crate returns Indexed
+    "mountain_800.gif", // GIF, not PNG/JPEG
     "lossy_mountain.webp",
     "1_webp_a.webp",
     "1_webp_ll.webp",
@@ -258,7 +262,7 @@ struct ImageResult {
     zen_bytes: usize,
     moz_vs_orig: f64,
     zen_vs_orig: f64,
-    delta: f64,     // zen - moz (positive = zen better)
+    delta: f64,      // zen - moz (positive = zen better)
     size_ratio: f64, // zen / moz
     error: Option<String>,
 }
@@ -267,10 +271,7 @@ fn as_rgb_pixels(rgb: &[u8]) -> &[[u8; 3]] {
     bytemuck::cast_slice(rgb)
 }
 
-fn process_image_quality(
-    img: &LoadedImage,
-    quality: u8,
-) -> ImageResult {
+fn process_image_quality(img: &LoadedImage, quality: u8) -> ImageResult {
     let (w, h) = (img.width, img.height);
 
     // Encode with both
@@ -411,7 +412,10 @@ fn truncate(s: &str, max: usize) -> String {
 fn imageflow_corpus_zensim_vs_mozjpeg() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
-        _ => { println!("imageflow corpus not found, skipping"); return; }
+        _ => {
+            println!("imageflow corpus not found, skipping");
+            return;
+        }
     };
 
     println!("=== Encoder Quality vs Original (same Q parameter) ===");
@@ -438,11 +442,20 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
                     continue;
                 }
                 if (w as u64) * (h as u64) > MAX_PIXELS {
-                    skipped.push((name, format!("too large: {w}x{h} ({} MP)", w as u64 * h as u64 / 1_000_000)));
+                    skipped.push((
+                        name,
+                        format!(
+                            "too large: {w}x{h} ({} MP)",
+                            w as u64 * h as u64 / 1_000_000
+                        ),
+                    ));
                     continue;
                 }
                 if pixels.len() != (w * h * 3) as usize {
-                    skipped.push((name, format!("pixel count mismatch: {} vs {}x{}x3", pixels.len(), w, h)));
+                    skipped.push((
+                        name,
+                        format!("pixel count mismatch: {} vs {}x{}x3", pixels.len(), w, h),
+                    ));
                     continue;
                 }
                 images.push(LoadedImage {
@@ -542,14 +555,21 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
     // ── Summary by quality level ────────────────────────────────────────
 
     println!();
-    println!(
-        "=== Summary across {} images ===",
-        images.len()
-    );
+    println!("=== Summary across {} images ===", images.len());
     println!();
     println!(
         "{:>3} {:>7} {:>7} {:>7} {:>8} {:>8} {:>7} {:>7} {:>5}/{:>4}/{:>5}",
-        "Q", "moz_kb", "zen_kb", "sz_Δ%", "moz→orig", "zen→orig", "Δ(z-m)", "min_Δ", "win", "tie", "loss"
+        "Q",
+        "moz_kb",
+        "zen_kb",
+        "sz_Δ%",
+        "moz→orig",
+        "zen→orig",
+        "Δ(z-m)",
+        "min_Δ",
+        "win",
+        "tie",
+        "loss"
     );
     println!("{}", "-".repeat(95));
 
@@ -559,15 +579,20 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
             continue;
         }
         let n = qrows.len() as f64;
-        let moz_kb = qrows.iter().map(|r| r.moz_bytes as f64 / 1024.0).sum::<f64>() / n;
-        let zen_kb = qrows.iter().map(|r| r.zen_bytes as f64 / 1024.0).sum::<f64>() / n;
+        let moz_kb = qrows
+            .iter()
+            .map(|r| r.moz_bytes as f64 / 1024.0)
+            .sum::<f64>()
+            / n;
+        let zen_kb = qrows
+            .iter()
+            .map(|r| r.zen_bytes as f64 / 1024.0)
+            .sum::<f64>()
+            / n;
         let moz_s = qrows.iter().map(|r| r.moz_vs_orig).sum::<f64>() / n;
         let zen_s = qrows.iter().map(|r| r.zen_vs_orig).sum::<f64>() / n;
         let delta = qrows.iter().map(|r| r.delta).sum::<f64>() / n;
-        let min_delta = qrows
-            .iter()
-            .map(|r| r.delta)
-            .fold(f64::INFINITY, f64::min);
+        let min_delta = qrows.iter().map(|r| r.delta).fold(f64::INFINITY, f64::min);
         let size_pct = (zen_kb / moz_kb - 1.0) * 100.0;
         let wins = qrows.iter().filter(|r| r.delta > 0.1).count();
         let losses = qrows.iter().filter(|r| r.delta < -0.1).count();
@@ -611,8 +636,16 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
     for r in &by_delta {
         report.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:+.4}\n",
-            r.name, r.quality, r.width, r.height, r.moz_bytes, r.zen_bytes, r.size_ratio,
-            r.moz_vs_orig, r.zen_vs_orig, r.delta,
+            r.name,
+            r.quality,
+            r.width,
+            r.height,
+            r.moz_bytes,
+            r.zen_bytes,
+            r.size_ratio,
+            r.moz_vs_orig,
+            r.zen_vs_orig,
+            r.delta,
         ));
     }
     let _ = std::fs::write(results_path, &report);
@@ -715,8 +748,7 @@ fn imageflow_corpus_zensim_vs_mozjpeg() {
     // 7. At Q90+, zenjpeg's f32 DCT should produce competitive quality
     let q90_plus: Vec<&&ImageResult> = successes.iter().filter(|r| r.quality >= 90).collect();
     if !q90_plus.is_empty() {
-        let q90_mean_delta =
-            q90_plus.iter().map(|r| r.delta).sum::<f64>() / q90_plus.len() as f64;
+        let q90_mean_delta = q90_plus.iter().map(|r| r.delta).sum::<f64>() / q90_plus.len() as f64;
         let q90_wins = q90_plus.iter().filter(|r| r.delta > 0.1).count();
         let q90_losses = q90_plus.iter().filter(|r| r.delta < -0.1).count();
         println!(
@@ -775,8 +807,13 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
         Ok(v) => v,
         Err(_) => {
             return DecoderParityResult {
-                name: img.name.clone(), quality, jpeg_bytes: 0,
-                default_score: 0.0, compat_score: 0.0, default_max_diff: 0, compat_max_diff: 0,
+                name: img.name.clone(),
+                quality,
+                jpeg_bytes: 0,
+                default_score: 0.0,
+                compat_score: 0.0,
+                default_max_diff: 0,
+                compat_max_diff: 0,
                 error: Some("mozjpeg encode panicked".into()),
             };
         }
@@ -787,8 +824,13 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
         Ok((rgb, _, _)) => rgb,
         Err(e) => {
             return DecoderParityResult {
-                name: img.name.clone(), quality, jpeg_bytes: moz_jpeg.len(),
-                default_score: 0.0, compat_score: 0.0, default_max_diff: 0, compat_max_diff: 0,
+                name: img.name.clone(),
+                quality,
+                jpeg_bytes: moz_jpeg.len(),
+                default_score: 0.0,
+                compat_score: 0.0,
+                default_max_diff: 0,
+                compat_max_diff: 0,
                 error: Some(format!("mozjpeg decode: {e}")),
             };
         }
@@ -818,8 +860,14 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
     });
 
     DecoderParityResult {
-        name: img.name.clone(), quality, jpeg_bytes: moz_jpeg.len(),
-        default_score, compat_score, default_max_diff, compat_max_diff, error: None,
+        name: img.name.clone(),
+        quality,
+        jpeg_bytes: moz_jpeg.len(),
+        default_score,
+        compat_score,
+        default_max_diff,
+        compat_max_diff,
+        error: None,
     }
 }
 
@@ -828,7 +876,10 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
 fn imageflow_decoder_parity_mozjpeg_files() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
-        _ => { println!("imageflow corpus not found, skipping"); return; }
+        _ => {
+            println!("imageflow corpus not found, skipping");
+            return;
+        }
     };
 
     println!("╔═══════════════════════════════════════════════════════════════════╗");
@@ -848,22 +899,26 @@ fn imageflow_decoder_parity_mozjpeg_files() {
     for path in &paths {
         let name = short_name(path, &corpus);
         if let Some((pixels, w, h)) = load_image(path) {
-            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+            if w < MIN_DIM
+                || h < MIN_DIM
+                || (w as u64) * (h as u64) > MAX_PIXELS
                 || pixels.len() != (w * h * 3) as usize
             {
                 skipped += 1;
                 continue;
             }
-            images.push(LoadedImage { name, pixels, width: w, height: h });
+            images.push(LoadedImage {
+                name,
+                pixels,
+                width: w,
+                height: h,
+            });
         } else {
             skipped += 1;
         }
     }
 
-    println!(
-        "Loaded {} images (skipped {})",
-        images.len(), skipped
-    );
+    println!("Loaded {} images (skipped {})", images.len(), skipped);
 
     let work: Vec<(usize, u8)> = images
         .iter()
@@ -891,7 +946,8 @@ fn imageflow_decoder_parity_mozjpeg_files() {
         })
         .collect();
 
-    let successes: Vec<&DecoderParityResult> = results.iter().filter(|r| r.error.is_none()).collect();
+    let successes: Vec<&DecoderParityResult> =
+        results.iter().filter(|r| r.error.is_none()).collect();
     let errors: Vec<&DecoderParityResult> = results.iter().filter(|r| r.error.is_some()).collect();
 
     // Sort by compat_score ascending (worst parity first)
@@ -932,7 +988,9 @@ fn imageflow_decoder_parity_mozjpeg_files() {
 
     for &q in &QUALITY_LEVELS {
         let qr: Vec<&&DecoderParityResult> = successes.iter().filter(|r| r.quality == q).collect();
-        if qr.is_empty() { continue; }
+        if qr.is_empty() {
+            continue;
+        }
         let n = qr.len() as f64;
         let def_mean = qr.iter().map(|r| r.default_score).sum::<f64>() / n;
         let compat_mean = qr.iter().map(|r| r.compat_score).sum::<f64>() / n;
@@ -947,7 +1005,12 @@ fn imageflow_decoder_parity_mozjpeg_files() {
     if !errors.is_empty() {
         println!("\n--- Errors ({}) ---", errors.len());
         for r in errors.iter().take(10) {
-            println!("  {} Q{}: {}", r.name, r.quality, r.error.as_deref().unwrap_or("?"));
+            println!(
+                "  {} Q{}: {}",
+                r.name,
+                r.quality,
+                r.error.as_deref().unwrap_or("?")
+            );
         }
     }
 
@@ -960,9 +1023,13 @@ fn imageflow_decoder_parity_mozjpeg_files() {
     for r in &by_compat {
         report.push_str(&format!(
             "{}\t{}\t{:.1}\t{:.4}\t{}\t{:.4}\t{}\n",
-            r.name, r.quality, r.jpeg_bytes as f64 / 1024.0,
-            r.default_score, r.default_max_diff,
-            r.compat_score, r.compat_max_diff,
+            r.name,
+            r.quality,
+            r.jpeg_bytes as f64 / 1024.0,
+            r.default_score,
+            r.default_max_diff,
+            r.compat_score,
+            r.compat_max_diff,
         ));
     }
     let _ = std::fs::write(results_path, &report);
@@ -970,11 +1037,19 @@ fn imageflow_decoder_parity_mozjpeg_files() {
 
     // ── Assertions ──────────────────────────────────────────────────────
 
-    assert!(errors.is_empty(), "{} decode errors on mozjpeg files", errors.len());
+    assert!(
+        errors.is_empty(),
+        "{} decode errors on mozjpeg files",
+        errors.len()
+    );
 
     // LibjpegCompat mode: should match mozjpeg within max_diff ≤ 2 for
     // well-formed images. Memory notes confirm this from the 754-file corpus.
-    let compat_worst_max = successes.iter().map(|r| r.compat_max_diff).max().unwrap_or(0);
+    let compat_worst_max = successes
+        .iter()
+        .map(|r| r.compat_max_diff)
+        .max()
+        .unwrap_or(0);
     println!("\nLibjpegCompat worst max_diff: {compat_worst_max}");
     assert!(
         compat_worst_max <= 3,
@@ -982,8 +1057,12 @@ fn imageflow_decoder_parity_mozjpeg_files() {
     );
 
     // Mean zensim in compat mode should be very high (>95)
-    let compat_mean = successes.iter().map(|r| r.compat_score).sum::<f64>() / successes.len() as f64;
-    let compat_min = successes.iter().map(|r| r.compat_score).fold(f64::INFINITY, f64::min);
+    let compat_mean =
+        successes.iter().map(|r| r.compat_score).sum::<f64>() / successes.len() as f64;
+    let compat_min = successes
+        .iter()
+        .map(|r| r.compat_score)
+        .fold(f64::INFINITY, f64::min);
     println!("LibjpegCompat zensim: mean={compat_mean:.2}, min={compat_min:.2}");
     assert!(
         compat_min > 85.0,
@@ -991,10 +1070,20 @@ fn imageflow_decoder_parity_mozjpeg_files() {
     );
 
     // Default Jpegli IDCT: slightly wider tolerance (different IDCT constants)
-    let default_worst_max = successes.iter().map(|r| r.default_max_diff).max().unwrap_or(0);
-    let default_mean = successes.iter().map(|r| r.default_score).sum::<f64>() / successes.len() as f64;
-    let default_min = successes.iter().map(|r| r.default_score).fold(f64::INFINITY, f64::min);
-    println!("Default Jpegli zensim: mean={default_mean:.2}, min={default_min:.2}, worst max_diff={default_worst_max}");
+    let default_worst_max = successes
+        .iter()
+        .map(|r| r.default_max_diff)
+        .max()
+        .unwrap_or(0);
+    let default_mean =
+        successes.iter().map(|r| r.default_score).sum::<f64>() / successes.len() as f64;
+    let default_min = successes
+        .iter()
+        .map(|r| r.default_score)
+        .fold(f64::INFINITY, f64::min);
+    println!(
+        "Default Jpegli zensim: mean={default_mean:.2}, min={default_min:.2}, worst max_diff={default_worst_max}"
+    );
     assert!(
         default_worst_max <= 5,
         "Default IDCT max_diff {default_worst_max} > 5 — decoder regression"
@@ -1041,8 +1130,13 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
         Ok(v) => v,
         Err(_) => {
             return CrossResult {
-                name: img.name.clone(), quality, cross_score: 0.0, cross_max_diff: 0,
-                moz_bytes: 0, zen_bytes: 0, error: Some("mozjpeg encode panicked".into()),
+                name: img.name.clone(),
+                quality,
+                cross_score: 0.0,
+                cross_max_diff: 0,
+                moz_bytes: 0,
+                zen_bytes: 0,
+                error: Some("mozjpeg encode panicked".into()),
             };
         }
     };
@@ -1053,8 +1147,13 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
         Ok(v) => v,
         Err(_) => {
             return CrossResult {
-                name: img.name.clone(), quality, cross_score: 0.0, cross_max_diff: 0,
-                moz_bytes: moz_jpeg.len(), zen_bytes: 0, error: Some("zenjpeg encode panicked".into()),
+                name: img.name.clone(),
+                quality,
+                cross_score: 0.0,
+                cross_max_diff: 0,
+                moz_bytes: moz_jpeg.len(),
+                zen_bytes: 0,
+                error: Some("zenjpeg encode panicked".into()),
             };
         }
     };
@@ -1077,8 +1176,13 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
     });
 
     CrossResult {
-        name: img.name.clone(), quality, cross_score, cross_max_diff,
-        moz_bytes: moz_jpeg.len(), zen_bytes: zen_jpeg.len(), error: None,
+        name: img.name.clone(),
+        quality,
+        cross_score,
+        cross_max_diff,
+        moz_bytes: moz_jpeg.len(),
+        zen_bytes: zen_jpeg.len(),
+        error: None,
     }
 }
 
@@ -1087,7 +1191,10 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
 fn imageflow_encoder_cross_comparison() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
-        _ => { println!("imageflow corpus not found, skipping"); return; }
+        _ => {
+            println!("imageflow corpus not found, skipping");
+            return;
+        }
     };
 
     println!("=== Encoder Cross-Comparison: decoded outputs compared to each other ===");
@@ -1103,10 +1210,19 @@ fn imageflow_encoder_cross_comparison() {
     for path in &paths {
         let name = short_name(path, &corpus);
         if let Some((pixels, w, h)) = load_image(path) {
-            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+            if w < MIN_DIM
+                || h < MIN_DIM
+                || (w as u64) * (h as u64) > MAX_PIXELS
                 || pixels.len() != (w * h * 3) as usize
-            { continue; }
-            images.push(LoadedImage { name, pixels, width: w, height: h });
+            {
+                continue;
+            }
+            images.push(LoadedImage {
+                name,
+                pixels,
+                width: w,
+                height: h,
+            });
         }
     }
 
@@ -1121,7 +1237,9 @@ fn imageflow_encoder_cross_comparison() {
 
     println!(
         "Running {} cross-comparisons ({} images × {} Q levels)...\n",
-        total, images.len(), QUALITY_LEVELS.len()
+        total,
+        images.len(),
+        QUALITY_LEVELS.len()
     );
 
     let results: Vec<CrossResult> = work
@@ -1166,16 +1284,22 @@ fn imageflow_encoder_cross_comparison() {
 
     for &q in &QUALITY_LEVELS {
         let qr: Vec<&&CrossResult> = successes.iter().filter(|r| r.quality == q).collect();
-        if qr.is_empty() { continue; }
+        if qr.is_empty() {
+            continue;
+        }
         let n = qr.len() as f64;
         let mean = qr.iter().map(|r| r.cross_score).sum::<f64>() / n;
-        let min = qr.iter().map(|r| r.cross_score).fold(f64::INFINITY, f64::min);
+        let min = qr
+            .iter()
+            .map(|r| r.cross_score)
+            .fold(f64::INFINITY, f64::min);
         let max_diff = qr.iter().map(|r| r.cross_max_diff).max().unwrap_or(0);
         println!("{:>3} {:>8.2} {:>8.2} {:>4}", q, mean, min, max_diff);
     }
 
     let results_path = "/tmp/imageflow_encoder_cross.tsv";
-    let mut report = String::from("image\tquality\tcross_score\tcross_max_diff\tmoz_bytes\tzen_bytes\n");
+    let mut report =
+        String::from("image\tquality\tcross_score\tcross_max_diff\tmoz_bytes\tzen_bytes\n");
     for r in &by_score {
         report.push_str(&format!(
             "{}\t{}\t{:.4}\t{}\t{}\t{}\n",
@@ -1186,8 +1310,12 @@ fn imageflow_encoder_cross_comparison() {
     println!("\nFull results saved to {results_path}");
 
     // At the same quality, encoders should produce perceptually similar output
-    let overall_mean = successes.iter().map(|r| r.cross_score).sum::<f64>() / successes.len() as f64;
-    let overall_min = successes.iter().map(|r| r.cross_score).fold(f64::INFINITY, f64::min);
+    let overall_mean =
+        successes.iter().map(|r| r.cross_score).sum::<f64>() / successes.len() as f64;
+    let overall_min = successes
+        .iter()
+        .map(|r| r.cross_score)
+        .fold(f64::INFINITY, f64::min);
     println!("\nCross-encoder zensim: mean={overall_mean:.2}, min={overall_min:.2}");
 
     // Even the worst case should show substantial similarity
@@ -1237,7 +1365,9 @@ fn encode_zenjpeg_size_match(
     let mut best_dist: usize = usize::MAX;
 
     for _ in 0..15 {
-        if lo > hi { break; }
+        if lo > hi {
+            break;
+        }
         let mid = lo + (hi - lo) / 2;
         let jpeg = encode_zenjpeg(pixels, w, h, mid);
         let sz = jpeg.len();
@@ -1279,7 +1409,7 @@ struct SizeMatchResult {
     size_err_pct: f64,
     moz_vs_orig: f64,
     zen_vs_orig: f64,
-    delta: f64,     // zen - moz (positive = zen better at same size)
+    delta: f64, // zen - moz (positive = zen better at same size)
     error: Option<String>,
 }
 
@@ -1295,9 +1425,15 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
         Some(v) => v,
         None => {
             return SizeMatchResult {
-                name: img.name.clone(), moz_quality, zen_quality: 0,
-                moz_bytes: target_bytes, zen_bytes: 0, size_err_pct: 0.0,
-                moz_vs_orig: 0.0, zen_vs_orig: 0.0, delta: 0.0,
+                name: img.name.clone(),
+                moz_quality,
+                zen_quality: 0,
+                moz_bytes: target_bytes,
+                zen_bytes: 0,
+                size_err_pct: 0.0,
+                moz_vs_orig: 0.0,
+                zen_vs_orig: 0.0,
+                delta: 0.0,
                 error: Some("no size match found".into()),
             };
         }
@@ -1324,10 +1460,16 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
     });
 
     SizeMatchResult {
-        name: img.name.clone(), moz_quality, zen_quality,
-        moz_bytes: target_bytes, zen_bytes: zen_jpeg.len(), size_err_pct,
-        moz_vs_orig: moz_score, zen_vs_orig: zen_score,
-        delta: zen_score - moz_score, error: None,
+        name: img.name.clone(),
+        moz_quality,
+        zen_quality,
+        moz_bytes: target_bytes,
+        zen_bytes: zen_jpeg.len(),
+        size_err_pct,
+        moz_vs_orig: moz_score,
+        zen_vs_orig: zen_score,
+        delta: zen_score - moz_score,
+        error: None,
     }
 }
 
@@ -1336,12 +1478,17 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
 fn imageflow_size_matched_quality() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
-        _ => { println!("imageflow corpus not found, skipping"); return; }
+        _ => {
+            println!("imageflow corpus not found, skipping");
+            return;
+        }
     };
 
     println!("=== Size-Matched Quality: fair comparison at equal file size ===");
     println!("  Encoder A: mozjpeg-rs | ProgressiveSmallest | 4:2:0 | Q as given");
-    println!("  Encoder B: zenjpeg   | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0 | Q bisected to match A's size ±2%");
+    println!(
+        "  Encoder B: zenjpeg   | ApproxMozjpeg(Q) + MozjpegProgressive | 4:2:0 | Q bisected to match A's size ±2%"
+    );
     println!("  Decoder:   zenjpeg   | Jpegli IDCT | Triangle upsampling | no ICC");
     println!("  Metric:    zensim(decoded, original) for each — same bits, who wins?\n");
 
@@ -1351,10 +1498,19 @@ fn imageflow_size_matched_quality() {
     for path in &paths {
         let name = short_name(path, &corpus);
         if let Some((pixels, w, h)) = load_image(path) {
-            if w < MIN_DIM || h < MIN_DIM || (w as u64) * (h as u64) > MAX_PIXELS
+            if w < MIN_DIM
+                || h < MIN_DIM
+                || (w as u64) * (h as u64) > MAX_PIXELS
                 || pixels.len() != (w * h * 3) as usize
-            { continue; }
-            images.push(LoadedImage { name, pixels, width: w, height: h });
+            {
+                continue;
+            }
+            images.push(LoadedImage {
+                name,
+                pixels,
+                width: w,
+                height: h,
+            });
         }
     }
 
@@ -1369,7 +1525,9 @@ fn imageflow_size_matched_quality() {
 
     println!(
         "Running {} size-matched comparisons ({} images × {} Q levels)...\n",
-        total, images.len(), QUALITY_LEVELS.len()
+        total,
+        images.len(),
+        QUALITY_LEVELS.len()
     );
 
     let results: Vec<SizeMatchResult> = work
@@ -1423,7 +1581,9 @@ fn imageflow_size_matched_quality() {
 
     for &q in &QUALITY_LEVELS {
         let qr: Vec<&&SizeMatchResult> = successes.iter().filter(|r| r.moz_quality == q).collect();
-        if qr.is_empty() { continue; }
+        if qr.is_empty() {
+            continue;
+        }
         let n = qr.len() as f64;
         let avg_zq = qr.iter().map(|r| r.zen_quality as f64).sum::<f64>() / n;
         let avg_err = qr.iter().map(|r| r.size_err_pct).sum::<f64>() / n;
@@ -1443,7 +1603,12 @@ fn imageflow_size_matched_quality() {
     if !errors.is_empty() {
         println!("\n--- No size match found ({}) ---", errors.len());
         for r in errors.iter().take(10) {
-            println!("  {} mQ{}: {}", r.name, r.moz_quality, r.error.as_deref().unwrap_or("?"));
+            println!(
+                "  {} mQ{}: {}",
+                r.name,
+                r.moz_quality,
+                r.error.as_deref().unwrap_or("?")
+            );
         }
         if errors.len() > 10 {
             println!("  ... and {} more", errors.len() - 10);
@@ -1457,8 +1622,15 @@ fn imageflow_size_matched_quality() {
     for r in &by_delta {
         report.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{:+.2}\t{:.4}\t{:.4}\t{:+.4}\n",
-            r.name, r.moz_quality, r.zen_quality, r.moz_bytes, r.zen_bytes,
-            r.size_err_pct, r.moz_vs_orig, r.zen_vs_orig, r.delta,
+            r.name,
+            r.moz_quality,
+            r.zen_quality,
+            r.moz_bytes,
+            r.zen_bytes,
+            r.size_err_pct,
+            r.moz_vs_orig,
+            r.zen_vs_orig,
+            r.delta,
         ));
     }
     let _ = std::fs::write(results_path, &report);

@@ -27,7 +27,9 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((info.width * info.height * 3) as usize);
-            for c in src.chunks_exact(4) { rgb.extend_from_slice(&c[..3]); }
+            for c in src.chunks_exact(4) {
+                rgb.extend_from_slice(&c[..3]);
+            }
             rgb
         }
         _ => return None,
@@ -38,15 +40,19 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 /// Encode a test image at given quality with mozjpeg (baseline, with DRI for parallel tests).
 fn encode_mozjpeg_baseline(pixels: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
     mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::BaselineBalanced)
-        .quality(q).subsampling(mozjpeg_rs::Subsampling::S420)
-        .encode_rgb(pixels, w, h).expect("mozjpeg encode")
+        .quality(q)
+        .subsampling(mozjpeg_rs::Subsampling::S420)
+        .encode_rgb(pixels, w, h)
+        .expect("mozjpeg encode")
 }
 
 /// Encode a test image as progressive (no DRI — standard mozjpeg progressive).
 fn encode_mozjpeg_progressive(pixels: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
     mozjpeg_rs::Encoder::new(mozjpeg_rs::Preset::ProgressiveSmallest)
-        .quality(q).subsampling(mozjpeg_rs::Subsampling::S420)
-        .encode_rgb(pixels, w, h).expect("mozjpeg encode")
+        .quality(q)
+        .subsampling(mozjpeg_rs::Subsampling::S420)
+        .encode_rgb(pixels, w, h)
+        .expect("mozjpeg encode")
 }
 
 /// Decode with libjpeg-turbo/mozjpeg via FFI (the C reference decoder).
@@ -81,7 +87,8 @@ fn decode_libjpeg_turbo(jpeg: &[u8]) -> Vec<u8> {
 fn decode_zune(jpeg: &[u8]) -> Vec<u8> {
     use zune_core::options::DecoderOptions;
     use zune_jpeg::JpegDecoder;
-    let options = DecoderOptions::default().jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
+    let options =
+        DecoderOptions::default().jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
     let mut decoder = JpegDecoder::new_with_options(std::io::Cursor::new(jpeg), options);
     decoder.decode().expect("zune decode")
 }
@@ -98,31 +105,41 @@ struct TestImage {
 
 fn load_test_images() -> Vec<TestImage> {
     let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c, Err(_) => return Vec::new(),
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
     };
     let dir = match corpus.get("CID22/CID22-512/training") {
-        Ok(d) => d, Err(_) => return Vec::new(),
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
     };
 
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap()
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("png")))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("png"))
+        })
         .map(|e| e.path())
         .collect();
     paths.sort();
     paths.truncate(10); // 10 images for manageable bench time
 
-    paths.iter().filter_map(|p| {
-        let (pixels, w, h) = load_png_rgb(p)?;
-        let name = p.file_stem()?.to_string_lossy().into_owned();
-        Some(TestImage {
-            baseline_q85: encode_mozjpeg_baseline(&pixels, w, h, 85),
-            progressive_q85: encode_mozjpeg_progressive(&pixels, w, h, 85),
-            baseline_q20: encode_mozjpeg_baseline(&pixels, w, h, 20),
-            pixels: (w * h) as usize,
-            name,
+    paths
+        .iter()
+        .filter_map(|p| {
+            let (pixels, w, h) = load_png_rgb(p)?;
+            let name = p.file_stem()?.to_string_lossy().into_owned();
+            Some(TestImage {
+                baseline_q85: encode_mozjpeg_baseline(&pixels, w, h, 85),
+                progressive_q85: encode_mozjpeg_progressive(&pixels, w, h, 85),
+                baseline_q20: encode_mozjpeg_baseline(&pixels, w, h, 20),
+                pixels: (w * h) as usize,
+                name,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 // ── Benchmarks ──────────────────────────────────────────────────────────────
@@ -158,36 +175,48 @@ fn bench_decode(suite: &mut Suite) {
 
         g.bench("libjpeg-turbo/mozjpeg (C, NASM SIMD)", |b| {
             b.iter(|| {
-                for img in get_images() { decode_libjpeg_turbo(&img.baseline_q85); }
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
             })
         });
 
         g.bench("zune-jpeg", |b| {
             b.iter(|| {
-                for img in get_images() { decode_zune(&img.baseline_q85); }
+                for img in get_images() {
+                    decode_zune(&img.baseline_q85);
+                }
             })
         });
 
         g.bench("zenjpeg default (Jpegli IDCT, Triangle)", |b| {
             let dec = Decoder::new().apply_icc(false);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg LibjpegCompat (Libjpeg IDCT)", |b| {
-            let dec = Decoder::new().apply_icc(false)
+            let dec = Decoder::new()
+                .apply_icc(false)
                 .chroma_upsampling(ChromaUpsampling::LibjpegCompat);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg NearestNeighbor (box filter)", |b| {
-            let dec = Decoder::new().apply_icc(false)
+            let dec = Decoder::new()
+                .apply_icc(false)
                 .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
             })
         });
     });
@@ -199,20 +228,26 @@ fn bench_decode(suite: &mut Suite) {
 
         g.bench("libjpeg-turbo/mozjpeg (C, NASM SIMD)", |b| {
             b.iter(|| {
-                for img in get_images() { decode_libjpeg_turbo(&img.progressive_q85); }
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.progressive_q85);
+                }
             })
         });
 
         g.bench("zune-jpeg", |b| {
             b.iter(|| {
-                for img in get_images() { decode_zune(&img.progressive_q85); }
+                for img in get_images() {
+                    decode_zune(&img.progressive_q85);
+                }
             })
         });
 
         g.bench("zenjpeg default", |b| {
             let dec = Decoder::new().apply_icc(false);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.progressive_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.progressive_q85, Unstoppable).unwrap();
+                }
             })
         });
     });
@@ -225,31 +260,40 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg Off (no deblock)", |b| {
             let dec = Decoder::new().apply_icc(false);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q20, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q20, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg Boundary4Tap", |b| {
-            let dec = Decoder::new().apply_icc(false)
+            let dec = Decoder::new()
+                .apply_icc(false)
                 .deblock(DeblockMode::Boundary4Tap);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q20, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q20, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg Knusperli", |b| {
-            let dec = Decoder::new().apply_icc(false)
+            let dec = Decoder::new()
+                .apply_icc(false)
                 .deblock(DeblockMode::Knusperli);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q20, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q20, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg Auto", |b| {
-            let dec = Decoder::new().apply_icc(false)
-                .deblock(DeblockMode::Auto);
+            let dec = Decoder::new().apply_icc(false).deblock(DeblockMode::Auto);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q20, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q20, Unstoppable).unwrap();
+                }
             })
         });
     });
@@ -262,10 +306,14 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg scanline Off", |b| {
             b.iter(|| {
                 for img in get_images() {
-                    let mut reader = Decoder::new().apply_icc(false)
-                        .scanline_reader(&img.baseline_q85).unwrap();
+                    let mut reader = Decoder::new()
+                        .apply_icc(false)
+                        .scanline_reader(&img.baseline_q85)
+                        .unwrap();
                     let mut buf = vec![0u8; 512 * 512 * 3];
-                    reader.read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 512 * 3, 512)).unwrap();
+                    reader
+                        .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 512 * 3, 512))
+                        .unwrap();
                 }
             })
         });
@@ -273,11 +321,15 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg scanline Boundary4Tap", |b| {
             b.iter(|| {
                 for img in get_images() {
-                    let mut reader = Decoder::new().apply_icc(false)
+                    let mut reader = Decoder::new()
+                        .apply_icc(false)
                         .deblock(DeblockMode::Boundary4Tap)
-                        .scanline_reader(&img.baseline_q85).unwrap();
+                        .scanline_reader(&img.baseline_q85)
+                        .unwrap();
                     let mut buf = vec![0u8; 512 * 512 * 3];
-                    reader.read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 512 * 3, 512)).unwrap();
+                    reader
+                        .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, 512 * 3, 512))
+                        .unwrap();
                 }
             })
         });
@@ -291,14 +343,18 @@ fn bench_decode(suite: &mut Suite) {
         g.bench("zenjpeg default (no bias)", |b| {
             let dec = Decoder::new().apply_icc(false);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
             })
         });
 
         g.bench("zenjpeg dequant_bias", |b| {
             let dec = Decoder::new().apply_icc(false).dequant_bias(true);
             b.iter(|| {
-                for img in get_images() { dec.decode(&img.baseline_q85, Unstoppable).unwrap(); }
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
             })
         });
     });

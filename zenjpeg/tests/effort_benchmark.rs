@@ -28,7 +28,9 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => {
             let src = &buf[..info.buffer_size()];
             let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-            for chunk in src.chunks_exact(4) { rgb.extend_from_slice(&chunk[..3]); }
+            for chunk in src.chunks_exact(4) {
+                rgb.extend_from_slice(&chunk[..3]);
+            }
             rgb
         }
         _ => return None,
@@ -38,9 +40,16 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 fn collect_pngs(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter().flatten().filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("png")))
-        .map(|e| e.path()).collect();
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("png"))
+        })
+        .map(|e| e.path())
+        .collect();
     files.sort();
     files
 }
@@ -73,8 +82,7 @@ fn cfg_max(q: u8) -> EncoderConfig {
 }
 
 fn cfg_auto(q: u8) -> EncoderConfig {
-    EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter)
-        .auto_optimize(true)
+    EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter).auto_optimize(true)
 }
 
 fn cfg_mozjpeg_prog(q: u8) -> EncoderConfig {
@@ -83,17 +91,46 @@ fn cfg_mozjpeg_prog(q: u8) -> EncoderConfig {
 }
 
 const MODES: [Mode; 6] = [
-    Mode { label: "default",   desc: "ycbcr(Q) — progressive + AQ, no trellis, jpegli tables",         make_config: cfg_default },
-    Mode { label: "fast",      desc: "Effort::Fast — baseline + AQ, no trellis",                       make_config: cfg_fast },
-    Mode { label: "balanced",  desc: "Effort::Balanced — progressive + AQ + adaptive trellis",          make_config: cfg_balanced },
-    Mode { label: "max",       desc: "Effort::Max — progressive + scan search + AQ + thorough trellis", make_config: cfg_max },
-    Mode { label: "auto",      desc: "auto_optimize(true) — progressive + AQ + hybrid trellis λ=14.5", make_config: cfg_auto },
-    Mode { label: "moz-prog",  desc: "ApproxMozjpeg(Q) + MozjpegProgressive — trellis, no AQ",         make_config: cfg_mozjpeg_prog },
+    Mode {
+        label: "default",
+        desc: "ycbcr(Q) — progressive + AQ, no trellis, jpegli tables",
+        make_config: cfg_default,
+    },
+    Mode {
+        label: "fast",
+        desc: "Effort::Fast — baseline + AQ, no trellis",
+        make_config: cfg_fast,
+    },
+    Mode {
+        label: "balanced",
+        desc: "Effort::Balanced — progressive + AQ + adaptive trellis",
+        make_config: cfg_balanced,
+    },
+    Mode {
+        label: "max",
+        desc: "Effort::Max — progressive + scan search + AQ + thorough trellis",
+        make_config: cfg_max,
+    },
+    Mode {
+        label: "auto",
+        desc: "auto_optimize(true) — progressive + AQ + hybrid trellis λ=14.5",
+        make_config: cfg_auto,
+    },
+    Mode {
+        label: "moz-prog",
+        desc: "ApproxMozjpeg(Q) + MozjpegProgressive — trellis, no AQ",
+        make_config: cfg_mozjpeg_prog,
+    },
 ];
 
 // ── Encode + measure ────────────────────────────────────────────────────────
 
-fn encode_once(pixels: &[u8], w: u32, h: u32, config: EncoderConfig) -> (usize, std::time::Duration) {
+fn encode_once(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    config: EncoderConfig,
+) -> (usize, std::time::Duration) {
     let start = Instant::now();
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
@@ -120,16 +157,24 @@ fn encode_mozjpeg_rs(pixels: &[u8], w: u32, h: u32, quality: u8) -> (usize, std:
 fn effort_size_and_speed() {
     let corpus = match codec_corpus::Corpus::new() {
         Ok(c) => c,
-        Err(e) => { println!("codec-corpus init failed: {e}"); return; }
+        Err(e) => {
+            println!("codec-corpus init failed: {e}");
+            return;
+        }
     };
     let dir = match corpus.get("CID22/CID22-512/training") {
         Ok(d) => d,
-        Err(_) => { println!("CID22 not available"); return; }
+        Err(_) => {
+            println!("CID22 not available");
+            return;
+        }
     };
 
     // Load 25 images (consistent subset for timing)
     let paths = collect_pngs(&dir);
-    let images: Vec<(Vec<u8>, u32, u32)> = paths.iter().take(25)
+    let images: Vec<(Vec<u8>, u32, u32)> = paths
+        .iter()
+        .take(25)
         .filter_map(|p| load_png_rgb(p))
         .collect();
     let n = images.len();
@@ -142,7 +187,10 @@ fn effort_size_and_speed() {
     for m in &MODES {
         println!("    {:<12} {}", m.label, m.desc);
     }
-    println!("    {:<12} {}", "mozjpeg-rs", "C mozjpeg via mozjpeg-rs | ProgressiveSmallest | 4:2:0");
+    println!(
+        "    {:<12} {}",
+        "mozjpeg-rs", "C mozjpeg via mozjpeg-rs | ProgressiveSmallest | 4:2:0"
+    );
     println!();
 
     // Per-quality comparison
