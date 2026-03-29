@@ -1594,7 +1594,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 if let Some(exif) = extras.exif() {
                     if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
                         info =
-                            info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
+                            info.with_orientation(zencodec::Orientation::from_exif(orient).unwrap_or_default());
                     }
                     info = info.with_exif(exif.to_vec());
                 }
@@ -1869,7 +1869,7 @@ fn to_image_info(info: &crate::decode::JpegInfo) -> ImageInfo {
     }
     if let Some(ref exif) = info.exif {
         if let Some(orient) = crate::lossless::parse_exif_orientation(exif) {
-            img_info = img_info.with_orientation(zencodec::Orientation::from_exif(orient as u16));
+            img_info = img_info.with_orientation(zencodec::Orientation::from_exif(orient).unwrap_or_default());
         }
         img_info = img_info.with_exif(exif.clone());
     }

@@ -132,9 +132,10 @@ zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["trellis", "decoder", "yuv"]
-# Legacy flag — yuv crate is now a mandatory dependency. Kept so cfg(feature = "yuv")
-# gates compile correctly. Will be removed when yuv is replaced with archmage code.
+default = ["decoder", "yuv"]
+# Internal: yuv is a mandatory dependency. This empty flag is kept because 23 cfg(feature = "yuv")
+# gates in the source code select between yuv-crate and scalar fallback paths. The flag will be
+# removed when the scalar fallbacks are deleted and cfg gates stripped.
 yuv = []
 # Enable the decoder API.
 decoder = []

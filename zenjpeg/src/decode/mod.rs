@@ -294,8 +294,7 @@ impl DecodeConfig {
     /// no color conversion is performed — pixels are returned in the JPEG's
     /// native color space.
     ///
-    /// Requires the `moxcms` feature. Without a CMS feature,
-    /// this setting has no effect.
+    /// Requires the `moxcms` feature. Without it, this method is not available.
     ///
     /// # Example
     ///
@@ -306,6 +305,7 @@ impl DecodeConfig {
     ///     .correct_color(Some(TargetColorSpace::Srgb))
     ///     .decode(&jpeg, stop)?;
     /// ```
+    #[cfg(feature = "moxcms")]
     #[must_use]
     pub fn correct_color(mut self, target: Option<TargetColorSpace>) -> Self {
         self.correct_color = target;

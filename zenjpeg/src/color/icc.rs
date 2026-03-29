@@ -29,6 +29,9 @@ pub const ICC_PROFILE_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";
 ///
 /// When [`Decoder::correct_color`](crate::decode::Decoder::correct_color) is set
 /// to `Some(target)`, embedded ICC profiles are converted to this target color space.
+///
+/// When the `moxcms` feature is disabled, the type is still available for API
+/// compatibility but color conversion is a no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum TargetColorSpace {
