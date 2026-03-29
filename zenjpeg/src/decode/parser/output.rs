@@ -917,8 +917,7 @@ impl<'a> JpegParser<'a> {
                     *v += 128.0;
                 }
 
-                let strength =
-                    crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
+                let strength = crate::deblock::BoundaryStrength::from_dc_quant(dc_quant);
                 crate::deblock::filter_plane_boundary_4tap(plane, w, h, strength);
 
                 // Shift back to [-128, 127]

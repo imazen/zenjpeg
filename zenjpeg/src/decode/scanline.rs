@@ -26,10 +26,12 @@
 
 use alloc::borrow::Cow;
 
+use super::DeblockMode;
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
 use super::pool::PoolGuard;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
+use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
@@ -160,6 +162,22 @@ pub struct ScanlineReader<'a> {
     // Pool guard for adaptive threading. When Some, the pool slot is held
     // for the lifetime of this reader and released on drop.
     pub(super) pool_guard: Option<PoolGuard<'a>>,
+
+    // Boundary 4-tap deblocking state.
+    // When deblock_mode is Off, all deblock fields are inert (None / empty)
+    // and no deblock code runs — zero overhead.
+    deblock_mode: DeblockMode,
+    /// Per-component boundary strength, computed once from DC quant tables.
+    /// None when deblock_mode is Off.
+    deblock_strength: Option<[BoundaryStrength; 3]>,
+    /// Last 2 rows of each i16 plane from the previous MCU row, for
+    /// horizontal boundary filtering at MCU row junctions.
+    /// Layout: [y_row_minus2, y_row_minus1, cb_row_minus2, cb_row_minus1,
+    ///          cr_row_minus2, cr_row_minus1], each `strip_stride` i16 values.
+    /// Empty when deblock_mode is Off.
+    deblock_prev_rows: Vec<i16>,
+    /// Whether `deblock_prev_rows` contains valid data from a previous MCU row.
+    deblock_has_prev: bool,
 }
 
 impl<'a> ScanlineReader<'a> {
@@ -171,6 +189,7 @@ impl<'a> ScanlineReader<'a> {
         chroma_upsampling: super::ChromaUpsampling,
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
+        deblock_mode: DeblockMode,
     ) -> Result<Self> {
         let data_cow = Cow::Borrowed(scan.data);
         Self::from_scan_data_cow(
@@ -179,6 +198,7 @@ impl<'a> ScanlineReader<'a> {
             chroma_upsampling,
             idct_method,
             output_target,
+            deblock_mode,
         )
     }
 
@@ -193,6 +213,7 @@ impl<'a> ScanlineReader<'a> {
         chroma_upsampling: super::ChromaUpsampling,
         idct_method: super::IdctMethod,
         output_target: super::OutputTarget,
+        deblock_mode: DeblockMode,
     ) -> Result<Self> {
         let super::parser::ParsedScanData {
             data: _,
@@ -221,6 +242,44 @@ impl<'a> ScanlineReader<'a> {
             idct_method,
             output_target,
         )?;
+
+        // Resolve deblock mode: Auto selects Boundary4Tap in streaming
+        // (Knusperli requires coefficients, not available here).
+        let effective_deblock = match deblock_mode {
+            DeblockMode::Auto => DeblockMode::Boundary4Tap,
+            other => other,
+        };
+
+        // Compute per-component boundary strength from DC quant values.
+        // Only allocate deblock buffers when actually filtering.
+        let active = effective_deblock == DeblockMode::Boundary4Tap;
+        let deblock_strength = if active {
+            let mut strengths = [BoundaryStrength::from_dc_quant(1); 3];
+            for i in 0..num_components.min(3) as usize {
+                if let Some(ref qt) = quant_tables[quant_indices[i]] {
+                    strengths[i] = BoundaryStrength::from_dc_quant(qt[0]);
+                }
+            }
+            Some(strengths)
+        } else {
+            None
+        };
+
+        // Allocate prev-row buffer for horizontal boundary filtering.
+        // Layout: [Y_row-2, Y_row-1, Cb_row-2, Cb_row-1, Cr_row-2, Cr_row-1]
+        // Y rows use strip_stride, Cb/Cr use chroma_strip_stride.
+        let deblock_prev_rows = if active {
+            let ys = strip.strip_stride;
+            let cs = strip.chroma_strip_stride;
+            let total = if num_components == 1 {
+                2 * ys
+            } else {
+                2 * ys + 2 * cs + 2 * cs
+            };
+            alloc::vec![0i16; total]
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             data: data_cow,
@@ -278,6 +337,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: effective_deblock,
+            deblock_strength,
+            deblock_prev_rows,
+            deblock_has_prev: false,
         })
     }
 
@@ -350,6 +413,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: DeblockMode::Off,
+            deblock_strength: None,
+            deblock_prev_rows: Vec::new(),
+            deblock_has_prev: false,
         }
     }
 
@@ -420,6 +487,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: DeblockMode::Off,
+            deblock_strength: None,
+            deblock_prev_rows: Vec::new(),
+            deblock_has_prev: false,
         }
     }
 
@@ -545,6 +616,10 @@ impl<'a> ScanlineReader<'a> {
             #[cfg(feature = "parallel")]
             wave_planar_next_seg: 0,
             pool_guard: None,
+            deblock_mode: DeblockMode::Off,
+            deblock_strength: None,
+            deblock_prev_rows: Vec::new(),
+            deblock_has_prev: false,
         })
     }
 
@@ -1159,12 +1234,124 @@ impl<'a> ScanlineReader<'a> {
                 self.height as usize,
                 self.current_mcu_row,
             );
+
+            // Apply boundary 4-tap deblock BEFORE upsampling so each component
+            // is filtered at native resolution (matching the coefficient path).
+            if self.deblock_mode == DeblockMode::Boundary4Tap {
+                self.apply_boundary_deblock();
+            }
+
             self.strip.upsample_chroma();
         }
 
         self.mcu_row_decoded = true;
 
         Ok(())
+    }
+
+    /// Apply boundary 4-tap deblocking to the current MCU row's strip planes.
+    ///
+    /// Filters each component plane at native resolution:
+    /// - Y: `strip_stride × mcu_height`, boundaries at 8px
+    /// - Cb/Cr: `chroma_strip_stride × chroma_strip_height`, boundaries at 8px
+    ///
+    /// Vertical boundaries (within row) and intra-MCU horizontal boundaries are
+    /// filtered using the current strip data. The inter-MCU horizontal boundary
+    /// (junction with previous MCU row) uses `deblock_prev_rows`.
+    fn apply_boundary_deblock(&mut self) {
+        let strengths = match self.deblock_strength {
+            Some(s) => s,
+            None => return,
+        };
+
+        let mcu_row = self.current_mcu_row;
+        let is_grayscale = self.num_components == 1;
+
+        // --- Filter Y plane ---
+        {
+            let w = self.strip.strip_width;
+            let stride = self.strip.strip_stride;
+            let h = self.strip.mcu_height;
+            let strength = strengths[0];
+
+            // Vertical boundaries within this MCU row
+            filter_strip_vertical_i16(&mut self.strip.y_strip, w, stride, h, &strength);
+
+            // Intra-MCU horizontal boundaries (at row 8 for 16-row MCUs)
+            filter_strip_horizontal_i16(&mut self.strip.y_strip, w, stride, h, &strength);
+
+            // Inter-MCU horizontal boundary with previous MCU row
+            if self.deblock_has_prev && mcu_row > 0 {
+                filter_inter_mcu_horizontal_i16(
+                    &self.deblock_prev_rows,
+                    0, // Y prev rows at offset 0
+                    stride,
+                    &mut self.strip.y_strip,
+                    stride,
+                    w,
+                    &strength,
+                );
+            }
+
+            // Save last 2 rows of Y for next MCU row's inter-MCU boundary
+            if h >= 2 {
+                let src_row_m2 = (h - 2) * stride;
+                let src_row_m1 = (h - 1) * stride;
+                self.deblock_prev_rows[..stride]
+                    .copy_from_slice(&self.strip.y_strip[src_row_m2..src_row_m2 + stride]);
+                self.deblock_prev_rows[stride..2 * stride]
+                    .copy_from_slice(&self.strip.y_strip[src_row_m1..src_row_m1 + stride]);
+            }
+        }
+
+        // --- Filter Cb/Cr planes ---
+        if !is_grayscale {
+            let cw = self.strip.chroma_strip_width;
+            let cs = self.strip.chroma_strip_stride;
+            let ch = self.strip.chroma_strip_height;
+            let ys = self.strip.strip_stride;
+
+            for (comp_idx, plane) in [&mut self.strip.cb_strip, &mut self.strip.cr_strip]
+                .into_iter()
+                .enumerate()
+            {
+                let strength = strengths[comp_idx + 1];
+
+                // Vertical boundaries
+                filter_strip_vertical_i16(plane, cw, cs, ch, &strength);
+
+                // Intra-MCU horizontal boundaries
+                filter_strip_horizontal_i16(plane, cw, cs, ch, &strength);
+
+                // Inter-MCU horizontal boundary
+                // Cb at offset 2*ys, Cr at offset 2*ys + 2*cs
+                if self.deblock_has_prev && mcu_row > 0 {
+                    let prev_offset = 2 * ys + comp_idx * 2 * cs;
+                    filter_inter_mcu_horizontal_i16(
+                        &self.deblock_prev_rows,
+                        prev_offset,
+                        cs,
+                        plane,
+                        cs,
+                        cw,
+                        &strength,
+                    );
+                }
+
+                // Save last 2 chroma rows
+                if ch >= 2 {
+                    let src_row_m2 = (ch - 2) * cs;
+                    let src_row_m1 = (ch - 1) * cs;
+                    let dst_offset = 2 * ys + comp_idx * 2 * cs;
+                    self.deblock_prev_rows[dst_offset..dst_offset + cs]
+                        .copy_from_slice(&plane[src_row_m2..src_row_m2 + cs]);
+                    self.deblock_prev_rows[dst_offset + cs..dst_offset + 2 * cs]
+                        .copy_from_slice(&plane[src_row_m1..src_row_m1 + cs]);
+                }
+            }
+        }
+
+        self.deblock_has_prev = true;
     }
 
     /// Decode an MCU row from pre-stored coefficients (no entropy decoding).
@@ -2715,9 +2902,208 @@ fn srgb_to_linear_f32(s: f32) -> f32 {
     }
 }
 
+// =============================================================================
+// Boundary 4-tap deblocking helpers for i16 strip planes.
+//
+// These mirror `deblock::boundary::filter_plane_boundary_4tap` but operate on
+// i16 data in a strip (one MCU row) rather than a full f32 plane.
+// =============================================================================
+
+/// Apply vertical boundary filtering (columns at multiples of 8) to an i16
+/// strip plane. `width` is the true pixel width; `stride` >= width.
+/// `height` is the number of rows in the strip.
+fn filter_strip_vertical_i16(
+    plane: &mut [i16],
+    width: usize,
+    stride: usize,
+    height: usize,
+    strength: &BoundaryStrength,
+) {
+    if strength.max_delta < 0.5 || width < 16 || height < 2 {
+        return;
+    }
+
+    let thresh = strength.threshold;
+    let max_d = strength.max_delta;
+
+    let num_boundaries = width / 8;
+
+    for bx in 1..num_boundaries {
+        let col = bx * 8;
+        if col + 1 >= width || col < 2 {
+            continue;
+        }
+
+        for y in 0..height {
+            let base = y * stride;
+            let p1 = plane[base + col - 2] as f32;
+            let p0 = plane[base + col - 1] as f32;
+            let q0 = plane[base + col] as f32;
+            let q1 = plane[base + col + 1] as f32;
+
+            let disc = (p0 - q0).abs();
+            if disc < thresh {
+                continue;
+            }
+
+            let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
+            let delta_p = (avg - p0).clamp(-max_d, max_d);
+            let delta_q = (avg - q0).clamp(-max_d, max_d);
+
+            plane[base + col - 1] = (p0 + delta_p).round() as i16;
+            plane[base + col] = (q0 + delta_q).round() as i16;
+        }
+    }
+}
+
+/// Apply horizontal boundary filtering (rows at multiples of 8) WITHIN a
+/// single strip (intra-MCU boundaries). For an 8-row MCU there are no
+/// intra-MCU boundaries; for a 16-row MCU there is one at row 8.
+fn filter_strip_horizontal_i16(
+    plane: &mut [i16],
+    width: usize,
+    stride: usize,
+    height: usize,
+    strength: &BoundaryStrength,
+) {
+    if strength.max_delta < 0.5 || width < 2 || height < 16 {
+        return;
+    }
+
+    let thresh = strength.threshold;
+    let max_d = strength.max_delta;
+
+    let num_boundaries = height / 8;
+
+    for by in 1..num_boundaries {
+        let row = by * 8;
+        if row + 1 >= height || row < 2 {
+            continue;
+        }
+
+        let off_p1 = (row - 2) * stride;
+        let off_p0 = (row - 1) * stride;
+        let off_q0 = row * stride;
+        let off_q1 = (row + 1) * stride;
+
+        for x in 0..width {
+            let p1 = plane[off_p1 + x] as f32;
+            let p0 = plane[off_p0 + x] as f32;
+            let q0 = plane[off_q0 + x] as f32;
+            let q1 = plane[off_q1 + x] as f32;
+
+            let disc = (p0 - q0).abs();
+            if disc < thresh {
+                continue;
+            }
+
+            let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
+            let delta_p = (avg - p0).clamp(-max_d, max_d);
+            let delta_q = (avg - q0).clamp(-max_d, max_d);
+
+            plane[off_p0 + x] = (p0 + delta_p).round() as i16;
+            plane[off_q0 + x] = (q0 + delta_q).round() as i16;
+        }
+    }
+}
+
+/// Apply horizontal boundary filtering at the junction between two MCU rows.
+///
+/// `prev_rows` contains the last 2 rows of the previous MCU row's strip at
+/// `prev_offset`: row[-2] at `prev_offset`, row[-1] at `prev_offset + prev_stride`.
+/// `curr_plane` is the current strip; row[0] at offset 0, row[1] at `curr_stride`.
+///
+/// The 4-tap filter straddles the boundary: p1=row[-2], p0=row[-1], q0=row[0], q1=row[1].
+/// Only modifies `curr_plane` row[0] (q0 side); the previous MCU row's data has already
+/// been served to the caller, so we don't modify `prev_rows`. This is a one-sided filter
+/// at the MCU junction — slightly weaker than the full two-sided filter, but avoids
+/// requiring access to already-served output.
+fn filter_inter_mcu_horizontal_i16(
+    prev_rows: &[i16],
+    prev_offset: usize,
+    prev_stride: usize,
+    curr_plane: &mut [i16],
+    curr_stride: usize,
+    width: usize,
+    strength: &BoundaryStrength,
+) {
+    if strength.max_delta < 0.5 || width < 2 {
+        return;
+    }
+    // Need at least 2 rows in current plane for q0/q1
+    if curr_plane.len() < 2 * curr_stride {
+        return;
+    }
+
+    let thresh = strength.threshold;
+    let max_d = strength.max_delta;
+
+    for x in 0..width {
+        let p1 = prev_rows[prev_offset + x] as f32;
+        let p0 = prev_rows[prev_offset + prev_stride + x] as f32;
+        let q0 = curr_plane[x] as f32;
+        let q1 = curr_plane[curr_stride + x] as f32;
+
+        let disc = (p0 - q0).abs();
+        if disc < thresh {
+            continue;
+        }
+
+        let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
+        let delta_q = (avg - q0).clamp(-max_d, max_d);
+
+        // Only modify the current MCU row's side (q0).
+        curr_plane[x] = (q0 + delta_q).round() as i16;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_filter_strip_vertical_i16() {
+        // 32x8 plane with sharp step at column 8
+        let stride = 32;
+        let width = 32;
+        let height = 8;
+        let mut plane = vec![0i16; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = if x < 8 { 50 } else { 200 };
+            }
+        }
+        let strength = BoundaryStrength::from_dc_quant(20);
+        filter_strip_vertical_i16(&mut plane, width, stride, height, &strength);
+
+        // Pixels at boundary should be pulled toward each other
+        let p0 = plane[2 * stride + 7]; // col 7
+        let q0 = plane[2 * stride + 8]; // col 8
+        assert!(p0 > 50, "p0 should increase from 50: got {p0}");
+        assert!(q0 < 200, "q0 should decrease from 200: got {q0}");
+    }
+
+    #[test]
+    fn test_filter_strip_horizontal_i16() {
+        // 16x16 plane with sharp step at row 8
+        let stride = 16;
+        let width = 16;
+        let height = 16;
+        let mut plane = vec![0i16; stride * height];
+        for y in 0..height {
+            for x in 0..width {
+                plane[y * stride + x] = if y < 8 { 50 } else { 200 };
+            }
+        }
+        let strength = BoundaryStrength::from_dc_quant(20);
+        filter_strip_horizontal_i16(&mut plane, width, stride, height, &strength);
+
+        // Pixels at horizontal boundary should be pulled toward each other
+        let p0 = plane[7 * stride + 5]; // row 7
+        let q0 = plane[8 * stride + 5]; // row 8
+        assert!(p0 > 50, "p0 should increase from 50: got {p0}");
+        assert!(q0 < 200, "q0 should decrease from 200: got {q0}");
+    }
 
     /// Helper to encode RGB pixels with 4:4:4 (no subsampling).
     /// This ensures the streaming decode path is used, which matches the scanline reader's

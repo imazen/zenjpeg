@@ -675,10 +675,12 @@ impl DecodeConfig {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        // Deblocking requires coefficient access — not available in streaming mode
-        if self.deblock_mode != DeblockMode::Off {
+        // Knusperli requires full coefficient access — not available in streaming mode.
+        // Boundary4Tap and Auto (which resolves to Boundary4Tap) are supported.
+        if self.deblock_mode == DeblockMode::Knusperli {
             return Err(Error::unsupported_feature(
-                "deblocking is not supported in scanline_reader (use .decode() instead)",
+                "Knusperli deblocking requires coefficient access and is not supported in \
+                 scanline_reader (use .decode() instead, or use DeblockMode::Boundary4Tap)",
             ));
         }
 
@@ -861,6 +863,7 @@ impl DecodeConfig {
                         self.chroma_upsampling,
                         self.effective_idct_method(),
                         self.output_target,
+                        self.deblock_mode,
                     )?;
                     reader.attach_wave_state(wave_state);
                     self.apply_crop(&mut reader, width, height, mcu_height)?;
@@ -874,6 +877,7 @@ impl DecodeConfig {
             self.chroma_upsampling,
             self.effective_idct_method(),
             self.output_target,
+            self.deblock_mode,
         )?;
         self.apply_crop(&mut reader, width, height, mcu_height)?;
         Ok(reader)
@@ -903,6 +907,14 @@ impl DecodeConfig {
     fn scanline_reader_owned<'a>(&self, vec: alloc::vec::Vec<u8>) -> Result<ScanlineReader<'a>> {
         use crate::types::JpegMode;
         use alloc::borrow::Cow;
+
+        // Knusperli requires full coefficient access — not available in streaming mode.
+        if self.deblock_mode == DeblockMode::Knusperli {
+            return Err(Error::unsupported_feature(
+                "Knusperli deblocking requires coefficient access and is not supported in \
+                 scanline_reader (use .decode() instead, or use DeblockMode::Boundary4Tap)",
+            ));
+        }
 
         // Check if we need a transform
         let effective_transform = self.compute_effective_transform_from_data(&vec);
@@ -1145,6 +1157,7 @@ impl DecodeConfig {
                             self.chroma_upsampling,
                             self.effective_idct_method(),
                             self.output_target,
+                            self.deblock_mode,
                         )?;
                         reader.attach_wave_state(wave_state);
                         self.apply_crop(&mut reader, width, height, mcu_height)?;
@@ -1158,6 +1171,7 @@ impl DecodeConfig {
                     self.chroma_upsampling,
                     self.effective_idct_method(),
                     self.output_target,
+                    self.deblock_mode,
                 )?;
                 self.apply_crop(&mut reader, width, height, mcu_height)?;
                 Ok(reader)
@@ -1710,7 +1724,13 @@ impl DecodeConfig {
             // f32 output path
             #[allow(unused_mut)]
             let mut pixels = if self.deblock_mode != DeblockMode::Off {
-                parser.to_pixels_f32_deblock(output_format, info.is_xyb, self.chroma_upsampling, self.deblock_mode, &stop)?
+                parser.to_pixels_f32_deblock(
+                    output_format,
+                    info.is_xyb,
+                    self.chroma_upsampling,
+                    self.deblock_mode,
+                    &stop,
+                )?
             } else {
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
             };
@@ -1798,10 +1818,15 @@ impl DecodeConfig {
             // u8 output with deblocking: route through f32 deblock path, convert to u8.
             // The f32 path applies deblocking between IDCT and color conversion.
             let f32_pixels = parser.to_pixels_f32_deblock(
-                output_format, info.is_xyb, self.chroma_upsampling, self.deblock_mode, &stop,
+                output_format,
+                info.is_xyb,
+                self.chroma_upsampling,
+                self.deblock_mode,
+                &stop,
             )?;
             #[allow(unused_mut)]
-            let mut pixels: Vec<u8> = f32_pixels.iter()
+            let mut pixels: Vec<u8> = f32_pixels
+                .iter()
                 .map(|&v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8)
                 .collect();
 
