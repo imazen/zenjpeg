@@ -253,7 +253,6 @@ fn test_decoder_builder() {
 
     let decoded = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .fancy_upsampling(true)
         .decode(&jpeg, Unstoppable)
         .expect("decode failed");
 

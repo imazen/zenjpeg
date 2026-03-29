@@ -184,7 +184,7 @@ fn bench_decode_mozjpeg(c: &mut Criterion) {
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)
-                        .fancy_upsampling(false);
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     decoder
                         .decode(black_box(data), Unstoppable)
                         .expect("decode failed")

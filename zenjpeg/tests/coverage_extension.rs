@@ -371,7 +371,7 @@ mod decode_coverage {
         let config = EncoderConfig::ycbcr(30.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
-        let decoder = Decoder::new().block_smoothing(true);
+        let decoder = Decoder::new();
 
         let decoded = decoder.decode(&jpeg, Unstoppable).expect("decode failed");
         assert_eq!(decoded.width, 64);

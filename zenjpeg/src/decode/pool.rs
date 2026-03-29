@@ -14,7 +14,7 @@
 //! // Built once at server startup
 //! let decoder = Decoder::new()
 //!     .output_format(PixelFormat::Rgb)
-//!     .fancy_upsampling(false);
+//!     .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
 //!
 //! let pool = DecodePool::new();
 //!

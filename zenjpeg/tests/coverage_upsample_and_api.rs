@@ -372,12 +372,11 @@ mod decoder_config_tests {
     fn decoder_fancy_upsampling_toggle() {
         let jpeg = make_jpeg_420();
         let fancy = Decoder::new()
-            .fancy_upsampling(true)
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("fancy");
         let box_filter = Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .output_format(PixelFormat::Rgb)
             .decode(&jpeg, Unstoppable)
             .expect("box");
@@ -488,7 +487,7 @@ mod decoder_config_tests {
     fn decoder_is_clone() {
         let d = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .max_pixels(1_000_000);
         let d2 = d.clone();
         let jpeg = make_jpeg_420();
@@ -932,7 +931,7 @@ mod scanline_reader_tests {
 
         let decoder = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .fancy_upsampling(false);
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
         let mut reader = decoder.scanline_reader(&jpeg).expect("scanline_reader");
 
         let info = reader.info();
@@ -963,7 +962,7 @@ mod scanline_reader_tests {
 
         let decoder = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .fancy_upsampling(false);
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
         let mut reader = decoder.scanline_reader(&jpeg).expect("scanline_reader");
 
         let mut rows = 0;

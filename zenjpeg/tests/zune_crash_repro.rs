@@ -43,7 +43,7 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
     // With fancy upsampling disabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .decode(data, Unstoppable)
     }));
     if let Err(e) = result {
@@ -58,7 +58,6 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
     // With fancy upsampling enabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         Decoder::new()
-            .fancy_upsampling(true)
             .decode(data, Unstoppable)
     }));
     if let Err(e) = result {

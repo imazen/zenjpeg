@@ -238,7 +238,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)
-                        .fancy_upsampling(false);
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     decoder
                         .decode(black_box(data), Unstoppable)
                         .expect("decode failed")
@@ -301,7 +301,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
                     use zenjpeg::decoder::PixelFormat;
                     let decoder = Decoder::new()
                         .output_format(PixelFormat::Rgb)
-                        .fancy_upsampling(false);
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     decoder
                         .decode(black_box(data), Unstoppable)
                         .expect("decode failed")
@@ -395,7 +395,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 b.iter(|| {
                     use imgref::ImgRefMut;
                     use zenjpeg::decode::Decoder;
-                    let decoder = Decoder::new().fancy_upsampling(false);
+                    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     let mut reader = decoder
                         .scanline_reader(black_box(data))
                         .expect("scanline_reader failed");
@@ -427,7 +427,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
                 b.iter(|| {
                     use imgref::ImgRefMut;
                     use zenjpeg::decode::Decoder;
-                    let decoder = Decoder::new().fancy_upsampling(false).num_threads(1); // Force sequential
+                    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor).num_threads(1); // Force sequential
                     let mut reader = decoder
                         .scanline_reader(black_box(data))
                         .expect("scanline_reader failed");
@@ -587,7 +587,7 @@ fn bench_parallel_strategies(c: &mut Criterion) {
                     Decoder::new()
                         .output_format(PixelFormat::Rgb)
                         .parallel_strategy(ParallelStrategy::Auto)
-                        .fancy_upsampling(false)
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
                         .decode(black_box(data), Unstoppable)
                         .expect("decode failed")
                 });

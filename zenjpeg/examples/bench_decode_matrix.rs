@@ -224,7 +224,7 @@ mod bench {
     fn decode_with_zenjpeg_box(data: &[u8], pool: &rayon::ThreadPool) -> Vec<u8> {
         let decoder = Decoder::new()
             .output_format(PixelFormat::Rgb)
-            .fancy_upsampling(false);
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
         pool.install(|| {
             decoder
                 .decode(data, Unstoppable)

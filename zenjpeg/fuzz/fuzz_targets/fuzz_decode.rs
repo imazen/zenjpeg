@@ -30,12 +30,11 @@ fuzz_target!(|data: &[u8]| {
 
     // Test with various decoder options
     let decoder = Decoder::new()
-        .fancy_upsampling(true)
-        .block_smoothing(true);
+        ;
     let _ = decoder.decode(data);
 
     let decoder = Decoder::new()
-        .fancy_upsampling(false)
-        .block_smoothing(false);
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
+        ;
     let _ = decoder.decode(data);
 });

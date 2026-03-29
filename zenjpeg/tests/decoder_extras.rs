@@ -79,7 +79,7 @@ fn test_extras_empty_when_preserve_none() {
 
     // Decode with no preservation
     let decoded = Decoder::new()
-        .preserve_none()
+        .preserve_no_metadata()
         .decode(&jpeg, Unstoppable)
         .expect("decode");
 

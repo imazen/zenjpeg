@@ -1523,7 +1523,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 self.orientation,
                 self.policy.as_ref(),
             );
-            cfg = cfg.preserve_all();
+            cfg = cfg.preserve_all_metadata();
 
             if wants_f32 {
                 cfg = cfg.output_target(OutputTarget::LinearF32);

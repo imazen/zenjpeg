@@ -211,11 +211,10 @@ fn main() {
     // Shared decoder configs — reused across all strategies
     let decoder_box = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .fancy_upsampling(false);
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
 
     let decoder_fancy = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .fancy_upsampling(true);
 
     // Shared pools (created once, reused)
     let pool_2 = Arc::new(DecodePool::new().parallel_threshold(2));

@@ -180,7 +180,7 @@ impl DecodeConfig {
     /// ```ignore
     /// use zenjpeg::decode::{Decoder, DecodePool};
     ///
-    /// let decoder = Decoder::new().fancy_upsampling(false);
+    /// let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
     /// let pool = DecodePool::new();
     ///
     /// // With pool (server)
@@ -218,21 +218,6 @@ impl DecodeConfig {
 
     /// Enables or disables fancy (triangle filter) upsampling.
     ///
-    /// This is a convenience method for backwards compatibility.
-    /// `true` maps to [`ChromaUpsampling::Triangle`],
-    /// `false` maps to [`ChromaUpsampling::NearestNeighbor`].
-    ///
-    /// For more control, use [`chroma_upsampling()`](Self::chroma_upsampling).
-    #[must_use]
-    pub fn fancy_upsampling(mut self, enable: bool) -> Self {
-        self.chroma_upsampling = if enable {
-            ChromaUpsampling::Triangle
-        } else {
-            ChromaUpsampling::NearestNeighbor
-        };
-        self
-    }
-
     /// Sets the integer IDCT algorithm.
     ///
     /// Controls which fixed-point IDCT is used during decoding. Different
@@ -299,24 +284,6 @@ impl DecodeConfig {
     #[must_use]
     pub fn deblock(mut self, mode: DeblockMode) -> Self {
         self.deblock_mode = mode;
-        self
-    }
-
-    /// Enables inter-block smoothing for progressive JPEGs.
-    ///
-    /// **Disabled by default.** When enabled, applies a cross-block smoothing
-    /// filter during progressive JPEG rendering to reduce blocking artifacts
-    /// in partially-received scans. This is the same as libjpeg's
-    /// `do_block_smoothing` option.
-    ///
-    /// Has no effect on baseline JPEGs or fully-received progressive JPEGs
-    /// (the final coefficients are already smooth). Most useful for progressive
-    /// display during download, where early scans have coarse quantization.
-    ///
-    /// Performance impact: negligible (only runs during progressive rendering).
-    #[must_use]
-    pub fn block_smoothing(mut self, enable: bool) -> Self {
-        self.block_smoothing = enable;
         self
     }
 
@@ -408,15 +375,15 @@ impl DecodeConfig {
         self
     }
 
-    /// Convenience: preserve nothing extra (minimal memory).
+    /// Convenience: preserve no metadata (minimal memory, pixels only).
     #[must_use]
-    pub fn preserve_none(self) -> Self {
+    pub fn preserve_no_metadata(self) -> Self {
         self.preserve(PreserveConfig::none())
     }
 
-    /// Convenience: preserve everything.
+    /// Convenience: preserve all metadata (EXIF, XMP, ICC, IPTC, comments, MPF).
     #[must_use]
-    pub fn preserve_all(self) -> Self {
+    pub fn preserve_all_metadata(self) -> Self {
         self.preserve(PreserveConfig::all())
     }
 
@@ -2618,8 +2585,7 @@ mod tests {
     #[test]
     fn test_decoder_creation() {
         let decoder = Decoder::new()
-            .output_format(PixelFormat::Rgb)
-            .fancy_upsampling(true);
+            .output_format(PixelFormat::Rgb);
 
         assert_eq!(decoder.output_format, Some(PixelFormat::Rgb));
         assert_eq!(decoder.chroma_upsampling, ChromaUpsampling::Triangle);

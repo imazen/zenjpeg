@@ -18,7 +18,7 @@
 //!     │   ├── .strictness()          error handling (Strict, Balanced, Lenient)
 //!     │   ├── .strict() / .lenient() convenience shortcuts
 //!     │   ├── .preserve()            metadata preservation
-//!     │   ├── .preserve_all() / .preserve_none()
+//!     │   ├── .preserve_all_metadata() / .preserve_no_metadata()
 //!     │   ├── .limits()              resource limits
 //!     │   ├── .max_pixels()          pixel count limit
 //!     │   ├── .max_memory()          memory limit
@@ -500,20 +500,19 @@ fn chroma_upsampling_libjpeg_compat() {
     assert!(result.pixels_u8().is_some());
 }
 
-/// `.fancy_upsampling(false)` maps to NearestNeighbor.
+/// `.chroma_upsampling(ChromaUpsampling::NearestNeighbor)` maps to NearestNeighbor.
 #[test]
 fn fancy_upsampling_toggle() {
     let jpeg = test_jpeg_420();
 
     // false → NearestNeighbor (fast)
     let fast = Decoder::new()
-        .fancy_upsampling(false)
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
     // true → Triangle (default quality)
     let fancy = Decoder::new()
-        .fancy_upsampling(true)
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
@@ -623,23 +622,23 @@ fn preserve_default() {
     assert!(extras.exif().is_some(), "default should preserve EXIF");
 }
 
-/// `.preserve_all()` keeps everything.
+/// `.preserve_all_metadata()` keeps everything.
 #[test]
 fn preserve_all() {
     let jpeg = test_jpeg_with_exif();
     let result = Decoder::new()
-        .preserve_all()
+        .preserve_all_metadata()
         .decode(&jpeg, Unstoppable)
         .unwrap();
     assert!(result.extras().is_some());
 }
 
-/// `.preserve_none()` drops all metadata.
+/// `.preserve_no_metadata()` drops all metadata.
 #[test]
 fn preserve_none() {
     let jpeg = test_jpeg_with_exif();
     let result = Decoder::new()
-        .preserve_none()
+        .preserve_no_metadata()
         .decode(&jpeg, Unstoppable)
         .unwrap();
     // extras may still exist but individual fields should be empty
@@ -675,7 +674,7 @@ fn preserve_custom() {
 fn decode_result_accessors() {
     let jpeg = test_jpeg_420();
     let mut result = Decoder::new()
-        .preserve_all()
+        .preserve_all_metadata()
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
@@ -1351,12 +1350,12 @@ fn block_smoothing() {
     let jpeg = test_jpeg_420();
     // Just verify it doesn't crash
     let result = Decoder::new()
-        .block_smoothing(true)
+        
         .decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 
     let result = Decoder::new()
-        .block_smoothing(false)
+        
         .decode(&jpeg, Unstoppable);
     assert!(result.is_ok());
 }
@@ -1414,7 +1413,7 @@ fn gain_map_handling() {
 fn decoded_extras() {
     let jpeg = test_jpeg_with_exif();
     let result = Decoder::new()
-        .preserve_all()
+        .preserve_all_metadata()
         .decode(&jpeg, Unstoppable)
         .unwrap();
 
@@ -1488,7 +1487,6 @@ fn decode_progressive() {
 fn config_reuse() {
     let decoder = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .fancy_upsampling(true);
 
     let jpeg_a = test_jpeg_420();
     let jpeg_b = test_jpeg_444();

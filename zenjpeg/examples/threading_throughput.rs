@@ -79,7 +79,7 @@ fn decode_parallel(data: &[u8]) -> Vec<u8> {
     use zenjpeg::decoder::PixelFormat;
     let decoder = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .fancy_upsampling(false);
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
     decoder
         .decode(data, Unstoppable)
         .expect("decode")
@@ -93,7 +93,7 @@ fn decode_sequential(data: &[u8]) -> Vec<u8> {
     let decoder = Decoder::new()
         .output_format(PixelFormat::Rgb)
         .num_threads(1)
-        .fancy_upsampling(false);
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
     decoder
         .decode(data, Unstoppable)
         .expect("decode")
@@ -103,7 +103,7 @@ fn decode_sequential(data: &[u8]) -> Vec<u8> {
 
 /// Decode: wave-parallel scanline reader (rayon global pool)
 fn decode_wave(data: &[u8]) -> Vec<u8> {
-    let decoder = Decoder::new().fancy_upsampling(false);
+    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
     let mut reader = decoder.scanline_reader(data).expect("scanline_reader");
     let w = reader.width() as usize;
     let h = reader.height() as usize;

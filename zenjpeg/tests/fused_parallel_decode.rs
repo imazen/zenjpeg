@@ -580,7 +580,7 @@ fn decode_wave_scanline(jpeg: &[u8]) -> Vec<u8> {
         .unwrap();
     pool.install(|| {
         let mut reader = Decoder::new()
-            .fancy_upsampling(false) // box filter = NearestNeighbor
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor) // box filter = NearestNeighbor
             .scanline_reader(jpeg)
             .expect("wave scanline_reader failed");
         let width = reader.width() as usize;
@@ -605,7 +605,7 @@ fn decode_wave_scanline(jpeg: &[u8]) -> Vec<u8> {
 /// Decode via sequential scanline reader (single-threaded).
 fn decode_sequential_scanline(jpeg: &[u8]) -> Vec<u8> {
     let mut reader = Decoder::new()
-        .fancy_upsampling(false)
+        .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
         .num_threads(1)
         .scanline_reader(jpeg)
         .expect("sequential scanline_reader failed");
@@ -706,7 +706,7 @@ fn test_wave_parallel_small_chunks() {
         .unwrap();
     let wave = pool.install(|| {
         let mut reader = Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .scanline_reader(&jpeg)
             .expect("scanline_reader failed");
         let width = reader.width() as usize;
@@ -742,7 +742,7 @@ fn decode_planar_i16_seq(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u32
         .unwrap();
     pool.install(|| {
         let mut reader = Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .num_threads(1)
             .scanline_reader(jpeg)
             .expect("scanline_reader failed");
@@ -797,7 +797,7 @@ fn decode_planar_i16_wave(jpeg: &[u8]) -> (Vec<i16>, Vec<i16>, Vec<i16>, u32, u3
         .unwrap();
     pool.install(|| {
         let mut reader = Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .scanline_reader(jpeg)
             .expect("scanline_reader failed");
 
@@ -979,7 +979,7 @@ fn test_planar_to_rgb_reconstruction_420() {
             .unwrap();
         pool.install(|| {
             Decoder::new()
-                .fancy_upsampling(false)
+                .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
                 .num_threads(1)
                 .output_format(PixelFormat::Rgb)
                 .decode(&jpeg, Unstoppable)

@@ -766,8 +766,6 @@ pub struct DecodeConfig {
     pub gain_map: GainMapHandling,
     /// Chroma upsampling method for subsampled images
     pub chroma_upsampling: ChromaUpsampling,
-    /// Whether to apply block smoothing
-    pub block_smoothing: bool,
     /// Convert embedded ICC color profile to a target color space.
     ///
     /// When `Some(target)`, the decoder applies the embedded ICC profile
@@ -834,7 +832,6 @@ impl core::fmt::Debug for DecodeConfig {
             .field("output_target", &self.output_target)
             .field("gain_map", &self.gain_map)
             .field("chroma_upsampling", &self.chroma_upsampling)
-            .field("block_smoothing", &self.block_smoothing)
             .field("correct_color", &self.correct_color)
             .field("max_pixels", &self.max_pixels)
             .field("max_memory", &self.max_memory)
@@ -858,7 +855,6 @@ impl Default for DecodeConfig {
             output_target: OutputTarget::default(),
             gain_map: GainMapHandling::default(),
             chroma_upsampling: ChromaUpsampling::default(),
-            block_smoothing: false,
             correct_color: None,
             max_pixels: DEFAULT_MAX_PIXELS,
             max_memory: DEFAULT_MAX_MEMORY,

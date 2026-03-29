@@ -105,7 +105,7 @@ fn test_file(path: &Path) -> TestResult {
     // Test with fancy upsampling disabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         Decoder::new()
-            .fancy_upsampling(false)
+            .chroma_upsampling(ChromaUpsampling::NearestNeighbor)
             .decode(&data, Unstoppable)
     }));
     if let Err(e) = result {
@@ -115,7 +115,6 @@ fn test_file(path: &Path) -> TestResult {
     // Test with fancy upsampling enabled
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         Decoder::new()
-            .fancy_upsampling(true)
             .decode(&data, Unstoppable)
     }));
     if let Err(e) = result {
