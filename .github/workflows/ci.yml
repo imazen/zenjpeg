@@ -66,20 +66,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test (zenjpeg)
+      - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
 
-      - name: Test (zenjpeg --features decoder)
-        run: cargo test -p zenjpeg --release --features decoder --lib --tests
+      - name: Test (all user features)
+        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec" --lib --tests
 
-      - name: Test (zenjpeg --features decoder,parallel)
-        run: cargo test -p zenjpeg --release --features "decoder,parallel" --lib --tests
-
-      - name: Test (zenjpeg --no-default-features --features std)
-        run: cargo test -p zenjpeg --release --no-default-features --features std --lib --tests
-
-      - name: Test (zenjpeg --features decoder,sharp-yuv)
-        run: cargo test -p zenjpeg --release --features "decoder,sharp-yuv" --lib --tests
+      - name: Test (no defaults, decoder only)
+        run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
 
   i686:
     name: Test (i686)
@@ -168,8 +162,8 @@ jobs:
       - name: Clippy
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
-      - name: Clippy (CI features)
-        run: cargo clippy -p zenjpeg --lib --tests --benches --features "decoder,parallel,trellis,yuv,sharp-yuv,ultrahdr,zencodec,cms,cms-moxcms,mozjpeg-tables,optimized-tables,test-utils" -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy -p zenjpeg --lib --tests --benches --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
 
   fmt:
     name: Format
