@@ -885,6 +885,17 @@ impl JpegDecoderConfig {
         &mut self.inner
     }
 
+    /// Enable post-decode deblocking to reduce JPEG block artifacts.
+    ///
+    /// Delegates to [`DecodeConfig::deblock()`](crate::decode::DecodeConfig::deblock).
+    /// See [`DeblockMode`](crate::decode::DeblockMode) for available modes.
+    #[cfg(feature = "decoder")]
+    #[must_use]
+    pub fn deblock(mut self, mode: crate::decode::DeblockMode) -> Self {
+        self.inner = self.inner.deblock(mode);
+        self
+    }
+
     /// Convenience: probe image header with this config.
     pub fn probe_header(&self, data: &[u8]) -> Result<ImageInfo, Error> {
         use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
