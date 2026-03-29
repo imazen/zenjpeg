@@ -541,48 +541,58 @@ fn photo_decoder_parity() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TEST 2.5: DECODER RECONSTRUCTION QUALITY vs ORIGINAL
+// TEST 2.5: DECODER RECONSTRUCTION QUALITY vs ORIGINAL (all encoders)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Given a mozjpeg-encoded JPEG, which decoder produces the best
-// reconstruction of the original? This is different from test 2 (parity):
-// test 2 measures how close to mozjpeg-sys; this measures how close to truth.
+// For each (encoder, quality), encode the source, then decode with all 3
+// decoders, and measure zensim of each decoded output vs the original.
+// Shows which (encoder, decoder) combination best reconstructs the source.
 //
-// Pipeline:
-//   Encoder:   mozjpeg-rs | ProgressiveSmallest | 4:2:0
-//   Decoder A: mozjpeg-sys | libjpeg-turbo FFI | islow IDCT | fancy upsample
-//   Decoder B: zenjpeg    | Jpegli IDCT (12-bit) | Triangle upsampling
-//   Decoder C: zenjpeg    | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample
-//   Metric:    zensim(decoder_output, original) for each decoder
+// Encoders:
+//   mozjpeg:    mozjpeg-rs | ProgressiveSmallest | 4:2:0
+//   zen-jpegli: zenjpeg | native Q + JpegliProgressive | AQ | jpegli tables | 4:2:0
+//   zen-auto:   zenjpeg | native Q + auto_optimize | AQ + hybrid trellis | jpegli tables | 4:2:0
+// Decoders:
+//   mozjpeg-sys: libjpeg-turbo FFI | islow IDCT (13-bit) | fancy upsample
+//   zen-default: zenjpeg | Jpegli IDCT (12-bit) | Triangle upsampling
+//   zen-compat:  zenjpeg | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample
+// Metric: zensim(decoded, original) for each (encoder × decoder) cell
 
-struct ReconResult {
-    corpus: &'static str,
+/// Extended quality range for reconstruction test — includes low Q.
+const RECON_QUALITY_LEVELS: [u8; 11] = [5, 10, 20, 30, 40, 50, 70, 80, 85, 90, 95];
+
+struct ReconRow {
     quality: u8,
-    /// zensim vs original for each decoder
-    mozjpeg_sys_score: f64,
-    zen_default_score: f64,
-    zen_compat_score: f64,
+    /// For each encoder: (label, [(decoder_label, zensim_vs_orig)])
+    /// 3 encoders × 3 decoders = 9 scores per row
+    cells: Vec<(&'static str, Vec<(&'static str, f64)>)>,
 }
 
-fn process_recon(img: &LoadedImage, quality: u8) -> ReconResult {
+fn process_recon(img: &LoadedImage, quality: u8) -> ReconRow {
     let (w, h, px) = (img.width, img.height, &img.pixels);
-    let moz_jpeg = encode_mozjpeg(px, w, h, quality);
 
-    let (_, _, dec_moz) = decode_mozjpeg_sys(&moz_jpeg).expect("mozjpeg decode");
-    let (_, _, dec_def) = decode_zen_default(&moz_jpeg);
-    let (_, _, dec_compat) = decode_zen_compat(&moz_jpeg);
+    let encoders: Vec<(&str, Vec<u8>)> = vec![
+        (MODE_MOZJPEG.label, encode_mozjpeg(px, w, h, quality)),
+        (MODE_ZEN_JPEGLI.label, encode_zen_jpegli(px, w, h, quality)),
+        (MODE_ZEN_AUTO.label, encode_zen_auto(px, w, h, quality)),
+    ];
 
     thread_local! { static Z: Zensim = Zensim::new(ZensimProfile::latest()); }
-    let (ms, ds, cs) = Z.with(|z| {
-        (zensim_score(z, px, &dec_moz, w as usize, h as usize),
-         zensim_score(z, px, &dec_def, w as usize, h as usize),
-         zensim_score(z, px, &dec_compat, w as usize, h as usize))
-    });
 
-    ReconResult {
-        corpus: img.corpus, quality,
-        mozjpeg_sys_score: ms, zen_default_score: ds, zen_compat_score: cs,
-    }
+    let cells: Vec<_> = encoders.into_iter().map(|(enc_label, jpeg)| {
+        let (_, _, dec_moz) = decode_mozjpeg_sys(&jpeg).expect("mozjpeg decode");
+        let (_, _, dec_def) = decode_zen_default(&jpeg);
+        let (_, _, dec_compat) = decode_zen_compat(&jpeg);
+
+        let scores = Z.with(|z| vec![
+            ("moz-sys", zensim_score(z, px, &dec_moz, w as usize, h as usize)),
+            ("zen-def", zensim_score(z, px, &dec_def, w as usize, h as usize)),
+            ("zen-cmp", zensim_score(z, px, &dec_compat, w as usize, h as usize)),
+        ]);
+        (enc_label, scores)
+    }).collect();
+
+    ReconRow { quality, cells }
 }
 
 #[test]
@@ -591,59 +601,79 @@ fn photo_decoder_reconstruction_vs_original() {
     let images = load_all_corpora();
     if images.is_empty() { println!("No corpora found, skipping"); return; }
 
-    println!("=== Decoder Reconstruction Quality vs Original ===");
-    println!("  Encoder:   mozjpeg-rs | ProgressiveSmallest | 4:2:0");
-    println!("  Decoder A: mozjpeg-sys | libjpeg-turbo FFI | islow IDCT | fancy upsample");
-    println!("  Decoder B: zenjpeg    | Jpegli IDCT (12-bit) | Triangle upsampling");
-    println!("  Decoder C: zenjpeg    | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample");
-    println!("  Metric:    zensim(decoded, original) — which decoder best reconstructs the source?");
+    println!("=== Decoder Reconstruction vs Original (all encoders × all decoders) ===");
+    println!("  Encoders:");
+    println!("    {}: {}", MODE_MOZJPEG.label, MODE_MOZJPEG.desc);
+    println!("    {}: {}", MODE_ZEN_JPEGLI.label, MODE_ZEN_JPEGLI.desc);
+    println!("    {}: {}", MODE_ZEN_AUTO.label, MODE_ZEN_AUTO.desc);
+    println!("  Decoders:");
+    println!("    moz-sys: mozjpeg-sys | libjpeg-turbo FFI | islow IDCT (13-bit) | fancy upsample");
+    println!("    zen-def: zenjpeg | Jpegli IDCT (12-bit) | Triangle upsampling");
+    println!("    zen-cmp: zenjpeg | Libjpeg IDCT (13-bit Loeffler) | LibjpegCompat upsample");
+    println!("  Metric: zensim(decoded, original) — higher = better reconstruction");
+    println!("  Quality range: Q5–Q95 (11 levels)");
     println!();
     print_corpus_info(&images);
 
     let work: Vec<(usize, u8)> = images.iter().enumerate()
-        .flat_map(|(i, _)| QUALITY_LEVELS.iter().map(move |&q| (i, q)))
+        .flat_map(|(i, _)| RECON_QUALITY_LEVELS.iter().map(move |&q| (i, q)))
         .collect();
     let total = work.len() as u32;
     let progress = AtomicU32::new(0);
-    println!("Running {total} reconstruction checks...\n");
+    println!("Running {total} images × 3 encoders × 3 decoders...\n");
 
-    let results: Vec<ReconResult> = work.par_iter().map(|&(idx, q)| {
+    let results: Vec<ReconRow> = work.par_iter().map(|&(idx, q)| {
         let done = progress.fetch_add(1, Ordering::Relaxed);
-        if done > 0 && done % 200 == 0 { eprintln!("  ... {done}/{total}"); }
+        if done > 0 && done % 300 == 0 { eprintln!("  ... {done}/{total}"); }
         process_recon(&images[idx], q)
     }).collect();
 
-    println!("  {:>3}  {:>12}  {:>12}  {:>12}  {:>6}  {:>6}", "Q", "mozjpeg-sys", "zen-default", "zen-compat", "Δ def", "Δ cmp");
-    println!("  {}", "-".repeat(68));
+    let enc_labels = [MODE_MOZJPEG.label, MODE_ZEN_JPEGLI.label, MODE_ZEN_AUTO.label];
+    let dec_labels = ["moz-sys", "zen-def", "zen-cmp"];
 
-    for &q in &QUALITY_LEVELS {
-        let qr: Vec<&ReconResult> = results.iter().filter(|r| r.quality == q).collect();
-        let n = qr.len() as f64;
-        let ms = qr.iter().map(|r| r.mozjpeg_sys_score).sum::<f64>() / n;
-        let ds = qr.iter().map(|r| r.zen_default_score).sum::<f64>() / n;
-        let cs = qr.iter().map(|r| r.zen_compat_score).sum::<f64>() / n;
-        println!("  Q{q:<2}  {ms:>12.2}  {ds:>12.2}  {cs:>12.2}  {:.2}  {:.2}", ds - ms, cs - ms);
+    // Print per-encoder table: rows = Q, columns = decoder
+    for (ei, enc_label) in enc_labels.iter().enumerate() {
+        println!("\n  Encoder: {enc_label}");
+        println!("  {:>3}  {:>10}  {:>10}  {:>10}  {:>7}  {:>7}",
+            "Q", dec_labels[0], dec_labels[1], dec_labels[2], "Δ def", "Δ cmp");
+        println!("  {}", "-".repeat(60));
+
+        for &q in &RECON_QUALITY_LEVELS {
+            let qr: Vec<&ReconRow> = results.iter().filter(|r| r.quality == q).collect();
+            let n = qr.len() as f64;
+
+            // Mean score for each decoder under this encoder
+            let mut means = [0.0f64; 3];
+            for r in &qr {
+                for (di, &(_, score)) in r.cells[ei].1.iter().enumerate() {
+                    means[di] += score;
+                }
+            }
+            for m in &mut means { *m /= n; }
+
+            // Δ = zen-decoder minus moz-sys
+            println!("  Q{q:<2}  {:.2}  {:.2}  {:.2}  {:>+6.2}  {:>+6.2}",
+                means[0], means[1], means[2],
+                means[1] - means[0],  // zen-def vs moz-sys
+                means[2] - means[0],  // zen-cmp vs moz-sys
+            );
+        }
     }
 
-    // Per-corpus
-    for corpus in ["CID22", "CLIC", "gb82"] {
-        let cr: Vec<&ReconResult> = results.iter().filter(|r| r.corpus == corpus).collect();
-        if cr.is_empty() { continue; }
-        let n = cr.len() as f64;
-        let ms = cr.iter().map(|r| r.mozjpeg_sys_score).sum::<f64>() / n;
-        let ds = cr.iter().map(|r| r.zen_default_score).sum::<f64>() / n;
-        let cs = cr.iter().map(|r| r.zen_compat_score).sum::<f64>() / n;
-        println!("  {corpus:<5}: moz-sys={ms:.2}, default={ds:.2} ({:+.2}), compat={cs:.2} ({:+.2})",
-                 ds - ms, cs - ms);
+    // Best decoder per encoder (across all Q and images)
+    println!();
+    for (ei, enc_label) in enc_labels.iter().enumerate() {
+        let mut dec_wins = [0usize; 3];
+        for r in &results {
+            let scores: Vec<f64> = r.cells[ei].1.iter().map(|&(_, s)| s).collect();
+            let best = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            for (di, &s) in scores.iter().enumerate() {
+                if (s - best).abs() < 0.001 { dec_wins[di] += 1; }
+            }
+        }
+        println!("  {enc_label}: best decoder wins — moz-sys:{} zen-def:{} zen-cmp:{}",
+            dec_wins[0], dec_wins[1], dec_wins[2]);
     }
-
-    // Which decoder wins most often (vs original)?
-    let def_wins = results.iter().filter(|r| r.zen_default_score > r.mozjpeg_sys_score + 0.01).count();
-    let moz_wins = results.iter().filter(|r| r.mozjpeg_sys_score > r.zen_default_score + 0.01).count();
-    let compat_wins = results.iter().filter(|r| r.zen_compat_score > r.mozjpeg_sys_score + 0.01).count();
-    println!("\n  zen-default beats mozjpeg-sys: {def_wins} / {} (vs original)", results.len());
-    println!("  zen-compat beats mozjpeg-sys: {compat_wins} / {} (vs original)", results.len());
-    println!("  mozjpeg-sys beats zen-default: {moz_wins} / {} (vs original)", results.len());
 
     println!("PASS");
 }
