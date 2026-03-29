@@ -47,8 +47,7 @@ pub enum ChromaUpsampling {
     /// Separable triangle filter with fixed `+8` rounding bias. Lower quality
     /// than [`Triangle`](Self::Triangle) due to systematic upward rounding and
     /// an intermediate rounding step from the two-pass (horizontal then vertical)
-    /// implementation. Retained only for reproducing output from earlier zenjpeg
-    /// versions.
+    /// implementation. Matches the C++ jpegli decoder's upsampling behavior.
     SeparableBiased,
 
     /// Horizontal-only triangle filter with vertical box (nearest-neighbor).
