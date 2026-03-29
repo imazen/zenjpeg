@@ -65,11 +65,12 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `decoder` | **yes** | JPEG decoder (streaming, parallel, deblocking) |
-| `trellis` | no | Trellis quantization, `auto_optimize()`, mozjpeg/hybrid presets |
+| `trellis` | no | Trellis quantization, `auto_optimize()`, mozjpeg/hybrid presets. Compile error without it. |
 | `parallel` | no | Multi-threaded encode/decode via rayon |
 | `moxcms` | no | Color management (pure Rust). Required for `.correct_color()` and XYB |
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
 | `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
+| `layout` | no | Lossless transforms + lossy decode→resize→encode pipeline |
 
 `decoder` is on by default. The decoder API is prerelease; expect breaking changes.
 
