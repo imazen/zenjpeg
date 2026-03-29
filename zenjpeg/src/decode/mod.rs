@@ -271,14 +271,26 @@ impl DecodeConfig {
     /// The effect is strongest at low quality levels (Q5-Q50) where blocking
     /// artifacts are most visible.
     ///
-    /// [`DeblockMode::Auto`] uses content classification to pick the optimal
-    /// strategy. For photos at Q5-Q30, this typically applies Knusperli
-    /// (DCT-domain correction). For Q30+, it uses boundary 4-tap filtering.
-    /// Screenshots are skipped (deblocking hurts synthetic content).
+    /// # Supported paths
     ///
-    /// Performance: boundary 4-tap adds ~5-15% decode time. Knusperli adds
-    /// ~20-40% due to extra IDCT work. Both modes force the coefficient decode
-    /// path (no streaming).
+    /// | Mode | `decode()` | `scanline_reader()` |
+    /// |------|-----------|-------------------|
+    /// | `Off` | no-op | no-op (zero overhead) |
+    /// | `Boundary4Tap` | f32 planes | i16 planes (streaming) |
+    /// | `Knusperli` | DCT-domain | **error** (needs coefficients) |
+    /// | `Auto` | knusperli at low Q, boundary otherwise | always boundary_4tap |
+    ///
+    /// # Auto mode inconsistency
+    ///
+    /// [`DeblockMode::Auto`] selects different strategies depending on the decode
+    /// path. At low quality (approximately Q5-Q50, DC quant ≥ 27), `decode()` uses
+    /// Knusperli while `scanline_reader()` uses Boundary4Tap. For consistent output
+    /// across both paths, use an explicit mode instead of `Auto`.
+    ///
+    /// # Performance
+    ///
+    /// Boundary 4-tap adds ~5-15% decode time. Knusperli adds ~20-40% due to extra
+    /// IDCT work. When `Off` (default), zero overhead in both paths.
     ///
     /// # Example
     ///

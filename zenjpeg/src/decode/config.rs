@@ -133,12 +133,19 @@ pub enum DeblockMode {
     /// No deblocking (default). Fastest, pixel-exact decode output.
     #[default]
     Off,
-    /// Auto-detect: use content classification and quality to pick the best strategy.
+    /// Auto-detect: pick the best deblocking strategy based on quality level.
     ///
-    /// Uses [`detect::content::recommend_deblock()`](crate::detect::content::recommend_deblock)
-    /// internally. For photos at Q5-Q30, this typically applies Knusperli
-    /// (DCT-domain correction). For Q30+, it uses boundary 4-tap filtering.
-    /// Screenshots at Q10+ are skipped (deblocking hurts synthetic content).
+    /// With [`decode()`](super::DecodeConfig::decode): uses Knusperli (DCT-domain
+    /// correction) when DC quant ≥ 27 (roughly Q5–Q50), Boundary4Tap otherwise.
+    ///
+    /// With [`scanline_reader()`](super::DecodeConfig::scanline_reader): always
+    /// resolves to [`Boundary4Tap`](Self::Boundary4Tap) because Knusperli requires
+    /// full coefficient access unavailable in streaming mode.
+    ///
+    /// **Consistency note:** At low quality (approximately Q5–Q50), `Auto` produces
+    /// different output depending on whether you call `decode()` or `scanline_reader()`.
+    /// If you need identical output from both paths, use an explicit mode
+    /// (`Boundary4Tap` or `Knusperli`) instead of `Auto`.
     Auto,
     /// Always apply H.264-style 4-tap boundary filter.
     ///
