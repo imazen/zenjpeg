@@ -1445,9 +1445,9 @@ impl<'a> JpegParser<'a> {
             ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
             _ => upsample_h2v2_i16_fancy,
         };
-        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::Jpegli)
+        let use_scratch_upsample = matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased)
             && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
-        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::Jpegli);
+        let do_fixup = matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased);
 
         let (dc_tables, ac_tables) = self.build_huffman_tables(scan_components);
 

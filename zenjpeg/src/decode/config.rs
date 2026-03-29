@@ -21,7 +21,7 @@ use super::extras::{DecodedExtras, PreserveConfig};
 /// | Method | Matches |
 /// |--------|---------|
 /// | `Triangle` | libjpeg-turbo, mozjpeg, djpeg (default) |
-/// | `Jpegli` | C++ jpegli decoder |
+/// | `SeparableBiased` | Legacy (lower quality, see docs) |
 /// | `NearestNeighbor` | fastest, lowest quality |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -44,16 +44,12 @@ pub enum ChromaUpsampling {
     #[default]
     Triangle,
 
-    /// Separable triangle filter with uniform `+8` rounding bias (jpegli-style).
-    ///
-    /// Applies horizontal then vertical 3:1 interpolation in separate passes.
-    /// The fixed `+8` bias introduces systematic upward rounding; the separable
-    /// passes add an intermediate rounding step. Slightly lower quality than
-    /// the default fused [`Triangle`](Self::Triangle).
-    ///
-    /// Retained for compatibility with output from earlier zenjpeg versions
-    /// and the C++ jpegli decoder.
-    Jpegli,
+    /// Separable triangle filter with fixed `+8` rounding bias. Lower quality
+    /// than [`Triangle`](Self::Triangle) due to systematic upward rounding and
+    /// an intermediate rounding step from the two-pass (horizontal then vertical)
+    /// implementation. Retained only for reproducing output from earlier zenjpeg
+    /// versions.
+    SeparableBiased,
 
     /// Horizontal-only triangle filter with vertical box (nearest-neighbor).
     ///

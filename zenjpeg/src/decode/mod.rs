@@ -206,7 +206,7 @@ impl DecodeConfig {
     /// upsampled to match luma resolution.
     ///
     /// - [`ChromaUpsampling::Triangle`] (default): fused 2D filter, matches libjpeg-turbo/mozjpeg
-    /// - [`ChromaUpsampling::Jpegli`]: separable filter with fixed rounding (jpegli-style)
+    /// - [`ChromaUpsampling::SeparableBiased`]: separable filter with fixed rounding (jpegli-style)
     /// - [`ChromaUpsampling::NearestNeighbor`]: fastest, lowest quality
     #[must_use]
     pub fn chroma_upsampling(mut self, method: ChromaUpsampling) -> Self {

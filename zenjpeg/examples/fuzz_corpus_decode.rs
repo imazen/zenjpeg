@@ -291,7 +291,7 @@ fn main() {
                     ChromaUpsampling::Triangle,
                 ),
                 Mode::BufferedTriangle => {
-                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::Jpegli)
+                    decode_buffered(data_ref, OutputTarget::Srgb8, ChromaUpsampling::SeparableBiased)
                 }
                 Mode::Scanline => decode_scanline(data_ref, ChromaUpsampling::Triangle),
                 Mode::ScanlineFast => decode_scanline(data_ref, ChromaUpsampling::NearestNeighbor),

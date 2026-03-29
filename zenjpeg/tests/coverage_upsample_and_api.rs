@@ -397,7 +397,7 @@ mod decoder_config_tests {
         let jpeg = make_jpeg_420();
         for method in [
             ChromaUpsampling::NearestNeighbor,
-            ChromaUpsampling::Jpegli,
+            ChromaUpsampling::SeparableBiased,
             ChromaUpsampling::Triangle,
             ChromaUpsampling::HorizontalFancy,
         ] {

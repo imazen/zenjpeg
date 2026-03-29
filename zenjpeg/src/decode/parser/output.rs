@@ -400,7 +400,7 @@ impl<'a> JpegParser<'a> {
                 UpsampleFn,
                 UpsampleFn,
             ) = match chroma_upsampling {
-                ChromaUpsampling::Jpegli => (
+                ChromaUpsampling::SeparableBiased => (
                     upsample_h2v2_i16_fancy,
                     upsample_h2v1_i16_fancy,
                     upsample_h1v2_i16_fancy,
@@ -545,7 +545,7 @@ impl<'a> JpegParser<'a> {
         let use_scratch_upsample = needs_full_upsample
             && h_ratio == 2
             && v_ratio == 2
-            && matches!(chroma_upsampling, ChromaUpsampling::Jpegli)
+            && matches!(chroma_upsampling, ChromaUpsampling::SeparableBiased)
             && c_strip_width <= MAX_UPSAMPLE_SCRATCH;
         let mut upsample_scratch = [0i16; MAX_UPSAMPLE_SCRATCH];
 
@@ -955,7 +955,7 @@ impl<'a> JpegParser<'a> {
                 let scale_y = max_v_samp as usize / info.v_samp;
 
                 match chroma_upsampling {
-                    super::super::ChromaUpsampling::Jpegli => upsample_fancy(
+                    super::super::ChromaUpsampling::SeparableBiased => upsample_fancy(
                         comp_plane,
                         info.comp_width,
                         info.comp_height,
