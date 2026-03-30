@@ -1,11 +1,6 @@
-# zenjpeg
+# zenjpeg [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenjpeg/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenjpeg?style=flat-square)](https://crates.io/crates/zenjpeg) [![lib.rs](https://img.shields.io/crates/v/zenjpeg?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenjpeg) [![docs.rs](https://img.shields.io/docsrs/zenjpeg?style=flat-square)](https://docs.rs/zenjpeg) [![license](https://img.shields.io/crates/l/zenjpeg?style=flat-square)](https://github.com/imazen/zenjpeg/blob/main/LICENSE)
 
-[![Crates.io](https://img.shields.io/crates/v/zenjpeg?style=for-the-badge)](https://crates.io/crates/zenjpeg)
-[![docs.rs](https://img.shields.io/docsrs/zenjpeg?style=for-the-badge)](https://docs.rs/zenjpeg)
-[![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenjpeg/ci.yml?style=for-the-badge)](https://github.com/imazen/zenjpeg/actions/workflows/ci.yml)
-[![License: AGPL/Commercial](https://img.shields.io/badge/License-AGPL%2FCommercial-blue?style=for-the-badge)](https://github.com/imazen/zenjpeg/blob/main/LICENSE)
-
-A pure Rust JPEG encoder and decoder with perceptual optimizations. Safe SIMD on x86_64 and aarch64 via archmage tokens. `#![forbid(unsafe_code)]`.
+A pure Rust JPEG encoder and decoder. Heavily inspired by jpegli and mozjpeg, with significant original research including streaming single-pass decode, hybrid trellis quantization, and perceptual quality tuning. Safe SIMD on x86_64 and aarch64 via archmage tokens. `#![forbid(unsafe_code)]`.
 
 > **Note:** This crate was previously published as `jpegli-rs`. If migrating, update imports from `use jpegli::` to `use zenjpeg::`.
 
@@ -416,9 +411,10 @@ a sliding scale. You can also use this under the AGPL v3.
 
 ## Acknowledgments
 
-Originally a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-from the JPEG XL project by Google (BSD-3-Clause). After six rewrites, this is now
-an independent project that shares ideas but little code with the original.
+Built on ideas from [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
+(Google, BSD-3-Clause) and [mozjpeg](https://github.com/nickt/mozjpeg-rs) (Mozilla).
+After six rewrites from the initial jpegli port, zenjpeg is an independent project
+with its own architecture, streaming pipeline, and quality optimizations.
 
 ## AI Disclosure
 
