@@ -407,3 +407,21 @@ crash_219_test!(
     crash_219_fb5c7664,
     "crash_219_fb5c7664dbc9117c998c2f6e76c392e6cc481048.jpg"
 );
+
+// ============================================================================
+// Fuzz: i16::abs() negate overflow in gather_block (quant/mod.rs)
+//
+// A crafted JPEG with a DCT coefficient of i16::MIN (-32768) caused
+// `coeff.abs()` to panic in debug mode. Fixed by widening to i32 before abs.
+// ============================================================================
+
+#[test]
+fn crash_negate_overflow_i16min_gather_block() {
+    let data = include_bytes!("crash_repro/crash_negate_overflow_i16min_gather_block.jpg");
+    let result = must_not_panic_any_config(data);
+    assert!(
+        result.is_ok(),
+        "Panic on i16::MIN negate overflow in gather_block: {:?}",
+        result.err()
+    );
+}
