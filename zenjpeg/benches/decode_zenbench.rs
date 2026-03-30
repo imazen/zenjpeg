@@ -393,7 +393,9 @@ fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
                     rd.find(|e| {
                         e.as_ref()
                             .ok()
-                            .and_then(|e| e.path().extension().map(|x| x.eq_ignore_ascii_case("png")))
+                            .and_then(|e| {
+                                e.path().extension().map(|x| x.eq_ignore_ascii_case("png"))
+                            })
                             .unwrap_or(false)
                     })
                 })
@@ -424,10 +426,14 @@ fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
             let idx = (y * w as usize + x) * 3;
             let bx = (x / 8) as u32;
             let by = (y / 8) as u32;
-            let block_hash = bx.wrapping_mul(2654435761).wrapping_add(by.wrapping_mul(40503));
+            let block_hash = bx
+                .wrapping_mul(2654435761)
+                .wrapping_add(by.wrapping_mul(40503));
             let px = x as u32;
             let py = y as u32;
-            let mut h = px.wrapping_mul(374761393).wrapping_add(py.wrapping_mul(668265263));
+            let mut h = px
+                .wrapping_mul(374761393)
+                .wrapping_add(py.wrapping_mul(668265263));
             h = (h ^ (h >> 13)).wrapping_mul(1274126177);
             let noise = (h >> 24) as u8;
             let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
@@ -443,7 +449,11 @@ fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
                     data[idx + 2] = noise >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
                     data[idx] = edge;
                     data[idx + 1] = edge.wrapping_add(noise >> 4);
                     data[idx + 2] = 255 - edge;
@@ -473,17 +483,23 @@ fn encode_mozjpeg_with_opts(
     } else {
         mozjpeg_rs::Preset::BaselineBalanced
     };
-    let mut enc = mozjpeg_rs::Encoder::new(preset)
-        .quality(q)
-        .subsampling(sub);
+    let mut enc = mozjpeg_rs::Encoder::new(preset).quality(q).subsampling(sub);
     if !progressive {
-        // Optimal restart interval: 1 MCU row for parallelism
-        let mcu_w = if matches!(sub, mozjpeg_rs::Subsampling::S420 | mozjpeg_rs::Subsampling::S422) {
+        // Restart interval: 4 MCU rows balances parallelism vs overhead.
+        // Too fine (1 row) → rayon dispatch dominates. Too coarse (8+) →
+        // not enough segments for 16+ cores.
+        let mcu_w = if matches!(
+            sub,
+            mozjpeg_rs::Subsampling::S420 | mozjpeg_rs::Subsampling::S422
+        ) {
             (w + 15) / 16
         } else {
             (w + 7) / 8
         };
-        enc = enc.restart_interval(mcu_w as u16);
+        // restart_mcu_rows=4: four MCU rows per segment. Balances segment
+        // count (64 at 4096) vs per-segment overhead. Use restart_mcu_rows=1
+        // (mcu_w) for maximum parallelism on 16+ core systems.
+        enc = enc.restart_interval((mcu_w * 4) as u16);
     }
     enc.encode_rgb(pixels, w, h).expect("mozjpeg encode")
 }
@@ -505,8 +521,11 @@ fn generate_test_sets() -> Vec<TestSet> {
         .iter()
         .map(|&(w, h)| {
             let px = load_or_generate_pixels(w, h);
-            eprintln!("  pixels {w}x{h}: {} bytes ({})", px.len(),
-                if px.len() > 0 { "loaded" } else { "synthetic" });
+            eprintln!(
+                "  pixels {w}x{h}: {} bytes ({})",
+                px.len(),
+                if px.len() > 0 { "loaded" } else { "synthetic" }
+            );
             ((w, h), px)
         })
         .collect();
@@ -529,13 +548,8 @@ fn generate_test_sets() -> Vec<TestSet> {
         .collect()
 }
 
-
 /// Add decode benchmarks for a test set: mozjpeg, zune, zenjpeg full, zenjpeg scanline.
-fn add_decode_group(
-    suite: &mut Suite,
-    group_name: &str,
-    jpegs: &'static [(String, Vec<u8>)],
-) {
+fn add_decode_group(suite: &mut Suite, group_name: &str, jpegs: &'static [(String, Vec<u8>)]) {
     suite.group(group_name, |g| {
         for (label, jpeg) in jpegs.iter() {
             g.bench(format!("mozjpeg/{label}"), {
@@ -574,11 +588,7 @@ fn add_decode_group(
 
 /// Add parallel vs sequential vs wave-scanline decode benchmarks.
 #[cfg(feature = "parallel")]
-fn add_parallel_group(
-    suite: &mut Suite,
-    group_name: &str,
-    jpegs: &'static [(String, Vec<u8>)],
-) {
+fn add_parallel_group(suite: &mut Suite, group_name: &str, jpegs: &'static [(String, Vec<u8>)]) {
     suite.group(group_name, |g| {
         for (label, jpeg) in jpegs.iter() {
             g.bench(format!("sequential/{label}"), {
@@ -599,8 +609,8 @@ fn add_parallel_group(
                 let jpeg = jpeg.clone();
                 move |b| {
                     b.iter(|| {
-                        let dec = Decoder::new()
-                            .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                        let dec =
+                            Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                         let mut reader = dec.scanline_reader(&jpeg).unwrap();
                         let w = reader.width() as usize;
                         let h = reader.height() as usize;
