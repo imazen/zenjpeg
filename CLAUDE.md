@@ -854,9 +854,9 @@ sensitivity tables, and preset baselines.
 ~~4. **frymire_hash_locked XYB Q50 pre-existing failure (2026-03-26)**~~ — **FIXED (2026-03-27).**
    All XYB hashes updated. The stale hashes were from before archmage XYB cbrt_midp() changes.
 
-5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)** - `trellis_use_lambda_weight_tbl`
-   always uses flat 1/q² weights. `trellis_num_loops` stored but never read (single-pass only).
-   Both documented in config doc comments. Low priority — parameters have no effect.
+~~5. **Trellis dead parameters (2026-02-02, documented 2026-03-08)**~~ — **FIXED (2026-03-30,
+   commit d2a1af25).** Both `trellis_use_lambda_weight_tbl` and `trellis_num_loops` deleted
+   from ExpertConfig, TrellisConfig, and HybridConfig.
 
 ### Fixed / Resolved Bugs (historical reference)
 
