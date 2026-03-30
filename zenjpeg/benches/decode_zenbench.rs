@@ -529,7 +529,7 @@ fn add_decode_group(
     });
 }
 
-/// Add parallel vs sequential decode benchmarks.
+/// Add parallel vs sequential vs wave-scanline decode benchmarks.
 #[cfg(feature = "parallel")]
 fn add_parallel_group(
     suite: &mut Suite,
@@ -550,6 +550,23 @@ fn add_parallel_group(
                 move |b| {
                     let dec = Decoder::new();
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+            g.bench(format!("wave-scanline/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    b.iter(|| {
+                        let dec = Decoder::new()
+                            .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                        let mut reader = dec.scanline_reader(&jpeg).unwrap();
+                        let w = reader.width() as usize;
+                        let h = reader.height() as usize;
+                        let mut buf = vec![0u8; w * h * 3];
+                        reader
+                            .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, w * 3, h))
+                            .unwrap();
+                        buf
+                    })
                 }
             });
         }
