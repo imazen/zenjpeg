@@ -16,7 +16,7 @@
 use enough::Unstoppable;
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
-use zenjpeg::decode::{DecodePool, Decoder};
+use zenjpeg::decode::{ChromaUpsampling, DecodePool, Decoder};
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 

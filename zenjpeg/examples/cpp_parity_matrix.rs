@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use zenjpeg::decoder::{JpegMode, Subsampling, decode_jpeg_with_icc};
+use zenjpeg::decoder::{JpegMode, Subsampling};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use zenjpeg::test_utils::find_cjpegli;
 
@@ -201,25 +201,12 @@ impl ParityResult {
 // Verification Functions
 // ============================================================================
 
-fn decode_jpeg(data: &[u8], color: ColorMode) -> Vec<u8> {
-    match color {
-        ColorMode::Xyb => decode_jpeg_with_icc(data)
-            .map(|(pixels, _, _)| pixels)
-            .unwrap_or_else(|_| {
-                use zune_jpeg::JpegDecoder;
-                use zune_jpeg::zune_core::bytestream::ZCursor;
-                let cursor = ZCursor::new(data);
-                let mut decoder = JpegDecoder::new(cursor);
-                decoder.decode().expect("JPEG decode failed")
-            }),
-        ColorMode::YCbCr => {
-            use zune_jpeg::JpegDecoder;
-            use zune_jpeg::zune_core::bytestream::ZCursor;
-            let cursor = ZCursor::new(data);
-            let mut decoder = JpegDecoder::new(cursor);
-            decoder.decode().expect("JPEG decode failed")
-        }
-    }
+fn decode_jpeg(data: &[u8], _color: ColorMode) -> Vec<u8> {
+    use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode().expect("JPEG decode failed")
 }
 
 fn compute_max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {

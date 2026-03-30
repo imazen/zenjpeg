@@ -37,7 +37,7 @@ mod bench {
     use std::io::Write;
     use std::path::Path;
     use std::time::Instant;
-    use zenjpeg::decode::Decoder;
+    use zenjpeg::decode::{ChromaUpsampling, Decoder};
     use zenjpeg::decoder::PixelFormat;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, XybSubsampling};
 

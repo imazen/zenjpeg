@@ -18,7 +18,7 @@
 use enough::Unstoppable;
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
-use zenjpeg::decode::Decoder;
+use zenjpeg::decode::{ChromaUpsampling, Decoder};
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
