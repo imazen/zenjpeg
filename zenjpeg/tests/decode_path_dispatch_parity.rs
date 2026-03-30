@@ -393,7 +393,6 @@ fn decode_paths_dispatch_parity() {
     let upsampling_modes = [
         ("Triangle", ChromaUpsampling::Triangle),
         ("NearestNeighbor", ChromaUpsampling::NearestNeighbor),
-        ("LibjpegCompat", ChromaUpsampling::Triangle),
     ];
 
     let mut first_report = true;

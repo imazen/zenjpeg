@@ -133,7 +133,7 @@ fn compare_pixels(name_a: &str, a: &[u8], name_b: &str, b: &[u8], w: u32, h: u32
 }
 
 #[test]
-fn issue7_libjpeg_compat_delta() {
+fn issue7_triangle_jpegli_idct_delta() {
     let jpeg = fetch_test_image();
 
     println!("Image size: {} bytes", jpeg.len());

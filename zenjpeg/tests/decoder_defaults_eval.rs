@@ -161,7 +161,7 @@ const DECODERS: [DecoderMode; 5] = [
     },
     DecoderMode {
         label: "zen-compat",
-        desc: "Libjpeg IDCT (13-bit) + LibjpegCompat",
+        desc: "Libjpeg IDCT (13-bit) + Triangle",
         decode: dec_compat,
     },
     DecoderMode {
@@ -171,7 +171,7 @@ const DECODERS: [DecoderMode; 5] = [
     },
     DecoderMode {
         label: "zen-bias-cmp",
-        desc: "dequant_bias + Libjpeg IDCT (f32) + LibjpegCompat",
+        desc: "dequant_bias + Libjpeg IDCT (f32) + Triangle",
         decode: dec_bias_compat,
     },
     DecoderMode {
