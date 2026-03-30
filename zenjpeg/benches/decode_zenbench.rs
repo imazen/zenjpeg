@@ -371,4 +371,186 @@ fn bench_decode(suite: &mut Suite) {
     });
 }
 
-zenbench::main!(bench_decode);
+// ── Size matrix benchmark (synthetic images, variant/size naming for matrix chart) ──
+
+fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) -> Vec<u8> {
+    use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+    let mut data = vec![0u8; (width * height * 3) as usize];
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let idx = (y * width as usize + x) * 3;
+            let bx = (x / 8) as u32;
+            let by = (y / 8) as u32;
+            let block_hash = bx.wrapping_mul(2654435761).wrapping_add(by.wrapping_mul(40503));
+            let block_type = block_hash % 4;
+            let px = x as u32;
+            let py = y as u32;
+            let mut h = px.wrapping_mul(374761393).wrapping_add(py.wrapping_mul(668265263));
+            h = (h ^ (h >> 13)).wrapping_mul(1274126177);
+            let noise = (h >> 24) as u8;
+            match block_type {
+                0 => {
+                    let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
+                    data[idx] = bias.wrapping_add(noise >> 2);
+                    data[idx + 1] = bias.wrapping_add(noise >> 1);
+                    data[idx + 2] = bias.wrapping_add(noise >> 3);
+                }
+                1 => {
+                    data[idx] = ((x * 255) / width as usize) as u8;
+                    data[idx + 1] = ((y * 255) / height as usize) as u8;
+                    data[idx + 2] = noise >> 2;
+                }
+                2 => {
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    data[idx] = edge;
+                    data[idx + 1] = edge.wrapping_add(noise >> 4);
+                    data[idx + 2] = 255 - edge;
+                }
+                _ => {
+                    data[idx] = noise;
+                    data[idx + 1] = noise.wrapping_mul(3);
+                    data[idx + 2] = noise.wrapping_mul(7);
+                }
+            }
+        }
+    }
+
+    let mut config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
+        .progressive(progressive);
+    if progressive {
+        config = config.restart_mcu_rows(0); // zune-jpeg bug with DRI + progressive
+    }
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
+    enc.push_packed(&data, Unstoppable).expect("push");
+    enc.finish().expect("finish")
+}
+
+fn bench_decode_matrix(suite: &mut Suite) {
+    let sizes: &[(u32, u32)] = &[
+        (256, 256),
+        (512, 512),
+        (1024, 1024),
+        (2048, 2048),
+        (4096, 4096),
+    ];
+
+    eprintln!("Generating synthetic test images...");
+
+    // Pre-encode at all sizes
+    let baseline_jpegs: Vec<(String, Vec<u8>)> = sizes
+        .iter()
+        .map(|&(w, h)| {
+            let label = format!("{w}x{h}");
+            let jpeg = create_test_jpeg(w, h, 85.0, false);
+            eprintln!("  baseline {label}: {} bytes", jpeg.len());
+            (label, jpeg)
+        })
+        .collect();
+
+    let progressive_jpegs: Vec<(String, Vec<u8>)> = sizes
+        .iter()
+        .map(|&(w, h)| {
+            let label = format!("{w}x{h}");
+            let jpeg = create_test_jpeg(w, h, 85.0, true);
+            eprintln!("  progressive {label}: {} bytes", jpeg.len());
+            (label, jpeg)
+        })
+        .collect();
+
+    // Leak the encoded data so closures can capture &'static references
+    let baseline_jpegs: &'static [(String, Vec<u8>)] = baseline_jpegs.leak();
+    let progressive_jpegs: &'static [(String, Vec<u8>)] = progressive_jpegs.leak();
+
+    // ── Baseline 4:2:0 matrix ──────────────────────────────────────────
+
+    suite.group("baseline_420_matrix", |g| {
+        for (label, jpeg) in baseline_jpegs.iter() {
+            g.bench(format!("mozjpeg/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| b.iter(|| decode_libjpeg_turbo(&jpeg))
+            });
+            g.bench(format!("zune/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| b.iter(|| decode_zune(&jpeg))
+            });
+            g.bench(format!("zenjpeg/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new();
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+            g.bench(format!("zenjpeg-box/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new()
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+        }
+    });
+
+    // ── Progressive 4:2:0 matrix ───────────────────────────────────────
+
+    suite.group("progressive_420_matrix", |g| {
+        for (label, jpeg) in progressive_jpegs.iter() {
+            g.bench(format!("mozjpeg/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| b.iter(|| decode_libjpeg_turbo(&jpeg))
+            });
+            g.bench(format!("zune/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| b.iter(|| decode_zune(&jpeg))
+            });
+            g.bench(format!("zenjpeg/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new();
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+        }
+    });
+
+    // ── Parallel matrix (feature-gated) ────────────────────────────────
+
+    #[cfg(feature = "parallel")]
+    suite.group("parallel_420_matrix", |g| {
+        // Skip 256 (too small for parallel)
+        for (label, jpeg) in baseline_jpegs.iter().skip(1) {
+            g.bench(format!("zenjpeg-seq/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new().num_threads(1);
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+            g.bench(format!("zenjpeg-par/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new();
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+            g.bench(format!("zenjpeg-box-par/{label}"), {
+                let jpeg = jpeg.clone();
+                move |b| {
+                    let dec = Decoder::new()
+                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                }
+            });
+        }
+    });
+}
+
+fn bench_all(suite: &mut Suite) {
+    bench_decode(suite);
+    bench_decode_matrix(suite);
+}
+
+zenbench::main!(bench_all);
