@@ -706,6 +706,18 @@ impl<'a> JpegParser<'a> {
                         let dc_table = (tables >> 4) as usize;
                         let ac_table = (tables & 0x0F) as usize;
 
+                        // Validate Huffman table indexes
+                        if dc_table >= MAX_HUFFMAN_TABLES {
+                            return Err(Error::invalid_jpeg_data(
+                                "SOS DC Huffman table index out of range",
+                            ));
+                        }
+                        if ac_table >= MAX_HUFFMAN_TABLES {
+                            return Err(Error::invalid_jpeg_data(
+                                "SOS AC Huffman table index out of range",
+                            ));
+                        }
+
                         // Find component index
                         let comp_idx = self.components[..self.num_components as usize]
                             .iter()
