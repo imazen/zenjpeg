@@ -9,6 +9,7 @@
 //! ```
 
 use enough::Unstoppable;
+use std::collections::HashMap;
 use std::path::Path;
 use zenbench::prelude::*;
 use zenjpeg::decode::{ChromaUpsampling, DeblockMode};
@@ -373,50 +374,76 @@ fn bench_decode(suite: &mut Suite) {
 
 // ── Size matrix benchmark (synthetic images, variant/size naming for matrix chart) ──
 
-fn create_test_jpeg_sub(
-    width: u32,
-    height: u32,
-    quality: f32,
-    progressive: bool,
-    subsampling: zenjpeg::encode::ChromaSubsampling,
-) -> Vec<u8> {
-    use zenjpeg::encode::{EncoderConfig, PixelLayout};
+/// Helper: generate test JPEGs for a set of (subsampling, progressive, label_prefix) configs.
+struct TestSet {
+    label: &'static str,
+    jpegs: Vec<(String, Vec<u8>)>, // (size_label, jpeg_data)
+}
 
-    let mut data = vec![0u8; (width * height * 3) as usize];
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let idx = (y * width as usize + x) * 3;
+/// Load a real corpus image, resized to target dimensions via simple subsampling.
+/// Falls back to synthetic noise+patches if corpus unavailable.
+fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
+    // Try CID22 corpus first
+    if let Ok(corpus) = codec_corpus::Corpus::new() {
+        if let Ok(dir) = corpus.get("CID22/CID22-512/training") {
+            // Find first PNG, tile it to fill target size
+            if let Some(path) = std::fs::read_dir(&dir)
+                .ok()
+                .and_then(|mut rd| {
+                    rd.find(|e| {
+                        e.as_ref()
+                            .ok()
+                            .and_then(|e| e.path().extension().map(|x| x.eq_ignore_ascii_case("png")))
+                            .unwrap_or(false)
+                    })
+                })
+                .and_then(|e| e.ok())
+            {
+                if let Some((src_pixels, sw, sh)) = load_png_rgb(&path.path()) {
+                    // Tile source image to fill target dimensions
+                    let mut out = vec![0u8; (w * h * 3) as usize];
+                    for y in 0..h as usize {
+                        for x in 0..w as usize {
+                            let sx = x % sw as usize;
+                            let sy = y % sh as usize;
+                            let si = (sy * sw as usize + sx) * 3;
+                            let di = (y * w as usize + x) * 3;
+                            out[di..di + 3].copy_from_slice(&src_pixels[si..si + 3]);
+                        }
+                    }
+                    return out;
+                }
+            }
+        }
+    }
+
+    // Fallback: synthetic noise+patches
+    let mut data = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 3;
             let bx = (x / 8) as u32;
             let by = (y / 8) as u32;
-            let block_hash = bx
-                .wrapping_mul(2654435761)
-                .wrapping_add(by.wrapping_mul(40503));
-            let block_type = block_hash % 4;
+            let block_hash = bx.wrapping_mul(2654435761).wrapping_add(by.wrapping_mul(40503));
             let px = x as u32;
             let py = y as u32;
-            let mut h = px
-                .wrapping_mul(374761393)
-                .wrapping_add(py.wrapping_mul(668265263));
+            let mut h = px.wrapping_mul(374761393).wrapping_add(py.wrapping_mul(668265263));
             h = (h ^ (h >> 13)).wrapping_mul(1274126177);
             let noise = (h >> 24) as u8;
-            match block_type {
+            let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
+            match block_hash % 4 {
                 0 => {
-                    let bias = ((bx.wrapping_mul(17) ^ by.wrapping_mul(31)) & 0xFF) as u8;
                     data[idx] = bias.wrapping_add(noise >> 2);
                     data[idx + 1] = bias.wrapping_add(noise >> 1);
                     data[idx + 2] = bias.wrapping_add(noise >> 3);
                 }
                 1 => {
-                    data[idx] = ((x * 255) / width as usize) as u8;
-                    data[idx + 1] = ((y * 255) / height as usize) as u8;
+                    data[idx] = ((x * 255) / w as usize) as u8;
+                    data[idx + 1] = ((y * 255) / w as usize) as u8;
                     data[idx + 2] = noise >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
-                        200u8
-                    } else {
-                        55u8
-                    };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
                     data[idx] = edge;
                     data[idx + 1] = edge.wrapping_add(noise >> 4);
                     data[idx + 2] = 255 - edge;
@@ -429,47 +456,61 @@ fn create_test_jpeg_sub(
             }
         }
     }
+    data
+}
 
-    let mut config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
-    if progressive {
-        config = config.restart_mcu_rows(0); // zune-jpeg bug with DRI + progressive
+/// Encode pixels with mozjpeg-rs for fair decoder comparison.
+fn encode_mozjpeg_with_opts(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    q: u8,
+    sub: mozjpeg_rs::Subsampling,
+    progressive: bool,
+) -> Vec<u8> {
+    let preset = if progressive {
+        mozjpeg_rs::Preset::ProgressiveSmallest
+    } else {
+        mozjpeg_rs::Preset::BaselineBalanced
+    };
+    let mut enc = mozjpeg_rs::Encoder::new(preset)
+        .quality(q)
+        .subsampling(sub);
+    if !progressive {
+        // Optimal restart interval: 1 MCU row for parallelism
+        let mcu_w = if matches!(sub, mozjpeg_rs::Subsampling::S420 | mozjpeg_rs::Subsampling::S422) {
+            (w + 15) / 16
+        } else {
+            (w + 7) / 8
+        };
+        enc = enc.restart_interval(mcu_w as u16);
     }
-    let mut enc = config
-        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
-        .expect("encoder");
-    enc.push_packed(&data, Unstoppable).expect("push");
-    enc.finish().expect("finish")
-}
-
-fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) -> Vec<u8> {
-    create_test_jpeg_sub(
-        width,
-        height,
-        quality,
-        progressive,
-        zenjpeg::encode::ChromaSubsampling::Quarter,
-    )
-}
-
-/// Helper: generate test JPEGs for a set of (subsampling, progressive, label_prefix) configs.
-struct TestSet {
-    label: &'static str,
-    jpegs: Vec<(String, Vec<u8>)>, // (size_label, jpeg_data)
+    enc.encode_rgb(pixels, w, h).expect("mozjpeg encode")
 }
 
 fn generate_test_sets() -> Vec<TestSet> {
-    use zenjpeg::encode::ChromaSubsampling;
-
     let sizes: &[(u32, u32)] = &[(2048, 2048), (4096, 4096)];
 
-    let configs: &[(&str, ChromaSubsampling, bool)] = &[
-        ("seq-420", ChromaSubsampling::Quarter, false),
-        ("seq-444", ChromaSubsampling::None, false),
-        ("prog-420", ChromaSubsampling::Quarter, true),
-        ("prog-444", ChromaSubsampling::None, true),
+    let configs: &[(&str, mozjpeg_rs::Subsampling, bool)] = &[
+        ("seq-420", mozjpeg_rs::Subsampling::S420, false),
+        ("seq-444", mozjpeg_rs::Subsampling::S444, false),
+        ("prog-420", mozjpeg_rs::Subsampling::S420, true),
+        ("prog-444", mozjpeg_rs::Subsampling::S444, true),
     ];
 
-    eprintln!("Generating test images...");
+    eprintln!("Generating test images (real corpus if available)...");
+
+    // Cache pixels per size (expensive to generate)
+    let pixels_cache: HashMap<(u32, u32), Vec<u8>> = sizes
+        .iter()
+        .map(|&(w, h)| {
+            let px = load_or_generate_pixels(w, h);
+            eprintln!("  pixels {w}x{h}: {} bytes ({})", px.len(),
+                if px.len() > 0 { "loaded" } else { "synthetic" });
+            ((w, h), px)
+        })
+        .collect();
+
     configs
         .iter()
         .map(|&(label, sub, prog)| {
@@ -477,7 +518,8 @@ fn generate_test_sets() -> Vec<TestSet> {
                 .iter()
                 .map(|&(w, h)| {
                     let size = format!("{w}x{h}");
-                    let jpeg = create_test_jpeg_sub(w, h, 85.0, prog, sub);
+                    let pixels = &pixels_cache[&(w, h)];
+                    let jpeg = encode_mozjpeg_with_opts(pixels, w, h, 85, sub, prog);
                     eprintln!("  {label} {size}: {} bytes", jpeg.len());
                     (size, jpeg)
                 })
@@ -486,6 +528,7 @@ fn generate_test_sets() -> Vec<TestSet> {
         })
         .collect()
 }
+
 
 /// Add decode benchmarks for a test set: mozjpeg, zune, zenjpeg full, zenjpeg scanline.
 fn add_decode_group(
