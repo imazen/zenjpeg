@@ -77,7 +77,7 @@ pub fn try_alloc_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wide::{AlignTo, f32x8};
+    use super::*;
 
     #[test]
     fn test_aligned_vec_is_32_byte_aligned() {
@@ -89,8 +89,13 @@ mod tests {
     #[test]
     fn test_simd_align_to_has_no_prefix() {
         let vec = try_alloc_zeroed(128).unwrap();
-        let (prefix, _aligned, _suffix) = f32x8::simd_align_to(&vec);
-        assert_eq!(prefix.len(), 0, "32-byte aligned vec should have no prefix");
+        // Verify 32-byte alignment by checking pointer alignment directly
+        let addr = vec.as_ptr() as usize;
+        assert_eq!(
+            addr % 32,
+            0,
+            "32-byte aligned vec should have no unaligned prefix"
+        );
     }
 
     #[test]

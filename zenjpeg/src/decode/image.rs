@@ -9,7 +9,6 @@ use crate::types::PixelFormat;
 
 use super::DecodeWarning;
 use super::extras::DecodedExtras;
-use wide::f32x8;
 
 /// A decoded image with dimensions and pixel data.
 ///
@@ -191,31 +190,7 @@ impl DecodedImageF32 {
         let len = self.data.len();
         let mut data = vec![0u8; len];
 
-        let scale = f32x8::splat(255.0);
-        let zero = f32x8::splat(0.0);
-        let max_val = f32x8::splat(255.0);
-
-        let chunks = len / 8;
-        for chunk in 0..chunks {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                self.data[k],
-                self.data[k + 1],
-                self.data[k + 2],
-                self.data[k + 3],
-                self.data[k + 4],
-                self.data[k + 5],
-                self.data[k + 6],
-                self.data[k + 7],
-            ]);
-            let scaled = (v * scale).round().max(zero).min(max_val);
-            let arr: [f32; 8] = scaled.into();
-            for j in 0..8 {
-                data[k + j] = arr[j] as u8;
-            }
-        }
-        // Remainder
-        for i in (chunks * 8)..len {
+        for i in 0..len {
             data[i] = (self.data[i] * 255.0).round().clamp(0.0, 255.0) as u8;
         }
 
@@ -237,31 +212,7 @@ impl DecodedImageF32 {
         let len = self.data.len();
         let mut result = vec![0u16; len];
 
-        let scale = f32x8::splat(65535.0);
-        let zero = f32x8::splat(0.0);
-        let max_val = f32x8::splat(65535.0);
-
-        let chunks = len / 8;
-        for chunk in 0..chunks {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                self.data[k],
-                self.data[k + 1],
-                self.data[k + 2],
-                self.data[k + 3],
-                self.data[k + 4],
-                self.data[k + 5],
-                self.data[k + 6],
-                self.data[k + 7],
-            ]);
-            let scaled = (v * scale).round().max(zero).min(max_val);
-            let arr: [f32; 8] = scaled.into();
-            for j in 0..8 {
-                result[k + j] = arr[j] as u16;
-            }
-        }
-        // Remainder
-        for i in (chunks * 8)..len {
+        for i in 0..len {
             result[i] = (self.data[i] * 65535.0).round().clamp(0.0, 65535.0) as u16;
         }
         result

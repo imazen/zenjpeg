@@ -111,7 +111,7 @@ fn filter_vertical_boundaries(
 ///
 /// For each boundary row, processes all columns. Horizontal boundaries have
 /// contiguous memory access within each row, allowing efficient vectorization.
-/// Uses `wide::f32x8` to process 8 contiguous columns at a time.
+/// Processes columns with autovectorizable scalar loop.
 #[inline(never)]
 fn filter_horizontal_boundaries(
     plane: &mut [f32],
@@ -119,17 +119,8 @@ fn filter_horizontal_boundaries(
     height: usize,
     strength: &BoundaryStrength,
 ) {
-    use wide::f32x8;
-
     let max_d = strength.max_delta;
     let thresh = strength.threshold;
-    let max_d_v = f32x8::splat(max_d);
-    let neg_max_d_v = f32x8::splat(-max_d);
-    let zero_v = f32x8::splat(0.0);
-    let val_255_v = f32x8::splat(255.0);
-    let three_v = f32x8::splat(3.0);
-    let eighth_v = f32x8::splat(0.125);
-
     let num_boundaries = height / 8;
 
     for by in 1..num_boundaries {
@@ -143,53 +134,17 @@ fn filter_horizontal_boundaries(
         let off_q0 = row * width;
         let off_q1 = (row + 1) * width;
 
-        // SIMD: process 8 contiguous columns at a time
-        let mut x = 0;
-        while x + 8 <= width {
-            // Contiguous loads — optimal memory access pattern
-            let p1 = f32x8::new(plane[off_p1 + x..off_p1 + x + 8].try_into().unwrap());
-            let p0 = f32x8::new(plane[off_p0 + x..off_p0 + x + 8].try_into().unwrap());
-            let q0 = f32x8::new(plane[off_q0 + x..off_q0 + x + 8].try_into().unwrap());
-            let q1 = f32x8::new(plane[off_q1 + x..off_q1 + x + 8].try_into().unwrap());
-
-            // 4-tap average
-            let avg = (p1 + three_v * p0 + three_v * q0 + q1) * eighth_v;
-
-            // Deltas clamped to max strength
-            let delta_p = (avg - p0).max(neg_max_d_v).min(max_d_v);
-            let delta_q = (avg - q0).max(neg_max_d_v).min(max_d_v);
-
-            // Apply with pixel range clamping
-            let new_p0 = (p0 + delta_p).max(zero_v).min(val_255_v);
-            let new_q0 = (q0 + delta_q).max(zero_v).min(val_255_v);
-
-            // Threshold masking: only update lanes where |p0 - q0| >= threshold.
-            // We do this per-element since wide doesn't have blend/select.
-            let disc: [f32; 8] = (p0 - q0).abs().into();
-            let new_p0_arr: [f32; 8] = new_p0.into();
-            let new_q0_arr: [f32; 8] = new_q0.into();
-
-            for i in 0..8 {
-                if disc[i] >= thresh {
-                    plane[off_p0 + x + i] = new_p0_arr[i];
-                    plane[off_q0 + x + i] = new_q0_arr[i];
-                }
-            }
-
-            x += 8;
-        }
-
-        // Scalar tail
-        for x in (width & !7)..width {
-            let p1 = plane[off_p1 + x];
+        for x in 0..width {
             let p0 = plane[off_p0 + x];
             let q0 = plane[off_q0 + x];
-            let q1 = plane[off_q1 + x];
 
             let disc = (p0 - q0).abs();
             if disc < thresh {
                 continue;
             }
+
+            let p1 = plane[off_p1 + x];
+            let q1 = plane[off_q1 + x];
 
             let avg = (p1 + 3.0 * p0 + 3.0 * q0 + q1) * 0.125;
             let delta_p = (avg - p0).clamp(-max_d, max_d);
