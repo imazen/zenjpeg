@@ -11,9 +11,9 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("baseline");
 
-    // 1920x1080 test image (2 megapixels)
-    let width = 1920usize;
-    let height = 1080usize;
+    // Default: 1920x1080. Override with WIDTH=7680 HEIGHT=4320 for 8K.
+    let width: usize = env::var("WIDTH").ok().and_then(|s| s.parse().ok()).unwrap_or(1920);
+    let height: usize = env::var("HEIGHT").ok().and_then(|s| s.parse().ok()).unwrap_or(1080);
 
     // Row buffer for streaming — only MCU-row height, not full image
     let mcu_rows = 16;
