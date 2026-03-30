@@ -38,7 +38,7 @@
 //!   (only when `ScalingParams::Scaled`; absent for `Exact`)
 //! - 384 zero-bias blend endpoints (192 HQ + 192 LQ) — in `zero_bias_hq/lq`
 //! - 2 zero-bias blend distances
-//! - 9 trellis params
+//! - 7 trellis params
 //! - 5 AQ-trellis coupling params
 //! - 5 encoder flags (scan_mode, deringing, allow_16bit, downsampling, quality)
 //!
@@ -102,9 +102,7 @@ use super::tuning::{EncodingTables, PerComponent};
 ///
 /// | Parameter | Why dead |
 /// |-----------|----------|
-/// | `trellis_use_lambda_weight_tbl` | Always uses flat 1/q² weights regardless of flag |
 /// | `trellis_speed_mode` | Only limits search candidates; DP finds same optimum |
-/// | `trellis_num_loops` | Stored but never read — single-pass only |
 /// | `quality` (Exact tables) | Tables pre-scaled; zero-bias all zeros for mozjpeg |
 /// | `allow_16bit_quant_tables` | No effect unless quant values > 255 |
 /// | `deringing` | Only affects images with saturated (255) pixels near edges |
@@ -203,15 +201,6 @@ pub struct ExpertConfig {
     /// Default: `true`.
     pub trellis_dc_enabled: bool,
 
-    /// Use perceptual lambda weighting table.
-    ///
-    /// **DEAD PARAMETER.** The trellis always uses flat 1/q² weights regardless
-    /// of this flag. The CSF-based weighting from C mozjpeg mode=1 was never
-    /// implemented; mode=1 hardcodes flat weights. Toggling has zero effect.
-    ///
-    /// Default: `true`.
-    pub trellis_use_lambda_weight_tbl: bool,
-
     /// Lambda log scale 1 (rate penalty). Higher = more aggressive quantization.
     ///
     /// **Huge impact: -46% to +12%.** The effective lambda is
@@ -231,15 +220,6 @@ pub struct ExpertConfig {
     ///
     /// Default: `16.5`. Useful range: `14.0`–`18.0`.
     pub trellis_lambda_log_scale2: f32,
-
-    /// Number of trellis optimization loops.
-    ///
-    /// **DEAD PARAMETER.** Stored but never read by the trellis engine.
-    /// The encoder always performs a single pass. Values 1–5 all produce
-    /// identical output.
-    ///
-    /// Default: `1`.
-    pub trellis_num_loops: i32,
 
     /// Speed optimization mode for high-entropy blocks.
     ///
@@ -400,10 +380,8 @@ impl ExpertConfig {
             trellis_enabled: false,
             trellis_dc_enabled: true,
 
-            trellis_use_lambda_weight_tbl: true,
             trellis_lambda_log_scale1: 14.75,
             trellis_lambda_log_scale2: 16.5,
-            trellis_num_loops: 1,
             trellis_speed_mode: TrellisSpeedMode::Adaptive,
             trellis_delta_dc_weight: 0.0,
 
@@ -498,10 +476,8 @@ impl ExpertConfig {
             trellis_enabled,
             trellis_dc_enabled: true,
 
-            trellis_use_lambda_weight_tbl: true,
             trellis_lambda_log_scale1: 14.75,
             trellis_lambda_log_scale2: 16.5,
-            trellis_num_loops: 1,
             trellis_speed_mode,
             trellis_delta_dc_weight: 0.0,
 
@@ -628,7 +604,7 @@ impl ExpertConfig {
     ///
     /// In hybrid mode, the following fields are NOT forwarded to per-block trellis
     /// configs (see struct-level docs): `trellis_speed_mode`,
-    /// `trellis_delta_dc_weight`, `trellis_use_lambda_weight_tbl`.
+    /// `trellis_delta_dc_weight`.
     fn build_trellis_or_hybrid(&self) -> (Option<TrellisConfig>, HybridConfig) {
         if !self.trellis_enabled {
             return (None, HybridConfig::disabled());
@@ -636,9 +612,8 @@ impl ExpertConfig {
 
         if self.aq_trellis_coupling != 0.0 {
             // Hybrid mode: AQ-coupled trellis (positive or negative coupling).
-            // Note: trellis_speed_mode, trellis_delta_dc_weight,
-            // and trellis_use_lambda_weight_tbl are stored in HybridConfig but
-            // NOT forwarded to per-block TrellisConfig by to_trellis_config().
+            // Note: trellis_speed_mode and trellis_delta_dc_weight are NOT
+            // forwarded to per-block TrellisConfig by to_trellis_config().
             // See struct-level "Hybrid-Mode Limitations" docs.
             let hybrid = HybridConfig {
                 enabled: true,
@@ -646,8 +621,6 @@ impl ExpertConfig {
                 base_lambda_scale1: self.trellis_lambda_log_scale1,
                 base_lambda_scale2: self.trellis_lambda_log_scale2,
                 dc_enabled: self.trellis_dc_enabled,
-                num_loops: self.trellis_num_loops,
-                use_lambda_weight_tbl: self.trellis_use_lambda_weight_tbl,
                 aq_exponent: self.aq_trellis_exponent,
                 aq_threshold: self.aq_trellis_threshold,
                 quality_adaptive: self.aq_trellis_quality_adaptive,
@@ -661,10 +634,8 @@ impl ExpertConfig {
             let trellis = TrellisConfig {
                 enabled: true,
                 dc_enabled: self.trellis_dc_enabled,
-                use_lambda_weight_tbl: self.trellis_use_lambda_weight_tbl,
                 lambda_log_scale1: self.trellis_lambda_log_scale1,
                 lambda_log_scale2: self.trellis_lambda_log_scale2,
-                num_loops: self.trellis_num_loops,
                 speed_mode: self.trellis_speed_mode,
                 delta_dc_weight: self.trellis_delta_dc_weight,
             };
@@ -860,16 +831,14 @@ mod tests {
         }
     }
 
-    /// Verify all 9 trellis fields pass through in standalone mode (coupling=0).
+    /// Verify all trellis fields pass through in standalone mode (coupling=0).
     #[test]
     fn test_trellis_fields_pass_through_standalone() {
         let mut expert = ExpertConfig::default_ycbcr(85.0);
         expert.trellis_enabled = true;
         expert.trellis_dc_enabled = false;
-        expert.trellis_use_lambda_weight_tbl = false;
         expert.trellis_lambda_log_scale1 = 15.0;
         expert.trellis_lambda_log_scale2 = 17.0;
-        expert.trellis_num_loops = 2;
         expert.trellis_speed_mode = TrellisSpeedMode::Level(5);
         expert.trellis_delta_dc_weight = 0.5;
 
@@ -880,10 +849,8 @@ mod tests {
         let trellis = enc.trellis.unwrap();
         assert!(trellis.enabled);
         assert!(!trellis.dc_enabled);
-        assert!(!trellis.use_lambda_weight_tbl);
         assert!((trellis.lambda_log_scale1 - 15.0).abs() < 1e-6);
         assert!((trellis.lambda_log_scale2 - 17.0).abs() < 1e-6);
-        assert_eq!(trellis.num_loops, 2);
         assert_eq!(trellis.speed_mode, TrellisSpeedMode::Level(5));
         assert!((trellis.delta_dc_weight - 0.5).abs() < 1e-6);
     }
@@ -903,7 +870,6 @@ mod tests {
         expert.trellis_lambda_log_scale1 = 15.0;
         expert.trellis_lambda_log_scale2 = 17.0;
         expert.trellis_dc_enabled = false;
-        expert.trellis_num_loops = 2;
 
         let enc = expert.to_encoder_config(ColorMode::YCbCr {
             subsampling: ChromaSubsampling::None,
@@ -919,7 +885,6 @@ mod tests {
         assert!((enc.hybrid_config.base_lambda_scale1 - 15.0).abs() < 1e-6);
         assert!((enc.hybrid_config.base_lambda_scale2 - 17.0).abs() < 1e-6);
         assert!(!enc.hybrid_config.dc_enabled);
-        assert_eq!(enc.hybrid_config.num_loops, 2);
     }
 
     #[test]
@@ -1068,13 +1033,6 @@ mod tests {
             test_field("trellis_dc_enabled=false", &c, "(was true)");
         }
 
-        println!("\n--- Trellis lambda weight table ---");
-        {
-            let mut c = base.clone();
-            c.trellis_use_lambda_weight_tbl = false;
-            test_field("trellis_use_lambda_weight_tbl=false", &c, "(was true)");
-        }
-
         println!("\n--- Trellis lambda_log_scale1 (rate penalty) ---");
         for val in [12.0, 13.0, 14.0, 14.75, 15.5, 16.0, 17.0] {
             let mut c = base.clone();
@@ -1102,17 +1060,6 @@ mod tests {
                 } else {
                     ""
                 },
-            );
-        }
-
-        println!("\n--- Trellis num_loops ---");
-        for val in [1, 2, 3, 5] {
-            let mut c = base.clone();
-            c.trellis_num_loops = val;
-            test_field(
-                Box::leak(format!("trellis_num_loops={}", val).into_boxed_str()),
-                &c,
-                if val == 1 { "(default)" } else { "" },
             );
         }
 

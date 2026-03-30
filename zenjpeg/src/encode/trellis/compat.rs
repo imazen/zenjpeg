@@ -157,23 +157,10 @@ pub struct TrellisConfig {
     pub enabled: bool,
     /// Enable trellis quantization for DC coefficients.
     pub dc_enabled: bool,
-    /// Use perceptual lambda weighting table.
-    ///
-    /// **Currently unused:** The implementation always uses flat 1/q² weights
-    /// regardless of this flag (see `encode/trellis/ac.rs`). Retained for
-    /// future implementation of perceptual weighting.
-    pub use_lambda_weight_tbl: bool,
     /// Lambda log scale parameter 1 (rate penalty).
     pub lambda_log_scale1: f32,
     /// Lambda log scale parameter 2 (distortion sensitivity).
     pub lambda_log_scale2: f32,
-    /// Number of trellis optimization loops.
-    ///
-    /// **Currently unused:** The implementation always performs a single pass.
-    /// Multi-loop trellis (iterating until convergence) is a potential future
-    /// optimization — each loop refines coefficient choices based on updated
-    /// rate estimates from the previous loop.
-    pub num_loops: i32,
     /// Speed optimization mode.
     pub speed_mode: TrellisSpeedMode,
     /// Weight for vertical DC gradient consideration in DC trellis.
@@ -199,10 +186,8 @@ impl Default for TrellisConfig {
         Self {
             enabled: true,
             dc_enabled: true,
-            use_lambda_weight_tbl: true,
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
-            num_loops: 1,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
         }
@@ -225,10 +210,8 @@ impl TrellisConfig {
         Self {
             enabled: false,
             dc_enabled: false,
-            use_lambda_weight_tbl: false,
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
-            num_loops: 1,
             speed_mode: TrellisSpeedMode::Adaptive,
             delta_dc_weight: 0.0,
         }
@@ -377,18 +360,6 @@ impl TrellisConfig {
     #[must_use]
     pub fn speed_level(mut self, level: u8) -> Self {
         self.speed_mode = TrellisSpeedMode::Level(level.min(10));
-        self
-    }
-
-    /// Set the number of trellis optimization loops.
-    ///
-    /// Multiple loops can improve results but with diminishing returns.
-    /// Generally not worth increasing beyond 1.
-    ///
-    /// Default: `1`
-    #[must_use]
-    pub fn num_loops(mut self, loops: i32) -> Self {
-        self.num_loops = loops.max(1);
         self
     }
 
@@ -574,12 +545,6 @@ mod tests {
 
         // Level(0) is full search
         assert_eq!(TrellisSpeedMode::Level(0).get_limits(60), (63, 16));
-    }
-
-    #[test]
-    fn test_num_loops_minimum() {
-        let config = TrellisConfig::default().num_loops(0);
-        assert_eq!(config.num_loops, 1); // Minimum is 1
     }
 
     #[test]
