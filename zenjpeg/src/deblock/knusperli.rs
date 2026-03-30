@@ -19,7 +19,8 @@
 use crate::decode::idct::inverse_dct_8x8;
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
-use wide::f32x8;
+use magetypes::simd::backends::F32x8Backend;
+use magetypes::simd::generic::f32x8 as gf32x8;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -211,9 +212,39 @@ fn dequantize_row(
 /// Correct vertical boundaries between horizontally adjacent blocks in one row.
 #[inline(never)]
 fn correct_h_row(blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
-    let alpha_v = f32x8::new(ALPHA_SQRT2);
-    let sign_v = f32x8::new(SIGN_ALT);
-    let idx_sq_v = f32x8::new(IDX_SQ);
+    archmage::incant!(correct_h_row_impl(blocks, offsets, blocks_wide));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn correct_h_row_impl_v3(
+    _token: archmage::X64V3Token,
+    blocks: &[f32],
+    offsets: &mut [f32],
+    blocks_wide: usize,
+) {
+    correct_h_row_generic(_token, blocks, offsets, blocks_wide);
+}
+
+fn correct_h_row_impl_scalar(
+    _token: archmage::ScalarToken,
+    blocks: &[f32],
+    offsets: &mut [f32],
+    blocks_wide: usize,
+) {
+    correct_h_row_generic(_token, blocks, offsets, blocks_wide);
+}
+
+#[inline(always)]
+fn correct_h_row_generic<T: F32x8Backend>(
+    token: T,
+    blocks: &[f32],
+    offsets: &mut [f32],
+    blocks_wide: usize,
+) {
+    let alpha_v = gf32x8::from_array(token, ALPHA_SQRT2);
+    let sign_v = gf32x8::from_array(token, SIGN_ALT);
+    let idx_sq_v = gf32x8::from_array(token, IDX_SQ);
 
     for bx in 0..blocks_wide.saturating_sub(1) {
         let bi = bx * 64;
@@ -222,9 +253,8 @@ fn correct_h_row(blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
         for v in 0..4 {
             let row = v * 8;
 
-            // Contiguous load: one row of 8 coefficients from each block
-            let gi = f32x8::new(blocks[bi + row..bi + row + 8].try_into().unwrap());
-            let gj = f32x8::new(blocks[bj + row..bj + row + 8].try_into().unwrap());
+            let gi = gf32x8::load(token, blocks[bi + row..bi + row + 8].try_into().unwrap());
+            let gj = gf32x8::load(token, blocks[bj + row..bj + row + 8].try_into().unwrap());
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
@@ -250,15 +280,50 @@ fn correct_v_between(
     bot_off: &mut [f32],
     blocks_wide: usize,
 ) {
-    let alpha_v = f32x8::new(ALPHA_SQRT2);
-    let sign_v = f32x8::new(SIGN_ALT);
-    let idx_sq_v = f32x8::new(IDX_SQ);
+    archmage::incant!(correct_v_between_impl(top, top_off, bot, bot_off, blocks_wide));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn correct_v_between_impl_v3(
+    _token: archmage::X64V3Token,
+    top: &[f32],
+    top_off: &mut [f32],
+    bot: &[f32],
+    bot_off: &mut [f32],
+    blocks_wide: usize,
+) {
+    correct_v_between_generic(_token, top, top_off, bot, bot_off, blocks_wide);
+}
+
+fn correct_v_between_impl_scalar(
+    _token: archmage::ScalarToken,
+    top: &[f32],
+    top_off: &mut [f32],
+    bot: &[f32],
+    bot_off: &mut [f32],
+    blocks_wide: usize,
+) {
+    correct_v_between_generic(_token, top, top_off, bot, bot_off, blocks_wide);
+}
+
+#[inline(always)]
+fn correct_v_between_generic<T: F32x8Backend>(
+    token: T,
+    top: &[f32],
+    top_off: &mut [f32],
+    bot: &[f32],
+    bot_off: &mut [f32],
+    blocks_wide: usize,
+) {
+    let alpha_v = gf32x8::from_array(token, ALPHA_SQRT2);
+    let sign_v = gf32x8::from_array(token, SIGN_ALT);
+    let idx_sq_v = gf32x8::from_array(token, IDX_SQ);
 
     for bx in 0..blocks_wide {
         let off = bx * 64;
 
         for u in 0..4 {
-            // Gather column u from both blocks (stride 8 within 64-element block)
             let mut gi_arr = [0.0f32; 8];
             let mut gj_arr = [0.0f32; 8];
             for v in 0..8 {
@@ -266,13 +331,12 @@ fn correct_v_between(
                 gj_arr[v] = bot[off + v * 8 + u];
             }
 
-            let gi = f32x8::new(gi_arr);
-            let gj = f32x8::new(gj_arr);
+            let gi = gf32x8::from_array(token, gi_arr);
+            let gj = gf32x8::from_array(token, gj_arr);
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
             let (gl, gr) = select_gradient(hf);
-            // Scatter corrections at strided positions (column u, rows 0..3)
             for v in 0..4 {
                 top_off[off + v * 8 + u] += delta * gl[v];
                 bot_off[off + v * 8 + u] += delta * gr[v];
@@ -285,17 +349,22 @@ fn correct_v_between(
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Compute boundary discontinuity (delta) and HF energy penalty from two
-/// 8-element coefficient vectors (one row/column from each adjacent block).
+/// Compute boundary discontinuity (delta) and HF energy penalty, generic over backend.
 #[inline(always)]
-fn compute_delta_hf(gi: f32x8, gj: f32x8, alpha: f32x8, sign: f32x8, idx_sq: f32x8) -> (f32, f32) {
+fn compute_delta_hf<T: F32x8Backend>(
+    gi: gf32x8<T>,
+    gj: gf32x8<T>,
+    alpha: gf32x8<T>,
+    sign: gf32x8<T>,
+    idx_sq: gf32x8<T>,
+) -> (f32, f32) {
     // delta = Σ α(k)√2 × (gj[k] - (-1)^k × gi[k])
     let delta_lanes = alpha * (gj - sign * gi);
-    let delta = sum_f32x8(delta_lanes);
+    let delta = delta_lanes.reduce_add();
 
     // hf = Σ k² × (gi[k]² + gj[k]²)
     let hf_lanes = idx_sq * (gi * gi + gj * gj);
-    let hf = sum_f32x8(hf_lanes);
+    let hf = hf_lanes.reduce_add();
 
     (delta, hf)
 }
@@ -308,13 +377,6 @@ fn select_gradient(hf: f32) -> (&'static [f32; 4], &'static [f32; 4]) {
     } else {
         (&GRAD_LEFT, &GRAD_RIGHT)
     }
-}
-
-/// Sum all 8 lanes of an f32x8 with pairwise reduction.
-#[inline(always)]
-fn sum_f32x8(v: f32x8) -> f32 {
-    let a: [f32; 8] = v.into();
-    (a[0] + a[1]) + (a[2] + a[3]) + (a[4] + a[5]) + (a[6] + a[7])
 }
 
 // ---------------------------------------------------------------------------
@@ -333,38 +395,77 @@ fn finalize_row(
     pw: usize,
     plane: &mut [f32],
 ) {
-    let scale_v = f32x8::splat(OFFSET_SCALE);
-    let half = f32x8::splat(0.5);
-    let level_shift = f32x8::splat(128.0);
+    archmage::incant!(finalize_row_impl(blocks, offsets, quant_f32, by, blocks_wide, pw, plane));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn finalize_row_impl_v3(
+    _token: archmage::X64V3Token,
+    blocks: &[f32],
+    offsets: &[f32],
+    quant_f32: &[f32; 64],
+    by: usize,
+    blocks_wide: usize,
+    pw: usize,
+    plane: &mut [f32],
+) {
+    finalize_row_generic(_token, blocks, offsets, quant_f32, by, blocks_wide, pw, plane);
+}
+
+fn finalize_row_impl_scalar(
+    _token: archmage::ScalarToken,
+    blocks: &[f32],
+    offsets: &[f32],
+    quant_f32: &[f32; 64],
+    by: usize,
+    blocks_wide: usize,
+    pw: usize,
+    plane: &mut [f32],
+) {
+    finalize_row_generic(_token, blocks, offsets, quant_f32, by, blocks_wide, pw, plane);
+}
+
+#[inline(always)]
+fn finalize_row_generic<T: F32x8Backend>(
+    token: T,
+    blocks: &[f32],
+    offsets: &[f32],
+    quant_f32: &[f32; 64],
+    by: usize,
+    blocks_wide: usize,
+    pw: usize,
+    plane: &mut [f32],
+) {
+    let scale_v = gf32x8::splat(token, OFFSET_SCALE);
+    let half = gf32x8::splat(token, 0.5);
+    let level_shift = gf32x8::splat(token, 128.0);
 
     let mut block = [0.0f32; 64];
 
     for bx in 0..blocks_wide {
         let off = bx * 64;
 
-        // Apply offsets with SIMD: corrected = mid + off × scale, clamped to [mid-q/2, mid+q/2]
         for k in (0..64).step_by(8) {
-            let mid = f32x8::new(blocks[off + k..off + k + 8].try_into().unwrap());
-            let correction = f32x8::new(offsets[off + k..off + k + 8].try_into().unwrap());
-            let q = f32x8::new(quant_f32[k..k + 8].try_into().unwrap());
+            let mid = gf32x8::load(token, blocks[off + k..off + k + 8].try_into().unwrap());
+            let correction =
+                gf32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
+            let q = gf32x8::load(token, quant_f32[k..k + 8].try_into().unwrap());
             let half_q = q * half;
 
             let corrected = mid + correction * scale_v;
             let clamped = corrected.max(mid - half_q).min(mid + half_q);
 
-            let result: [f32; 8] = clamped.into();
-            block[k..k + 8].copy_from_slice(&result);
+            clamped.store(<&mut [f32; 8]>::try_from(&mut block[k..k + 8]).unwrap());
         }
 
-        // IDCT
         let pixels = inverse_dct_8x8(&block);
 
-        // Write to output plane with +128 level shift, 8 pixels at a time
         for row in 0..8 {
-            let src = f32x8::new(pixels[row * 8..(row + 1) * 8].try_into().unwrap());
-            let shifted: [f32; 8] = (src + level_shift).into();
+            let src = gf32x8::load(token, pixels[row * 8..(row + 1) * 8].try_into().unwrap());
+            let shifted = src + level_shift;
             let dst = (by * 8 + row) * pw + bx * 8;
-            plane[dst..dst + 8].copy_from_slice(&shifted);
+            shifted.store(<&mut [f32; 8]>::try_from(&mut plane[dst..dst + 8]).unwrap());
         }
     }
 }

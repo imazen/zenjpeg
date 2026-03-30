@@ -121,7 +121,6 @@ impl QuantContext {
 }
 
 use crate::foundation::simd_types::Block8x8f;
-use wide::f32x8;
 
 /// Wide-native block extraction: returns Block8x8f directly.
 ///
@@ -140,7 +139,6 @@ pub(crate) fn extract_block_from_strip_wide(
     local_by: usize,
     strip_width: usize,
 ) -> Block8x8f {
-    let level_shift = f32x8::splat(128.0);
     let x_start = bx * 8;
     let y_start = local_by * 8;
 
@@ -155,10 +153,9 @@ pub(crate) fn extract_block_from_strip_wide(
     let mut rows = [[0.0f32; 8]; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
-        let src = &strip[row_start..row_start + 8];
-        let mut arr = [0.0f32; 8];
-        arr.copy_from_slice(src);
-        rows[dy] = (f32x8::from(arr) - level_shift).to_array();
+        for dx in 0..8 {
+            rows[dy][dx] = strip[row_start + dx] - 128.0;
+        }
     }
 
     Block8x8f { rows }
