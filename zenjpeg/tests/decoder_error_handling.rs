@@ -738,3 +738,46 @@ fn test_all_0xff() {
     let ones = vec![0xffu8; COMPRESSED_0.len()];
     assert!(!parse_compressed(&ones), "Should reject all-0xFF data");
 }
+
+// ============================================================================
+// Scanline reader crash regressions
+// ============================================================================
+
+/// Regression test for fuzz-found index OOB in scanline decoder.
+///
+/// The crash file has a valid SOF0 (1x1 grayscale, sampling 1x1, quant 0)
+/// but a malformed SOS with Huffman table indices dc=4, ac=15, both
+/// exceeding MAX_HUFFMAN_TABLES (4). The scanline parser's `find_scan_info()`
+/// lacked bounds checks on these indices, causing a panic at
+/// `self.dc_tables[dc_idx]` in `decode_mcu_row`.
+///
+/// Crash artifact: zencodecs fuzz_push_decode crash-d387982cfd9793c47f9cd3411e37d01832524791
+#[test]
+fn test_scanline_huffman_table_oob() {
+    let data = std::fs::read("tests/crash_repro/crash_scanline_huffman_table_oob.jpg")
+        .expect("crash repro file should exist");
+
+    // Full decode path (uses scan.rs parser, already validated)
+    let decoder = Decoder::new();
+    assert!(
+        decoder.decode(&data, Unstoppable).is_err(),
+        "Full decode should return error, not panic"
+    );
+
+    // Scanline reader path (uses find_scan_info in parser/mod.rs — this was the crash site)
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decoder.scanline_reader(&data)
+    }));
+    match result {
+        Ok(Err(_)) => {} // Expected: graceful error
+        Ok(Ok(_)) => panic!("scanline_reader should reject malformed SOS"),
+        Err(e) => {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".to_string());
+            panic!("scanline_reader panicked instead of returning error: {msg}");
+        }
+    }
+}
