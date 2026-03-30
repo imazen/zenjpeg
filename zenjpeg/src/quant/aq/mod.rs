@@ -322,40 +322,10 @@ pub fn quant_field_to_aq_strength(quant_field: f32) -> f32 {
 ///
 /// Returns `AllocError` if result buffer allocation fails.
 pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Result<AlignedVec<f32>, AllocError> {
-    use wide::f32x8;
-
     let mut result = try_alloc_zeroed(quant_field.len())?;
-    let chunks = quant_field.len() / 8;
-
-    let point_six = f32x8::splat(0.6);
-    let one = f32x8::splat(1.0);
-    let zero = f32x8::splat(0.0);
-
-    for chunk in 0..chunks {
-        let k = chunk * 8;
-        let qf = f32x8::from([
-            quant_field[k],
-            quant_field[k + 1],
-            quant_field[k + 2],
-            quant_field[k + 3],
-            quant_field[k + 4],
-            quant_field[k + 5],
-            quant_field[k + 6],
-            quant_field[k + 7],
-        ]);
-
-        // aq_strength = max(0.0, 0.6 / quant_field - 1.0)
-        let aq = (point_six / qf - one).max(zero);
-
-        let arr: [f32; 8] = aq.into();
-        result[k..k + 8].copy_from_slice(&arr);
-    }
-
-    // Handle remainder
-    for i in (chunks * 8)..quant_field.len() {
+    for i in 0..quant_field.len() {
         result[i] = quant_field_to_aq_strength(quant_field[i]);
     }
-
     Ok(result)
 }
 

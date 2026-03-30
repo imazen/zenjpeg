@@ -762,41 +762,11 @@ pub fn quantize_block(
     coeffs: &[f32; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
 ) -> [i16; DCT_BLOCK_SIZE] {
-    use wide::f32x8;
-
     let mut result = [0i16; DCT_BLOCK_SIZE];
-
-    // Process 8 coefficients at a time
-    for chunk in 0..8 {
-        let k = chunk * 8;
-
-        // Load coefficients directly from slice
-        let c = f32x8::from(<[f32; 8]>::try_from(&coeffs[k..k + 8]).unwrap());
-
-        // Load quant values (must convert u16 to f32)
-        let q = f32x8::from([
-            quant[k] as f32,
-            quant[k + 1] as f32,
-            quant[k + 2] as f32,
-            quant[k + 3] as f32,
-            quant[k + 4] as f32,
-            quant[k + 5] as f32,
-            quant[k + 6] as f32,
-            quant[k + 7] as f32,
-        ]);
-
-        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
-        let eight = f32x8::splat(8.0);
-        let qval = c * eight / q;
-        let rounded = qval.round();
-        let arr: [f32; 8] = rounded.into();
-
-        // Store results (must convert f32 to i16)
-        for i in 0..8 {
-            result[k + i] = arr[i] as i16;
-        }
+    // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+    for k in 0..DCT_BLOCK_SIZE {
+        result[k] = (coeffs[k] * 8.0 / quant[k] as f32).round() as i16;
     }
-
     result
 }
 
@@ -852,56 +822,15 @@ pub fn quantize_block_with_zero_bias_simd(
     zero_bias: &ZeroBiasParams,
     aq_strength: f32,
 ) -> [i16; DCT_BLOCK_SIZE] {
-    use wide::f32x8;
-
     let mut result = [0i16; DCT_BLOCK_SIZE];
-    let aq = f32x8::splat(aq_strength);
-
-    // Process 8 coefficients at a time
-    for chunk in 0..8 {
-        let k = chunk * 8;
-
-        // Load coefficients directly from slice
-        let c = f32x8::from(<[f32; 8]>::try_from(&coeffs[k..k + 8]).unwrap());
-
-        // Load quant values (must convert u16 to f32)
-        let q = f32x8::from([
-            quant[k] as f32,
-            quant[k + 1] as f32,
-            quant[k + 2] as f32,
-            quant[k + 3] as f32,
-            quant[k + 4] as f32,
-            quant[k + 5] as f32,
-            quant[k + 6] as f32,
-            quant[k + 7] as f32,
-        ]);
-
-        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
-        let eight = f32x8::splat(8.0);
-        let qval = c * eight / q;
-
-        // Load zero_bias offset and mul directly from slices
-        let offset = f32x8::from(<[f32; 8]>::try_from(&zero_bias.offset[k..k + 8]).unwrap());
-        let mul = f32x8::from(<[f32; 8]>::try_from(&zero_bias.mul[k..k + 8]).unwrap());
-
-        // threshold = offset + mul * aq_strength
-        let threshold = offset + mul * aq;
-
-        // |qval| >= threshold
-        let abs_qval = qval.abs();
-
-        // Convert to arrays for conditional processing
-        let qval_arr: [f32; 8] = qval.into();
-        let abs_arr: [f32; 8] = abs_qval.into();
-        let thresh_arr: [f32; 8] = threshold.into();
-
-        for i in 0..8 {
-            if abs_arr[i] >= thresh_arr[i] {
-                result[k + i] = qval_arr[i].round() as i16;
-            }
+    // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+    for k in 0..DCT_BLOCK_SIZE {
+        let qval = coeffs[k] * 8.0 / quant[k] as f32;
+        let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
+        if qval.abs() >= threshold {
+            result[k] = qval.round() as i16;
         }
     }
-
     result
 }
 
@@ -1020,44 +949,10 @@ pub fn dequantize_block(
     quantized: &[i16; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
 ) -> [f32; DCT_BLOCK_SIZE] {
-    use wide::f32x8;
-
     let mut result = [0.0f32; DCT_BLOCK_SIZE];
-
-    // Process 8 coefficients at a time
-    for chunk in 0..8 {
-        let k = chunk * 8;
-
-        // Load quantized values and convert to f32
-        let q = f32x8::from([
-            quantized[k] as f32,
-            quantized[k + 1] as f32,
-            quantized[k + 2] as f32,
-            quantized[k + 3] as f32,
-            quantized[k + 4] as f32,
-            quantized[k + 5] as f32,
-            quantized[k + 6] as f32,
-            quantized[k + 7] as f32,
-        ]);
-
-        // Load quant table values and convert to f32
-        let qt = f32x8::from([
-            quant[k] as f32,
-            quant[k + 1] as f32,
-            quant[k + 2] as f32,
-            quant[k + 3] as f32,
-            quant[k + 4] as f32,
-            quant[k + 5] as f32,
-            quant[k + 6] as f32,
-            quant[k + 7] as f32,
-        ]);
-
-        // Multiply to get dequantized values
-        let dq = q * qt;
-        let arr: [f32; 8] = dq.into();
-        result[k..k + 8].copy_from_slice(&arr);
+    for k in 0..DCT_BLOCK_SIZE {
+        result[k] = quantized[k] as f32 * quant[k] as f32;
     }
-
     result
 }
 

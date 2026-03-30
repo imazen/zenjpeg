@@ -384,8 +384,6 @@ mod tests {
 
     #[test]
     fn test_deringing_block() {
-        use wide::f32x8;
-
         // Create a Block8x8f with some max pixels
         let mut block = Block8x8f::ZERO;
 

@@ -32,8 +32,6 @@ use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_f32};
 use crate::foundation::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
 use crate::types::PixelFormat;
 
-use wide::f32x8;
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -47,12 +45,10 @@ const NUM_ITERATIONS: usize = 4;
 const CONVERGENCE_THRESHOLD: f32 = 0.1;
 
 // ============================================================================
-// SIMD Helper Functions
+// Helper Functions
 // ============================================================================
 
-/// Compute Y (luminance) plane from interleaved RGB u8 data using SIMD.
-///
-/// Processes 8 pixels at a time using f32x8 vectors.
+/// Compute Y (luminance) plane from interleaved RGB u8 data.
 fn compute_y_plane_from_rgb(
     data: &[u8],
     width: usize,
@@ -60,62 +56,13 @@ fn compute_y_plane_from_rgb(
     bpp: usize,
     y_plane: &mut [f32],
 ) {
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
-
     let num_pixels = width * height;
-    let chunks = num_pixels / 8;
-
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let rgb_base = base * bpp;
-
-        // Gather 8 RGB pixels
-        let r = f32x8::from([
-            data[rgb_base] as f32,
-            data[rgb_base + bpp] as f32,
-            data[rgb_base + 2 * bpp] as f32,
-            data[rgb_base + 3 * bpp] as f32,
-            data[rgb_base + 4 * bpp] as f32,
-            data[rgb_base + 5 * bpp] as f32,
-            data[rgb_base + 6 * bpp] as f32,
-            data[rgb_base + 7 * bpp] as f32,
-        ]);
-        let g = f32x8::from([
-            data[rgb_base + 1] as f32,
-            data[rgb_base + bpp + 1] as f32,
-            data[rgb_base + 2 * bpp + 1] as f32,
-            data[rgb_base + 3 * bpp + 1] as f32,
-            data[rgb_base + 4 * bpp + 1] as f32,
-            data[rgb_base + 5 * bpp + 1] as f32,
-            data[rgb_base + 6 * bpp + 1] as f32,
-            data[rgb_base + 7 * bpp + 1] as f32,
-        ]);
-        let b = f32x8::from([
-            data[rgb_base + 2] as f32,
-            data[rgb_base + bpp + 2] as f32,
-            data[rgb_base + 2 * bpp + 2] as f32,
-            data[rgb_base + 3 * bpp + 2] as f32,
-            data[rgb_base + 4 * bpp + 2] as f32,
-            data[rgb_base + 5 * bpp + 2] as f32,
-            data[rgb_base + 6 * bpp + 2] as f32,
-            data[rgb_base + 7 * bpp + 2] as f32,
-        ]);
-
-        // Y = R_TO_Y * R + G_TO_Y * G + B_TO_Y * B - use FMA for accuracy
-        let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
-        let arr: [f32; 8] = y.into();
-        y_plane[base..base + 8].copy_from_slice(&arr);
-    }
-
-    // Handle remainder with scalar code
-    for i in (chunks * 8)..num_pixels {
+    for i in 0..num_pixels {
         let idx = i * bpp;
         let r = data[idx] as f32;
         let g = data[idx + 1] as f32;
         let b = data[idx + 2] as f32;
-        y_plane[i] = color::rgb_to_ycbcr_f32(r, g, b).0;
+        y_plane[i] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
     }
 }
 
