@@ -81,7 +81,7 @@ thiserror = { version = "2.0", default-features = false }
 # Cooperative cancellation
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
-zencodec = { version = "0.1.8", path = "../zencodec" }
+zencodec = { version = "0.1.10" }
 zenpixels = { version = "0.2.1", default-features = false, features = ["imgref"] }
 
 # Published crates
@@ -100,6 +100,15 @@ ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.3.0", default
 # Layout + resize pipeline
 zenlayout = "0.2"
 zenresize = { path = "../zenresize", version = "0.2" }
+
+[workspace.metadata.superwork.ci]
+delete_members = ["internal/jpegli-internals-sys", "zjpeg"]
+delete_workspace_deps = ["zenresize"]
+
+[workspace.metadata.superwork.ci.member_overrides.zenjpeg]
+delete_deps = ["jpegli-internals-sys", "zenresize", "zennode"]
+strip_features = ["cjpegli-ffi"]
+blank = { layout = "[]", zennode = "[]" }
 
 [profile.release]
 debug = true
