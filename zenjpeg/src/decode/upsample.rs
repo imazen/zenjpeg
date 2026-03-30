@@ -273,14 +273,86 @@ pub fn upsample_h1v2_i16_libjpeg_strided(
         let near_row = in_y_clamped * in_stride;
         let far_row = far_y * in_stride;
 
-        let bias = if is_upper { 1i32 } else { 2i32 };
+        let bias = if is_upper { 1i16 } else { 2i16 };
+        let w = out_width.min(in_width);
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if let Some(token) = archmage::X64V3Token::summon() {
+                upsample_h1v2_row_avx2(
+                    token,
+                    &input[near_row..],
+                    &input[far_row..],
+                    &mut output[out_row..],
+                    w,
+                    bias,
+                );
+                // Handle edge replication for out_width > in_width
+                if out_width > in_width && in_width > 0 {
+                    let edge = output[out_row + in_width - 1];
+                    for x in in_width..out_width {
+                        output[out_row + x] = edge;
+                    }
+                }
+                continue;
+            }
+        }
 
         for out_x in 0..out_width {
             let in_x = out_x.min(in_width.saturating_sub(1));
             let near = input[near_row + in_x] as i32;
             let far = input[far_row + in_x] as i32;
-            output[out_row + out_x] = ((near * 3 + far + bias) >> 2) as i16;
+            output[out_row + out_x] = ((near * 3 + far + bias as i32) >> 2) as i16;
         }
+    }
+}
+
+/// AVX2 implementation of one row of vertical 2x upsampling.
+///
+/// Computes `(near*3 + far + bias) >> 2` for 16 i16 elements at a time.
+/// All arithmetic stays within i16 range: max magnitude is
+/// `(2048*3 + 2048 + 2) >> 2 = 2049`, well within i16.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn upsample_h1v2_row_avx2(
+    _token: archmage::X64V3Token,
+    near: &[i16],
+    far: &[i16],
+    output: &mut [i16],
+    width: usize,
+    bias: i16,
+) {
+    use core::arch::x86_64::*;
+
+    let v_three = _mm256_set1_epi16(3);
+    let v_bias = _mm256_set1_epi16(bias);
+
+    let mut x = 0;
+    while x + 16 <= width {
+        let v_near =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x..x + 16]).unwrap());
+        let v_far =
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x..x + 16]).unwrap());
+        // (near * 3 + far + bias) >> 2
+        let v_result = _mm256_srai_epi16(
+            _mm256_add_epi16(
+                _mm256_add_epi16(_mm256_mullo_epi16(v_near, v_three), v_far),
+                v_bias,
+            ),
+            2,
+        );
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[x..x + 16]).unwrap(),
+            v_result,
+        );
+        x += 16;
+    }
+
+    // Scalar tail
+    for x in x..width {
+        let n = near[x] as i32;
+        let f = far[x] as i32;
+        output[x] = ((n * 3 + f + bias as i32) >> 2) as i16;
     }
 }
 
