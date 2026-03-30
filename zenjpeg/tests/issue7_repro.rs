@@ -13,10 +13,18 @@ use std::path::PathBuf;
 use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, IdctMethod};
 
-const IMAGE_URL: &str = "https://imageflow-resources.s3.us-west-2.amazonaws.com/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg";
+const CORPUS_PATH: &str = "imageflow/test_inputs/canon_5d_srgb.jpg";
+const FALLBACK_URL: &str = "https://imageflow-resources.s3.us-west-2.amazonaws.com/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg";
 
-/// Fetch test image, caching in target/test-cache/.
+/// Fetch test image via codec-corpus (auto-download), falling back to S3.
 fn fetch_test_image() -> Vec<u8> {
+    // Try codec-corpus first
+    if let Ok(corpus) = codec_corpus::Corpus::new() {
+        if let Ok(path) = corpus.get(CORPUS_PATH) {
+            return std::fs::read(path).expect("read corpus image");
+        }
+    }
+    // Fallback: download from S3 with local cache
     let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("test-cache");
@@ -26,10 +34,10 @@ fn fetch_test_image() -> Vec<u8> {
         return data;
     }
     let resp = std::process::Command::new("curl")
-        .args(["-sfL", "-o", cached.to_str().unwrap(), IMAGE_URL])
+        .args(["-sfL", "-o", cached.to_str().unwrap(), FALLBACK_URL])
         .status()
         .expect("curl not found");
-    assert!(resp.success(), "failed to download test image from {IMAGE_URL}");
+    assert!(resp.success(), "failed to download test image from {FALLBACK_URL}");
     std::fs::read(&cached).expect("read cached image")
 }
 
