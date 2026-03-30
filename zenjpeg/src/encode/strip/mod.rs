@@ -152,15 +152,13 @@ pub(crate) fn extract_block_from_strip_wide(
         strip.len(),
     );
 
-    let mut rows = [f32x8::ZERO; 8];
+    let mut rows = [[0.0f32; 8]; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
         let src = &strip[row_start..row_start + 8];
-        // SAFETY: src.len() == 8 is guaranteed by the slice range.
-        // Using copy instead of try_into to avoid Result overhead.
         let mut arr = [0.0f32; 8];
         arr.copy_from_slice(src);
-        rows[dy] = f32x8::from(arr) - level_shift;
+        rows[dy] = (f32x8::from(arr) - level_shift).to_array();
     }
 
     Block8x8f { rows }

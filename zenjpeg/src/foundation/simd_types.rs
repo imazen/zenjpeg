@@ -1,48 +1,46 @@
 //! SIMD-native data types for efficient block processing.
 //!
-//! These types store data in SIMD-friendly layouts to eliminate load/store overhead
-//! during DCT and quantization operations.
+//! These types store data in raw arrays for `Pod`/`Zeroable`/`const` compatibility.
+//! Computation uses `wide::f32x8` (portable fallback) or `magetypes` (archmage dispatch).
+//! The array storage is layout-compatible with SIMD vectors (32-byte aligned).
 
 #![allow(dead_code)]
 #![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
 
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-use wide::{CmpGe, f32x8, i16x8, i32x8};
+use wide::{CmpGe, f32x8, i32x8};
 
-/// An 8x8 block stored as 8 rows of f32x8 for SIMD-native access.
+/// An 8x8 block stored as 8 rows of `[f32; 8]` for SIMD-native access.
 ///
 /// This layout means:
-/// - Each row is already a SIMD vector (no gather needed)
+/// - Each row can be loaded into a SIMD vector with a single aligned load
 /// - Row-wise operations (DCT, quantization) are trivial
 /// - 32-byte aligned for optimal SIMD access
 ///
 /// # Safety
 ///
 /// `Block8x8f` is `Pod` and `Zeroable` because:
-/// - `f32x8` is `#[repr(C)]` containing 8 f32s (all Pod)
+/// - `[f32; 8]` is Pod (all f32 bit patterns are valid)
 /// - The struct is `#[repr(C, align(32))]` with no padding
-/// - All bit patterns are valid (f32 allows all patterns including NaN)
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, align(32))]
 pub struct Block8x8f {
-    pub rows: [f32x8; 8],
+    pub rows: [[f32; 8]; 8],
 }
 
 impl Block8x8f {
     pub const ZERO: Self = Self {
-        rows: [f32x8::ZERO; 8],
+        rows: [[0.0; 8]; 8],
     };
 
     /// Create from a flat array (for compatibility with existing code)
     #[inline]
     pub fn from_array(arr: &[f32; 64]) -> Self {
-        let mut rows = [f32x8::ZERO; 8];
+        let mut rows = [[0.0f32; 8]; 8];
         for (row_idx, row) in rows.iter_mut().enumerate() {
             let start = row_idx * 8;
-            // Use slice-to-array conversion - zero-cost load from contiguous memory
-            let row_slice: [f32; 8] = arr[start..start + 8].try_into().unwrap();
-            *row = f32x8::from(row_slice);
+            *row = arr[start..start + 8].try_into().unwrap();
         }
         Self { rows }
     }
@@ -52,8 +50,7 @@ impl Block8x8f {
     pub fn to_array(&self) -> [f32; 64] {
         let mut arr = [0.0f32; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
-            let row_arr: [f32; 8] = (*row).into();
-            arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(&row_arr);
+            arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
         }
         arr
     }
@@ -61,16 +58,13 @@ impl Block8x8f {
     /// Access a single coefficient
     #[inline]
     pub fn get(&self, row: usize, col: usize) -> f32 {
-        let row_arr: [f32; 8] = self.rows[row].into();
-        row_arr[col]
+        self.rows[row][col]
     }
 
     /// Set a single coefficient
     #[inline]
     pub fn set(&mut self, row: usize, col: usize, value: f32) {
-        let mut row_arr: [f32; 8] = self.rows[row].into();
-        row_arr[col] = value;
-        self.rows[row] = f32x8::from(row_arr);
+        self.rows[row][col] = value;
     }
 
     /// Multiply all elements by a scalar
@@ -79,7 +73,7 @@ impl Block8x8f {
         let scale = f32x8::splat(factor);
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] = self.rows[i] * scale;
+            result.rows[i] = (f32x8::from(self.rows[i]) * scale).to_array();
         }
         result
     }
@@ -89,7 +83,8 @@ impl Block8x8f {
     pub fn mul(&self, other: &Self) -> Self {
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] = self.rows[i] * other.rows[i];
+            result.rows[i] =
+                (f32x8::from(self.rows[i]) * f32x8::from(other.rows[i])).to_array();
         }
         result
     }
@@ -99,7 +94,8 @@ impl Block8x8f {
     pub fn add(&self, other: &Self) -> Self {
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] = self.rows[i] + other.rows[i];
+            result.rows[i] =
+                (f32x8::from(self.rows[i]) + f32x8::from(other.rows[i])).to_array();
         }
         result
     }
@@ -111,29 +107,27 @@ impl Default for Block8x8f {
     }
 }
 
-/// An 8x8 block of i16 values stored as 8 rows of i16x8.
+/// An 8x8 block of i16 values stored as 8 rows of `[i16; 8]`.
 ///
 /// Used for quantized DCT coefficients.
 #[derive(Clone, Copy, Debug)]
 #[repr(C, align(16))]
 pub struct Block8x8i16 {
-    pub rows: [i16x8; 8],
+    pub rows: [[i16; 8]; 8],
 }
 
 impl Block8x8i16 {
     pub const ZERO: Self = Self {
-        rows: [i16x8::ZERO; 8],
+        rows: [[0; 8]; 8],
     };
 
     /// Create from a flat array
     #[inline]
     pub fn from_array(arr: &[i16; 64]) -> Self {
-        let mut rows = [i16x8::ZERO; 8];
+        let mut rows = [[0i16; 8]; 8];
         for (row_idx, row) in rows.iter_mut().enumerate() {
             let start = row_idx * 8;
-            // Use slice-to-array conversion - zero-cost load from contiguous memory
-            let row_slice: [i16; 8] = arr[start..start + 8].try_into().unwrap();
-            *row = i16x8::from(row_slice);
+            *row = arr[start..start + 8].try_into().unwrap();
         }
         Self { rows }
     }
@@ -143,8 +137,7 @@ impl Block8x8i16 {
     pub fn to_array(&self) -> [i16; 64] {
         let mut arr = [0i16; 64];
         for (row_idx, row) in self.rows.iter().enumerate() {
-            let row_arr: [i16; 8] = (*row).into();
-            arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(&row_arr);
+            arr[row_idx * 8..row_idx * 8 + 8].copy_from_slice(row);
         }
         arr
     }
@@ -152,8 +145,7 @@ impl Block8x8i16 {
     /// Access a single coefficient
     #[inline]
     pub fn get(&self, row: usize, col: usize) -> i16 {
-        let row_arr: [i16; 8] = self.rows[row].into();
-        row_arr[col]
+        self.rows[row][col]
     }
 }
 
@@ -171,7 +163,7 @@ impl Default for Block8x8i16 {
 #[repr(C, align(32))]
 pub struct QuantTableSimd {
     /// Multipliers for quantization (8.0 / quant_value)
-    pub mul_rows: [f32x8; 8],
+    pub mul_rows: [[f32; 8]; 8],
     /// Original values for encoding the JPEG header
     pub values: [u16; 64],
 }
@@ -182,24 +174,21 @@ pub struct QuantTableSimd {
 #[derive(Clone, Debug)]
 #[repr(C, align(32))]
 pub struct ZeroBiasSimd {
-    /// offset\[k\] for each coefficient (8 rows of f32x8)
-    pub offset_rows: [f32x8; 8],
-    /// mul\[k\] for each coefficient (8 rows of f32x8)
-    pub mul_rows: [f32x8; 8],
+    /// offset\[k\] for each coefficient (8 rows of \[f32; 8\])
+    pub offset_rows: [[f32; 8]; 8],
+    /// mul\[k\] for each coefficient (8 rows of \[f32; 8\])
+    pub mul_rows: [[f32; 8]; 8],
 }
 
 impl ZeroBiasSimd {
     /// Create from ZeroBiasParams
     pub fn from_params(params: &crate::quant::ZeroBiasParams) -> Self {
-        let mut offset_rows = [f32x8::ZERO; 8];
-        let mut mul_rows = [f32x8::ZERO; 8];
+        let mut offset_rows = [[0.0f32; 8]; 8];
+        let mut mul_rows = [[0.0f32; 8]; 8];
         for row in 0..8 {
             let start = row * 8;
-            // Zero-cost load from contiguous memory
-            let offset_slice: [f32; 8] = params.offset[start..start + 8].try_into().unwrap();
-            let mul_slice: [f32; 8] = params.mul[start..start + 8].try_into().unwrap();
-            offset_rows[row] = f32x8::from(offset_slice);
-            mul_rows[row] = f32x8::from(mul_slice);
+            offset_rows[row] = params.offset[start..start + 8].try_into().unwrap();
+            mul_rows[row] = params.mul[start..start + 8].try_into().unwrap();
         }
         Self {
             offset_rows,
@@ -214,12 +203,10 @@ impl QuantTableSimd {
     /// Computes 8.0/quant multipliers for fast quantization.
     /// The 8.0 factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
     pub fn from_values(values: &[u16; 64]) -> Self {
-        let mut mul_rows = [f32x8::ZERO; 8];
-        // DCT uses 1/64 scaling, so quantize needs to multiply by 8/quant
+        let mut mul_rows = [[0.0f32; 8]; 8];
         let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
-            // Convert u16 -> f32 (unavoidable), then SIMD divide
             let row_f32: [f32; 8] = [
                 values[start] as f32,
                 values[start + 1] as f32,
@@ -230,7 +217,7 @@ impl QuantTableSimd {
                 values[start + 6] as f32,
                 values[start + 7] as f32,
             ];
-            mul_rows[row] = eight / f32x8::from(row_f32);
+            mul_rows[row] = (eight / f32x8::from(row_f32)).to_array();
         }
         Self {
             mul_rows,
@@ -243,15 +230,13 @@ impl QuantTableSimd {
     /// Computes 8.0/quant multipliers for fast quantization.
     /// The 8.0 factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
     pub fn from_f32_values(values: &[f32; 64]) -> Self {
-        let mut mul_rows = [f32x8::ZERO; 8];
+        let mut mul_rows = [[0.0f32; 8]; 8];
         let mut u16_values = [0u16; 64];
-        // DCT uses 1/64 scaling, so quantize needs to multiply by 8/quant
         let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
-            // Zero-cost load, SIMD divide
             let values_slice: [f32; 8] = values[start..start + 8].try_into().unwrap();
-            mul_rows[row] = eight / f32x8::from(values_slice);
+            mul_rows[row] = (eight / f32x8::from(values_slice)).to_array();
             for col in 0..8 {
                 u16_values[start + col] = values[start + col].round() as u16;
             }
@@ -269,25 +254,12 @@ impl QuantTableSimd {
     pub fn quantize(&self, block: &Block8x8f) -> Block8x8i32 {
         let mut result = Block8x8i32::ZERO;
         for i in 0..8 {
-            // Multiply and round to nearest integer
-            let quantized = block.rows[i] * self.mul_rows[i];
-            result.rows[i] = quantized.round_int();
+            let quantized = f32x8::from(block.rows[i]) * f32x8::from(self.mul_rows[i]);
+            result.rows[i] = quantized.round_int().to_array();
         }
         result
     }
 
-    /// Quantize a block with zero-bias using SIMD.
-    ///
-    /// This is the optimized hot path for encoding. Processes 8 coefficients at a time
-    /// with zero additional load/store overhead when data is already in SIMD format.
-    ///
-    /// # Arguments
-    /// * `block` - DCT coefficients in SIMD-native format
-    /// * `zero_bias` - Pre-computed zero-bias parameters in SIMD format
-    /// * `aq_strength` - Per-block adaptive quantization strength
-    ///
-    /// # Returns
-    /// Quantized coefficients ready for entropy coding
     /// Quantize a block with zero-bias, outputting directly in zigzag order.
     ///
     /// This fuses quantization and zigzag reordering into a single pass,
@@ -315,7 +287,6 @@ impl QuantTableSimd {
     /// Quantize a block from a flat array with zero-bias using pre-computed SIMD tables.
     ///
     /// This avoids the Block8x8f conversion overhead by loading directly from the array.
-    /// Uses unsafe pointer casting for aligned loads - the input must be 64 f32s.
     #[inline]
     pub fn quantize_array_with_zero_bias(
         &self,
@@ -328,7 +299,6 @@ impl QuantTableSimd {
 
         for row in 0..8 {
             let k = row * 8;
-            // Load 8 coefficients - compiler will optimize this
             let coeffs_simd = f32x8::new([
                 coeffs[k],
                 coeffs[k + 1],
@@ -340,16 +310,11 @@ impl QuantTableSimd {
                 coeffs[k + 7],
             ]);
 
-            // qval = coeffs / quant (using pre-computed 1/quant)
-            let qval = coeffs_simd * self.mul_rows[row];
-
-            // threshold = offset + mul * aq_strength
-            let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
-
-            // |qval| >= threshold ? round(qval) : 0
+            let qval = coeffs_simd * f32x8::from(self.mul_rows[row]);
+            let threshold =
+                f32x8::from(zero_bias.offset_rows[row]) + f32x8::from(zero_bias.mul_rows[row]) * aq;
             let abs_qval = qval.abs();
 
-            // Zero-copy access with fast rounding
             let abs_arr = abs_qval.as_array();
             let thresh_arr = threshold.as_array();
             let rounded = qval.fast_round_int();
@@ -366,18 +331,18 @@ impl QuantTableSimd {
     }
 }
 
-/// An 8x8 block of i32 values stored as 8 rows of i32x8.
+/// An 8x8 block of i32 values stored as 8 rows of `[i32; 8]`.
 ///
 /// Used as intermediate during quantization before conversion to i16.
 #[derive(Clone, Copy, Debug)]
 #[repr(C, align(32))]
 pub struct Block8x8i32 {
-    pub rows: [i32x8; 8],
+    pub rows: [[i32; 8]; 8],
 }
 
 impl Block8x8i32 {
     pub const ZERO: Self = Self {
-        rows: [i32x8::ZERO; 8],
+        rows: [[0; 8]; 8],
     };
 
     /// Convert to i16 block (with saturation)
@@ -385,18 +350,9 @@ impl Block8x8i32 {
     pub fn to_i16(&self) -> Block8x8i16 {
         let mut result = Block8x8i16::ZERO;
         for i in 0..8 {
-            // Extract i32 values and convert to i16 with saturation
-            let row: [i32; 8] = self.rows[i].into();
-            result.rows[i] = i16x8::from([
-                row[0].clamp(-32768, 32767) as i16,
-                row[1].clamp(-32768, 32767) as i16,
-                row[2].clamp(-32768, 32767) as i16,
-                row[3].clamp(-32768, 32767) as i16,
-                row[4].clamp(-32768, 32767) as i16,
-                row[5].clamp(-32768, 32767) as i16,
-                row[6].clamp(-32768, 32767) as i16,
-                row[7].clamp(-32768, 32767) as i16,
-            ]);
+            for j in 0..8 {
+                result.rows[i][j] = self.rows[i][j].clamp(-32768, 32767) as i16;
+            }
         }
         result
     }
@@ -420,7 +376,7 @@ impl Default for Block8x8i32 {
 fn mage_quantize_block_zigzag(
     _token: archmage::X64V3Token,
     block: &Block8x8f,
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -434,15 +390,10 @@ fn mage_quantize_block_zigzag(
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_arr: [f32; 8] = block.rows[row].into();
-        let mul_arr: [f32; 8] = mul_rows[row].into();
-        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
-        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
-
-        let block_m = mf32x8::from_array(token, block_arr);
-        let mul_m = mf32x8::from_array(token, mul_arr);
-        let offset_m = mf32x8::from_array(token, offset_arr);
-        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+        let block_m = mf32x8::from_array(token, block.rows[row]);
+        let mul_m = mf32x8::from_array(token, mul_rows[row]);
+        let offset_m = mf32x8::from_array(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = mf32x8::from_array(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -474,7 +425,7 @@ fn mage_quantize_block_zigzag(
 fn mage_quantize_block(
     _token: archmage::X64V3Token,
     block: &Block8x8f,
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -487,15 +438,10 @@ fn mage_quantize_block(
     let mut result = [0i16; 64];
 
     for row in 0..8 {
-        let block_arr: [f32; 8] = block.rows[row].into();
-        let mul_arr: [f32; 8] = mul_rows[row].into();
-        let offset_arr: [f32; 8] = zero_bias.offset_rows[row].into();
-        let bias_mul_arr: [f32; 8] = zero_bias.mul_rows[row].into();
-
-        let block_m = mf32x8::from_array(token, block_arr);
-        let mul_m = mf32x8::from_array(token, mul_arr);
-        let offset_m = mf32x8::from_array(token, offset_arr);
-        let bias_mul_m = mf32x8::from_array(token, bias_mul_arr);
+        let block_m = mf32x8::from_array(token, block.rows[row]);
+        let mul_m = mf32x8::from_array(token, mul_rows[row]);
+        let offset_m = mf32x8::from_array(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = mf32x8::from_array(token, zero_bias.mul_rows[row]);
 
         let qval = block_m * mul_m;
         let threshold = bias_mul_m.mul_add(aq_m, offset_m);
@@ -525,7 +471,7 @@ fn mage_quantize_block(
 #[archmage::autoversion]
 fn scalar_quantize_block_zigzag(
     block: &Block8x8f,
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -536,8 +482,9 @@ fn scalar_quantize_block_zigzag(
     let zero_i32 = i32x8::ZERO;
 
     for row in 0..8 {
-        let qval = block.rows[row] * mul_rows[row];
-        let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
+        let qval = f32x8::from(block.rows[row]) * f32x8::from(mul_rows[row]);
+        let threshold = f32x8::from(zero_bias.offset_rows[row])
+            + f32x8::from(zero_bias.mul_rows[row]) * aq;
         let abs_qval = qval.abs();
         let mask_f32 = abs_qval.simd_ge(threshold);
         let mask_i32: i32x8 = bytemuck::cast(mask_f32);
@@ -564,7 +511,7 @@ fn scalar_quantize_block_zigzag(
 #[archmage::autoversion]
 fn scalar_quantize_block(
     block: &Block8x8f,
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
@@ -573,8 +520,9 @@ fn scalar_quantize_block(
     let zero_i32 = i32x8::ZERO;
 
     for row in 0..8 {
-        let qval = block.rows[row] * mul_rows[row];
-        let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
+        let qval = f32x8::from(block.rows[row]) * f32x8::from(mul_rows[row]);
+        let threshold = f32x8::from(zero_bias.offset_rows[row])
+            + f32x8::from(zero_bias.mul_rows[row]) * aq;
         let abs_qval = qval.abs();
         let mask_f32 = abs_qval.simd_ge(threshold);
         let mask_i32: i32x8 = bytemuck::cast(mask_f32);
@@ -600,7 +548,7 @@ fn scalar_quantize_block(
 /// Dispatching quantize with zigzag — tries archmage AVX2, falls back to scalar.
 #[inline]
 fn quantize_block_zigzag(
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     block: &Block8x8f,
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
@@ -617,7 +565,7 @@ fn quantize_block_zigzag(
 /// Dispatching quantize natural order — tries archmage AVX2, falls back to scalar.
 #[inline]
 fn quantize_block(
-    mul_rows: &[f32x8; 8],
+    mul_rows: &[[f32; 8]; 8],
     block: &Block8x8f,
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
@@ -792,10 +740,9 @@ mod tests {
 
         // Check that multipliers are correct (8.0 / value to compensate for 1/64 DCT scaling)
         for row in 0..8 {
-            let row_arr: [f32; 8] = quant.mul_rows[row].into();
             for col in 0..8 {
                 let expected = 8.0 / (row * 8 + col + 1) as f32;
-                assert!((row_arr[col] - expected).abs() < 1e-6);
+                assert!((quant.mul_rows[row][col] - expected).abs() < 1e-6);
             }
         }
     }
@@ -803,7 +750,6 @@ mod tests {
     #[test]
     fn test_quantize_simple() {
         // Create a block with known values (simulating DCT output at 1/64 scale)
-        // The quantize function expects coefficients that have been scaled by 1/64 from DCT.
         let mut arr = [0.0f32; 64];
         for i in 0..64 {
             arr[i] = (i + 1) as f32 * 10.0; // 10, 20, 30, ...

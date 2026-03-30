@@ -602,11 +602,14 @@ pub(crate) mod simd {
     #[autoversion]
     #[inline]
     fn forward_dct_8x8_wide_fallback(input: &Block8x8f) -> Block8x8f {
-        let cols = transpose_vec(input.rows);
+        let rows: [f32x8; 8] = core::array::from_fn(|i| f32x8::from(input.rows[i]));
+        let cols = transpose_vec(rows);
         let cols_after_row = scale_vec(dct_1d_vec(cols));
         let rows_for_col = transpose_vec(cols_after_row);
         let final_rows = scale_vec(dct_1d_vec(rows_for_col));
-        Block8x8f { rows: final_rows }
+        Block8x8f {
+            rows: core::array::from_fn(|i| final_rows[i].to_array()),
+        }
     }
 
     // ========================================================================

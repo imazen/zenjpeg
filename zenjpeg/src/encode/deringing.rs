@@ -387,20 +387,17 @@ mod tests {
         use wide::f32x8;
 
         // Create a Block8x8f with some max pixels
-        let mut block = Block8x8f {
-            rows: [f32x8::ZERO; 8],
-        };
+        let mut block = Block8x8f::ZERO;
 
         // Set first row to max
-        block.rows[0] = f32x8::splat(MAX_SAMPLE);
+        block.rows[0] = [MAX_SAMPLE; 8];
         // Set second row to a slope
-        block.rows[1] = f32x8::from([100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0]);
+        block.rows[1] = [100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0];
 
         preprocess_deringing_block(&mut block, 16);
 
         // First row should have some overshoot
-        let row0: [f32; 8] = block.rows[0].into();
-        let has_overshoot = row0.iter().any(|&v| v > MAX_SAMPLE);
+        let has_overshoot = block.rows[0].iter().any(|&v| v > MAX_SAMPLE);
         assert!(has_overshoot, "Block deringing should create overshoot");
     }
 }

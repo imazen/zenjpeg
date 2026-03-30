@@ -241,6 +241,11 @@ name = "decode_mozjpeg"
 harness = false
 required-features = ["decoder"]
 
+[[bench]]
+name = "wide_migration"
+harness = false
+required-features = ["decoder", "parallel"]
+
 [lints]
 workspace = true
 
