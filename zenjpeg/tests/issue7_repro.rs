@@ -9,8 +9,29 @@
 //! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
 
 use enough::Unstoppable;
+use std::path::PathBuf;
 use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, IdctMethod};
+
+const IMAGE_URL: &str = "https://imageflow-resources.s3.us-west-2.amazonaws.com/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg";
+
+/// Fetch test image, caching in target/test-cache/.
+fn fetch_test_image() -> Vec<u8> {
+    let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test-cache");
+    std::fs::create_dir_all(&cache_dir).expect("create cache dir");
+    let cached = cache_dir.join("issue7_canon_5d.jpg");
+    if let Ok(data) = std::fs::read(&cached) {
+        return data;
+    }
+    let resp = std::process::Command::new("curl")
+        .args(["-sfL", "-o", cached.to_str().unwrap(), IMAGE_URL])
+        .status()
+        .expect("curl not found");
+    assert!(resp.success(), "failed to download test image from {IMAGE_URL}");
+    std::fs::read(&cached).expect("read cached image")
+}
 
 /// Decode JPEG with mozjpeg-sys (libjpeg-turbo FFI) — the reference implementation.
 fn decode_mozjpeg(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
@@ -113,17 +134,7 @@ fn compare_pixels(name_a: &str, a: &[u8], name_b: &str, b: &[u8], w: u32, h: u32
 
 #[test]
 fn issue7_libjpeg_compat_delta() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            eprintln!(
-                "Download with: curl -sL -o /tmp/issue7_test.jpg 'https://s3-us-west-2.amazonaws.com/imageflow-resources/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg'"
-            );
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     println!("Image size: {} bytes", jpeg.len());
 
@@ -161,14 +172,7 @@ fn issue7_libjpeg_compat_delta() {
 /// Triangle + Libjpeg IDCT should match mozjpeg within max_diff <= 2.
 #[test]
 fn issue7_libjpeg_idct_delta() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
@@ -196,14 +200,7 @@ fn issue7_libjpeg_idct_delta() {
 /// Test the scanline_reader path matches decode() path.
 #[test]
 fn issue7_scanline_reader_path() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
@@ -257,14 +254,7 @@ fn issue7_scanline_reader_path() {
 /// when both sides should be sRGB-to-sRGB (identity).
 #[test]
 fn issue7_with_icc_enabled() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
@@ -310,14 +300,7 @@ fn issue7_with_icc_enabled() {
 fn issue7_coefficient_path() {
     use zenjpeg::decode::OutputTarget;
 
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
@@ -364,14 +347,7 @@ fn issue7_coefficient_path() {
 /// and applies Laplacian dequantization biases, producing the most divergent output.
 #[test]
 fn issue7_dequant_bias_path() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
@@ -412,14 +388,7 @@ fn issue7_dequant_bias_path() {
 /// Test all decode paths produce matching output for this specific image.
 #[test]
 fn issue7_cross_path_consistency() {
-    let jpeg_path = "/tmp/issue7_test.jpg";
-    let jpeg = match std::fs::read(jpeg_path) {
-        Ok(data) => data,
-        Err(_) => {
-            eprintln!("Test image not found at {jpeg_path}, skipping.");
-            return;
-        }
-    };
+    let jpeg = fetch_test_image();
 
     // Path 1: decode() - streaming
     let result1 = Decoder::new()
