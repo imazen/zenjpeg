@@ -2962,12 +2962,11 @@ dependencies = [
 
 [[package]]
 name = "zenblend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archmage 0.9.15",
  "magetypes",
  "safe_unaligned_simd",
- "wide 1.2.0",
 ]
 
 [[package]]
@@ -2984,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "zenjpeg"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aligned-vec",
  "almost-enough",
