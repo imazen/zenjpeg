@@ -373,8 +373,14 @@ fn bench_decode(suite: &mut Suite) {
 
 // ── Size matrix benchmark (synthetic images, variant/size naming for matrix chart) ──
 
-fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) -> Vec<u8> {
-    use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+fn create_test_jpeg_sub(
+    width: u32,
+    height: u32,
+    quality: f32,
+    progressive: bool,
+    subsampling: zenjpeg::encode::ChromaSubsampling,
+) -> Vec<u8> {
+    use zenjpeg::encode::{EncoderConfig, PixelLayout};
 
     let mut data = vec![0u8; (width * height * 3) as usize];
     for y in 0..height as usize {
@@ -424,8 +430,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) ->
         }
     }
 
-    let mut config =
-        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(progressive);
+    let mut config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
     if progressive {
         config = config.restart_mcu_rows(0); // zune-jpeg bug with DRI + progressive
     }
@@ -436,46 +441,60 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) ->
     enc.finish().expect("finish")
 }
 
-fn bench_decode_matrix(suite: &mut Suite) {
-    let sizes: &[(u32, u32)] = &[
-        (256, 256),
-        (512, 512),
-        (1024, 1024),
-        (2048, 2048),
-        (4096, 4096),
+fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) -> Vec<u8> {
+    create_test_jpeg_sub(
+        width,
+        height,
+        quality,
+        progressive,
+        zenjpeg::encode::ChromaSubsampling::Quarter,
+    )
+}
+
+/// Helper: generate test JPEGs for a set of (subsampling, progressive, label_prefix) configs.
+struct TestSet {
+    label: &'static str,
+    jpegs: Vec<(String, Vec<u8>)>, // (size_label, jpeg_data)
+}
+
+fn generate_test_sets() -> Vec<TestSet> {
+    use zenjpeg::encode::ChromaSubsampling;
+
+    let sizes: &[(u32, u32)] = &[(2048, 2048), (4096, 4096)];
+
+    let configs: &[(&str, ChromaSubsampling, bool)] = &[
+        ("seq-420", ChromaSubsampling::Quarter, false),
+        ("seq-444", ChromaSubsampling::None, false),
+        ("prog-420", ChromaSubsampling::Quarter, true),
+        ("prog-444", ChromaSubsampling::None, true),
     ];
 
-    eprintln!("Generating synthetic test images...");
-
-    // Pre-encode at all sizes
-    let baseline_jpegs: Vec<(String, Vec<u8>)> = sizes
+    eprintln!("Generating test images...");
+    configs
         .iter()
-        .map(|&(w, h)| {
-            let label = format!("{w}x{h}");
-            let jpeg = create_test_jpeg(w, h, 85.0, false);
-            eprintln!("  baseline {label}: {} bytes", jpeg.len());
-            (label, jpeg)
+        .map(|&(label, sub, prog)| {
+            let jpegs = sizes
+                .iter()
+                .map(|&(w, h)| {
+                    let size = format!("{w}x{h}");
+                    let jpeg = create_test_jpeg_sub(w, h, 85.0, prog, sub);
+                    eprintln!("  {label} {size}: {} bytes", jpeg.len());
+                    (size, jpeg)
+                })
+                .collect();
+            TestSet { label, jpegs }
         })
-        .collect();
+        .collect()
+}
 
-    let progressive_jpegs: Vec<(String, Vec<u8>)> = sizes
-        .iter()
-        .map(|&(w, h)| {
-            let label = format!("{w}x{h}");
-            let jpeg = create_test_jpeg(w, h, 85.0, true);
-            eprintln!("  progressive {label}: {} bytes", jpeg.len());
-            (label, jpeg)
-        })
-        .collect();
-
-    // Leak the encoded data so closures can capture &'static references
-    let baseline_jpegs: &'static [(String, Vec<u8>)] = baseline_jpegs.leak();
-    let progressive_jpegs: &'static [(String, Vec<u8>)] = progressive_jpegs.leak();
-
-    // ── Baseline 4:2:0 matrix ──────────────────────────────────────────
-
-    suite.group("baseline_420_matrix", |g| {
-        for (label, jpeg) in baseline_jpegs.iter() {
+/// Add decode benchmarks for a test set: mozjpeg, zune, zenjpeg full, zenjpeg scanline.
+fn add_decode_group(
+    suite: &mut Suite,
+    group_name: &str,
+    jpegs: &'static [(String, Vec<u8>)],
+) {
+    suite.group(group_name, |g| {
+        for (label, jpeg) in jpegs.iter() {
             g.bench(format!("mozjpeg/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| b.iter(|| decode_libjpeg_turbo(&jpeg))
@@ -491,67 +510,70 @@ fn bench_decode_matrix(suite: &mut Suite) {
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
                 }
             });
-            g.bench(format!("zenjpeg-box/{label}"), {
+            g.bench(format!("zen-scanline/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| {
-                    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
-                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
+                    b.iter(|| {
+                        let mut reader = Decoder::new().scanline_reader(&jpeg).unwrap();
+                        let w = reader.width() as usize;
+                        let h = reader.height() as usize;
+                        let mut buf = vec![0u8; w * h * 3];
+                        reader
+                            .read_rows_rgb8(imgref::ImgRefMut::new(&mut buf, w * 3, h))
+                            .unwrap();
+                        buf
+                    })
                 }
             });
         }
     });
+}
 
-    // ── Progressive 4:2:0 matrix ───────────────────────────────────────
-
-    suite.group("progressive_420_matrix", |g| {
-        for (label, jpeg) in progressive_jpegs.iter() {
-            g.bench(format!("mozjpeg/{label}"), {
-                let jpeg = jpeg.clone();
-                move |b| b.iter(|| decode_libjpeg_turbo(&jpeg))
-            });
-            g.bench(format!("zune/{label}"), {
-                let jpeg = jpeg.clone();
-                move |b| b.iter(|| decode_zune(&jpeg))
-            });
-            g.bench(format!("zenjpeg/{label}"), {
-                let jpeg = jpeg.clone();
-                move |b| {
-                    let dec = Decoder::new();
-                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
-                }
-            });
-        }
-    });
-
-    // ── Parallel matrix (feature-gated) ────────────────────────────────
-
-    #[cfg(feature = "parallel")]
-    suite.group("parallel_420_matrix", |g| {
-        // Skip 256 (too small for parallel)
-        for (label, jpeg) in baseline_jpegs.iter().skip(1) {
-            g.bench(format!("zenjpeg-seq/{label}"), {
+/// Add parallel vs sequential decode benchmarks.
+#[cfg(feature = "parallel")]
+fn add_parallel_group(
+    suite: &mut Suite,
+    group_name: &str,
+    jpegs: &'static [(String, Vec<u8>)],
+) {
+    suite.group(group_name, |g| {
+        for (label, jpeg) in jpegs.iter() {
+            g.bench(format!("sequential/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| {
                     let dec = Decoder::new().num_threads(1);
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
                 }
             });
-            g.bench(format!("zenjpeg-par/{label}"), {
+            g.bench(format!("parallel/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| {
                     let dec = Decoder::new();
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
                 }
             });
-            g.bench(format!("zenjpeg-box-par/{label}"), {
-                let jpeg = jpeg.clone();
-                move |b| {
-                    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
-                    b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
-                }
-            });
         }
     });
+}
+
+fn bench_decode_matrix(suite: &mut Suite) {
+    let test_sets = generate_test_sets();
+
+    // Leak for 'static lifetime in closures
+    let test_sets: &'static [TestSet] = test_sets.leak();
+
+    for set in test_sets.iter() {
+        let jpegs: &'static [(String, Vec<u8>)] = &set.jpegs;
+
+        // Decode comparison: mozjpeg vs zune vs zenjpeg full vs scanline
+        add_decode_group(suite, &format!("decode_{}", set.label), jpegs);
+
+        // Parallel vs sequential (baseline only — progressive has no DRI)
+        #[cfg(feature = "parallel")]
+        if !set.label.starts_with("prog") {
+            add_parallel_group(suite, &format!("parallel_{}", set.label), jpegs);
+        }
+    }
 }
 
 fn bench_all(suite: &mut Suite) {
