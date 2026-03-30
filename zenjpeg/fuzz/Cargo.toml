@@ -11,10 +11,14 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
+enough = "0.4.2"
 zune-jpeg = "0.4"
+
+zenpixels = { version = "0.2.1", default-features = false }
 
 [dependencies.zenjpeg]
 path = ".."
+features = ["zencodec"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -51,6 +55,20 @@ bench = false
 [[bin]]
 name = "fuzz_encode"
 path = "fuzz_targets/fuzz_encode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode_paths"
+path = "fuzz_targets/fuzz_decode_paths.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_push_decode"
+path = "fuzz_targets/fuzz_push_decode.rs"
 test = false
 doc = false
 bench = false
