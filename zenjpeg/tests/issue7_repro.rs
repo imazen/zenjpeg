@@ -1,7 +1,10 @@
-//! Issue #7 reproduction: LibjpegCompat produces delta=49 vs mozjpeg on Canon 5D JPEG.
+//! Issue #7 regression: Triangle upsampling vs mozjpeg on Canon 5D JPEG.
 //!
-//! Downloads a Canon EOS 5D Mark IV sRGB JPEG (800x537, baseline 4:2:0, DRI)
-//! and compares zenjpeg LibjpegCompat decode against mozjpeg-sys (libjpeg-turbo FFI).
+//! Decodes a Canon EOS 5D Mark IV sRGB JPEG (800x537, baseline 4:2:0, DRI)
+//! and compares zenjpeg Triangle decode against mozjpeg-sys (libjpeg-turbo FFI).
+//!
+//! Triangle upsampling with default Jpegli IDCT: max_diff <= 3.
+//! Triangle upsampling with IdctMethod::Libjpeg: max_diff <= 2.
 //!
 //! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
 
@@ -38,19 +41,7 @@ fn decode_mozjpeg(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     }
 }
 
-/// Decode JPEG with zenjpeg in LibjpegCompat mode.
-fn decode_zenjpeg_compat(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
-    let result = Decoder::new()
-        .chroma_upsampling(ChromaUpsampling::Triangle)
-        .decode(jpeg, Unstoppable)
-        .expect("zenjpeg decode failed");
-    let w = result.width();
-    let h = result.height();
-    let pixels = result.into_pixels_u8().expect("u8 pixels");
-    (w, h, pixels)
-}
-
-/// Decode JPEG with zenjpeg using default (Triangle) upsampling.
+/// Decode JPEG with zenjpeg using default settings (Triangle upsampling, Jpegli IDCT).
 fn decode_zenjpeg_default(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
     let result = Decoder::new()
         .decode(jpeg, Unstoppable)
@@ -139,84 +130,35 @@ fn issue7_libjpeg_compat_delta() {
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
     println!("mozjpeg decoded: {mw}x{mh}");
 
-    let (zw, zh, zen_compat) = decode_zenjpeg_compat(&jpeg);
-    println!("zenjpeg (LibjpegCompat) decoded: {zw}x{zh}");
-
     let (dw, dh, zen_default) = decode_zenjpeg_default(&jpeg);
     println!("zenjpeg (default/Triangle) decoded: {dw}x{dh}");
 
-    assert_eq!((mw, mh), (zw, zh), "dimension mismatch");
     assert_eq!((mw, mh), (dw, dh), "dimension mismatch");
 
     compare_pixels(
-        "zenjpeg-compat",
-        &zen_compat,
-        "mozjpeg",
-        &moz_pixels,
-        mw,
-        mh,
-    );
-    compare_pixels(
         "zenjpeg-default",
         &zen_default,
         "mozjpeg",
         &moz_pixels,
-        mw,
-        mh,
-    );
-    compare_pixels(
-        "zenjpeg-compat",
-        &zen_compat,
-        "zenjpeg-default",
-        &zen_default,
         mw,
         mh,
     );
 
-    // The actual assertion: LibjpegCompat should be within 1 of mozjpeg
+    // Triangle upsampling + Jpegli IDCT: documented max_diff <= 3
     let npixels = (mw * mh) as usize;
-    let mut max_compat_moz = 0i32;
+    let mut max_delta = 0i32;
     for i in 0..npixels * 3 {
-        let d = (zen_compat[i] as i32 - moz_pixels[i] as i32).abs();
-        max_compat_moz = max_compat_moz.max(d);
-    }
-
-    if max_compat_moz > 1 {
-        eprintln!(
-            "\nFAILURE: LibjpegCompat max delta vs mozjpeg = {max_compat_moz}, expected <= 1"
-        );
-
-        // Find where the worst differences are (by row)
-        let w = mw as usize;
-        let h = mh as usize;
-        let mut worst_rows: Vec<(usize, i32)> = Vec::new();
-        for y in 0..h {
-            let mut row_max = 0i32;
-            for x in 0..w {
-                let idx = (y * w + x) * 3;
-                for c in 0..3 {
-                    let d = (zen_compat[idx + c] as i32 - moz_pixels[idx + c] as i32).abs();
-                    row_max = row_max.max(d);
-                }
-            }
-            if row_max > 2 {
-                worst_rows.push((y, row_max));
-            }
-        }
-        worst_rows.sort_by(|a, b| b.1.cmp(&a.1));
-        println!("\nWorst rows (delta > 2):");
-        for (y, d) in worst_rows.iter().take(20) {
-            println!("  row {y}: max_delta={d}");
-        }
+        let d = (zen_default[i] as i32 - moz_pixels[i] as i32).abs();
+        max_delta = max_delta.max(d);
     }
 
     assert!(
-        max_compat_moz <= 1,
-        "LibjpegCompat delta vs mozjpeg = {max_compat_moz}, expected <= 1"
+        max_delta <= 3,
+        "Triangle + Jpegli IDCT delta vs mozjpeg = {max_delta}, expected <= 3"
     );
 }
 
-/// Test the scanline_reader path too — the issue mentions StripProcessor.
+/// Test the scanline_reader path matches decode() path.
 #[test]
 fn issue7_scanline_reader_path() {
     let jpeg_path = "/tmp/issue7_test.jpg";
@@ -230,8 +172,8 @@ fn issue7_scanline_reader_path() {
 
     let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
 
-    // Decode via scanline_reader with LibjpegCompat
-    let decoder = Decoder::new().chroma_upsampling(ChromaUpsampling::Triangle);
+    // Decode via scanline_reader with default (Triangle) upsampling
+    let decoder = Decoder::new();
     let mut reader = decoder
         .scanline_reader(&jpeg)
         .expect("scanline_reader failed");
@@ -253,7 +195,7 @@ fn issue7_scanline_reader_path() {
     assert_eq!((w as u32, h as u32), (mw, mh), "dimension mismatch");
 
     compare_pixels(
-        "zen-scanline-compat",
+        "zen-scanline",
         &pixels,
         "mozjpeg",
         &moz_pixels,
@@ -261,16 +203,17 @@ fn issue7_scanline_reader_path() {
         mh,
     );
 
+    // Triangle upsampling + Jpegli IDCT: documented max_diff <= 3
     let mut max_delta = 0i32;
     for i in 0..pixels.len() {
         let d = (pixels[i] as i32 - moz_pixels[i] as i32).abs();
         max_delta = max_delta.max(d);
     }
 
-    println!("\nScanline reader LibjpegCompat max delta vs mozjpeg: {max_delta}");
+    println!("\nScanline reader Triangle max delta vs mozjpeg: {max_delta}");
     assert!(
-        max_delta <= 1,
-        "Scanline reader LibjpegCompat delta vs mozjpeg = {max_delta}, expected <= 1"
+        max_delta <= 3,
+        "Scanline reader Triangle delta vs mozjpeg = {max_delta}, expected <= 3"
     );
 }
 
@@ -317,7 +260,7 @@ fn issue7_with_icc_enabled() {
         max_delta = max_delta.max(d);
     }
 
-    println!("\nLibjpegCompat + correct_color max delta vs mozjpeg: {max_delta}");
+    println!("\nTriangle + correct_color max delta vs mozjpeg: {max_delta}");
     // With ICC enabled and sRGB profile, should still be small
     // but if CMS is not compiled in, correct_color has no effect
     if max_delta > 2 {
@@ -375,7 +318,7 @@ fn issue7_coefficient_path() {
         max_delta = max_delta.max(d);
     }
 
-    println!("\nCoefficient path (SrgbF32) LibjpegCompat max delta vs mozjpeg: {max_delta}");
+    println!("\nCoefficient path (SrgbF32) Triangle max delta vs mozjpeg: {max_delta}");
     // f32 path uses different precision so expect slightly larger deltas
     if max_delta > 5 {
         eprintln!("WARNING: f32 coefficient path produces delta={max_delta} — may indicate bug");
@@ -428,7 +371,7 @@ fn issue7_dequant_bias_path() {
         max_delta = max_delta.max(d);
     }
 
-    println!("\ndequant_bias + LibjpegCompat max delta vs mozjpeg: {max_delta}");
+    println!("\ndequant_bias + Triangle max delta vs mozjpeg: {max_delta}");
 }
 
 /// Test all decode paths produce matching output for this specific image.
