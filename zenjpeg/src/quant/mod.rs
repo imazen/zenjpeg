@@ -1122,7 +1122,7 @@ impl DequantBiasStats {
     pub fn gather_block(&mut self, component: usize, coeffs: &[i16; DCT_BLOCK_SIZE]) {
         let offset = component * DCT_BLOCK_SIZE;
         for (k, &coeff) in coeffs.iter().enumerate() {
-            let abs_coeff = coeff.abs() as i32;
+            let abs_coeff = (coeff as i32).abs();
             if abs_coeff > 0 {
                 self.nonzeros[offset + k] += 1;
                 self.sumabs[offset + k] += abs_coeff;
