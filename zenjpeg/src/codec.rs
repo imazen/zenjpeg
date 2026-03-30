@@ -1044,7 +1044,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         {
             self.check_input_size(data)?;
             let info = self.config.inner.read_info(data)?;
-            let native_format = decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
+            let native_format =
+                decode_descriptor(&[], &info, self.config.inner.correct_color.as_ref());
             let mut w = info.dimensions.width;
             let mut h = info.dimensions.height;
 
@@ -1141,7 +1142,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
             // When Owned, the reader stores the Vec internally.
             let reader = cfg.scanline_reader_cow(data)?;
 
-            let descriptor = decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
+            let descriptor =
+                decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
             let mcu_height = reader.luma_rows_per_mcu();
 
             Ok(JpegStreamingDecoder {
@@ -1250,7 +1252,8 @@ fn push_decoder_native<'a>(
 
     let width = reader.width() as usize;
     let height = reader.height() as usize;
-    let mut descriptor = decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
+    let mut descriptor =
+        decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
     let mcu_height = reader.luma_rows_per_mcu();
 
     let ch_type = descriptor.channel_type();
@@ -1631,7 +1634,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let jpeg_extras = result.take_extras();
 
             // Derive correct pixel format descriptor from source color metadata.
-            let corrected_cicp = self.config.inner.correct_color.as_ref().map(|_| zenpixels::Cicp::SRGB);
+            let corrected_cicp = self
+                .config
+                .inner
+                .correct_color
+                .as_ref()
+                .map(|_| zenpixels::Cicp::SRGB);
 
             // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
@@ -1639,9 +1647,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 match format {
                     PixelFormat::Gray => {
                         let desc = zencodec::helpers::descriptor_for_decoded_pixels(
-                            zenpixels::PixelFormat::GrayF32, &info.source_color, corrected_cicp.as_ref(),
+                            zenpixels::PixelFormat::GrayF32,
+                            &info.source_color,
+                            corrected_cicp.as_ref(),
                             zencodec::helpers::IccMatchTolerance::Intent,
-                        ).with_transfer(zenpixels::TransferFunction::Linear);
+                        )
+                        .with_transfer(zenpixels::TransferFunction::Linear);
                         let gray: Vec<Gray<f32>> =
                             pixels_f32.iter().map(|&v| Gray::new(v)).collect();
                         PixelBuffer::from_pixels(gray, w, h)
@@ -1653,17 +1664,23 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         let pixel_count = (w as usize) * (h as usize);
                         if pixels_f32.len() == pixel_count * 3 {
                             let desc = zencodec::helpers::descriptor_for_decoded_pixels(
-                                zenpixels::PixelFormat::RgbF32, &info.source_color, corrected_cicp.as_ref(),
+                                zenpixels::PixelFormat::RgbF32,
+                                &info.source_color,
+                                corrected_cicp.as_ref(),
                                 zencodec::helpers::IccMatchTolerance::Intent,
-                            ).with_transfer(zenpixels::TransferFunction::Linear);
+                            )
+                            .with_transfer(zenpixels::TransferFunction::Linear);
                             let raw_bytes = bytemuck::cast_slice::<f32, u8>(&pixels_f32).to_vec();
                             PixelBuffer::from_vec(raw_bytes, w, h, desc)
                                 .map_err(|_| Error::internal("pixel buffer creation failed"))?
                         } else {
                             let desc = zencodec::helpers::descriptor_for_decoded_pixels(
-                                zenpixels::PixelFormat::RgbaF32, &info.source_color, corrected_cicp.as_ref(),
+                                zenpixels::PixelFormat::RgbaF32,
+                                &info.source_color,
+                                corrected_cicp.as_ref(),
                                 zencodec::helpers::IccMatchTolerance::Intent,
-                            ).with_transfer(zenpixels::TransferFunction::Linear);
+                            )
+                            .with_transfer(zenpixels::TransferFunction::Linear);
                             let rgb: Vec<Rgb<f32>> = pixels_f32
                                 .chunks_exact(3)
                                 .map(|c| Rgb {
@@ -1688,7 +1705,9 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     _ => zenpixels::PixelFormat::Rgb8,
                 };
                 let desc = zencodec::helpers::descriptor_for_decoded_pixels(
-                    pf, &info.source_color, corrected_cicp.as_ref(),
+                    pf,
+                    &info.source_color,
+                    corrected_cicp.as_ref(),
                     zencodec::helpers::IccMatchTolerance::Intent,
                 );
                 PixelBuffer::from_vec(pixels_u8, w, h, desc)

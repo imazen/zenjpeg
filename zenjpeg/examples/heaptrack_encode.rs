@@ -12,8 +12,14 @@ fn main() {
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("baseline");
 
     // Default: 1920x1080. Override with WIDTH=7680 HEIGHT=4320 for 8K.
-    let width: usize = env::var("WIDTH").ok().and_then(|s| s.parse().ok()).unwrap_or(1920);
-    let height: usize = env::var("HEIGHT").ok().and_then(|s| s.parse().ok()).unwrap_or(1080);
+    let width: usize = env::var("WIDTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1920);
+    let height: usize = env::var("HEIGHT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1080);
 
     // Row buffer for streaming — only MCU-row height, not full image
     let mcu_rows = 16;
@@ -36,18 +42,31 @@ fn main() {
             }
         }
         for (name, cfg) in [
-            ("baseline-fixed", EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-                .progressive(false).optimize_huffman(false)),
-            ("baseline-optimized", EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-                .progressive(false)),
-            ("progressive", EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-                .progressive(true)),
+            (
+                "baseline-fixed",
+                EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+                    .progressive(false)
+                    .optimize_huffman(false),
+            ),
+            (
+                "baseline-optimized",
+                EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(false),
+            ),
+            (
+                "progressive",
+                EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(true),
+            ),
         ] {
-            let mut enc = cfg.encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb).unwrap();
+            let mut enc = cfg
+                .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+                .unwrap();
             enc.push_packed(&all_pixels, enough::Unstoppable).unwrap();
             let out = enc.finish().unwrap();
-            let overhead = if name != "baseline-fixed" { String::new() }
-            else { String::new() };
+            let overhead = if name != "baseline-fixed" {
+                String::new()
+            } else {
+                String::new()
+            };
             eprintln!("  {name}: {} bytes", out.len());
         }
         let _ = all_pixels; // drop before streaming
@@ -59,8 +78,7 @@ fn main() {
     let config = match mode {
         "baseline" => {
             eprintln!("Using: Baseline + Optimized Huffman");
-            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-                .progressive(false)
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(false)
         }
         "baseline-fixed" => {
             eprintln!("Using: Baseline + Fixed Huffman (no optimization)");
@@ -79,9 +97,17 @@ fn main() {
     };
 
     let estimate = config.estimate_memory(width as u32, height as u32);
-    eprintln!("Estimated encoder memory: {} bytes ({:.1} KB)", estimate, estimate as f64 / 1024.0);
+    eprintln!(
+        "Estimated encoder memory: {} bytes ({:.1} KB)",
+        estimate,
+        estimate as f64 / 1024.0
+    );
 
-    eprintln!("Row buffer: {} bytes ({:.1} KB)", row_buf_size, row_buf_size as f64 / 1024.0);
+    eprintln!(
+        "Row buffer: {} bytes ({:.1} KB)",
+        row_buf_size,
+        row_buf_size as f64 / 1024.0
+    );
 
     let mut encoder = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)

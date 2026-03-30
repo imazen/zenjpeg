@@ -37,7 +37,10 @@ fn fetch_test_image() -> Vec<u8> {
         .args(["-sfL", "-o", cached.to_str().unwrap(), FALLBACK_URL])
         .status()
         .expect("curl not found");
-    assert!(resp.success(), "failed to download test image from {FALLBACK_URL}");
+    assert!(
+        resp.success(),
+        "failed to download test image from {FALLBACK_URL}"
+    );
     std::fs::read(&cached).expect("read cached image")
 }
 
@@ -190,7 +193,14 @@ fn issue7_libjpeg_idct_delta() {
         .expect("zenjpeg decode failed");
     let zen_pixels = result.into_pixels_u8().expect("u8 pixels");
 
-    compare_pixels("zen-libjpeg-idct", &zen_pixels, "mozjpeg", &moz_pixels, mw, mh);
+    compare_pixels(
+        "zen-libjpeg-idct",
+        &zen_pixels,
+        "mozjpeg",
+        &moz_pixels,
+        mw,
+        mh,
+    );
 
     let mut max_delta = 0i32;
     for i in 0..zen_pixels.len() {
@@ -234,14 +244,7 @@ fn issue7_scanline_reader_path() {
 
     assert_eq!((w as u32, h as u32), (mw, mh), "dimension mismatch");
 
-    compare_pixels(
-        "zen-scanline",
-        &pixels,
-        "mozjpeg",
-        &moz_pixels,
-        mw,
-        mh,
-    );
+    compare_pixels("zen-scanline", &pixels, "mozjpeg", &moz_pixels, mw, mh);
 
     // Triangle upsampling + Jpegli IDCT: documented max_diff <= 3
     let mut max_delta = 0i32;

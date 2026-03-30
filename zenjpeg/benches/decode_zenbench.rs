@@ -382,11 +382,15 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) ->
             let idx = (y * width as usize + x) * 3;
             let bx = (x / 8) as u32;
             let by = (y / 8) as u32;
-            let block_hash = bx.wrapping_mul(2654435761).wrapping_add(by.wrapping_mul(40503));
+            let block_hash = bx
+                .wrapping_mul(2654435761)
+                .wrapping_add(by.wrapping_mul(40503));
             let block_type = block_hash % 4;
             let px = x as u32;
             let py = y as u32;
-            let mut h = px.wrapping_mul(374761393).wrapping_add(py.wrapping_mul(668265263));
+            let mut h = px
+                .wrapping_mul(374761393)
+                .wrapping_add(py.wrapping_mul(668265263));
             h = (h ^ (h >> 13)).wrapping_mul(1274126177);
             let noise = (h >> 24) as u8;
             match block_type {
@@ -402,7 +406,11 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) ->
                     data[idx + 2] = noise >> 2;
                 }
                 2 => {
-                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) { 200u8 } else { 55u8 };
+                    let edge = if (x % 8 < 4) ^ (y % 8 < 4) {
+                        200u8
+                    } else {
+                        55u8
+                    };
                     data[idx] = edge;
                     data[idx + 1] = edge.wrapping_add(noise >> 4);
                     data[idx + 2] = 255 - edge;
@@ -416,8 +424,8 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) ->
         }
     }
 
-    let mut config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
-        .progressive(progressive);
+    let mut config =
+        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(progressive);
     if progressive {
         config = config.restart_mcu_rows(0); // zune-jpeg bug with DRI + progressive
     }
@@ -486,8 +494,7 @@ fn bench_decode_matrix(suite: &mut Suite) {
             g.bench(format!("zenjpeg-box/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| {
-                    let dec = Decoder::new()
-                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
                 }
             });
@@ -539,8 +546,7 @@ fn bench_decode_matrix(suite: &mut Suite) {
             g.bench(format!("zenjpeg-box-par/{label}"), {
                 let jpeg = jpeg.clone();
                 move |b| {
-                    let dec = Decoder::new()
-                        .chroma_upsampling(ChromaUpsampling::NearestNeighbor);
+                    let dec = Decoder::new().chroma_upsampling(ChromaUpsampling::NearestNeighbor);
                     b.iter(|| dec.decode(&jpeg, Unstoppable).unwrap())
                 }
             });

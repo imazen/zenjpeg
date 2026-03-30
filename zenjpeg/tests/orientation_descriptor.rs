@@ -12,13 +12,13 @@
 
 use std::borrow::Cow;
 
+use zenjpeg::JpegDecoderConfig;
 use zenjpeg::encode::encoder_config::EncoderConfig;
 use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 use zenjpeg::encode::exif::{Exif, Orientation};
-use zenjpeg::JpegDecoderConfig;
 
-use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 use zencodec::OrientationHint;
+use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
 use zenpixels::{ColorPrimaries, TransferFunction};
 
 /// All 8 EXIF orientation values.
@@ -122,7 +122,10 @@ fn correct_orientation_reports_identity() {
             assert_eq!(info.height, 4, "orient={orient:?}: expected swapped height");
         } else {
             assert_eq!(info.width, 4, "orient={orient:?}: expected original width");
-            assert_eq!(info.height, 2, "orient={orient:?}: expected original height");
+            assert_eq!(
+                info.height, 2,
+                "orient={orient:?}: expected original height"
+            );
         }
     }
 }
@@ -365,8 +368,7 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     ) -> Result<(), zencodec::decode::SinkError> {
         let bpp = descriptor.bytes_per_pixel();
         self.stride = width as usize * bpp;
-        self.data
-            .resize(self.stride * height as usize, 0);
+        self.data.resize(self.stride * height as usize, 0);
         Ok(())
     }
 
