@@ -10,7 +10,7 @@
 
 use enough::Unstoppable;
 use zenjpeg::color::icc::TargetColorSpace;
-use zenjpeg::decode::{ChromaUpsampling, Decoder};
+use zenjpeg::decode::{ChromaUpsampling, Decoder, IdctMethod};
 
 /// Decode JPEG with mozjpeg-sys (libjpeg-turbo FFI) — the reference implementation.
 fn decode_mozjpeg(jpeg: &[u8]) -> (u32, u32, Vec<u8>) {
@@ -155,6 +155,41 @@ fn issue7_libjpeg_compat_delta() {
     assert!(
         max_delta <= 3,
         "Triangle + Jpegli IDCT delta vs mozjpeg = {max_delta}, expected <= 3"
+    );
+}
+
+/// Triangle + Libjpeg IDCT should match mozjpeg within max_diff <= 2.
+#[test]
+fn issue7_libjpeg_idct_delta() {
+    let jpeg_path = "/tmp/issue7_test.jpg";
+    let jpeg = match std::fs::read(jpeg_path) {
+        Ok(data) => data,
+        Err(_) => {
+            eprintln!("Test image not found at {jpeg_path}, skipping.");
+            return;
+        }
+    };
+
+    let (mw, mh, moz_pixels) = decode_mozjpeg(&jpeg);
+
+    let result = Decoder::new()
+        .idct_method(IdctMethod::Libjpeg)
+        .decode(&jpeg, Unstoppable)
+        .expect("zenjpeg decode failed");
+    let zen_pixels = result.into_pixels_u8().expect("u8 pixels");
+
+    compare_pixels("zen-libjpeg-idct", &zen_pixels, "mozjpeg", &moz_pixels, mw, mh);
+
+    let mut max_delta = 0i32;
+    for i in 0..zen_pixels.len() {
+        let d = (zen_pixels[i] as i32 - moz_pixels[i] as i32).abs();
+        max_delta = max_delta.max(d);
+    }
+
+    println!("\nTriangle + Libjpeg IDCT max delta vs mozjpeg: {max_delta}");
+    assert!(
+        max_delta <= 2,
+        "Triangle + Libjpeg IDCT delta vs mozjpeg = {max_delta}, expected <= 2"
     );
 }
 
