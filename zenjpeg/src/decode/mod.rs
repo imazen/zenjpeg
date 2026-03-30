@@ -1,6 +1,22 @@
 //! JPEG decoder implementation.
 //!
 //! This module provides the main decoder interface for reading JPEG images.
+//! For a detailed map of which code paths run for different configurations, see
+//! [`docs/DECODER_PATHS.md`](https://github.com/imazen/zenjpeg/blob/main/zenjpeg/docs/DECODER_PATHS.md).
+//!
+//! # Decode paths
+//!
+//! The decoder selects between streaming and buffered decode paths automatically:
+//!
+//! - **[`decode()`](DecodeConfig::decode)** uses streaming single-pass decode for baseline
+//!   JPEGs with standard sampling and u8 RGB/BGR/RGBA/BGRA output. Falls back to
+//!   buffered coefficient decode for progressive, f32 output, lossless transforms,
+//!   dequant bias, Knusperli deblocking, or non-standard pixel formats.
+//!
+//! - **[`scanline_reader()`](DecodeConfig::scanline_reader)** uses streaming decode for
+//!   baseline JPEGs. Falls back to buffered decode for progressive, CMYK, and
+//!   Knusperli deblocking. With `--features parallel` and DRI present, wave-parallel
+//!   decode activates automatically.
 //!
 //! # Quick Start
 //!
@@ -629,7 +645,14 @@ impl DecodeConfig {
     /// Creates a pull-based scanline reader for streaming decode.
     ///
     /// This allows reading the image row by row without loading the entire
-    /// image into memory. Only supports baseline JPEGs with 4:4:4 subsampling.
+    /// image into memory. Uses streaming single-pass decode for baseline JPEGs
+    /// (all standard subsampling modes: 4:4:4, 4:2:0, 4:2:2). Falls back to
+    /// buffered decode for progressive JPEGs, CMYK, and Knusperli deblocking.
+    ///
+    /// With `--features parallel` and DRI present in the JPEG, wave-parallel
+    /// decode activates automatically: restart segments are decoded in parallel
+    /// via rayon into a reusable wave buffer with a 6 MB memory budget.
+    /// Use [`num_threads(1)`](Self::num_threads) to force sequential decode.
     ///
     /// # Example
     /// ```ignore
@@ -1651,6 +1674,12 @@ impl DecodeConfig {
     }
 
     /// Decodes a JPEG image.
+    ///
+    /// Uses streaming single-pass decode (entropy, IDCT, color convert in one
+    /// MCU-row pass, no coefficient storage) for baseline JPEGs with u8
+    /// RGB/BGR/RGBA/BGRA output. Falls back to buffered coefficient decode for
+    /// progressive JPEGs, f32/u16 output, lossless transforms, dequant bias,
+    /// Knusperli deblocking, or grayscale/CMYK pixel formats.
     ///
     /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row

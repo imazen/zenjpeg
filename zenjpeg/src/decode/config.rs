@@ -28,18 +28,19 @@ pub enum ChromaUpsampling {
     /// Pixel replication (box filter). Fastest, lowest quality.
     ///
     /// Each chroma sample is duplicated to fill the corresponding output pixels.
-    /// No interpolation is performed.
+    /// No interpolation is performed. Typically 5-10% faster than [`Triangle`](Self::Triangle)
+    /// with minimal perceptual quality difference on photographic content.
     NearestNeighbor,
 
     /// Fused 2D triangle filter with alternating rounding bias (default).
     ///
     /// Uses fused vertical+horizontal interpolation with alternating `+7`/`+8`
     /// rounding bias, avoiding systematic bias and intermediate rounding errors.
-    /// Matches libjpeg-turbo/mozjpeg upsampling within max_diff ≤ 3.
     ///
-    /// For pixel-exact matching (max_diff ≤ 2), also set
-    /// `.idct_method(IdctMethod::Libjpeg)` — but note this adds ~37% decode
-    /// overhead.
+    /// With the default [`IdctMethod::Jpegli`] IDCT, matches libjpeg-turbo/mozjpeg
+    /// within max_diff <= 3. With [`IdctMethod::Libjpeg`], matches within
+    /// max_diff <= 2 (the remaining gap is upsampler rounding differences).
+    /// The Libjpeg IDCT adds ~37% decode overhead.
     #[default]
     Triangle,
 }
@@ -96,11 +97,14 @@ pub enum IdctMethod {
 /// encoder family, and quality level. Screenshots are skipped at Q10+ because
 /// deblocking harms synthetic content.
 ///
-/// # Performance
+/// # Performance and decode paths
 ///
-/// Boundary 4-tap adds ~5-15% decode time. Knusperli adds ~20-40% due to
-/// extra IDCT work. Both modes force the coefficient decode path (no streaming),
-/// since they need access to quantization tables and/or raw DCT coefficients.
+/// Boundary 4-tap adds ~5-15% decode time and works in streaming mode.
+/// Knusperli adds ~20-40% and forces the buffered coefficient decode path
+/// (no streaming) since it needs raw DCT coefficients. `Auto` and
+/// `AutoStreamable` stay streaming when they select Boundary4Tap; `Auto`
+/// falls back to buffered only when it selects Knusperli (DC quant >= 27,
+/// roughly Q5-Q50).
 ///
 /// # Example
 ///
