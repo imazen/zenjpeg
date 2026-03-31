@@ -120,8 +120,8 @@ impl QuantContext {
     }
 }
 
-use archmage::prelude::*;
 use crate::foundation::simd_types::Block8x8f;
+use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 /// Block extraction with level shift: returns Block8x8f directly.
