@@ -153,15 +153,52 @@ feature-check:
     cargo check -p zenjpeg --no-default-features --features "std,ultrahdr"
     cargo check -p zenjpeg --no-default-features --features "std,layout"
 
-# Cross-compile and test on i686 (32-bit x86) via QEMU
-test-i686:
-    cross test -p zenjpeg --lib --target i686-unknown-linux-gnu
+# Cross-compile and test via QEMU user-mode emulation.
+# Strips jpegli-internals-sys (C++ FFI) from the workspace since it can't cross-compile,
+# then restores Cargo.toml after the test. Uses cargo directly with qemu runners from
+# ~/.cargo/config.toml (no Docker container, so sibling path deps resolve normally).
 
-# Cross-compile and test on armv7 (32-bit ARM) via QEMU
-test-armv7:
-    cross test -p zenjpeg --lib --target armv7-unknown-linux-gnueabihf
+# Helper: strip C++ FFI members/deps that can't cross-compile
+_strip-cpp-ffi:
+    #!/usr/bin/env bash
+    # From workspace Cargo.toml: remove jpegli-internals-sys and zjpeg members
+    python3 -c "
+    import re
+    t = open('Cargo.toml').read()
+    t = re.sub(r'\s*\"internal/jpegli-internals-sys\",?', '', t)
+    t = re.sub(r'\s*\"zjpeg\",?', '', t)
+    open('Cargo.toml', 'w').write(t)
+    "
+    # From zenjpeg/Cargo.toml: remove jpegli-internals-sys dep and cjpegli-ffi feature ref
+    python3 -c "
+    import re
+    t = open('zenjpeg/Cargo.toml').read()
+    t = re.sub(r'jpegli-internals-sys[^\n]*\n', '', t)
+    t = re.sub(r', features = \[\"cjpegli-ffi\"\]', '', t)
+    open('zenjpeg/Cargo.toml', 'w').write(t)
+    "
+
+# Test on i686 (32-bit x86) — catches pointer-width bugs, WASM-relevant
+test-i686:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cp Cargo.toml Cargo.toml.bak
+    cp zenjpeg/Cargo.toml zenjpeg/Cargo.toml.bak
+    trap 'mv Cargo.toml.bak Cargo.toml; mv zenjpeg/Cargo.toml.bak zenjpeg/Cargo.toml' EXIT
+    just _strip-cpp-ffi
+    cargo test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+
+# Test on aarch64 (ARM64) — catches NEON codegen, locked value divergence
+test-aarch64:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cp Cargo.toml Cargo.toml.bak
+    cp zenjpeg/Cargo.toml zenjpeg/Cargo.toml.bak
+    trap 'mv Cargo.toml.bak Cargo.toml; mv zenjpeg/Cargo.toml.bak zenjpeg/Cargo.toml' EXIT
+    just _strip-cpp-ffi
+    cargo test -p zenjpeg --target aarch64-unknown-linux-gnu --lib --tests
 
 # Run all cross-compilation targets
 test-cross:
     just test-i686
-    just test-armv7
+    just test-aarch64
