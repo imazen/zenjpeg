@@ -172,7 +172,6 @@ fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) {
 
 /// Find a pre-built library in common locations
 fn find_prebuilt_library(jpegli_root: &Path, butteraugli_enabled: bool) -> Option<PathBuf> {
-    // Check standard build directories
     let candidates = [
         "build",
         "build_release",
@@ -180,29 +179,31 @@ fn find_prebuilt_library(jpegli_root: &Path, butteraugli_enabled: bool) -> Optio
         "cmake-build-release",
     ];
 
+    let (prefix, ext) = if cfg!(windows) { ("", "lib") } else { ("lib", "a") };
+
     for candidate in &candidates {
         let build_dir = jpegli_root.join(candidate);
-        let lib_dir = build_dir.join("lib");
 
-        // Check if the required library exists
-        let jpegli_lib = if cfg!(windows) {
-            lib_dir.join("jpegli-static.lib")
-        } else {
-            lib_dir.join("libjpegli-static.a")
-        };
+        // Check lib/ and lib/Release/ (VS generator puts libs in Release/)
+        let found_jpegli = ["lib", "lib/Release"].iter().any(|sub| {
+            build_dir
+                .join(sub)
+                .join(format!("{prefix}jpegli-static.{ext}"))
+                .exists()
+        });
 
-        if !jpegli_lib.exists() {
+        if !found_jpegli {
             continue;
         }
 
-        // If butteraugli is enabled, we also need jxl_extras-internal
         if butteraugli_enabled {
-            let extras_lib = if cfg!(windows) {
-                lib_dir.join("jxl_extras-internal.lib")
-            } else {
-                lib_dir.join("libjxl_extras-internal.a")
-            };
-            if !extras_lib.exists() {
+            let found_extras = ["lib", "lib/Release"].iter().any(|sub| {
+                build_dir
+                    .join(sub)
+                    .join(format!("{prefix}jxl_extras-internal.{ext}"))
+                    .exists()
+            });
+            if !found_extras {
                 continue;
             }
         }
@@ -324,36 +325,57 @@ fn build_with_cmake(
     out_dir.join("build")
 }
 
-/// Link the built libraries
-fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
-    // Try lib/ first, fall back to lib64/ (from jpegxl-src pattern)
-    let lib_dir = {
-        let lib = build_dir.join("lib");
-        if lib.exists() {
-            lib
-        } else {
-            let lib64 = build_dir.join("lib64");
-            if lib64.exists() {
-                lib64
-            } else {
-                // Fall back to lib/ — cmake may create it during linking
-                lib
-            }
-        }
+/// Find the directory containing a static library, checking common paths.
+///
+/// On Windows with VS generators, cmake puts libraries in `lib/Release/` or
+/// `lib/Debug/` instead of directly in `lib/`.
+fn find_lib_dir(build_dir: &Path, lib_name: &str, target: &str) -> PathBuf {
+    let (prefix, ext) = if target.contains("msvc") {
+        ("", "lib")
+    } else {
+        ("lib", "a")
     };
+    let filename = format!("{prefix}{lib_name}.{ext}");
 
-    let hwy_dir = build_dir.join("third_party").join("highway");
-    let brotli_dir = build_dir.join("third_party").join("brotli");
+    // Search order: lib/, lib/Release/, lib64/, lib64/Release/
+    let candidates = [
+        build_dir.join("lib"),
+        build_dir.join("lib").join("Release"),
+        build_dir.join("lib64"),
+        build_dir.join("lib64").join("Release"),
+    ];
 
-    // Add library search paths
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-
-    if hwy_dir.exists() {
-        println!("cargo:rustc-link-search=native={}", hwy_dir.display());
+    for candidate in &candidates {
+        if candidate.join(&filename).exists() {
+            return candidate.clone();
+        }
     }
 
-    if brotli_dir.exists() {
-        println!("cargo:rustc-link-search=native={}", brotli_dir.display());
+    // Fall back to lib/ — cmake may create it during linking
+    build_dir.join("lib")
+}
+
+/// Link the built libraries
+fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
+    let lib_dir = find_lib_dir(build_dir, "jpegli-static", target);
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+
+    // Highway: check both third_party/highway/ and third_party/highway/Release/
+    let hwy_base = build_dir.join("third_party").join("highway");
+    for sub in ["", "Release"] {
+        let dir = if sub.is_empty() { hwy_base.clone() } else { hwy_base.join(sub) };
+        if dir.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
+    }
+
+    // Brotli
+    let brotli_base = build_dir.join("third_party").join("brotli");
+    for sub in ["", "Release"] {
+        let dir = if sub.is_empty() { brotli_base.clone() } else { brotli_base.join(sub) };
+        if dir.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
     }
 
     // Link jpegli-static
@@ -366,23 +388,24 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
     if butteraugli_enabled {
         println!("cargo:rustc-link-lib=static=jxl_extras-internal");
 
-        // jxl_extras may need additional dependencies
+        // jxl_extras may need additional dependencies — search third_party tree
         let third_party = build_dir.join("third_party");
-        if third_party.exists() {
-            println!(
-                "cargo:rustc-link-search=native={}",
-                third_party.display()
-            );
+        for sub in ["", "Release"] {
+            let dir = if sub.is_empty() { third_party.clone() } else { third_party.join(sub) };
+            if dir.exists() {
+                println!("cargo:rustc-link-search=native={}", dir.display());
+            }
         }
 
         // lcms2 may be built as a static lib
-        let lcms2_lib = if target.contains("msvc") {
-            third_party.join("lcms2.lib")
-        } else {
-            third_party.join("liblcms2.a")
-        };
-        if lcms2_lib.exists() {
-            println!("cargo:rustc-link-lib=static=lcms2");
+        let lcms2_name = if target.contains("msvc") { "lcms2.lib" } else { "liblcms2.a" };
+        for sub in ["", "Release"] {
+            let dir = if sub.is_empty() { third_party.clone() } else { third_party.join(sub) };
+            if dir.join(lcms2_name).exists() {
+                println!("cargo:rustc-link-search=native={}", dir.display());
+                println!("cargo:rustc-link-lib=static=lcms2");
+                break;
+            }
         }
     }
 
