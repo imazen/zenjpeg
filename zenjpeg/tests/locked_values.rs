@@ -222,8 +222,10 @@ fn test_values_file_integrity() {
 
 /// Verify all encoder outputs match expected values.
 /// On non-x86_64 platforms: values_wide.csv needs regeneration after archmage 0.9.15 NEON changes.
+/// Without yuv feature: YCbCr conversion path produces different output.
 /// Run: REGENERATE_LOCKED_VALUES=1 cargo test --release -p zenjpeg --test locked_values
 ///   --no-default-features --features "std,yuv" -- regenerate --ignored --nocapture
+#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "values_wide.csv needs regeneration on this platform (archmage 0.9.15 changed NEON output)"

@@ -102,7 +102,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|, path = "\.\./ultrahdr/[^"]*"||g' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -148,7 +148,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|, path = "\.\./ultrahdr/[^"]*"||g' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -195,7 +195,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|, path = "\.\./ultrahdr/[^"]*"||g' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
@@ -234,7 +234,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|, path = "\.\./ultrahdr/[^"]*"||g' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -277,7 +277,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|, path = "\.\./ultrahdr/[^"]*"||g' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \

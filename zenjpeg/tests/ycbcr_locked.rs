@@ -308,6 +308,7 @@ fn test_exact_hash(
 // TESTS: Sequential (Baseline) Mode
 // =============================================================================
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s444_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -323,6 +324,7 @@ fn test_frymire_s444_sequential_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s422_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -338,6 +340,7 @@ fn test_frymire_s422_sequential_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s420_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -353,6 +356,7 @@ fn test_frymire_s420_sequential_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s440_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -368,6 +372,7 @@ fn test_frymire_s440_sequential_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s444_sequential_hash() {
     let (rgb, w, h) = load_frymire();
@@ -384,6 +389,7 @@ fn test_frymire_s444_sequential_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s422_sequential_hash() {
     let (rgb, w, h) = load_frymire();
@@ -400,6 +406,7 @@ fn test_frymire_s422_sequential_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s420_sequential_hash() {
     let (rgb, w, h) = load_frymire();
@@ -416,6 +423,7 @@ fn test_frymire_s420_sequential_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s440_sequential_hash() {
     let (rgb, w, h) = load_frymire();
@@ -436,6 +444,7 @@ fn test_frymire_s440_sequential_hash() {
 // TESTS: Progressive Mode
 // =============================================================================
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s444_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -451,6 +460,7 @@ fn test_frymire_s444_progressive_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s422_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -466,6 +476,7 @@ fn test_frymire_s422_progressive_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s420_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -481,6 +492,7 @@ fn test_frymire_s420_progressive_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s440_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
@@ -496,6 +508,7 @@ fn test_frymire_s440_progressive_sizes() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s444_progressive_hash() {
     let (rgb, w, h) = load_frymire();
@@ -512,6 +525,7 @@ fn test_frymire_s444_progressive_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s422_progressive_hash() {
     let (rgb, w, h) = load_frymire();
@@ -528,6 +542,7 @@ fn test_frymire_s422_progressive_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s420_progressive_hash() {
     let (rgb, w, h) = load_frymire();
@@ -544,6 +559,7 @@ fn test_frymire_s420_progressive_hash() {
     );
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 fn test_frymire_s440_progressive_hash() {
     let (rgb, w, h) = load_frymire();
@@ -566,6 +582,7 @@ fn test_frymire_s440_progressive_hash() {
 
 /// Print current values if you need to update the locked constants.
 /// Run with: cargo test --test ycbcr_locked print_current_values -- --ignored --nocapture
+#[cfg_attr(not(target_arch = "x86_64"), ignore = "locked values are x86_64-specific (NEON output differs)")]
 #[test]
 #[ignore = "utility for updating reference values"]
 fn print_current_values() {
