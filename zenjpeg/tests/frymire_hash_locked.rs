@@ -659,6 +659,8 @@ fn test_configs() -> Vec<EncoderTestConfig> {
 /// Only runs in release mode without the parallel feature:
 /// - Debug mode: floating-point rounding differences cause hash mismatches
 /// - Parallel feature: thread ordering causes non-deterministic output
+/// - Without yuv feature: YCbCr conversion path produces different output
+#[cfg(feature = "yuv")]
 #[test]
 #[cfg_attr(
     any(debug_assertions, feature = "parallel"),

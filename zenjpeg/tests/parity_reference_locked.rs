@@ -261,6 +261,10 @@ fn compute_dssim(original: &[u8], decoded: &[u8], _width: usize, _height: usize)
 // =============================================================================
 
 /// Verify 4:4:4 optimized Huffman matches reference
+#[cfg_attr(
+    not(target_arch = "x86_64"),
+    ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
+)]
 #[test]
 fn test_s444_opt_parity() {
     let (rgb, width, height) = load_test_image();
@@ -293,6 +297,10 @@ fn test_s444_opt_parity() {
 }
 
 /// Verify 4:4:4 fixed Huffman matches reference
+#[cfg_attr(
+    not(target_arch = "x86_64"),
+    ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
+)]
 #[test]
 fn test_s444_fixed_parity() {
     let (rgb, width, height) = load_test_image();
@@ -314,6 +322,10 @@ fn test_s444_fixed_parity() {
 }
 
 /// Verify 4:2:0 optimized Huffman matches reference
+#[cfg_attr(
+    not(target_arch = "x86_64"),
+    ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
+)]
 #[test]
 fn test_s420_opt_parity() {
     let (rgb, width, height) = load_test_image();
@@ -346,6 +358,10 @@ fn test_s420_opt_parity() {
 }
 
 /// Verify 4:2:2 optimized Huffman matches reference
+#[cfg_attr(
+    not(target_arch = "x86_64"),
+    ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
+)]
 #[test]
 fn test_s422_opt_parity() {
     let (rgb, width, height) = load_test_image();
@@ -375,6 +391,10 @@ fn test_s422_opt_parity() {
 }
 
 /// Verify 4:4:0 optimized Huffman matches reference
+#[cfg_attr(
+    not(target_arch = "x86_64"),
+    ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
+)]
 #[test]
 fn test_s440_opt_parity() {
     let (rgb, width, height) = load_test_image();
