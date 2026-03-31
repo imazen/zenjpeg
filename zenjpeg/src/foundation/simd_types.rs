@@ -1,7 +1,7 @@
 //! SIMD-native data types for efficient block processing.
 //!
 //! These types store data in raw arrays for `Pod`/`Zeroable`/`const` compatibility.
-//! Computation uses `wide::f32x8` (portable fallback) or `magetypes` (archmage dispatch).
+//! Computation uses scalar loops (portable) or `magetypes` (archmage dispatch).
 //! The array storage is layout-compatible with SIMD vectors (32-byte aligned).
 
 #![allow(dead_code)]
@@ -9,7 +9,6 @@
 
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-use wide::{CmpGe, f32x8, i32x8};
 
 /// An 8x8 block stored as 8 rows of `[f32; 8]` for SIMD-native access.
 ///
@@ -70,10 +69,11 @@ impl Block8x8f {
     /// Multiply all elements by a scalar
     #[inline]
     pub fn scale(&self, factor: f32) -> Self {
-        let scale = f32x8::splat(factor);
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] = (f32x8::from(self.rows[i]) * scale).to_array();
+            for j in 0..8 {
+                result.rows[i][j] = self.rows[i][j] * factor;
+            }
         }
         result
     }
@@ -83,8 +83,9 @@ impl Block8x8f {
     pub fn mul(&self, other: &Self) -> Self {
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] =
-                (f32x8::from(self.rows[i]) * f32x8::from(other.rows[i])).to_array();
+            for j in 0..8 {
+                result.rows[i][j] = self.rows[i][j] * other.rows[i][j];
+            }
         }
         result
     }
@@ -94,8 +95,9 @@ impl Block8x8f {
     pub fn add(&self, other: &Self) -> Self {
         let mut result = Self::ZERO;
         for i in 0..8 {
-            result.rows[i] =
-                (f32x8::from(self.rows[i]) + f32x8::from(other.rows[i])).to_array();
+            for j in 0..8 {
+                result.rows[i][j] = self.rows[i][j] + other.rows[i][j];
+            }
         }
         result
     }
@@ -204,20 +206,11 @@ impl QuantTableSimd {
     /// The 8.0 factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
     pub fn from_values(values: &[u16; 64]) -> Self {
         let mut mul_rows = [[0.0f32; 8]; 8];
-        let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
-            let row_f32: [f32; 8] = [
-                values[start] as f32,
-                values[start + 1] as f32,
-                values[start + 2] as f32,
-                values[start + 3] as f32,
-                values[start + 4] as f32,
-                values[start + 5] as f32,
-                values[start + 6] as f32,
-                values[start + 7] as f32,
-            ];
-            mul_rows[row] = (eight / f32x8::from(row_f32)).to_array();
+            for col in 0..8 {
+                mul_rows[row][col] = 8.0 / values[start + col] as f32;
+            }
         }
         Self {
             mul_rows,
@@ -232,12 +225,10 @@ impl QuantTableSimd {
     pub fn from_f32_values(values: &[f32; 64]) -> Self {
         let mut mul_rows = [[0.0f32; 8]; 8];
         let mut u16_values = [0u16; 64];
-        let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
-            let values_slice: [f32; 8] = values[start..start + 8].try_into().unwrap();
-            mul_rows[row] = (eight / f32x8::from(values_slice)).to_array();
             for col in 0..8 {
+                mul_rows[row][col] = 8.0 / values[start + col];
                 u16_values[start + col] = values[start + col].round() as u16;
             }
         }
@@ -254,8 +245,9 @@ impl QuantTableSimd {
     pub fn quantize(&self, block: &Block8x8f) -> Block8x8i32 {
         let mut result = Block8x8i32::ZERO;
         for i in 0..8 {
-            let quantized = f32x8::from(block.rows[i]) * f32x8::from(self.mul_rows[i]);
-            result.rows[i] = quantized.round_int().to_array();
+            for j in 0..8 {
+                result.rows[i][j] = (block.rows[i][j] * self.mul_rows[i][j]).round() as i32;
+            }
         }
         result
     }
@@ -295,38 +287,17 @@ impl QuantTableSimd {
         aq_strength: f32,
     ) -> [i16; 64] {
         let mut result = [0i16; 64];
-        let aq = f32x8::splat(aq_strength);
-
         for row in 0..8 {
             let k = row * 8;
-            let coeffs_simd = f32x8::new([
-                coeffs[k],
-                coeffs[k + 1],
-                coeffs[k + 2],
-                coeffs[k + 3],
-                coeffs[k + 4],
-                coeffs[k + 5],
-                coeffs[k + 6],
-                coeffs[k + 7],
-            ]);
-
-            let qval = coeffs_simd * f32x8::from(self.mul_rows[row]);
-            let threshold =
-                f32x8::from(zero_bias.offset_rows[row]) + f32x8::from(zero_bias.mul_rows[row]) * aq;
-            let abs_qval = qval.abs();
-
-            let abs_arr = abs_qval.as_array();
-            let thresh_arr = threshold.as_array();
-            let rounded = qval.fast_round_int();
-            let rounded_arr = rounded.as_array();
-
-            for i in 0..8 {
-                if abs_arr[i] >= thresh_arr[i] {
-                    result[k + i] = rounded_arr[i] as i16;
+            for col in 0..8 {
+                let qval = coeffs[k + col] * self.mul_rows[row][col];
+                let threshold = zero_bias.offset_rows[row][col]
+                    + zero_bias.mul_rows[row][col] * aq_strength;
+                if qval.abs() >= threshold {
+                    result[k + col] = fast_round_i32(qval) as i16;
                 }
             }
         }
-
         result
     }
 }
@@ -467,8 +438,7 @@ fn mage_quantize_block(
     result
 }
 
-/// Scalar fallback quantize with zigzag output (wide crate, 2× SSE2).
-#[archmage::autoversion]
+/// Scalar fallback quantize with zigzag output.
 fn scalar_quantize_block_zigzag(
     block: &Block8x8f,
     mul_rows: &[[f32; 8]; 8],
@@ -478,37 +448,22 @@ fn scalar_quantize_block_zigzag(
     use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
     let mut result = [0i16; 64];
-    let aq = f32x8::splat(aq_strength);
-    let zero_i32 = i32x8::ZERO;
-
     for row in 0..8 {
-        let qval = f32x8::from(block.rows[row]) * f32x8::from(mul_rows[row]);
-        let threshold = f32x8::from(zero_bias.offset_rows[row])
-            + f32x8::from(zero_bias.mul_rows[row]) * aq;
-        let abs_qval = qval.abs();
-        let mask_f32 = abs_qval.simd_ge(threshold);
-        let mask_i32: i32x8 = bytemuck::cast(mask_f32);
-        let rounded = qval.fast_round_int();
-        let blended = mask_i32.blend(rounded, zero_i32);
-
-        let arr = blended.as_array();
         let k = row * 8;
-
-        result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
-        result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
+        for col in 0..8 {
+            let qval = block.rows[row][col] * mul_rows[row][col];
+            let threshold =
+                zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
+            if qval.abs() >= threshold {
+                result[JPEG_ZIGZAG_ORDER[k + col] as usize] =
+                    fast_round_i32(qval) as i16;
+            }
+        }
     }
-
     result
 }
 
-/// Scalar fallback quantize, natural order output (wide crate, 2× SSE2).
-#[archmage::autoversion]
+/// Scalar fallback quantize, natural order output.
 fn scalar_quantize_block(
     block: &Block8x8f,
     mul_rows: &[[f32; 8]; 8],
@@ -516,33 +471,26 @@ fn scalar_quantize_block(
     aq_strength: f32,
 ) -> [i16; 64] {
     let mut result = [0i16; 64];
-    let aq = f32x8::splat(aq_strength);
-    let zero_i32 = i32x8::ZERO;
-
     for row in 0..8 {
-        let qval = f32x8::from(block.rows[row]) * f32x8::from(mul_rows[row]);
-        let threshold = f32x8::from(zero_bias.offset_rows[row])
-            + f32x8::from(zero_bias.mul_rows[row]) * aq;
-        let abs_qval = qval.abs();
-        let mask_f32 = abs_qval.simd_ge(threshold);
-        let mask_i32: i32x8 = bytemuck::cast(mask_f32);
-        let rounded = qval.fast_round_int();
-        let blended = mask_i32.blend(rounded, zero_i32);
-
-        let arr = blended.as_array();
         let k = row * 8;
-
-        result[k] = arr[0] as i16;
-        result[k + 1] = arr[1] as i16;
-        result[k + 2] = arr[2] as i16;
-        result[k + 3] = arr[3] as i16;
-        result[k + 4] = arr[4] as i16;
-        result[k + 5] = arr[5] as i16;
-        result[k + 6] = arr[6] as i16;
-        result[k + 7] = arr[7] as i16;
+        for col in 0..8 {
+            let qval = block.rows[row][col] * mul_rows[row][col];
+            let threshold =
+                zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
+            if qval.abs() >= threshold {
+                result[k + col] = fast_round_i32(qval) as i16;
+            }
+        }
     }
-
     result
+}
+
+/// Round to nearest i32, matching wide::f32x8::fast_round_int behavior.
+#[inline(always)]
+fn fast_round_i32(v: f32) -> i32 {
+    // fast_round_int adds/subtracts magic constant to trigger rounding,
+    // which is equivalent to roundf for values in the f32 integer range.
+    v.round() as i32
 }
 
 /// Dispatching quantize with zigzag — tries archmage AVX2, falls back to scalar.
