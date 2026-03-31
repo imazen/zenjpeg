@@ -860,6 +860,15 @@ sensitivity tables, and preset baselines.
 
 ### Fixed / Resolved Bugs (historical reference)
 
+- **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
+  `try_fused_parallel_decode()` didn't check `decode_mode`, so it took the fused parallel
+  path (decodes directly to u8 pixels, no coefficient storage) even when
+  `DecodeMode::Coefficient` was set. This caused "no decoded data" InternalError for
+  `OutputTarget::SrgbF32`, `dequant_bias(true)`, lossless transforms, and Knusperli deblock
+  — any path needing coefficient access. Only triggered with `--features parallel` on images
+  with DRI (restart markers). Fix: return `Ok(false)` from `try_fused_parallel_decode` when
+  `decode_mode == Coefficient`. (`fused_parallel.rs:92`)
+
 - **Progressive decoder truncation near restart markers (FIXED 2026-03-09, commit 08ef601)** -
   Fused `decode_ac_first_scan` and `decode_ac_refine_scan` lacked a bit-by-bit Huffman
   fallback when `peek_bits_refill(16)` failed near restart marker boundaries. When a Huffman
