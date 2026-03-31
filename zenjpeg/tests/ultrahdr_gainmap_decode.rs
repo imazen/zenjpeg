@@ -1096,22 +1096,24 @@ fn test_xmp_contains_required_fields() {
 
     let xmp = extras.xmp().expect("Should have XMP");
 
-    // Required UltraHDR XMP fields
+    // Primary XMP has version and container directory
     assert!(
         xmp.contains("hdrgm:Version"),
-        "XMP should contain hdrgm:Version"
+        "Primary XMP should contain hdrgm:Version"
     );
     assert!(
-        xmp.contains("hdrgm:GainMapMax"),
-        "XMP should contain hdrgm:GainMapMax"
+        xmp.contains("Container:Directory") || xmp.contains("Item:Semantic"),
+        "Primary XMP should contain Container:Directory"
     );
+
+    // Gain map metadata should be accessible via ultrahdr_metadata()
+    let (metadata, _) = extras
+        .ultrahdr_metadata()
+        .expect("Should have UltraHDR metadata")
+        .expect("Metadata parsing should succeed");
     assert!(
-        xmp.contains("hdrgm:GainMapMin"),
-        "XMP should contain hdrgm:GainMapMin"
-    );
-    assert!(
-        xmp.contains("hdrgm:Gamma"),
-        "XMP should contain hdrgm:Gamma"
+        metadata.gain_map_max[0] != 0.0 || metadata.gain_map_max[1] != 0.0,
+        "Metadata should have non-zero GainMapMax"
     );
 }
 

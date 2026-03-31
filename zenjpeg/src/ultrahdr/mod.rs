@@ -86,7 +86,7 @@ pub use ultrahdr_core::{
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
     metadata::iso21496::{parse_iso21496, serialize_iso21496},
-    metadata::xmp::{generate_xmp, parse_xmp},
+    metadata::xmp::{generate_gainmap_xmp, generate_primary_xmp, generate_xmp, parse_xmp},
 };
 
 // Re-export the Stop trait from enough (same one used by jpegli)

@@ -466,13 +466,50 @@ impl<'a> JpegParser<'a> {
             gainmap_range = find_secondary_jpeg_range(full_data);
         }
 
+        // If primary XMP had only hdrgm:Version but no numeric metadata,
+        // check the gain map JPEG's XMP (modern format used by libultrahdr).
+        let metadata = if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
+            if meta.gain_map_max == [0.0; 3] && meta.alternate_hdr_headroom == 0.0 {
+                // Try the gain map JPEG's XMP
+                let gm_data = &full_data[gm_start..gm_end];
+                if let Some(gm_xmp) = find_xmp_in_jpeg(gm_data) {
+                    parse_xmp(&gm_xmp).ok().map(|(m, _)| m).or(metadata)
+                } else {
+                    metadata
+                }
+            } else {
+                metadata
+            }
+        } else {
+            metadata
+        };
+
         Ok((gainmap_range, metadata))
     }
 
     // =========================================================================
     // Core I/O utilities
     // =========================================================================
+}
 
+/// Extract XMP string from a JPEG's APP1 segment.
+fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
+    let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
+    let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
+    let xmp_start = idx + xmp_ns.len();
+    let marker_pos = idx.checked_sub(4)?;
+    if jpeg.get(marker_pos)? != &0xFF || jpeg.get(marker_pos + 1)? != &0xE1 {
+        return None;
+    }
+    let length = u16::from_be_bytes([jpeg[marker_pos + 2], jpeg[marker_pos + 3]]) as usize;
+    let xmp_end = marker_pos + 2 + length;
+    let xmp_bytes = jpeg.get(xmp_start..xmp_end)?;
+    core::str::from_utf8(xmp_bytes)
+        .ok()
+        .map(|s| alloc::string::String::from(s))
+}
+
+impl<'a> JpegParser<'a> {
     pub(super) fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
             return Err(Error::truncated_data("reading marker data"));

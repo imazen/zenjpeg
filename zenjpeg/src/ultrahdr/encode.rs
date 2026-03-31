@@ -11,7 +11,7 @@ use ultrahdr_core::{
     ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
     color::tonemap::{AdaptiveTonemapper, ToneMapConfig, tonemap_to_sdr},
     gainmap::{GainMapConfig, RowEncoder, compute_gainmap},
-    metadata::xmp::generate_xmp,
+    metadata::xmp::{create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp},
 };
 
 /// Encode an HDR image as UltraHDR JPEG.
@@ -170,18 +170,37 @@ pub fn encode_with_gainmap(
     let gainmap_jpeg = encode_gainmap_jpeg(gainmap, gainmap_quality, &stop)?;
     stop.check()?;
 
-    // Generate XMP metadata
-    let xmp = generate_xmp(metadata, gainmap_jpeg.len());
+    // Inject gain map metadata XMP into the secondary JPEG.
+    // libultrahdr reads metadata from here, not the primary XMP.
+    let gainmap_xmp = generate_gainmap_xmp(metadata);
+    let gainmap_xmp_marker = create_xmp_app1_marker(&gainmap_xmp);
+    let gainmap_with_xmp = inject_xmp_after_soi(&gainmap_jpeg, &gainmap_xmp_marker)?;
 
-    // Create encoder segments with XMP and gain map (chained builder pattern)
-    let segments = EncoderSegments::new()
-        .set_xmp(&xmp)
-        .add_mpf_image(gainmap_jpeg, crate::encode::extras::MpfImageType::Undefined);
+    // Generate primary XMP (container directory only, with updated gain map size)
+    let primary_xmp = generate_primary_xmp(gainmap_with_xmp.len());
+
+    // Create encoder segments with primary XMP and gain map (with metadata)
+    let segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
+        gainmap_with_xmp,
+        crate::encode::extras::MpfImageType::Undefined,
+    );
 
     // Encode base SDR image with the segments
     let base_jpeg = encode_sdr_base(sdr, encoder_config, segments, stop)?;
 
     Ok(base_jpeg)
+}
+
+/// Inject an APP1 XMP marker into a JPEG after the SOI.
+fn inject_xmp_after_soi(jpeg: &[u8], xmp_marker: &[u8]) -> Result<Vec<u8>> {
+    if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
+        return Err(Error::unsupported_feature("gain map JPEG missing SOI"));
+    }
+    let mut result = Vec::with_capacity(jpeg.len() + xmp_marker.len());
+    result.extend_from_slice(&jpeg[..2]); // SOI
+    result.extend_from_slice(xmp_marker); // XMP APP1
+    result.extend_from_slice(&jpeg[2..]); // rest of JPEG
+    Ok(result)
 }
 
 /// Encode the gain map as a grayscale JPEG.

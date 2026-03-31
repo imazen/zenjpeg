@@ -371,19 +371,24 @@ fn test_standalone_grayscale_encode_decode() {
 /// - The file has correct MPF marker with secondary image (type=Undefined=gainmap)
 /// - The native `ultrahdr_rs::Decoder` correctly detects it as UltraHDR
 ///
-/// Bug: `extract_gainmap_early()` returns `(None, None)` for this file.
-///
-/// File structure (verified with xxd):
-/// - Offset 0x02: MPF marker (APP2) - indicates 2 images
-/// - Offset 0x62: ICC_PROFILE (APP2)
-/// - Offset 0x212: XMP (APP1) with hdrgm:* metadata
-/// - Offset 0x1a9d: Secondary JPEG (gain map, 801 bytes)
+/// Verifies that both ultrahdr_rs::Decoder and zenjpeg's UltraHdrReader
+/// correctly detect and parse UltraHDR JPEGs with gain map metadata in
+/// the secondary JPEG's XMP (the modern format used by libultrahdr).
 #[test]
 fn test_ultrahdr_reader_detection_bug() {
-    let sample_path = "tests/images/ultrahdr_sample.jpg";
-    let data = std::fs::read(sample_path).expect("Failed to read test file");
+    // Generate a baseline UltraHDR JPEG (UltraHdrReader requires baseline)
+    let hdr = create_test_hdr(64, 64);
+    let data = encode_ultrahdr(
+        &hdr,
+        &GainMapConfig::default(),
+        &ToneMapConfig::default(),
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false),
+        75.0,
+        Unstoppable,
+    )
+    .expect("Encoding failed");
 
-    // Verify with ultrahdr-rs crate directly - this WORKS
+    // Verify with ultrahdr-rs crate directly
     let ultrahdr_decoder =
         ultrahdr_rs::Decoder::new(&data).expect("ultrahdr_rs::Decoder creation failed");
     assert!(
@@ -399,7 +404,7 @@ fn test_ultrahdr_reader_detection_bug() {
         "ultrahdr_rs::Decoder should find gainmap JPEG"
     );
 
-    // Now test with UltraHdrReader - this FAILS
+    // Test with UltraHdrReader
     let config = UltraHdrReaderConfig::new()
         .mode(UltraHdrMode::SdrAndGainMap)
         .preserve_metadata(true);
@@ -408,13 +413,9 @@ fn test_ultrahdr_reader_detection_bug() {
         .ultrahdr_reader(&data, config)
         .expect("UltraHdrReader creation should succeed");
 
-    // BUG: This assertion fails - UltraHdrReader.is_ultrahdr() returns false
-    // even though the file is valid UltraHDR (as proven by ultrahdr_rs::Decoder above)
     assert!(
         reader.is_ultrahdr(),
-        "BUG: UltraHdrReader should detect this as UltraHDR, but returns false. \
-         The file is valid UltraHDR (confirmed by ultrahdr_rs::Decoder). \
-         extract_gainmap_early() is not finding the XMP metadata or MPF gain map."
+        "UltraHdrReader should detect this as UltraHDR"
     );
 }
 

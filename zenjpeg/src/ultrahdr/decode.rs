@@ -43,6 +43,23 @@ impl UltraHdrExtras for DecodedExtras {
     }
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
+        // First try primary XMP (legacy format: all metadata in primary)
+        if let Some(xmp) = self.xmp() {
+            if let Ok((metadata, len)) = parse_xmp(xmp) {
+                if metadata.gain_map_max != [0.0; 3] || metadata.alternate_hdr_headroom != 0.0 {
+                    return Some(Ok((metadata, len)));
+                }
+            }
+        }
+
+        // Then try gain map JPEG's XMP (modern format: metadata in secondary)
+        if let Some(gainmap_jpeg) = self.gainmap() {
+            if let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg) {
+                return Some(parse_xmp(&gm_xmp).map_err(ultrahdr_to_jpegli_error));
+            }
+        }
+
+        // Fall back to primary XMP even if values are all-default
         let xmp = self.xmp()?;
         Some(parse_xmp(xmp).map_err(ultrahdr_to_jpegli_error))
     }
@@ -192,6 +209,23 @@ fn is_grayscale_content(pixels: &[u8]) -> bool {
         .chunks_exact(3)
         .take(100) // Sample first 100 pixels
         .all(|p| p[0] == p[1] && p[1] == p[2])
+}
+
+/// Extract XMP string from a JPEG's APP1 segment.
+fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
+    let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
+    let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
+    let xmp_start = idx + xmp_ns.len();
+    // Find the APP1 marker to get the segment length
+    // Walk backwards from idx to find FF E1
+    let marker_pos = idx.checked_sub(4)?;
+    if jpeg.get(marker_pos)? != &0xFF || jpeg.get(marker_pos + 1)? != &0xE1 {
+        return None;
+    }
+    let length = u16::from_be_bytes([jpeg[marker_pos + 2], jpeg[marker_pos + 3]]) as usize;
+    let xmp_end = marker_pos + 2 + length;
+    let xmp_bytes = jpeg.get(xmp_start..xmp_end)?;
+    String::from_utf8(xmp_bytes.to_vec()).ok()
 }
 
 /// Convert ultrahdr_core::Error to jpegli Error.
