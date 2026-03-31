@@ -15,7 +15,7 @@
 
 #![cfg(target_arch = "aarch64")]
 
-use archmage::{NeonToken, SimdToken, arcane, rite};
+use archmage::{NeonToken, arcane, rite};
 use core::arch::aarch64::*;
 use safe_unaligned_simd::aarch64 as safe_simd;
 

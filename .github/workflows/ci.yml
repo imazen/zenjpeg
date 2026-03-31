@@ -66,11 +66,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Print hashes for regeneration (non-x86_64 only)
-        if: matrix.os == 'ubuntu-24.04-arm' || matrix.os == 'windows-11-arm'
-        run: cargo test -p zenjpeg --release --test frymire_hash_locked print_all_hashes -- --ignored --nocapture
-        continue-on-error: true
-
       - name: Test (defaults)
         run: cargo test -p zenjpeg --release --lib --tests
 
