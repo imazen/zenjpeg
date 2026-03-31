@@ -1190,7 +1190,7 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// This is the legacy implementation kept for comparison. In most cases,
 /// `idct_int_auto` (which uses `wide`) should be preferred as it's portable
 /// and has similar performance.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn idct_int_avx2_raw(
     token: archmage::X64V3Token,
@@ -1620,7 +1620,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_avx2_matches_scalar() {
         let Some(token) = archmage::X64V3Token::summon() else {
