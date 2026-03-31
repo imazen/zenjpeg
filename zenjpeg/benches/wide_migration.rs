@@ -143,7 +143,7 @@ fn bench_encode(suite: &mut Suite) {
 
     for &(ss_name, ss) in &subsamplings {
         // 2k baseline + progressive
-        suite.group(&format!("enc/2k/{ss_name}"), |g| {
+        suite.group(format!("enc/2k/{ss_name}"), |g| {
             g.throughput(Throughput::Bytes((S2K.0 * S2K.1 * 3) as u64));
 
             g.bench("base", move |b| {
@@ -169,7 +169,7 @@ fn bench_encode(suite: &mut Suite) {
         });
 
         // 4k baseline + progressive
-        suite.group(&format!("enc/4k/{ss_name}"), |g| {
+        suite.group(format!("enc/4k/{ss_name}"), |g| {
             g.throughput(Throughput::Bytes((S4K.0 * S4K.1 * 3) as u64));
 
             g.bench("base", move |b| {
@@ -198,7 +198,7 @@ fn bench_encode(suite: &mut Suite) {
     // ── Parallel encode: subsampling × size ─────────────────────────
 
     for &(ss_name, ss) in &subsamplings {
-        suite.group(&format!("enc/2k/{ss_name}/par"), |g| {
+        suite.group(format!("enc/2k/{ss_name}/par"), |g| {
             g.throughput(Throughput::Bytes((S2K.0 * S2K.1 * 3) as u64));
 
             g.bench("seq", move |b| {
@@ -223,7 +223,7 @@ fn bench_encode(suite: &mut Suite) {
             });
         });
 
-        suite.group(&format!("enc/4k/{ss_name}/par"), |g| {
+        suite.group(format!("enc/4k/{ss_name}/par"), |g| {
             g.throughput(Throughput::Bytes((S4K.0 * S4K.1 * 3) as u64));
 
             g.bench("seq", move |b| {
@@ -435,7 +435,7 @@ fn bench_decode(suite: &mut Suite) {
     // ── Subsampling × size × mode (default decoder) ───────────────────
 
     for case in cases_2k.iter() {
-        suite.group(&format!("dec/2k/{}", case.label), |g| {
+        suite.group(format!("dec/2k/{}", case.label), |g| {
             g.throughput(Throughput::Elements(case.pixels));
 
             g.bench("default", |b| {
@@ -446,7 +446,7 @@ fn bench_decode(suite: &mut Suite) {
     }
 
     for case in cases_4k.iter() {
-        suite.group(&format!("dec/4k/{}", case.label), |g| {
+        suite.group(format!("dec/4k/{}", case.label), |g| {
             g.throughput(Throughput::Elements(case.pixels));
 
             g.bench("default", |b| {
@@ -459,7 +459,7 @@ fn bench_decode(suite: &mut Suite) {
     // ── Parallel decode: subsampling × size (baseline only, needs DRI) ─
 
     for case in cases_2k.iter().filter(|c| c.label.ends_with("_base")) {
-        suite.group(&format!("dec/2k/{}/par", case.label), |g| {
+        suite.group(format!("dec/2k/{}/par", case.label), |g| {
             g.throughput(Throughput::Elements(case.pixels));
 
             g.bench("seq", |b| {
@@ -479,7 +479,7 @@ fn bench_decode(suite: &mut Suite) {
     }
 
     for case in cases_4k.iter().filter(|c| c.label.ends_with("_base")) {
-        suite.group(&format!("dec/4k/{}/par", case.label), |g| {
+        suite.group(format!("dec/4k/{}/par", case.label), |g| {
             g.throughput(Throughput::Elements(case.pixels));
 
             g.bench("seq", |b| {

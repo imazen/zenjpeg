@@ -323,7 +323,7 @@ fn quantize_chroma_blocks(
         // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
         #[cfg(feature = "trellis")]
         if let Some(dc_raw) = dc_raw_output.as_deref_mut() {
-            let row0: [f32; 8] = dct.rows[0].into();
+            let row0: [f32; 8] = dct.rows[0];
             let dc_val = (row0[0] * 64.0).round() as i32;
             dc_raw.push(dc_val);
         }

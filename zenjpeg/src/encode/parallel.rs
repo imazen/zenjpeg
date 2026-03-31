@@ -556,8 +556,8 @@ mod tests {
         assert_eq!(seq_output.len(), par_output.len());
         for (i, (s, p)) in seq_output.iter().zip(par_output.iter()).enumerate() {
             for row in 0..8 {
-                let s_arr: [f32; 8] = s.rows[row].into();
-                let p_arr: [f32; 8] = p.rows[row].into();
+                let s_arr: [f32; 8] = s.rows[row];
+                let p_arr: [f32; 8] = p.rows[row];
                 for col in 0..8 {
                     assert!(
                         (s_arr[col] - p_arr[col]).abs() < 1e-6,
