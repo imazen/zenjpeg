@@ -119,7 +119,7 @@ jobs:
           key: cross-i686
 
       - name: Test (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --no-default-features --features "std,yuv,decoder" --lib --tests
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
   clippy:
     name: Clippy
