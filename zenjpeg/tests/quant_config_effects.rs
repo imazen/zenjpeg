@@ -173,10 +173,7 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
     );
 }
 
-#[cfg_attr(
-    not(target_arch = "x86_64"),
-    ignore = "NEON rounding on 64x64 test image makes zero bias changes unobservable"
-)]
+#[cfg(feature = "yuv")]
 #[test]
 fn test_zero_bias_changes_output() {
     let width = 64u32;
@@ -216,10 +213,7 @@ fn test_zero_bias_changes_output() {
     );
 }
 
-#[cfg_attr(
-    not(target_arch = "x86_64"),
-    ignore = "NEON rounding on 64x64 test image makes zero bias changes unobservable"
-)]
+#[cfg(feature = "yuv")]
 #[test]
 fn test_custom_zero_bias_changes_output() {
     let width = 64u32;

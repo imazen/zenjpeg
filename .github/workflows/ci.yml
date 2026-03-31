@@ -102,7 +102,8 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # ultrahdr path deps kept — sibling repos are cloned above
+          # Strip ultrahdr paths for cross (container can't see ../ultrahdr/)
+          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -118,7 +119,7 @@ jobs:
           key: cross-i686
 
       - name: Test (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --no-default-features --features "std,yuv,decoder" --lib --tests
 
   clippy:
     name: Clippy
