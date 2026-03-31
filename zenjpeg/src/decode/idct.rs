@@ -252,7 +252,7 @@ mod simd {
     }
 
     #[magetypes(v3, neon, wasm128, scalar)]
-    fn transpose_8x8_simd_impl(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    fn transpose_8x8_simd_impl(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 

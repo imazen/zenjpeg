@@ -210,7 +210,7 @@ pub fn preprocess_deringing_block(block: &mut Block8x8f, dc_quant: u16) {
     // Convert Block8x8f to flat array
     let mut data = [0.0f32; DCT_BLOCK_SIZE];
     for (row_idx, row) in block.rows.iter().enumerate() {
-        let arr: [f32; 8] = (*row).into();
+        let arr: [f32; 8] = *row;
         data[row_idx * 8..row_idx * 8 + 8].copy_from_slice(&arr);
     }
 
@@ -219,8 +219,7 @@ pub fn preprocess_deringing_block(block: &mut Block8x8f, dc_quant: u16) {
 
     // Write back to Block8x8f
     for (row_idx, row) in block.rows.iter_mut().enumerate() {
-        let slice: [f32; 8] = data[row_idx * 8..row_idx * 8 + 8].try_into().unwrap();
-        *row = slice.into();
+        *row = data[row_idx * 8..row_idx * 8 + 8].try_into().unwrap();
     }
 }
 

@@ -559,6 +559,7 @@ mod avx2 {
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
+    #[allow(unused_imports)]
     use core::arch::x86_64::*;
 
     /// Shuffle constant helper (equivalent to _MM_SHUFFLE).

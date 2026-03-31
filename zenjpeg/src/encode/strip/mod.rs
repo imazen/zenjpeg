@@ -1296,7 +1296,7 @@ impl StripProcessor {
 
             // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
             if store_dc_raw {
-                let row0: [f32; 8] = dct.rows[0].into();
+                let row0: [f32; 8] = dct.rows[0];
                 let dc_raw = (row0[0] * 64.0).round() as i32;
                 self.y_dc_raw.push(dc_raw);
             }

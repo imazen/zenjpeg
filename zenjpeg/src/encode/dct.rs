@@ -264,7 +264,7 @@ pub(crate) mod simd {
     /// Generic transpose fallback using magetypes generics.
     #[magetypes(v3, neon, wasm128, scalar)]
     #[inline(always)]
-    fn transpose_8x8_generic(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    fn transpose_8x8_generic(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
@@ -354,8 +354,8 @@ pub(crate) mod simd {
 
         // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
         second[0] = second[0] * sqrt2 + second[1];
-        second[1] = second[1] + second[2];
-        second[2] = second[2] + second[3];
+        second[1] += second[2];
+        second[2] += second[3];
         // second[3] stays the same
 
         // InverseEvenOdd<8>: interleave

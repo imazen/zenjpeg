@@ -384,38 +384,37 @@ struct TestSet {
 /// Falls back to synthetic noise+patches if corpus unavailable.
 fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
     // Try CID22 corpus first
-    if let Ok(corpus) = codec_corpus::Corpus::new() {
-        if let Ok(dir) = corpus.get("CID22/CID22-512/training") {
-            // Find first PNG, tile it to fill target size
-            if let Some(path) = std::fs::read_dir(&dir)
-                .ok()
-                .and_then(|mut rd| {
-                    rd.find(|e| {
-                        e.as_ref()
-                            .ok()
-                            .and_then(|e| {
-                                e.path().extension().map(|x| x.eq_ignore_ascii_case("png"))
-                            })
-                            .unwrap_or(false)
-                    })
+    if let Ok(corpus) = codec_corpus::Corpus::new()
+        && let Ok(dir) = corpus.get("CID22/CID22-512/training")
+    {
+        // Find first PNG, tile it to fill target size
+        if let Some(path) = std::fs::read_dir(&dir)
+            .ok()
+            .and_then(|mut rd| {
+                rd.find(|e| {
+                    e.as_ref()
+                        .ok()
+                        .and_then(|e| {
+                            e.path().extension().map(|x| x.eq_ignore_ascii_case("png"))
+                        })
+                        .unwrap_or(false)
                 })
-                .and_then(|e| e.ok())
-            {
-                if let Some((src_pixels, sw, sh)) = load_png_rgb(&path.path()) {
-                    // Tile source image to fill target dimensions
-                    let mut out = vec![0u8; (w * h * 3) as usize];
-                    for y in 0..h as usize {
-                        for x in 0..w as usize {
-                            let sx = x % sw as usize;
-                            let sy = y % sh as usize;
-                            let si = (sy * sw as usize + sx) * 3;
-                            let di = (y * w as usize + x) * 3;
-                            out[di..di + 3].copy_from_slice(&src_pixels[si..si + 3]);
-                        }
-                    }
-                    return out;
+            })
+            .and_then(|e| e.ok())
+            && let Some((src_pixels, sw, sh)) = load_png_rgb(&path.path())
+        {
+            // Tile source image to fill target dimensions
+            let mut out = vec![0u8; (w * h * 3) as usize];
+            for y in 0..h as usize {
+                for x in 0..w as usize {
+                    let sx = x % sw as usize;
+                    let sy = y % sh as usize;
+                    let si = (sy * sw as usize + sx) * 3;
+                    let di = (y * w as usize + x) * 3;
+                    out[di..di + 3].copy_from_slice(&src_pixels[si..si + 3]);
                 }
             }
+            return out;
         }
     }
 
@@ -524,7 +523,7 @@ fn generate_test_sets() -> Vec<TestSet> {
             eprintln!(
                 "  pixels {w}x{h}: {} bytes ({})",
                 px.len(),
-                if px.len() > 0 { "loaded" } else { "synthetic" }
+                if !px.is_empty() { "loaded" } else { "synthetic" }
             );
             ((w, h), px)
         })

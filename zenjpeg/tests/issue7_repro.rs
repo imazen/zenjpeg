@@ -19,10 +19,10 @@ const FALLBACK_URL: &str = "https://imageflow-resources.s3.us-west-2.amazonaws.c
 /// Fetch test image via codec-corpus (auto-download), falling back to S3.
 fn fetch_test_image() -> Vec<u8> {
     // Try codec-corpus first
-    if let Ok(corpus) = codec_corpus::Corpus::new() {
-        if let Ok(path) = corpus.get(CORPUS_PATH) {
-            return std::fs::read(path).expect("read corpus image");
-        }
+    if let Ok(corpus) = codec_corpus::Corpus::new()
+        && let Ok(path) = corpus.get(CORPUS_PATH)
+    {
+        return std::fs::read(path).expect("read corpus image");
     }
     // Fallback: download from S3 with local cache
     let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
