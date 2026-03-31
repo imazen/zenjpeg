@@ -42,7 +42,7 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
-zenpixels = { workspace = true }
+zenpixels = { workspace = true , version = "0.2.2" }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 linear-srgb = { workspace = true }
 whereat = { workspace = true }  # Error tracing with location tracking
