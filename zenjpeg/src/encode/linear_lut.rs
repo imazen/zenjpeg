@@ -1,7 +1,7 @@
 //! Fast linear RGB to sRGB/YCbCr conversion using the linear-srgb crate.
 //!
-//! Uses direct transfer function computation - no LUTs, no runtime initialization.
-//! The linear-srgb crate provides optimized implementations with FMA acceleration.
+//! The linear-srgb crate provides SIMD-optimized rational polynomial approximations
+//! for the sRGB transfer function, dispatched via archmage tokens (AVX2/NEON/WASM128).
 
 use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
@@ -10,15 +10,11 @@ use crate::foundation::consts::{
 /// Cb/Cr offset (128.0 for 8-bit JPEG)
 const CHROMA_OFFSET: f32 = 128.0;
 
-/// sRGB transfer function (linear → sRGB).
-/// Standard IEC 61966-2-1 formula. Input and output in [0, 1].
+/// sRGB transfer function (linear → sRGB) via linear-srgb crate.
+/// Uses rational polynomial approximation (no powf).
 #[inline]
 fn linear_to_srgb(x: f32) -> f32 {
-    if x <= 0.003_130_8 {
-        x * 12.92
-    } else {
-        1.055 * x.powf(1.0 / 2.4) - 0.055
-    }
+    linear_srgb::default::linear_to_srgb(x)
 }
 
 // ============================================================================
@@ -113,31 +109,38 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 /// Convert 8 linear f32 values [0,∞) to sRGB [0, 255].
 ///
 /// Values > 1.0 are tone-mapped with Reinhard: x / (1 + x).
+/// Uses linear-srgb crate's SIMD-optimized rational polynomial approximation.
 #[inline(always)]
 pub fn linear_to_srgb_255_x8(x: &[f32; 8]) -> [f32; 8] {
-    let mut out = [0.0f32; 8];
+    let mut buf = [0.0f32; 8];
     for i in 0..8 {
         let v = x[i].max(0.0);
-        // Reinhard tone mapping for HDR
-        let v = if v > 1.0 { v / (1.0 + v) } else { v };
-        out[i] = linear_to_srgb(v) * 255.0;
+        // Reinhard tone mapping for HDR values
+        buf[i] = if v > 1.0 { v / (1.0 + v) } else { v };
     }
-    out
+    // SIMD-accelerated linear→sRGB (rational polynomial, no powf)
+    linear_srgb::default::linear_to_srgb_slice(&mut buf);
+    for i in 0..8 {
+        buf[i] *= 255.0;
+    }
+    buf
 }
 
 /// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255].
+///
+/// Uses linear-srgb crate's SIMD-optimized rational polynomial approximation.
 #[inline(always)]
 pub fn linear_u16_to_srgb_255_x8(values: &[u16; 8]) -> [f32; 8] {
-    let mut linear = [0.0f32; 8];
+    let mut buf = [0.0f32; 8];
     for i in 0..8 {
-        linear[i] = values[i] as f32 / 65535.0;
+        buf[i] = values[i] as f32 / 65535.0;
     }
-    // No HDR tone mapping needed for u16 (max is 1.0)
-    let mut out = [0.0f32; 8];
+    // SIMD-accelerated linear→sRGB (no HDR tone mapping needed, max is 1.0)
+    linear_srgb::default::linear_to_srgb_slice(&mut buf);
     for i in 0..8 {
-        out[i] = linear_to_srgb(linear[i]) * 255.0;
+        buf[i] *= 255.0;
     }
-    out
+    buf
 }
 
 /// Convert 8 linear RGB16 pixels to 8 Y, 8 Cb, 8 Cr values.

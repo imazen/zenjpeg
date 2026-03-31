@@ -3007,6 +3007,7 @@ dependencies = [
  "jpeg-decoder",
  "jpegli-internals-sys",
  "kamadak-exif",
+ "linear-srgb",
  "magetypes",
  "moxcms 0.8.1",
  "mozjpeg-rs",
