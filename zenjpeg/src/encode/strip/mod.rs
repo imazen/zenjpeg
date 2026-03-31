@@ -144,7 +144,7 @@ pub(crate) fn extract_block_from_strip_wide(
     incant!(extract_block_impl(strip, bx, local_by, strip_width))
 }
 
-#[magetypes(v3, scalar)]
+#[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
 fn extract_block_impl(
     token: Token,

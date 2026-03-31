@@ -216,7 +216,7 @@ fn correct_h_row(blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
     incant!(correct_h_row_impl(blocks, offsets, blocks_wide));
 }
 
-#[magetypes(v3, scalar)]
+#[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
 fn correct_h_row_impl(token: Token, blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
     #[allow(non_camel_case_types)]
@@ -269,7 +269,7 @@ fn correct_v_between(
     ));
 }
 
-#[magetypes(v3, scalar)]
+#[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
 fn correct_v_between_impl(
     token: Token,
@@ -372,7 +372,7 @@ fn finalize_row(
     ));
 }
 
-#[magetypes(v3, scalar)]
+#[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
 fn finalize_row_impl(
     token: Token,

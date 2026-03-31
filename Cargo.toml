@@ -117,6 +117,8 @@ debug = true
 # unsafe_code is allowed - we have intentional unsafe for performance-critical
 # allocation (try_alloc_uninitialized) and SIMD operations
 unsafe_code = "allow"
+# incant! macro internally checks cfg(feature = "avx512") for AVX-512 dispatch
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512"))'] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
