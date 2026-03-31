@@ -44,19 +44,18 @@ impl UltraHdrExtras for DecodedExtras {
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
         // First try primary XMP (legacy format: all metadata in primary)
-        if let Some(xmp) = self.xmp() {
-            if let Ok((metadata, len)) = parse_xmp(xmp) {
-                if metadata.gain_map_max != [0.0; 3] || metadata.alternate_hdr_headroom != 0.0 {
-                    return Some(Ok((metadata, len)));
-                }
-            }
+        if let Some(xmp) = self.xmp()
+            && let Ok((metadata, len)) = parse_xmp(xmp)
+            && (metadata.gain_map_max != [0.0; 3] || metadata.alternate_hdr_headroom != 0.0)
+        {
+            return Some(Ok((metadata, len)));
         }
 
         // Then try gain map JPEG's XMP (modern format: metadata in secondary)
-        if let Some(gainmap_jpeg) = self.gainmap() {
-            if let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg) {
-                return Some(parse_xmp(&gm_xmp).map_err(ultrahdr_to_jpegli_error));
-            }
+        if let Some(gainmap_jpeg) = self.gainmap()
+            && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
+        {
+            return Some(parse_xmp(&gm_xmp).map_err(ultrahdr_to_jpegli_error));
         }
 
         // Fall back to primary XMP even if values are all-default
