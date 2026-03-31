@@ -35,7 +35,8 @@ const QUALITY_LEVELS: &[u8] = &[50, 75, 90];
 // This affects ~14 of 36 entries (mostly Q75/Q90 YCbCr configs; XYB is identical).
 // Both sets are valid — they represent the same algorithm with different FP precision.
 
-// Updated 2026-02-01: sizes reduced after defaulting allow_16bit_quant_tables=false
+// Updated 2026-03-31: linear-srgb 0.6.5→0.6.6 changed GammaAware/GammaAwareIterative
+// downsampling output; baseline_420_gamma and baseline_420_sharpyuv hashes updated.
 #[cfg(target_arch = "x86_64")]
 const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
@@ -95,37 +96,37 @@ const EXPECTED_HASHES: &[(&str, u8, &str, usize)] = &[
     (
         "baseline_420_gamma",
         50,
-        "d39c8be29b3b231f28b9899d787d4f521108aca5aea014258a1ab7ec4888fb9e",
-        268259,
+        "e29258f39aa77d276d448e5678c44eaab86b6aea1cd165b5d3b428ad6f37fc52",
+        268313,
     ),
     (
         "baseline_420_gamma",
         75,
-        "48ab269a235993af5ae0e256d267af39532c3eb64cb0c93ba89b6059d058441c",
+        "1cd5c1cd44af122f0363dd588fdad17356f02e75d532e4d9c447f6ee40d80a5b",
         396612,
     ),
     (
         "baseline_420_gamma",
         90,
-        "425b7290854cd8f4ee5d63b5266941ee7b3b83757d69126678de213dd89d154a",
+        "bf542b185aadb87080f466dc8c7f23f03f43d0175954eacc3aa20cb8048ecb6a",
         584723,
     ),
     (
         "baseline_420_sharpyuv",
         50,
-        "4e1aed9fbc806a813d1981f406aee0faad17e1b81a613587d71f46b9204d2af6",
-        267841,
+        "8a86afdab65154482f3a287d13908c1d3a9e961608ff628ad6e387c35cde5da0",
+        267866,
     ),
     (
         "baseline_420_sharpyuv",
         75,
-        "60ba57795f19a406bf3a9b3ca81d18e5ec0817e05f90709aff232b7512fc810b",
+        "91dfd18a2ff2f025f976b2a4da14db9c0fe9a4c541f65838661a660546617f88",
         395931,
     ),
     (
         "baseline_420_sharpyuv",
         90,
-        "542f31fdaa9e24ba856a213df80699a4b9b5509fcccb9b5b87d60d6a155e7e17",
+        "cd68d01d32d5eb9fb265debe2f7009b98479d8e88275f55c24611110985f9f98",
         583660,
     ),
     (
