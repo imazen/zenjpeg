@@ -182,10 +182,10 @@ jobs:
           key: cpp-parity
 
       - name: Build (includes C++ jpegli compilation)
-        run: cargo build -p zenjpeg --release --tests
+        run: cargo build -p zenjpeg --release --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
 
-      - name: Test (defaults with C++ FFI)
-        run: cargo test -p zenjpeg --release --lib --tests
+      - name: Test (all features + C++ FFI parity)
+        run: cargo test -p zenjpeg --release --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
 
   clippy:
     name: Clippy
