@@ -90,6 +90,9 @@ impl<'a> JpegParser<'a> {
         use super::rst_scan::scan_rst_markers;
 
         // Quick eligibility checks
+        if self.decode_mode == super::parser::DecodeMode::Coefficient {
+            return Ok(false); // Need coefficient storage for f32/transform/dequant_bias paths
+        }
         if self.num_threads == 1 {
             return Ok(false);
         }
