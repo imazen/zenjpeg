@@ -189,6 +189,12 @@ jobs:
         shell: bash
         run: |
           cd internal/jpegli-cpp
+          # Use 'build' dir (matches find_cjpegli() search path).
+          # On Windows, match /MD (dynamic CRT) to avoid LNK2038 with cc crate.
+          CMAKE_EXTRA=""
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            CMAKE_EXTRA="-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
+          fi
           cmake -B build -DCMAKE_BUILD_TYPE=Release \
             -DJPEGXL_ENABLE_TOOLS=ON \
             -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON \
@@ -206,7 +212,8 @@ jobs:
             -DJPEGXL_ENABLE_TCMALLOC=OFF \
             -DJPEGXL_ENABLE_FUZZERS=OFF \
             -DJPEGXL_ENABLE_VIEWERS=OFF \
-            -DJPEGXL_BUNDLE_LIBPNG=OFF
+            -DJPEGXL_BUNDLE_LIBPNG=OFF \
+            $CMAKE_EXTRA
           cmake --build build --target cjpegli djpegli --config Release --parallel
 
       - name: Build (includes C++ jpegli compilation)
