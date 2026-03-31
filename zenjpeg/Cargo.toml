@@ -300,6 +300,11 @@ required-features = ["trellis"]
 name = "cpp_parity_matrix"
 required-features = ["decoder", "__test-utils", "moxcms"]
 
+# Tests requiring test utilities (cjpegli path discovery)
+[[test]]
+name = "cpp_quality_comparison"
+required-features = ["__test-utils"]
+
 # Tests requiring FFI (libjpeg linkage)
 [[test]]
 name = "quality_matrix"

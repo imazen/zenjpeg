@@ -36,7 +36,7 @@ const VALUES_FILE_HASH: &str = "f2aa555e7fe8f4329b9dd195c98c8bca75818f8c247da5e3
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
-const VALUES_FILE_HASH: &str = "06328ab82eea36fd6f61f51ee5e713e4308a330bac602bbc31e8d060a177c114";
+const VALUES_FILE_HASH: &str = "1eaf3785274279445c1b2a5f21127d0dfcfdbdfa8138c2423ab798a37c872e78";
 
 // =============================================================================
 // CSV FILE (compile-time inclusion based on SIMD variant)
