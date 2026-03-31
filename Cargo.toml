@@ -50,7 +50,7 @@ yuv = { version = "0.8", features = ["professional_mode"] }
 approx = "0.5"
 proptest = "1.4"
 criterion = "0.8"
-zenbench = "0.1"
+zenbench = { version = "0.1.2", path = "../zenbench" }
 test-case = "3.3"
 codec-eval = "0.3"
 
