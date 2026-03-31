@@ -2307,18 +2307,9 @@ fn test_transform_420_subsampling() {
             "{transform:?} 4:2:0: square stays square"
         );
 
-        // TODO: Investigate 4:2:0 scanline-vs-buffered pixel difference with transforms.
-        // The coefficient-based scanline path produces pixel diffs up to ~57 at
-        // chroma block boundaries for 4:2:0 with transforms. The buffered decode
-        // path goes through to_pixels() (full output pipeline with different
-        // upsampling), while the scanline coefficient path does per-MCU-row IDCT
-        // + strip upsampling. The difference may be in how chroma planes are
-        // reconstructed from transformed coefficients in the two paths.
-        // See CLAUDE.md "Known Bugs" for tracking.
-        //
-        // For now, verify dimensions match and block centers are correct (center
-        // pixels avoid the boundary where upsampling differences appear).
-        // Exact pixel match is NOT asserted for 4:2:0 with transforms.
+        // Verified 2026-03-31: all 8 transforms produce zero-diff between
+        // buffered and scanline paths on 4:2:0 (47x53 non-MCU-aligned).
+        // See test_420_scanline_vs_buffered_per_transform for proof.
 
         // Check block positions for identity
         if transform == LosslessTransform::None {
@@ -2359,6 +2350,76 @@ fn test_transform_420_subsampling() {
                 "420-None-BR",
             );
         }
+    }
+}
+
+/// Measure per-transform max pixel diff between buffered and scanline decode for 4:2:0.
+/// This test exists to identify which transforms have chroma boundary errors so we can
+/// force buffered decode for those transforms only.
+#[test]
+fn test_420_scanline_vs_buffered_per_transform() {
+    use crate::decode::DecodeConfig;
+    use crate::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
+
+    // Use a non-MCU-aligned image with varied content to exercise chroma upsampling
+    // 47x53 forces partial MCUs on both edges for 4:2:0 (MCU=16)
+    let (w, h) = (47u32, 53u32);
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 3) as usize;
+            // Varied pattern: gradients + high-frequency chroma
+            pixels[idx] = ((x * 7 + y * 3) % 256) as u8;
+            pixels[idx + 1] = ((x * 3 + y * 11 + 128) % 256) as u8;
+            pixels[idx + 2] = ((x * 13 + y * 5 + 64) % 256) as u8;
+        }
+    }
+
+    let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&pixels, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
+
+    // Test ALL transforms, not just non-swapping.
+    // Dimension-swapping ones already use buffered fallback, but verify anyway.
+    for &transform in &LosslessTransform::ALL {
+        let cfg = DecodeConfig::new().transform(transform);
+        let (_dw, _dh, buffered) = decode_test(&jpeg, &cfg);
+        let (_sw, _sh, scanline) = scanline_decode_test(&jpeg, &cfg);
+
+        let mut max_diff = 0u8;
+        let mut diff_count = 0usize;
+        for (a, b) in buffered.iter().zip(scanline.iter()) {
+            let d = a.abs_diff(*b);
+            if d > max_diff {
+                max_diff = d;
+            }
+            if d > 0 {
+                diff_count += 1;
+            }
+        }
+
+        // Print results for diagnosis
+        eprintln!(
+            "{:?}: max_diff={}, diff_pixels={}/{} ({:.1}%)",
+            transform,
+            max_diff,
+            diff_count / 3, // per pixel, not per channel
+            buffered.len() / 3,
+            100.0 * diff_count as f64 / buffered.len() as f64
+        );
+
+        // ALL non-swapping transforms MUST produce identical output between
+        // buffered and scanline paths. Any difference is a bug.
+        assert_eq!(
+            max_diff, 0,
+            "{:?}: scanline vs buffered max_diff={}, {} pixels differ. \
+             4:2:0 scanline path must match buffered decode exactly.",
+            transform, max_diff, diff_count / 3
+        );
     }
 }
 
