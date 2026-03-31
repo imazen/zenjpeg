@@ -25,10 +25,8 @@
 use crate::foundation::consts::{
     XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT, XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX,
 };
-use wide::{f32x8, f64x2};
-
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, arcane};
+use archmage::prelude::*;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // ============================================================================
 // CONSTANTS
@@ -512,232 +510,17 @@ pub fn xyb_planes_to_rgb_buffer(
 }
 
 // ============================================================================
-// SIMD CUBE ROOT
-// ============================================================================
-
-/// Initial cube root approximation using IEEE 754 bit manipulation.
-#[inline]
-fn cbrt_initial_approx(x: f32) -> f32 {
-    const B1: u32 = 709_958_130;
-    let ui: u32 = x.to_bits();
-    let sign = ui & 0x8000_0000;
-    let hx = ui & 0x7FFF_FFFF;
-    let approx = hx / 3 + B1;
-    f32::from_bits(sign | approx)
-}
-
-/// SIMD cube root for 8 values using f32x8 with f64x2 Newton iterations.
-#[inline]
-fn cbrtf_x8(x: f32x8) -> f32x8 {
-    let x_arr: [f32; 8] = x.into();
-    let t_arr: [f32; 8] = [
-        cbrt_initial_approx(x_arr[0]),
-        cbrt_initial_approx(x_arr[1]),
-        cbrt_initial_approx(x_arr[2]),
-        cbrt_initial_approx(x_arr[3]),
-        cbrt_initial_approx(x_arr[4]),
-        cbrt_initial_approx(x_arr[5]),
-        cbrt_initial_approx(x_arr[6]),
-        cbrt_initial_approx(x_arr[7]),
-    ];
-
-    // Process in f64x2 pairs for precision (2 Newton iterations each)
-    let x0 = f64x2::new([x_arr[0] as f64, x_arr[1] as f64]);
-    let x1 = f64x2::new([x_arr[2] as f64, x_arr[3] as f64]);
-    let x2 = f64x2::new([x_arr[4] as f64, x_arr[5] as f64]);
-    let x3 = f64x2::new([x_arr[6] as f64, x_arr[7] as f64]);
-
-    let mut t0 = f64x2::new([t_arr[0] as f64, t_arr[1] as f64]);
-    let mut t1 = f64x2::new([t_arr[2] as f64, t_arr[3] as f64]);
-    let mut t2 = f64x2::new([t_arr[4] as f64, t_arr[5] as f64]);
-    let mut t3 = f64x2::new([t_arr[6] as f64, t_arr[7] as f64]);
-
-    let x2_0 = x0 + x0;
-    let x2_1 = x1 + x1;
-    let x2_2 = x2 + x2;
-    let x2_3 = x3 + x3;
-
-    // First Newton iteration: t = t * (2x + t³) / (x + 2t³)
-    let r0 = t0 * t0 * t0;
-    let r1 = t1 * t1 * t1;
-    let r2 = t2 * t2 * t2;
-    let r3 = t3 * t3 * t3;
-    t0 = t0 * (x2_0 + r0) / (x0 + r0 + r0);
-    t1 = t1 * (x2_1 + r1) / (x1 + r1 + r1);
-    t2 = t2 * (x2_2 + r2) / (x2 + r2 + r2);
-    t3 = t3 * (x2_3 + r3) / (x3 + r3 + r3);
-
-    // Second Newton iteration
-    let r0 = t0 * t0 * t0;
-    let r1 = t1 * t1 * t1;
-    let r2 = t2 * t2 * t2;
-    let r3 = t3 * t3 * t3;
-    t0 = t0 * (x2_0 + r0) / (x0 + r0 + r0);
-    t1 = t1 * (x2_1 + r1) / (x1 + r1 + r1);
-    t2 = t2 * (x2_2 + r2) / (x2 + r2 + r2);
-    t3 = t3 * (x2_3 + r3) / (x3 + r3 + r3);
-
-    let t0_arr: [f64; 2] = t0.into();
-    let t1_arr: [f64; 2] = t1.into();
-    let t2_arr: [f64; 2] = t2.into();
-    let t3_arr: [f64; 2] = t3.into();
-
-    f32x8::new([
-        t0_arr[0] as f32,
-        t0_arr[1] as f32,
-        t1_arr[0] as f32,
-        t1_arr[1] as f32,
-        t2_arr[0] as f32,
-        t2_arr[1] as f32,
-        t3_arr[0] as f32,
-        t3_arr[1] as f32,
-    ])
-}
-
-// ============================================================================
 // SIMD XYB CORE TRANSFORM
 // ============================================================================
 
-/// Pre-computed SIMD constants for XYB conversion.
+/// Generic SIMD core: linear RGB arrays → scaled XYB, stored to planes.
 ///
-/// Creating this once and reusing it avoids redundant `f32x8::splat` calls
-/// in inner loops, improving performance.
-struct XybSimdConstants {
-    // Opsin absorbance matrix coefficients
-    m00: f32x8,
-    m01: f32x8,
-    m02: f32x8,
-    m10: f32x8,
-    m11: f32x8,
-    m12: f32x8,
-    m20: f32x8,
-    m21: f32x8,
-    m22: f32x8,
-    // Other constants
-    bias: f32x8,
-    zero: f32x8,
-    neg_bias_cbrt: f32x8,
-    half: f32x8,
-    // Scaling constants
-    scale_x: f32x8,
-    scale_y: f32x8,
-    scale_b: f32x8,
-    offset_x: f32x8,
-    offset_y: f32x8,
-    offset_b: f32x8,
-}
-
-impl XybSimdConstants {
-    /// Create new SIMD constants from the global XYB parameters.
-    fn new() -> Self {
-        let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
-        let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
-        let neg_bias_cbrt = -cbrtf_fast(bias);
-
-        Self {
-            m00: f32x8::splat(m[0]),
-            m01: f32x8::splat(m[1]),
-            m02: f32x8::splat(m[2]),
-            m10: f32x8::splat(m[3]),
-            m11: f32x8::splat(m[4]),
-            m12: f32x8::splat(m[5]),
-            m20: f32x8::splat(m[6]),
-            m21: f32x8::splat(m[7]),
-            m22: f32x8::splat(m[8]),
-            bias: f32x8::splat(bias),
-            zero: f32x8::splat(0.0),
-            neg_bias_cbrt: f32x8::splat(neg_bias_cbrt),
-            half: f32x8::splat(0.5),
-            scale_x: f32x8::splat(SCALED_XYB_SCALE[0]),
-            scale_y: f32x8::splat(SCALED_XYB_SCALE[1]),
-            scale_b: f32x8::splat(SCALED_XYB_SCALE[2]),
-            offset_x: f32x8::splat(SCALED_XYB_OFFSET[0]),
-            offset_y: f32x8::splat(SCALED_XYB_OFFSET[1]),
-            offset_b: f32x8::splat(SCALED_XYB_OFFSET[2]),
-        }
-    }
-
-    /// Core SIMD XYB transform: linear RGB → scaled XYB.
-    ///
-    /// Takes 8 linear RGB values and produces 8 scaled XYB values.
-    /// This is the shared core that all SIMD converters use.
-    #[inline(always)]
-    fn linear_rgb_to_scaled_xyb(&self, r: f32x8, g: f32x8, b_in: f32x8) -> (f32x8, f32x8, f32x8) {
-        // Step 1: Opsin absorbance matrix
-        let mixed0 = self
-            .m00
-            .mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
-        let mixed1 = self
-            .m10
-            .mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
-        let mixed2 = self
-            .m20
-            .mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
-
-        // Step 2: Clamp negatives
-        let mixed0 = mixed0.max(self.zero);
-        let mixed1 = mixed1.max(self.zero);
-        let mixed2 = mixed2.max(self.zero);
-
-        // Step 3: Cube root + bias subtraction
-        let gamma0 = cbrtf_x8(mixed0) + self.neg_bias_cbrt;
-        let gamma1 = cbrtf_x8(mixed1) + self.neg_bias_cbrt;
-        let gamma2 = cbrtf_x8(mixed2) + self.neg_bias_cbrt;
-
-        // Step 4: XYB transform
-        let x_xyb = self.half * (gamma0 - gamma1);
-        let y_xyb = self.half * (gamma0 + gamma1);
-        let b_xyb = gamma2;
-
-        // Step 5: Scale for JPEG
-        // IMPORTANT: B channel formula is (b - y + offset) * scale, NOT b * scale + offset
-        let scaled_x = (x_xyb + self.offset_x) * self.scale_x;
-        let scaled_y = (y_xyb + self.offset_y) * self.scale_y;
-        let scaled_b = (b_xyb - y_xyb + self.offset_b) * self.scale_b;
-
-        (scaled_x, scaled_y, scaled_b)
-    }
-
-    /// Core SIMD XYB transform without scaling: linear RGB → XYB.
-    #[inline(always)]
-    fn linear_rgb_to_xyb(&self, r: f32x8, g: f32x8, b_in: f32x8) -> (f32x8, f32x8, f32x8) {
-        let mixed0 = self
-            .m00
-            .mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
-        let mixed1 = self
-            .m10
-            .mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
-        let mixed2 = self
-            .m20
-            .mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
-
-        let mixed0 = mixed0.max(self.zero);
-        let mixed1 = mixed1.max(self.zero);
-        let mixed2 = mixed2.max(self.zero);
-
-        let gamma0 = cbrtf_x8(mixed0) + self.neg_bias_cbrt;
-        let gamma1 = cbrtf_x8(mixed1) + self.neg_bias_cbrt;
-        let gamma2 = cbrtf_x8(mixed2) + self.neg_bias_cbrt;
-
-        let x = self.half * (gamma0 - gamma1);
-        let y = self.half * (gamma0 + gamma1);
-        let b = gamma2;
-
-        (x, y, b)
-    }
-}
-
-// ============================================================================
-// ARCHMAGE XYB CORE TRANSFORM (AVX2+FMA with hardware cbrt)
-// ============================================================================
-
-/// AVX2+FMA XYB core transform using magetypes::simd::f32x8 for real FMA
-/// and cbrt_midp() for hardware-accelerated cube root (~3 ULP precision,
-/// better than C++ jpegli's ~6 ULP).
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_linear_rgb_to_scaled_xyb(
-    token: archmage::X64V3Token,
+/// Uses `cbrt_midp()` for hardware-accelerated cube root (~3 ULP precision,
+/// better than C++ jpegli's ~6 ULP). Dispatches to AVX2+FMA on x86_64,
+/// NEON on aarch64, WASM SIMD128 on wasm32, or scalar fallback.
+#[inline(always)]
+fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
+    token: T,
     r_arr: [f32; 8],
     g_arr: [f32; 8],
     b_arr: [f32; 8],
@@ -746,30 +529,31 @@ fn mage_linear_rgb_to_scaled_xyb(
     b_out: &mut [f32],
     base: usize,
 ) {
-    use magetypes::simd::f32x8 as mf32x8;
+    #[allow(non_camel_case_types)]
+    type f32x8<T> = GenericF32x8<T>;
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias_val = XYB_OPSIN_ABSORBANCE_BIAS[0];
     let neg_bias_cbrt_val = -cbrtf_fast(bias_val);
 
-    let r = mf32x8::from_array(token, r_arr);
-    let g = mf32x8::from_array(token, g_arr);
-    let b_in = mf32x8::from_array(token, b_arr);
+    let r = f32x8::<T>::from_array(token, r_arr);
+    let g = f32x8::<T>::from_array(token, g_arr);
+    let b_in = f32x8::<T>::from_array(token, b_arr);
 
-    // Opsin absorbance matrix (real FMA: vfmadd instructions)
-    let m00 = mf32x8::splat(token, m[0]);
-    let m01 = mf32x8::splat(token, m[1]);
-    let m02 = mf32x8::splat(token, m[2]);
-    let m10 = mf32x8::splat(token, m[3]);
-    let m11 = mf32x8::splat(token, m[4]);
-    let m12 = mf32x8::splat(token, m[5]);
-    let m20 = mf32x8::splat(token, m[6]);
-    let m21 = mf32x8::splat(token, m[7]);
-    let m22 = mf32x8::splat(token, m[8]);
-    let bias = mf32x8::splat(token, bias_val);
-    let zero = mf32x8::splat(token, 0.0);
-    let neg_bias_cbrt = mf32x8::splat(token, neg_bias_cbrt_val);
-    let half = mf32x8::splat(token, 0.5);
+    // Opsin absorbance matrix (real FMA on supporting hardware)
+    let m00 = f32x8::<T>::splat(token, m[0]);
+    let m01 = f32x8::<T>::splat(token, m[1]);
+    let m02 = f32x8::<T>::splat(token, m[2]);
+    let m10 = f32x8::<T>::splat(token, m[3]);
+    let m11 = f32x8::<T>::splat(token, m[4]);
+    let m12 = f32x8::<T>::splat(token, m[5]);
+    let m20 = f32x8::<T>::splat(token, m[6]);
+    let m21 = f32x8::<T>::splat(token, m[7]);
+    let m22 = f32x8::<T>::splat(token, m[8]);
+    let bias = f32x8::<T>::splat(token, bias_val);
+    let zero = f32x8::<T>::splat(token, 0.0);
+    let neg_bias_cbrt = f32x8::<T>::splat(token, neg_bias_cbrt_val);
+    let half = f32x8::<T>::splat(token, 0.5);
 
     let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
     let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
@@ -790,12 +574,13 @@ fn mage_linear_rgb_to_scaled_xyb(
     let b_xyb = gamma2;
 
     // Scale for JPEG
-    let scale_x = mf32x8::splat(token, SCALED_XYB_SCALE[0]);
-    let scale_y = mf32x8::splat(token, SCALED_XYB_SCALE[1]);
-    let scale_b = mf32x8::splat(token, SCALED_XYB_SCALE[2]);
-    let offset_x = mf32x8::splat(token, SCALED_XYB_OFFSET[0]);
-    let offset_y = mf32x8::splat(token, SCALED_XYB_OFFSET[1]);
-    let offset_b = mf32x8::splat(token, SCALED_XYB_OFFSET[2]);
+    // IMPORTANT: B channel formula is (b - y + offset) * scale, NOT b * scale + offset
+    let scale_x = f32x8::<T>::splat(token, SCALED_XYB_SCALE[0]);
+    let scale_y = f32x8::<T>::splat(token, SCALED_XYB_SCALE[1]);
+    let scale_b = f32x8::<T>::splat(token, SCALED_XYB_SCALE[2]);
+    let offset_x = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[0]);
+    let offset_y = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[1]);
+    let offset_b = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[2]);
 
     let sx = (x_xyb + offset_x) * scale_x;
     let sy = (y_xyb + offset_y) * scale_y;
@@ -807,29 +592,32 @@ fn mage_linear_rgb_to_scaled_xyb(
     b_out[base..base + 8].copy_from_slice(&sb.to_array());
 }
 
-/// AVX2+FMA XYB core transform without JPEG scaling (for non-encoded XYB output).
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_linear_rgb_to_xyb_inplace(token: archmage::X64V3Token, pixels: &mut [[f32; 3]]) {
-    use magetypes::simd::f32x8 as mf32x8;
+/// Generic SIMD core: linear RGB → XYB (no JPEG scaling), in-place on `[[f32; 3]]`.
+#[inline(always)]
+fn generic_linear_rgb_to_xyb_inplace<T: magetypes::simd::backends::F32x8Convert>(
+    token: T,
+    pixels: &mut [[f32; 3]],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8<T> = GenericF32x8<T>;
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias_val = XYB_OPSIN_ABSORBANCE_BIAS[0];
     let neg_bias_cbrt_val = -cbrtf_fast(bias_val);
 
-    let m00 = mf32x8::splat(token, m[0]);
-    let m01 = mf32x8::splat(token, m[1]);
-    let m02 = mf32x8::splat(token, m[2]);
-    let m10 = mf32x8::splat(token, m[3]);
-    let m11 = mf32x8::splat(token, m[4]);
-    let m12 = mf32x8::splat(token, m[5]);
-    let m20 = mf32x8::splat(token, m[6]);
-    let m21 = mf32x8::splat(token, m[7]);
-    let m22 = mf32x8::splat(token, m[8]);
-    let bias = mf32x8::splat(token, bias_val);
-    let zero = mf32x8::splat(token, 0.0);
-    let neg_bias_cbrt = mf32x8::splat(token, neg_bias_cbrt_val);
-    let half = mf32x8::splat(token, 0.5);
+    let m00 = f32x8::<T>::splat(token, m[0]);
+    let m01 = f32x8::<T>::splat(token, m[1]);
+    let m02 = f32x8::<T>::splat(token, m[2]);
+    let m10 = f32x8::<T>::splat(token, m[3]);
+    let m11 = f32x8::<T>::splat(token, m[4]);
+    let m12 = f32x8::<T>::splat(token, m[5]);
+    let m20 = f32x8::<T>::splat(token, m[6]);
+    let m21 = f32x8::<T>::splat(token, m[7]);
+    let m22 = f32x8::<T>::splat(token, m[8]);
+    let bias = f32x8::<T>::splat(token, bias_val);
+    let zero = f32x8::<T>::splat(token, 0.0);
+    let neg_bias_cbrt = f32x8::<T>::splat(token, neg_bias_cbrt_val);
+    let half = f32x8::<T>::splat(token, 0.5);
 
     let chunks_8 = pixels.len() / 8;
     for chunk_idx in 0..chunks_8 {
@@ -845,9 +633,9 @@ fn mage_linear_rgb_to_xyb_inplace(token: archmage::X64V3Token, pixels: &mut [[f3
             b_arr[i] = p[2];
         }
 
-        let r = mf32x8::from_array(token, r_arr);
-        let g = mf32x8::from_array(token, g_arr);
-        let b_in = mf32x8::from_array(token, b_arr);
+        let r = f32x8::<T>::from_array(token, r_arr);
+        let g = f32x8::<T>::from_array(token, g_arr);
+        let b_in = f32x8::<T>::from_array(token, b_arr);
 
         let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias)));
         let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias)));
@@ -990,133 +778,6 @@ fn gather_bgra_8_arr(bgra_data: &[u8], base: usize) -> ([f32; 8], [f32; 8], [f32
     (r, g, b)
 }
 
-/// Gather 8 RGB pixels from packed RGB u8 data.
-#[inline(always)]
-fn gather_rgb_8(rgb_data: &[u8], base: usize) -> (f32x8, f32x8, f32x8) {
-    let r = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgb_data[base] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 3] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 6] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 9] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 12] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 15] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 18] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 21] as usize],
-    ]);
-    let g = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 1] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 4] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 7] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 10] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 13] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 16] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 19] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 22] as usize],
-    ]);
-    let b = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 2] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 5] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 8] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 11] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 14] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 17] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 20] as usize],
-        SRGB_TO_LINEAR_LUT[rgb_data[base + 23] as usize],
-    ]);
-    (r, g, b)
-}
-
-/// Gather 8 RGBA pixels from packed RGBA u8 data (alpha ignored).
-#[inline(always)]
-fn gather_rgba_8(rgba_data: &[u8], base: usize) -> (f32x8, f32x8, f32x8) {
-    let r = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgba_data[base] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 4] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 8] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 12] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 16] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 20] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 24] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 28] as usize],
-    ]);
-    let g = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 1] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 5] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 9] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 13] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 17] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 21] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 25] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 29] as usize],
-    ]);
-    let b = f32x8::from([
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 2] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 6] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 10] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 14] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 18] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 22] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 26] as usize],
-        SRGB_TO_LINEAR_LUT[rgba_data[base + 30] as usize],
-    ]);
-    (r, g, b)
-}
-
-/// Gather 8 BGRA pixels from packed BGRA u8 data (alpha ignored).
-#[inline(always)]
-fn gather_bgra_8(bgra_data: &[u8], base: usize) -> (f32x8, f32x8, f32x8) {
-    // BGRA layout: B=0, G=1, R=2, A=3
-    let r = f32x8::from([
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 2] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 6] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 10] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 14] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 18] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 22] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 26] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 30] as usize],
-    ]);
-    let g = f32x8::from([
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 1] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 5] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 9] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 13] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 17] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 21] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 25] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 29] as usize],
-    ]);
-    let b = f32x8::from([
-        SRGB_TO_LINEAR_LUT[bgra_data[base] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 4] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 8] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 12] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 16] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 20] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 24] as usize],
-        SRGB_TO_LINEAR_LUT[bgra_data[base + 28] as usize],
-    ]);
-    (r, g, b)
-}
-
-/// Scatter 8 XYB values to separate planes.
-#[inline(always)]
-fn scatter_xyb_8(
-    x: f32x8,
-    y: f32x8,
-    b: f32x8,
-    x_plane: &mut [f32],
-    y_plane: &mut [f32],
-    b_plane: &mut [f32],
-    base: usize,
-) {
-    let x_arr: [f32; 8] = x.into();
-    let y_arr: [f32; 8] = y.into();
-    let b_arr: [f32; 8] = b.into();
-    x_plane[base..base + 8].copy_from_slice(&x_arr);
-    y_plane[base..base + 8].copy_from_slice(&y_arr);
-    b_plane[base..base + 8].copy_from_slice(&b_arr);
-}
 
 // ============================================================================
 // SIMD PUBLIC API: sRGB → Scaled XYB Planes
@@ -1146,7 +807,8 @@ pub fn srgb_to_scaled_xyb_planes_simd(
 
 /// SIMD sRGB to scaled XYB conversion (RGB format, inplace).
 ///
-/// Dispatches to AVX2+FMA with hardware cbrt on x86_64, wide fallback otherwise.
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on wasm32,
+/// or scalar fallback. Uses `cbrt_midp()` for hardware-accelerated cube root.
 pub fn srgb_to_scaled_xyb_planes_simd_inplace(
     rgb_data: &[u8],
     x_plane: &mut [f32],
@@ -1159,39 +821,26 @@ pub fn srgb_to_scaled_xyb_planes_simd_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
+    incant!(srgb_to_scaled_xyb_planes_rgb_impl(rgb_data, x_plane, y_plane, b_plane, num_pixels));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn srgb_to_scaled_xyb_planes_rgb_impl(
+    token: Token,
+    rgb_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
     let chunks = num_pixels / 8;
 
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        for chunk in 0..chunks {
-            let pixel_idx = chunk * 8;
-            let rgb_idx = pixel_idx * 3;
-
-            // LUT gather is scalar (index-dependent), then pack into archmage transform
-            let (r_arr, g_arr, b_arr) = gather_rgb_8_arr(rgb_data, rgb_idx);
-            mage_linear_rgb_to_scaled_xyb(
-                token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
-            );
-        }
-
-        for i in (chunks * 8)..num_pixels {
-            let (x, y, b) =
-                srgb_to_scaled_xyb(rgb_data[i * 3], rgb_data[i * 3 + 1], rgb_data[i * 3 + 2]);
-            x_plane[i] = x;
-            y_plane[i] = y;
-            b_plane[i] = b;
-        }
-        return;
-    }
-
-    let consts = XybSimdConstants::new();
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let rgb_idx = pixel_idx * 3;
-
-        let (r, g, b_in) = gather_rgb_8(rgb_data, rgb_idx);
-        let (sx, sy, sb) = consts.linear_rgb_to_scaled_xyb(r, g, b_in);
-        scatter_xyb_8(sx, sy, sb, x_plane, y_plane, b_plane, pixel_idx);
+        let (r_arr, g_arr, b_arr) = gather_rgb_8_arr(rgb_data, rgb_idx);
+        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1227,7 +876,8 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba(
 
 /// SIMD sRGB to scaled XYB conversion (RGBA format, inplace).
 ///
-/// Dispatches to AVX2+FMA with hardware cbrt on x86_64, wide fallback otherwise.
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on wasm32,
+/// or scalar fallback. Uses `cbrt_midp()` for hardware-accelerated cube root.
 pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
     rgba_data: &[u8],
     x_plane: &mut [f32],
@@ -1240,38 +890,26 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
+    incant!(srgb_to_scaled_xyb_planes_rgba_impl(rgba_data, x_plane, y_plane, b_plane, num_pixels));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn srgb_to_scaled_xyb_planes_rgba_impl(
+    token: Token,
+    rgba_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
     let chunks = num_pixels / 8;
 
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        for chunk in 0..chunks {
-            let pixel_idx = chunk * 8;
-            let rgba_idx = pixel_idx * 4;
-
-            let (r_arr, g_arr, b_arr) = gather_rgba_8_arr(rgba_data, rgba_idx);
-            mage_linear_rgb_to_scaled_xyb(
-                token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
-            );
-        }
-
-        for i in (chunks * 8)..num_pixels {
-            let (x, y, b) =
-                srgb_to_scaled_xyb(rgba_data[i * 4], rgba_data[i * 4 + 1], rgba_data[i * 4 + 2]);
-            x_plane[i] = x;
-            y_plane[i] = y;
-            b_plane[i] = b;
-        }
-        return;
-    }
-
-    let consts = XybSimdConstants::new();
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let rgba_idx = pixel_idx * 4;
-
-        let (r, g, b_in) = gather_rgba_8(rgba_data, rgba_idx);
-        let (sx, sy, sb) = consts.linear_rgb_to_scaled_xyb(r, g, b_in);
-        scatter_xyb_8(sx, sy, sb, x_plane, y_plane, b_plane, pixel_idx);
+        let (r_arr, g_arr, b_arr) = gather_rgba_8_arr(rgba_data, rgba_idx);
+        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1307,7 +945,8 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra(
 
 /// SIMD sRGB to scaled XYB conversion (BGRA format, inplace).
 ///
-/// Dispatches to AVX2+FMA with hardware cbrt on x86_64, wide fallback otherwise.
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on wasm32,
+/// or scalar fallback. Uses `cbrt_midp()` for hardware-accelerated cube root.
 pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
     bgra_data: &[u8],
     x_plane: &mut [f32],
@@ -1320,38 +959,26 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
+    incant!(srgb_to_scaled_xyb_planes_bgra_impl(bgra_data, x_plane, y_plane, b_plane, num_pixels));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn srgb_to_scaled_xyb_planes_bgra_impl(
+    token: Token,
+    bgra_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
     let chunks = num_pixels / 8;
 
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        for chunk in 0..chunks {
-            let pixel_idx = chunk * 8;
-            let bgra_idx = pixel_idx * 4;
-
-            let (r_arr, g_arr, b_arr) = gather_bgra_8_arr(bgra_data, bgra_idx);
-            mage_linear_rgb_to_scaled_xyb(
-                token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
-            );
-        }
-
-        for i in (chunks * 8)..num_pixels {
-            let (x, y, b) =
-                srgb_to_scaled_xyb(bgra_data[i * 4 + 2], bgra_data[i * 4 + 1], bgra_data[i * 4]);
-            x_plane[i] = x;
-            y_plane[i] = y;
-            b_plane[i] = b;
-        }
-        return;
-    }
-
-    let consts = XybSimdConstants::new();
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let bgra_idx = pixel_idx * 4;
-
-        let (r, g, b_in) = gather_bgra_8(bgra_data, bgra_idx);
-        let (sx, sy, sb) = consts.linear_rgb_to_scaled_xyb(r, g, b_in);
-        scatter_xyb_8(sx, sy, sb, x_plane, y_plane, b_plane, pixel_idx);
+        let (r_arr, g_arr, b_arr) = gather_bgra_8_arr(bgra_data, bgra_idx);
+        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1390,54 +1017,18 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgr_inplace(
 
 /// SIMD linear RGB (0-1) to XYB conversion for a batch of pixels (in-place).
 ///
-/// Dispatches to AVX2+FMA with hardware cbrt on x86_64, wide fallback otherwise.
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on wasm32,
+/// or scalar fallback. Uses `cbrt_midp()` for hardware-accelerated cube root.
 pub fn linear_rgb_to_xyb_simd(pixels: &mut [[f32; 3]]) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        mage_linear_rgb_to_xyb_inplace(token, pixels);
+    incant!(linear_rgb_to_xyb_simd_impl(pixels));
+}
 
-        // Scalar fallback for remainder (archmage function handles chunks internally)
-        let scalar_start = (pixels.len() / 8) * 8;
-        for pix in &mut pixels[scalar_start..] {
-            let (x, y, b) = linear_rgb_to_xyb(pix[0], pix[1], pix[2]);
-            *pix = [x, y, b];
-        }
-        return;
-    }
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn linear_rgb_to_xyb_simd_impl(token: Token, pixels: &mut [[f32; 3]]) {
+    generic_linear_rgb_to_xyb_inplace(token, pixels);
 
-    let consts = XybSimdConstants::new();
-    let chunks_8 = pixels.len() / 8;
-
-    for chunk_idx in 0..chunks_8 {
-        let base = chunk_idx * 8;
-
-        let mut r_arr = [0.0f32; 8];
-        let mut g_arr = [0.0f32; 8];
-        let mut b_arr = [0.0f32; 8];
-
-        for i in 0..8 {
-            let p = pixels[base + i];
-            r_arr[i] = p[0];
-            g_arr[i] = p[1];
-            b_arr[i] = p[2];
-        }
-
-        let r = f32x8::new(r_arr);
-        let g = f32x8::new(g_arr);
-        let b = f32x8::new(b_arr);
-
-        let (x, y, b_out) = consts.linear_rgb_to_xyb(r, g, b);
-
-        let x_arr: [f32; 8] = x.into();
-        let y_arr: [f32; 8] = y.into();
-        let b_arr: [f32; 8] = b_out.into();
-
-        for i in 0..8 {
-            pixels[base + i] = [x_arr[i], y_arr[i], b_arr[i]];
-        }
-    }
-
-    let scalar_start = chunks_8 * 8;
+    let scalar_start = (pixels.len() / 8) * 8;
     for pix in &mut pixels[scalar_start..] {
         let (x, y, b) = linear_rgb_to_xyb(pix[0], pix[1], pix[2]);
         *pix = [x, y, b];
@@ -1446,54 +1037,19 @@ pub fn linear_rgb_to_xyb_simd(pixels: &mut [[f32; 3]]) {
 
 /// SIMD linear RGB (0-255) to XYB conversion for C++ jpegli compatibility (in-place).
 ///
-/// Dispatches to AVX2+FMA with hardware cbrt on x86_64, wide fallback otherwise.
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on wasm32,
+/// or scalar fallback. Uses `cbrt_midp()` for hardware-accelerated cube root.
 pub fn linear_rgb_to_xyb_simd_255(pixels: &mut [[f32; 3]]) {
-    // The archmage path handles 0-255 range identically (just different input values)
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        mage_linear_rgb_to_xyb_inplace(token, pixels);
+    // The generic path handles 0-255 range identically (just different input values)
+    incant!(linear_rgb_to_xyb_simd_255_impl(pixels));
+}
 
-        let scalar_start = (pixels.len() / 8) * 8;
-        for pix in &mut pixels[scalar_start..] {
-            let (x, y, b) = linear_rgb_to_xyb_255(pix[0], pix[1], pix[2]);
-            *pix = [x, y, b];
-        }
-        return;
-    }
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn linear_rgb_to_xyb_simd_255_impl(token: Token, pixels: &mut [[f32; 3]]) {
+    generic_linear_rgb_to_xyb_inplace(token, pixels);
 
-    let consts = XybSimdConstants::new();
-    let chunks_8 = pixels.len() / 8;
-
-    for chunk_idx in 0..chunks_8 {
-        let base = chunk_idx * 8;
-
-        let mut r_arr = [0.0f32; 8];
-        let mut g_arr = [0.0f32; 8];
-        let mut b_arr = [0.0f32; 8];
-
-        for i in 0..8 {
-            let p = pixels[base + i];
-            r_arr[i] = p[0];
-            g_arr[i] = p[1];
-            b_arr[i] = p[2];
-        }
-
-        let r = f32x8::new(r_arr);
-        let g = f32x8::new(g_arr);
-        let b = f32x8::new(b_arr);
-
-        let (x, y, b_out) = consts.linear_rgb_to_xyb(r, g, b);
-
-        let x_arr: [f32; 8] = x.into();
-        let y_arr: [f32; 8] = y.into();
-        let b_arr: [f32; 8] = b_out.into();
-
-        for i in 0..8 {
-            pixels[base + i] = [x_arr[i], y_arr[i], b_arr[i]];
-        }
-    }
-
-    let scalar_start = chunks_8 * 8;
+    let scalar_start = (pixels.len() / 8) * 8;
     for pix in &mut pixels[scalar_start..] {
         let (x, y, b) = linear_rgb_to_xyb_255(pix[0], pix[1], pix[2]);
         *pix = [x, y, b];
@@ -1531,16 +1087,31 @@ pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32],
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
 
+    incant!(xyb_planes_to_rgb_u8_impl(plane0, plane1, plane2, rgb));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn xyb_planes_to_rgb_u8_impl(
+    token: Token,
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [u8],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let num_pixels = plane0.len();
-    let offset = f32x8::splat(128.0);
-    let zero = f32x8::splat(0.0);
-    let max_val = f32x8::splat(255.0);
+    let offset = f32x8::splat(token, 128.0);
+    let zero = f32x8::splat(token, 0.0);
+    let max_val = f32x8::splat(token, 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let p0 = f32x8::from([
+        let p0 = f32x8::from_array(token, [
             plane0[base],
             plane0[base + 1],
             plane0[base + 2],
@@ -1550,7 +1121,7 @@ pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32],
             plane0[base + 6],
             plane0[base + 7],
         ]);
-        let p1 = f32x8::from([
+        let p1 = f32x8::from_array(token, [
             plane1[base],
             plane1[base + 1],
             plane1[base + 2],
@@ -1560,7 +1131,7 @@ pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32],
             plane1[base + 6],
             plane1[base + 7],
         ]);
-        let p2 = f32x8::from([
+        let p2 = f32x8::from_array(token, [
             plane2[base],
             plane2[base + 1],
             plane2[base + 2],
@@ -1575,9 +1146,9 @@ pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32],
         let g = (p1 + offset).max(zero).min(max_val);
         let b = (p2 + offset).max(zero).min(max_val);
 
-        let r_arr: [f32; 8] = r.into();
-        let g_arr: [f32; 8] = g.into();
-        let b_arr: [f32; 8] = b.into();
+        let r_arr = r.to_array();
+        let g_arr = g.to_array();
+        let b_arr = b.to_array();
 
         for j in 0..8 {
             let idx = (base + j) * 3;
@@ -1603,17 +1174,32 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
 
+    incant!(xyb_planes_to_rgb_f32_impl(plane0, plane1, plane2, rgb));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn xyb_planes_to_rgb_f32_impl(
+    token: Token,
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let num_pixels = plane0.len();
-    let offset = f32x8::splat(128.0);
-    let scale = f32x8::splat(1.0 / 255.0);
-    let zero = f32x8::splat(0.0);
-    let one = f32x8::splat(1.0);
+    let offset = f32x8::splat(token, 128.0);
+    let scale = f32x8::splat(token, 1.0 / 255.0);
+    let zero = f32x8::splat(token, 0.0);
+    let one = f32x8::splat(token, 1.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let p0 = f32x8::from([
+        let p0 = f32x8::from_array(token, [
             plane0[base],
             plane0[base + 1],
             plane0[base + 2],
@@ -1623,7 +1209,7 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
             plane0[base + 6],
             plane0[base + 7],
         ]);
-        let p1 = f32x8::from([
+        let p1 = f32x8::from_array(token, [
             plane1[base],
             plane1[base + 1],
             plane1[base + 2],
@@ -1633,7 +1219,7 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
             plane1[base + 6],
             plane1[base + 7],
         ]);
-        let p2 = f32x8::from([
+        let p2 = f32x8::from_array(token, [
             plane2[base],
             plane2[base + 1],
             plane2[base + 2],
@@ -1648,9 +1234,9 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
         let g = ((p1 + offset) * scale).max(zero).min(one);
         let b = ((p2 + offset) * scale).max(zero).min(one);
 
-        let r_arr: [f32; 8] = r.into();
-        let g_arr: [f32; 8] = g.into();
-        let b_arr: [f32; 8] = b.into();
+        let r_arr = r.to_array();
+        let g_arr = g.to_array();
+        let b_arr = b.to_array();
 
         for j in 0..8 {
             let idx = (base + j) * 3;

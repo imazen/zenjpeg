@@ -5,7 +5,7 @@
 //! - RGB and CMYK
 //! - Various pixel format conversions
 //!
-//! SIMD optimization via the `wide` crate is always enabled.
+//! SIMD optimization via archmage/magetypes generics with multi-tier dispatch.
 
 #![allow(dead_code)] // Multiple conversion variants for different pipelines
 
@@ -18,10 +18,8 @@ use crate::foundation::consts::{
 };
 use crate::types::PixelFormat;
 
-use wide::{f32x4, f32x8};
-
-#[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, arcane};
+use archmage::prelude::*;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
@@ -136,123 +134,67 @@ pub fn convert_ycbcr_to_rgb_buffer(buffer: &mut [u8]) {
     }
 }
 
-// SIMD-optimized color conversion (always available via `wide` crate)
+// Scalar color conversion for 4-pixel batches (used by plane conversion functions).
 mod simd {
     use super::*;
 
-    /// Process 4 RGB pixels to YCbCr using SIMD.
+    /// Process 4 RGB pixels to YCbCr using scalar FMA.
     /// Returns (Y[4], Cb[4], Cr[4]) as u8 arrays.
     #[inline]
     pub fn rgb_to_ycbcr_x4(r: [u8; 4], g: [u8; 4], b: [u8; 4]) -> ([u8; 4], [u8; 4], [u8; 4]) {
-        // Convert to f32 vectors
-        let rf = f32x4::from([r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32]);
-        let gf = f32x4::from([g[0] as f32, g[1] as f32, g[2] as f32, g[3] as f32]);
-        let bf = f32x4::from([b[0] as f32, b[1] as f32, b[2] as f32, b[3] as f32]);
-
-        // YCbCr coefficients as vectors
-        let r_to_y = f32x4::splat(YCBCR_R_TO_Y);
-        let g_to_y = f32x4::splat(YCBCR_G_TO_Y);
-        let b_to_y = f32x4::splat(YCBCR_B_TO_Y);
-
-        let r_to_cb = f32x4::splat(YCBCR_R_TO_CB);
-        let g_to_cb = f32x4::splat(YCBCR_G_TO_CB);
-        let b_to_cb = f32x4::splat(YCBCR_B_TO_CB);
-
-        let r_to_cr = f32x4::splat(YCBCR_R_TO_CR);
-        let g_to_cr = f32x4::splat(YCBCR_G_TO_CR);
-        let b_to_cr = f32x4::splat(YCBCR_B_TO_CR);
-
-        let offset_128 = f32x4::splat(128.0);
-
-        // Compute Y, Cb, Cr (using FMA)
-        let y = r_to_y.mul_add(rf, g_to_y.mul_add(gf, b_to_y * bf));
-        let cb = r_to_cb.mul_add(rf, g_to_cb.mul_add(gf, b_to_cb.mul_add(bf, offset_128)));
-        let cr = r_to_cr.mul_add(rf, g_to_cr.mul_add(gf, b_to_cr.mul_add(bf, offset_128)));
-
-        // Round and clamp to u8
-        let y_arr = y.to_array();
-        let cb_arr = cb.to_array();
-        let cr_arr = cr.to_array();
-
         let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
 
-        (
-            [
-                clamp(y_arr[0]),
-                clamp(y_arr[1]),
-                clamp(y_arr[2]),
-                clamp(y_arr[3]),
-            ],
-            [
-                clamp(cb_arr[0]),
-                clamp(cb_arr[1]),
-                clamp(cb_arr[2]),
-                clamp(cb_arr[3]),
-            ],
-            [
-                clamp(cr_arr[0]),
-                clamp(cr_arr[1]),
-                clamp(cr_arr[2]),
-                clamp(cr_arr[3]),
-            ],
-        )
+        let mut y_out = [0u8; 4];
+        let mut cb_out = [0u8; 4];
+        let mut cr_out = [0u8; 4];
+
+        for i in 0..4 {
+            let rf = r[i] as f32;
+            let gf = g[i] as f32;
+            let bf = b[i] as f32;
+
+            let y = YCBCR_R_TO_Y.mul_add(rf, YCBCR_G_TO_Y.mul_add(gf, YCBCR_B_TO_Y * bf));
+            let cb = YCBCR_R_TO_CB.mul_add(
+                rf,
+                YCBCR_G_TO_CB.mul_add(gf, YCBCR_B_TO_CB.mul_add(bf, 128.0)),
+            );
+            let cr = YCBCR_R_TO_CR.mul_add(
+                rf,
+                YCBCR_G_TO_CR.mul_add(gf, YCBCR_B_TO_CR.mul_add(bf, 128.0)),
+            );
+
+            y_out[i] = clamp(y);
+            cb_out[i] = clamp(cb);
+            cr_out[i] = clamp(cr);
+        }
+
+        (y_out, cb_out, cr_out)
     }
 
-    /// Process 4 YCbCr pixels to RGB using SIMD.
+    /// Process 4 YCbCr pixels to RGB using scalar FMA.
     #[inline]
     pub fn ycbcr_to_rgb_x4(y: [u8; 4], cb: [u8; 4], cr: [u8; 4]) -> ([u8; 4], [u8; 4], [u8; 4]) {
-        // Convert to f32 vectors
-        let yf = f32x4::from([y[0] as f32, y[1] as f32, y[2] as f32, y[3] as f32]);
-        let cbf = f32x4::from([cb[0] as f32, cb[1] as f32, cb[2] as f32, cb[3] as f32])
-            - f32x4::splat(128.0);
-        let crf = f32x4::from([cr[0] as f32, cr[1] as f32, cr[2] as f32, cr[3] as f32])
-            - f32x4::splat(128.0);
-
-        // RGB coefficients as vectors
-        let y_to_r = f32x4::splat(YCBCR_Y_TO_R);
-        let cb_to_r = f32x4::splat(YCBCR_CB_TO_R);
-        let cr_to_r = f32x4::splat(YCBCR_CR_TO_R);
-
-        let y_to_g = f32x4::splat(YCBCR_Y_TO_G);
-        let cb_to_g = f32x4::splat(YCBCR_CB_TO_G);
-        let cr_to_g = f32x4::splat(YCBCR_CR_TO_G);
-
-        let y_to_b = f32x4::splat(YCBCR_Y_TO_B);
-        let cb_to_b = f32x4::splat(YCBCR_CB_TO_B);
-        let cr_to_b = f32x4::splat(YCBCR_CR_TO_B);
-
-        // Compute R, G, B (using FMA)
-        let r = y_to_r.mul_add(yf, cb_to_r.mul_add(cbf, cr_to_r * crf));
-        let g = y_to_g.mul_add(yf, cb_to_g.mul_add(cbf, cr_to_g * crf));
-        let b = y_to_b.mul_add(yf, cb_to_b.mul_add(cbf, cr_to_b * crf));
-
-        // Round and clamp to u8
-        let r_arr = r.to_array();
-        let g_arr = g.to_array();
-        let b_arr = b.to_array();
-
         let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
 
-        (
-            [
-                clamp(r_arr[0]),
-                clamp(r_arr[1]),
-                clamp(r_arr[2]),
-                clamp(r_arr[3]),
-            ],
-            [
-                clamp(g_arr[0]),
-                clamp(g_arr[1]),
-                clamp(g_arr[2]),
-                clamp(g_arr[3]),
-            ],
-            [
-                clamp(b_arr[0]),
-                clamp(b_arr[1]),
-                clamp(b_arr[2]),
-                clamp(b_arr[3]),
-            ],
-        )
+        let mut r_out = [0u8; 4];
+        let mut g_out = [0u8; 4];
+        let mut b_out = [0u8; 4];
+
+        for i in 0..4 {
+            let yf = y[i] as f32;
+            let cbf = cb[i] as f32 - 128.0;
+            let crf = cr[i] as f32 - 128.0;
+
+            let r = YCBCR_Y_TO_R.mul_add(yf, YCBCR_CB_TO_R.mul_add(cbf, YCBCR_CR_TO_R * crf));
+            let g = YCBCR_Y_TO_G.mul_add(yf, YCBCR_CB_TO_G.mul_add(cbf, YCBCR_CR_TO_G * crf));
+            let b = YCBCR_Y_TO_B.mul_add(yf, YCBCR_CB_TO_B.mul_add(cbf, YCBCR_CR_TO_B * crf));
+
+            r_out[i] = clamp(r);
+            g_out[i] = clamp(g);
+            b_out[i] = clamp(b);
+        }
+
+        (r_out, g_out, b_out)
     }
 }
 
@@ -405,32 +347,27 @@ pub fn ycbcr_planes_to_rgb(
 /// Applies level shift (+128) and clamps to 0-255.
 ///
 /// This is optimized for the decoder which processes planes separately.
-/// Dispatches to AVX2+FMA on x86_64, falls back to wide f32x8 (2× SSE2).
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2+FMA, NEON, WASM128, scalar).
 pub fn ycbcr_planes_f32_to_rgb_u8(
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
     rgb: &mut [u8],
 ) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_ycbcr_planes_f32_to_rgb_u8(token, y_plane, cb_plane, cr_plane, rgb);
-    }
-
-    ycbcr_planes_f32_to_rgb_u8_wide(y_plane, cb_plane, cr_plane, rgb);
+    incant!(ycbcr_planes_f32_to_rgb_u8_impl(y_plane, cb_plane, cr_plane, rgb));
 }
 
-/// AVX2+FMA implementation of YCbCr f32 planes → interleaved RGB u8.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_ycbcr_planes_f32_to_rgb_u8(
-    token: archmage::X64V3Token,
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn ycbcr_planes_f32_to_rgb_u8_impl(
+    token: Token,
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
     rgb: &mut [u8],
 ) {
-    use magetypes::simd::f32x8 as mf32x8;
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(y_plane.len(), cb_plane.len());
     debug_assert_eq!(y_plane.len(), cr_plane.len());
@@ -439,13 +376,13 @@ fn mage_ycbcr_planes_f32_to_rgb_u8(
     let num_pixels = y_plane.len();
 
     // BT.601 coefficients
-    let cr_to_r = mf32x8::splat(token, 1.402);
-    let cb_to_g = mf32x8::splat(token, -0.344136);
-    let cr_to_g = mf32x8::splat(token, -0.714136);
-    let cb_to_b = mf32x8::splat(token, 1.772);
-    let offset = mf32x8::splat(token, 128.0);
-    let zero = mf32x8::splat(token, 0.0);
-    let max_val = mf32x8::splat(token, 255.0);
+    let cr_to_r = f32x8::splat(token, 1.402);
+    let cb_to_g = f32x8::splat(token, -0.344136);
+    let cr_to_g = f32x8::splat(token, -0.714136);
+    let cb_to_b = f32x8::splat(token, 1.772);
+    let offset = f32x8::splat(token, 128.0);
+    let zero = f32x8::splat(token, 0.0);
+    let max_val = f32x8::splat(token, 255.0);
 
     let chunks = num_pixels / 8;
 
@@ -453,13 +390,13 @@ fn mage_ycbcr_planes_f32_to_rgb_u8(
         let i = chunk * 8;
 
         // Load 8 values from each plane
-        let y = mf32x8::from_array(token, <[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap());
-        let cb = mf32x8::from_array(token, <[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap());
-        let cr = mf32x8::from_array(token, <[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap());
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap().clone());
+        let cb = f32x8::from_array(token, <&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap().clone());
+        let cr = f32x8::from_array(token, <&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap().clone());
 
         let y_off = y + offset;
 
-        // YCbCr to RGB with real FMA (vfmadd instructions)
+        // YCbCr to RGB with FMA
         let r = cr_to_r.mul_add(cr, y_off).max(zero).min(max_val);
         let g = cb_to_g
             .mul_add(cb, cr_to_g.mul_add(cr, y_off))
@@ -498,88 +435,6 @@ fn mage_ycbcr_planes_f32_to_rgb_u8(
     }
 }
 
-/// Wide-based fallback for YCbCr f32 planes → interleaved RGB u8.
-/// Uses wide::f32x8 (2× SSE2 on x86_64, portable on other targets).
-fn ycbcr_planes_f32_to_rgb_u8_wide(
-    y_plane: &[f32],
-    cb_plane: &[f32],
-    cr_plane: &[f32],
-    rgb: &mut [u8],
-) {
-    debug_assert_eq!(y_plane.len(), cb_plane.len());
-    debug_assert_eq!(y_plane.len(), cr_plane.len());
-    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
-
-    let num_pixels = y_plane.len();
-
-    // BT.601 coefficients
-    const CR_TO_R: f32 = 1.402;
-    const CB_TO_G: f32 = -0.344136;
-    const CR_TO_G: f32 = -0.714136;
-    const CB_TO_B: f32 = 1.772;
-
-    let cr_to_r = f32x8::splat(CR_TO_R);
-    let cb_to_g = f32x8::splat(CB_TO_G);
-    let cr_to_g = f32x8::splat(CR_TO_G);
-    let cb_to_b = f32x8::splat(CB_TO_B);
-    let offset = f32x8::splat(128.0);
-    let zero = f32x8::splat(0.0);
-    let max_val = f32x8::splat(255.0);
-
-    let y_chunks = y_plane.chunks_exact(8);
-    let cb_chunks = cb_plane.chunks_exact(8);
-    let cr_chunks = cr_plane.chunks_exact(8);
-    let rgb_chunks = rgb.chunks_exact_mut(24);
-
-    let y_remainder = y_chunks.remainder();
-    let cb_remainder = cb_chunks.remainder();
-    let cr_remainder = cr_chunks.remainder();
-
-    for (((y_chunk, cb_chunk), cr_chunk), rgb_chunk) in
-        y_chunks.zip(cb_chunks).zip(cr_chunks).zip(rgb_chunks)
-    {
-        let y = f32x8::from(<[f32; 8]>::try_from(y_chunk).unwrap());
-        let cb = f32x8::from(<[f32; 8]>::try_from(cb_chunk).unwrap());
-        let cr = f32x8::from(<[f32; 8]>::try_from(cr_chunk).unwrap());
-
-        let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
-        let g = cb_to_g
-            .mul_add(cb, cr_to_g.mul_add(cr, y + offset))
-            .max(zero)
-            .min(max_val);
-        let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);
-
-        let r_arr: [f32; 8] = r.into();
-        let g_arr: [f32; 8] = g.into();
-        let b_arr: [f32; 8] = b.into();
-
-        for j in 0..8 {
-            rgb_chunk[j * 3] = r_arr[j] as u8;
-            rgb_chunk[j * 3 + 1] = g_arr[j] as u8;
-            rgb_chunk[j * 3 + 2] = b_arr[j] as u8;
-        }
-    }
-
-    // Scalar remainder
-    let chunks_processed = (num_pixels / 8) * 8;
-    let rgb_start = chunks_processed * 3;
-    for (i, ((y, cb), cr)) in y_remainder
-        .iter()
-        .zip(cb_remainder.iter())
-        .zip(cr_remainder.iter())
-        .enumerate()
-    {
-        let r = CR_TO_R.mul_add(*cr, *y);
-        let g = CB_TO_G.mul_add(*cb, CR_TO_G.mul_add(*cr, *y));
-        let b_val = CB_TO_B.mul_add(*cb, *y);
-
-        let idx = rgb_start + i * 3;
-        rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[idx + 2] = (b_val + 128.0).clamp(0.0, 255.0) as u8;
-    }
-}
-
 /// Batch YCbCr to RGB conversion for f32 planes to f32 output.
 ///
 /// Input: centered YCbCr (Y, Cb, Cr all centered around 0 from f32 IDCT).
@@ -587,32 +442,27 @@ fn ycbcr_planes_f32_to_rgb_u8_wide(
 /// exceed [0, 1] due to YCbCr→RGB color matrix expansion — this is intentional
 /// to preserve full precision. Callers should clamp only at final output if needed.
 ///
-/// Dispatches to AVX2+FMA on x86_64, falls back to wide f32x8 (2× SSE2).
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2+FMA, NEON, WASM128, scalar).
 pub fn ycbcr_planes_f32_to_rgb_f32(
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
     rgb: &mut [f32],
 ) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_ycbcr_planes_f32_to_rgb_f32(token, y_plane, cb_plane, cr_plane, rgb);
-    }
-
-    ycbcr_planes_f32_to_rgb_f32_wide(y_plane, cb_plane, cr_plane, rgb);
+    incant!(ycbcr_planes_f32_to_rgb_f32_impl(y_plane, cb_plane, cr_plane, rgb));
 }
 
-/// AVX2+FMA implementation of YCbCr f32 planes → interleaved RGB f32.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_ycbcr_planes_f32_to_rgb_f32(
-    token: archmage::X64V3Token,
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn ycbcr_planes_f32_to_rgb_f32_impl(
+    token: Token,
     y_plane: &[f32],
     cb_plane: &[f32],
     cr_plane: &[f32],
     rgb: &mut [f32],
 ) {
-    use magetypes::simd::f32x8 as mf32x8;
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(y_plane.len(), cb_plane.len());
     debug_assert_eq!(y_plane.len(), cr_plane.len());
@@ -620,33 +470,24 @@ fn mage_ycbcr_planes_f32_to_rgb_f32(
 
     let num_pixels = y_plane.len();
 
-    let cr_to_r = mf32x8::splat(token, 1.402);
-    let cb_to_g = mf32x8::splat(token, -0.344136);
-    let cr_to_g = mf32x8::splat(token, -0.714136);
-    let cb_to_b = mf32x8::splat(token, 1.772);
-    let offset = mf32x8::splat(token, 128.0);
-    let scale = mf32x8::splat(token, 1.0 / 255.0);
+    let cr_to_r = f32x8::splat(token, 1.402);
+    let cb_to_g = f32x8::splat(token, -0.344136);
+    let cr_to_g = f32x8::splat(token, -0.714136);
+    let cb_to_b = f32x8::splat(token, 1.772);
+    let offset = f32x8::splat(token, 128.0);
+    let scale = f32x8::splat(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let y = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
-        );
-        let cb = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap(),
-        );
-        let cr = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
+        let cb = f32x8::from_array(token, <&[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap().clone());
+        let cr = f32x8::from_array(token, <&[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap().clone());
 
         let y_off = y + offset;
 
-        // YCbCr to RGB with real FMA, level shift, normalize — no clamping
+        // YCbCr to RGB with FMA, level shift, normalize — no clamping
         let r = cr_to_r.mul_add(cr, y_off) * scale;
         let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y_off)) * scale;
         let b = cb_to_b.mul_add(cb, y_off) * scale;
@@ -680,141 +521,33 @@ fn mage_ycbcr_planes_f32_to_rgb_f32(
     }
 }
 
-/// Wide-based fallback for YCbCr f32 planes → interleaved RGB f32.
-fn ycbcr_planes_f32_to_rgb_f32_wide(
-    y_plane: &[f32],
-    cb_plane: &[f32],
-    cr_plane: &[f32],
-    rgb: &mut [f32],
-) {
-    debug_assert_eq!(y_plane.len(), cb_plane.len());
-    debug_assert_eq!(y_plane.len(), cr_plane.len());
-    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
-
-    let num_pixels = y_plane.len();
-
-    const CR_TO_R: f32 = 1.402;
-    const CB_TO_G: f32 = -0.344136;
-    const CR_TO_G: f32 = -0.714136;
-    const CB_TO_B: f32 = 1.772;
-
-    let cr_to_r = f32x8::splat(CR_TO_R);
-    let cb_to_g = f32x8::splat(CB_TO_G);
-    let cr_to_g = f32x8::splat(CR_TO_G);
-    let cb_to_b = f32x8::splat(CB_TO_B);
-    let offset = f32x8::splat(128.0);
-    let scale = f32x8::splat(1.0 / 255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-        let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
-        let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
-
-        let r = cr_to_r.mul_add(cr, y + offset) * scale;
-        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale;
-        let b = cb_to_b.mul_add(cb, y + offset) * scale;
-
-        let r_arr: [f32; 8] = r.into();
-        let g_arr: [f32; 8] = g.into();
-        let b_arr: [f32; 8] = b.into();
-
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            rgb[idx] = r_arr[j];
-            rgb[idx + 1] = g_arr[j];
-            rgb[idx + 2] = b_arr[j];
-        }
-    }
-
-    // Scalar remainder
-    for i in (chunks * 8)..num_pixels {
-        let y = y_plane[i];
-        let cb = cb_plane[i];
-        let cr = cr_plane[i];
-
-        let r = CR_TO_R.mul_add(cr, y);
-        let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
-        let b = CB_TO_B.mul_add(cb, y);
-
-        let idx = i * 3;
-        rgb[idx] = (r + 128.0) / 255.0;
-        rgb[idx + 1] = (g + 128.0) / 255.0;
-        rgb[idx + 2] = (b + 128.0) / 255.0;
-    }
-}
-
 /// Batch grayscale to RGB conversion for f32 to u8.
 ///
-/// Dispatches to AVX2 on x86_64, falls back to wide f32x8 (2× SSE2).
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2, NEON, WASM128, scalar).
 pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_gray_f32_to_rgb_u8(token, y_plane, rgb);
-    }
-
-    gray_f32_to_rgb_u8_wide(y_plane, rgb);
+    incant!(gray_f32_to_rgb_u8_impl(y_plane, rgb));
 }
 
-/// AVX2 implementation of grayscale f32 → interleaved RGB u8.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_gray_f32_to_rgb_u8(token: archmage::X64V3Token, y_plane: &[f32], rgb: &mut [u8]) {
-    use magetypes::simd::f32x8 as mf32x8;
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn gray_f32_to_rgb_u8_impl(token: Token, y_plane: &[f32], rgb: &mut [u8]) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
-    let offset = mf32x8::splat(token, 128.0);
-    let zero = mf32x8::splat(token, 0.0);
-    let max_val = mf32x8::splat(token, 255.0);
+    let offset = f32x8::splat(token, 128.0);
+    let zero = f32x8::splat(token, 0.0);
+    let max_val = f32x8::splat(token, 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
-
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            let v = arr[j] as u8;
-            rgb[idx] = v;
-            rgb[idx + 1] = v;
-            rgb[idx + 2] = v;
-        }
-    }
-
-    for i in (chunks * 8)..num_pixels {
-        let val = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
-        let idx = i * 3;
-        rgb[idx] = val;
-        rgb[idx + 1] = val;
-        rgb[idx + 2] = val;
-    }
-}
-
-/// Wide-based fallback for grayscale f32 → interleaved RGB u8.
-fn gray_f32_to_rgb_u8_wide(y_plane: &[f32], rgb: &mut [u8]) {
-    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
-
-    let num_pixels = y_plane.len();
-    let offset = f32x8::splat(128.0);
-    let zero = f32x8::splat(0.0);
-    let max_val = f32x8::splat(255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-
-        let val = (y + offset).max(zero).min(max_val);
-        let arr: [f32; 8] = val.into();
 
         for j in 0..8 {
             let idx = (base + j) * 3;
@@ -839,71 +572,30 @@ fn gray_f32_to_rgb_u8_wide(y_plane: &[f32], rgb: &mut [u8]) {
 /// Input: centered grayscale (Y centered around 0 from f32 IDCT).
 /// Output: normalized to approximately 0.0-1.0 range without clamping.
 ///
-/// Dispatches to AVX2 on x86_64, falls back to wide f32x8 (2× SSE2).
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2, NEON, WASM128, scalar).
 pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_gray_f32_to_rgb_f32(token, y_plane, rgb);
-    }
-
-    gray_f32_to_rgb_f32_wide(y_plane, rgb);
+    incant!(gray_f32_to_rgb_f32_impl(y_plane, rgb));
 }
 
-/// AVX2 implementation of grayscale f32 → interleaved RGB f32.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_gray_f32_to_rgb_f32(token: archmage::X64V3Token, y_plane: &[f32], rgb: &mut [f32]) {
-    use magetypes::simd::f32x8 as mf32x8;
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn gray_f32_to_rgb_f32_impl(token: Token, y_plane: &[f32], rgb: &mut [f32]) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
     let num_pixels = y_plane.len();
-    let offset = mf32x8::splat(token, 128.0);
-    let scale = mf32x8::splat(token, 1.0 / 255.0);
+    let offset = f32x8::splat(token, 128.0);
+    let scale = f32x8::splat(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
 
         let val = (y + offset) * scale;
         let arr = val.to_array();
-
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            rgb[idx] = arr[j];
-            rgb[idx + 1] = arr[j];
-            rgb[idx + 2] = arr[j];
-        }
-    }
-
-    for i in (chunks * 8)..num_pixels {
-        let val = (y_plane[i] + 128.0) / 255.0;
-        let idx = i * 3;
-        rgb[idx] = val;
-        rgb[idx + 1] = val;
-        rgb[idx + 2] = val;
-    }
-}
-
-/// Wide-based fallback for grayscale f32 → interleaved RGB f32.
-fn gray_f32_to_rgb_f32_wide(y_plane: &[f32], rgb: &mut [f32]) {
-    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
-
-    let num_pixels = y_plane.len();
-    let offset = f32x8::splat(128.0);
-    let scale = f32x8::splat(1.0 / 255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-
-        let val = (y + offset) * scale;
-        let arr: [f32; 8] = val.into();
 
         for j in 0..8 {
             let idx = (base + j) * 3;
@@ -924,64 +616,31 @@ fn gray_f32_to_rgb_f32_wide(y_plane: &[f32], rgb: &mut [f32]) {
 
 /// Batch level shift for grayscale f32 to u8.
 ///
-/// Dispatches to AVX2 on x86_64, falls back to wide f32x8.
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2, NEON, WASM128, scalar).
 pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_gray_f32_to_gray_u8(token, y_plane, output);
-    }
-
-    gray_f32_to_gray_u8_wide(y_plane, output);
+    incant!(gray_f32_to_gray_u8_impl(y_plane, output));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_gray_f32_to_gray_u8(token: archmage::X64V3Token, y_plane: &[f32], output: &mut [u8]) {
-    use magetypes::simd::f32x8 as mf32x8;
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn gray_f32_to_gray_u8_impl(token: Token, y_plane: &[f32], output: &mut [u8]) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
-    let offset = mf32x8::splat(token, 128.0);
-    let zero = mf32x8::splat(token, 0.0);
-    let max_val = mf32x8::splat(token, 255.0);
+    let offset = f32x8::splat(token, 128.0);
+    let zero = f32x8::splat(token, 0.0);
+    let max_val = f32x8::splat(token, 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
-
-        for j in 0..8 {
-            output[base + j] = arr[j] as u8;
-        }
-    }
-
-    for i in (chunks * 8)..num_pixels {
-        output[i] = (y_plane[i] + 128.0).clamp(0.0, 255.0) as u8;
-    }
-}
-
-fn gray_f32_to_gray_u8_wide(y_plane: &[f32], output: &mut [u8]) {
-    debug_assert_eq!(y_plane.len(), output.len());
-
-    let num_pixels = y_plane.len();
-    let offset = f32x8::splat(128.0);
-    let zero = f32x8::splat(0.0);
-    let max_val = f32x8::splat(255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-
-        let val = (y + offset).max(zero).min(max_val);
-        let arr: [f32; 8] = val.into();
 
         for j in 0..8 {
             output[base + j] = arr[j] as u8;
@@ -998,59 +657,30 @@ fn gray_f32_to_gray_u8_wide(y_plane: &[f32], output: &mut [u8]) {
 /// Input: centered grayscale (Y centered around 0 from f32 IDCT).
 /// Output: normalized without clamping to preserve full precision.
 ///
-/// Dispatches to AVX2 on x86_64, falls back to wide f32x8.
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2, NEON, WASM128, scalar).
 pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
-    #[cfg(target_arch = "x86_64")]
-    if let Some(token) = archmage::X64V3Token::summon() {
-        return mage_gray_f32_to_gray_f32(token, y_plane, output);
-    }
-
-    gray_f32_to_gray_f32_wide(y_plane, output);
+    incant!(gray_f32_to_gray_f32_impl(y_plane, output));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn mage_gray_f32_to_gray_f32(token: archmage::X64V3Token, y_plane: &[f32], output: &mut [f32]) {
-    use magetypes::simd::f32x8 as mf32x8;
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn gray_f32_to_gray_f32_impl(token: Token, y_plane: &[f32], output: &mut [f32]) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
     debug_assert_eq!(y_plane.len(), output.len());
 
     let num_pixels = y_plane.len();
-    let offset = mf32x8::splat(token, 128.0);
-    let scale = mf32x8::splat(token, 1.0 / 255.0);
+    let offset = f32x8::splat(token, 128.0);
+    let scale = f32x8::splat(token, 1.0 / 255.0);
 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = mf32x8::from_array(
-            token,
-            <[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
 
         let val = (y + offset) * scale;
         let arr = val.to_array();
-        output[base..base + 8].copy_from_slice(&arr);
-    }
-
-    for i in (chunks * 8)..num_pixels {
-        output[i] = (y_plane[i] + 128.0) / 255.0;
-    }
-}
-
-fn gray_f32_to_gray_f32_wide(y_plane: &[f32], output: &mut [f32]) {
-    debug_assert_eq!(y_plane.len(), output.len());
-
-    let num_pixels = y_plane.len();
-    let offset = f32x8::splat(128.0);
-    let scale = f32x8::splat(1.0 / 255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-
-        let val = (y + offset) * scale;
-        let arr: [f32; 8] = val.into();
         output[base..base + 8].copy_from_slice(&arr);
     }
 

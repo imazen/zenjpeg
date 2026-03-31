@@ -19,27 +19,24 @@
 #![allow(dead_code)]
 
 use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};
-use archmage::autoversion;
-use wide::f32x8;
+use archmage::prelude::*;
+use magetypes::simd::backends::F32x8Backend;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // ============================================================================
-// Safe SIMD load/store helpers
+// Safe SIMD load/store helpers (generic over backend)
 // ============================================================================
 
-/// Load 8 f32s into f32x8. Panics if slice is too short.
-/// Uses array conversion which compiles to a single load instruction.
+/// Load 8 f32s into GenericF32x8. Panics if slice is too short.
 #[inline(always)]
-fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
-    // Convert slice to array, then array to f32x8 (cast/transmute)
-    <[f32; 8]>::try_from(&slice[offset..offset + 8])
-        .unwrap()
-        .into()
+fn load_f32x8<T: F32x8Backend>(token: T, slice: &[f32], offset: usize) -> GenericF32x8<T> {
+    GenericF32x8::<T>::load(token, slice[offset..offset + 8].try_into().unwrap())
 }
 
-/// Store f32x8 to slice. Panics if slice is too short.
+/// Store GenericF32x8 to slice. Panics if slice is too short.
 #[inline(always)]
-fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
-    slice[offset..offset + 8].copy_from_slice(&value.to_array())
+fn store_f32x8<T: F32x8Backend>(slice: &mut [f32], offset: usize, value: GenericF32x8<T>) {
+    value.store(<&mut [f32; 8]>::try_from(&mut slice[offset..offset + 8]).unwrap())
 }
 
 // ============================================================================
@@ -94,45 +91,45 @@ fn masking_sqrt_scalar(v: f32) -> f32 {
 // ============================================================================
 
 /// SIMD version of ratio_of_derivatives (non-inverted).
-/// Processes 8 f32 values at once.
+/// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
-pub fn ratio_of_derivatives_x8(vals: f32x8) -> f32x8 {
-    let v = vals.fast_max(f32x8::ZERO);
+fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8<T>) -> GenericF32x8<T> {
+    let v = vals.max(GenericF32x8::<T>::zero(token));
     let v2 = v * v;
 
     let num = v2.mul_add(
-        f32x8::splat(K_NUM_MUL_RATIO),
-        f32x8::splat(K_NUM_OFFSET_RATIO),
+        GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
+        GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO)).mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
     den / num
 }
 
 /// SIMD version of ratio_of_derivatives (inverted).
-/// Processes 8 f32 values at once.
+/// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
-pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
-    let v = vals.fast_max(f32x8::ZERO);
+fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8<T>) -> GenericF32x8<T> {
+    let v = vals.max(GenericF32x8::<T>::zero(token));
     let v2 = v * v;
 
     let num = v2.mul_add(
-        f32x8::splat(K_NUM_MUL_RATIO),
-        f32x8::splat(K_NUM_OFFSET_RATIO),
+        GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
+        GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO)).mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
 
     num / den
 }
 
 /// SIMD version of masking_sqrt.
-/// Processes 8 f32 values at once.
+/// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
-pub fn masking_sqrt_x8(v: f32x8) -> f32x8 {
-    let k_mul_sqrt = f32x8::splat((K_MASKING_MUL * 1e8_f32).sqrt());
-    let k_offset = f32x8::splat(K_MASKING_LOG_OFFSET);
-    f32x8::splat(0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
+fn masking_sqrt_x8_generic<T: F32x8Backend>(token: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
+    let k_mul_sqrt = GenericF32x8::<T>::splat(token, (K_MASKING_MUL * 1e8_f32).sqrt());
+    let k_offset = GenericF32x8::<T>::splat(token, K_MASKING_LOG_OFFSET);
+    GenericF32x8::<T>::splat(token, 0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
 }
 
 // ============================================================================
@@ -143,41 +140,32 @@ const LIMIT: f32 = 0.2;
 const MATCH_GAMMA_OFFSET: f32 = 0.019;
 const GAMMA_OFFSET: f32 = MATCH_GAMMA_OFFSET / K_INPUT_SCALING; // ~4.845
 
-/// Process 8 pixels of the pre-erosion inner loop.
+/// Process 8 pixels of the pre-erosion inner loop. Generic over SIMD backend.
 ///
 /// For each pixel: compute neighbor average, ratio_of_derivatives, diff, masking_sqrt.
-///
-/// # Arguments
-/// * `pixels` - 8 center pixel values (0-255)
-/// * `left` - 8 left neighbor values
-/// * `right` - 8 right neighbor values
-/// * `top` - 8 top neighbor values
-/// * `bottom` - 8 bottom neighbor values
-///
-/// # Returns
-/// 8 masked diff values ready for accumulation
 #[inline(always)]
-pub fn pre_erosion_pixel_x8(
-    pixels: f32x8,
-    left: f32x8,
-    right: f32x8,
-    top: f32x8,
-    bottom: f32x8,
-) -> f32x8 {
+fn pre_erosion_pixel_x8_generic<T: F32x8Backend>(
+    token: T,
+    pixels: GenericF32x8<T>,
+    left: GenericF32x8<T>,
+    right: GenericF32x8<T>,
+    top: GenericF32x8<T>,
+    bottom: GenericF32x8<T>,
+) -> GenericF32x8<T> {
     // base = 0.25 * (left + right + top + bottom)
-    let base = f32x8::splat(0.25) * (left + right + top + bottom);
+    let base = GenericF32x8::<T>::splat(token, 0.25) * (left + right + top + bottom);
 
     // ratio = ratio_of_derivatives(pixel + gamma_offset, false)
-    let ratio = ratio_of_derivatives_x8(pixels + f32x8::splat(GAMMA_OFFSET));
+    let ratio = ratio_of_derivatives_x8_generic(token, pixels + GenericF32x8::<T>::splat(token, GAMMA_OFFSET));
 
     // diff = ratio * (pixel - base)
     let diff = ratio * (pixels - base);
 
     // diff_sq = min(diff * diff, LIMIT)
-    let diff_sq = (diff * diff).fast_min(f32x8::splat(LIMIT));
+    let diff_sq = (diff * diff).min(GenericF32x8::<T>::splat(token, LIMIT));
 
     // masked = masking_sqrt(diff_sq)
-    masking_sqrt_x8(diff_sq)
+    masking_sqrt_x8_generic(token, diff_sq)
 }
 
 /// Process a full row of pre-erosion, writing results to output buffer.
@@ -189,8 +177,16 @@ pub fn pre_erosion_pixel_x8(
 /// * `row_above` - Row above (or same row if y=0)
 /// * `row_below` - Row below (or same row if y=height-1)
 /// * `output` - Output buffer to accumulate into (must be same length as row)
-#[autoversion]
 pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output: &mut [f32]) {
+    incant!(pre_erosion_row_impl(row, row_above, row_below, output));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn pre_erosion_row_impl(token: Token, row: &[f32], row_above: &[f32], row_below: &[f32], output: &mut [f32]) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let width = row.len();
     assert_eq!(row_above.len(), width);
     assert_eq!(row_below.len(), width);
@@ -207,12 +203,12 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
         let x = chunk * 8;
 
         // Load center pixels
-        let pixels = load_f32x8(row, x);
+        let pixels = load_f32x8(token, row, x);
 
         // Load neighbors with boundary handling
         let left = if x == 0 {
             // First chunk: first pixel uses itself as left neighbor
-            f32x8::from([
+            f32x8::from_array(token, [
                 row[0],
                 row[x],
                 row[x + 1],
@@ -223,13 +219,13 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
                 row[x + 6],
             ])
         } else {
-            load_f32x8(row, x - 1)
+            load_f32x8(token, row, x - 1)
         };
 
         let right = if x + 8 >= width {
             // Last chunk: last pixel uses itself as right neighbor
             let last = width - 1;
-            f32x8::from([
+            f32x8::from_array(token, [
                 row[(x + 1).min(last)],
                 row[(x + 2).min(last)],
                 row[(x + 3).min(last)],
@@ -240,17 +236,17 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
                 row[(x + 8).min(last)],
             ])
         } else {
-            load_f32x8(row, x + 1)
+            load_f32x8(token, row, x + 1)
         };
 
-        let top = load_f32x8(row_above, x);
-        let bottom = load_f32x8(row_below, x);
+        let top = load_f32x8(token, row_above, x);
+        let bottom = load_f32x8(token, row_below, x);
 
         // Compute and accumulate using SIMD add
-        let result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
+        let result = pre_erosion_pixel_x8_generic(token, pixels, left, right, top, bottom);
 
         // Load existing, add result, store back
-        let existing = load_f32x8(output, x);
+        let existing = load_f32x8(token, output, x);
         store_f32x8(output, x, existing + result);
     }
 
@@ -291,8 +287,20 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 /// * `row_below` - Row below with padding (length = width + 2)
 /// * `width` - Actual data width (without padding)
 /// * `output` - Output buffer to accumulate into (length = width)
-#[autoversion]
 pub fn pre_erosion_row_padded(
+    row: &[f32],
+    row_above: &[f32],
+    row_below: &[f32],
+    width: usize,
+    output: &mut [f32],
+) {
+    incant!(pre_erosion_row_padded_impl(row, row_above, row_below, width, output));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn pre_erosion_row_padded_impl(
+    token: Token,
     row: &[f32],
     row_above: &[f32],
     row_below: &[f32],
@@ -318,19 +326,19 @@ pub fn pre_erosion_row_padded(
         let buf_x = x + 1;
 
         // Load center pixels (indices buf_x..buf_x+8)
-        let pixels = load_f32x8(row, buf_x);
+        let pixels = load_f32x8(token, row, buf_x);
 
         // Load neighbors - no conditionals needed due to padding!
-        let left = load_f32x8(row, buf_x - 1); // indices x..x+8, always valid
-        let right = load_f32x8(row, buf_x + 1); // indices x+2..x+10, always valid
-        let top = load_f32x8(row_above, buf_x);
-        let bottom = load_f32x8(row_below, buf_x);
+        let left = load_f32x8(token, row, buf_x - 1); // indices x..x+8, always valid
+        let right = load_f32x8(token, row, buf_x + 1); // indices x+2..x+10, always valid
+        let top = load_f32x8(token, row_above, buf_x);
+        let bottom = load_f32x8(token, row_below, buf_x);
 
         // Compute and accumulate
-        let result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
+        let result = pre_erosion_pixel_x8_generic(token, pixels, left, right, top, bottom);
 
         // Load existing, add result, store back
-        let existing = load_f32x8(output, x);
+        let existing = load_f32x8(token, output, x);
         store_f32x8(output, x, existing + result);
     }
 
@@ -421,8 +429,14 @@ pub fn compute_pre_erosion_simd(
 }
 
 /// Downsample by 4x with sum and scale by 0.25.
-#[autoversion]
 fn downsample_4x_sum(input: &[f32], output: &mut [f32]) {
+    incant!(downsample_4x_sum_impl(input, output));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn downsample_4x_sum_impl(token: Token, input: &[f32], output: &mut [f32]) {
+    let _ = token; // used by magetypes for autovectorization
     let width = input.len();
     let out_w = output.len();
 
@@ -535,25 +549,10 @@ fn fast_log2(x: f32) -> f32 {
 }
 
 /// Compute sum of ratio_of_derivatives(inv=true) for an 8x8 block.
-///
-/// SIMD accelerated - processes one row of 8 pixels at a time.
-///
-/// When the buffer has edge-replicated padding (stride > img_width), we use
-/// all 8 pixels per row including replicated ones. This matches C++ behavior
-/// and gives correct normalization (64 pixels per block).
-///
-/// # Arguments
-/// * `block` - Pointer to top-left of 8x8 block
-/// * `stride` - Row stride (may be padded beyond img_width)
-/// * `_block_x` - X position of block (unused, kept for API compatibility)
-/// * `block_y` - Y position of block (for boundary check)
-/// * `_img_width` - Image width (unused, kept for API compatibility)
-/// * `img_height` - Total image height
-///
-/// # Returns
-/// Sum of ratio_of_derivatives for all valid pixels in the block
+/// Generic over SIMD backend.
 #[inline(always)]
-pub fn gamma_modulation_sum_8x8(
+fn gamma_modulation_sum_8x8_generic<T: F32x8Backend>(
+    token: T,
     block: &[f32],
     stride: usize,
     _block_x: usize,
@@ -561,8 +560,8 @@ pub fn gamma_modulation_sum_8x8(
     _img_width: usize,
     img_height: usize,
 ) -> f32 {
-    let bias = f32x8::splat(K_BIAS);
-    let mut sum = f32x8::ZERO;
+    let bias = GenericF32x8::<T>::splat(token, K_BIAS);
+    let mut sum = GenericF32x8::<T>::zero(token);
 
     // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
     // allocation. For edge blocks, the extra columns contain replicated edge values,
@@ -577,8 +576,8 @@ pub fn gamma_modulation_sum_8x8(
 
         // Process all 8 pixels - buffer has MCU-aligned padding with edge replication
         if row_start + 8 <= block.len() {
-            let row = load_f32x8(block, row_start);
-            let ratio = ratio_of_derivatives_inv_x8(row + bias);
+            let row = load_f32x8(token, block, row_start);
+            let ratio = ratio_of_derivatives_inv_x8_generic(token, row + bias);
             sum += ratio;
         }
     }
@@ -588,14 +587,10 @@ pub fn gamma_modulation_sum_8x8(
 }
 
 /// Compute HF modulation sum: |p - right| + |p - below| for 8x8 block.
-///
-/// Optimized with SIMD for row processing.
-///
-/// When the buffer has edge-replicated padding (stride > img_width), we use
-/// all 8 pixels per row including replicated ones. This matches C++ behavior
-/// and gives correct normalization (112 = 7×8 + 8×7 differences).
+/// Generic over SIMD backend.
 #[inline(always)]
-pub fn hf_modulation_sum_8x8(
+fn hf_modulation_sum_8x8_generic<T: F32x8Backend>(
+    token: T,
     block: &[f32],
     stride: usize,
     _block_x: usize,
@@ -604,10 +599,10 @@ pub fn hf_modulation_sum_8x8(
     img_height: usize,
 ) -> f32 {
     // Mask to zero out the 8th element for horizontal differences
-    const MASK_FIRST_7: f32x8 = f32x8::new([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
+    let mask_first_7 = GenericF32x8::<T>::from_array(token, [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
 
-    let mut h_sum = f32x8::ZERO;
-    let mut v_sum = f32x8::ZERO;
+    let mut h_sum = GenericF32x8::<T>::zero(token);
+    let mut v_sum = GenericF32x8::<T>::zero(token);
 
     // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
     // allocation. For edge blocks, the extra columns contain replicated edge values,
@@ -623,18 +618,18 @@ pub fn hf_modulation_sum_8x8(
         // Horizontal differences: |p - p_right| for positions 0..6
         // Buffer has 9 valid elements per row (8 + 1 for rightward shift)
         if row_start + 9 <= block.len() {
-            let p = load_f32x8(block, row_start);
-            let p_right = load_f32x8(block, row_start + 1);
+            let p = load_f32x8(token, block, row_start);
+            let p_right = load_f32x8(token, block, row_start + 1);
             // Mask out 8th element (position 7->8 difference not needed), accumulate
-            h_sum += (p - p_right).abs() * MASK_FIRST_7;
+            h_sum += (p - p_right).abs() * mask_first_7;
         }
 
         // Vertical differences: |p - p_below| for first 7 rows
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
             if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
-                let p = load_f32x8(block, row_start);
-                let p_below = load_f32x8(block, next_row_start);
+                let p = load_f32x8(token, block, row_start);
+                let p_below = load_f32x8(token, block, next_row_start);
                 v_sum += (p - p_below).abs();
             }
         }
@@ -703,8 +698,24 @@ pub fn per_block_modulations_simd(
 /// - `block_w`: Number of blocks in row
 /// - `aq_row`: Output AQ values (one per block)
 /// - `mul`, `add`: Final transform coefficients
-#[autoversion]
 pub fn per_block_modulations_row(
+    input: &[f32],
+    stride: usize,
+    img_width: usize,
+    img_height: usize,
+    by: usize,
+    block_w: usize,
+    aq_row: &mut [f32],
+    mul: f32,
+    add: f32,
+) {
+    incant!(per_block_modulations_row_impl(input, stride, img_width, img_height, by, block_w, aq_row, mul, add));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn per_block_modulations_row_impl(
+    token: Token,
     input: &[f32],
     stride: usize,
     img_width: usize,
@@ -752,12 +763,12 @@ pub fn per_block_modulations_row(
         // 2. HfModulation with SIMD
         let block_offset = y_start * stride + x_start;
         let block = &input[block_offset..];
-        let hf_sum = hf_modulation_sum_8x8(block, stride, x_start, y_start, img_width, img_height);
+        let hf_sum = hf_modulation_sum_8x8_generic(token, block, stride, x_start, y_start, img_width, img_height);
         out_val += hf_sum * K_SUM_COEFF;
 
         // 3. GammaModulation with SIMD and fast_log2
         let gamma_sum =
-            gamma_modulation_sum_8x8(block, stride, x_start, y_start, img_width, img_height);
+            gamma_modulation_sum_8x8_generic(token, block, stride, x_start, y_start, img_width, img_height);
         let overall_ratio = gamma_sum * K_SCALE;
         let log_ratio = if overall_ratio > 0.0 {
             fast_log2(overall_ratio)
@@ -787,26 +798,18 @@ const FUZZY_MUL3: f32 = 0.05;
 // SIMD Sorting Network for 4-smallest-of-9
 // ============================================================================
 
-/// Compare-and-swap for sorting network: returns (min, max)
+/// Compare-and-swap for sorting network: returns (min, max). Generic over SIMD backend.
 #[inline(always)]
-fn cas(a: f32x8, b: f32x8) -> (f32x8, f32x8) {
+fn cas<T: F32x8Backend>(a: GenericF32x8<T>, b: GenericF32x8<T>) -> (GenericF32x8<T>, GenericF32x8<T>) {
     (a.min(b), a.max(b))
 }
 
-/// SIMD sorting network to find 4 smallest of 9 values.
+/// SIMD sorting network to find 4 smallest of 9 values. Generic over SIMD backend.
 /// Processes 8 independent sets of 9 values in parallel (one per SIMD lane).
 /// Returns weighted sum for each lane: MUL0*v0 + MUL1*v1 + MUL2*v2 + MUL3*v3
-///
-/// Uses a fixed comparison network - no branches, fully SIMD-parallel.
-/// The network ensures v[0..4] contain the 4 smallest values (not fully sorted,
-/// but the 4 smallest are guaranteed to be in those positions).
 #[inline(always)]
-fn weighted_min4_of_9_simd(mut v: [f32x8; 9]) -> f32x8 {
+fn weighted_min4_of_9_simd<T: F32x8Backend>(token: T, mut v: [GenericF32x8<T>; 9]) -> GenericF32x8<T> {
     // Sorting network for 9 elements to get 4 smallest in positions 0-3
-    // This is a partial sorting network optimized for finding k-smallest
-    //
-    // The network below is derived from Batcher's odd-even merge sort,
-    // optimized to only guarantee the 4 smallest values end up in v[0..4].
     // Total: 19 compare-exchange operations
 
     // Layer 1: Initial pairwise comparisons
@@ -840,10 +843,10 @@ fn weighted_min4_of_9_simd(mut v: [f32x8; 9]) -> f32x8 {
 
     // Now v[0..4] contains the 4 smallest values
     // Compute weighted sum using FMA
-    let mul0 = f32x8::splat(FUZZY_MUL0);
-    let mul1 = f32x8::splat(FUZZY_MUL1);
-    let mul2 = f32x8::splat(FUZZY_MUL2);
-    let mul3 = f32x8::splat(FUZZY_MUL3);
+    let mul0 = GenericF32x8::<T>::splat(token, FUZZY_MUL0);
+    let mul1 = GenericF32x8::<T>::splat(token, FUZZY_MUL1);
+    let mul2 = GenericF32x8::<T>::splat(token, FUZZY_MUL2);
+    let mul3 = GenericF32x8::<T>::splat(token, FUZZY_MUL3);
 
     mul0 * v[0] + mul1 * v[1] + mul2 * v[2] + mul3 * v[3]
 }
@@ -858,6 +861,22 @@ pub fn fuzzy_erosion_row_simd(
     max_y: usize,
     out: &mut [f32],
 ) -> usize {
+    incant!(fuzzy_erosion_row_simd_impl(pre_erosion, pre_erosion_w, y, max_y, out))
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn fuzzy_erosion_row_simd_impl(
+    token: Token,
+    pre_erosion: &[f32],
+    pre_erosion_w: usize,
+    y: usize,
+    max_y: usize,
+    out: &mut [f32],
+) -> usize {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let row_above_y = (y as isize - 1).clamp(0, max_y as isize) as usize;
     let row_below_y = (y + 1).min(max_y);
 
@@ -870,20 +889,19 @@ pub fn fuzzy_erosion_row_simd(
 
     while x + 8 <= pre_erosion_w.saturating_sub(1) {
         // Gather 9 neighbor values for 8 consecutive pixels
-        // Each v[i] contains the i-th neighbor for 8 different pixels
         let v = [
-            load_f32x8(row_above, x - 1), // top-left
-            load_f32x8(row_above, x),     // top
-            load_f32x8(row_above, x + 1), // top-right (shifted by 1)
-            load_f32x8(row_curr, x - 1),  // left
-            load_f32x8(row_curr, x),      // center
-            load_f32x8(row_curr, x + 1),  // right
-            load_f32x8(row_below, x - 1), // bottom-left
-            load_f32x8(row_below, x),     // bottom
-            load_f32x8(row_below, x + 1), // bottom-right
+            load_f32x8(token, row_above, x - 1), // top-left
+            load_f32x8(token, row_above, x),     // top
+            load_f32x8(token, row_above, x + 1), // top-right
+            load_f32x8(token, row_curr, x - 1),  // left
+            load_f32x8(token, row_curr, x),      // center
+            load_f32x8(token, row_curr, x + 1),  // right
+            load_f32x8(token, row_below, x - 1), // bottom-left
+            load_f32x8(token, row_below, x),     // bottom
+            load_f32x8(token, row_below, x + 1), // bottom-right
         ];
 
-        let result = weighted_min4_of_9_simd(v);
+        let result = weighted_min4_of_9_simd(token, v);
         store_f32x8(out, x, result);
 
         x += 8;
@@ -979,8 +997,10 @@ fn weighted_min4_of_9(v: [f32; 9]) -> f32 {
 
 /// Gather a single neighbor value for 8 blocks from circular buffer.
 /// Each lane gets the value at (cx[lane] + nx, cy + ny) with boundary clamping.
+/// Generic over SIMD backend.
 #[inline(always)]
-fn gather_neighbor_circular(
+fn gather_neighbor_circular<T: F32x8Backend>(
+    token: T,
     buffer: &[f32],
     pe_w: usize,
     buffer_rows: usize,
@@ -990,7 +1010,7 @@ fn gather_neighbor_circular(
     ny: isize,
     max_x: isize,
     max_y: isize,
-) -> f32x8 {
+) -> GenericF32x8<T> {
     let py = (cy + ny).clamp(0, max_y) as usize;
     let buffer_row = py % buffer_rows;
     let row_offset = buffer_row * pe_w;
@@ -1001,7 +1021,7 @@ fn gather_neighbor_circular(
         let idx = row_offset + px;
         if idx < buffer.len() { buffer[idx] } else { 0.0 }
     });
-    vals.into()
+    GenericF32x8::<T>::from_array(token, vals)
 }
 
 /// Compute fuzzy erosion for 8 blocks using SIMD sorting network.
@@ -1021,6 +1041,25 @@ pub fn compute_fuzzy_erosion_blocks_simd(
     end: usize,
     out: &mut [f32],
 ) -> usize {
+    incant!(compute_fuzzy_erosion_blocks_simd_impl(pre_erosion_buffer, pe_w, buffer_rows, pe_y_base, max_filled_row, start, end, out))
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn compute_fuzzy_erosion_blocks_simd_impl(
+    token: Token,
+    pre_erosion_buffer: &[f32],
+    pe_w: usize,
+    buffer_rows: usize,
+    pe_y_base: isize,
+    max_filled_row: isize,
+    start: usize,
+    end: usize,
+    out: &mut [f32],
+) -> usize {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let max_x = pe_w as isize - 1;
     let max_y = max_filled_row.max(0);
 
@@ -1032,7 +1071,7 @@ pub fn compute_fuzzy_erosion_blocks_simd(
         // Base cx values for 8 consecutive blocks (stride 2 in pre-erosion space)
         let base_cx: [isize; 8] = std::array::from_fn(|i| ((bx + i - start) * 2) as isize);
 
-        let mut sum = f32x8::ZERO;
+        let mut sum = f32x8::zero(token);
 
         // Process 4 sub-pixels per block: (dx, dy) in {0,1} x {0,1}
         for dy in 0..2isize {
@@ -1043,109 +1082,19 @@ pub fn compute_fuzzy_erosion_blocks_simd(
 
                 // Gather 9 neighbors for all 8 blocks
                 let v = [
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        -1,
-                        -1,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        0,
-                        -1,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        1,
-                        -1,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        -1,
-                        0,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        0,
-                        0,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        1,
-                        0,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        -1,
-                        1,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        0,
-                        1,
-                        max_x,
-                        max_y,
-                    ),
-                    gather_neighbor_circular(
-                        pre_erosion_buffer,
-                        pe_w,
-                        buffer_rows,
-                        cx,
-                        cy,
-                        1,
-                        1,
-                        max_x,
-                        max_y,
-                    ),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, -1, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, -1, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, -1, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, 0, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, 0, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, 0, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, 1, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, 1, max_x, max_y),
+                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, 1, max_x, max_y),
                 ];
 
                 // SIMD sorting network to find 4 smallest and compute weighted sum
-                sum += weighted_min4_of_9_simd(v);
+                sum += weighted_min4_of_9_simd(token, v);
             }
         }
 
@@ -2661,6 +2610,97 @@ pub const TEST_INPUTS_RATIO: [f32; 16] = [
 // Tests
 // ============================================================================
 
+// ============================================================================
+// Test dispatch wrappers (dispatch generic SIMD helpers via incant!)
+// ============================================================================
+
+/// Test wrapper: dispatch ratio_of_derivatives (non-inverted) on array input.
+#[cfg(test)]
+fn test_ratio_of_derivatives_x8(input: [f32; 8]) -> [f32; 8] {
+    fn inner(input: [f32; 8]) -> [f32; 8] {
+        incant!(test_ratio_of_derivatives_x8_impl(input))
+    }
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn test_ratio_of_derivatives_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+        let v = f32x8::from_array(token, input);
+        ratio_of_derivatives_x8_generic(token, v).to_array()
+    }
+    inner(input)
+}
+
+/// Test wrapper: dispatch ratio_of_derivatives (inverted) on array input.
+#[cfg(test)]
+fn test_ratio_of_derivatives_inv_x8(input: [f32; 8]) -> [f32; 8] {
+    fn inner(input: [f32; 8]) -> [f32; 8] {
+        incant!(test_ratio_of_derivatives_inv_x8_impl(input))
+    }
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn test_ratio_of_derivatives_inv_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+        let v = f32x8::from_array(token, input);
+        ratio_of_derivatives_inv_x8_generic(token, v).to_array()
+    }
+    inner(input)
+}
+
+/// Test wrapper: dispatch masking_sqrt on array input.
+#[cfg(test)]
+fn test_masking_sqrt_x8(input: [f32; 8]) -> [f32; 8] {
+    fn inner(input: [f32; 8]) -> [f32; 8] {
+        incant!(test_masking_sqrt_x8_impl(input))
+    }
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn test_masking_sqrt_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+        let v = f32x8::from_array(token, input);
+        masking_sqrt_x8_generic(token, v).to_array()
+    }
+    inner(input)
+}
+
+/// Test wrapper: dispatch pre_erosion_pixel on array inputs.
+#[cfg(test)]
+fn test_pre_erosion_pixel_x8(
+    pixels: [f32; 8],
+    left: [f32; 8],
+    right: [f32; 8],
+    top: [f32; 8],
+    bottom: [f32; 8],
+) -> [f32; 8] {
+    fn inner(pixels: [f32; 8], left: [f32; 8], right: [f32; 8], top: [f32; 8], bottom: [f32; 8]) -> [f32; 8] {
+        incant!(test_pre_erosion_pixel_x8_impl(pixels, left, right, top, bottom))
+    }
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn test_pre_erosion_pixel_x8_impl(
+        token: Token,
+        pixels: [f32; 8],
+        left: [f32; 8],
+        right: [f32; 8],
+        top: [f32; 8],
+        bottom: [f32; 8],
+    ) -> [f32; 8] {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+        pre_erosion_pixel_x8_generic(
+            token,
+            f32x8::from_array(token, pixels),
+            f32x8::from_array(token, left),
+            f32x8::from_array(token, right),
+            f32x8::from_array(token, top),
+            f32x8::from_array(token, bottom),
+        ).to_array()
+    }
+    inner(pixels, left, right, top, bottom)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2683,7 +2723,7 @@ mod tests {
 
     #[test]
     fn test_ratio_of_derivatives_x8_matches_scalar() {
-        let inputs = f32x8::from([
+        let input_arr: [f32; 8] = [
             TEST_INPUTS_RATIO[0],
             TEST_INPUTS_RATIO[1],
             TEST_INPUTS_RATIO[2],
@@ -2692,10 +2732,9 @@ mod tests {
             TEST_INPUTS_RATIO[5],
             TEST_INPUTS_RATIO[6],
             TEST_INPUTS_RATIO[7],
-        ]);
+        ];
 
-        let simd_result = ratio_of_derivatives_x8(inputs);
-        let simd_arr: [f32; 8] = simd_result.into();
+        let simd_arr = test_ratio_of_derivatives_x8(input_arr);
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(TEST_INPUTS_RATIO[i], false);
@@ -2712,7 +2751,7 @@ mod tests {
 
     #[test]
     fn test_ratio_of_derivatives_inv_x8_matches_scalar() {
-        let inputs = f32x8::from([
+        let input_arr: [f32; 8] = [
             TEST_INPUTS_RATIO[8],
             TEST_INPUTS_RATIO[9],
             TEST_INPUTS_RATIO[10],
@@ -2721,10 +2760,9 @@ mod tests {
             TEST_INPUTS_RATIO[13],
             TEST_INPUTS_RATIO[14],
             TEST_INPUTS_RATIO[15],
-        ]);
+        ];
 
-        let simd_result = ratio_of_derivatives_inv_x8(inputs);
-        let simd_arr: [f32; 8] = simd_result.into();
+        let simd_arr = test_ratio_of_derivatives_inv_x8(input_arr);
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(TEST_INPUTS_RATIO[8 + i], true);
@@ -2742,11 +2780,9 @@ mod tests {
     #[test]
     fn test_masking_sqrt_x8_matches_scalar() {
         // Test with typical diff_sq values (0 to 0.2 range, clamped in real usage)
-        let inputs = f32x8::from([0.0, 0.01, 0.05, 0.1, 0.15, 0.2, 0.05, 0.08]);
+        let input_arr: [f32; 8] = [0.0, 0.01, 0.05, 0.1, 0.15, 0.2, 0.05, 0.08];
 
-        let simd_result = masking_sqrt_x8(inputs);
-        let simd_arr: [f32; 8] = simd_result.into();
-        let input_arr: [f32; 8] = inputs.into();
+        let simd_arr = test_masking_sqrt_x8(input_arr);
 
         for i in 0..8 {
             let scalar_result = masking_sqrt_scalar(input_arr[i]);
@@ -2764,11 +2800,9 @@ mod tests {
     #[test]
     fn test_ratio_edge_cases() {
         // Test edge cases: zero, negative, very small, very large
-        let inputs = f32x8::from([0.0, -1.0, 0.001, 1.0, 10.0, 100.0, 255.0, 1000.0]);
+        let input_arr: [f32; 8] = [0.0, -1.0, 0.001, 1.0, 10.0, 100.0, 255.0, 1000.0];
 
-        let simd_result = ratio_of_derivatives_x8(inputs);
-        let simd_arr: [f32; 8] = simd_result.into();
-        let input_arr: [f32; 8] = inputs.into();
+        let simd_arr = test_ratio_of_derivatives_x8(input_arr);
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(input_arr[i], false);
@@ -2804,7 +2838,7 @@ mod tests {
         }
 
         // Verify SIMD produces same values
-        let inputs = f32x8::from([
+        let input_arr: [f32; 8] = [
             locked_inputs[0],
             locked_inputs[1],
             locked_inputs[2],
@@ -2813,9 +2847,8 @@ mod tests {
             0.0,
             0.0,
             0.0,
-        ]);
-        let simd_result = ratio_of_derivatives_x8(inputs);
-        let simd_arr: [f32; 8] = simd_result.into();
+        ];
+        let simd_arr = test_ratio_of_derivatives_x8(input_arr);
 
         for i in 0..4 {
             assert!(
@@ -2833,20 +2866,13 @@ mod tests {
     #[test]
     fn test_pre_erosion_pixel_x8_matches_scalar() {
         // Test data: 8 pixels with their neighbors
-        let pixels = f32x8::from([100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0, 170.0]);
-        let left = f32x8::from([95.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0]);
-        let right = f32x8::from([110.0, 120.0, 130.0, 140.0, 150.0, 160.0, 170.0, 175.0]);
-        let top = f32x8::from([98.0, 108.0, 118.0, 128.0, 138.0, 148.0, 158.0, 168.0]);
-        let bottom = f32x8::from([102.0, 112.0, 122.0, 132.0, 142.0, 152.0, 162.0, 172.0]);
+        let pixels_arr: [f32; 8] = [100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0, 170.0];
+        let left_arr: [f32; 8] = [95.0, 100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0];
+        let right_arr: [f32; 8] = [110.0, 120.0, 130.0, 140.0, 150.0, 160.0, 170.0, 175.0];
+        let top_arr: [f32; 8] = [98.0, 108.0, 118.0, 128.0, 138.0, 148.0, 158.0, 168.0];
+        let bottom_arr: [f32; 8] = [102.0, 112.0, 122.0, 132.0, 142.0, 152.0, 162.0, 172.0];
 
-        let simd_result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
-        let simd_arr: [f32; 8] = simd_result.into();
-
-        let pixels_arr: [f32; 8] = pixels.into();
-        let left_arr: [f32; 8] = left.into();
-        let right_arr: [f32; 8] = right.into();
-        let top_arr: [f32; 8] = top.into();
-        let bottom_arr: [f32; 8] = bottom.into();
+        let simd_arr = test_pre_erosion_pixel_x8(pixels_arr, left_arr, right_arr, top_arr, bottom_arr);
 
         for i in 0..8 {
             // Scalar reference calculation
