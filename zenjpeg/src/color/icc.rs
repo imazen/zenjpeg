@@ -233,10 +233,11 @@ pub fn apply_icc_transform_f32(
 /// Standard moxcms transform options for ICC color transforms.
 #[cfg(feature = "moxcms")]
 fn moxcms_transform_opts() -> moxcms::TransformOptions {
-    use moxcms::{BarycentricWeightScale, TransformOptions};
+    use moxcms::{BarycentricWeightScale, InterpolationMethod, TransformOptions};
     TransformOptions {
         allow_use_cicp_transfer: false,
         barycentric_weight_scale: BarycentricWeightScale::High,
+        interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
 }
