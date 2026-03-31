@@ -2415,10 +2415,13 @@ fn test_420_scanline_vs_buffered_per_transform() {
         // ALL non-swapping transforms MUST produce identical output between
         // buffered and scanline paths. Any difference is a bug.
         assert_eq!(
-            max_diff, 0,
+            max_diff,
+            0,
             "{:?}: scanline vs buffered max_diff={}, {} pixels differ. \
              4:2:0 scanline path must match buffered decode exactly.",
-            transform, max_diff, diff_count / 3
+            transform,
+            max_diff,
+            diff_count / 3
         );
     }
 }
