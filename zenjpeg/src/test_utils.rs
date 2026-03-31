@@ -509,11 +509,15 @@ pub fn find_cjpegli() -> Option<PathBuf> {
         }
     }
 
-    // Check relative to manifest dir
+    // Check relative to manifest dir (Unix and Windows/VS paths)
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let base = PathBuf::from(&manifest);
         let candidates = [
-            PathBuf::from(&manifest).join("../internal/jpegli-cpp/build/tools/cjpegli"),
-            PathBuf::from(&manifest).join("../../jpegli/build/tools/cjpegli"),
+            base.join("../internal/jpegli-cpp/build/tools/cjpegli"),
+            base.join("../internal/jpegli-cpp/build/tools/cjpegli.exe"),
+            base.join("../internal/jpegli-cpp/build/tools/Release/cjpegli.exe"),
+            base.join("../../jpegli/build/tools/cjpegli"),
+            base.join("../../jpegli/build/tools/cjpegli.exe"),
         ];
         for path in candidates {
             if path.exists() {
@@ -522,8 +526,9 @@ pub fn find_cjpegli() -> Option<PathBuf> {
         }
     }
 
-    // Check PATH using which
-    std::process::Command::new("which")
+    // Check PATH
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    std::process::Command::new(which_cmd)
         .arg("cjpegli")
         .output()
         .ok()
@@ -531,7 +536,7 @@ pub fn find_cjpegli() -> Option<PathBuf> {
             if o.status.success() {
                 String::from_utf8(o.stdout)
                     .ok()
-                    .map(|s| PathBuf::from(s.trim()))
+                    .map(|s| PathBuf::from(s.lines().next().unwrap_or("").trim()))
             } else {
                 None
             }
@@ -563,11 +568,15 @@ pub fn find_djpegli() -> Option<PathBuf> {
         }
     }
 
-    // Check relative to manifest dir
+    // Check relative to manifest dir (Unix and Windows/VS paths)
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let base = PathBuf::from(&manifest);
         let candidates = [
-            PathBuf::from(&manifest).join("../internal/jpegli-cpp/build/tools/djpegli"),
-            PathBuf::from(&manifest).join("../../jpegli/build/tools/djpegli"),
+            base.join("../internal/jpegli-cpp/build/tools/djpegli"),
+            base.join("../internal/jpegli-cpp/build/tools/djpegli.exe"),
+            base.join("../internal/jpegli-cpp/build/tools/Release/djpegli.exe"),
+            base.join("../../jpegli/build/tools/djpegli"),
+            base.join("../../jpegli/build/tools/djpegli.exe"),
         ];
         for path in candidates {
             if path.exists() {
@@ -577,7 +586,8 @@ pub fn find_djpegli() -> Option<PathBuf> {
     }
 
     // Check PATH
-    std::process::Command::new("which")
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    std::process::Command::new(which_cmd)
         .arg("djpegli")
         .output()
         .ok()
@@ -585,7 +595,7 @@ pub fn find_djpegli() -> Option<PathBuf> {
             if o.status.success() {
                 String::from_utf8(o.stdout)
                     .ok()
-                    .map(|s| PathBuf::from(s.trim()))
+                    .map(|s| PathBuf::from(s.lines().next().unwrap_or("").trim()))
             } else {
                 None
             }

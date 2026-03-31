@@ -139,16 +139,20 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install CMake and Ninja
+      - name: Install build tools and libjpeg-turbo
         shell: bash
         run: |
-          if command -v cmake &>/dev/null && command -v ninja &>/dev/null; then
-            echo "CMake and Ninja already installed"
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y cmake ninja-build
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y cmake ninja-build libjpeg-turbo-progs
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install jpeg-turbo
+            echo "$(brew --prefix jpeg-turbo)/bin" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            choco install libjpeg-turbo --yes --no-progress
+            echo "C:\\libjpeg-turbo64\\bin" >> "$GITHUB_PATH"
           fi
           cmake --version
-          ninja --version || true
+          djpeg -version || djpeg --version || echo "djpeg not in PATH yet (will be available after PATH update)"
 
       - name: Clone sibling repos
         shell: bash
@@ -180,6 +184,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: cpp-parity
+
+      - name: Build C++ jpegli tools (cjpegli, djpegli)
+        shell: bash
+        run: |
+          cd internal/jpegli-cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DJPEGXL_ENABLE_TOOLS=ON \
+            -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON \
+            -DJPEGXL_STATIC=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DJPEGXL_ENABLE_DOXYGEN=OFF \
+            -DJPEGXL_ENABLE_MANPAGES=OFF \
+            -DJPEGXL_ENABLE_BENCHMARK=OFF \
+            -DJPEGXL_ENABLE_EXAMPLES=OFF \
+            -DJPEGXL_ENABLE_JNI=OFF \
+            -DJPEGXL_ENABLE_SJPEG=OFF \
+            -DJPEGXL_ENABLE_OPENEXR=OFF \
+            -DJPEGXL_ENABLE_SKCMS=OFF \
+            -DJPEGXL_ENABLE_TCMALLOC=OFF \
+            -DJPEGXL_ENABLE_FUZZERS=OFF \
+            -DJPEGXL_ENABLE_VIEWERS=OFF \
+            -DJPEGXL_BUNDLE_LIBPNG=OFF
+          cmake --build build --target cjpegli djpegli --config Release --parallel
 
       - name: Build (includes C++ jpegli compilation)
         run: cargo build -p zenjpeg --release --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
