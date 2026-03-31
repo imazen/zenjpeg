@@ -596,7 +596,10 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
     #[cfg(target_arch = "x86_64")]
     {
         if let Some(token) = archmage::X64V3Token::summon() {
-            let chunks = num_pixels / 8;
+            // Each 8-pixel SIMD chunk uses two overlapping 16-byte loads: [0..16] and [12..28].
+            // This requires rgb_data[rgb_idx..rgb_idx+28] to be valid — 4 bytes past the 24-byte
+            // pixel payload. Reduce chunks to avoid the out-of-bounds read on the last chunk.
+            let chunks = rgb_data.len().saturating_sub(4) / 24;
 
             for chunk in 0..chunks {
                 let pixel_idx = chunk * 8;
