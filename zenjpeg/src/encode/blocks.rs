@@ -16,7 +16,6 @@ use crate::types::Subsampling;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
 
-
 /// Frequency counts from an optimized Huffman encoding pass.
 ///
 /// Contains the raw symbol frequencies for each of the 4 Huffman tables

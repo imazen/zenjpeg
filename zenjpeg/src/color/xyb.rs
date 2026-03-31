@@ -778,7 +778,6 @@ fn gather_bgra_8_arr(bgra_data: &[u8], base: usize) -> ([f32; 8], [f32; 8], [f32
     (r, g, b)
 }
 
-
 // ============================================================================
 // SIMD PUBLIC API: sRGB → Scaled XYB Planes
 // ============================================================================
@@ -821,7 +820,9 @@ pub fn srgb_to_scaled_xyb_planes_simd_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
-    incant!(srgb_to_scaled_xyb_planes_rgb_impl(rgb_data, x_plane, y_plane, b_plane, num_pixels));
+    incant!(srgb_to_scaled_xyb_planes_rgb_impl(
+        rgb_data, x_plane, y_plane, b_plane, num_pixels
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -840,7 +841,9 @@ fn srgb_to_scaled_xyb_planes_rgb_impl(
         let pixel_idx = chunk * 8;
         let rgb_idx = pixel_idx * 3;
         let (r_arr, g_arr, b_arr) = gather_rgb_8_arr(rgb_data, rgb_idx);
-        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
+        generic_linear_rgb_to_scaled_xyb(
+            token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
+        );
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -890,7 +893,9 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
-    incant!(srgb_to_scaled_xyb_planes_rgba_impl(rgba_data, x_plane, y_plane, b_plane, num_pixels));
+    incant!(srgb_to_scaled_xyb_planes_rgba_impl(
+        rgba_data, x_plane, y_plane, b_plane, num_pixels
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -909,7 +914,9 @@ fn srgb_to_scaled_xyb_planes_rgba_impl(
         let pixel_idx = chunk * 8;
         let rgba_idx = pixel_idx * 4;
         let (r_arr, g_arr, b_arr) = gather_rgba_8_arr(rgba_data, rgba_idx);
-        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
+        generic_linear_rgb_to_scaled_xyb(
+            token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
+        );
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -959,7 +966,9 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
     assert!(y_plane.len() >= num_pixels);
     assert!(b_plane.len() >= num_pixels);
 
-    incant!(srgb_to_scaled_xyb_planes_bgra_impl(bgra_data, x_plane, y_plane, b_plane, num_pixels));
+    incant!(srgb_to_scaled_xyb_planes_bgra_impl(
+        bgra_data, x_plane, y_plane, b_plane, num_pixels
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -978,7 +987,9 @@ fn srgb_to_scaled_xyb_planes_bgra_impl(
         let pixel_idx = chunk * 8;
         let bgra_idx = pixel_idx * 4;
         let (r_arr, g_arr, b_arr) = gather_bgra_8_arr(bgra_data, bgra_idx);
-        generic_linear_rgb_to_scaled_xyb(token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx);
+        generic_linear_rgb_to_scaled_xyb(
+            token, r_arr, g_arr, b_arr, x_plane, y_plane, b_plane, pixel_idx,
+        );
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1111,36 +1122,45 @@ fn xyb_planes_to_rgb_u8_impl(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let p0 = f32x8::from_array(token, [
-            plane0[base],
-            plane0[base + 1],
-            plane0[base + 2],
-            plane0[base + 3],
-            plane0[base + 4],
-            plane0[base + 5],
-            plane0[base + 6],
-            plane0[base + 7],
-        ]);
-        let p1 = f32x8::from_array(token, [
-            plane1[base],
-            plane1[base + 1],
-            plane1[base + 2],
-            plane1[base + 3],
-            plane1[base + 4],
-            plane1[base + 5],
-            plane1[base + 6],
-            plane1[base + 7],
-        ]);
-        let p2 = f32x8::from_array(token, [
-            plane2[base],
-            plane2[base + 1],
-            plane2[base + 2],
-            plane2[base + 3],
-            plane2[base + 4],
-            plane2[base + 5],
-            plane2[base + 6],
-            plane2[base + 7],
-        ]);
+        let p0 = f32x8::from_array(
+            token,
+            [
+                plane0[base],
+                plane0[base + 1],
+                plane0[base + 2],
+                plane0[base + 3],
+                plane0[base + 4],
+                plane0[base + 5],
+                plane0[base + 6],
+                plane0[base + 7],
+            ],
+        );
+        let p1 = f32x8::from_array(
+            token,
+            [
+                plane1[base],
+                plane1[base + 1],
+                plane1[base + 2],
+                plane1[base + 3],
+                plane1[base + 4],
+                plane1[base + 5],
+                plane1[base + 6],
+                plane1[base + 7],
+            ],
+        );
+        let p2 = f32x8::from_array(
+            token,
+            [
+                plane2[base],
+                plane2[base + 1],
+                plane2[base + 2],
+                plane2[base + 3],
+                plane2[base + 4],
+                plane2[base + 5],
+                plane2[base + 6],
+                plane2[base + 7],
+            ],
+        );
 
         let r = (p0 + offset).max(zero).min(max_val);
         let g = (p1 + offset).max(zero).min(max_val);
@@ -1199,36 +1219,45 @@ fn xyb_planes_to_rgb_f32_impl(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let p0 = f32x8::from_array(token, [
-            plane0[base],
-            plane0[base + 1],
-            plane0[base + 2],
-            plane0[base + 3],
-            plane0[base + 4],
-            plane0[base + 5],
-            plane0[base + 6],
-            plane0[base + 7],
-        ]);
-        let p1 = f32x8::from_array(token, [
-            plane1[base],
-            plane1[base + 1],
-            plane1[base + 2],
-            plane1[base + 3],
-            plane1[base + 4],
-            plane1[base + 5],
-            plane1[base + 6],
-            plane1[base + 7],
-        ]);
-        let p2 = f32x8::from_array(token, [
-            plane2[base],
-            plane2[base + 1],
-            plane2[base + 2],
-            plane2[base + 3],
-            plane2[base + 4],
-            plane2[base + 5],
-            plane2[base + 6],
-            plane2[base + 7],
-        ]);
+        let p0 = f32x8::from_array(
+            token,
+            [
+                plane0[base],
+                plane0[base + 1],
+                plane0[base + 2],
+                plane0[base + 3],
+                plane0[base + 4],
+                plane0[base + 5],
+                plane0[base + 6],
+                plane0[base + 7],
+            ],
+        );
+        let p1 = f32x8::from_array(
+            token,
+            [
+                plane1[base],
+                plane1[base + 1],
+                plane1[base + 2],
+                plane1[base + 3],
+                plane1[base + 4],
+                plane1[base + 5],
+                plane1[base + 6],
+                plane1[base + 7],
+            ],
+        );
+        let p2 = f32x8::from_array(
+            token,
+            [
+                plane2[base],
+                plane2[base + 1],
+                plane2[base + 2],
+                plane2[base + 3],
+                plane2[base + 4],
+                plane2[base + 5],
+                plane2[base + 6],
+                plane2[base + 7],
+            ],
+        );
 
         let r = ((p0 + offset) * scale).max(zero).min(one);
         let g = ((p1 + offset) * scale).max(zero).min(one);

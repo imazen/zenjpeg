@@ -354,7 +354,9 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     cr_plane: &[f32],
     rgb: &mut [u8],
 ) {
-    incant!(ycbcr_planes_f32_to_rgb_u8_impl(y_plane, cb_plane, cr_plane, rgb));
+    incant!(ycbcr_planes_f32_to_rgb_u8_impl(
+        y_plane, cb_plane, cr_plane, rgb
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -390,9 +392,18 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         let i = chunk * 8;
 
         // Load 8 values from each plane
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap().clone());
-        let cb = f32x8::from_array(token, <&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap().clone());
-        let cr = f32x8::from_array(token, <&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap().clone(),
+        );
+        let cb = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap().clone(),
+        );
+        let cr = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap().clone(),
+        );
 
         let y_off = y + offset;
 
@@ -449,7 +460,9 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
     cr_plane: &[f32],
     rgb: &mut [f32],
 ) {
-    incant!(ycbcr_planes_f32_to_rgb_f32_impl(y_plane, cb_plane, cr_plane, rgb));
+    incant!(ycbcr_planes_f32_to_rgb_f32_impl(
+        y_plane, cb_plane, cr_plane, rgb
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -481,9 +494,24 @@ fn ycbcr_planes_f32_to_rgb_f32_impl(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
-        let cb = f32x8::from_array(token, <&[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap().clone());
-        let cr = f32x8::from_array(token, <&[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
+        let cb = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&cb_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
+        let cr = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&cr_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
 
         let y_off = y + offset;
 
@@ -544,7 +572,12 @@ fn gray_f32_to_rgb_u8_impl(token: Token, y_plane: &[f32], rgb: &mut [u8]) {
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
@@ -592,7 +625,12 @@ fn gray_f32_to_rgb_f32_impl(token: Token, y_plane: &[f32], rgb: &mut [f32]) {
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
 
         let val = (y + offset) * scale;
         let arr = val.to_array();
@@ -637,7 +675,12 @@ fn gray_f32_to_gray_u8_impl(token: Token, y_plane: &[f32], output: &mut [u8]) {
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
 
         let val = (y + offset).max(zero).min(max_val);
         let arr = val.to_array();
@@ -677,7 +720,12 @@ fn gray_f32_to_gray_f32_impl(token: Token, y_plane: &[f32], output: &mut [f32]) 
     let chunks = num_pixels / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let y = f32x8::from_array(token, <&[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap().clone());
+        let y = f32x8::from_array(
+            token,
+            <&[f32; 8]>::try_from(&y_plane[base..base + 8])
+                .unwrap()
+                .clone(),
+        );
 
         let val = (y + offset) * scale;
         let arr = val.to_array();

@@ -174,20 +174,14 @@ pub fn linear_rgbf32_to_ycbcr_x8(
 
 /// BT.601 RGB→YCbCr matrix multiply for 8 pixels (SoA layout).
 #[inline(always)]
-fn rgb_to_ycbcr_x8(
-    r: &[f32; 8],
-    g: &[f32; 8],
-    b: &[f32; 8],
-) -> ([f32; 8], [f32; 8], [f32; 8]) {
+fn rgb_to_ycbcr_x8(r: &[f32; 8], g: &[f32; 8], b: &[f32; 8]) -> ([f32; 8], [f32; 8], [f32; 8]) {
     let mut y = [0.0f32; 8];
     let mut cb = [0.0f32; 8];
     let mut cr = [0.0f32; 8];
     for i in 0..8 {
         y[i] = YCBCR_R_TO_Y * r[i] + YCBCR_G_TO_Y * g[i] + YCBCR_B_TO_Y * b[i];
-        cb[i] = YCBCR_R_TO_CB * r[i] + YCBCR_G_TO_CB * g[i] + YCBCR_B_TO_CB * b[i]
-            + CHROMA_OFFSET;
-        cr[i] = YCBCR_R_TO_CR * r[i] + YCBCR_G_TO_CR * g[i] + YCBCR_B_TO_CR * b[i]
-            + CHROMA_OFFSET;
+        cb[i] = YCBCR_R_TO_CB * r[i] + YCBCR_G_TO_CB * g[i] + YCBCR_B_TO_CB * b[i] + CHROMA_OFFSET;
+        cr[i] = YCBCR_R_TO_CR * r[i] + YCBCR_G_TO_CR * g[i] + YCBCR_B_TO_CR * b[i] + CHROMA_OFFSET;
     }
     (y, cb, cr)
 }

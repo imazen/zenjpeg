@@ -218,12 +218,7 @@ fn correct_h_row(blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
 
 #[magetypes(v3, scalar)]
 #[inline(always)]
-fn correct_h_row_impl(
-    token: Token,
-    blocks: &[f32],
-    offsets: &mut [f32],
-    blocks_wide: usize,
-) {
+fn correct_h_row_impl(token: Token, blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
@@ -265,7 +260,13 @@ fn correct_v_between(
     bot_off: &mut [f32],
     blocks_wide: usize,
 ) {
-    incant!(correct_v_between_impl(top, top_off, bot, bot_off, blocks_wide));
+    incant!(correct_v_between_impl(
+        top,
+        top_off,
+        bot,
+        bot_off,
+        blocks_wide
+    ));
 }
 
 #[magetypes(v3, scalar)]
@@ -360,7 +361,15 @@ fn finalize_row(
     pw: usize,
     plane: &mut [f32],
 ) {
-    incant!(finalize_row_impl(blocks, offsets, quant_f32, by, blocks_wide, pw, plane));
+    incant!(finalize_row_impl(
+        blocks,
+        offsets,
+        quant_f32,
+        by,
+        blocks_wide,
+        pw,
+        plane
+    ));
 }
 
 #[magetypes(v3, scalar)]
@@ -389,8 +398,7 @@ fn finalize_row_impl(
 
         for k in (0..64).step_by(8) {
             let mid = f32x8::load(token, blocks[off + k..off + k + 8].try_into().unwrap());
-            let correction =
-                f32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
+            let correction = f32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
             let q = f32x8::load(token, quant_f32[k..k + 8].try_into().unwrap());
             let half_q = q * half;
 

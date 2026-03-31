@@ -6,20 +6,20 @@
 //! - **Recursive (jpegli)**: Uses recursive splitting for exact C++ jpegli compatibility
 //! - **AAN (libjpeg)**: Arai-Agui-Nakajima algorithm with only 5 multiplies per 1D DCT
 //!
-//! SIMD optimization via the `wide` crate is always enabled.
+//! SIMD optimization via magetypes generics with multi-tier dispatch.
 //!
 //! # SIMD Architecture
 //!
 //! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
-//! - **magetypes path** : Token-gated AVX2+FMA via `magetypes::simd::f32x8`
-//! - **wide path** (default fallback): Portable SIMD via `wide::f32x8`
+//! - **magetypes path** (x86_64): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
+//! - **generic path** (fallback): Portable SIMD via `magetypes::simd::generic::f32x8`
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
-use archmage::autoversion;
-use wide::f32x8;
+use archmage::prelude::*;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // ============================================================================
 // Recursive DCT (jpegli-compatible)
@@ -231,7 +231,7 @@ fn dct1d_8(mem: &mut [f32]) {
     inverse_even_odd::<8>(&tmp, mem);
 }
 
-// SIMD-optimized implementations (always available via `wide` crate)
+// SIMD-optimized implementations using magetypes generics
 pub(crate) mod simd {
     use super::*;
 
@@ -241,165 +241,15 @@ pub(crate) mod simd {
     #[cfg(target_arch = "x86_64")]
     use magetypes::simd::f32x8 as mf32x8;
 
-    // SIMD versions of WC constants for parallel DCT
-    // Note: The parallel DCT approach has poor cache locality and doesn't
-    // improve performance compared to row-by-row processing. Kept for reference.
-    #[allow(dead_code)]
-    const WC4_0: f32x8 = f32x8::new([0.541196100146197; 8]);
-    #[allow(dead_code)]
-    const WC4_1: f32x8 = f32x8::new([1.3065629648763764; 8]);
-
-    #[allow(dead_code)]
-    const WC8_0: f32x8 = f32x8::new([0.5097955791041592; 8]);
-    #[allow(dead_code)]
-    const WC8_1: f32x8 = f32x8::new([0.6013448869350453; 8]);
-    #[allow(dead_code)]
-    const WC8_2: f32x8 = f32x8::new([0.8999762231364156; 8]);
-    #[allow(dead_code)]
-    const WC8_3: f32x8 = f32x8::new([2.5629154477415055; 8]);
-
-    #[allow(dead_code)]
-    const SQRT2_VEC: f32x8 = f32x8::new([1.41421356237; 8]);
-
-    /// DCT base case for N=2 on SIMD vectors
-    /// Processes 8 independent 2-point DCTs in parallel
-    #[allow(dead_code)]
-    #[inline]
-    fn dct1d_2_simd(m0: &mut f32x8, m1: &mut f32x8) {
-        let in0 = *m0;
-        let in1 = *m1;
-        *m0 = in0 + in1;
-        *m1 = in0 - in1;
-    }
-
-    /// DCT for N=4 on SIMD vectors
-    /// Processes 8 independent 4-point DCTs in parallel
-    #[allow(dead_code)]
-    #[inline]
-    fn dct1d_4_simd(m: &mut [f32x8; 4]) {
-        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
-        let t0 = m[0] + m[3]; // m[0] + m[4-1-0]
-        let t1 = m[1] + m[2]; // m[1] + m[4-1-1]
-
-        // SubReverse<2>: tmp[2:4] = m[0:2] - reverse(m[2:4])
-        let t2 = m[0] - m[3];
-        let t3 = m[1] - m[2];
-
-        // DCT1D<2> on first half (t0, t1)
-        let r0 = t0 + t1;
-        let r1 = t0 - t1;
-
-        // Multiply by WC4
-        let t2_scaled = t2 * WC4_0;
-        let t3_scaled = t3 * WC4_1;
-
-        // DCT1D<2> on second half
-        let r2 = t2_scaled + t3_scaled;
-        let r3 = t2_scaled - t3_scaled;
-
-        // B<2>: r2 = r2 * sqrt2 + r3
-        let r2_final = r2 * SQRT2_VEC + r3;
-
-        // InverseEvenOdd<4>: interleave even/odd
-        m[0] = r0; // even[0]
-        m[1] = r2_final; // odd[0]
-        m[2] = r1; // even[1]
-        m[3] = r3; // odd[1]
-    }
-
-    /// DCT for N=8 on SIMD vectors
-    /// Processes 8 independent 8-point DCTs in parallel
-    #[allow(dead_code)]
-    #[inline]
-    fn dct1d_8_simd(m: &mut [f32x8; 8]) {
-        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
-        let t0 = m[0] + m[7];
-        let t1 = m[1] + m[6];
-        let t2 = m[2] + m[5];
-        let t3 = m[3] + m[4];
-
-        // SubReverse<4>: tmp[4:8] = m[0:4] - reverse(m[4:8])
-        let t4 = m[0] - m[7];
-        let t5 = m[1] - m[6];
-        let t6 = m[2] - m[5];
-        let t7 = m[3] - m[4];
-
-        // DCT1D<4> on first half (t0-t3)
-        let mut first = [t0, t1, t2, t3];
-        dct1d_4_simd(&mut first);
-
-        // Multiply by WC8
-        let t4_scaled = t4 * WC8_0;
-        let t5_scaled = t5 * WC8_1;
-        let t6_scaled = t6 * WC8_2;
-        let t7_scaled = t7 * WC8_3;
-
-        // DCT1D<4> on second half
-        let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
-        dct1d_4_simd(&mut second);
-
-        // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
-        second[0] = second[0] * SQRT2_VEC + second[1];
-        second[1] += second[2];
-        second[2] += second[3];
-        // second[3] stays the same
-
-        // InverseEvenOdd<8>: interleave
-        m[0] = first[0];
-        m[1] = second[0];
-        m[2] = first[1];
-        m[3] = second[1];
-        m[4] = first[2];
-        m[5] = second[2];
-        m[6] = first[3];
-        m[7] = second[3];
-    }
-
-    /// Process 8 rows simultaneously using SIMD with AVX2 transpose.
-    /// Uses cache-friendly row loads + fast transpose instead of element-by-element gather.
-    #[autoversion]
-    #[allow(dead_code)]
-    pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Step 1: Load all 8 rows (cache-friendly sequential access, zero-cost)
-        let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
-        for row in 0..8 {
-            let k = row * 8;
-            let row_slice: [f32; 8] = input[k..k + 8].try_into().unwrap();
-            rows[row] = f32x8::from(row_slice);
-        }
-
-        // Step 2: Transpose to column-major using AVX2 if available
-        // After transpose: mem[col] = [row0[col], row1[col], ..., row7[col]]
-        let mut mem = transpose_f32x8_array(&rows);
-
-        // Step 3: Execute 8 DCT-1D operations in parallel
-        dct1d_8_simd(&mut mem);
-
-        // Step 4: Transpose back to row-major and store
-        let result = transpose_f32x8_array(&mem);
-        for (i, r) in result.iter().enumerate() {
-            let arr = r.to_array();
-            output[i * 8..i * 8 + 8].copy_from_slice(&arr);
-        }
-    }
-
-    /// Transpose an 8x8 matrix of f32x8 vectors using wide's built-in transpose.
-    /// AVX-accelerated when available.
-    #[allow(dead_code)]
-    #[inline]
-    fn transpose_f32x8_array(input: &[f32x8; 8]) -> [f32x8; 8] {
-        f32x8::transpose(*input)
-    }
-
     /// SIMD-optimized 8x8 transpose with archmage runtime dispatch.
-    /// Uses magetypes AVX2 intrinsics when available, falls back to wide.
+    /// Uses magetypes AVX2 intrinsics when available, falls back to generic.
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
             return mage_transpose_8x8(token, input, output);
         }
 
-        transpose_8x8_wide(input, output);
+        incant!(transpose_8x8_generic(input, output));
     }
 
     /// AVX2 transpose using magetypes intrinsics (load → transpose → store).
@@ -411,91 +261,101 @@ pub(crate) mod simd {
         mf32x8::store_8x8(&rows, output);
     }
 
-    /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).
-    /// (Safe fallback for non-x86_64 targets)
-    #[allow(dead_code)]
-    #[inline]
-    fn transpose_8x8_wide(input: &[f32; 64], output: &mut [f32; 64]) {
-        let rows = [
-            f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[16..24]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[24..32]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[32..40]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[40..48]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[48..56]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
-        ];
-        let transposed = f32x8::transpose(rows);
-        output[0..8].copy_from_slice(&transposed[0].to_array());
-        output[8..16].copy_from_slice(&transposed[1].to_array());
-        output[16..24].copy_from_slice(&transposed[2].to_array());
-        output[24..32].copy_from_slice(&transposed[3].to_array());
-        output[32..40].copy_from_slice(&transposed[4].to_array());
-        output[40..48].copy_from_slice(&transposed[5].to_array());
-        output[48..56].copy_from_slice(&transposed[6].to_array());
-        output[56..64].copy_from_slice(&transposed[7].to_array());
+    /// Generic transpose fallback using magetypes generics.
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn transpose_8x8_generic(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+
+        let mut rows = f32x8::load_8x8(input);
+        f32x8::transpose_8x8(&mut rows);
+        f32x8::store_8x8(&rows, output);
     }
 
-    /// Transpose 8 f32x8 vectors in-place using wide's built-in transpose.
+    /// DCT for N=4 on generic f32x8 vectors (helper for dct_1d_vec_generic)
     #[inline(always)]
-    fn transpose_vec(rows: [f32x8; 8]) -> [f32x8; 8] {
-        f32x8::transpose(rows)
+    fn dct_1d_4_vec_generic<T: magetypes::simd::backends::F32x8Backend>(
+        token: T,
+        m: [GenericF32x8<T>; 4],
+    ) -> [GenericF32x8<T>; 4] {
+        #[allow(non_camel_case_types)]
+        type f32x8<U> = GenericF32x8<U>;
+
+        let wc4_0 = f32x8::splat(token, 0.541196100146197);
+        let wc4_1 = f32x8::splat(token, 1.3065629648763764);
+        let sqrt2 = f32x8::splat(token, 1.41421356237);
+
+        // AddReverse<2>
+        let t0 = m[0] + m[3];
+        let t1 = m[1] + m[2];
+
+        // SubReverse<2>
+        let t2 = m[0] - m[3];
+        let t3 = m[1] - m[2];
+
+        // DCT1D<2> on first half
+        let r0 = t0 + t1;
+        let r1 = t0 - t1;
+
+        // Multiply by WC4
+        let t2_scaled = t2 * wc4_0;
+        let t3_scaled = t3 * wc4_1;
+
+        // DCT1D<2> on second half
+        let r2 = t2_scaled + t3_scaled;
+        let r3 = t2_scaled - t3_scaled;
+
+        // B<2>: r2 = r2 * sqrt2 + r3
+        let r2_final = r2 * sqrt2 + r3;
+
+        // InverseEvenOdd<4>: interleave even/odd
+        [r0, r2_final, r1, r3]
     }
 
-    /// 1/8 scaling factor for DCT normalization.
-    /// Applied after each 1D DCT pass, giving 1/64 total scaling (matching C++ jpegli).
-    const DCT_SCALE: f32x8 = f32x8::new([1.0 / 8.0; 8]);
-
-    /// Apply 1/8 scaling to 8 f32x8 vectors.
+    /// Vectorized 1D DCT on 8 rows in parallel (generic over backend).
     #[inline(always)]
-    fn scale_vec(v: [f32x8; 8]) -> [f32x8; 8] {
-        [
-            v[0] * DCT_SCALE,
-            v[1] * DCT_SCALE,
-            v[2] * DCT_SCALE,
-            v[3] * DCT_SCALE,
-            v[4] * DCT_SCALE,
-            v[5] * DCT_SCALE,
-            v[6] * DCT_SCALE,
-            v[7] * DCT_SCALE,
-        ]
-    }
+    fn dct_1d_vec_generic<T: magetypes::simd::backends::F32x8Backend>(
+        token: T,
+        m: [GenericF32x8<T>; 8],
+    ) -> [GenericF32x8<T>; 8] {
+        #[allow(non_camel_case_types)]
+        type f32x8<U> = GenericF32x8<U>;
 
-    /// Vectorized 1D DCT on 8 rows in parallel.
-    /// Input: 8 f32x8 vectors where each represents corresponding values from 8 rows.
-    /// (i.e., m[0] contains element 0 from each of 8 rows)
-    /// Returns: transformed values in the same layout.
-    #[inline(always)]
-    fn dct_1d_vec(m: [f32x8; 8]) -> [f32x8; 8] {
-        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
+        let wc8_0 = f32x8::splat(token, 0.5097955791041592);
+        let wc8_1 = f32x8::splat(token, 0.6013448869350453);
+        let wc8_2 = f32x8::splat(token, 0.8999762231364156);
+        let wc8_3 = f32x8::splat(token, 2.5629154477415055);
+        let sqrt2 = f32x8::splat(token, 1.41421356237);
+
+        // AddReverse<4>
         let t0 = m[0] + m[7];
         let t1 = m[1] + m[6];
         let t2 = m[2] + m[5];
         let t3 = m[3] + m[4];
 
-        // SubReverse<4>: tmp[4:8] = m[0:4] - reverse(m[4:8])
+        // SubReverse<4>
         let t4 = m[0] - m[7];
         let t5 = m[1] - m[6];
         let t6 = m[2] - m[5];
         let t7 = m[3] - m[4];
 
-        // DCT1D<4> on first half (t0-t3)
-        let first = dct_1d_4_vec([t0, t1, t2, t3]);
+        // DCT1D<4> on first half
+        let first = dct_1d_4_vec_generic(token, [t0, t1, t2, t3]);
 
         // Multiply by WC8
-        let t4_scaled = t4 * WC8_0;
-        let t5_scaled = t5 * WC8_1;
-        let t6_scaled = t6 * WC8_2;
-        let t7_scaled = t7 * WC8_3;
+        let t4_scaled = t4 * wc8_0;
+        let t5_scaled = t5 * wc8_1;
+        let t6_scaled = t6 * wc8_2;
+        let t7_scaled = t7 * wc8_3;
 
         // DCT1D<4> on second half
-        let mut second = dct_1d_4_vec([t4_scaled, t5_scaled, t6_scaled, t7_scaled]);
+        let mut second = dct_1d_4_vec_generic(token, [t4_scaled, t5_scaled, t6_scaled, t7_scaled]);
 
         // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
-        second[0] = second[0] * SQRT2_VEC + second[1];
-        second[1] += second[2];
-        second[2] += second[3];
+        second[0] = second[0] * sqrt2 + second[1];
+        second[1] = second[1] + second[2];
+        second[2] = second[2] + second[3];
         // second[3] stays the same
 
         // InverseEvenOdd<8>: interleave
@@ -504,40 +364,56 @@ pub(crate) mod simd {
         ]
     }
 
-    /// DCT for N=4 on SIMD vectors (helper for dct_1d_vec)
+    /// Apply 1/8 scaling to 8 generic f32x8 vectors.
     #[inline(always)]
-    fn dct_1d_4_vec(m: [f32x8; 4]) -> [f32x8; 4] {
-        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
-        let t0 = m[0] + m[3];
-        let t1 = m[1] + m[2];
+    fn scale_vec_generic<T: magetypes::simd::backends::F32x8Backend>(
+        token: T,
+        v: [GenericF32x8<T>; 8],
+    ) -> [GenericF32x8<T>; 8] {
+        let scale = GenericF32x8::<T>::splat(token, 1.0 / 8.0);
+        [
+            v[0] * scale,
+            v[1] * scale,
+            v[2] * scale,
+            v[3] * scale,
+            v[4] * scale,
+            v[5] * scale,
+            v[6] * scale,
+            v[7] * scale,
+        ]
+    }
 
-        // SubReverse<2>: tmp[2:4] = m[0:2] - reverse(m[2:4])
-        let t2 = m[0] - m[3];
-        let t3 = m[1] - m[2];
+    /// Process 8 rows simultaneously using SIMD with transpose.
+    /// Uses magetypes generics for multi-tier dispatch.
+    #[allow(dead_code)]
+    pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
+        incant!(dct_8rows_parallel_impl(input, output));
+    }
 
-        // DCT1D<2> on first half (t0, t1)
-        let r0 = t0 + t1;
-        let r1 = t0 - t1;
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[allow(dead_code)]
+    fn dct_8rows_parallel_impl(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
 
-        // Multiply by WC4
-        let t2_scaled = t2 * WC4_0;
-        let t3_scaled = t3 * WC4_1;
+        // Load all 8 rows
+        let mut rows = f32x8::load_8x8(input);
 
-        // DCT1D<2> on second half
-        let r2 = t2_scaled + t3_scaled;
-        let r3 = t2_scaled - t3_scaled;
+        // Transpose to column-major
+        f32x8::transpose_8x8(&mut rows);
 
-        // B<2>: r2 = r2 * sqrt2 + r3
-        let r2_final = r2 * SQRT2_VEC + r3;
+        // Execute 8 DCT-1D operations in parallel (single pass, no scale)
+        rows = dct_1d_vec_generic(token, rows);
 
-        // InverseEvenOdd<4>: interleave even/odd
-        [r0, r2_final, r1, r3]
+        // Transpose back to row-major and store
+        f32x8::transpose_8x8(&mut rows);
+        f32x8::store_8x8(&rows, output);
     }
 
     /// Full SIMD-optimized 2D forward DCT with register chaining.
     ///
     /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8` which uses
-    /// native AVX2 intrinsics + FMA. Falls back to `wide::f32x8` path otherwise.
+    /// native AVX2 intrinsics + FMA. Falls back to generic magetypes path otherwise.
     pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -546,38 +422,24 @@ pub(crate) mod simd {
             return output;
         }
 
-        forward_dct_8x8_simd_chained_fallback(input)
+        incant!(forward_dct_8x8_simd_chained_fallback(input))
     }
 
-    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by autoversion).
-    #[autoversion]
-    fn forward_dct_8x8_simd_chained_fallback(input: &[f32; 64]) -> [f32; 64] {
-        let rows = [
-            f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[16..24]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[24..32]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[32..40]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[40..48]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[48..56]).unwrap()),
-            f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
-        ];
+    /// Fallback DCT using magetypes generics (portable SIMD).
+    #[magetypes(v3, neon, wasm128, scalar)]
+    fn forward_dct_8x8_simd_chained_fallback(token: Token, input: &[f32; 64]) -> [f32; 64] {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
 
-        let cols = transpose_vec(rows);
-        let cols_after_row = scale_vec(dct_1d_vec(cols));
-        let rows_for_col = transpose_vec(cols_after_row);
-        let final_rows = scale_vec(dct_1d_vec(rows_for_col));
+        let mut rows = f32x8::load_8x8(input);
+        f32x8::transpose_8x8(&mut rows);
+        let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
+        let mut rows_for_col = cols_after_row;
+        f32x8::transpose_8x8(&mut rows_for_col);
+        let final_rows = scale_vec_generic(token, dct_1d_vec_generic(token, rows_for_col));
 
         let mut output = [0.0f32; 64];
-        output[0..8].copy_from_slice(&final_rows[0].to_array());
-        output[8..16].copy_from_slice(&final_rows[1].to_array());
-        output[16..24].copy_from_slice(&final_rows[2].to_array());
-        output[24..32].copy_from_slice(&final_rows[3].to_array());
-        output[32..40].copy_from_slice(&final_rows[4].to_array());
-        output[40..48].copy_from_slice(&final_rows[5].to_array());
-        output[48..56].copy_from_slice(&final_rows[6].to_array());
-        output[56..64].copy_from_slice(&final_rows[7].to_array());
-
+        f32x8::store_8x8(&final_rows, &mut output);
         output
     }
 
@@ -587,7 +449,7 @@ pub(crate) mod simd {
     /// Use this in hot paths where blocks are stored as Block8x8f.
     ///
     /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8_wide` which uses
-    /// native AVX2 intrinsics + FMA. Falls back to `wide::f32x8` path otherwise.
+    /// native AVX2 intrinsics + FMA. Falls back to generic magetypes path otherwise.
     #[inline]
     pub fn forward_dct_8x8_wide(input: &Block8x8f) -> Block8x8f {
         #[cfg(target_arch = "x86_64")]
@@ -595,18 +457,23 @@ pub(crate) mod simd {
             return crate::encode::mage_simd::mage_forward_dct_8x8_wide(token, input);
         }
 
-        forward_dct_8x8_wide_fallback(input)
+        incant!(forward_dct_8x8_wide_fallback(input))
     }
 
-    /// Fallback DCT using wide::f32x8 (portable SIMD, autovectorized by autoversion).
-    #[autoversion]
+    /// Fallback DCT using magetypes generics (portable SIMD).
+    #[magetypes(v3, neon, wasm128, scalar)]
     #[inline]
-    fn forward_dct_8x8_wide_fallback(input: &Block8x8f) -> Block8x8f {
-        let rows: [f32x8; 8] = core::array::from_fn(|i| f32x8::from(input.rows[i]));
-        let cols = transpose_vec(rows);
-        let cols_after_row = scale_vec(dct_1d_vec(cols));
-        let rows_for_col = transpose_vec(cols_after_row);
-        let final_rows = scale_vec(dct_1d_vec(rows_for_col));
+    fn forward_dct_8x8_wide_fallback(token: Token, input: &Block8x8f) -> Block8x8f {
+        #[allow(non_camel_case_types)]
+        type f32x8 = GenericF32x8<Token>;
+
+        let mut rows: [f32x8; 8] =
+            core::array::from_fn(|i| f32x8::from_array(token, input.rows[i]));
+        f32x8::transpose_8x8(&mut rows);
+        let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
+        let mut rows_for_col = cols_after_row;
+        f32x8::transpose_8x8(&mut rows_for_col);
+        let final_rows = scale_vec_generic(token, dct_1d_vec_generic(token, rows_for_col));
         Block8x8f {
             rows: core::array::from_fn(|i| final_rows[i].to_array()),
         }
@@ -769,7 +636,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// 8x8 block of DCT coefficients
 /// Performs an 8x8 forward DCT with automatic CPU dispatch.
 ///
-/// Tries archmage AVX2+FMA first (runtime check), falls back to wide crate SIMD.
+/// Tries archmage AVX2+FMA first (runtime check), falls back to magetypes generics.
 #[must_use]
 #[inline]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
@@ -784,8 +651,8 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     forward_dct_8x8_scalar(input)
 }
 
-/// Fallback for forward DCT using wide crate SIMD (portable to all platforms).
-/// Public so autoversion blocks can call it directly via cfg(target_feature).
+/// Fallback for forward DCT using magetypes generics (portable to all platforms).
+/// Public so callers can bypass the mage path if needed.
 #[inline]
 pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     simd::forward_dct_8x8_simd_chained(input)
@@ -802,24 +669,8 @@ pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_
 pub fn forward_dct_8x8_u8(input: &[u8; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Convert to f32 with level shift (-128)
     let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
-    let level_shift = f32x8::splat(128.0);
-
-    // Process 8 values at a time
-    for chunk in 0..8 {
-        let k = chunk * 8;
-        let v = f32x8::from([
-            input[k] as f32,
-            input[k + 1] as f32,
-            input[k + 2] as f32,
-            input[k + 3] as f32,
-            input[k + 4] as f32,
-            input[k + 5] as f32,
-            input[k + 6] as f32,
-            input[k + 7] as f32,
-        ]);
-        let result = v - level_shift;
-        let arr: [f32; 8] = result.into();
-        shifted[k..k + 8].copy_from_slice(&arr);
+    for (i, &v) in input.iter().enumerate() {
+        shifted[i] = v as f32 - 128.0;
     }
 
     forward_dct_8x8(&shifted)

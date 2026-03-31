@@ -328,8 +328,7 @@ impl StripProcessor {
                         let values: [u16; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 16]);
                         let srgb = linear_u16_to_srgb_255_x8(&values);
-                        self.y_strip[dst_start + x..dst_start + x + 8]
-                            .copy_from_slice(&srgb);
+                        self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&srgb);
                     }
 
                     // Handle remainder with scalar
@@ -379,8 +378,7 @@ impl StripProcessor {
 
                         let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
-                        self.y_strip[y_row_start + x..y_row_start + x + 8]
-                            .copy_from_slice(&y);
+                        self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
                             .copy_from_slice(&cb);
                         self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
@@ -425,8 +423,7 @@ impl StripProcessor {
                         let values: [f32; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 32]);
                         let srgb = linear_to_srgb_255_x8(&values);
-                        self.y_strip[dst_start + x..dst_start + x + 8]
-                            .copy_from_slice(&srgb);
+                        self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&srgb);
                     }
 
                     // Handle remainder with scalar
@@ -475,11 +472,9 @@ impl StripProcessor {
                             b_arr[i] = rgb[2];
                         }
 
-                        let (y, cb, cr) =
-                            linear_rgbf32_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
+                        let (y, cb, cr) = linear_rgbf32_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
-                        self.y_strip[y_row_start + x..y_row_start + x + 8]
-                            .copy_from_slice(&y);
+                        self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
                             .copy_from_slice(&cb);
                         self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]

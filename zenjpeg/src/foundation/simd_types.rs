@@ -119,9 +119,7 @@ pub struct Block8x8i16 {
 }
 
 impl Block8x8i16 {
-    pub const ZERO: Self = Self {
-        rows: [[0; 8]; 8],
-    };
+    pub const ZERO: Self = Self { rows: [[0; 8]; 8] };
 
     /// Create from a flat array
     #[inline]
@@ -291,8 +289,8 @@ impl QuantTableSimd {
             let k = row * 8;
             for col in 0..8 {
                 let qval = coeffs[k + col] * self.mul_rows[row][col];
-                let threshold = zero_bias.offset_rows[row][col]
-                    + zero_bias.mul_rows[row][col] * aq_strength;
+                let threshold =
+                    zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
                 if qval.abs() >= threshold {
                     result[k + col] = fast_round_i32(qval) as i16;
                 }
@@ -312,9 +310,7 @@ pub struct Block8x8i32 {
 }
 
 impl Block8x8i32 {
-    pub const ZERO: Self = Self {
-        rows: [[0; 8]; 8],
-    };
+    pub const ZERO: Self = Self { rows: [[0; 8]; 8] };
 
     /// Convert to i16 block (with saturation)
     #[inline]
@@ -455,8 +451,7 @@ fn scalar_quantize_block_zigzag(
             let threshold =
                 zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
             if qval.abs() >= threshold {
-                result[JPEG_ZIGZAG_ORDER[k + col] as usize] =
-                    fast_round_i32(qval) as i16;
+                result[JPEG_ZIGZAG_ORDER[k + col] as usize] = fast_round_i32(qval) as i16;
             }
         }
     }

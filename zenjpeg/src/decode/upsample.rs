@@ -331,8 +331,7 @@ fn upsample_h1v2_row_avx2(
     while x + 16 <= width {
         let v_near =
             safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&near[x..x + 16]).unwrap());
-        let v_far =
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x..x + 16]).unwrap());
+        let v_far = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&far[x..x + 16]).unwrap());
         // (near * 3 + far + bias) >> 2
         let v_result = _mm256_srai_epi16(
             _mm256_add_epi16(

@@ -8,22 +8,23 @@
 //!
 //! This module follows a two-layer pattern:
 //!
-//! 1. **Safe public APIs** (e.g., `downsample_2x2_simd`, `rgb_to_ycbcr_planes_simd_inplace`):
-//!    - Use `wide` crate's portable SIMD types (`f32x8`)
+//! 1. **Safe public APIs** (e.g., `downsample_2x2_simd_inplace`, `rgb_to_ycbcr_planes_simd_inplace`):
+//!    - Use magetypes generic SIMD types (`GenericF32x8<Token>`) via `#[magetypes]`
 //!    - Safe load/store helpers with bounds checking
-//!    - Runtime CPU feature detection via `#[autoversion]` or archmage tokens
+//!    - Multi-tier runtime dispatch via `incant!` (AVX2+FMA, NEON, WASM128, scalar)
 //!
 //! 2. **Safe internal functions via archmage** (e.g., `gather_even_odd_x8_avx2`, `rgb_to_ycbcr_8px_fma`):
 //!    - Raw SSSE3/SSE4.1/AVX/AVX2/FMA intrinsics made safe via `#[arcane]` attribute
-//!    - Capability tokens (`Avx2Token`, `Avx2FmaToken`) prove CPU support at the call site
+//!    - Capability tokens (`X64V3Token`) prove CPU support at the call site
 //!    - Load/store operations use safe_unaligned_simd wrappers (no unsafe needed)
 //!
 //! All functions have tests to verify parity with scalar implementations.
 
 #![allow(dead_code)]
 
-use archmage::autoversion;
-use wide::f32x8;
+use archmage::prelude::*;
+use magetypes::simd::backends::F32x8Backend;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
 #[cfg(target_arch = "x86_64")]
@@ -45,20 +46,16 @@ use crate::foundation::consts::{
 // Safe SIMD Load/Store Helpers
 // ============================================================================
 
-/// Load 8 f32s into f32x8. Panics if slice is too short.
-/// Uses array conversion which compiles to a single load instruction.
+/// Load 8 f32s into GenericF32x8. Panics if slice is too short.
 #[inline(always)]
-fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
-    // Convert slice to array, then array to f32x8 (cast/transmute)
-    <[f32; 8]>::try_from(&slice[offset..offset + 8])
-        .unwrap()
-        .into()
+fn load_f32x8<T: F32x8Backend>(token: T, slice: &[f32], offset: usize) -> GenericF32x8<T> {
+    GenericF32x8::<T>::load(token, slice[offset..offset + 8].try_into().unwrap())
 }
 
-/// Store f32x8 to slice. Panics if slice is too short.
+/// Store GenericF32x8 to slice. Panics if slice is too short.
 #[inline(always)]
-fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
-    slice[offset..offset + 8].copy_from_slice(value.as_array())
+fn store_f32x8<T: F32x8Backend>(slice: &mut [f32], offset: usize, value: GenericF32x8<T>) {
+    value.store(<&mut [f32; 8]>::try_from(&mut slice[offset..offset + 8]).unwrap())
 }
 
 // ============================================================================
@@ -74,13 +71,28 @@ fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
 /// * `width` - Input width
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
-#[autoversion]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
+    incant!(downsample_2x2_simd_inplace_impl(
+        plane, width, height, result
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn downsample_2x2_simd_inplace_impl(
+    token: Token,
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    result: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
     debug_assert!(result.len() >= new_width * new_height);
 
-    let scale = f32x8::splat(0.25);
+    let scale = f32x8::splat(token, 0.25);
     // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
     // would read past the row boundary into the next row, so we use scalar path
     // for any columns where input x + 15 >= width (i.e., last 8 output columns when width % 16 >= 1).
@@ -101,15 +113,20 @@ pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
             let row1_idx = y1 * width + in_x;
 
             // Gather even/odd from row 0 and row 1
-            let (p00, p10) = gather_even_odd_x8(plane, row0_idx, width);
-            let (p01, p11) = gather_even_odd_x8(plane, row1_idx, width);
+            let (p00_arr, p10_arr) = gather_even_odd_x8(plane, row0_idx, width);
+            let (p01_arr, p11_arr) = gather_even_odd_x8(plane, row1_idx, width);
+
+            let p00 = f32x8::from_array(token, p00_arr);
+            let p10 = f32x8::from_array(token, p10_arr);
+            let p01 = f32x8::from_array(token, p01_arr);
+            let p11 = f32x8::from_array(token, p11_arr);
 
             // Box filter: (p00 + p10 + p01 + p11) * 0.25
             let sum = p00 + p10 + p01 + p11;
             let avg = sum * scale;
 
             // Store result
-            store_f32x8(result, out_row_start + out_x, avg);
+            store_f32x8(&mut *result, out_row_start + out_x, avg);
         }
 
         // Scalar path for remaining columns (handles row boundary correctly)
@@ -131,10 +148,26 @@ pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
 ///
 /// Writes to pre-allocated result buffer.
 pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
+    incant!(downsample_2x1_simd_inplace_impl(
+        plane, width, height, result
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn downsample_2x1_simd_inplace_impl(
+    token: Token,
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    result: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let new_width = (width + 1) / 2;
     debug_assert!(result.len() >= new_width * height);
 
-    let scale = f32x8::splat(0.5);
+    let scale = f32x8::splat(token, 0.5);
     // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
     // would read past the row boundary, so use scalar path for edge columns.
     let safe_chunks = if width >= 16 { (width - 15) / 16 } else { 0 };
@@ -149,13 +182,15 @@ pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, r
             let in_x = out_x * 2;
 
             // Gather even/odd pixels from the row
-            let (p0, p1) = gather_even_odd_x8(plane, in_row_start + in_x, width);
+            let (p0_arr, p1_arr) = gather_even_odd_x8(plane, in_row_start + in_x, width);
+            let p0 = f32x8::from_array(token, p0_arr);
+            let p1 = f32x8::from_array(token, p1_arr);
 
             // Box filter: (p0 + p1) * 0.5
             let avg = (p0 + p1) * scale;
 
             // Store result
-            store_f32x8(result, out_row_start + out_x, avg);
+            store_f32x8(&mut *result, out_row_start + out_x, avg);
         }
 
         // Scalar path for remaining columns (handles edge correctly)
@@ -175,10 +210,26 @@ pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, r
 ///
 /// Writes to pre-allocated result buffer.
 pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
+    incant!(downsample_1x2_simd_inplace_impl(
+        plane, width, height, result
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn downsample_1x2_simd_inplace_impl(
+    token: Token,
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    result: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let new_height = (height + 1) / 2;
     debug_assert!(result.len() >= width * new_height);
 
-    let scale = f32x8::splat(0.5);
+    let scale = f32x8::splat(token, 0.5);
     let chunks = width / 8;
 
     for y in 0..new_height {
@@ -194,13 +245,13 @@ pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
             let row0_idx = y0 * width + x;
             let row1_idx = y1 * width + x;
 
-            let p0 = load_f32x8(plane, row0_idx);
-            let p1 = load_f32x8(plane, row1_idx);
+            let p0 = load_f32x8(token, plane, row0_idx);
+            let p1 = load_f32x8(token, plane, row1_idx);
 
             let avg = (p0 + p1) * scale;
 
             // Store result
-            store_f32x8(result, out_row_start + x, avg);
+            store_f32x8(&mut *result, out_row_start + x, avg);
         }
 
         // Scalar remainder
@@ -237,7 +288,7 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 #[inline]
-fn gather_even_odd_x8_avx2(_token: archmage::X64V3Token, data: &[f32; 16]) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_avx2(_token: archmage::X64V3Token, data: &[f32; 16]) -> ([f32; 8], [f32; 8]) {
     use std::arch::x86_64::*;
 
     // Load 16 consecutive floats as two YMM registers
@@ -260,27 +311,27 @@ fn gather_even_odd_x8_avx2(_token: archmage::X64V3Token, data: &[f32; 16]) -> (f
     let odds_raw = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v3131), 0xD8));
 
     (
-        bytemuck::cast::<__m256, f32x8>(evens_raw),
-        bytemuck::cast::<__m256, f32x8>(odds_raw),
+        bytemuck::cast::<__m256, [f32; 8]>(evens_raw),
+        bytemuck::cast::<__m256, [f32; 8]>(odds_raw),
     )
 }
 
 /// Scalar fallback for gather_even_odd - used by non-AVX2 targets
 #[inline(always)]
-fn gather_even_odd_x8_scalar(slice: &[f32]) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_scalar(slice: &[f32]) -> ([f32; 8], [f32; 8]) {
     // Caller guarantees at least 16 elements are available
-    let evens = f32x8::from([
+    let evens = [
         slice[0], slice[2], slice[4], slice[6], slice[8], slice[10], slice[12], slice[14],
-    ]);
-    let odds = f32x8::from([
+    ];
+    let odds = [
         slice[1], slice[3], slice[5], slice[7], slice[9], slice[11], slice[13], slice[15],
-    ]);
+    ];
     (evens, odds)
 }
 
 /// Boundary-safe gather with clamping for edge cases
 #[inline(always)]
-fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> ([f32; 8], [f32; 8]) {
     let get = |offset: usize| -> f32 {
         let idx = start_idx + offset;
         if idx < plane.len() {
@@ -290,7 +341,7 @@ fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8
         }
     };
 
-    let evens = f32x8::from([
+    let evens = [
         get(0),
         get(2),
         get(4),
@@ -299,9 +350,9 @@ fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8
         get(10),
         get(12),
         get(14),
-    ]);
+    ];
 
-    let odds = f32x8::from([
+    let odds = [
         get(1),
         get(3),
         get(5),
@@ -310,26 +361,20 @@ fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8
         get(11),
         get(13),
         get(15),
-    ]);
+    ];
 
     (evens, odds)
 }
 
-/// Gather even and odd indexed elements from a row into two f32x8 vectors.
+/// Gather even and odd indexed elements from a row into two f32 arrays.
 ///
 /// Given input [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, ...]:
 /// - evens = [a, c, e, g, i, k, m, o]
 /// - odds = [b, d, f, h, j, l, n, p]
 ///
-/// IMPORTANT: This is called from multiversioned functions. The caller
-/// (downsample_2x2_simd_inplace) is compiled with AVX2 enabled via autoversion,
-/// which means we can safely call AVX2 intrinsics here when the AVX2 version
-/// of the caller is running.
-///
-/// We use `is_x86_feature_detected!` which is cheap (cached atomic load) to
-/// select the right path. The branch predictor will quickly learn the pattern.
+/// Returns raw `[f32; 8]` arrays. Callers load into SIMD vectors as needed.
 #[inline(always)]
-fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8, f32x8) {
+fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> ([f32; 8], [f32; 8]) {
     // Fast path: when we have at least 16 elements available
     if start_idx + 16 <= plane.len() {
         let slice = &plane[start_idx..start_idx + 16];
@@ -583,14 +628,13 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
         }
     }
 
-    // Fallback path using wide crate's f32x8 (safe, portable SIMD)
+    // Fallback path using magetypes generic SIMD (portable)
     rgb_to_ycbcr_planes_simd_inplace_fallback(rgb_data, y_plane, cb_plane, cr_plane, num_pixels);
 }
 
-/// Fallback implementation using wide crate's f32x8 (portable SIMD)
+/// Fallback implementation using magetypes generic f32x8 (portable SIMD)
 ///
-/// Uses autoversion for runtime dispatch to optimal SIMD path.
-#[autoversion]
+/// Uses `incant!` for multi-tier SIMD dispatch (AVX2+FMA, NEON, WASM128, scalar).
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -598,20 +642,37 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     cr_plane: &mut [f32],
     num_pixels: usize,
 ) {
+    incant!(rgb_to_ycbcr_planes_simd_inplace_fallback_impl(
+        rgb_data, y_plane, cb_plane, cr_plane, num_pixels
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn rgb_to_ycbcr_planes_simd_inplace_fallback_impl(
+    token: Token,
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     // Coefficients as SIMD vectors
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
 
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
 
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
 
-    let offset_128 = f32x8::splat(128.0);
+    let offset_128 = f32x8::splat(token, 128.0);
 
     let chunks = num_pixels / 8;
 
@@ -620,38 +681,47 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
         let rgb_idx = pixel_idx * 3;
 
         // Gather 8 R, G, B values from interleaved data
-        let r = f32x8::from([
-            rgb_data[rgb_idx] as f32,
-            rgb_data[rgb_idx + 3] as f32,
-            rgb_data[rgb_idx + 6] as f32,
-            rgb_data[rgb_idx + 9] as f32,
-            rgb_data[rgb_idx + 12] as f32,
-            rgb_data[rgb_idx + 15] as f32,
-            rgb_data[rgb_idx + 18] as f32,
-            rgb_data[rgb_idx + 21] as f32,
-        ]);
+        let r = f32x8::from_array(
+            token,
+            [
+                rgb_data[rgb_idx] as f32,
+                rgb_data[rgb_idx + 3] as f32,
+                rgb_data[rgb_idx + 6] as f32,
+                rgb_data[rgb_idx + 9] as f32,
+                rgb_data[rgb_idx + 12] as f32,
+                rgb_data[rgb_idx + 15] as f32,
+                rgb_data[rgb_idx + 18] as f32,
+                rgb_data[rgb_idx + 21] as f32,
+            ],
+        );
 
-        let g = f32x8::from([
-            rgb_data[rgb_idx + 1] as f32,
-            rgb_data[rgb_idx + 4] as f32,
-            rgb_data[rgb_idx + 7] as f32,
-            rgb_data[rgb_idx + 10] as f32,
-            rgb_data[rgb_idx + 13] as f32,
-            rgb_data[rgb_idx + 16] as f32,
-            rgb_data[rgb_idx + 19] as f32,
-            rgb_data[rgb_idx + 22] as f32,
-        ]);
+        let g = f32x8::from_array(
+            token,
+            [
+                rgb_data[rgb_idx + 1] as f32,
+                rgb_data[rgb_idx + 4] as f32,
+                rgb_data[rgb_idx + 7] as f32,
+                rgb_data[rgb_idx + 10] as f32,
+                rgb_data[rgb_idx + 13] as f32,
+                rgb_data[rgb_idx + 16] as f32,
+                rgb_data[rgb_idx + 19] as f32,
+                rgb_data[rgb_idx + 22] as f32,
+            ],
+        );
 
-        let b = f32x8::from([
-            rgb_data[rgb_idx + 2] as f32,
-            rgb_data[rgb_idx + 5] as f32,
-            rgb_data[rgb_idx + 8] as f32,
-            rgb_data[rgb_idx + 11] as f32,
-            rgb_data[rgb_idx + 14] as f32,
-            rgb_data[rgb_idx + 17] as f32,
-            rgb_data[rgb_idx + 20] as f32,
-            rgb_data[rgb_idx + 23] as f32,
-        ]);
+        let b = f32x8::from_array(
+            token,
+            [
+                rgb_data[rgb_idx + 2] as f32,
+                rgb_data[rgb_idx + 5] as f32,
+                rgb_data[rgb_idx + 8] as f32,
+                rgb_data[rgb_idx + 11] as f32,
+                rgb_data[rgb_idx + 14] as f32,
+                rgb_data[rgb_idx + 17] as f32,
+                rgb_data[rgb_idx + 20] as f32,
+                rgb_data[rgb_idx + 23] as f32,
+            ],
+        );
 
         // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
         let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
@@ -680,7 +750,6 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
-#[autoversion]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
     y_plane: &mut [f32],
@@ -688,62 +757,88 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
     cr_plane: &mut [f32],
     num_pixels: usize,
 ) {
+    incant!(rgba_to_ycbcr_planes_simd_inplace_impl(
+        rgba_data, y_plane, cb_plane, cr_plane, num_pixels
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn rgba_to_ycbcr_planes_simd_inplace_impl(
+    token: Token,
+    rgba_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     debug_assert!(rgba_data.len() >= num_pixels * 4);
     debug_assert!(y_plane.len() >= num_pixels);
     debug_assert!(cb_plane.len() >= num_pixels);
     debug_assert!(cr_plane.len() >= num_pixels);
 
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
 
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
 
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
 
-    let offset_128 = f32x8::splat(128.0);
+    let offset_128 = f32x8::splat(token, 128.0);
     let chunks = num_pixels / 8;
 
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let rgba_idx = pixel_idx * 4;
 
-        let r = f32x8::from([
-            rgba_data[rgba_idx] as f32,
-            rgba_data[rgba_idx + 4] as f32,
-            rgba_data[rgba_idx + 8] as f32,
-            rgba_data[rgba_idx + 12] as f32,
-            rgba_data[rgba_idx + 16] as f32,
-            rgba_data[rgba_idx + 20] as f32,
-            rgba_data[rgba_idx + 24] as f32,
-            rgba_data[rgba_idx + 28] as f32,
-        ]);
+        let r = f32x8::from_array(
+            token,
+            [
+                rgba_data[rgba_idx] as f32,
+                rgba_data[rgba_idx + 4] as f32,
+                rgba_data[rgba_idx + 8] as f32,
+                rgba_data[rgba_idx + 12] as f32,
+                rgba_data[rgba_idx + 16] as f32,
+                rgba_data[rgba_idx + 20] as f32,
+                rgba_data[rgba_idx + 24] as f32,
+                rgba_data[rgba_idx + 28] as f32,
+            ],
+        );
 
-        let g = f32x8::from([
-            rgba_data[rgba_idx + 1] as f32,
-            rgba_data[rgba_idx + 5] as f32,
-            rgba_data[rgba_idx + 9] as f32,
-            rgba_data[rgba_idx + 13] as f32,
-            rgba_data[rgba_idx + 17] as f32,
-            rgba_data[rgba_idx + 21] as f32,
-            rgba_data[rgba_idx + 25] as f32,
-            rgba_data[rgba_idx + 29] as f32,
-        ]);
+        let g = f32x8::from_array(
+            token,
+            [
+                rgba_data[rgba_idx + 1] as f32,
+                rgba_data[rgba_idx + 5] as f32,
+                rgba_data[rgba_idx + 9] as f32,
+                rgba_data[rgba_idx + 13] as f32,
+                rgba_data[rgba_idx + 17] as f32,
+                rgba_data[rgba_idx + 21] as f32,
+                rgba_data[rgba_idx + 25] as f32,
+                rgba_data[rgba_idx + 29] as f32,
+            ],
+        );
 
-        let b = f32x8::from([
-            rgba_data[rgba_idx + 2] as f32,
-            rgba_data[rgba_idx + 6] as f32,
-            rgba_data[rgba_idx + 10] as f32,
-            rgba_data[rgba_idx + 14] as f32,
-            rgba_data[rgba_idx + 18] as f32,
-            rgba_data[rgba_idx + 22] as f32,
-            rgba_data[rgba_idx + 26] as f32,
-            rgba_data[rgba_idx + 30] as f32,
-        ]);
+        let b = f32x8::from_array(
+            token,
+            [
+                rgba_data[rgba_idx + 2] as f32,
+                rgba_data[rgba_idx + 6] as f32,
+                rgba_data[rgba_idx + 10] as f32,
+                rgba_data[rgba_idx + 14] as f32,
+                rgba_data[rgba_idx + 18] as f32,
+                rgba_data[rgba_idx + 22] as f32,
+                rgba_data[rgba_idx + 26] as f32,
+                rgba_data[rgba_idx + 30] as f32,
+            ],
+        );
 
         // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
         let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
@@ -770,7 +865,6 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
-#[autoversion]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -778,62 +872,88 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
     cr_plane: &mut [f32],
     num_pixels: usize,
 ) {
+    incant!(bgr_to_ycbcr_planes_simd_inplace_impl(
+        bgr_data, y_plane, cb_plane, cr_plane, num_pixels
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn bgr_to_ycbcr_planes_simd_inplace_impl(
+    token: Token,
+    bgr_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     debug_assert!(bgr_data.len() >= num_pixels * 3);
     debug_assert!(y_plane.len() >= num_pixels);
     debug_assert!(cb_plane.len() >= num_pixels);
     debug_assert!(cr_plane.len() >= num_pixels);
 
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
 
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
 
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
 
-    let offset_128 = f32x8::splat(128.0);
+    let offset_128 = f32x8::splat(token, 128.0);
     let chunks = num_pixels / 8;
 
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let bgr_idx = pixel_idx * 3;
 
-        let b = f32x8::from([
-            bgr_data[bgr_idx] as f32,
-            bgr_data[bgr_idx + 3] as f32,
-            bgr_data[bgr_idx + 6] as f32,
-            bgr_data[bgr_idx + 9] as f32,
-            bgr_data[bgr_idx + 12] as f32,
-            bgr_data[bgr_idx + 15] as f32,
-            bgr_data[bgr_idx + 18] as f32,
-            bgr_data[bgr_idx + 21] as f32,
-        ]);
+        let b = f32x8::from_array(
+            token,
+            [
+                bgr_data[bgr_idx] as f32,
+                bgr_data[bgr_idx + 3] as f32,
+                bgr_data[bgr_idx + 6] as f32,
+                bgr_data[bgr_idx + 9] as f32,
+                bgr_data[bgr_idx + 12] as f32,
+                bgr_data[bgr_idx + 15] as f32,
+                bgr_data[bgr_idx + 18] as f32,
+                bgr_data[bgr_idx + 21] as f32,
+            ],
+        );
 
-        let g = f32x8::from([
-            bgr_data[bgr_idx + 1] as f32,
-            bgr_data[bgr_idx + 4] as f32,
-            bgr_data[bgr_idx + 7] as f32,
-            bgr_data[bgr_idx + 10] as f32,
-            bgr_data[bgr_idx + 13] as f32,
-            bgr_data[bgr_idx + 16] as f32,
-            bgr_data[bgr_idx + 19] as f32,
-            bgr_data[bgr_idx + 22] as f32,
-        ]);
+        let g = f32x8::from_array(
+            token,
+            [
+                bgr_data[bgr_idx + 1] as f32,
+                bgr_data[bgr_idx + 4] as f32,
+                bgr_data[bgr_idx + 7] as f32,
+                bgr_data[bgr_idx + 10] as f32,
+                bgr_data[bgr_idx + 13] as f32,
+                bgr_data[bgr_idx + 16] as f32,
+                bgr_data[bgr_idx + 19] as f32,
+                bgr_data[bgr_idx + 22] as f32,
+            ],
+        );
 
-        let r = f32x8::from([
-            bgr_data[bgr_idx + 2] as f32,
-            bgr_data[bgr_idx + 5] as f32,
-            bgr_data[bgr_idx + 8] as f32,
-            bgr_data[bgr_idx + 11] as f32,
-            bgr_data[bgr_idx + 14] as f32,
-            bgr_data[bgr_idx + 17] as f32,
-            bgr_data[bgr_idx + 20] as f32,
-            bgr_data[bgr_idx + 23] as f32,
-        ]);
+        let r = f32x8::from_array(
+            token,
+            [
+                bgr_data[bgr_idx + 2] as f32,
+                bgr_data[bgr_idx + 5] as f32,
+                bgr_data[bgr_idx + 8] as f32,
+                bgr_data[bgr_idx + 11] as f32,
+                bgr_data[bgr_idx + 14] as f32,
+                bgr_data[bgr_idx + 17] as f32,
+                bgr_data[bgr_idx + 20] as f32,
+                bgr_data[bgr_idx + 23] as f32,
+            ],
+        );
 
         // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
         let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
@@ -860,7 +980,6 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
-#[autoversion]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
     y_plane: &mut [f32],
@@ -868,62 +987,88 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
     cr_plane: &mut [f32],
     num_pixels: usize,
 ) {
+    incant!(bgra_to_ycbcr_planes_simd_inplace_impl(
+        bgra_data, y_plane, cb_plane, cr_plane, num_pixels
+    ));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn bgra_to_ycbcr_planes_simd_inplace_impl(
+    token: Token,
+    bgra_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     debug_assert!(bgra_data.len() >= num_pixels * 4);
     debug_assert!(y_plane.len() >= num_pixels);
     debug_assert!(cb_plane.len() >= num_pixels);
     debug_assert!(cr_plane.len() >= num_pixels);
 
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
 
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
 
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
 
-    let offset_128 = f32x8::splat(128.0);
+    let offset_128 = f32x8::splat(token, 128.0);
     let chunks = num_pixels / 8;
 
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let bgra_idx = pixel_idx * 4;
 
-        let b = f32x8::from([
-            bgra_data[bgra_idx] as f32,
-            bgra_data[bgra_idx + 4] as f32,
-            bgra_data[bgra_idx + 8] as f32,
-            bgra_data[bgra_idx + 12] as f32,
-            bgra_data[bgra_idx + 16] as f32,
-            bgra_data[bgra_idx + 20] as f32,
-            bgra_data[bgra_idx + 24] as f32,
-            bgra_data[bgra_idx + 28] as f32,
-        ]);
+        let b = f32x8::from_array(
+            token,
+            [
+                bgra_data[bgra_idx] as f32,
+                bgra_data[bgra_idx + 4] as f32,
+                bgra_data[bgra_idx + 8] as f32,
+                bgra_data[bgra_idx + 12] as f32,
+                bgra_data[bgra_idx + 16] as f32,
+                bgra_data[bgra_idx + 20] as f32,
+                bgra_data[bgra_idx + 24] as f32,
+                bgra_data[bgra_idx + 28] as f32,
+            ],
+        );
 
-        let g = f32x8::from([
-            bgra_data[bgra_idx + 1] as f32,
-            bgra_data[bgra_idx + 5] as f32,
-            bgra_data[bgra_idx + 9] as f32,
-            bgra_data[bgra_idx + 13] as f32,
-            bgra_data[bgra_idx + 17] as f32,
-            bgra_data[bgra_idx + 21] as f32,
-            bgra_data[bgra_idx + 25] as f32,
-            bgra_data[bgra_idx + 29] as f32,
-        ]);
+        let g = f32x8::from_array(
+            token,
+            [
+                bgra_data[bgra_idx + 1] as f32,
+                bgra_data[bgra_idx + 5] as f32,
+                bgra_data[bgra_idx + 9] as f32,
+                bgra_data[bgra_idx + 13] as f32,
+                bgra_data[bgra_idx + 17] as f32,
+                bgra_data[bgra_idx + 21] as f32,
+                bgra_data[bgra_idx + 25] as f32,
+                bgra_data[bgra_idx + 29] as f32,
+            ],
+        );
 
-        let r = f32x8::from([
-            bgra_data[bgra_idx + 2] as f32,
-            bgra_data[bgra_idx + 6] as f32,
-            bgra_data[bgra_idx + 10] as f32,
-            bgra_data[bgra_idx + 14] as f32,
-            bgra_data[bgra_idx + 18] as f32,
-            bgra_data[bgra_idx + 22] as f32,
-            bgra_data[bgra_idx + 26] as f32,
-            bgra_data[bgra_idx + 30] as f32,
-        ]);
+        let r = f32x8::from_array(
+            token,
+            [
+                bgra_data[bgra_idx + 2] as f32,
+                bgra_data[bgra_idx + 6] as f32,
+                bgra_data[bgra_idx + 10] as f32,
+                bgra_data[bgra_idx + 14] as f32,
+                bgra_data[bgra_idx + 18] as f32,
+                bgra_data[bgra_idx + 22] as f32,
+                bgra_data[bgra_idx + 26] as f32,
+                bgra_data[bgra_idx + 30] as f32,
+            ],
+        );
 
         // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
         let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
@@ -968,7 +1113,6 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
 /// * `height` - Number of rows to process
 /// * `y_stride` - Y output stride (typically padded_width)
 /// * `bpp` - Bytes per pixel (3 for RGB)
-#[autoversion]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -984,7 +1128,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
     debug_assert!(cb_plane.len() >= width * height);
     debug_assert!(cr_plane.len() >= width * height);
 
-    // Use fast yuv crate when available (10-150× faster SIMD integer math)
+    // Use fast yuv crate when available (10-150x faster SIMD integer math)
     #[cfg(feature = "yuv")]
     {
         crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
@@ -1011,33 +1155,57 @@ pub fn rgb_to_ycbcr_strided_inplace(
     // Strided path: process row-by-row (fallback when yuv not available)
     #[cfg(not(feature = "yuv"))]
     {
-        let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-        let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-        let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
-        let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-        let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-        let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
-        let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-        let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-        let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
-        let offset_128 = f32x8::splat(128.0);
+        incant!(rgb_to_ycbcr_strided_inplace_impl(
+            rgb_data, y_plane, cb_plane, cr_plane, width, height, y_stride, bpp
+        ));
+    }
+}
 
-        for row in 0..height {
-            let rgb_row_start = row * width * bpp;
-            let y_row_start = row * y_stride;
-            let cbcr_row_start = row * width;
+#[cfg(not(feature = "yuv"))]
+#[magetypes(v3, neon, wasm128, scalar)]
+fn rgb_to_ycbcr_strided_inplace_impl(
+    token: Token,
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
-            let chunks = width / 8;
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
+    let offset_128 = f32x8::splat(token, 128.0);
 
-            // SIMD loop for 8-pixel chunks
-            for chunk in 0..chunks {
-                let px = chunk * 8;
-                let rgb_idx = rgb_row_start + px * bpp;
+    for row in 0..height {
+        let rgb_row_start = row * width * bpp;
+        let y_row_start = row * y_stride;
+        let cbcr_row_start = row * width;
 
-                // Gather RGB (bpp=3 or 4)
-                let (r, g, b) = if bpp == 3 {
-                    (
-                        f32x8::from([
+        let chunks = width / 8;
+
+        // SIMD loop for 8-pixel chunks
+        for chunk in 0..chunks {
+            let px = chunk * 8;
+            let rgb_idx = rgb_row_start + px * bpp;
+
+            // Gather RGB (bpp=3 or 4)
+            let (r, g, b) = if bpp == 3 {
+                (
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx] as f32,
                             rgb_data[rgb_idx + 3] as f32,
                             rgb_data[rgb_idx + 6] as f32,
@@ -1046,8 +1214,11 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 15] as f32,
                             rgb_data[rgb_idx + 18] as f32,
                             rgb_data[rgb_idx + 21] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx + 1] as f32,
                             rgb_data[rgb_idx + 4] as f32,
                             rgb_data[rgb_idx + 7] as f32,
@@ -1056,8 +1227,11 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 16] as f32,
                             rgb_data[rgb_idx + 19] as f32,
                             rgb_data[rgb_idx + 22] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx + 2] as f32,
                             rgb_data[rgb_idx + 5] as f32,
                             rgb_data[rgb_idx + 8] as f32,
@@ -1066,12 +1240,15 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 17] as f32,
                             rgb_data[rgb_idx + 20] as f32,
                             rgb_data[rgb_idx + 23] as f32,
-                        ]),
-                    )
-                } else {
-                    // bpp == 4 (RGBA)
-                    (
-                        f32x8::from([
+                        ],
+                    ),
+                )
+            } else {
+                // bpp == 4 (RGBA)
+                (
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx] as f32,
                             rgb_data[rgb_idx + 4] as f32,
                             rgb_data[rgb_idx + 8] as f32,
@@ -1080,8 +1257,11 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 20] as f32,
                             rgb_data[rgb_idx + 24] as f32,
                             rgb_data[rgb_idx + 28] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx + 1] as f32,
                             rgb_data[rgb_idx + 5] as f32,
                             rgb_data[rgb_idx + 9] as f32,
@@ -1090,8 +1270,11 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 21] as f32,
                             rgb_data[rgb_idx + 25] as f32,
                             rgb_data[rgb_idx + 29] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             rgb_data[rgb_idx + 2] as f32,
                             rgb_data[rgb_idx + 6] as f32,
                             rgb_data[rgb_idx + 10] as f32,
@@ -1100,45 +1283,45 @@ pub fn rgb_to_ycbcr_strided_inplace(
                             rgb_data[rgb_idx + 22] as f32,
                             rgb_data[rgb_idx + 26] as f32,
                             rgb_data[rgb_idx + 30] as f32,
-                        ]),
-                    )
-                };
+                        ],
+                    ),
+                )
+            };
 
-                // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
-                let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
-                let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb.mul_add(b, offset_128)));
-                let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr.mul_add(b, offset_128)));
+            // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
+            let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
+            let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb.mul_add(b, offset_128)));
+            let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr.mul_add(b, offset_128)));
 
-                // Write Y with strided offset, Cb/Cr with packed offset
-                store_f32x8(y_plane, y_row_start + px, y);
-                store_f32x8(cb_plane, cbcr_row_start + px, cb);
-                store_f32x8(cr_plane, cbcr_row_start + px, cr);
-            }
+            // Write Y with strided offset, Cb/Cr with packed offset
+            store_f32x8(y_plane, y_row_start + px, y);
+            store_f32x8(cb_plane, cbcr_row_start + px, cb);
+            store_f32x8(cr_plane, cbcr_row_start + px, cr);
+        }
 
-            // Scalar remainder for this row
-            for px in (chunks * 8)..width {
-                let rgb_idx = rgb_row_start + px * bpp;
-                let r = rgb_data[rgb_idx] as f32;
-                let g = rgb_data[rgb_idx + 1] as f32;
-                let b = rgb_data[rgb_idx + 2] as f32;
+        // Scalar remainder for this row
+        for px in (chunks * 8)..width {
+            let rgb_idx = rgb_row_start + px * bpp;
+            let r = rgb_data[rgb_idx] as f32;
+            let g = rgb_data[rgb_idx + 1] as f32;
+            let b = rgb_data[rgb_idx + 2] as f32;
 
-                y_plane[y_row_start + px] =
-                    YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                cb_plane[cbcr_row_start + px] = YCBCR_R_TO_CB
-                    .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                cr_plane[cbcr_row_start + px] = YCBCR_R_TO_CR
-                    .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
-            }
+            y_plane[y_row_start + px] =
+                YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+            cb_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            cr_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        }
 
-            // Edge-pad Y row to stride
-            if width < y_stride {
-                let edge_val = y_plane[y_row_start + width - 1];
-                for px in width..y_stride {
-                    y_plane[y_row_start + px] = edge_val;
-                }
+        // Edge-pad Y row to stride
+        if width < y_stride {
+            let edge_val = y_plane[y_row_start + width - 1];
+            for px in width..y_stride {
+                y_plane[y_row_start + px] = edge_val;
             }
         }
-    } // #[cfg(not(feature = "yuv"))]
+    }
 }
 
 /// RGB to YCbCr with strided output using pre-allocated u8 buffers.
@@ -1220,7 +1403,6 @@ pub fn bgr_to_ycbcr_strided_reuse(
 }
 
 /// BGR variant of strided conversion (for BGR/BGRA input).
-#[autoversion]
 pub fn bgr_to_ycbcr_strided_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -1236,7 +1418,7 @@ pub fn bgr_to_ycbcr_strided_inplace(
     debug_assert!(cb_plane.len() >= width * height);
     debug_assert!(cr_plane.len() >= width * height);
 
-    // Use fast yuv crate when available (10-150× faster SIMD integer math)
+    // Use fast yuv crate when available (10-150x faster SIMD integer math)
     #[cfg(feature = "yuv")]
     {
         crate::color::fast_yuv::bgr_to_ycbcr_strided_fast(
@@ -1263,32 +1445,56 @@ pub fn bgr_to_ycbcr_strided_inplace(
     // Strided path: process row-by-row (swap R/B channels)
     #[cfg(not(feature = "yuv"))]
     {
-        let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-        let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-        let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
-        let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-        let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-        let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
-        let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-        let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-        let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
-        let offset_128 = f32x8::splat(128.0);
+        incant!(bgr_to_ycbcr_strided_inplace_impl(
+            bgr_data, y_plane, cb_plane, cr_plane, width, height, y_stride, bpp
+        ));
+    }
+}
 
-        for row in 0..height {
-            let bgr_row_start = row * width * bpp;
-            let y_row_start = row * y_stride;
-            let cbcr_row_start = row * width;
+#[cfg(not(feature = "yuv"))]
+#[magetypes(v3, neon, wasm128, scalar)]
+fn bgr_to_ycbcr_strided_inplace_impl(
+    token: Token,
+    bgr_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
 
-            let chunks = width / 8;
+    let r_to_y = f32x8::splat(token, YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(token, YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(token, YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(token, YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(token, YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(token, YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(token, YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(token, YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(token, YCBCR_B_TO_CR);
+    let offset_128 = f32x8::splat(token, 128.0);
 
-            for chunk in 0..chunks {
-                let px = chunk * 8;
-                let bgr_idx = bgr_row_start + px * bpp;
+    for row in 0..height {
+        let bgr_row_start = row * width * bpp;
+        let y_row_start = row * y_stride;
+        let cbcr_row_start = row * width;
 
-                // Gather BGR (channels swapped vs RGB)
-                let (r, g, b) = if bpp == 3 {
-                    (
-                        f32x8::from([
+        let chunks = width / 8;
+
+        for chunk in 0..chunks {
+            let px = chunk * 8;
+            let bgr_idx = bgr_row_start + px * bpp;
+
+            // Gather BGR (channels swapped vs RGB)
+            let (r, g, b) = if bpp == 3 {
+                (
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx + 2] as f32,
                             bgr_data[bgr_idx + 5] as f32,
                             bgr_data[bgr_idx + 8] as f32,
@@ -1297,8 +1503,11 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 17] as f32,
                             bgr_data[bgr_idx + 20] as f32,
                             bgr_data[bgr_idx + 23] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx + 1] as f32,
                             bgr_data[bgr_idx + 4] as f32,
                             bgr_data[bgr_idx + 7] as f32,
@@ -1307,8 +1516,11 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 16] as f32,
                             bgr_data[bgr_idx + 19] as f32,
                             bgr_data[bgr_idx + 22] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx] as f32,
                             bgr_data[bgr_idx + 3] as f32,
                             bgr_data[bgr_idx + 6] as f32,
@@ -1317,12 +1529,15 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 15] as f32,
                             bgr_data[bgr_idx + 18] as f32,
                             bgr_data[bgr_idx + 21] as f32,
-                        ]),
-                    )
-                } else {
-                    // bpp == 4 (BGRA)
-                    (
-                        f32x8::from([
+                        ],
+                    ),
+                )
+            } else {
+                // bpp == 4 (BGRA)
+                (
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx + 2] as f32,
                             bgr_data[bgr_idx + 6] as f32,
                             bgr_data[bgr_idx + 10] as f32,
@@ -1331,8 +1546,11 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 22] as f32,
                             bgr_data[bgr_idx + 26] as f32,
                             bgr_data[bgr_idx + 30] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx + 1] as f32,
                             bgr_data[bgr_idx + 5] as f32,
                             bgr_data[bgr_idx + 9] as f32,
@@ -1341,8 +1559,11 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 21] as f32,
                             bgr_data[bgr_idx + 25] as f32,
                             bgr_data[bgr_idx + 29] as f32,
-                        ]),
-                        f32x8::from([
+                        ],
+                    ),
+                    f32x8::from_array(
+                        token,
+                        [
                             bgr_data[bgr_idx] as f32,
                             bgr_data[bgr_idx + 4] as f32,
                             bgr_data[bgr_idx + 8] as f32,
@@ -1351,42 +1572,42 @@ pub fn bgr_to_ycbcr_strided_inplace(
                             bgr_data[bgr_idx + 20] as f32,
                             bgr_data[bgr_idx + 24] as f32,
                             bgr_data[bgr_idx + 28] as f32,
-                        ]),
-                    )
-                };
+                        ],
+                    ),
+                )
+            };
 
-                // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
-                let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
-                let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb.mul_add(b, offset_128)));
-                let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr.mul_add(b, offset_128)));
+            // Compute Y, Cb, Cr using FMA for accuracy (single rounding)
+            let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
+            let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb.mul_add(b, offset_128)));
+            let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr.mul_add(b, offset_128)));
 
-                store_f32x8(y_plane, y_row_start + px, y);
-                store_f32x8(cb_plane, cbcr_row_start + px, cb);
-                store_f32x8(cr_plane, cbcr_row_start + px, cr);
-            }
+            store_f32x8(y_plane, y_row_start + px, y);
+            store_f32x8(cb_plane, cbcr_row_start + px, cb);
+            store_f32x8(cr_plane, cbcr_row_start + px, cr);
+        }
 
-            for px in (chunks * 8)..width {
-                let bgr_idx = bgr_row_start + px * bpp;
-                let b = bgr_data[bgr_idx] as f32;
-                let g = bgr_data[bgr_idx + 1] as f32;
-                let r = bgr_data[bgr_idx + 2] as f32;
+        for px in (chunks * 8)..width {
+            let bgr_idx = bgr_row_start + px * bpp;
+            let b = bgr_data[bgr_idx] as f32;
+            let g = bgr_data[bgr_idx + 1] as f32;
+            let r = bgr_data[bgr_idx + 2] as f32;
 
-                y_plane[y_row_start + px] =
-                    YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                cb_plane[cbcr_row_start + px] = YCBCR_R_TO_CB
-                    .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                cr_plane[cbcr_row_start + px] = YCBCR_R_TO_CR
-                    .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
-            }
+            y_plane[y_row_start + px] =
+                YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+            cb_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            cr_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        }
 
-            if width < y_stride {
-                let edge_val = y_plane[y_row_start + width - 1];
-                for px in width..y_stride {
-                    y_plane[y_row_start + px] = edge_val;
-                }
+        if width < y_stride {
+            let edge_val = y_plane[y_row_start + width - 1];
+            for px in width..y_stride {
+                y_plane[y_row_start + px] = edge_val;
             }
         }
-    } // #[cfg(not(feature = "yuv"))]
+    }
 }
 
 // ============================================================================
@@ -1411,27 +1632,40 @@ pub fn extract_block_xyb_simd(
     bx: usize,
     by: usize,
 ) -> [f32; 64] {
+    incant!(extract_block_xyb_simd_impl(plane, width, height, bx, by))
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+fn extract_block_xyb_simd_impl(
+    token: Token,
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    bx: usize,
+    by: usize,
+) -> [f32; 64] {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let px_start = bx * 8;
     let py_start = by * 8;
 
     let is_interior = px_start + 8 <= width && py_start + 8 <= height;
 
-    let scale = f32x8::splat(255.0);
-    let level_shift = f32x8::splat(128.0);
+    let scale = f32x8::splat(token, 255.0);
+    let level_shift = f32x8::splat(token, 128.0);
     let mut block = [0.0f32; 64];
 
     if is_interior {
         for y in 0..8 {
             let row_start = (py_start + y) * width + px_start;
-            // Load 8 consecutive f32 values (zero-cost from contiguous memory)
-            let row_arr: [f32; 8] = plane[row_start..row_start + 8].try_into().unwrap();
-            let row = f32x8::from(row_arr);
+            // Load 8 consecutive f32 values
+            let row = load_f32x8(token, plane, row_start);
 
             // XYB: val * 255.0 - 128.0
             let scaled = row * scale - level_shift;
 
-            let arr: [f32; 8] = scaled.into();
-            block[y * 8..y * 8 + 8].copy_from_slice(&arr);
+            scaled.store(<&mut [f32; 8]>::try_from(&mut block[y * 8..y * 8 + 8]).unwrap());
         }
     } else {
         for y in 0..8 {
@@ -1465,12 +1699,9 @@ mod tests {
         let data: Vec<f32> = (0..32).map(|i| i as f32).collect();
 
         // Call the function
-        let (evens, odds) = gather_even_odd_x8(&data, 0, 32);
+        let (evens_arr, odds_arr) = gather_even_odd_x8(&data, 0, 32);
 
         // Expected: evens = [0, 2, 4, 6, 8, 10, 12, 14]
-        let evens_arr: [f32; 8] = evens.into();
-        let odds_arr: [f32; 8] = odds.into();
-
         let expected_evens = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0];
         let expected_odds = [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0];
 
@@ -1492,9 +1723,7 @@ mod tests {
         }
 
         // Test with offset
-        let (evens2, odds2) = gather_even_odd_x8(&data, 4, 32);
-        let evens2_arr: [f32; 8] = evens2.into();
-        let odds2_arr: [f32; 8] = odds2.into();
+        let (evens2_arr, odds2_arr) = gather_even_odd_x8(&data, 4, 32);
 
         // With offset 4: evens = [4, 6, 8, 10, 12, 14, 16, 18]
         let expected_evens2 = [4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0];

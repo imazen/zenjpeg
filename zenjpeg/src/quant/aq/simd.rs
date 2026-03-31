@@ -93,7 +93,10 @@ fn masking_sqrt_scalar(v: f32) -> f32 {
 /// SIMD version of ratio_of_derivatives (non-inverted).
 /// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
-fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8<T>) -> GenericF32x8<T> {
+fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(
+    token: T,
+    vals: GenericF32x8<T>,
+) -> GenericF32x8<T> {
     let v = vals.max(GenericF32x8::<T>::zero(token));
     let v2 = v * v;
 
@@ -101,7 +104,8 @@ fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8
         GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
         GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO)).mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO))
+        .mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
     den / num
@@ -110,7 +114,10 @@ fn ratio_of_derivatives_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8
 /// SIMD version of ratio_of_derivatives (inverted).
 /// Processes 8 f32 values at once. Generic over SIMD backend.
 #[inline(always)]
-fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(token: T, vals: GenericF32x8<T>) -> GenericF32x8<T> {
+fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(
+    token: T,
+    vals: GenericF32x8<T>,
+) -> GenericF32x8<T> {
     let v = vals.max(GenericF32x8::<T>::zero(token));
     let v2 = v * v;
 
@@ -118,7 +125,8 @@ fn ratio_of_derivatives_inv_x8_generic<T: F32x8Backend>(token: T, vals: GenericF
         GenericF32x8::<T>::splat(token, K_NUM_MUL_RATIO),
         GenericF32x8::<T>::splat(token, K_NUM_OFFSET_RATIO),
     );
-    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO)).mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
+    let den = (v * GenericF32x8::<T>::splat(token, K_DEN_MUL_RATIO))
+        .mul_add(v2, GenericF32x8::<T>::splat(token, K_VOFFSET_RATIO));
 
     num / den
 }
@@ -156,7 +164,10 @@ fn pre_erosion_pixel_x8_generic<T: F32x8Backend>(
     let base = GenericF32x8::<T>::splat(token, 0.25) * (left + right + top + bottom);
 
     // ratio = ratio_of_derivatives(pixel + gamma_offset, false)
-    let ratio = ratio_of_derivatives_x8_generic(token, pixels + GenericF32x8::<T>::splat(token, GAMMA_OFFSET));
+    let ratio = ratio_of_derivatives_x8_generic(
+        token,
+        pixels + GenericF32x8::<T>::splat(token, GAMMA_OFFSET),
+    );
 
     // diff = ratio * (pixel - base)
     let diff = ratio * (pixels - base);
@@ -183,7 +194,13 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 
 #[magetypes(v3, neon, wasm128, scalar)]
 #[inline(always)]
-fn pre_erosion_row_impl(token: Token, row: &[f32], row_above: &[f32], row_below: &[f32], output: &mut [f32]) {
+fn pre_erosion_row_impl(
+    token: Token,
+    row: &[f32],
+    row_above: &[f32],
+    row_below: &[f32],
+    output: &mut [f32],
+) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
 
@@ -208,16 +225,19 @@ fn pre_erosion_row_impl(token: Token, row: &[f32], row_above: &[f32], row_below:
         // Load neighbors with boundary handling
         let left = if x == 0 {
             // First chunk: first pixel uses itself as left neighbor
-            f32x8::from_array(token, [
-                row[0],
-                row[x],
-                row[x + 1],
-                row[x + 2],
-                row[x + 3],
-                row[x + 4],
-                row[x + 5],
-                row[x + 6],
-            ])
+            f32x8::from_array(
+                token,
+                [
+                    row[0],
+                    row[x],
+                    row[x + 1],
+                    row[x + 2],
+                    row[x + 3],
+                    row[x + 4],
+                    row[x + 5],
+                    row[x + 6],
+                ],
+            )
         } else {
             load_f32x8(token, row, x - 1)
         };
@@ -225,16 +245,19 @@ fn pre_erosion_row_impl(token: Token, row: &[f32], row_above: &[f32], row_below:
         let right = if x + 8 >= width {
             // Last chunk: last pixel uses itself as right neighbor
             let last = width - 1;
-            f32x8::from_array(token, [
-                row[(x + 1).min(last)],
-                row[(x + 2).min(last)],
-                row[(x + 3).min(last)],
-                row[(x + 4).min(last)],
-                row[(x + 5).min(last)],
-                row[(x + 6).min(last)],
-                row[(x + 7).min(last)],
-                row[(x + 8).min(last)],
-            ])
+            f32x8::from_array(
+                token,
+                [
+                    row[(x + 1).min(last)],
+                    row[(x + 2).min(last)],
+                    row[(x + 3).min(last)],
+                    row[(x + 4).min(last)],
+                    row[(x + 5).min(last)],
+                    row[(x + 6).min(last)],
+                    row[(x + 7).min(last)],
+                    row[(x + 8).min(last)],
+                ],
+            )
         } else {
             load_f32x8(token, row, x + 1)
         };
@@ -294,7 +317,9 @@ pub fn pre_erosion_row_padded(
     width: usize,
     output: &mut [f32],
 ) {
-    incant!(pre_erosion_row_padded_impl(row, row_above, row_below, width, output));
+    incant!(pre_erosion_row_padded_impl(
+        row, row_above, row_below, width, output
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -599,7 +624,8 @@ fn hf_modulation_sum_8x8_generic<T: F32x8Backend>(
     img_height: usize,
 ) -> f32 {
     // Mask to zero out the 8th element for horizontal differences
-    let mask_first_7 = GenericF32x8::<T>::from_array(token, [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
+    let mask_first_7 =
+        GenericF32x8::<T>::from_array(token, [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
 
     let mut h_sum = GenericF32x8::<T>::zero(token);
     let mut v_sum = GenericF32x8::<T>::zero(token);
@@ -709,7 +735,9 @@ pub fn per_block_modulations_row(
     mul: f32,
     add: f32,
 ) {
-    incant!(per_block_modulations_row_impl(input, stride, img_width, img_height, by, block_w, aq_row, mul, add));
+    incant!(per_block_modulations_row_impl(
+        input, stride, img_width, img_height, by, block_w, aq_row, mul, add
+    ));
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -763,12 +791,15 @@ fn per_block_modulations_row_impl(
         // 2. HfModulation with SIMD
         let block_offset = y_start * stride + x_start;
         let block = &input[block_offset..];
-        let hf_sum = hf_modulation_sum_8x8_generic(token, block, stride, x_start, y_start, img_width, img_height);
+        let hf_sum = hf_modulation_sum_8x8_generic(
+            token, block, stride, x_start, y_start, img_width, img_height,
+        );
         out_val += hf_sum * K_SUM_COEFF;
 
         // 3. GammaModulation with SIMD and fast_log2
-        let gamma_sum =
-            gamma_modulation_sum_8x8_generic(token, block, stride, x_start, y_start, img_width, img_height);
+        let gamma_sum = gamma_modulation_sum_8x8_generic(
+            token, block, stride, x_start, y_start, img_width, img_height,
+        );
         let overall_ratio = gamma_sum * K_SCALE;
         let log_ratio = if overall_ratio > 0.0 {
             fast_log2(overall_ratio)
@@ -800,7 +831,10 @@ const FUZZY_MUL3: f32 = 0.05;
 
 /// Compare-and-swap for sorting network: returns (min, max). Generic over SIMD backend.
 #[inline(always)]
-fn cas<T: F32x8Backend>(a: GenericF32x8<T>, b: GenericF32x8<T>) -> (GenericF32x8<T>, GenericF32x8<T>) {
+fn cas<T: F32x8Backend>(
+    a: GenericF32x8<T>,
+    b: GenericF32x8<T>,
+) -> (GenericF32x8<T>, GenericF32x8<T>) {
     (a.min(b), a.max(b))
 }
 
@@ -808,7 +842,10 @@ fn cas<T: F32x8Backend>(a: GenericF32x8<T>, b: GenericF32x8<T>) -> (GenericF32x8
 /// Processes 8 independent sets of 9 values in parallel (one per SIMD lane).
 /// Returns weighted sum for each lane: MUL0*v0 + MUL1*v1 + MUL2*v2 + MUL3*v3
 #[inline(always)]
-fn weighted_min4_of_9_simd<T: F32x8Backend>(token: T, mut v: [GenericF32x8<T>; 9]) -> GenericF32x8<T> {
+fn weighted_min4_of_9_simd<T: F32x8Backend>(
+    token: T,
+    mut v: [GenericF32x8<T>; 9],
+) -> GenericF32x8<T> {
     // Sorting network for 9 elements to get 4 smallest in positions 0-3
     // Total: 19 compare-exchange operations
 
@@ -861,7 +898,13 @@ pub fn fuzzy_erosion_row_simd(
     max_y: usize,
     out: &mut [f32],
 ) -> usize {
-    incant!(fuzzy_erosion_row_simd_impl(pre_erosion, pre_erosion_w, y, max_y, out))
+    incant!(fuzzy_erosion_row_simd_impl(
+        pre_erosion,
+        pre_erosion_w,
+        y,
+        max_y,
+        out
+    ))
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -1041,7 +1084,16 @@ pub fn compute_fuzzy_erosion_blocks_simd(
     end: usize,
     out: &mut [f32],
 ) -> usize {
-    incant!(compute_fuzzy_erosion_blocks_simd_impl(pre_erosion_buffer, pe_w, buffer_rows, pe_y_base, max_filled_row, start, end, out))
+    incant!(compute_fuzzy_erosion_blocks_simd_impl(
+        pre_erosion_buffer,
+        pe_w,
+        buffer_rows,
+        pe_y_base,
+        max_filled_row,
+        start,
+        end,
+        out
+    ))
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
@@ -1082,15 +1134,114 @@ fn compute_fuzzy_erosion_blocks_simd_impl(
 
                 // Gather 9 neighbors for all 8 blocks
                 let v = [
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, -1, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, -1, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, -1, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, 0, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, 0, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, 0, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, -1, 1, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 0, 1, max_x, max_y),
-                    gather_neighbor_circular(token, pre_erosion_buffer, pe_w, buffer_rows, cx, cy, 1, 1, max_x, max_y),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        token,
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
                 ];
 
                 // SIMD sorting network to find 4 smallest and compute weighted sum
@@ -2674,8 +2825,16 @@ fn test_pre_erosion_pixel_x8(
     top: [f32; 8],
     bottom: [f32; 8],
 ) -> [f32; 8] {
-    fn inner(pixels: [f32; 8], left: [f32; 8], right: [f32; 8], top: [f32; 8], bottom: [f32; 8]) -> [f32; 8] {
-        incant!(test_pre_erosion_pixel_x8_impl(pixels, left, right, top, bottom))
+    fn inner(
+        pixels: [f32; 8],
+        left: [f32; 8],
+        right: [f32; 8],
+        top: [f32; 8],
+        bottom: [f32; 8],
+    ) -> [f32; 8] {
+        incant!(test_pre_erosion_pixel_x8_impl(
+            pixels, left, right, top, bottom
+        ))
     }
     #[magetypes(v3, neon, wasm128, scalar)]
     #[inline(always)]
@@ -2696,7 +2855,8 @@ fn test_pre_erosion_pixel_x8(
             f32x8::from_array(token, right),
             f32x8::from_array(token, top),
             f32x8::from_array(token, bottom),
-        ).to_array()
+        )
+        .to_array()
     }
     inner(pixels, left, right, top, bottom)
 }
@@ -2872,7 +3032,8 @@ mod tests {
         let top_arr: [f32; 8] = [98.0, 108.0, 118.0, 128.0, 138.0, 148.0, 158.0, 168.0];
         let bottom_arr: [f32; 8] = [102.0, 112.0, 122.0, 132.0, 142.0, 152.0, 162.0, 172.0];
 
-        let simd_arr = test_pre_erosion_pixel_x8(pixels_arr, left_arr, right_arr, top_arr, bottom_arr);
+        let simd_arr =
+            test_pre_erosion_pixel_x8(pixels_arr, left_arr, right_arr, top_arr, bottom_arr);
 
         for i in 0..8 {
             // Scalar reference calculation

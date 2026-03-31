@@ -23,9 +23,11 @@ use enough::Unstoppable;
 use zenbench::prelude::*;
 use zenjpeg::decode::Decoder;
 use zenjpeg::decoder::PixelFormat;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, ParallelEncoding, PixelLayout, XybSubsampling};
 #[cfg(feature = "trellis")]
 use zenjpeg::encode::trellis::TrellisConfig;
+use zenjpeg::encode::{
+    ChromaSubsampling, EncoderConfig, ParallelEncoding, PixelLayout, XybSubsampling,
+};
 
 // ── Test image generation ──────────────────────────────────────────────────
 
@@ -39,8 +41,12 @@ fn create_rgb8(width: usize, height: usize) -> Vec<u8> {
             let px = (x / 32) % 4;
             let py = (y / 32) % 4;
             for c in 0..3u8 {
-                let base = ((px * (60 + c as usize * 20) + py * (40 + c as usize * 30) + c as usize * 80) % 256) as u8;
-                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let base =
+                    ((px * (60 + c as usize * 20) + py * (40 + c as usize * 30) + c as usize * 80)
+                        % 256) as u8;
+                rng = rng
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let noise = ((rng >> 33) % 40) as u8;
                 data[idx + c as usize] = base.wrapping_add(noise);
             }
@@ -88,25 +94,23 @@ fn create_rgbf32(width: usize, height: usize) -> Vec<f32> {
     rgb.iter().map(|&v| v as f32 / 255.0).collect()
 }
 
-fn encode_jpeg(
-    rgb: &[u8],
-    w: u32,
-    h: u32,
-    ss: ChromaSubsampling,
-    progressive: bool,
-) -> Vec<u8> {
+fn encode_jpeg(rgb: &[u8], w: u32, h: u32, ss: ChromaSubsampling, progressive: bool) -> Vec<u8> {
     let mut config = EncoderConfig::ycbcr(90.0, ss);
     if progressive {
         config = config.progressive(true);
     }
-    let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+        .unwrap();
     enc.push_packed(rgb, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
 
 fn encode_grayscale_jpeg(gray: &[u8], w: u32, h: u32) -> Vec<u8> {
     let config = EncoderConfig::grayscale(90.0);
-    let mut enc = config.encode_from_bytes(w, h, PixelLayout::Gray8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::Gray8Srgb)
+        .unwrap();
     enc.push_packed(gray, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
@@ -145,7 +149,8 @@ fn bench_encode(suite: &mut Suite) {
             g.bench("base", move |b| {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
-                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -155,7 +160,8 @@ fn bench_encode(suite: &mut Suite) {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
                         .progressive(true)
-                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -169,7 +175,8 @@ fn bench_encode(suite: &mut Suite) {
             g.bench("base", move |b| {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
-                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_4k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -179,7 +186,8 @@ fn bench_encode(suite: &mut Suite) {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
                         .progressive(true)
-                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_4k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -196,7 +204,8 @@ fn bench_encode(suite: &mut Suite) {
             g.bench("seq", move |b| {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
-                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -206,7 +215,8 @@ fn bench_encode(suite: &mut Suite) {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
                         .parallel(ParallelEncoding::Auto)
-                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -219,7 +229,8 @@ fn bench_encode(suite: &mut Suite) {
             g.bench("seq", move |b| {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
-                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_4k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -229,7 +240,8 @@ fn bench_encode(suite: &mut Suite) {
                 b.iter(|| {
                     let mut enc = EncoderConfig::ycbcr(90.0, ss)
                         .parallel(ParallelEncoding::Auto)
-                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb).unwrap();
+                        .encode_from_bytes(S4K.0, S4K.1, PixelLayout::Rgb8Srgb)
+                        .unwrap();
                     enc.push_packed(rgb8_4k, Unstoppable).unwrap();
                     enc.finish()
                 })
@@ -245,7 +257,8 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("rgb8", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                    .unwrap();
                 enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -254,7 +267,8 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("rgba8", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgba8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgba8Srgb)
+                    .unwrap();
                 enc.push_packed(rgba8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -263,7 +277,8 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("bgra8", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Bgra8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Bgra8Srgb)
+                    .unwrap();
                 enc.push_packed(bgra8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -272,8 +287,10 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("rgb16", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb16Linear).unwrap();
-                enc.push_packed(bytemuck::cast_slice(rgb16_2k), Unstoppable).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb16Linear)
+                    .unwrap();
+                enc.push_packed(bytemuck::cast_slice(rgb16_2k), Unstoppable)
+                    .unwrap();
                 enc.finish()
             })
         });
@@ -281,8 +298,10 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("rgbf32", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::RgbF32Linear).unwrap();
-                enc.push_packed(bytemuck::cast_slice(rgbf32_2k), Unstoppable).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::RgbF32Linear)
+                    .unwrap();
+                enc.push_packed(bytemuck::cast_slice(rgbf32_2k), Unstoppable)
+                    .unwrap();
                 enc.finish()
             })
         });
@@ -296,7 +315,8 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("gray8_base", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::grayscale(90.0)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Gray8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Gray8Srgb)
+                    .unwrap();
                 enc.push_packed(gray8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -306,7 +326,8 @@ fn bench_encode(suite: &mut Suite) {
             b.iter(|| {
                 let mut enc = EncoderConfig::grayscale(90.0)
                     .progressive(true)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Gray8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Gray8Srgb)
+                    .unwrap();
                 enc.push_packed(gray8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -321,7 +342,8 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("xyb_base", |b| {
             b.iter(|| {
                 let mut enc = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                    .unwrap();
                 enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -338,7 +360,8 @@ fn bench_encode(suite: &mut Suite) {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                     .trellis(TrellisConfig::default())
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                    .unwrap();
                 enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -348,7 +371,8 @@ fn bench_encode(suite: &mut Suite) {
             b.iter(|| {
                 let mut enc = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                     .auto_optimize(true)
-                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb).unwrap();
+                    .encode_from_bytes(S2K.0, S2K.1, PixelLayout::Rgb8Srgb)
+                    .unwrap();
                 enc.push_packed(rgb8_2k, Unstoppable).unwrap();
                 enc.finish()
             })
@@ -601,7 +625,11 @@ fn bench_decode(suite: &mut Suite) {
     // ── Deblock modes (2k, 420 baseline, low quality for deblock) ─────
 
     let lowq_jpeg_2k: &'static [u8] = Vec::leak(encode_jpeg(
-        &rgb8_2k, S2K.0, S2K.1, ChromaSubsampling::Quarter, false,
+        &rgb8_2k,
+        S2K.0,
+        S2K.1,
+        ChromaSubsampling::Quarter,
+        false,
     ));
 
     suite.group("dec/2k/deblock", |g| {

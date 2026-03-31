@@ -8,15 +8,18 @@
 //! # SIMD Implementations
 //!
 //! Three implementations are available:
-//! - **wide**: Portable SIMD using `wide` crate with `#[autoversion]` (recommended)
+//! - **generic**: Portable SIMD using magetypes generics with multi-tier dispatch (recommended)
 //! - **avx2**: AVX2 intrinsics via archmage capability tokens (x86_64 only, kept for reference)
 //! - **scalar**: Pure scalar fallback
 //!
 //! Benchmarks (8x8 IDCT block):
-//! - x86_64 AVX2: wide 1.64x faster than scalar
-//! - aarch64 NEON: wide 1.11x faster than scalar
+//! - x86_64 AVX2: generic 1.64x faster than scalar
+//! - aarch64 NEON: generic 1.11x faster than scalar
 
 #![allow(dead_code)]
+
+use archmage::prelude::*;
+use magetypes::simd::generic::i32x8 as GenericI32x8;
 
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
@@ -983,21 +986,21 @@ mod avx2 {
 }
 
 // =============================================================================
-// Portable SIMD Implementation using `wide` crate
+// Portable SIMD Implementation using magetypes generics
 // =============================================================================
 
-/// Portable SIMD IDCT using `wide` crate with `#[autoversion]` for cross-platform support.
+/// Portable SIMD IDCT using magetypes generics with multi-tier dispatch.
 ///
-/// This implementation uses `wide::i32x8` for the butterfly operations and
-/// `wide::i32x8::transpose` for the 8x8 matrix transpose.
+/// This implementation uses `GenericI32x8` for the butterfly operations and
+/// a scalar transpose (magetypes i32x8 has no transpose_8x8).
 ///
 /// Performance vs scalar (standalone benchmark):
 /// - x86_64 AVX2: 1.64x faster (26.9 ns vs 44.2 ns per block)
 /// - aarch64 NEON: 1.11x faster (583.9 ns vs 646.9 ns per block via qemu)
 mod wide_simd {
     use super::SCALE_BITS;
-    use archmage::autoversion;
-    use wide::i32x8;
+    use archmage::prelude::*;
+    use magetypes::simd::generic::i32x8 as GenericI32x8;
 
     /// IDCT constants (fixed-point, 12-bit precision)
     const C2217: i32 = 2217;
@@ -1013,44 +1016,44 @@ mod wide_simd {
     const CN8034: i32 = -8034;
     const CN1597: i32 = -1597;
 
-    /// Portable SIMD IDCT using `wide` crate.
+    /// Portable SIMD IDCT using magetypes generics.
     ///
-    /// IMPORTANT: Uses `#[autoversion]` to enable SIMD on each target.
-    /// Without this, `wide` falls back to scalar and is slower!
-    ///
-    /// Targets (in priority order):
-    /// - x86_64+avx2: Uses AVX2 for i32x8 ops and transpose
-    /// - x86_64+sse4.1: Uses SSE4.1 (i32x8 = 2x __m128i)
-    /// - aarch64+neon: Uses NEON for i32x8 ops
-    /// - default: Scalar fallback
-    #[autoversion]
+    /// Uses `#[magetypes]` for multi-tier SIMD dispatch (AVX2, NEON, WASM128, scalar).
     pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
+        incant!(idct_int_wide_impl(in_vector, out_vector, stride));
+    }
+
+    #[magetypes(v3, neon, wasm128, scalar)]
+    fn idct_int_wide_impl(
+        token: Token,
+        in_vector: &[i32; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+    ) {
+        #[allow(non_camel_case_types)]
+        type i32x8 = GenericI32x8<Token>;
+
         // Load 8 rows as i32x8 vectors
-        let mut rows: [i32x8; 8] = [
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap()),
-            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap()),
-        ];
+        let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
+            i32x8::from_array(
+                token,
+                *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
+            )
+        });
 
         // First pass (columns) - process all 8 columns in parallel
-        idct_pass(&mut rows, i32x8::splat(512), 10);
+        idct_pass_generic(token, &mut rows, i32x8::splat(token, 512), 10);
 
-        // Transpose using wide's built-in (uses SIMD on supported targets)
-        rows = i32x8::transpose(rows);
+        // Transpose using to_array/from_array (no native i32x8 transpose)
+        transpose_i32x8(token, &mut rows);
 
         // Second pass (rows)
-        idct_pass(&mut rows, i32x8::splat(SCALE_BITS), 17);
+        idct_pass_generic(token, &mut rows, i32x8::splat(token, SCALE_BITS), 17);
 
         // Transpose back to row-major order
-        rows = i32x8::transpose(rows);
+        transpose_i32x8(token, &mut rows);
 
         // Extract and clamp to output with stride.
-        // Single bounds check proves all strided writes are in-bounds.
         let min_len = stride * 7 + 8;
         assert!(out_vector.len() >= min_len);
         let out = &mut out_vector[..min_len];
@@ -1064,18 +1067,40 @@ mod wide_simd {
         }
     }
 
-    /// One pass of IDCT butterfly using i32x8 SIMD.
+    /// Scalar 8x8 transpose for i32x8 vectors (no native transpose available).
+    #[inline(always)]
+    pub(super) fn transpose_i32x8<T: magetypes::simd::backends::I32x8Backend>(
+        token: T,
+        rows: &mut [GenericI32x8<T>; 8],
+    ) {
+        let r: [[i32; 8]; 8] = core::array::from_fn(|i| rows[i].to_array());
+        for i in 0..8 {
+            rows[i] = GenericI32x8::<T>::from_array(token, core::array::from_fn(|j| r[j][i]));
+        }
+    }
+
+    /// One pass of IDCT butterfly using generic i32x8 SIMD.
     ///
     /// This is the core IDCT computation, called twice (columns then rows).
+    /// Note: uses `shl_const` and `shr_arithmetic_const` instead of `<<`/`>>`
+    /// operators (not available on GenericI32x8).
     #[inline(always)]
-    pub(super) fn idct_pass(rows: &mut [i32x8; 8], scale_bits: i32x8, shift: i32) {
-        // Even part (rows 0, 2, 4, 6)
-        let p1 = (rows[2] + rows[6]) * i32x8::splat(C2217);
-        let t2 = p1 + rows[6] * i32x8::splat(CN7567);
-        let t3 = p1 + rows[2] * i32x8::splat(C3135);
+    pub(super) fn idct_pass_generic<T: magetypes::simd::backends::I32x8Backend>(
+        token: T,
+        rows: &mut [GenericI32x8<T>; 8],
+        scale_bits: GenericI32x8<T>,
+        shift: i32,
+    ) {
+        #[allow(non_camel_case_types)]
+        type i32x8<U> = GenericI32x8<U>;
 
-        let t0 = (rows[0] + rows[4]) << 12;
-        let t1 = (rows[0] - rows[4]) << 12;
+        // Even part (rows 0, 2, 4, 6)
+        let p1 = (rows[2] + rows[6]) * i32x8::splat(token, C2217);
+        let t2 = p1 + rows[6] * i32x8::splat(token, CN7567);
+        let t3 = p1 + rows[2] * i32x8::splat(token, C3135);
+
+        let t0 = (rows[0] + rows[4]).shl_const::<12>();
+        let t1 = (rows[0] - rows[4]).shl_const::<12>();
 
         let x0 = t0 + t3 + scale_bits;
         let x3 = t0 - t3 + scale_bits;
@@ -1087,17 +1112,17 @@ mod wide_simd {
         let p4 = rows[5] + rows[1];
         let p1_odd = rows[7] + rows[1];
         let p2_odd = rows[5] + rows[3];
-        let p5 = (p3 + p4) * i32x8::splat(C4816);
+        let p5 = (p3 + p4) * i32x8::splat(token, C4816);
 
-        let mut t0 = rows[7] * i32x8::splat(C1223);
-        let mut t1 = rows[5] * i32x8::splat(C8410);
-        let mut t2 = rows[3] * i32x8::splat(C12586);
-        let mut t3 = rows[1] * i32x8::splat(C6149);
+        let mut t0 = rows[7] * i32x8::splat(token, C1223);
+        let mut t1 = rows[5] * i32x8::splat(token, C8410);
+        let mut t2 = rows[3] * i32x8::splat(token, C12586);
+        let mut t3 = rows[1] * i32x8::splat(token, C6149);
 
-        let p1_final = p5 + p1_odd * i32x8::splat(CN3685);
-        let p2_final = p5 + p2_odd * i32x8::splat(CN10497);
-        let p3_final = p3 * i32x8::splat(CN8034);
-        let p4_final = p4 * i32x8::splat(CN1597);
+        let p1_final = p5 + p1_odd * i32x8::splat(token, CN3685);
+        let p2_final = p5 + p2_odd * i32x8::splat(token, CN10497);
+        let p3_final = p3 * i32x8::splat(token, CN8034);
+        let p4_final = p4 * i32x8::splat(token, CN1597);
 
         t3 = t3 + p1_final + p4_final;
         t2 = t2 + p2_final + p3_final;
@@ -1105,14 +1130,31 @@ mod wide_simd {
         t0 = t0 + p1_final + p3_final;
 
         // Combine even and odd parts, then shift
-        rows[0] = (x0 + t3) >> shift;
-        rows[1] = (x1 + t2) >> shift;
-        rows[2] = (x2 + t1) >> shift;
-        rows[3] = (x3 + t0) >> shift;
-        rows[4] = (x3 - t0) >> shift;
-        rows[5] = (x2 - t1) >> shift;
-        rows[6] = (x1 - t2) >> shift;
-        rows[7] = (x0 - t3) >> shift;
+        // Note: shift is always 10 or 17, known at call site but not const generic.
+        // Use match to dispatch to const generic shifts.
+        match shift {
+            10 => {
+                rows[0] = (x0 + t3).shr_arithmetic_const::<10>();
+                rows[1] = (x1 + t2).shr_arithmetic_const::<10>();
+                rows[2] = (x2 + t1).shr_arithmetic_const::<10>();
+                rows[3] = (x3 + t0).shr_arithmetic_const::<10>();
+                rows[4] = (x3 - t0).shr_arithmetic_const::<10>();
+                rows[5] = (x2 - t1).shr_arithmetic_const::<10>();
+                rows[6] = (x1 - t2).shr_arithmetic_const::<10>();
+                rows[7] = (x0 - t3).shr_arithmetic_const::<10>();
+            }
+            17 => {
+                rows[0] = (x0 + t3).shr_arithmetic_const::<17>();
+                rows[1] = (x1 + t2).shr_arithmetic_const::<17>();
+                rows[2] = (x2 + t1).shr_arithmetic_const::<17>();
+                rows[3] = (x3 + t0).shr_arithmetic_const::<17>();
+                rows[4] = (x3 - t0).shr_arithmetic_const::<17>();
+                rows[5] = (x2 - t1).shr_arithmetic_const::<17>();
+                rows[6] = (x1 - t2).shr_arithmetic_const::<17>();
+                rows[7] = (x0 - t3).shr_arithmetic_const::<17>();
+            }
+            _ => unreachable!("idct_pass_generic only supports shift=10 or shift=17"),
+        }
     }
 }
 
@@ -1255,25 +1297,32 @@ pub fn idct_int_dc_only_unclamped(dc_coeff: i32, out_vector: &mut [i16], stride:
     }
 }
 
-/// Unclamped wide SIMD IDCT.
+/// Unclamped wide SIMD IDCT using magetypes generics.
 fn idct_int_wide_unclamped(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
-    use wide::i32x8;
+    incant!(idct_int_wide_unclamped_impl(in_vector, out_vector, stride));
+}
 
-    let mut rows: [i32x8; 8] = [
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap()),
-        i32x8::from(*<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap()),
-    ];
+#[magetypes(v3, neon, wasm128, scalar)]
+fn idct_int_wide_unclamped_impl(
+    token: Token,
+    in_vector: &[i32; 64],
+    out_vector: &mut [i16],
+    stride: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
 
-    wide_simd::idct_pass(&mut rows, i32x8::splat(512), 10);
-    rows = i32x8::transpose(rows);
-    wide_simd::idct_pass(&mut rows, i32x8::splat(SCALE_BITS), 17);
-    rows = i32x8::transpose(rows);
+    let mut rows: [i32x8; 8] = core::array::from_fn(|i| {
+        i32x8::from_array(
+            token,
+            *<&[i32; 8]>::try_from(&in_vector[i * 8..(i + 1) * 8]).unwrap(),
+        )
+    });
+
+    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat(token, 512), 10);
+    wide_simd::transpose_i32x8(token, &mut rows);
+    wide_simd::idct_pass_generic(token, &mut rows, i32x8::splat(token, SCALE_BITS), 17);
+    wide_simd::transpose_i32x8(token, &mut rows);
 
     // Store WITHOUT clamping — single bounds check for all strided writes
     let min_len = stride * 7 + 8;
