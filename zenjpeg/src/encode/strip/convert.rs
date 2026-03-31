@@ -327,9 +327,9 @@ impl StripProcessor {
                         // Single unaligned load of 8 u16 values (16 bytes)
                         let values: [u16; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 16]);
-                        let srgb = linear_u16_to_srgb_255_x8(values);
+                        let srgb = linear_u16_to_srgb_255_x8(&values);
                         self.y_strip[dst_start + x..dst_start + x + 8]
-                            .copy_from_slice(&srgb.to_array());
+                            .copy_from_slice(&srgb);
                     }
 
                     // Handle remainder with scalar
@@ -377,14 +377,14 @@ impl StripProcessor {
                             b_arr[i] = rgb[2];
                         }
 
-                        let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(r_arr, g_arr, b_arr);
+                        let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
                         self.y_strip[y_row_start + x..y_row_start + x + 8]
-                            .copy_from_slice(&y.to_array());
+                            .copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
-                            .copy_from_slice(&cb.to_array());
+                            .copy_from_slice(&cb);
                         self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
-                            .copy_from_slice(&cr.to_array());
+                            .copy_from_slice(&cr);
                     }
 
                     // Handle remainder with scalar
@@ -412,23 +412,21 @@ impl StripProcessor {
                 use super::super::linear_lut::{
                     linear_f32_to_srgb_255_fast, linear_to_srgb_255_x8,
                 };
-                use wide::f32x8;
 
                 // GrayF32: 4 bytes per pixel, linear
                 for row in 0..strip_height {
                     let src_start = row * width * 4;
                     let dst_start = row * padded_width;
 
-                    // Process 8 pixels at a time with SIMD
+                    // Process 8 pixels at a time
                     let simd_width = width / 8 * 8;
                     for x in (0..simd_width).step_by(8) {
                         let idx = src_start + x * 4;
-                        // Single unaligned load of 8 f32 values (32 bytes)
                         let values: [f32; 8] =
                             bytemuck::pod_read_unaligned(&rgb_strip[idx..idx + 32]);
-                        let srgb = linear_to_srgb_255_x8(f32x8::new(values));
+                        let srgb = linear_to_srgb_255_x8(&values);
                         self.y_strip[dst_start + x..dst_start + x + 8]
-                            .copy_from_slice(&srgb.to_array());
+                            .copy_from_slice(&srgb);
                     }
 
                     // Handle remainder with scalar
@@ -451,10 +449,8 @@ impl StripProcessor {
                 use super::super::linear_lut::{
                     linear_rgbf32_to_ycbcr_fast, linear_rgbf32_to_ycbcr_x8,
                 };
-                use wide::f32x8;
 
                 // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
-                // Uses SIMD for fast linear -> YCbCr conversion
                 let bpp = self.pixel_format.bytes_per_pixel();
 
                 for row in 0..strip_height {
@@ -462,7 +458,7 @@ impl StripProcessor {
                     let cbcr_row_start = row * width;
                     let row_base = row * width * bpp;
 
-                    // Process 8 pixels at a time with SIMD
+                    // Process 8 pixels at a time
                     let simd_width = width / 8 * 8;
                     for x in (0..simd_width).step_by(8) {
                         // Deinterleave 8 RGB pixels into separate R, G, B vectors
@@ -479,18 +475,15 @@ impl StripProcessor {
                             b_arr[i] = rgb[2];
                         }
 
-                        let (y, cb, cr) = linear_rgbf32_to_ycbcr_x8(
-                            f32x8::new(r_arr),
-                            f32x8::new(g_arr),
-                            f32x8::new(b_arr),
-                        );
+                        let (y, cb, cr) =
+                            linear_rgbf32_to_ycbcr_x8(&r_arr, &g_arr, &b_arr);
 
                         self.y_strip[y_row_start + x..y_row_start + x + 8]
-                            .copy_from_slice(&y.to_array());
+                            .copy_from_slice(&y);
                         self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
-                            .copy_from_slice(&cb.to_array());
+                            .copy_from_slice(&cb);
                         self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
-                            .copy_from_slice(&cr.to_array());
+                            .copy_from_slice(&cr);
                     }
 
                     // Handle remainder with scalar

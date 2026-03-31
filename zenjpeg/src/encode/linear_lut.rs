@@ -110,125 +110,85 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 // SIMD implementations (8-wide)
 // ============================================================================
 
-use wide::{CmpGt, f32x8};
-
-/// sRGB transfer function for 8 lanes (linear → sRGB).
-/// Uses polynomial approximation matching linear-srgb crate accuracy.
+/// Convert 8 linear f32 values [0,∞) to sRGB [0, 255].
+///
+/// Values > 1.0 are tone-mapped with Reinhard: x / (1 + x).
 #[inline(always)]
-fn linear_to_srgb_x8(x: f32x8) -> f32x8 {
-    // Standard sRGB transfer: x <= 0.0031308 ? 12.92*x : 1.055*x^(1/2.4) - 0.055
-    // Approximate x^(1/2.4) ≈ x^0.4167 via sqrt(sqrt(x)) * x^0.0417 ≈ sqrt(sqrt(x)) * lerp
-    // But for correctness, use the polynomial approximation from the sRGB spec.
-    //
-    // Fast path: use the exact formula with sqrt-based approximation of pow.
-    // x^(1/2.4) = x^(5/12) = (x^(1/4))^(5/3) = sqrt(sqrt(x)) * (sqrt(sqrt(x)))^(2/3)
-    // Simpler: x^(1/2.4) ≈ sqrt(x) * x^(-1/60) which is close but imprecise.
-    //
-    // For maximum accuracy without powf, use the minimax polynomial from linear-srgb:
-    // We'll use scalar powf per-element since this is not the hot path.
-    let arr = <[f32; 8]>::from(x);
+pub fn linear_to_srgb_255_x8(x: &[f32; 8]) -> [f32; 8] {
     let mut out = [0.0f32; 8];
     for i in 0..8 {
-        out[i] = linear_to_srgb(arr[i]);
+        let v = x[i].max(0.0);
+        // Reinhard tone mapping for HDR
+        let v = if v > 1.0 { v / (1.0 + v) } else { v };
+        out[i] = linear_to_srgb(v) * 255.0;
     }
-    f32x8::new(out)
+    out
 }
 
-/// Convert 8 linear f32 values [0,1] to sRGB [0, 255] using SIMD.
-///
-/// Values > 1.0 are tone-mapped with Reinhard.
+/// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255].
 #[inline(always)]
-pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
-    // Clamp negatives to zero
-    let x = x.max(f32x8::ZERO);
-
-    // Reinhard tone mapping for HDR: x / (1 + x)
-    // Only apply where x > 1.0
-    let one = f32x8::ONE;
-    let needs_tonemap = x.simd_gt(one);
-    let tonemapped = x / (one + x);
-    let x = needs_tonemap.blend(tonemapped, x);
-
-    // Apply sRGB transfer function and scale to [0, 255]
-    linear_to_srgb_x8(x) * f32x8::splat(255.0)
-}
-
-/// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255] using SIMD.
-#[inline(always)]
-pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
-    let scale = f32x8::splat(1.0 / 65535.0);
-    let linear = f32x8::new([
-        values[0] as f32,
-        values[1] as f32,
-        values[2] as f32,
-        values[3] as f32,
-        values[4] as f32,
-        values[5] as f32,
-        values[6] as f32,
-        values[7] as f32,
-    ]) * scale;
-
+pub fn linear_u16_to_srgb_255_x8(values: &[u16; 8]) -> [f32; 8] {
+    let mut linear = [0.0f32; 8];
+    for i in 0..8 {
+        linear[i] = values[i] as f32 / 65535.0;
+    }
     // No HDR tone mapping needed for u16 (max is 1.0)
-    linear_to_srgb_x8(linear) * f32x8::splat(255.0)
+    let mut out = [0.0f32; 8];
+    for i in 0..8 {
+        out[i] = linear_to_srgb(linear[i]) * 255.0;
+    }
+    out
 }
 
-/// Convert 8 linear RGB16 pixels to 8 Y, 8 Cb, 8 Cr values using SIMD.
+/// Convert 8 linear RGB16 pixels to 8 Y, 8 Cb, 8 Cr values.
 ///
 /// Takes R, G, B as separate arrays of 8 u16 values.
-/// Returns (Y, Cb, Cr) as f32x8 vectors.
+/// Returns (Y, Cb, Cr) as [f32; 8] arrays.
 #[inline(always)]
-pub fn linear_rgb16_to_ycbcr_x8(r: [u16; 8], g: [u16; 8], b: [u16; 8]) -> (f32x8, f32x8, f32x8) {
-    // Convert linear u16 to sRGB [0, 255]
+pub fn linear_rgb16_to_ycbcr_x8(
+    r: &[u16; 8],
+    g: &[u16; 8],
+    b: &[u16; 8],
+) -> ([f32; 8], [f32; 8], [f32; 8]) {
     let r = linear_u16_to_srgb_255_x8(r);
     let g = linear_u16_to_srgb_255_x8(g);
     let b = linear_u16_to_srgb_255_x8(b);
-
-    // RGB to YCbCr matrix multiplication
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
-    let chroma_offset = f32x8::splat(CHROMA_OFFSET);
-
-    let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
-    let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb * b)) + chroma_offset;
-    let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr * b)) + chroma_offset;
-
-    (y, cb, cr)
+    rgb_to_ycbcr_x8(&r, &g, &b)
 }
 
-/// Convert 8 linear RGB pixels to 8 Y, 8 Cb, 8 Cr values using SIMD.
+/// Convert 8 linear RGB f32 pixels to 8 Y, 8 Cb, 8 Cr values.
 ///
-/// Takes R, G, B as separate f32x8 vectors (structure-of-arrays layout).
-/// Returns (Y, Cb, Cr) as f32x8 vectors.
+/// Takes R, G, B as separate [f32; 8] arrays (structure-of-arrays layout).
+/// Returns (Y, Cb, Cr) as [f32; 8] arrays.
 #[inline(always)]
-pub fn linear_rgbf32_to_ycbcr_x8(r: f32x8, g: f32x8, b: f32x8) -> (f32x8, f32x8, f32x8) {
-    // Convert linear to sRGB [0, 255]
+pub fn linear_rgbf32_to_ycbcr_x8(
+    r: &[f32; 8],
+    g: &[f32; 8],
+    b: &[f32; 8],
+) -> ([f32; 8], [f32; 8], [f32; 8]) {
     let r = linear_to_srgb_255_x8(r);
     let g = linear_to_srgb_255_x8(g);
     let b = linear_to_srgb_255_x8(b);
+    rgb_to_ycbcr_x8(&r, &g, &b)
+}
 
-    // RGB to YCbCr matrix multiplication
-    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
-    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
-    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
-    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
-    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
-    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
-    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
-    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
-    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
-    let chroma_offset = f32x8::splat(CHROMA_OFFSET);
-
-    let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
-    let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb * b)) + chroma_offset;
-    let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr * b)) + chroma_offset;
-
+/// BT.601 RGB→YCbCr matrix multiply for 8 pixels (SoA layout).
+#[inline(always)]
+fn rgb_to_ycbcr_x8(
+    r: &[f32; 8],
+    g: &[f32; 8],
+    b: &[f32; 8],
+) -> ([f32; 8], [f32; 8], [f32; 8]) {
+    let mut y = [0.0f32; 8];
+    let mut cb = [0.0f32; 8];
+    let mut cr = [0.0f32; 8];
+    for i in 0..8 {
+        y[i] = YCBCR_R_TO_Y * r[i] + YCBCR_G_TO_Y * g[i] + YCBCR_B_TO_Y * b[i];
+        cb[i] = YCBCR_R_TO_CB * r[i] + YCBCR_G_TO_CB * g[i] + YCBCR_B_TO_CB * b[i]
+            + CHROMA_OFFSET;
+        cr[i] = YCBCR_R_TO_CR * r[i] + YCBCR_G_TO_CR * g[i] + YCBCR_B_TO_CR * b[i]
+            + CHROMA_OFFSET;
+    }
     (y, cb, cr)
 }
 
