@@ -394,9 +394,7 @@ fn load_or_generate_pixels(w: u32, h: u32) -> Vec<u8> {
                 rd.find(|e| {
                     e.as_ref()
                         .ok()
-                        .and_then(|e| {
-                            e.path().extension().map(|x| x.eq_ignore_ascii_case("png"))
-                        })
+                        .and_then(|e| e.path().extension().map(|x| x.eq_ignore_ascii_case("png")))
                         .unwrap_or(false)
                 })
             })
@@ -523,7 +521,11 @@ fn generate_test_sets() -> Vec<TestSet> {
             eprintln!(
                 "  pixels {w}x{h}: {} bytes ({})",
                 px.len(),
-                if !px.is_empty() { "loaded" } else { "synthetic" }
+                if !px.is_empty() {
+                    "loaded"
+                } else {
+                    "synthetic"
+                }
             );
             ((w, h), px)
         })

@@ -392,18 +392,9 @@ fn ycbcr_planes_f32_to_rgb_u8_impl(
         let i = chunk * 8;
 
         // Load 8 values from each plane
-        let y = f32x8::from_array(
-            token,
-            *<&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap(),
-        );
-        let cb = f32x8::from_array(
-            token,
-            *<&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap(),
-        );
-        let cr = f32x8::from_array(
-            token,
-            *<&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap(),
-        );
+        let y = f32x8::from_array(token, *<&[f32; 8]>::try_from(&y_plane[i..i + 8]).unwrap());
+        let cb = f32x8::from_array(token, *<&[f32; 8]>::try_from(&cb_plane[i..i + 8]).unwrap());
+        let cr = f32x8::from_array(token, *<&[f32; 8]>::try_from(&cr_plane[i..i + 8]).unwrap());
 
         let y_off = y + offset;
 

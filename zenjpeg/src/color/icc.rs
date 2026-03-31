@@ -157,7 +157,12 @@ pub fn apply_icc_transform(
     let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_8bit(Layout::Rgb, &output_profile, Layout::Rgb, moxcms_transform_opts())
+        .create_transform_8bit(
+            Layout::Rgb,
+            &output_profile,
+            Layout::Rgb,
+            moxcms_transform_opts(),
+        )
         .map_err(|e| Error::icc_error(format!("moxcms transform: {e:?}")))?;
 
     let mut output = vec![0u8; rgb_data.len()];
@@ -207,7 +212,12 @@ pub fn apply_icc_transform_f32(
     let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_f32(Layout::Rgb, &output_profile, Layout::Rgb, moxcms_transform_opts())
+        .create_transform_f32(
+            Layout::Rgb,
+            &output_profile,
+            Layout::Rgb,
+            moxcms_transform_opts(),
+        )
         .map_err(|e| Error::icc_error(format!("moxcms f32 transform: {e:?}")))?;
 
     let mut output = vec![0f32; rgb_data.len()];
