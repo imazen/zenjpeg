@@ -493,6 +493,7 @@ impl<'a> JpegParser<'a> {
 }
 
 /// Extract XMP string from a JPEG's APP1 segment.
+#[cfg(feature = "ultrahdr")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
     let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
     let idx = jpeg.windows(xmp_ns.len()).position(|w| w == xmp_ns)?;
