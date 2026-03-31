@@ -102,7 +102,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # ultrahdr path deps kept — sibling repos are cloned above
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -148,7 +148,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # ultrahdr path deps kept — sibling repos are cloned above
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -161,11 +161,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Clippy
-        run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
-
       - name: Clippy (all features)
         run: cargo clippy -p zenjpeg --lib --tests --benches --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- -D warnings
+
+      - name: Clippy (default features)
+        run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
 
   fmt:
     name: Format
@@ -195,7 +195,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # ultrahdr path deps kept — sibling repos are cloned above
           sed \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
@@ -234,7 +234,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # ultrahdr path deps kept — sibling repos are cloned above
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
@@ -277,7 +277,7 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # ultrahdr path deps kept — sibling repos are cloned above
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
