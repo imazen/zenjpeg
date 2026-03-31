@@ -121,6 +121,72 @@ jobs:
       - name: Test (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
 
+  cpp-parity:
+    name: C++ Parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CMake and Ninja
+        shell: bash
+        run: |
+          if command -v cmake &>/dev/null && command -v ninja &>/dev/null; then
+            echo "CMake and Ninja already installed"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y cmake ninja-build
+          fi
+          cmake --version
+          ninja --version || true
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/ultrahdr.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+
+      - name: Strip non-CI workspace members and deps (keep jpegli-internals-sys)
+        shell: bash
+        run: |
+          # Remove zjpeg only (keep jpegli-internals-sys)
+          sed \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Remove zenresize workspace dep (needs zenblend/zennode chain)
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Remove non-CI deps from zenjpeg (keep jpegli-internals-sys and cjpegli-ffi)
+          sed \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cpp-parity
+
+      - name: Build (includes C++ jpegli compilation)
+        run: cargo build -p zenjpeg --release --tests
+
+      - name: Test (defaults with C++ FFI)
+        run: cargo test -p zenjpeg --release --lib --tests
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

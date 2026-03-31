@@ -12,7 +12,6 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -215,6 +214,8 @@ fn find_prebuilt_library(jpegli_root: &Path, butteraugli_enabled: bool) -> Optio
 }
 
 /// Build jpegli using cmake
+///
+/// Cross-platform build logic modeled after jpegxl-src from libjxl-rs.
 fn build_with_cmake(
     jpegli_root: &Path,
     out_dir: &Path,
@@ -224,9 +225,11 @@ fn build_with_cmake(
 ) -> PathBuf {
     let mut config = cmake::Config::new(jpegli_root);
 
-    // Basic configuration
+    // Basic configuration — disable everything we don't need
     config
         .define("BUILD_TESTING", "OFF")
+        .define("BUILD_SHARED_LIBS", "OFF")
+        .define("JPEGXL_STATIC", "ON")
         .define("JPEGXL_ENABLE_DOXYGEN", "OFF")
         .define("JPEGXL_ENABLE_MANPAGES", "OFF")
         .define("JPEGXL_ENABLE_BENCHMARK", "OFF")
@@ -236,9 +239,10 @@ fn build_with_cmake(
         .define("JPEGXL_ENABLE_OPENEXR", "OFF")
         .define("JPEGXL_ENABLE_SKCMS", "OFF")
         .define("JPEGXL_ENABLE_TCMALLOC", "OFF")
-        .define("JPEGXL_ENABLE_JPEGLI_LIBJPEG", "ON")
-        .define("JPEGXL_STATIC", "ON")
-        .define("BUILD_SHARED_LIBS", "OFF");
+        .define("JPEGXL_ENABLE_FUZZERS", "OFF")
+        .define("JPEGXL_ENABLE_VIEWERS", "OFF")
+        .define("JPEGXL_BUNDLE_LIBPNG", "OFF")
+        .define("JPEGXL_ENABLE_JPEGLI_LIBJPEG", "ON");
 
     // For butteraugli, we need jxl_extras which requires JPEGXL_ENABLE_TOOLS
     // (jxl_extras.cmake is only included when JPEGXL_ENABLE_TOOLS or BUILD_TESTING is ON)
@@ -251,16 +255,46 @@ fn build_with_cmake(
     // Release build for performance
     config.profile("Release");
 
-    // Platform-specific settings
-    if target.contains("windows") && target.contains("msvc") {
-        // MSVC-specific settings
-        config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+    // Parallel build support (from jpegxl-src pattern)
+    if let Ok(p) = std::thread::available_parallelism() {
+        config.env("CMAKE_BUILD_PARALLEL_LEVEL", format!("{p}"));
     }
 
-    // Disable unnecessary components to speed up build
-    config
-        .define("JPEGXL_ENABLE_FUZZERS", "OFF")
-        .define("JPEGXL_ENABLE_VIEWERS", "OFF");
+    // Sanitizer support (from jpegxl-src pattern)
+    if cfg!(asan) {
+        config
+            .env("SANITIZER", "asan")
+            .cflag("-g -DADDRESS_SANITIZER -fsanitize=address")
+            .cxxflag("-g -DADDRESS_SANITIZER -fsanitize=address")
+            .define("JPEGXL_ENABLE_TCMALLOC", "OFF");
+    } else if cfg!(tsan) {
+        config
+            .env("SANITIZER", "tsan")
+            .cflag("-g -DTHREAD_SANITIZER -fsanitize=thread")
+            .cxxflag("-g -DTHREAD_SANITIZER -fsanitize=thread")
+            .define("JPEGXL_ENABLE_TCMALLOC", "OFF");
+    }
+
+    // Platform-specific settings (from jpegxl-src pattern)
+    if target.contains("msvc") {
+        // Windows MSVC: Use ClangCL for Highway SIMD compatibility
+        let mut exeflags = "MSVCRTD.lib".to_string();
+        if cfg!(asan) {
+            exeflags.push_str(
+                " clang_rt.asan_dynamic-x86_64.lib clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
+            );
+        }
+
+        config
+            .generator_toolset("ClangCL")
+            .define(
+                "CMAKE_VS_GLOBALS",
+                "UseMultiToolTask=true;EnforceProcessCountAcrossBuilds=true",
+            )
+            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")
+            .define("CMAKE_EXE_LINKER_FLAGS", exeflags)
+            .cflag("/Zl");
+    }
 
     // Build the appropriate target(s)
     // Note: jxl_extras-internal depends on jpegli-static, so building extras
@@ -271,12 +305,20 @@ fn build_with_cmake(
         config.build_target("jpegli-static");
     }
 
-    // Set the number of parallel jobs
-    if let Ok(jobs) = env::var("CARGO_BUILD_JOBS") {
-        config.build_arg(format!("-j{}", jobs));
-    }
+    let prefix = config.build();
 
-    let _dst = config.build();
+    // Detect lib directory — some platforms use lib64 (from jpegxl-src pattern)
+    let lib_dir = prefix.join("lib");
+    if !lib_dir.exists() {
+        let lib64_dir = prefix.join("lib64");
+        if lib64_dir.exists() {
+            // Symlink lib64 → lib so downstream code can use consistent paths
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&lib64_dir, &lib_dir);
+            }
+        }
+    }
 
     // The cmake crate puts built files in out_dir/build
     out_dir.join("build")
@@ -284,7 +326,22 @@ fn build_with_cmake(
 
 /// Link the built libraries
 fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
-    let lib_dir = build_dir.join("lib");
+    // Try lib/ first, fall back to lib64/ (from jpegxl-src pattern)
+    let lib_dir = {
+        let lib = build_dir.join("lib");
+        if lib.exists() {
+            lib
+        } else {
+            let lib64 = build_dir.join("lib64");
+            if lib64.exists() {
+                lib64
+            } else {
+                // Fall back to lib/ — cmake may create it during linking
+                lib
+            }
+        }
+    };
+
     let hwy_dir = build_dir.join("third_party").join("highway");
     let brotli_dir = build_dir.join("third_party").join("brotli");
 
@@ -310,12 +367,21 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
         println!("cargo:rustc-link-lib=static=jxl_extras-internal");
 
         // jxl_extras may need additional dependencies
-        let lcms2_lib = build_dir.join("third_party").join("liblcms2.a");
-        if lcms2_lib.exists() {
+        let third_party = build_dir.join("third_party");
+        if third_party.exists() {
             println!(
                 "cargo:rustc-link-search=native={}",
-                build_dir.join("third_party").display()
+                third_party.display()
             );
+        }
+
+        // lcms2 may be built as a static lib
+        let lcms2_lib = if target.contains("msvc") {
+            third_party.join("lcms2.lib")
+        } else {
+            third_party.join("liblcms2.a")
+        };
+        if lcms2_lib.exists() {
             println!("cargo:rustc-link-lib=static=lcms2");
         }
     }
@@ -325,13 +391,12 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
     link_system_libraries(target);
 }
 
-/// Link the appropriate C++ runtime for the target platform
+/// Link the appropriate C++ runtime for the target platform (from jpegxl-src pattern)
 fn link_cpp_runtime(target: &str) {
     if target.contains("msvc") {
         // MSVC: C++ runtime is linked automatically
-        // No explicit linking needed
-    } else if target.contains("apple") || target.contains("darwin") {
-        // macOS: Use libc++
+    } else if target.contains("apple") || target.contains("darwin") || target.contains("freebsd") {
+        // macOS / FreeBSD: Use libc++
         println!("cargo:rustc-link-lib=c++");
     } else if target.contains("windows") {
         // MinGW on Windows
@@ -355,10 +420,4 @@ fn link_system_libraries(target: &str) {
         println!("cargo:rustc-link-lib=m"); // Math library
         println!("cargo:rustc-link-lib=pthread"); // Threads
     }
-}
-
-/// Check if a command exists in PATH
-#[allow(dead_code)]
-fn command_exists(cmd: &str) -> bool {
-    Command::new(cmd).arg("--version").output().is_ok()
 }

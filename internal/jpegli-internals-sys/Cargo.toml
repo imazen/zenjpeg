@@ -33,6 +33,9 @@ libc = "0.2"
 cmake = "0.1"
 cc = "1.0"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asan)', 'cfg(tsan)'] }
+
 [package.metadata.docs.rs]
 # Don't build docs.rs - requires C++ submodule
 all-features = false
