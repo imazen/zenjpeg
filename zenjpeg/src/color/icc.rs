@@ -149,7 +149,7 @@ pub fn apply_icc_transform(
     icc_profile: &[u8],
     target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
-    use moxcms::{ColorProfile, Layout, TransformOptions};
+    use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformOptions};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
@@ -163,6 +163,7 @@ pub fn apply_icc_transform(
             Layout::Rgb,
             TransformOptions {
                 allow_use_cicp_transfer: false,
+                barycentric_weight_scale: BarycentricWeightScale::High,
                 ..Default::default()
             },
         )
@@ -207,7 +208,7 @@ pub fn apply_icc_transform_f32(
     icc_profile: &[u8],
     target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
-    use moxcms::{ColorProfile, Layout, TransformOptions};
+    use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformOptions};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
@@ -221,6 +222,7 @@ pub fn apply_icc_transform_f32(
             Layout::Rgb,
             TransformOptions {
                 allow_use_cicp_transfer: false,
+                barycentric_weight_scale: BarycentricWeightScale::High,
                 ..Default::default()
             },
         )
