@@ -120,9 +120,11 @@ impl QuantContext {
     }
 }
 
+use archmage::prelude::*;
 use crate::foundation::simd_types::Block8x8f;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
-/// Wide-native block extraction: returns Block8x8f directly.
+/// Block extraction with level shift: returns Block8x8f directly.
 ///
 /// Assumes strip is properly padded (MCU-aligned) so no bounds checking needed.
 /// This is the fast path for the hot encoding loop.
@@ -139,23 +141,38 @@ pub(crate) fn extract_block_from_strip_wide(
     local_by: usize,
     strip_width: usize,
 ) -> Block8x8f {
+    incant!(extract_block_impl(strip, bx, local_by, strip_width))
+}
+
+#[magetypes(v3, scalar)]
+#[inline(always)]
+fn extract_block_impl(
+    token: Token,
+    strip: &[f32],
+    bx: usize,
+    local_by: usize,
+    strip_width: usize,
+) -> Block8x8f {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
     let x_start = bx * 8;
     let y_start = local_by * 8;
 
     let last_row_end = (y_start + 7) * strip_width + x_start + 8;
     debug_assert!(
         last_row_end <= strip.len(),
-        "extract_block_from_strip_wide: block ({bx}, {local_by}) out of bounds \
+        "extract_block_impl: block ({bx}, {local_by}) out of bounds \
          (need {last_row_end}, have {}; strip_width={strip_width})",
         strip.len(),
     );
 
+    let level_shift = f32x8::splat(token, 128.0);
     let mut rows = [[0.0f32; 8]; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
-        for dx in 0..8 {
-            rows[dy][dx] = strip[row_start + dx] - 128.0;
-        }
+        let src = f32x8::load(token, strip[row_start..row_start + 8].try_into().unwrap());
+        rows[dy] = (src - level_shift).to_array();
     }
 
     Block8x8f { rows }
