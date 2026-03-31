@@ -1,0 +1,101 @@
+[zenbench] results → /tmp/zenbench/zenbench-1774919863-1df997.txt
+  enc/4k/444/par::seq            634686944.8ns → 767067619.6ns   +20.86%  [31m▲ REGRESSION[0m
+  enc/4k/420::prog               370803111.4ns → 446331677.0ns   +20.37%  [31m▲ REGRESSION[0m
+  enc/4k/444/par::parallel       634580077.1ns → 745694739.7ns   +17.51%  [31m▲ REGRESSION[0m
+  enc/4k/420::base               370965836.1ns → 430146862.0ns   +15.95%  [31m▲ REGRESSION[0m
+  dec/2k/440_base::default       31323766.7ns → 34377145.3ns    +9.75%  [31m▲ REGRESSION[0m
+  dec/4k/422_base::default       182336856.4ns → 200040009.4ns    +9.71%  [31m▲ REGRESSION[0m
+  enc/2k/pixfmt::rgb16           137308574.8ns → 150319197.6ns    +9.48%  [31m▲ REGRESSION[0m
+  dec/2k/444_prog::default       45313288.9ns → 49552040.7ns    +9.35%  [31m▲ REGRESSION[0m
+  dec/2k/422_base::default       32009618.0ns → 34838492.9ns    +8.84%  [31m▲ REGRESSION[0m
+  dec/2k/440_prog::default       31281137.4ns → 34044004.7ns    +8.83%  [31m▲ REGRESSION[0m
+  dec/2k/422_prog::default       31726079.9ns → 34317640.8ns    +8.17%  [31m▲ REGRESSION[0m
+  enc/2k/pixfmt::rgbf32          143145053.1ns → 154650832.7ns    +8.04%  [31m▲ REGRESSION[0m
+  dec/2k/deblock::off            27477584.3ns → 29567463.8ns    +7.61%  [31m▲ REGRESSION[0m
+  dec/2k/dequant::dequant_bias   102597927.2ns → 110053921.7ns    +7.27%    unchanged
+  dec/2k/420_prog::default       27863363.0ns → 29771872.3ns    +6.85%  [31m▲ REGRESSION[0m
+  dec/2k/outfmt::rgb16           58411889.0ns → 62198630.6ns    +6.48%  [31m▲ REGRESSION[0m
+  dec/2k/420_base::default       27759298.3ns → 29455173.2ns    +6.11%  [31m▲ REGRESSION[0m
+  dec/2k/deblock::boundary4tap   39734470.4ns → 42142903.2ns    +6.06%  [31m▲ REGRESSION[0m
+  dec/2k/outfmt::rgba8           30101891.0ns → 31893171.3ns    +5.95%  [31m▲ REGRESSION[0m
+  dec/2k/outfmt::bgra8           30398989.5ns → 32166879.1ns    +5.82%  [31m▲ REGRESSION[0m
+  dec/2k/outfmt::rgbf32          58448396.7ns → 61798259.9ns    +5.73%  [31m▲ REGRESSION[0m
+  dec/2k/idct::jpegli            27477044.1ns → 29050100.3ns    +5.72%  [31m▲ REGRESSION[0m
+  dec/2k/idct::libjpeg           28205835.6ns → 29810210.9ns    +5.69%  [31m▲ REGRESSION[0m
+  dec/2k/upsample::nearest       27269558.8ns → 28767770.3ns    +5.49%  [31m▲ REGRESSION[0m
+  dec/2k/scanline::scanline_reader 29193750.8ns → 30795826.6ns    +5.49%  [31m▲ REGRESSION[0m
+  dec/2k/gray::gray_to_gray      46078572.7ns → 48428001.4ns    +5.10%  [31m▲ REGRESSION[0m
+  dec/2k/upsample::triangle      27785282.8ns → 29198328.6ns    +5.09%  [31m▲ REGRESSION[0m
+  dec/2k/gray::gray_to_rgb       46658440.8ns → 49012454.4ns    +5.05%  [31m▲ REGRESSION[0m
+  dec/2k/wave::scanline_wave     29230700.8ns → 30650860.6ns    +4.86%    unchanged
+  dec/2k/outfmt::rgb8            27205292.5ns → 28516127.6ns    +4.82%    unchanged
+  dec/2k/420_base/par::seq       31651839.4ns → 33165458.6ns    +4.78%    unchanged
+  dec/2k/444_base/par::seq       52427027.8ns → 54880953.9ns    +4.68%    unchanged
+  dec/2k/outfmt::bgr8            29447934.8ns → 30816626.5ns    +4.65%    unchanged
+  dec/2k/scanline::full_decode   27672744.7ns → 28945858.0ns    +4.60%    unchanged
+  enc/2k/444::base               137156070.3ns → 143374620.7ns    +4.53%    unchanged
+  enc/2k/optimize::trellis       553258569.9ns → 577041531.1ns    +4.30%    unchanged
+  enc/2k/444::prog               137364411.4ns → 143159853.5ns    +4.22%    unchanged
+  enc/4k/440/par::parallel       436590698.2ns → 454918598.1ns    +4.20%    unchanged
+  dec/2k/440_base/par::seq       36030330.9ns → 37513439.3ns    +4.12%    unchanged
+  dec/2k/wave::scanline_seq      29284404.5ns → 30487539.2ns    +4.11%    unchanged
+  dec/2k/444_base/par::parallel  45722533.7ns → 47497580.7ns    +3.88%    unchanged
+  enc/2k/xyb::xyb_base           180558091.2ns → 187555598.3ns    +3.88%    unchanged
+  dec/4k/444_base::default       276235120.6ns → 286930503.7ns    +3.87%    unchanged
+  enc/2k/optimize::auto_optimize 533471912.7ns → 553618499.7ns    +3.78%    unchanged
+  dec/2k/dequant::default        28044734.1ns → 29097844.8ns    +3.76%    unchanged
+  enc/2k/422/par::seq            101686913.2ns → 105268019.9ns    +3.52%    unchanged
+  enc/2k/gray::gray8_base        73171474.5ns → 75592054.5ns    +3.31%    unchanged
+  dec/2k/420_base/par::parallel  27554691.2ns → 28461397.9ns    +3.29%    unchanged
+  enc/2k/422/par::parallel       101431437.9ns → 104688041.3ns    +3.21%    unchanged
+  dec/2k/440_base/par::parallel  31680727.9ns → 32691506.3ns    +3.19%    unchanged
+  dec/2k/422_base/par::parallel  32185502.5ns → 33076154.8ns    +2.77%    unchanged
+  enc/2k/gray::gray8_prog        73474527.9ns → 75477617.1ns    +2.73%    unchanged
+  dec/2k/outfmt::gray8           59161695.0ns → 60738087.8ns    +2.66%    unchanged
+  enc/2k/pixfmt::rgb8            87896987.8ns → 90173920.8ns    +2.59%    unchanged
+  enc/4k/440::base               441971324.3ns → 452514575.0ns    +2.39%    unchanged
+  dec/4k/440_base::default       179743546.3ns → 183968796.4ns    +2.35%    unchanged
+  enc/2k/420/par::seq            88339848.3ns → 90389561.8ns    +2.32%    unchanged
+  enc/2k/440::base               100536476.4ns → 102744397.3ns    +2.20%    unchanged
+  enc/4k/440/par::seq            441764452.3ns → 450756813.0ns    +2.04%    unchanged
+  enc/2k/pixfmt::bgra8           89443440.7ns → 91108041.3ns    +1.86%    unchanged
+  enc/2k/420/par::parallel       88487295.8ns → 90087122.6ns    +1.81%    unchanged
+  enc/2k/440::prog               100750960.4ns → 102549305.7ns    +1.78%    unchanged
+  enc/2k/pixfmt::rgba8           89060879.0ns → 90600422.6ns    +1.73%    unchanged
+  enc/2k/444/par::seq            137938336.5ns → 139924616.5ns    +1.44%    unchanged
+  enc/2k/444/par::parallel       137661716.6ns → 139521911.6ns    +1.35%    unchanged
+  enc/4k/422/par::parallel       443660549.2ns → 449373418.0ns    +1.29%    unchanged
+  dec/2k/422_base/par::seq       43810210.3ns → 44219160.1ns    +0.93%    unchanged
+  enc/2k/440/par::seq            101230575.7ns → 101869455.2ns    +0.63%    unchanged
+  enc/4k/440::prog               440726954.5ns → 442178359.8ns    +0.33%    unchanged
+  enc/2k/440/par::parallel       101313304.8ns → 101614685.2ns    +0.30%    unchanged
+  dec/2k/deblock::knusperli      123503340.6ns → 123784597.7ns    +0.23%    unchanged
+  enc/2k/420::base               88393721.6ns → 88149850.2ns    -0.28%    unchanged
+  enc/2k/420::prog               88868874.9ns → 88559659.3ns    -0.35%    unchanged
+  enc/4k/422/par::seq            444207162.7ns → 442521876.9ns    -0.38%    unchanged
+  dec/4k/422_prog::default       181409451.6ns → 180093664.4ns    -0.73%    unchanged
+  enc/2k/422::prog               103444078.2ns → 102405858.4ns    -1.00%    unchanged
+  enc/2k/422::base               103497996.5ns → 101959762.5ns    -1.49%    unchanged
+  enc/4k/422::base               439483897.0ns → 430779393.6ns    -1.98%    unchanged
+  dec/4k/444_prog::default       276374797.0ns → 270279404.0ns    -2.21%    unchanged
+  dec/4k/440_prog::default       178249158.0ns → 174276334.3ns    -2.23%    unchanged
+  enc/4k/444::base               616894686.0ns → 600158772.4ns    -2.71%    unchanged
+  dec/2k/444_base::default       50727537.5ns → 49334520.3ns    -2.75%    unchanged
+  enc/4k/444::prog               615448917.1ns → 596554314.7ns    -3.07%    unchanged
+  enc/4k/422::prog               442473196.4ns → 428086644.5ns    -3.25%    unchanged
+  enc/4k/420/par::parallel       368432760.5ns → 356311562.4ns    -3.29%    unchanged
+  enc/4k/420/par::seq            368756645.6ns → 355026924.2ns    -3.72%    unchanged
+  dec/4k/422_base/par::seq       229576042.7ns → 217320629.0ns    -5.34%  [32m▼ improved[0m
+  dec/4k/420_base::default       162743008.7ns → 153683200.0ns    -5.57%  [32m▼ improved[0m
+  dec/4k/420_base/par::seq       178878986.0ns → 168323453.4ns    -5.90%  [32m▼ improved[0m
+  dec/4k/420_base/par::parallel  158261928.5ns → 148629554.4ns    -6.09%  [32m▼ improved[0m
+  dec/4k/420_prog::default       163413093.0ns → 152843976.8ns    -6.47%  [32m▼ improved[0m
+  dec/4k/422_base/par::parallel  181088090.2ns → 166715296.2ns    -7.94%  [32m▼ improved[0m
+  dec/4k/444_base/par::seq       302877047.6ns → 274836790.0ns    -9.26%  [32m▼ improved[0m
+  dec/4k/444_base/par::parallel  276769528.7ns → 243721196.3ns   -11.94%  [32m▼ improved[0m
+  dec/4k/wave::scanline_wave     211742692.9ns → 183938243.7ns   -13.13%  [32m▼ improved[0m
+  dec/4k/440_base/par::seq       219310307.7ns → 187812777.3ns   -14.36%  [32m▼ improved[0m
+  dec/4k/wave::scanline_seq      220825036.8ns → 184184315.6ns   -16.59%  [32m▼ improved[0m
+  dec/4k/440_base/par::parallel  211592895.4ns → 164630767.6ns   -22.19%  [32m▼ improved[0m
+  Summary: 27 regressions, 12 improvements, 59 unchanged
+[zenbench] FAIL: 27 regression(s) exceed 5% threshold
