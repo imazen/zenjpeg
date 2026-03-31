@@ -287,6 +287,81 @@ let oriented = apply_exif_orientation(&jpeg_data, enough::Unstoppable)?;
 
 All 8 D4 dihedral group elements: `None`, `FlipHorizontal`, `FlipVertical`, `Transpose`, `Rotate90`, `Rotate180`, `Rotate270`, `Transverse`.
 
+### UltraHDR (requires `ultrahdr` feature)
+
+UltraHDR embeds a gain map inside a standard JPEG so HDR-capable displays get HDR while everything else sees the SDR base image. zenjpeg handles the full stack: encode HDR → UltraHDR JPEG, decode UltraHDR JPEG → HDR pixels.
+
+#### Encode
+
+```rust
+use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
+use zenjpeg::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, UhdrRawImage};
+
+// Your HDR pixels (linear RGB float, any gamut)
+let hdr = UhdrRawImage::from_f32_rgb(
+    &hdr_pixels, width, height,
+    UhdrPixelFormat::Rgb888, UhdrColorGamut::Bt2100,
+    UhdrColorTransfer::Linear,
+)?;
+
+// One call: tonemap → encode SDR base → compute gain map → assemble MPF container
+let ultrahdr_jpeg = encode_ultrahdr(
+    &hdr,
+    &GainMapConfig::default(),   // gain map quality/resolution
+    &ToneMapConfig::default(),   // SDR tonemapping parameters
+    &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+    75.0,                        // gain map JPEG quality
+    enough::Unstoppable,
+)?;
+// ultrahdr_jpeg is a standard JPEG — works everywhere, HDR on supported displays
+```
+
+#### Decode (streaming)
+
+```rust
+use zenjpeg::decoder::Decoder;
+use zenjpeg::ultrahdr::{UltraHdrReaderConfig, UltraHdrMode, GainMapMemory};
+
+let config = UltraHdrReaderConfig::new()
+    .mode(UltraHdrMode::Hdr)      // HDR output (applies gain map)
+    .display_boost(4.0)           // target display peak brightness ratio
+    .memory_strategy(GainMapMemory::Streaming);
+
+let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
+let width = reader.dimensions().width as usize;
+let mut hdr_row = vec![0.0f32; width * 4]; // RGBA f32 per row
+
+while !reader.is_finished() {
+    reader.read_rows(1, None, Some(&mut hdr_row), None)?;
+    // hdr_row contains linear f32 RGBA pixels for this row
+}
+```
+
+#### Decode modes
+
+| `UltraHdrMode` | SDR output | HDR output | Gain map | Use case |
+|----------------|-----------|-----------|----------|----------|
+| `SdrOnly` | yes | — | — | Fastest, ignore HDR |
+| `Hdr` | — | yes | — | HDR display/processing |
+| `SdrAndHdr` | yes | yes | — | Preview + HDR pipeline |
+| `SdrAndGainMap` | yes | — | yes | Editing, gain map manipulation |
+
+Memory stays bounded regardless of image size — ~500KB peak for SDR-only, ~1MB for HDR mode on 4K images.
+
+#### Detection
+
+```rust
+let decoded = Decoder::new().decode(&jpeg_data, enough::Unstoppable)?;
+if let Some(extras) = decoded.extras() {
+    if extras.is_ultrahdr() {
+        let (metadata, _) = extras.ultrahdr_metadata().unwrap().unwrap();
+        println!("Gain map max boost: {:?}", metadata.gain_map_max);
+    }
+}
+```
+
+Non-UltraHDR JPEGs decode normally — the feature adds zero overhead when no gain map is present.
+
 ### Cooperative Cancellation
 
 Both encoder and decoder accept `Stop` tokens for graceful shutdown:
