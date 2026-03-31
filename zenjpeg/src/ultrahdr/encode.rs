@@ -8,10 +8,11 @@ use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
-    ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
+    ColorGamut, ColorTransfer, GainMap, GainMapEncodingFormat, GainMapMetadata,
+    PixelFormat as UhdrPixelFormat, RawImage,
     color::tonemap::{AdaptiveTonemapper, ToneMapConfig, tonemap_to_sdr},
     gainmap::{GainMapConfig, RowEncoder, compute_gainmap},
-    metadata::xmp::{create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp},
+    metadata::xmp::{build_gainmap_metadata_markers, generate_primary_xmp},
 };
 
 /// Encode an HDR image as UltraHDR JPEG.
@@ -157,7 +158,7 @@ pub fn create_gainmap_computer(
 
 /// Encode SDR image with pre-computed gain map.
 ///
-/// Lower-level function for when you already have the SDR and gain map.
+/// Uses [`GainMapEncodingFormat::Both`] for maximum compatibility.
 pub fn encode_with_gainmap(
     sdr: &RawImage,
     gainmap: &GainMap,
@@ -166,22 +167,44 @@ pub fn encode_with_gainmap(
     gainmap_quality: f32,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
+    encode_with_gainmap_format(
+        sdr,
+        gainmap,
+        metadata,
+        encoder_config,
+        gainmap_quality,
+        GainMapEncodingFormat::Both,
+        stop,
+    )
+}
+
+/// Encode SDR image with pre-computed gain map and metadata format control.
+pub fn encode_with_gainmap_format(
+    sdr: &RawImage,
+    gainmap: &GainMap,
+    metadata: &GainMapMetadata,
+    encoder_config: &EncoderConfig,
+    gainmap_quality: f32,
+    metadata_format: GainMapEncodingFormat,
+    stop: impl Stop,
+) -> Result<Vec<u8>> {
     // Encode gain map as grayscale JPEG
     let gainmap_jpeg = encode_gainmap_jpeg(gainmap, gainmap_quality, &stop)?;
     stop.check()?;
 
-    // Inject gain map metadata XMP into the secondary JPEG.
-    // libultrahdr reads metadata from here, not the primary XMP.
-    let gainmap_xmp = generate_gainmap_xmp(metadata);
-    let gainmap_xmp_marker = create_xmp_app1_marker(&gainmap_xmp);
-    let gainmap_with_xmp = inject_xmp_after_soi(&gainmap_jpeg, &gainmap_xmp_marker)?;
+    // Build metadata markers (XMP and/or ISO 21496-1) and inject into gain map JPEG
+    let metadata_markers = build_gainmap_metadata_markers(metadata, metadata_format);
+    let mut gainmap_final = gainmap_jpeg;
+    for marker in metadata_markers.iter().rev() {
+        gainmap_final = inject_marker_after_soi(&gainmap_final, marker)?;
+    }
 
     // Generate primary XMP (container directory only, with updated gain map size)
-    let primary_xmp = generate_primary_xmp(gainmap_with_xmp.len());
+    let primary_xmp = generate_primary_xmp(gainmap_final.len());
 
     // Create encoder segments with primary XMP and gain map (with metadata)
     let segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
-        gainmap_with_xmp,
+        gainmap_final,
         crate::encode::extras::MpfImageType::Undefined,
     );
 
@@ -191,14 +214,14 @@ pub fn encode_with_gainmap(
     Ok(base_jpeg)
 }
 
-/// Inject an APP1 XMP marker into a JPEG after the SOI.
-fn inject_xmp_after_soi(jpeg: &[u8], xmp_marker: &[u8]) -> Result<Vec<u8>> {
+/// Inject a complete JPEG marker segment after SOI.
+fn inject_marker_after_soi(jpeg: &[u8], marker: &[u8]) -> Result<Vec<u8>> {
     if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
         return Err(Error::unsupported_feature("gain map JPEG missing SOI"));
     }
-    let mut result = Vec::with_capacity(jpeg.len() + xmp_marker.len());
+    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
     result.extend_from_slice(&jpeg[..2]); // SOI
-    result.extend_from_slice(xmp_marker); // XMP APP1
+    result.extend_from_slice(marker); // marker segment
     result.extend_from_slice(&jpeg[2..]); // rest of JPEG
     Ok(result)
 }

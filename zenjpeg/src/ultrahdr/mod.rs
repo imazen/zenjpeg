@@ -60,6 +60,7 @@ mod encode;
 pub use decode::{UltraHdrExtras, create_hdr_reconstructor, tonemapper_from_ultrahdr};
 pub use encode::{
     create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_with_tonemapper, encode_with_gainmap,
+    encode_with_gainmap_format,
 };
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions)
@@ -69,6 +70,7 @@ pub use ultrahdr_core::{
     ColorTransfer as UhdrColorTransfer,
     // Gain map types
     GainMap,
+    GainMapEncodingFormat,
     GainMapMetadata,
     PixelFormat as UhdrPixelFormat,
     RawImage as UhdrRawImage,
