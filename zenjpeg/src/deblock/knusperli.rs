@@ -19,8 +19,9 @@
 use crate::decode::idct::inverse_dct_8x8;
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
+use archmage::prelude::*;
 use magetypes::simd::backends::F32x8Backend;
-use magetypes::simd::generic::f32x8 as gf32x8;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -212,39 +213,23 @@ fn dequantize_row(
 /// Correct vertical boundaries between horizontally adjacent blocks in one row.
 #[inline(never)]
 fn correct_h_row(blocks: &[f32], offsets: &mut [f32], blocks_wide: usize) {
-    archmage::incant!(correct_h_row_impl(blocks, offsets, blocks_wide));
+    incant!(correct_h_row_impl(blocks, offsets, blocks_wide));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-fn correct_h_row_impl_v3(
-    _token: archmage::X64V3Token,
-    blocks: &[f32],
-    offsets: &mut [f32],
-    blocks_wide: usize,
-) {
-    correct_h_row_generic(_token, blocks, offsets, blocks_wide);
-}
-
-fn correct_h_row_impl_scalar(
-    _token: archmage::ScalarToken,
-    blocks: &[f32],
-    offsets: &mut [f32],
-    blocks_wide: usize,
-) {
-    correct_h_row_generic(_token, blocks, offsets, blocks_wide);
-}
-
+#[magetypes(v3, scalar)]
 #[inline(always)]
-fn correct_h_row_generic<T: F32x8Backend>(
-    token: T,
+fn correct_h_row_impl(
+    token: Token,
     blocks: &[f32],
     offsets: &mut [f32],
     blocks_wide: usize,
 ) {
-    let alpha_v = gf32x8::from_array(token, ALPHA_SQRT2);
-    let sign_v = gf32x8::from_array(token, SIGN_ALT);
-    let idx_sq_v = gf32x8::from_array(token, IDX_SQ);
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let alpha_v = f32x8::from_array(token, ALPHA_SQRT2);
+    let sign_v = f32x8::from_array(token, SIGN_ALT);
+    let idx_sq_v = f32x8::from_array(token, IDX_SQ);
 
     for bx in 0..blocks_wide.saturating_sub(1) {
         let bi = bx * 64;
@@ -253,8 +238,8 @@ fn correct_h_row_generic<T: F32x8Backend>(
         for v in 0..4 {
             let row = v * 8;
 
-            let gi = gf32x8::load(token, blocks[bi + row..bi + row + 8].try_into().unwrap());
-            let gj = gf32x8::load(token, blocks[bj + row..bj + row + 8].try_into().unwrap());
+            let gi = f32x8::load(token, blocks[bi + row..bi + row + 8].try_into().unwrap());
+            let gj = f32x8::load(token, blocks[bj + row..bj + row + 8].try_into().unwrap());
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
@@ -280,45 +265,25 @@ fn correct_v_between(
     bot_off: &mut [f32],
     blocks_wide: usize,
 ) {
-    archmage::incant!(correct_v_between_impl(top, top_off, bot, bot_off, blocks_wide));
+    incant!(correct_v_between_impl(top, top_off, bot, bot_off, blocks_wide));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-fn correct_v_between_impl_v3(
-    _token: archmage::X64V3Token,
-    top: &[f32],
-    top_off: &mut [f32],
-    bot: &[f32],
-    bot_off: &mut [f32],
-    blocks_wide: usize,
-) {
-    correct_v_between_generic(_token, top, top_off, bot, bot_off, blocks_wide);
-}
-
-fn correct_v_between_impl_scalar(
-    _token: archmage::ScalarToken,
-    top: &[f32],
-    top_off: &mut [f32],
-    bot: &[f32],
-    bot_off: &mut [f32],
-    blocks_wide: usize,
-) {
-    correct_v_between_generic(_token, top, top_off, bot, bot_off, blocks_wide);
-}
-
+#[magetypes(v3, scalar)]
 #[inline(always)]
-fn correct_v_between_generic<T: F32x8Backend>(
-    token: T,
+fn correct_v_between_impl(
+    token: Token,
     top: &[f32],
     top_off: &mut [f32],
     bot: &[f32],
     bot_off: &mut [f32],
     blocks_wide: usize,
 ) {
-    let alpha_v = gf32x8::from_array(token, ALPHA_SQRT2);
-    let sign_v = gf32x8::from_array(token, SIGN_ALT);
-    let idx_sq_v = gf32x8::from_array(token, IDX_SQ);
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let alpha_v = f32x8::from_array(token, ALPHA_SQRT2);
+    let sign_v = f32x8::from_array(token, SIGN_ALT);
+    let idx_sq_v = f32x8::from_array(token, IDX_SQ);
 
     for bx in 0..blocks_wide {
         let off = bx * 64;
@@ -331,8 +296,8 @@ fn correct_v_between_generic<T: F32x8Backend>(
                 gj_arr[v] = bot[off + v * 8 + u];
             }
 
-            let gi = gf32x8::from_array(token, gi_arr);
-            let gj = gf32x8::from_array(token, gj_arr);
+            let gi = f32x8::from_array(token, gi_arr);
+            let gj = f32x8::from_array(token, gj_arr);
 
             let (delta, hf) = compute_delta_hf(gi, gj, alpha_v, sign_v, idx_sq_v);
 
@@ -352,11 +317,11 @@ fn correct_v_between_generic<T: F32x8Backend>(
 /// Compute boundary discontinuity (delta) and HF energy penalty, generic over backend.
 #[inline(always)]
 fn compute_delta_hf<T: F32x8Backend>(
-    gi: gf32x8<T>,
-    gj: gf32x8<T>,
-    alpha: gf32x8<T>,
-    sign: gf32x8<T>,
-    idx_sq: gf32x8<T>,
+    gi: GenericF32x8<T>,
+    gj: GenericF32x8<T>,
+    alpha: GenericF32x8<T>,
+    sign: GenericF32x8<T>,
+    idx_sq: GenericF32x8<T>,
 ) -> (f32, f32) {
     // delta = Σ α(k)√2 × (gj[k] - (-1)^k × gi[k])
     let delta_lanes = alpha * (gj - sign * gi);
@@ -395,40 +360,13 @@ fn finalize_row(
     pw: usize,
     plane: &mut [f32],
 ) {
-    archmage::incant!(finalize_row_impl(blocks, offsets, quant_f32, by, blocks_wide, pw, plane));
+    incant!(finalize_row_impl(blocks, offsets, quant_f32, by, blocks_wide, pw, plane));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-fn finalize_row_impl_v3(
-    _token: archmage::X64V3Token,
-    blocks: &[f32],
-    offsets: &[f32],
-    quant_f32: &[f32; 64],
-    by: usize,
-    blocks_wide: usize,
-    pw: usize,
-    plane: &mut [f32],
-) {
-    finalize_row_generic(_token, blocks, offsets, quant_f32, by, blocks_wide, pw, plane);
-}
-
-fn finalize_row_impl_scalar(
-    _token: archmage::ScalarToken,
-    blocks: &[f32],
-    offsets: &[f32],
-    quant_f32: &[f32; 64],
-    by: usize,
-    blocks_wide: usize,
-    pw: usize,
-    plane: &mut [f32],
-) {
-    finalize_row_generic(_token, blocks, offsets, quant_f32, by, blocks_wide, pw, plane);
-}
-
+#[magetypes(v3, scalar)]
 #[inline(always)]
-fn finalize_row_generic<T: F32x8Backend>(
-    token: T,
+fn finalize_row_impl(
+    token: Token,
     blocks: &[f32],
     offsets: &[f32],
     quant_f32: &[f32; 64],
@@ -437,9 +375,12 @@ fn finalize_row_generic<T: F32x8Backend>(
     pw: usize,
     plane: &mut [f32],
 ) {
-    let scale_v = gf32x8::splat(token, OFFSET_SCALE);
-    let half = gf32x8::splat(token, 0.5);
-    let level_shift = gf32x8::splat(token, 128.0);
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let scale_v = f32x8::splat(token, OFFSET_SCALE);
+    let half = f32x8::splat(token, 0.5);
+    let level_shift = f32x8::splat(token, 128.0);
 
     let mut block = [0.0f32; 64];
 
@@ -447,10 +388,10 @@ fn finalize_row_generic<T: F32x8Backend>(
         let off = bx * 64;
 
         for k in (0..64).step_by(8) {
-            let mid = gf32x8::load(token, blocks[off + k..off + k + 8].try_into().unwrap());
+            let mid = f32x8::load(token, blocks[off + k..off + k + 8].try_into().unwrap());
             let correction =
-                gf32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
-            let q = gf32x8::load(token, quant_f32[k..k + 8].try_into().unwrap());
+                f32x8::load(token, offsets[off + k..off + k + 8].try_into().unwrap());
+            let q = f32x8::load(token, quant_f32[k..k + 8].try_into().unwrap());
             let half_q = q * half;
 
             let corrected = mid + correction * scale_v;
@@ -462,7 +403,7 @@ fn finalize_row_generic<T: F32x8Backend>(
         let pixels = inverse_dct_8x8(&block);
 
         for row in 0..8 {
-            let src = gf32x8::load(token, pixels[row * 8..(row + 1) * 8].try_into().unwrap());
+            let src = f32x8::load(token, pixels[row * 8..(row + 1) * 8].try_into().unwrap());
             let shifted = src + level_shift;
             let dst = (by * 8 + row) * pw + bx * 8;
             shifted.store(<&mut [f32; 8]>::try_from(&mut plane[dst..dst + 8]).unwrap());
