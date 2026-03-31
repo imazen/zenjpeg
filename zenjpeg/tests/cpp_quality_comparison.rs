@@ -37,9 +37,10 @@ fn test_cpp_quality_comparison() {
         .collect();
 
     // Save as PNG for C++ input
-    let png_path = "/tmp/test_input.png";
+    let tmp_dir = std::env::temp_dir();
+    let png_path = tmp_dir.join("zenjpeg_test_input.png");
     {
-        let file = fs::File::create(png_path).unwrap();
+        let file = fs::File::create(&png_path).unwrap();
         let mut encoder = png::Encoder::new(file, width, height);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
@@ -92,11 +93,11 @@ fn test_cpp_quality_comparison() {
         let (rust_dssim, _) = dssim.compare(&orig_img, rust_img);
 
         // C++ encoding with progressive level 2
-        let cpp_out = format!("/tmp/cpp_q{}.jpg", q);
+        let cpp_out = tmp_dir.join(format!("zenjpeg_cpp_q{}.jpg", q));
         let status = Command::new(&cjpegli_path)
             .args([
-                png_path,
-                &cpp_out,
+                png_path.to_str().unwrap(),
+                cpp_out.to_str().unwrap(),
                 "-q",
                 &q.to_string(),
                 "--progressive_level=2",
@@ -113,7 +114,7 @@ fn test_cpp_quality_comparison() {
             continue;
         }
 
-        let cpp_jpeg = fs::read(&cpp_out).unwrap();
+        let cpp_jpeg = fs::read(cpp_out).unwrap();
         let cpp_size = cpp_jpeg.len();
 
         // Decode C++ JPEG for DSSIM
