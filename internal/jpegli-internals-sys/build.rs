@@ -278,23 +278,25 @@ fn build_with_cmake(
 
     // Platform-specific settings (from jpegxl-src pattern)
     if target.contains("msvc") {
-        // Windows MSVC: Use ClangCL for Highway SIMD compatibility
-        let mut exeflags = "MSVCRTD.lib".to_string();
-        if cfg!(asan) {
-            exeflags.push_str(
-                " clang_rt.asan_dynamic-x86_64.lib clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
-            );
-        }
-
+        // Windows MSVC: Use ClangCL for Highway SIMD compatibility.
+        // Use MultiThreadedDLL (/MD) to match the cc crate's default — Rust on
+        // MSVC defaults to dynamic CRT, so cc-compiled wrappers (jpegli_test_ffi,
+        // butteraugli_c) use /MD. Mixing /MT cmake with /MD cc causes LNK2038.
+        // jpegxl-src uses /MT+/Zl because it has no cc-compiled wrappers.
         config
             .generator_toolset("ClangCL")
             .define(
                 "CMAKE_VS_GLOBALS",
                 "UseMultiToolTask=true;EnforceProcessCountAcrossBuilds=true",
             )
-            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")
-            .define("CMAKE_EXE_LINKER_FLAGS", exeflags)
-            .cflag("/Zl");
+            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+
+        if cfg!(asan) {
+            config.define(
+                "CMAKE_EXE_LINKER_FLAGS",
+                "clang_rt.asan_dynamic-x86_64.lib clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
+            );
+        }
     }
 
     // Build the appropriate target(s)
