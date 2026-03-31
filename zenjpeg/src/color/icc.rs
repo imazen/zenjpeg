@@ -149,7 +149,7 @@ pub fn apply_icc_transform(
     icc_profile: &[u8],
     target: TargetColorSpace,
 ) -> Result<Vec<u8>> {
-    use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformOptions};
+    use moxcms::{ColorProfile, Layout};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
@@ -157,16 +157,7 @@ pub fn apply_icc_transform(
     let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_8bit(
-            Layout::Rgb,
-            &output_profile,
-            Layout::Rgb,
-            TransformOptions {
-                allow_use_cicp_transfer: false,
-                barycentric_weight_scale: BarycentricWeightScale::High,
-                ..Default::default()
-            },
-        )
+        .create_transform_8bit(Layout::Rgb, &output_profile, Layout::Rgb, moxcms_transform_opts())
         .map_err(|e| Error::icc_error(format!("moxcms transform: {e:?}")))?;
 
     let mut output = vec![0u8; rgb_data.len()];
@@ -208,7 +199,7 @@ pub fn apply_icc_transform_f32(
     icc_profile: &[u8],
     target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
-    use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformOptions};
+    use moxcms::{ColorProfile, Layout};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
         .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
@@ -216,16 +207,7 @@ pub fn apply_icc_transform_f32(
     let output_profile = make_moxcms_target(target);
 
     let transform = input_profile
-        .create_transform_f32(
-            Layout::Rgb,
-            &output_profile,
-            Layout::Rgb,
-            TransformOptions {
-                allow_use_cicp_transfer: false,
-                barycentric_weight_scale: BarycentricWeightScale::High,
-                ..Default::default()
-            },
-        )
+        .create_transform_f32(Layout::Rgb, &output_profile, Layout::Rgb, moxcms_transform_opts())
         .map_err(|e| Error::icc_error(format!("moxcms f32 transform: {e:?}")))?;
 
     let mut output = vec![0f32; rgb_data.len()];
@@ -246,6 +228,17 @@ pub fn apply_icc_transform_f32(
     _target: TargetColorSpace,
 ) -> Result<Vec<f32>> {
     Ok(rgb_data.to_vec())
+}
+
+/// Standard moxcms transform options for ICC color transforms.
+#[cfg(feature = "moxcms")]
+fn moxcms_transform_opts() -> moxcms::TransformOptions {
+    use moxcms::{BarycentricWeightScale, TransformOptions};
+    TransformOptions {
+        allow_use_cicp_transfer: false,
+        barycentric_weight_scale: BarycentricWeightScale::High,
+        ..Default::default()
+    }
 }
 
 /// Create a moxcms `ColorProfile` for the given target.
