@@ -367,13 +367,14 @@ dependencies = [
 
 [[package]]
 name = "butteraugli"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96131e7190d4a5d2433b6820ccbe26efa420a873169131eadf24e8524c03ab27"
+checksum = "9c28a6704cdf610e0dfe761e2f289a3cac568db9128db12393f9463b4bf4fc76"
 dependencies = [
  "archmage 0.9.15",
  "imgref",
  "magetypes",
+ "rayon",
  "rgb",
 ]
 
@@ -551,7 +552,7 @@ dependencies = [
  "codec-corpus",
  "csv",
  "dssim-core",
- "fast-ssim2",
+ "fast-ssim2 0.6.5",
  "imgref",
  "jpeg-decoder",
  "moxcms 0.7.11",
@@ -857,6 +858,21 @@ dependencies = [
  "safe_unaligned_simd",
  "thiserror",
  "wide 1.2.0",
+ "yuvxyb",
+ "yuvxyb-math",
+]
+
+[[package]]
+name = "fast-ssim2"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b14f283599922955989d328a7f8f805e03146fe96616aa60639a16cd478b7e"
+dependencies = [
+ "archmage 0.9.15",
+ "imgref",
+ "magetypes",
+ "num-traits",
+ "thiserror",
  "yuvxyb",
  "yuvxyb-math",
 ]
@@ -2990,7 +3006,7 @@ dependencies = [
  "approx",
  "archmage 0.9.15",
  "bincode",
- "butteraugli 0.8.0",
+ "butteraugli 0.9.0",
  "bytemuck",
  "chrono",
  "codec-corpus",
@@ -2999,7 +3015,7 @@ dependencies = [
  "criterion",
  "dssim-core",
  "enough",
- "fast-ssim2",
+ "fast-ssim2 0.7.1",
  "getrandom 0.3.4",
  "image",
  "img-parts",
@@ -3049,10 +3065,10 @@ dependencies = [
 name = "zenjpeg-bench-utils"
 version = "0.1.0"
 dependencies = [
- "butteraugli 0.8.0",
+ "butteraugli 0.9.0",
  "dssim-core",
  "enough",
- "fast-ssim2",
+ "fast-ssim2 0.7.1",
  "imgref",
  "jpegli-internals-sys",
  "libc",

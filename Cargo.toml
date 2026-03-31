@@ -40,7 +40,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 
 # Quality metrics
 dssim-core = "3.4"
-fast-ssim2 = { version = "0.6.5", features = ["imgref"] }
+fast-ssim2 = { version = "0.7.1", features = ["imgref"] }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
@@ -85,7 +85,7 @@ zencodec = { version = "0.1.11" }
 zenpixels = { version = "0.2.1", default-features = false, features = ["imgref"] }
 
 # Published crates
-butteraugli = "0.8"
+butteraugli = "0.9.0"
 mozjpeg-rs = "0.5.3"
 mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_simd"] }
 
