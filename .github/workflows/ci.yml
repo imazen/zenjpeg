@@ -102,19 +102,23 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Strip ultrahdr workspace deps for cross (container can't see ../ultrahdr/,
-          # and ultrahdr-core 0.4.0 isn't published yet — i686 doesn't use ultrahdr feature)
-          sed -e '/^ultrahdr/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Replace ultrahdr path deps with published versions for cross
+          # (container can't see ../ultrahdr/). The ultrahdr feature isn't used for
+          # i686 testing, but workspace deps must still resolve.
+          sed \
+            -e 's|ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3"|' \
+            -e 's|ultrahdr-core = { path = "[^"]*", version = "[^"]*", \(.*\)}|ultrahdr-core = { version = "0.3", \1}|' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
-            -e '/^ultrahdr-core.*=.*workspace/d' \
-            -e '/^ultrahdr-rs.*=.*workspace/d' \
             -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
-            -e 's/^ultrahdr = .*/ultrahdr = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          # Strip path overrides from ultrahdr deps in subcrate (cross can't see sibling repos)
+          sed -e 's|, path = "../../ultrahdr/[^"]*"||g' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
