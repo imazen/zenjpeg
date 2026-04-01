@@ -412,6 +412,38 @@ impl<'a> JpegParser<'a> {
                     let last_data_row_start = c_strip_height * c_strip_width;
                     let below_ctx_start = (c_strip_height + 1) * c_strip_width;
                     if imcu_row < mcu_rows - 1 {
+                        // At the last MCU row of this batch, ext_b may not contain the
+                        // next strip (it was used for above-context setup or is stale
+                        // after prior swaps). IDCT the next strip now to get correct
+                        // below-context for vertical interpolation (h1v2 / 4:4:0).
+                        if imcu_row + 1 == end_row {
+                            idct_chroma_into_ext(
+                                &mut ext_cb_b,
+                                &coeffs[1],
+                                &coeff_counts[1],
+                                info_cb,
+                                quant_cb,
+                                imcu_row + 1,
+                                c_strip_width,
+                                c_strip_height,
+                                chroma_height_total,
+                                idct_fn,
+                                &mut dequant_buf,
+                            );
+                            idct_chroma_into_ext(
+                                &mut ext_cr_b,
+                                &coeffs[2],
+                                &coeff_counts[2],
+                                info_cr,
+                                quant_cr,
+                                imcu_row + 1,
+                                c_strip_width,
+                                c_strip_height,
+                                chroma_height_total,
+                                idct_fn,
+                                &mut dequant_buf,
+                            );
+                        }
                         // Below context = first data row of next strip (ext_b row 1)
                         let src_start = c_strip_width;
                         ext_cb_a[below_ctx_start..below_ctx_start + c_strip_width]
