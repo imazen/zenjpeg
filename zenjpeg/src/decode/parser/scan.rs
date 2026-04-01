@@ -26,7 +26,7 @@ impl<'a> JpegParser<'a> {
     ///
     /// The `stop` parameter allows cancellation of long-running decodes.
     pub(super) fn parse_scan(&mut self, stop: &impl Stop) -> Result<()> {
-        let _length = self.read_u16()?;
+        let length = self.read_u16()?;
         let num_components = self.read_u8()?;
 
         // Validate num_components in scan
@@ -40,6 +40,17 @@ impl<'a> JpegParser<'a> {
         }
         if num_components > crate::foundation::consts::MAX_COMPONENTS as u8 {
             return Err(Error::invalid_jpeg_data("SOS num_components too large"));
+        }
+
+        // Validate SOS marker length: must be 6 + 2 * num_components
+        // (2-byte length + 1-byte Ns + 2*Ns component specs + 3 bytes Ss/Se/AhAl)
+        let expected_length = 6 + 2 * num_components as u16;
+        if length != expected_length {
+            // Don't error — warn and continue. The reads below will still
+            // consume exactly the right number of bytes for the declared
+            // num_components. A length mismatch indicates corruption but
+            // is recoverable as long as num_components is correct.
+            self.warn(DecodeWarning::MalformedSegmentSkipped)?;
         }
 
         let mut scan_components = Vec::with_capacity(num_components as usize);
