@@ -89,6 +89,15 @@ impl<'a> JpegParser<'a> {
                 .position(|c| c.id == component_id)
                 .ok_or(Error::invalid_jpeg_data("unknown component in scan"))?;
 
+            // Reject duplicate component IDs within a single scan.
+            // A duplicate would write the same coefficient buffer twice,
+            // producing corrupted output. (libjpeg-turbo also rejects this.)
+            if scan_components.iter().any(|&(idx, _, _)| idx == comp_idx) {
+                return Err(Error::invalid_jpeg_data(
+                    "duplicate component in scan",
+                ));
+            }
+
             scan_components.push((comp_idx, dc_table, ac_table));
         }
 

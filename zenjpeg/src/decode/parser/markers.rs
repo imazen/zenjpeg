@@ -304,6 +304,16 @@ impl<'a> JpegParser<'a> {
             }
 
             let num_values: usize = bits.iter().map(|&b| b as usize).sum();
+
+            // A Huffman table can have at most 256 symbols (JPEG spec B.2.4.2).
+            // Reject before allocating to prevent OOM on malicious input.
+            if num_values > 256 {
+                return Err(Error::invalid_huffman_table(
+                    table_idx as u8,
+                    "symbol count exceeds 256",
+                ));
+            }
+
             let mut values = vec![0u8; num_values];
             for i in 0..num_values {
                 values[i] = self.read_u8()?;

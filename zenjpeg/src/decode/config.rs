@@ -440,6 +440,16 @@ pub enum DecodeWarning {
         /// Actual restart marker number found (0-7).
         found: u8,
     },
+
+    /// Extraneous bytes between markers were skipped.
+    ///
+    /// Non-0xFF bytes found where a marker was expected. These indicate
+    /// file corruption or non-standard padding. In Strict mode this is
+    /// an error; in Balanced/Lenient mode the bytes are skipped with a warning.
+    ExtraneousBytesSkipped {
+        /// Number of non-0xFF bytes skipped before a valid marker was found.
+        count: u32,
+    },
 }
 
 impl core::fmt::Display for DecodeWarning {
@@ -494,6 +504,13 @@ impl core::fmt::Display for DecodeWarning {
                     f,
                     "restart marker mismatch: expected RST{}, found RST{}; resynced",
                     expected, found
+                )
+            }
+            Self::ExtraneousBytesSkipped { count } => {
+                write!(
+                    f,
+                    "{} extraneous byte(s) skipped between markers",
+                    count
                 )
             }
         }

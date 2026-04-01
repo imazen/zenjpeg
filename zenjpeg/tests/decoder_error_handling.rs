@@ -781,3 +781,154 @@ fn test_scanline_huffman_table_oob() {
         }
     }
 }
+
+// ============================================================================
+// Parser Hardening Tests
+// ============================================================================
+
+/// Minimal valid 3-component (YCbCr) 1x1 JPEG for multi-component mutation tests.
+///
+/// Structure: SOI, SOF0 (3 components), DQT, DHT (DC0+AC0), SOS (3 comps), data, EOI.
+#[rustfmt::skip]
+fn make_3comp_jpeg() -> Vec<u8> {
+    use enough::Unstoppable;
+    use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
+    let mut enc = config.encode_from_bytes(2, 2, PixelLayout::Rgb8Srgb).unwrap();
+    enc.push_packed(&[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0], Unstoppable).unwrap();
+    enc.finish().unwrap()
+}
+
+/// Duplicate component ID in SOS must be rejected.
+#[test]
+fn test_reject_duplicate_component_in_sos() {
+    let jpeg = make_3comp_jpeg();
+
+    // Find SOS marker (0xFF 0xDA)
+    let sos_pos = jpeg.windows(2)
+        .position(|w| w == [0xFF, 0xDA])
+        .expect("SOS marker not found");
+
+    // SOS layout after marker: length(2), num_components(1), then per-component: id(1), tables(1)
+    // For 3 components: length=0x000C, Ns=3, [id1,tbl1, id2,tbl2, id3,tbl3], Ss, Se, AhAl
+    let ns_offset = sos_pos + 4; // byte after the 2-byte length
+    let first_id_offset = ns_offset + 1; // first component ID
+    let third_id_offset = first_id_offset + 4; // third component ID (skip 2 bytes per component)
+
+    // Mutate: set third component ID = first component ID (duplicate)
+    let mut mutated = jpeg.clone();
+    mutated[third_id_offset] = mutated[first_id_offset];
+
+    let decoder = Decoder::new();
+    let result = decoder.decode(&mutated, Unstoppable);
+    assert!(result.is_err(), "should reject duplicate component in SOS");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("duplicate component"),
+        "error should mention duplicate component, got: {err_msg}"
+    );
+}
+
+/// DHT with symbol count > 256 must be rejected before allocation.
+#[test]
+fn test_reject_dht_symbol_count_over_256() {
+    // Build a malformed DHT where the bits array sums to > 256.
+    // Start with a valid JPEG, find DHT, mutate bits array.
+    let mut data = Vec::new();
+    data.extend_from_slice(&[0xFF, 0xD8]); // SOI
+
+    // SOF0: 1x1 grayscale, 1 component
+    data.extend_from_slice(&[
+        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01,
+        0x01, 0x01, 0x11, 0x00,
+    ]);
+
+    // DQT: table 0, all ones
+    data.extend_from_slice(&[0xFF, 0xDB, 0x00, 0x43, 0x00]);
+    data.extend_from_slice(&[1u8; 64]);
+
+    // Malformed DHT: table class 0, index 0, bits summing to 257
+    // bits[0..16]: 16 entries each = 17 would be 272 symbols, but let's use
+    // 16 × 16 = 256 is valid, 16 × 16 + 1 = 257 is invalid.
+    // Set bits = [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 17]
+    // Sum = 15*16 + 17 = 257
+    let num_values: usize = 15 * 16 + 17; // 257
+    let length: u16 = 2 + 1 + 16 + num_values as u16;
+    data.extend_from_slice(&[0xFF, 0xC4]);
+    data.extend_from_slice(&length.to_be_bytes());
+    data.push(0x00); // DC table 0
+    for i in 0..16u8 {
+        data.push(if i == 15 { 17 } else { 16 });
+    }
+    // Values (257 bytes — we won't even get here, but fill anyway)
+    data.extend(core::iter::repeat(0u8).take(num_values));
+
+    // SOS + EOI (won't reach these)
+    data.extend_from_slice(&[
+        0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00,
+        0x00, 0xFF, 0xD9,
+    ]);
+
+    let decoder = Decoder::new();
+    let result = decoder.decode(&data, Unstoppable);
+    assert!(result.is_err(), "should reject DHT with >256 symbols");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("256") || err_msg.contains("symbol"),
+        "error should mention symbol count, got: {err_msg}"
+    );
+}
+
+/// Extraneous bytes between markers should produce a warning in Balanced mode
+/// and an error in Strict mode.
+#[test]
+fn test_extraneous_inter_marker_bytes_strict() {
+    // Insert garbage bytes between DQT and DHT markers
+    let jpeg = COMPRESSED_0.to_vec();
+
+    // Find DHT marker position
+    let dht_pos = jpeg.windows(2)
+        .position(|w| w == [0xFF, 0xC4])
+        .expect("DHT marker not found");
+
+    // Insert 5 garbage bytes before DHT
+    let mut mutated = Vec::with_capacity(jpeg.len() + 5);
+    mutated.extend_from_slice(&jpeg[..dht_pos]);
+    mutated.extend_from_slice(&[0x42, 0x43, 0x44, 0x45, 0x46]); // garbage
+    mutated.extend_from_slice(&jpeg[dht_pos..]);
+
+    // Strict mode should reject
+    let decoder = Decoder::new().strict();
+    let result = decoder.decode(&mutated, Unstoppable);
+    assert!(result.is_err(), "strict mode should reject extraneous inter-marker bytes");
+}
+
+#[test]
+fn test_extraneous_inter_marker_bytes_balanced() {
+    // Insert garbage bytes between DQT and DHT markers
+    let jpeg = COMPRESSED_0.to_vec();
+
+    let dht_pos = jpeg.windows(2)
+        .position(|w| w == [0xFF, 0xC4])
+        .expect("DHT marker not found");
+
+    let mut mutated = Vec::with_capacity(jpeg.len() + 5);
+    mutated.extend_from_slice(&jpeg[..dht_pos]);
+    mutated.extend_from_slice(&[0x42, 0x43, 0x44, 0x45, 0x46]); // garbage
+    mutated.extend_from_slice(&jpeg[dht_pos..]);
+
+    // Balanced mode should succeed with warning
+    let decoder = Decoder::new();
+    let result = decoder.decode(&mutated, Unstoppable);
+    assert!(result.is_ok(), "balanced mode should accept extraneous bytes with warning");
+    let info = result.unwrap();
+    let warnings = info.warnings();
+    assert!(
+        warnings.iter().any(|w| {
+            let s = format!("{w}");
+            s.contains("extraneous")
+        }),
+        "should have ExtraneousBytesSkipped warning, got: {:?}",
+        warnings
+    );
+}

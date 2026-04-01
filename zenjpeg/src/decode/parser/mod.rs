@@ -297,6 +297,9 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::ZeroQuantValue { .. } => "zero quantization value in DQT",
                 DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
                 DecodeWarning::RestartMarkerResync { .. } => "restart marker sequence mismatch",
+                DecodeWarning::ExtraneousBytesSkipped { .. } => {
+                    "extraneous bytes between markers"
+                }
             }));
         }
         // Deduplicate: don't add the same warning twice
@@ -527,11 +530,21 @@ impl<'a> JpegParser<'a> {
     }
 
     pub(super) fn read_marker(&mut self) -> Result<u8> {
+        let mut skipped = 0u32;
         loop {
             // Skip until we find 0xFF
             let byte = self.read_u8()?;
             if byte != 0xFF {
+                skipped += 1;
                 continue;
+            }
+
+            // Warn about extraneous bytes before this 0xFF prefix
+            if skipped > 0 {
+                self.warn(DecodeWarning::ExtraneousBytesSkipped {
+                    count: skipped,
+                })?;
+                skipped = 0;
             }
 
             // Skip fill bytes (consecutive 0xFF)
