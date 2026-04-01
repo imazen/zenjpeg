@@ -1731,8 +1731,10 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
     let cb_to_b = i32x4::splat(token, CB_TO_B_INT);
 
     let chroma_width = (width + 1) / 2;
-    // Process 4 chroma pixels (8 output pixels) at a time
-    let chunks = chroma_width / 4;
+    // Process 4 chroma pixels (8 output pixels) at a time.
+    // Last chunk needs px_base + 7 < width, so stop early for odd widths.
+    let safe_chroma = if width >= 8 { (width - 7) / 2 } else { 0 };
+    let chunks = safe_chroma / 4;
     for chunk in 0..chunks {
         let cx_base = chunk * 4;
         let cb4 = i32x4::from_array(token, [
@@ -1887,7 +1889,9 @@ fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
     let mut cr_buf = [0i32; 8];
     let mut y_buf = [0i32; 8]; // left[0..4], right[0..4]
 
-    let chunks = chroma_width / 4;
+    // Each chunk reads y_row[cx*2+1] for cx up to cx_base+3, so needs px_base+7 < width.
+    let safe_chroma = if width >= 8 { (width - 7) / 2 } else { 0 };
+    let chunks = safe_chroma / 4;
     for chunk in 0..chunks {
         let cx_base = chunk * 4;
         // Compute triangle-filtered chroma for 4 chroma pixels
