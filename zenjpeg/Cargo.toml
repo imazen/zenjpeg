@@ -41,32 +41,32 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
-zencodec = { workspace = true , path = "../../zencodec" }
-zenpixels = { workspace = true , version = "0.2.2" , path = "../../zenpixels/zenpixels" }
+zencodec = { workspace = true }
+zenpixels = { workspace = true , version = "0.2.2" }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
-linear-srgb = { workspace = true , path = "../../linear-srgb" }
-whereat = { workspace = true , path = "../../whereat" }  # Error tracing with location tracking
+linear-srgb = { workspace = true }
+whereat = { workspace = true }  # Error tracing with location tracking
 thiserror = { workspace = true }  # Error derive macros
 # lcms2 removed — use moxcms (pure Rust) instead
-moxcms = { workspace = true, optional = true , path = "../../../moxcms" }
+moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 # Mandatory dependency — will be replaced with archmage-based code eventually.
 yuv = { workspace = true }
 # Token-based safe SIMD intrinsics (mandatory — always compiled in)
-archmage = { workspace = true , path = "../../../archmage" }
+archmage = { workspace = true }
 # Token-gated SIMD types (wraps archmage tokens)
-magetypes = { workspace = true , path = "../../../archmage/magetypes" }
+magetypes = { workspace = true }
 # Safe unaligned SIMD load/store wrappers (eliminates unsafe for memory ops)
 safe_unaligned_simd = { workspace = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # Container/MPF types shared with UltraHDR (unconditional — no new transitive deps)
-ultrahdr-core = { workspace = true , path = "../../ultrahdr/ultrahdr-core" }
+ultrahdr-core = { workspace = true }
 # Layout pipeline: geometry computation + image resampling
-zenlayout = { workspace = true, optional = true , path = "../../zenlayout" }
-zenresize = { workspace = true, optional = true, features = ["layout"] , path = "../../zenresize" }
+zenlayout = { workspace = true, optional = true }
+zenresize = { workspace = true, optional = true, features = ["layout"] }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
@@ -74,7 +74,7 @@ zenresize = { workspace = true, optional = true, features = ["layout"] , path = 
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
 test-case = { workspace = true }
-fast-ssim2 = { workspace = true , path = "../../fast-ssim2/fast-ssim2" }
+fast-ssim2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = "1.13"

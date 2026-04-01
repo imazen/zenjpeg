@@ -33,7 +33,7 @@ moxcms = { version = "*", features = ["options"] }
 
 # Image I/O (for testing)
 png = "0.18"
-zenpng = { path = "../zenpng", default-features = false }
+zenpng = { version = "0.1.1", default-features = false }
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
 # excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
@@ -94,12 +94,12 @@ kamadak-exif = "0.6"
 img-parts = "0.4"
 
 # Our ultrahdr crates
-ultrahdr-rs = { path = "../ultrahdr/ultrahdr-rs" }
-ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.4.0", default-features = false }
+ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr" }
+ultrahdr-core = { version = "0.4.0", default-features = false }
 
 # Layout + resize pipeline
 zenlayout = "0.2"
-zenresize = { path = "../zenresize", version = "0.2" }
+zenresize = { version = "0.2" }
 
 [workspace.metadata.superwork.ci]
 delete_members = ["internal/jpegli-internals-sys", "zjpeg"]
