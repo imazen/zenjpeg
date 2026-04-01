@@ -441,52 +441,6 @@ fn mage_quantize_block(
     result
 }
 
-/// Scalar fallback quantize with zigzag output.
-fn scalar_quantize_block_zigzag(
-    block: &Block8x8f,
-    mul_rows: &[[f32; 8]; 8],
-    zero_bias: &ZeroBiasSimd,
-    aq_strength: f32,
-) -> [i16; 64] {
-    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
-
-    let mut result = [0i16; 64];
-    for row in 0..8 {
-        let k = row * 8;
-        for col in 0..8 {
-            let qval = block.rows[row][col] * mul_rows[row][col];
-            let threshold =
-                zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
-            if qval.abs() >= threshold {
-                result[JPEG_ZIGZAG_ORDER[k + col] as usize] = fast_round_i32(qval) as i16;
-            }
-        }
-    }
-    result
-}
-
-/// Scalar fallback quantize, natural order output.
-fn scalar_quantize_block(
-    block: &Block8x8f,
-    mul_rows: &[[f32; 8]; 8],
-    zero_bias: &ZeroBiasSimd,
-    aq_strength: f32,
-) -> [i16; 64] {
-    let mut result = [0i16; 64];
-    for row in 0..8 {
-        let k = row * 8;
-        for col in 0..8 {
-            let qval = block.rows[row][col] * mul_rows[row][col];
-            let threshold =
-                zero_bias.offset_rows[row][col] + zero_bias.mul_rows[row][col] * aq_strength;
-            if qval.abs() >= threshold {
-                result[k + col] = fast_round_i32(qval) as i16;
-            }
-        }
-    }
-    result
-}
-
 /// Round to nearest i32, matching wide::f32x8::fast_round_int behavior.
 #[inline(always)]
 fn fast_round_i32(v: f32) -> i32 {
