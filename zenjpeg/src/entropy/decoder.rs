@@ -312,6 +312,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             ScanRead::Truncated => return Ok(ScanRead::Truncated),
         };
 
+        // DC category must be 0-16; values > 16 would cause shift overflow in
+        // huff_extend/decode_value (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
+        if dc_cat > 16 {
+            return Err(Error::invalid_jpeg_data(
+                "DC Huffman category out of range (0-16)",
+            ));
+        }
+
         let dc_diff = if dc_cat == 0 {
             0
         } else {
@@ -491,6 +499,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
             ScanRead::Truncated => return Ok(ScanRead::Truncated),
         };
+
+        // DC category must be 0-16; values > 16 would cause shift overflow in
+        // huff_extend (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
+        if dc_cat > 16 {
+            return Err(Error::invalid_jpeg_data(
+                "DC Huffman category out of range (0-16)",
+            ));
+        }
 
         let dc_diff = if dc_cat == 0 {
             0
@@ -755,6 +771,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         };
 
+        // DC category must be 0-16; values > 16 would cause shift overflow in
+        // huff_extend (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
+        if dc_cat > 16 {
+            return Err(Error::invalid_jpeg_data(
+                "DC Huffman category out of range (0-16)",
+            ));
+        }
+
         let dc_diff = if dc_cat == 0 {
             0
         } else {
@@ -968,6 +992,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         };
 
+        // DC category must be 0-16; values > 16 would cause shift overflow in
+        // huff_extend (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
+        if dc_cat > 16 {
+            return Err(Error::invalid_jpeg_data(
+                "DC Huffman category out of range (0-16)",
+            ));
+        }
+
         let dc_diff = if dc_cat == 0 {
             0i16
         } else {
@@ -1174,6 +1206,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
             ScanRead::Truncated => return Ok(ScanRead::Truncated),
         };
+
+        // DC category must be 0-16; values > 16 would cause shift overflow in
+        // decode_value (JPEG spec allows 0-11 for 8-bit, 0-15 for 12-bit)
+        if dc_cat > 16 {
+            return Err(Error::invalid_jpeg_data(
+                "DC Huffman category out of range (0-16)",
+            ));
+        }
+
         let dc_diff = if dc_cat == 0 {
             0
         } else {

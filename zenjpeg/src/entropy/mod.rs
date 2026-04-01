@@ -141,6 +141,12 @@ pub fn decode_value(category: u8, bits: u16) -> i16 {
 /// Formula: x + (((x - (1 << (s-1))) >> 31) & ((-1 << s) + 1))
 /// - If x >= 2^(s-1), returns x (positive value)
 /// - If x < 2^(s-1), returns x - (2^s - 1) (negative value)
+///
+/// # Safety invariant
+/// Caller MUST ensure `1 <= s <= 16`. Values outside this range cause
+/// shift overflow (panic in debug, UB-like wrapping in release).
+/// All call sites validate dc_cat <= 16 before calling; ac_cat is
+/// always `symbol & 0x0F` (bounded 0-15), with ac_cat == 0 handled separately.
 #[inline(always)]
 pub fn huff_extend(x: i32, s: i32) -> i32 {
     // The shift creates a mask: all 1s if x < half, all 0s otherwise

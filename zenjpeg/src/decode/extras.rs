@@ -815,6 +815,13 @@ impl DecodedExtras {
 
         // Sort by chunk number and concatenate
         chunks.sort_by_key(|(num, _)| *num);
+        let total_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
+
+        // Enforce maximum ICC profile size to prevent memory exhaustion
+        if total_size > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
+            return None;
+        }
+
         let profile: Vec<u8> = chunks
             .into_iter()
             .flat_map(|(_, data)| data)
