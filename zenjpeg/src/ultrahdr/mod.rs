@@ -87,9 +87,8 @@ pub use ultrahdr_core::{
     // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
-    metadata::iso21496::{
-        parse_iso21496, parse_iso21496_jpeg, serialize_iso21496, serialize_iso21496_jpeg,
-    },
+    Iso21496Format,
+    metadata::iso21496::{parse_iso21496, serialize_iso21496},
     metadata::xmp::{generate_gainmap_xmp, generate_primary_xmp, generate_xmp, parse_xmp},
 };
 
