@@ -116,6 +116,45 @@ fn test_wrong_rst_number_permissive_recovers() {
     assert!(result.is_ok(), "permissive mode should recover from wrong RST: {:?}", result.err());
 }
 
+/// Balanced mode should also recover from wrong RST numbers.
+/// Note: the streaming decode path handles RST markers implicitly via
+/// marker_found detection in BitReader refill, not via read_restart_marker().
+/// This means wrong RST numbers are silently accepted (no validation of
+/// which RST0-7 it is). The coefficient decode path (progressive, transforms,
+/// f32 output) does validate and emits RestartMarkerResync warnings.
+#[test]
+fn test_wrong_rst_number_balanced_recovers() {
+    let mut jpeg = make_large_dri_jpeg();
+    let markers = find_rst_markers(&jpeg);
+    assert!(markers.len() >= 2);
+
+    let (offset, num) = markers[0];
+    let wrong_num = (num + 1) & 7;
+    jpeg[offset + 1] = 0xD0 + wrong_num;
+
+    // Default strictness is Balanced
+    let decoder = Decoder::new();
+    let result = decoder.decode(&jpeg, Unstoppable);
+    assert!(result.is_ok(), "balanced mode should recover from wrong RST: {:?}", result.err());
+}
+
+/// Lenient mode should also recover from missing RST with a warning.
+#[test]
+fn test_missing_rst_lenient_recovers() {
+    let mut jpeg = make_large_dri_jpeg();
+    let markers = find_rst_markers(&jpeg);
+    assert!(markers.len() >= 2);
+
+    // Zero out the first RST marker
+    let (offset, _) = markers[0];
+    jpeg[offset] = 0x00;
+    jpeg[offset + 1] = 0x00;
+
+    let decoder = Decoder::new().lenient();
+    let result = decoder.decode(&jpeg, Unstoppable);
+    assert!(result.is_ok(), "lenient mode should recover from missing RST: {:?}", result.err());
+}
+
 // ============================================================================
 // Mutation: missing RST marker (zeroed out)
 // ============================================================================

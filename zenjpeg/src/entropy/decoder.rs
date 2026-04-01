@@ -179,6 +179,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.reader.set_permissive_rst(permissive);
     }
 
+    /// Number of RST marker resyncs that occurred during decoding.
+    pub fn rst_resync_count(&self) -> u32 {
+        self.reader.rst_resync_count()
+    }
+
     /// Sets a DC Huffman table (borrowed, not cloned).
     pub fn set_dc_table(&mut self, idx: usize, table: &'tables HuffmanDecodeTable) {
         if idx < 4 {

@@ -233,7 +233,10 @@ impl<'a> JpegParser<'a> {
         ) {
             decoder.set_lenient(true);
         }
-        if self.strictness == Strictness::Permissive {
+        // Enable RST resync for all non-Strict modes. Zero overhead on valid
+        // input (only gates error-path recovery). On mismatch, resync_to_restart()
+        // scans forward for the next RST marker and continues decoding.
+        if self.strictness != Strictness::Strict {
             decoder.set_permissive_rst(true);
         }
 
@@ -479,6 +482,7 @@ impl<'a> JpegParser<'a> {
         // Extract warning flags (decoder borrows self.dc_tables/ac_tables)
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
+        let rst_resyncs = decoder.rst_resync_count();
         self.position += decoder.position();
 
         // Emit warnings for any issues detected during decode
@@ -497,6 +501,12 @@ impl<'a> JpegParser<'a> {
         }
         if had_invalid_huffman {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
+        }
+        if rst_resyncs > 0 {
+            self.warn(DecodeWarning::RestartMarkerResync {
+                expected: 0, // exact numbers not tracked, just the count
+                found: rst_resyncs as u8,
+            })?;
         }
 
         Ok(())
@@ -610,7 +620,10 @@ impl<'a> JpegParser<'a> {
         ) {
             decoder.set_lenient(true);
         }
-        if self.strictness == Strictness::Permissive {
+        // Enable RST resync for all non-Strict modes. Zero overhead on valid
+        // input (only gates error-path recovery). On mismatch, resync_to_restart()
+        // scans forward for the next RST marker and continues decoding.
+        if self.strictness != Strictness::Strict {
             decoder.set_permissive_rst(true);
         }
 
@@ -787,6 +800,7 @@ impl<'a> JpegParser<'a> {
         // Extract warning flags (decoder borrows self tables)
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
+        let rst_resyncs = decoder.rst_resync_count();
         self.position += decoder.position();
 
         // Emit truncation warning (or error in Strict mode)
@@ -802,6 +816,12 @@ impl<'a> JpegParser<'a> {
         }
         if had_invalid_huffman {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
+        }
+        if rst_resyncs > 0 {
+            self.warn(DecodeWarning::RestartMarkerResync {
+                expected: 0,
+                found: rst_resyncs as u8,
+            })?;
         }
 
         Ok(rgb)
@@ -913,7 +933,10 @@ impl<'a> JpegParser<'a> {
         ) {
             decoder.set_lenient(true);
         }
-        if self.strictness == Strictness::Permissive {
+        // Enable RST resync for all non-Strict modes. Zero overhead on valid
+        // input (only gates error-path recovery). On mismatch, resync_to_restart()
+        // scans forward for the next RST marker and continues decoding.
+        if self.strictness != Strictness::Strict {
             decoder.set_permissive_rst(true);
         }
         for (comp_idx, dc_table, ac_table) in scan_components {
@@ -1534,6 +1557,7 @@ impl<'a> JpegParser<'a> {
         // Update position and emit warnings
         let had_ac_overflow = decoder.had_ac_overflow;
         let had_invalid_huffman = decoder.had_invalid_huffman;
+        let rst_resyncs = decoder.rst_resync_count();
         self.position += decoder.position();
 
         let total_mcus = (mcu_rows * mcu_cols) as u32;
@@ -1548,6 +1572,12 @@ impl<'a> JpegParser<'a> {
         }
         if had_invalid_huffman {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
+        }
+        if rst_resyncs > 0 {
+            self.warn(DecodeWarning::RestartMarkerResync {
+                expected: 0,
+                found: rst_resyncs as u8,
+            })?;
         }
 
         Ok(rgb)

@@ -367,6 +367,8 @@ pub struct BitReader<'a> {
     overread_by: usize,
     /// When true, accept any RST marker instead of requiring exact sequence.
     permissive_rst: bool,
+    /// Count of RST marker resyncs (wrong number accepted or forward-scanned).
+    rst_resync_count: u32,
 }
 
 /// Saved state of a BitReader for speculative decoding.
@@ -378,6 +380,7 @@ pub struct BitReaderState {
     marker_found: Option<u8>,
     overread_by: usize,
     permissive_rst: bool,
+    rst_resync_count: u32,
 }
 
 /// Check if a u32 contains a 0xFF byte using SWAR (SIMD Within A Register).
@@ -416,12 +419,18 @@ impl<'a> BitReader<'a> {
             marker_found: None,
             overread_by: 0,
             permissive_rst: false,
+            rst_resync_count: 0,
         }
     }
 
     /// Enable permissive restart marker handling (accept any RST marker).
     pub fn set_permissive_rst(&mut self, permissive: bool) {
         self.permissive_rst = permissive;
+    }
+
+    /// Number of RST marker resyncs that occurred during decoding.
+    pub fn rst_resync_count(&self) -> u32 {
+        self.rst_resync_count
     }
 
     /// Reads a single byte with byte unstuffing (slow path).
@@ -715,6 +724,7 @@ impl<'a> BitReader<'a> {
             marker_found: self.marker_found,
             overread_by: self.overread_by,
             permissive_rst: self.permissive_rst,
+            rst_resync_count: self.rst_resync_count,
         }
     }
 
@@ -726,6 +736,7 @@ impl<'a> BitReader<'a> {
         self.marker_found = state.marker_found;
         self.overread_by = state.overread_by;
         self.permissive_rst = state.permissive_rst;
+        self.rst_resync_count = state.rst_resync_count;
     }
 
     /// Reads and verifies a restart marker.
@@ -767,8 +778,9 @@ impl<'a> BitReader<'a> {
             // Check if it's a different restart marker (resync case)
             if (0xD0..=0xD7).contains(&second) {
                 if self.permissive_rst {
-                    // Accept any RST marker in permissive mode
+                    // Accept any RST marker — wrong number but valid marker
                     self.position += 1;
+                    self.rst_resync_count += 1;
                     return Ok(());
                 }
                 return Err(Error::invalid_jpeg_data("restart marker sequence mismatch"));
@@ -804,6 +816,7 @@ impl<'a> BitReader<'a> {
                 if (0xD0..=0xD7).contains(&marker) {
                     // Found a restart marker — skip past it
                     self.position = pos + 2;
+                    self.rst_resync_count += 1;
                     return Ok(());
                 }
                 // FF 00 (stuffed byte) or other marker — skip the FF

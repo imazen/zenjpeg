@@ -471,7 +471,7 @@ impl<'a> JpegParser<'a> {
             self.strictness,
             Strictness::Lenient | Strictness::Permissive
         );
-        let permissive_rst = self.strictness == Strictness::Permissive;
+        let permissive_rst = self.strictness != Strictness::Strict;
         let strict = self.strictness == Strictness::Strict;
 
         // Pre-compute per-component actual block counts for padding detection.
@@ -791,7 +791,7 @@ impl<'a> JpegParser<'a> {
             self.strictness,
             Strictness::Lenient | Strictness::Permissive
         );
-        let permissive_rst = self.strictness == Strictness::Permissive;
+        let permissive_rst = self.strictness != Strictness::Strict;
         let strict = self.strictness == Strictness::Strict;
 
         // Component info for sub-block iteration
@@ -1098,7 +1098,7 @@ impl<'a> JpegParser<'a> {
             self.strictness,
             Strictness::Lenient | Strictness::Permissive
         );
-        let permissive_rst = self.strictness == Strictness::Permissive;
+        let permissive_rst = self.strictness != Strictness::Strict;
         let strict = self.strictness == Strictness::Strict;
 
         let comp_h_samps: Vec<usize> = (0..3)
@@ -1441,7 +1441,7 @@ impl<'a> JpegParser<'a> {
             self.strictness,
             Strictness::Lenient | Strictness::Permissive
         );
-        let permissive_rst = self.strictness == Strictness::Permissive;
+        let permissive_rst = self.strictness != Strictness::Strict;
         let strict = self.strictness == Strictness::Strict;
         let max_h_samp = _max_h_samp;
         let max_v_samp = _max_v_samp;
@@ -2096,7 +2096,7 @@ impl WaveParallelState {
             strictness,
             super::Strictness::Lenient | super::Strictness::Permissive
         );
-        let permissive_rst = strictness == super::Strictness::Permissive;
+        let permissive_rst = strictness != super::Strictness::Strict;
         let strict = strictness == super::Strictness::Strict;
 
         let num_segments = seg_starts.len();

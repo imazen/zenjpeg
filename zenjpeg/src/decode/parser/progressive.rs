@@ -100,7 +100,7 @@ impl<'a> JpegParser<'a> {
         ) {
             decoder.set_lenient(true);
         }
-        if self.strictness == Strictness::Permissive {
+        if self.strictness != Strictness::Strict {
             decoder.set_permissive_rst(true);
         }
 
