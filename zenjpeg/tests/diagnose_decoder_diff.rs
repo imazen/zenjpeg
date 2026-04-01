@@ -1149,7 +1149,6 @@ fn compare_all_paths_rgb(data: &[u8]) -> ([i32; 3], [i32; 3]) {
 /// - luma_subsample: Y(1,1) Cb(2,2) Cr(2,2) — inverted subsampling (chroma > luma)
 /// - rgb_subsample_blue: R(2,2) G(2,2) B(1,1) — RGB mode with blue subsampled
 #[test]
-#[ignore = "known bug: 4:4:0 decode max=44, needs chroma upsampling fix"]
 fn test_nonstandard_sampling_all_paths() {
     let base = zenjpeg_bench_utils::jpegli_testdata_dir().join("jxl/flower");
     let test_cases: &[(&str, &str, i32)] = &[
@@ -1213,7 +1212,6 @@ fn test_nonstandard_sampling_all_paths() {
 /// Test that decode() and scanline_reader produce consistent output for all standard
 /// AND non-standard sampling modes (internal consistency, no mozjpeg reference needed).
 #[test]
-#[ignore = "known bug: scanline vs decode inconsistency in non-standard sampling"]
 fn test_decode_scanline_consistency() {
     use imgref::ImgRefMut;
 
