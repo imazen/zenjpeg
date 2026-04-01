@@ -127,7 +127,7 @@ img-parts = { workspace = true }
 # UltraHDR integration testing
 ultrahdr-core = { workspace = true }
 # Visual regression testing (diff images, montages, checksum management)
-zensim-regress = "0.2"
+zensim-regress = "0.3.0"
 zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
