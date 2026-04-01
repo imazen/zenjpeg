@@ -329,7 +329,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // FAILING: 4/185 cases where C++ is better - algorithm needs fixing
     fn test_against_cpp_testdata() {
         let tests = match load_cpp_testdata() {
             Some(t) => t,

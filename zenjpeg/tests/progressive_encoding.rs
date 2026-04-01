@@ -825,10 +825,8 @@ fn test_progressive_extreme_low_quality() {
 /// "extraneous bytes before marker" errors on our progressive output.
 ///
 /// NOTE: This test is marked as ignored because it currently fails.
-/// The djpeg tool (and jpeg-decoder crate) reject our AC refinement encoding,
-/// even though zune-jpeg decodes it correctly.
+/// Verify djpeg (libjpeg-turbo) can decode our progressive AC refinement output.
 #[test]
-#[ignore] // KNOWN BUG: djpeg rejects our AC refinement encoding
 fn test_libjpeg_compatibility_noise() {
     let width = 64u32;
     let height = 64u32;

@@ -38,16 +38,13 @@ fn xyb_huffman_512_q15() {
 }
 
 #[test]
-#[ignore = "known bug: XYB restart marker decode failure at 1024x1024"]
 fn xyb_rst_1024_q60() {
     let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q60.jpg");
     let result = try_decode(data);
-    // Currently fails with "expected 0xFF for restart marker"
     assert!(result.is_ok(), "decode failed: {}", result.unwrap_err());
 }
 
 #[test]
-#[ignore = "known bug: XYB restart marker decode failure at 1024x1024"]
 fn xyb_rst_1024_q15() {
     let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q15.jpg");
     let result = try_decode(data);
@@ -55,7 +52,6 @@ fn xyb_rst_1024_q15() {
 }
 
 #[test]
-#[ignore = "known bug: XYB restart marker decode failure at 1024x1024"]
 fn xyb_rst_1024_q20() {
     let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q20.jpg");
     let result = try_decode(data);
