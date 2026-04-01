@@ -858,6 +858,15 @@ sensitivity tables, and preset baselines.
    commit d2a1af25).** Both `trellis_use_lambda_weight_tbl` and `trellis_num_loops` deleted
    from ExpertConfig, TrellisConfig, and HybridConfig.
 
+6. **Progressive Q10 encoder ~2.8% larger than C++ jpegli (2026-03-31, issue #23)** -
+   `quality_matrix.rs` tests `test_ycbcr_{444,422,420,440}_progressive` fail at Q10 with
+   ~2.8-2.9% size excess vs C++ cjpegli reference (threshold: 2.0%). Rust produces larger
+   files. Only affects very low quality (Q10); Q50+ are within tolerance. Likely Huffman
+   table or DCT rounding differences at extreme quantization.
+   - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
+   - Files: `zenjpeg/tests/quality_matrix.rs:732,779,826,873`
+   - Impact: Low — Q10 is rarely used in production. Size parity at normal quality levels is fine.
+
 ### Fixed / Resolved Bugs (historical reference)
 
 - **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
