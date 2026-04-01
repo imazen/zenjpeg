@@ -63,10 +63,10 @@ safe_unaligned_simd = { workspace = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # Container/MPF types shared with UltraHDR (unconditional — no new transitive deps)
-ultrahdr-core = { workspace = true , path = "../../ultrahdr/ultrahdr-core" }
+ultrahdr-core = { workspace = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true , path = "../../zenlayout" }
-zenresize = { workspace = true, optional = true, features = ["layout"] , path = "../../zenresize" }
+zenresize = { workspace = true, optional = true, features = ["layout"] }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
