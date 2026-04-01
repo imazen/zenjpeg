@@ -93,9 +93,7 @@ impl<'a> JpegParser<'a> {
             // A duplicate would write the same coefficient buffer twice,
             // producing corrupted output. (libjpeg-turbo also rejects this.)
             if scan_components.iter().any(|&(idx, _, _)| idx == comp_idx) {
-                return Err(Error::invalid_jpeg_data(
-                    "duplicate component in scan",
-                ));
+                return Err(Error::invalid_jpeg_data("duplicate component in scan"));
             }
 
             scan_components.push((comp_idx, dc_table, ac_table));
@@ -503,9 +501,7 @@ impl<'a> JpegParser<'a> {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
         if rst_resyncs > 0 {
-            self.warn(DecodeWarning::RestartMarkerResync {
-                count: rst_resyncs,
-            })?;
+            self.warn(DecodeWarning::RestartMarkerResync { count: rst_resyncs })?;
         }
 
         Ok(())
@@ -817,9 +813,7 @@ impl<'a> JpegParser<'a> {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
         if rst_resyncs > 0 {
-            self.warn(DecodeWarning::RestartMarkerResync {
-                count: rst_resyncs,
-            })?;
+            self.warn(DecodeWarning::RestartMarkerResync { count: rst_resyncs })?;
         }
 
         Ok(rgb)
@@ -1572,9 +1566,7 @@ impl<'a> JpegParser<'a> {
             self.warn(DecodeWarning::InvalidHuffmanCode)?;
         }
         if rst_resyncs > 0 {
-            self.warn(DecodeWarning::RestartMarkerResync {
-                count: rst_resyncs,
-            })?;
+            self.warn(DecodeWarning::RestartMarkerResync { count: rst_resyncs })?;
         }
 
         Ok(rgb)

@@ -50,15 +50,11 @@ fn bench_ycbcr_to_rgb_i16_x16(c: &mut Criterion) {
             b.iter(|| {
                 let mut offset = 0usize;
                 for chunk_start in (0..width).step_by(16) {
-                    let y16: &[i16; 16] = y_data[chunk_start..chunk_start + 16]
-                        .try_into()
-                        .unwrap();
-                    let cb16: &[i16; 16] = cb_data[chunk_start..chunk_start + 16]
-                        .try_into()
-                        .unwrap();
-                    let cr16: &[i16; 16] = cr_data[chunk_start..chunk_start + 16]
-                        .try_into()
-                        .unwrap();
+                    let y16: &[i16; 16] = y_data[chunk_start..chunk_start + 16].try_into().unwrap();
+                    let cb16: &[i16; 16] =
+                        cb_data[chunk_start..chunk_start + 16].try_into().unwrap();
+                    let cr16: &[i16; 16] =
+                        cr_data[chunk_start..chunk_start + 16].try_into().unwrap();
                     ycbcr::ycbcr_to_rgb_i16_x16(
                         black_box(y16),
                         black_box(cb16),

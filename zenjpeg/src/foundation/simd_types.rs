@@ -457,7 +457,12 @@ fn quantize_block_zigzag(
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
-    incant!(mage_quantize_block_zigzag(block, mul_rows, zero_bias, aq_strength))
+    incant!(mage_quantize_block_zigzag(
+        block,
+        mul_rows,
+        zero_bias,
+        aq_strength
+    ))
 }
 
 /// Dispatching quantize natural order — magetypes multi-platform dispatch.

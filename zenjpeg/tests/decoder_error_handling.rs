@@ -805,7 +805,8 @@ fn test_reject_duplicate_component_in_sos() {
     let jpeg = make_3comp_jpeg();
 
     // Find SOS marker (0xFF 0xDA)
-    let sos_pos = jpeg.windows(2)
+    let sos_pos = jpeg
+        .windows(2)
         .position(|w| w == [0xFF, 0xDA])
         .expect("SOS marker not found");
 
@@ -839,8 +840,7 @@ fn test_reject_dht_symbol_count_over_256() {
 
     // SOF0: 1x1 grayscale, 1 component
     data.extend_from_slice(&[
-        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01,
-        0x01, 0x01, 0x11, 0x00,
+        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
     ]);
 
     // DQT: table 0, all ones
@@ -865,8 +865,7 @@ fn test_reject_dht_symbol_count_over_256() {
 
     // SOS + EOI (won't reach these)
     data.extend_from_slice(&[
-        0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00,
-        0x00, 0xFF, 0xD9,
+        0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x00, 0xFF, 0xD9,
     ]);
 
     let decoder = Decoder::new();
@@ -887,7 +886,8 @@ fn test_extraneous_inter_marker_bytes_strict() {
     let jpeg = COMPRESSED_0.to_vec();
 
     // Find DHT marker position
-    let dht_pos = jpeg.windows(2)
+    let dht_pos = jpeg
+        .windows(2)
         .position(|w| w == [0xFF, 0xC4])
         .expect("DHT marker not found");
 
@@ -900,7 +900,10 @@ fn test_extraneous_inter_marker_bytes_strict() {
     // Strict mode should reject
     let decoder = Decoder::new().strict();
     let result = decoder.decode(&mutated, Unstoppable);
-    assert!(result.is_err(), "strict mode should reject extraneous inter-marker bytes");
+    assert!(
+        result.is_err(),
+        "strict mode should reject extraneous inter-marker bytes"
+    );
 }
 
 #[test]
@@ -908,7 +911,8 @@ fn test_extraneous_inter_marker_bytes_balanced() {
     // Insert garbage bytes between DQT and DHT markers
     let jpeg = COMPRESSED_0.to_vec();
 
-    let dht_pos = jpeg.windows(2)
+    let dht_pos = jpeg
+        .windows(2)
         .position(|w| w == [0xFF, 0xC4])
         .expect("DHT marker not found");
 
@@ -920,7 +924,10 @@ fn test_extraneous_inter_marker_bytes_balanced() {
     // Balanced mode should succeed with warning
     let decoder = Decoder::new();
     let result = decoder.decode(&mutated, Unstoppable);
-    assert!(result.is_ok(), "balanced mode should accept extraneous bytes with warning");
+    assert!(
+        result.is_ok(),
+        "balanced mode should accept extraneous bytes with warning"
+    );
     let info = result.unwrap();
     let warnings = info.warnings();
     assert!(

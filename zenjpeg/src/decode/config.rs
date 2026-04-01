@@ -500,18 +500,10 @@ impl core::fmt::Display for DecodeWarning {
                 write!(f, "malformed segment with invalid length; skipped")
             }
             Self::RestartMarkerResync { count } => {
-                write!(
-                    f,
-                    "{} restart marker resync(s) during scan",
-                    count
-                )
+                write!(f, "{} restart marker resync(s) during scan", count)
             }
             Self::ExtraneousBytesSkipped { count } => {
-                write!(
-                    f,
-                    "{} extraneous byte(s) skipped between markers",
-                    count
-                )
+                write!(f, "{} extraneous byte(s) skipped between markers", count)
             }
         }
     }

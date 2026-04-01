@@ -993,7 +993,13 @@ pub fn ycbcr_to_rgb_i16_x16(
     }
     // Magetypes generic: 2x 8-pixel passes via i32x4
     incant!(ycbcr_to_rgb_i16_x8_generic(y, cb, cr, rgb, *offset));
-    incant!(ycbcr_to_rgb_i16_x8_generic(&y[8..], &cb[8..], &cr[8..], rgb, *offset + 24));
+    incant!(ycbcr_to_rgb_i16_x8_generic(
+        &y[8..],
+        &cb[8..],
+        &cr[8..],
+        rgb,
+        *offset + 24
+    ));
     *offset += 48;
 }
 
@@ -1059,18 +1065,33 @@ fn ycbcr_to_rgb_i16_x8_generic(
     // Process 8 pixels in two 4-wide passes
     for half in 0..2 {
         let off = half * 4;
-        let y4 = i32x4::from_array(token, [
-            i32::from(y[off]), i32::from(y[off + 1]),
-            i32::from(y[off + 2]), i32::from(y[off + 3]),
-        ]);
-        let cb4 = i32x4::from_array(token, [
-            i32::from(cb[off]), i32::from(cb[off + 1]),
-            i32::from(cb[off + 2]), i32::from(cb[off + 3]),
-        ]) - bias;
-        let cr4 = i32x4::from_array(token, [
-            i32::from(cr[off]), i32::from(cr[off + 1]),
-            i32::from(cr[off + 2]), i32::from(cr[off + 3]),
-        ]) - bias;
+        let y4 = i32x4::from_array(
+            token,
+            [
+                i32::from(y[off]),
+                i32::from(y[off + 1]),
+                i32::from(y[off + 2]),
+                i32::from(y[off + 3]),
+            ],
+        );
+        let cb4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cb[off]),
+                i32::from(cb[off + 1]),
+                i32::from(cb[off + 2]),
+                i32::from(cb[off + 3]),
+            ],
+        ) - bias;
+        let cr4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cr[off]),
+                i32::from(cr[off + 1]),
+                i32::from(cr[off + 2]),
+                i32::from(cr[off + 3]),
+            ],
+        ) - bias;
 
         let y_scaled = y4 * y_coeff + rounding;
 
@@ -1737,14 +1758,24 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
     let chunks = safe_chroma / 4;
     for chunk in 0..chunks {
         let cx_base = chunk * 4;
-        let cb4 = i32x4::from_array(token, [
-            i32::from(cb_row[cx_base]), i32::from(cb_row[cx_base + 1]),
-            i32::from(cb_row[cx_base + 2]), i32::from(cb_row[cx_base + 3]),
-        ]) - bias;
-        let cr4 = i32x4::from_array(token, [
-            i32::from(cr_row[cx_base]), i32::from(cr_row[cx_base + 1]),
-            i32::from(cr_row[cx_base + 2]), i32::from(cr_row[cx_base + 3]),
-        ]) - bias;
+        let cb4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cb_row[cx_base]),
+                i32::from(cb_row[cx_base + 1]),
+                i32::from(cb_row[cx_base + 2]),
+                i32::from(cb_row[cx_base + 3]),
+            ],
+        ) - bias;
+        let cr4 = i32x4::from_array(
+            token,
+            [
+                i32::from(cr_row[cx_base]),
+                i32::from(cr_row[cx_base + 1]),
+                i32::from(cr_row[cx_base + 2]),
+                i32::from(cr_row[cx_base + 3]),
+            ],
+        ) - bias;
 
         // Precompute color offsets (same for left and right output pixels)
         let cr_r = cr4 * cr_to_r;
@@ -1755,24 +1786,52 @@ fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
 
         // Left pixels (even indices)
         let px_base = cx_base * 2;
-        let y_left = i32x4::from_array(token, [
-            i32::from(y_row[px_base]), i32::from(y_row[px_base + 2]),
-            i32::from(y_row[px_base + 4]), i32::from(y_row[px_base + 6]),
-        ]);
+        let y_left = i32x4::from_array(
+            token,
+            [
+                i32::from(y_row[px_base]),
+                i32::from(y_row[px_base + 2]),
+                i32::from(y_row[px_base + 4]),
+                i32::from(y_row[px_base + 6]),
+            ],
+        );
         let ys_left = y_left * y_coeff + rounding;
-        let rl = (ys_left + cr_r).shr_arithmetic::<14>().max(zero).min(max255);
-        let gl = (ys_left + chroma_g).shr_arithmetic::<14>().max(zero).min(max255);
-        let bl = (ys_left + cb_b).shr_arithmetic::<14>().max(zero).min(max255);
+        let rl = (ys_left + cr_r)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
+        let gl = (ys_left + chroma_g)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
+        let bl = (ys_left + cb_b)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
 
         // Right pixels (odd indices)
-        let y_right = i32x4::from_array(token, [
-            i32::from(y_row[px_base + 1]), i32::from(y_row[px_base + 3]),
-            i32::from(y_row[px_base + 5]), i32::from(y_row[px_base + 7]),
-        ]);
+        let y_right = i32x4::from_array(
+            token,
+            [
+                i32::from(y_row[px_base + 1]),
+                i32::from(y_row[px_base + 3]),
+                i32::from(y_row[px_base + 5]),
+                i32::from(y_row[px_base + 7]),
+            ],
+        );
         let ys_right = y_right * y_coeff + rounding;
-        let rr = (ys_right + cr_r).shr_arithmetic::<14>().max(zero).min(max255);
-        let gr = (ys_right + chroma_g).shr_arithmetic::<14>().max(zero).min(max255);
-        let br = (ys_right + cb_b).shr_arithmetic::<14>().max(zero).min(max255);
+        let rr = (ys_right + cr_r)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
+        let gr = (ys_right + chroma_g)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
+        let br = (ys_right + cb_b)
+            .shr_arithmetic::<14>()
+            .max(zero)
+            .min(max255);
 
         // Interleave and store (left pixel, right pixel, left pixel, right pixel...)
         let rla = rl.to_array();
@@ -1899,32 +1958,76 @@ fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
             let cx = cx_base + j;
             let curr_cb = i32::from(cb_row[cx]);
             let curr_cr = i32::from(cr_row[cx]);
-            let left_cb = if cx > 0 { i32::from(cb_row[cx - 1]) } else { curr_cb };
-            let left_cr = if cx > 0 { i32::from(cr_row[cx - 1]) } else { curr_cr };
-            let right_cb = if cx + 1 < chroma_width { i32::from(cb_row[cx + 1]) } else { curr_cb };
-            let right_cr = if cx + 1 < chroma_width { i32::from(cr_row[cx + 1]) } else { curr_cr };
+            let left_cb = if cx > 0 {
+                i32::from(cb_row[cx - 1])
+            } else {
+                curr_cb
+            };
+            let left_cr = if cx > 0 {
+                i32::from(cr_row[cx - 1])
+            } else {
+                curr_cr
+            };
+            let right_cb = if cx + 1 < chroma_width {
+                i32::from(cb_row[cx + 1])
+            } else {
+                curr_cb
+            };
+            let right_cr = if cx + 1 < chroma_width {
+                i32::from(cr_row[cx + 1])
+            } else {
+                curr_cr
+            };
 
-            cb_buf[j] = ((3 * curr_cb + left_cb + 2) >> 2) - 128;     // left pixel
+            cb_buf[j] = ((3 * curr_cb + left_cb + 2) >> 2) - 128; // left pixel
             cr_buf[j] = ((3 * curr_cr + left_cr + 2) >> 2) - 128;
             cb_buf[4 + j] = ((3 * curr_cb + right_cb + 2) >> 2) - 128; // right pixel
             cr_buf[4 + j] = ((3 * curr_cr + right_cr + 2) >> 2) - 128;
 
             let px_base = cx * 2;
-            y_buf[j] = i32::from(y_row[px_base]);           // left Y
-            y_buf[4 + j] = i32::from(y_row[px_base + 1]);   // right Y
+            y_buf[j] = i32::from(y_row[px_base]); // left Y
+            y_buf[4 + j] = i32::from(y_row[px_base + 1]); // right Y
         }
 
         // Vectorized color conversion: 4 left pixels, then 4 right pixels
         for half in 0..2u32 {
             let off = (half * 4) as usize;
-            let cb4 = i32x4::from_array(token, [cb_buf[off], cb_buf[off + 1], cb_buf[off + 2], cb_buf[off + 3]]);
-            let cr4 = i32x4::from_array(token, [cr_buf[off], cr_buf[off + 1], cr_buf[off + 2], cr_buf[off + 3]]);
-            let y4 = i32x4::from_array(token, [y_buf[off], y_buf[off + 1], y_buf[off + 2], y_buf[off + 3]]);
+            let cb4 = i32x4::from_array(
+                token,
+                [
+                    cb_buf[off],
+                    cb_buf[off + 1],
+                    cb_buf[off + 2],
+                    cb_buf[off + 3],
+                ],
+            );
+            let cr4 = i32x4::from_array(
+                token,
+                [
+                    cr_buf[off],
+                    cr_buf[off + 1],
+                    cr_buf[off + 2],
+                    cr_buf[off + 3],
+                ],
+            );
+            let y4 = i32x4::from_array(
+                token,
+                [y_buf[off], y_buf[off + 1], y_buf[off + 2], y_buf[off + 3]],
+            );
 
             let ys = y4 * y_coeff + rounding;
-            let r = (ys + cr4 * cr_to_r).shr_arithmetic::<14>().max(zero).min(max255);
-            let g = (ys + cr4 * cr_to_g + cb4 * cb_to_g).shr_arithmetic::<14>().max(zero).min(max255);
-            let b = (ys + cb4 * cb_to_b).shr_arithmetic::<14>().max(zero).min(max255);
+            let r = (ys + cr4 * cr_to_r)
+                .shr_arithmetic::<14>()
+                .max(zero)
+                .min(max255);
+            let g = (ys + cr4 * cr_to_g + cb4 * cb_to_g)
+                .shr_arithmetic::<14>()
+                .max(zero)
+                .min(max255);
+            let b = (ys + cb4 * cb_to_b)
+                .shr_arithmetic::<14>()
+                .max(zero)
+                .min(max255);
 
             let ra = r.to_array();
             let ga = g.to_array();
@@ -1947,10 +2050,26 @@ fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
     for cx in (chunks * 4)..chroma_width {
         let curr_cb = i32::from(cb_row[cx]);
         let curr_cr = i32::from(cr_row[cx]);
-        let left_cb = if cx > 0 { i32::from(cb_row[cx - 1]) } else { curr_cb };
-        let left_cr = if cx > 0 { i32::from(cr_row[cx - 1]) } else { curr_cr };
-        let right_cb = if cx + 1 < chroma_width { i32::from(cb_row[cx + 1]) } else { curr_cb };
-        let right_cr = if cx + 1 < chroma_width { i32::from(cr_row[cx + 1]) } else { curr_cr };
+        let left_cb = if cx > 0 {
+            i32::from(cb_row[cx - 1])
+        } else {
+            curr_cb
+        };
+        let left_cr = if cx > 0 {
+            i32::from(cr_row[cx - 1])
+        } else {
+            curr_cr
+        };
+        let right_cb = if cx + 1 < chroma_width {
+            i32::from(cb_row[cx + 1])
+        } else {
+            curr_cb
+        };
+        let right_cr = if cx + 1 < chroma_width {
+            i32::from(cr_row[cx + 1])
+        } else {
+            curr_cr
+        };
 
         let cb_l = ((3 * curr_cb + left_cb + 2) >> 2) - 128;
         let cr_l = ((3 * curr_cr + left_cr + 2) >> 2) - 128;

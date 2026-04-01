@@ -72,6 +72,8 @@ pub use ultrahdr_core::{
     GainMap,
     GainMapEncodingFormat,
     GainMapMetadata,
+    // Metadata
+    Iso21496Format,
     PixelFormat as UhdrPixelFormat,
     RawImage as UhdrRawImage,
     // Fraction types (used by ISO 21496-1 binary format)
@@ -86,8 +88,6 @@ pub use ultrahdr_core::{
     // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
     // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
-    // Metadata
-    Iso21496Format,
     metadata::iso21496::{
         JpegIsoMarkers, create_iso_app2_marker, create_jpeg_iso_markers,
         create_version_only_iso_app2, parse_iso21496, serialize_iso21496,

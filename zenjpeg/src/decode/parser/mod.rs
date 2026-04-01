@@ -297,9 +297,7 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::ZeroQuantValue { .. } => "zero quantization value in DQT",
                 DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
                 DecodeWarning::RestartMarkerResync { .. } => "restart marker resync required",
-                DecodeWarning::ExtraneousBytesSkipped { .. } => {
-                    "extraneous bytes between markers"
-                }
+                DecodeWarning::ExtraneousBytesSkipped { .. } => "extraneous bytes between markers",
             }));
         }
         // Deduplicate: don't add the same warning twice
@@ -541,9 +539,7 @@ impl<'a> JpegParser<'a> {
 
             // Warn about extraneous bytes before this 0xFF prefix
             if skipped > 0 {
-                self.warn(DecodeWarning::ExtraneousBytesSkipped {
-                    count: skipped,
-                })?;
+                self.warn(DecodeWarning::ExtraneousBytesSkipped { count: skipped })?;
                 skipped = 0;
             }
 

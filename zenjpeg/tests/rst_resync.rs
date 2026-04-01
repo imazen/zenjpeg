@@ -21,8 +21,7 @@ fn make_large_dri_jpeg() -> Vec<u8> {
             pixels[idx + 2] = ((x * 13 + y * 5 + 64) % 256) as u8;
         }
     }
-    let config = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter)
-        .restart_mcu_rows(1);
+    let config = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter).restart_mcu_rows(1);
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .unwrap();
@@ -70,14 +69,26 @@ fn find_entropy_start(data: &[u8]) -> Option<usize> {
 fn test_dri_jpeg_decodes_correctly() {
     let jpeg = make_large_dri_jpeg();
     let markers = find_rst_markers(&jpeg);
-    assert!(markers.len() >= 4, "DRI JPEG should contain RST markers, got {}", markers.len());
+    assert!(
+        markers.len() >= 4,
+        "DRI JPEG should contain RST markers, got {}",
+        markers.len()
+    );
     let nums: Vec<u8> = markers.iter().map(|m| m.1).collect();
-    eprintln!("DRI JPEG: {} bytes, {} RST markers, nums={:?}",
-        jpeg.len(), markers.len(), nums);
+    eprintln!(
+        "DRI JPEG: {} bytes, {} RST markers, nums={:?}",
+        jpeg.len(),
+        markers.len(),
+        nums
+    );
 
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
-    assert!(result.is_ok(), "valid DRI JPEG should decode: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "valid DRI JPEG should decode: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================================
@@ -98,7 +109,10 @@ fn test_wrong_rst_number_strict_rejects() {
 
     let decoder = Decoder::new().strict();
     let result = decoder.decode(&jpeg, Unstoppable);
-    assert!(result.is_err(), "strict mode should reject wrong RST number");
+    assert!(
+        result.is_err(),
+        "strict mode should reject wrong RST number"
+    );
 }
 
 #[test]
@@ -113,7 +127,11 @@ fn test_wrong_rst_number_permissive_recovers() {
 
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&jpeg, Unstoppable);
-    assert!(result.is_ok(), "permissive mode should recover from wrong RST: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "permissive mode should recover from wrong RST: {:?}",
+        result.err()
+    );
 }
 
 /// Balanced mode should also recover from wrong RST numbers.
@@ -135,7 +153,11 @@ fn test_wrong_rst_number_balanced_recovers() {
     // Default strictness is Balanced
     let decoder = Decoder::new();
     let result = decoder.decode(&jpeg, Unstoppable);
-    assert!(result.is_ok(), "balanced mode should recover from wrong RST: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "balanced mode should recover from wrong RST: {:?}",
+        result.err()
+    );
 }
 
 /// Lenient mode should also recover from missing RST with a warning.
@@ -152,7 +174,11 @@ fn test_missing_rst_lenient_recovers() {
 
     let decoder = Decoder::new().lenient();
     let result = decoder.decode(&jpeg, Unstoppable);
-    assert!(result.is_ok(), "lenient mode should recover from missing RST: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "lenient mode should recover from missing RST: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================================
@@ -174,7 +200,10 @@ fn test_missing_rst_strict_rejects() {
     let decoder = Decoder::new().strict();
     let result = decoder.decode(&jpeg, Unstoppable);
     // With the RST gone, the entropy decoder will hit garbage or the next marker
-    assert!(result.is_err(), "strict mode should reject missing RST marker");
+    assert!(
+        result.is_err(),
+        "strict mode should reject missing RST marker"
+    );
 }
 
 #[test]
@@ -191,7 +220,10 @@ fn test_missing_rst_permissive_attempts_recovery() {
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&jpeg, Unstoppable);
     // May or may not recover — document the current behavior
-    eprintln!("missing RST permissive result: {}", if result.is_ok() { "OK" } else { "ERR" });
+    eprintln!(
+        "missing RST permissive result: {}",
+        if result.is_ok() { "OK" } else { "ERR" }
+    );
     if let Err(e) = &result {
         eprintln!("  error: {e}");
     }
@@ -217,7 +249,10 @@ fn test_extra_rst_marker_inserted() {
 
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&mutated, Unstoppable);
-    eprintln!("extra RST permissive: {}", if result.is_ok() { "OK" } else { "ERR" });
+    eprintln!(
+        "extra RST permissive: {}",
+        if result.is_ok() { "OK" } else { "ERR" }
+    );
     if let Err(e) = &result {
         eprintln!("  error: {e}");
     }
@@ -246,12 +281,18 @@ fn test_all_rst_markers_removed() {
     // Even strict should fail — DRI says restart markers exist but they're gone
     let decoder = Decoder::new().strict();
     let result = decoder.decode(&stripped, Unstoppable);
-    assert!(result.is_err(), "should fail when DRI is set but all RST markers are stripped");
+    assert!(
+        result.is_err(),
+        "should fail when DRI is set but all RST markers are stripped"
+    );
 
     // Permissive should at least not crash
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&stripped, Unstoppable);
-    eprintln!("all RST removed, permissive: {}", if result.is_ok() { "OK" } else { "ERR" });
+    eprintln!(
+        "all RST removed, permissive: {}",
+        if result.is_ok() { "OK" } else { "ERR" }
+    );
     if let Err(e) = &result {
         eprintln!("  error: {e}");
     }
@@ -267,7 +308,10 @@ fn test_rst_markers_swapped() {
     let mut jpeg = make_large_dri_jpeg();
     let markers = find_rst_markers(&jpeg);
     if markers.len() < 3 {
-        eprintln!("skipping: need at least 3 RST markers, got {}", markers.len());
+        eprintln!(
+            "skipping: need at least 3 RST markers, got {}",
+            markers.len()
+        );
         return;
     }
 
@@ -286,7 +330,10 @@ fn test_rst_markers_swapped() {
     jpeg[off1 + 1] = 0xD0 + num0;
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&jpeg, Unstoppable);
-    eprintln!("swapped RST permissive: {}", if result.is_ok() { "OK" } else { "ERR" });
+    eprintln!(
+        "swapped RST permissive: {}",
+        if result.is_ok() { "OK" } else { "ERR" }
+    );
 }
 
 // ============================================================================
@@ -308,7 +355,10 @@ fn test_junk_before_rst_marker() {
 
     let decoder = Decoder::new().permissive();
     let result = decoder.decode(&mutated, Unstoppable);
-    eprintln!("junk before RST permissive: {}", if result.is_ok() { "OK" } else { "ERR" });
+    eprintln!(
+        "junk before RST permissive: {}",
+        if result.is_ok() { "OK" } else { "ERR" }
+    );
     if let Err(e) = &result {
         eprintln!("  error: {e}");
     }
@@ -351,12 +401,18 @@ fn test_rst_resync_output_quality() {
         let mut max_diff = 0u8;
         for (a, b) in ref_pixels.iter().zip(mut_pixels.iter()) {
             let d = a.abs_diff(*b);
-            if d > 0 { diff_count += 1; }
-            if d > max_diff { max_diff = d; }
+            if d > 0 {
+                diff_count += 1;
+            }
+            if d > max_diff {
+                max_diff = d;
+            }
         }
         eprintln!(
             "RST resync quality: {}/{} channels differ, max_diff={}, {:.1}% affected",
-            diff_count, ref_pixels.len(), max_diff,
+            diff_count,
+            ref_pixels.len(),
+            max_diff,
             100.0 * diff_count as f64 / ref_pixels.len() as f64
         );
 
