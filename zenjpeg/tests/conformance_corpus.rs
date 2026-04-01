@@ -1,6 +1,7 @@
 //! Test decoder against jpeg-conformance corpus.
 //!
-//! Run with: cargo test --release --features decoder -p zenjpeg --test conformance_corpus -- --nocapture
+//! Uses codec-corpus for on-demand download of JPEG conformance test files.
+//! Downloads automatically on first run; cached for subsequent runs.
 use enough::Unstoppable;
 
 use std::fs;
@@ -51,7 +52,6 @@ fn decode_file_with_strictness(
 }
 
 #[test]
-#[ignore] // Run with --ignored
 fn test_valid_files() {
     let corpus = match corpus() {
         Some(c) => c,
@@ -107,7 +107,6 @@ fn test_valid_files() {
 }
 
 #[test]
-#[ignore] // Run with --ignored
 fn test_invalid_files() {
     let corpus = match corpus() {
         Some(c) => c,
@@ -168,7 +167,6 @@ fn test_invalid_files() {
 }
 
 #[test]
-#[ignore] // Run with --ignored
 fn test_nonconformant_files() {
     let corpus = match corpus() {
         Some(c) => c,
@@ -239,7 +237,6 @@ fn test_nonconformant_files() {
 }
 
 #[test]
-#[ignore] // Run with --ignored
 fn test_cmyk_files() {
     println!("\n=== CMYK/YCCK FILES ===\n");
 
@@ -293,7 +290,6 @@ fn test_cmyk_files() {
 /// - Non-conformant files: Strict may reject more than Lenient
 /// - Invalid files: should be rejected by all modes
 #[test]
-#[ignore] // Run with --ignored
 fn test_strictness_modes() {
     println!("\n=== STRICTNESS MODE COMPARISON ===\n");
 

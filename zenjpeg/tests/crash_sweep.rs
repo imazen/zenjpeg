@@ -8,7 +8,7 @@
 //!
 //! ALL files must never cause a panic, regardless of classification.
 //!
-//! Codec-corpus sweep tests are `#[ignore]` — run with `cargo test -- --ignored`.
+//! Codec-corpus datasets download on demand via `codec-corpus` crate.
 
 use enough::Unstoppable;
 use std::panic::{self, AssertUnwindSafe};
@@ -290,12 +290,11 @@ fn sweep_libjpeg_turbo_files() {
 }
 
 // ============================================================================
-// Codec-corpus sweep tests (#[ignore] — run with `cargo test -- --ignored`)
+// Codec-corpus sweep tests (auto-downloads on first run)
 // ============================================================================
 
 /// Sweep codec-corpus jpeg-conformance/valid — all MUST decode.
 #[test]
-#[ignore]
 fn sweep_corpus_jpeg_valid() {
     let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
     let dir = corpus
@@ -347,7 +346,6 @@ fn sweep_corpus_jpeg_valid() {
 
 /// Sweep codec-corpus jpeg-conformance/invalid — all MUST error, MUST NOT panic.
 #[test]
-#[ignore]
 fn sweep_corpus_jpeg_invalid() {
     let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
     let dir = corpus
@@ -391,7 +389,6 @@ fn sweep_corpus_jpeg_invalid() {
 
 /// Sweep codec-corpus jpeg-conformance/non-conformant — MUST NOT panic, may decode or error.
 #[test]
-#[ignore]
 fn sweep_corpus_jpeg_nonconformant() {
     let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
     let dir = corpus
@@ -438,7 +435,6 @@ fn sweep_corpus_jpeg_nonconformant() {
 
 /// Sweep zune fuzz corpus (1,836 files) — MUST NOT panic.
 #[test]
-#[ignore]
 fn sweep_corpus_zune_fuzz() {
     let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
     let dir = corpus
@@ -485,7 +481,6 @@ fn sweep_corpus_zune_fuzz() {
 
 /// Sweep codec-corpus crash-repro files (large files from upstream bug reports) — MUST NOT panic.
 #[test]
-#[ignore]
 fn sweep_corpus_crash_repro() {
     let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
     let dir = corpus
