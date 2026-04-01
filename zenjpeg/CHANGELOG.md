@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-04-01
+
+### Breaking Changes
+
+- **`DecodeWarning::RestartMarkerResync` variant fields changed** — the `expected`/`found`
+  fields were replaced with a single `count` field for correct RST marker resync reporting
 
 ### Changed
 
@@ -14,7 +19,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - XYB mode benefits even more: Rust now matches or beats C++ jpegli file sizes
     (previously 2-3% larger in baseline mode, now -0.3% to -4.3% smaller)
   - Use `.progressive(false)` to restore baseline mode if needed
-  - Note: Progressive mode requires optimized Huffman tables (the default)
+- **Complete `wide` to `magetypes` SIMD migration** across encoder, decoder, and all hot paths
+  - All SIMD code now uses archmage/magetypes generic dispatch (AVX2, NEON, WASM128, scalar)
+  - Removes `wide` crate dependency from all non-benchmark code paths
+- Removed dead trellis parameters (`trellis_use_lambda_weight_tbl`, `trellis_num_loops`)
+
+### Added
+
+- **WASM32 SIMD128 dispatch for forward DCT** and other hot paths
+- **Magetypes-generic kernels** for quantize_block, fused_h2v2_box, fused_h2v2_hfancy, ycbcr_to_rgb
+- **AVX2 SIMD for h1v2 (4:4:0) chroma upsampling**
+- **OrientationHint enum** and `.orientation()` method on DecodeConfig
+- **GainMapEncodingFormat control** for UltraHDR encoder
+- **UltraHDR ISO 21496-1 API re-exports** (parse/serialize)
+- RST marker resync for Balanced/Lenient decoder strictness modes
+- Encoder regression test framework (replaces frymire_hash_locked)
+
+### Fixed
+
+- **CRITICAL: bounds-check segment skip to prevent OOB panic** on malformed input
+- **CRITICAL: enforce MAX_ICC_PROFILE_SIZE on reassembled ICC profiles** to prevent OOM
+- **HIGH: validate SOS/DRI marker lengths** to detect corruption and prevent parser desync
+- **HIGH: validate dc_cat <= 16** to prevent huff_extend shift overflow
+- Parser hardening: duplicate SOS component detection, DHT >256 symbols check, extraneous bytes handling
+- Fused parallel decode now respects DecodeMode::Coefficient (was bypassing coefficient storage)
+- Fused parallel h2v2 fancy chroma boundary fixup
+- OOB read in rgb_to_ycbcr_8px_fma on last 8-pixel chunk
+- UltraHDR gain map metadata placement for libultrahdr compatibility
+- i686 compile fixes and test gating
+
+### Performance
+
+- SIMD sRGB transfer function via linear-srgb crate
+- Magetypes dispatch eliminates wide crate overhead in hot paths
 
 ### Known Issues
 

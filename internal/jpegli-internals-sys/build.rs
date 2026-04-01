@@ -179,7 +179,11 @@ fn find_prebuilt_library(jpegli_root: &Path, butteraugli_enabled: bool) -> Optio
         "cmake-build-release",
     ];
 
-    let (prefix, ext) = if cfg!(windows) { ("", "lib") } else { ("lib", "a") };
+    let (prefix, ext) = if cfg!(windows) {
+        ("", "lib")
+    } else {
+        ("lib", "a")
+    };
 
     for candidate in &candidates {
         let build_dir = jpegli_root.join(candidate);
@@ -365,7 +369,11 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
     // Highway: check both third_party/highway/ and third_party/highway/Release/
     let hwy_base = build_dir.join("third_party").join("highway");
     for sub in ["", "Release"] {
-        let dir = if sub.is_empty() { hwy_base.clone() } else { hwy_base.join(sub) };
+        let dir = if sub.is_empty() {
+            hwy_base.clone()
+        } else {
+            hwy_base.join(sub)
+        };
         if dir.exists() {
             println!("cargo:rustc-link-search=native={}", dir.display());
         }
@@ -374,7 +382,11 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
     // Brotli
     let brotli_base = build_dir.join("third_party").join("brotli");
     for sub in ["", "Release"] {
-        let dir = if sub.is_empty() { brotli_base.clone() } else { brotli_base.join(sub) };
+        let dir = if sub.is_empty() {
+            brotli_base.clone()
+        } else {
+            brotli_base.join(sub)
+        };
         if dir.exists() {
             println!("cargo:rustc-link-search=native={}", dir.display());
         }
@@ -393,16 +405,28 @@ fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
         // jxl_extras may need additional dependencies — search third_party tree
         let third_party = build_dir.join("third_party");
         for sub in ["", "Release"] {
-            let dir = if sub.is_empty() { third_party.clone() } else { third_party.join(sub) };
+            let dir = if sub.is_empty() {
+                third_party.clone()
+            } else {
+                third_party.join(sub)
+            };
             if dir.exists() {
                 println!("cargo:rustc-link-search=native={}", dir.display());
             }
         }
 
         // lcms2 may be built as a static lib
-        let lcms2_name = if target.contains("msvc") { "lcms2.lib" } else { "liblcms2.a" };
+        let lcms2_name = if target.contains("msvc") {
+            "lcms2.lib"
+        } else {
+            "liblcms2.a"
+        };
         for sub in ["", "Release"] {
-            let dir = if sub.is_empty() { third_party.clone() } else { third_party.join(sub) };
+            let dir = if sub.is_empty() {
+                third_party.clone()
+            } else {
+                third_party.join(sub)
+            };
             if dir.join(lcms2_name).exists() {
                 println!("cargo:rustc-link-search=native={}", dir.display());
                 println!("cargo:rustc-link-lib=static=lcms2");

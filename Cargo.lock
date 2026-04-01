@@ -2335,7 +2335,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-core"
 version = "0.4.0"
-source = "git+https://github.com/imazen/ultrahdr#ab8dbb854d42f699e847070e8978f432933149c6"
+source = "git+https://github.com/imazen/ultrahdr#b71611a16076dcae55a2cd97e7b2f0d6f00bd150"
 dependencies = [
  "archmage 0.9.16",
  "bytemuck",
@@ -2350,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-rs"
 version = "0.4.0"
-source = "git+https://github.com/imazen/ultrahdr#ab8dbb854d42f699e847070e8978f432933149c6"
+source = "git+https://github.com/imazen/ultrahdr#b71611a16076dcae55a2cd97e7b2f0d6f00bd150"
 dependencies = [
  "bytemuck",
  "enough",
@@ -2980,9 +2980,9 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 
 [[package]]
 name = "zenbench"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "608aa467d997f62def7d8a8f206c9fc1754ec61e159423c7d374eb4db1c5b01e"
+checksum = "c270931cc788ca2d9a58e22042de041df91e051f4c57858ebae98e637cd666e4"
 dependencies = [
  "clap",
  "fs4",
@@ -3017,7 +3017,7 @@ dependencies = [
 
 [[package]]
 name = "zenjpeg"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "aligned-vec",
  "almost-enough",
@@ -3043,7 +3043,7 @@ dependencies = [
  "kamadak-exif",
  "linear-srgb",
  "magetypes",
- "moxcms 0.8.1",
+ "moxcms 0.7.11",
  "mozjpeg-rs",
  "mozjpeg-sys",
  "png",

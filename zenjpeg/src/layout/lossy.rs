@@ -11,7 +11,7 @@ use enough::Stop;
 use imgref::ImgRefMut;
 use zenresize::{PixelDescriptor, StreamingResize};
 
-use crate::decode::{DecodeConfig, JpegInfo};
+use crate::decode::{ChromaUpsampling, DecodeConfig, JpegInfo};
 use crate::encode::encoder_types::PixelLayout as EncPixelLayout;
 use crate::encode::exif::Exif;
 use crate::error::Result;
@@ -112,7 +112,15 @@ fn decode_resize_encode(
     let mut encoder = request.encode_from_bytes(out_w, out_h, EncPixelLayout::Rgb8Srgb)?;
 
     // Streaming pipeline: decode rows → push to resizer → pull output → push to encoder
-    let decoder = DecodeConfig::new().fancy_upsampling(config.fancy_upsampling);
+    let decoder = {
+        let mut dc = DecodeConfig::new();
+        dc.chroma_upsampling = if config.fancy_upsampling {
+            ChromaUpsampling::Triangle
+        } else {
+            ChromaUpsampling::NearestNeighbor
+        };
+        dc
+    };
     let mut reader = decoder.scanline_reader(jpeg_data)?;
 
     let row_bytes = src_w as usize * 3;
@@ -186,7 +194,15 @@ pub(crate) fn resize_simple(
 
     let mut encoder = request.encode_from_bytes(dst_w, dst_h, EncPixelLayout::Rgb8Srgb)?;
 
-    let decoder = DecodeConfig::new().fancy_upsampling(config.fancy_upsampling);
+    let decoder = {
+        let mut dc = DecodeConfig::new();
+        dc.chroma_upsampling = if config.fancy_upsampling {
+            ChromaUpsampling::Triangle
+        } else {
+            ChromaUpsampling::NearestNeighbor
+        };
+        dc
+    };
     let mut reader = decoder.scanline_reader(jpeg_data)?;
 
     let row_bytes = src_w as usize * 3;
@@ -247,7 +263,15 @@ fn decode_reencode(
 
     let mut encoder = request.encode_from_bytes(width, height, EncPixelLayout::Rgb8Srgb)?;
 
-    let decoder = DecodeConfig::new().fancy_upsampling(config.fancy_upsampling);
+    let decoder = {
+        let mut dc = DecodeConfig::new();
+        dc.chroma_upsampling = if config.fancy_upsampling {
+            ChromaUpsampling::Triangle
+        } else {
+            ChromaUpsampling::NearestNeighbor
+        };
+        dc
+    };
     let mut reader = decoder.scanline_reader(jpeg_data)?;
 
     let row_bytes = width as usize * 3;

@@ -137,7 +137,7 @@ fn extract_block_sequential(
 
         if row_start + 8 <= strip.len() {
             let arr: [f32; 8] = strip[row_start..row_start + 8].try_into().unwrap();
-            block.rows[row] = f32x8::from(arr);
+            block.rows[row] = arr;
         }
     }
 
