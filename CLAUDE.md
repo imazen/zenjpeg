@@ -1028,20 +1028,16 @@ trellis only). CMA-ES scaling modifies quant table generation and is described a
   (division by zero, out-of-bounds index, integer overflow) must be caught at parse time,
   regardless of strictness level. Structural validation should never be skippable.
   Specific gaps to close:
-  - **DRI length validation**: currently reads 2 bytes without checking `length == 4`.
-    Malformed DRI could desync the parser. (`markers.rs:parse_restart_interval`)
-  - **SOS length validation**: doesn't check `length == 6 + 2*num_components`. A crafted
-    SOS with wrong length could cause reads past the marker boundary. (`scan.rs:parse_scan`)
-  - **Duplicate component in SOS**: not checked. libjpeg-turbo rejects duplicate component
-    IDs within a single scan. A duplicate could cause the same coefficient buffer to be
-    written twice, producing garbage. (`scan.rs:parse_scan`)
+  - ~~**DRI length validation**~~: FIXED (already had length check + extra byte consumption + warning).
+  - ~~**SOS length validation**~~: FIXED (already checked `length == 6 + 2*num_components` with warning).
+  - ~~**Duplicate component in SOS**~~: FIXED (commit d88c3ad7). Rejects duplicate component
+    IDs within a single scan, matching libjpeg-turbo behavior.
   - ~~**Ah/Al range validation**~~: FIXED (commit d12d699). Now rejects Ah/Al > 13.
     Also added Ss > Se validation. 5 regression tests in `decoder_error_handling.rs`.
-  - **Extraneous inter-marker bytes**: silently skipped with no count or warning. Should
-    at least count discarded bytes and emit a warning in Balanced mode, error in Strict.
-    (`mod.rs:read_marker`)
-  - **DHT symbol count vs remaining length**: validated via length arithmetic but should
-    explicitly check `num_values <= 256` before reading. (`markers.rs:parse_huffman_table`)
+  - ~~**Extraneous inter-marker bytes**~~: FIXED (commit d88c3ad7). Counts skipped bytes,
+    errors in Strict mode, warns with `ExtraneousBytesSkipped` in Balanced/Lenient.
+  - ~~**DHT symbol count vs remaining length**~~: FIXED (commit d88c3ad7). Explicit
+    `num_values <= 256` check before allocation, preventing OOM on malicious input.
   - **Restart marker resync**: no recovery strategy when the wrong RST marker appears.
     libjpeg-turbo has a 3-action resync (discard/scan forward/leave unread). zenjpeg
     should at minimum handle the "RST off by 1-2" case gracefully in Balanced/Lenient.
