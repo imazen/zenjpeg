@@ -20,6 +20,7 @@ use crate::types::PixelFormat;
 
 use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
+use magetypes::simd::generic::i32x4 as GenericI32x4;
 
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as safe_simd;
@@ -990,8 +991,10 @@ pub fn ycbcr_to_rgb_i16_x16(
             return;
         }
     }
-    // Scalar fallback
-    ycbcr_to_rgb_i16_x16_scalar(y, cb, cr, rgb, offset);
+    // Magetypes generic: 2x 8-pixel passes via i32x4
+    incant!(ycbcr_to_rgb_i16_x8_generic(y, cb, cr, rgb, *offset));
+    incant!(ycbcr_to_rgb_i16_x8_generic(&y[8..], &cb[8..], &cr[8..], rgb, *offset + 24));
+    *offset += 48;
 }
 
 /// Scalar implementation of integer YCbCr to RGB for 16 pixels.
@@ -1022,6 +1025,76 @@ fn ycbcr_to_rgb_i16_x16_scalar(
     }
 
     *offset += 48;
+}
+
+/// Magetypes-generic integer YCbCr to RGB for 8 pixels via i32x4.
+///
+/// Processes 8 pixels in two 4-wide i32x4 passes. Uses the same 14-bit
+/// fixed-point math as the scalar and AVX2 versions. Generic across
+/// all platforms (x86 AVX2, NEON, WASM128, scalar).
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn ycbcr_to_rgb_i16_x8_generic(
+    token: Token,
+    y: &[i16],
+    cb: &[i16],
+    cr: &[i16],
+    rgb: &mut [u8],
+    base: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type i32x4 = GenericI32x4<Token>;
+
+    let y_coeff = i32x4::splat(token, Y_CF_INT);
+    let rounding = i32x4::splat(token, YUV_ROUND);
+    let bias = i32x4::splat(token, 128);
+    let zero = i32x4::zero(token);
+    let max255 = i32x4::splat(token, 255);
+
+    let cr_to_r = i32x4::splat(token, CR_TO_R_INT);
+    let cr_to_g = i32x4::splat(token, CR_TO_G_INT);
+    let cb_to_g = i32x4::splat(token, CB_TO_G_INT);
+    let cb_to_b = i32x4::splat(token, CB_TO_B_INT);
+
+    // Process 8 pixels in two 4-wide passes
+    for half in 0..2 {
+        let off = half * 4;
+        let y4 = i32x4::from_array(token, [
+            i32::from(y[off]), i32::from(y[off + 1]),
+            i32::from(y[off + 2]), i32::from(y[off + 3]),
+        ]);
+        let cb4 = i32x4::from_array(token, [
+            i32::from(cb[off]), i32::from(cb[off + 1]),
+            i32::from(cb[off + 2]), i32::from(cb[off + 3]),
+        ]) - bias;
+        let cr4 = i32x4::from_array(token, [
+            i32::from(cr[off]), i32::from(cr[off + 1]),
+            i32::from(cr[off + 2]), i32::from(cr[off + 3]),
+        ]) - bias;
+
+        let y_scaled = y4 * y_coeff + rounding;
+
+        let r = (y_scaled + cr4 * cr_to_r).shr_arithmetic::<14>();
+        let g = (y_scaled + cr4 * cr_to_g + cb4 * cb_to_g).shr_arithmetic::<14>();
+        let b = (y_scaled + cb4 * cb_to_b).shr_arithmetic::<14>();
+
+        // Clamp to 0-255
+        let r = r.max(zero).min(max255);
+        let g = g.max(zero).min(max255);
+        let b = b.max(zero).min(max255);
+
+        // Extract and interleave RGB
+        let ra = r.to_array();
+        let ga = g.to_array();
+        let ba = b.to_array();
+
+        let idx = base + off * 3;
+        for i in 0..4 {
+            rgb[idx + i * 3] = ra[i] as u8;
+            rgb[idx + i * 3 + 1] = ga[i] as u8;
+            rgb[idx + i * 3 + 2] = ba[i] as u8;
+        }
+    }
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
