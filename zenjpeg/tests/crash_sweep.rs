@@ -296,7 +296,13 @@ fn sweep_libjpeg_turbo_files() {
 /// Sweep codec-corpus jpeg-conformance/valid — all MUST decode.
 #[test]
 fn sweep_corpus_jpeg_valid() {
-    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping: codec-corpus unavailable ({e})");
+            return;
+        }
+    };
     let dir = corpus
         .get("jpeg-conformance/valid")
         .expect("failed to get jpeg-conformance/valid");
@@ -347,7 +353,13 @@ fn sweep_corpus_jpeg_valid() {
 /// Sweep codec-corpus jpeg-conformance/invalid — all MUST error, MUST NOT panic.
 #[test]
 fn sweep_corpus_jpeg_invalid() {
-    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping: codec-corpus unavailable ({e})");
+            return;
+        }
+    };
     let dir = corpus
         .get("jpeg-conformance/invalid")
         .expect("failed to get jpeg-conformance/invalid");
@@ -390,7 +402,13 @@ fn sweep_corpus_jpeg_invalid() {
 /// Sweep codec-corpus jpeg-conformance/non-conformant — MUST NOT panic, may decode or error.
 #[test]
 fn sweep_corpus_jpeg_nonconformant() {
-    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping: codec-corpus unavailable ({e})");
+            return;
+        }
+    };
     let dir = corpus
         .get("jpeg-conformance/non-conformant")
         .expect("failed to get jpeg-conformance/non-conformant");
@@ -436,7 +454,13 @@ fn sweep_corpus_jpeg_nonconformant() {
 /// Sweep zune fuzz corpus (1,836 files) — MUST NOT panic.
 #[test]
 fn sweep_corpus_zune_fuzz() {
-    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping: codec-corpus unavailable ({e})");
+            return;
+        }
+    };
     let dir = corpus
         .get("zune/fuzz-corpus/jpeg")
         .expect("failed to get zune/fuzz-corpus/jpeg");
@@ -482,7 +506,13 @@ fn sweep_corpus_zune_fuzz() {
 /// Sweep codec-corpus crash-repro files (large files from upstream bug reports) — MUST NOT panic.
 #[test]
 fn sweep_corpus_crash_repro() {
-    let corpus = codec_corpus::Corpus::new().expect("failed to init codec-corpus");
+    let corpus = match codec_corpus::Corpus::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping: codec-corpus unavailable ({e})");
+            return;
+        }
+    };
     let dir = corpus
         .get("jpeg-conformance/crash-repro")
         .expect("failed to get jpeg-conformance/crash-repro");
