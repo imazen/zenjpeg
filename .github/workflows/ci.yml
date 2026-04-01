@@ -102,14 +102,17 @@ jobs:
             -e '/"zjpeg"/d' \
             Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
-          # Strip ultrahdr paths for cross (container can't see ../ultrahdr/)
-          sed -e 's|path = "\.\./ultrahdr/[^"]*", ||g' -e 's|^ultrahdr-rs = { path = "[^"]*" }|ultrahdr-rs = "0.3.0"|' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Strip ultrahdr workspace deps for cross (container can't see ../ultrahdr/,
+          # and ultrahdr-core 0.4.0 isn't published yet — i686 doesn't use ultrahdr feature)
+          sed -e '/^ultrahdr/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
           sed \
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
+            -e '/ultrahdr/d' \
             -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
+            -e 's/^ultrahdr = .*/ultrahdr = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
