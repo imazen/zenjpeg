@@ -413,7 +413,8 @@ pub(crate) mod simd {
     /// Full SIMD-optimized 2D forward DCT with register chaining.
     ///
     /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8` which uses
-    /// native AVX2 intrinsics + FMA. Falls back to generic magetypes path otherwise.
+    /// native AVX2 intrinsics + FMA. On wasm32 with SIMD128, uses the wasm128
+    /// magetypes path directly. Falls back to generic magetypes path otherwise.
     pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -422,7 +423,33 @@ pub(crate) mod simd {
             return output;
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return forward_dct_8x8_simd_chained_wasm(token, input);
+        }
+
         incant!(forward_dct_8x8_simd_chained_fallback(input))
+    }
+
+    /// Forward DCT 8x8 for wasm32 with a pre-summoned Wasm128Token.
+    #[cfg(target_arch = "wasm32")]
+    #[inline]
+    pub(crate) fn forward_dct_8x8_simd_chained_wasm(
+        token: archmage::Wasm128Token,
+        input: &[f32; 64],
+    ) -> [f32; 64] {
+        type F32x8 = GenericF32x8<archmage::Wasm128Token>;
+
+        let mut rows = F32x8::load_8x8(input);
+        F32x8::transpose_8x8(&mut rows);
+        let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
+        let mut rows_for_col = cols_after_row;
+        F32x8::transpose_8x8(&mut rows_for_col);
+        let final_rows = scale_vec_generic(token, dct_1d_vec_generic(token, rows_for_col));
+
+        let mut output = [0.0f32; 64];
+        F32x8::store_8x8(&final_rows, &mut output);
+        output
     }
 
     /// Fallback DCT using magetypes generics (portable SIMD).
@@ -449,7 +476,8 @@ pub(crate) mod simd {
     /// Use this in hot paths where blocks are stored as Block8x8f.
     ///
     /// On x86_64 with AVX2, dispatches to `mage_forward_dct_8x8_wide` which uses
-    /// native AVX2 intrinsics + FMA. Falls back to generic magetypes path otherwise.
+    /// native AVX2 intrinsics + FMA. On wasm32 with SIMD128, uses the wasm128
+    /// magetypes path directly. Falls back to generic magetypes path otherwise.
     #[inline]
     pub fn forward_dct_8x8_wide(input: &Block8x8f) -> Block8x8f {
         #[cfg(target_arch = "x86_64")]
@@ -457,7 +485,38 @@ pub(crate) mod simd {
             return crate::encode::mage_simd::mage_forward_dct_8x8_wide(token, input);
         }
 
+        #[cfg(target_arch = "wasm32")]
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return forward_dct_8x8_wide_wasm(token, input);
+        }
+
         incant!(forward_dct_8x8_wide_fallback(input))
+    }
+
+    /// Forward DCT 8x8 for wasm32 with a pre-summoned Wasm128Token.
+    ///
+    /// Uses the same jpegli-compatible recursive splitting algorithm as the
+    /// generic magetypes fallback, but takes a `Wasm128Token` directly to
+    /// avoid per-call token summoning overhead. The token is typically cached
+    /// once at encoder construction.
+    #[cfg(target_arch = "wasm32")]
+    #[inline]
+    pub fn forward_dct_8x8_wide_wasm(
+        token: archmage::Wasm128Token,
+        input: &Block8x8f,
+    ) -> Block8x8f {
+        type F32x8 = GenericF32x8<archmage::Wasm128Token>;
+
+        let mut rows: [F32x8; 8] =
+            core::array::from_fn(|i| F32x8::from_array(token, input.rows[i]));
+        F32x8::transpose_8x8(&mut rows);
+        let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
+        let mut rows_for_col = cols_after_row;
+        F32x8::transpose_8x8(&mut rows_for_col);
+        let final_rows = scale_vec_generic(token, dct_1d_vec_generic(token, rows_for_col));
+        Block8x8f {
+            rows: core::array::from_fn(|i| final_rows[i].to_array()),
+        }
     }
 
     /// Fallback DCT using magetypes generics (portable SIMD).
@@ -636,7 +695,8 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// 8x8 block of DCT coefficients
 /// Performs an 8x8 forward DCT with automatic CPU dispatch.
 ///
-/// Tries archmage AVX2+FMA first (runtime check), falls back to magetypes generics.
+/// Tries archmage AVX2+FMA first (runtime check), then wasm128 SIMD,
+/// then falls back to magetypes generics.
 #[must_use]
 #[inline]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
@@ -646,6 +706,12 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
             let mut output = [0.0f32; 64];
             simd::forward_dct_8x8_mage(input, &mut output);
             return output;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return simd::forward_dct_8x8_simd_chained_wasm(token, input);
         }
     }
     forward_dct_8x8_scalar(input)

@@ -195,9 +195,22 @@ fn forward_dct_dispatch(
     crate::encode::dct::simd::forward_dct_8x8_wide(block)
 }
 
-/// Performs forward DCT on a block (non-archmage fallback).
+/// Performs forward DCT on a block using wasm SIMD128 when available.
+///
+/// When a `Wasm128Token` is available, calls the wasm128-specific magetypes
+/// DCT directly, bypassing the `incant!` dispatch in `forward_dct_8x8_wide`.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn forward_dct_dispatch(token: Option<archmage::Wasm128Token>, block: &Block8x8f) -> Block8x8f {
+    if let Some(t) = token {
+        return crate::encode::dct::simd::forward_dct_8x8_wide_wasm(t, block);
+    }
+    crate::encode::dct::simd::forward_dct_8x8_wide(block)
+}
+
+/// Performs forward DCT on a block (generic fallback for non-x86_64, non-wasm32).
 /// The `_token` parameter is ignored but accepted for API consistency.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "wasm32")))]
 #[inline]
 fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
     crate::encode::dct::simd::forward_dct_8x8_wide(block)
@@ -440,6 +453,11 @@ pub struct StripProcessor {
     /// Obtained once at construction, reused for all blocks.
     #[cfg(target_arch = "x86_64")]
     simd_token: Option<crate::encode::mage_simd::Desktop64>,
+
+    /// Wasm128Token for zero-dispatch wasm SIMD128 operations.
+    /// Obtained once at construction, reused for all blocks.
+    #[cfg(target_arch = "wasm32")]
+    simd_token: Option<archmage::Wasm128Token>,
 
     // === Reusable u8 buffers for yuv crate (yuv feature) ===
     /// Temporary Y buffer for yuv crate conversion (avoids per-strip allocation)
@@ -705,6 +723,11 @@ impl StripProcessor {
             simd_token: {
                 use archmage::SimdToken;
                 crate::encode::mage_simd::Desktop64::summon()
+            },
+            #[cfg(target_arch = "wasm32")]
+            simd_token: {
+                use archmage::SimdToken;
+                archmage::Wasm128Token::summon()
             },
 
             // Reusable u8 buffers for yuv crate (one strip worth of pixels)
@@ -1090,7 +1113,9 @@ impl StripProcessor {
         // Extract SIMD token once for all blocks in this strip
         #[cfg(target_arch = "x86_64")]
         let simd_token = self.simd_token;
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "wasm32")]
+        let simd_token = self.simd_token;
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "wasm32")))]
         let simd_token = ();
 
         // y_strip is in padded layout, so use padded_width for sizing

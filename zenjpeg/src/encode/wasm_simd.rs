@@ -275,10 +275,21 @@ fn wasm_dct1d_8_inner(token: Wasm128Token, m: &mut [v128; 8]) {
 
 /// Forward DCT 8x8 using WASM SIMD128.
 ///
-/// Processes the DCT as two 4x4 blocks due to SIMD128's 4-wide registers.
+/// Implements a 2D DCT-II using the standard butterfly decomposition.
+/// Processes two 4-wide halves per row due to SIMD128's 128-bit (4xf32) registers.
+///
+/// Applies 1/8 scaling after each 1D pass (total 1/64 normalization),
+/// matching the magetypes/jpegli convention.
+///
+/// Note: this uses a different algorithm (butterfly) than the jpegli-compatible
+/// recursive splitting in the magetypes fallback. It is not used in the main
+/// encode hot path to preserve coefficient parity with x86_64. Kept as a
+/// standalone SIMD128 implementation for testing and future use.
 #[arcane]
 pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut [f32; 64]) {
-    // Load all 8 rows as v128 pairs
+    let scale = f32x4_splat(1.0 / 8.0);
+
+    // Load all 8 rows as v128 pairs (lo=cols 0-3, hi=cols 4-7)
     let zero = f32x4_splat(0.0);
     let mut rows_lo: [v128; 8] = [zero; 8];
     let mut rows_hi: [v128; 8] = [zero; 8];
@@ -286,34 +297,42 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
     for i in 0..8 {
         rows_lo[i] = load_f32x4!(&input[i * 8..][..4]);
         rows_hi[i] = load_f32x4!(&input[i * 8 + 4..][..4]);
+    }
 
-        // Apply 1D DCT to each row
-        wasm_dct1d_8_inner(token, &mut rows_lo);
-        wasm_dct1d_8_inner(token, &mut rows_hi);
+    // Pass 1: Apply 1D DCT to rows, then scale by 1/8
+    wasm_dct1d_8_inner(token, &mut rows_lo);
+    wasm_dct1d_8_inner(token, &mut rows_hi);
+    for i in 0..8 {
+        rows_lo[i] = f32x4_mul(rows_lo[i], scale);
+        rows_hi[i] = f32x4_mul(rows_hi[i], scale);
+    }
 
-        // Transpose
-        let mut temp = [0.0f32; 64];
-        for i in 0..8 {
-            store_f32x4!(&mut temp[i * 8..][..4], rows_lo[i]);
-            store_f32x4!(&mut temp[i * 8 + 4..][..4], rows_hi[i]);
-        }
-        wasm_transpose_8x8_inplace_inner(token, &mut temp);
+    // Transpose 8x8 via temp buffer
+    let mut temp = [0.0f32; 64];
+    for i in 0..8 {
+        store_f32x4!(&mut temp[i * 8..][..4], rows_lo[i]);
+        store_f32x4!(&mut temp[i * 8 + 4..][..4], rows_hi[i]);
+    }
+    wasm_transpose_8x8_inplace_inner(token, &mut temp);
 
-        // Reload transposed data
-        for i in 0..8 {
-            rows_lo[i] = load_f32x4!(&temp[i * 8..][..4]);
-            rows_hi[i] = load_f32x4!(&temp[i * 8 + 4..][..4]);
-        }
+    // Reload transposed data
+    for i in 0..8 {
+        rows_lo[i] = load_f32x4!(&temp[i * 8..][..4]);
+        rows_hi[i] = load_f32x4!(&temp[i * 8 + 4..][..4]);
+    }
 
-        // Apply 1D DCT to each column (now rows after transpose)
-        wasm_dct1d_8_inner(token, &mut rows_lo);
-        wasm_dct1d_8_inner(token, &mut rows_hi);
+    // Pass 2: Apply 1D DCT to columns (now rows after transpose), then scale
+    wasm_dct1d_8_inner(token, &mut rows_lo);
+    wasm_dct1d_8_inner(token, &mut rows_hi);
+    for i in 0..8 {
+        rows_lo[i] = f32x4_mul(rows_lo[i], scale);
+        rows_hi[i] = f32x4_mul(rows_hi[i], scale);
+    }
 
-        // Store result
-        for i in 0..8 {
-            store_f32x4!(&mut output[i * 8..][..4], rows_lo[i]);
-            store_f32x4!(&mut output[i * 8 + 4..][..4], rows_hi[i]);
-        }
+    // Store result
+    for i in 0..8 {
+        store_f32x4!(&mut output[i * 8..][..4], rows_lo[i]);
+        store_f32x4!(&mut output[i * 8 + 4..][..4], rows_hi[i]);
     }
 }
 
