@@ -95,7 +95,7 @@ img-parts = "0.4"
 
 # Our ultrahdr crates
 ultrahdr-rs = { path = "../ultrahdr/ultrahdr-rs" }
-ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.3.0", default-features = false }
+ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.4.0", default-features = false }
 
 # Layout + resize pipeline
 zenlayout = "0.2"
