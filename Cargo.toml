@@ -65,7 +65,7 @@ spin = "0.9"
 tinyvec = { version = "1.10", features = ["alloc"] }
 
 # Fast linear-sRGB conversion
-linear-srgb = "0.6.6"
+linear-srgb = "0.6.7"
 
 # Token-based safe SIMD intrinsics
 archmage = { version = "0.9.16", features = ["macros", "avx512", "testable_dispatch"] }
