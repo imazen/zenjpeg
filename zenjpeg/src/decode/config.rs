@@ -365,6 +365,7 @@ pub enum Strictness {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+// New variants may be added in minor releases as decoder hardening expands.
 #[non_exhaustive]
 pub enum DecodeWarning {
     /// No DHT markers found; standard Huffman tables (ITU-T T.81 K.3) were used.
@@ -432,13 +433,12 @@ pub enum DecodeWarning {
 
     /// Restart marker sequence mismatch was resynced.
     ///
-    /// Only recovered in Permissive mode. Expected one RST marker number
-    /// but found a different one; accepted the found marker and continued.
+    /// Recovered in Balanced, Lenient, and Permissive modes. The decoder
+    /// accepted a wrong RST number or forward-scanned to find the next
+    /// valid RST marker and continued decoding.
     RestartMarkerResync {
-        /// Expected restart marker number (0-7).
-        expected: u8,
-        /// Actual restart marker number found (0-7).
-        found: u8,
+        /// Number of RST marker resyncs during this scan.
+        count: u32,
     },
 
     /// Extraneous bytes between markers were skipped.
@@ -499,11 +499,11 @@ impl core::fmt::Display for DecodeWarning {
             Self::MalformedSegmentSkipped => {
                 write!(f, "malformed segment with invalid length; skipped")
             }
-            Self::RestartMarkerResync { expected, found } => {
+            Self::RestartMarkerResync { count } => {
                 write!(
                     f,
-                    "restart marker mismatch: expected RST{}, found RST{}; resynced",
-                    expected, found
+                    "{} restart marker resync(s) during scan",
+                    count
                 )
             }
             Self::ExtraneousBytesSkipped { count } => {

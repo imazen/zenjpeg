@@ -504,8 +504,7 @@ impl<'a> JpegParser<'a> {
         }
         if rst_resyncs > 0 {
             self.warn(DecodeWarning::RestartMarkerResync {
-                expected: 0, // exact numbers not tracked, just the count
-                found: rst_resyncs as u8,
+                count: rst_resyncs,
             })?;
         }
 
@@ -819,8 +818,7 @@ impl<'a> JpegParser<'a> {
         }
         if rst_resyncs > 0 {
             self.warn(DecodeWarning::RestartMarkerResync {
-                expected: 0,
-                found: rst_resyncs as u8,
+                count: rst_resyncs,
             })?;
         }
 
@@ -1575,8 +1573,7 @@ impl<'a> JpegParser<'a> {
         }
         if rst_resyncs > 0 {
             self.warn(DecodeWarning::RestartMarkerResync {
-                expected: 0,
-                found: rst_resyncs as u8,
+                count: rst_resyncs,
             })?;
         }
 

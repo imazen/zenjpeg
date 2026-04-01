@@ -296,7 +296,7 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::InvalidHuffmanCode => "invalid Huffman code mid-scan",
                 DecodeWarning::ZeroQuantValue { .. } => "zero quantization value in DQT",
                 DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
-                DecodeWarning::RestartMarkerResync { .. } => "restart marker sequence mismatch",
+                DecodeWarning::RestartMarkerResync { .. } => "restart marker resync required",
                 DecodeWarning::ExtraneousBytesSkipped { .. } => {
                     "extraneous bytes between markers"
                 }
