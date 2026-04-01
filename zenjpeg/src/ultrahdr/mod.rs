@@ -88,7 +88,10 @@ pub use ultrahdr_core::{
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
     Iso21496Format,
-    metadata::iso21496::{parse_iso21496, serialize_iso21496},
+    metadata::iso21496::{
+        JpegIsoMarkers, create_iso_app2_marker, create_jpeg_iso_markers,
+        create_version_only_iso_app2, parse_iso21496, serialize_iso21496,
+    },
     metadata::xmp::{generate_gainmap_xmp, generate_primary_xmp, generate_xmp, parse_xmp},
 };
 
