@@ -109,7 +109,8 @@ jobs:
             -e '/jpegli-internals-sys/d' \
             -e '/zenresize.*workspace/d' \
             -e '/zennode.*path/d' \
-            -e '/ultrahdr/d' \
+            -e '/^ultrahdr-core.*=.*workspace/d' \
+            -e '/^ultrahdr-rs.*=.*workspace/d' \
             -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
             -e 's/^ultrahdr = .*/ultrahdr = []/' \
