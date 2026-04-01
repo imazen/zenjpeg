@@ -77,7 +77,7 @@ pub use image::{
 #[allow(unused_imports)]
 pub use config::{
     CropRegion, DecodeConfig, DecodeInfo, DecodeResult, DecodedPixels, GainMapHandling,
-    GainMapResult, OutputTarget, OwnedDecodedPixels, ParallelStrategy,
+    GainMapResult, OrientationHint, OutputTarget, OwnedDecodedPixels, ParallelStrategy,
 };
 /// Backward-compatible alias for [`DecodeConfig`].
 pub type Decoder = DecodeConfig;
@@ -172,6 +172,23 @@ fn subsampling_from_max(max_h: u8, max_v: u8, is_grayscale: bool) -> Subsampling
 
 // Re-export config types (defined in config.rs, public API preserved)
 pub use config::{ChromaUpsampling, DeblockMode, DecodeWarning, IdctMethod, JpegInfo, Strictness};
+
+/// Convert a `zenpixels::Orientation` to the internal `LosslessTransform`.
+fn orientation_to_transform(o: zenpixels::Orientation) -> crate::lossless::LosslessTransform {
+    use crate::lossless::LosslessTransform;
+    use zenpixels::Orientation;
+    match o {
+        Orientation::Identity => LosslessTransform::None,
+        Orientation::FlipH => LosslessTransform::FlipHorizontal,
+        Orientation::FlipV => LosslessTransform::FlipVertical,
+        Orientation::Rotate180 => LosslessTransform::Rotate180,
+        Orientation::Rotate90 => LosslessTransform::Rotate90,
+        Orientation::Rotate270 => LosslessTransform::Rotate270,
+        Orientation::Transpose => LosslessTransform::Transpose,
+        Orientation::Transverse => LosslessTransform::Transverse,
+        _ => LosslessTransform::None,
+    }
+}
 
 #[cfg(feature = "moxcms")]
 use crate::color::icc::apply_icc_transform_f32;
@@ -484,6 +501,9 @@ impl DecodeConfig {
     /// Pass `false` to disable and get raw pixel orientation (e.g., for
     /// lossless re-encoding where you want to preserve the original
     /// orientation tag).
+    ///
+    /// Equivalent to [`orientation(OrientationHint::Correct)`](Self::orientation)
+    /// when `true`, [`orientation(OrientationHint::Preserve)`](Self::orientation) when `false`.
     #[must_use]
     pub fn auto_orient(mut self, enable: bool) -> Self {
         self.auto_orient = enable;
@@ -498,9 +518,43 @@ impl DecodeConfig {
     ///
     /// When combined with [`auto_orient(true)`](Self::auto_orient), the
     /// EXIF orientation correction is applied first, then this transform.
+    ///
+    /// Prefer [`orientation()`](Self::orientation) for new code.
     #[must_use]
     pub fn transform(mut self, transform: crate::lossless::LosslessTransform) -> Self {
         self.decode_transform = Some(transform);
+        self
+    }
+
+    /// Sets the orientation strategy for decode.
+    ///
+    /// This is the preferred way to control orientation, combining EXIF
+    /// auto-correction and explicit transforms into a single setting.
+    /// See [`OrientationHint`] for details.
+    ///
+    /// Replaces separate calls to [`auto_orient()`](Self::auto_orient) and
+    /// [`transform()`](Self::transform).
+    #[must_use]
+    pub fn orientation(mut self, hint: config::OrientationHint) -> Self {
+        use config::OrientationHint;
+        match hint {
+            OrientationHint::Preserve => {
+                self.auto_orient = false;
+                self.decode_transform = None;
+            }
+            OrientationHint::Correct => {
+                self.auto_orient = true;
+                self.decode_transform = None;
+            }
+            OrientationHint::CorrectAndTransform(o) => {
+                self.auto_orient = true;
+                self.decode_transform = Some(orientation_to_transform(o));
+            }
+            OrientationHint::ExactTransform(o) => {
+                self.auto_orient = false;
+                self.decode_transform = Some(orientation_to_transform(o));
+            }
+        }
         self
     }
 

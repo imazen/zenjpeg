@@ -7,8 +7,64 @@ use crate::color::icc::TargetColorSpace;
 use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 use crate::lossless::LosslessTransform;
 use crate::types::Dimensions;
+use zenpixels::Orientation;
 
 use super::extras::{DecodedExtras, PreserveConfig};
+
+/// How the decoder should handle image orientation.
+///
+/// Combines EXIF auto-orientation and explicit transforms into a single enum,
+/// allowing the decoder to coalesce operations (e.g., JPEG lossless DCT rotation).
+///
+/// Matches [`zencodec::OrientationHint`] when the `zencodec` feature is enabled.
+///
+/// # Examples
+///
+/// ```
+/// use zenjpeg::decode::{DecodeConfig, OrientationHint};
+/// use zenpixels::Orientation;
+///
+/// // Auto-correct EXIF orientation (default)
+/// let cfg = DecodeConfig::new();
+///
+/// // Preserve raw orientation (for lossless re-encoding)
+/// let cfg = DecodeConfig::new().orientation(OrientationHint::Preserve);
+///
+/// // Auto-correct EXIF, then rotate 90° more
+/// let cfg = DecodeConfig::new()
+///     .orientation(OrientationHint::CorrectAndTransform(Orientation::Rotate90));
+///
+/// // Ignore EXIF, apply exact transform
+/// let cfg = DecodeConfig::new()
+///     .orientation(OrientationHint::ExactTransform(Orientation::FlipH));
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OrientationHint {
+    /// Don't touch orientation. Report intrinsic orientation in output metadata.
+    Preserve,
+
+    /// Resolve EXIF/container orientation to identity (default).
+    ///
+    /// The decoder coalesces this with the decode operation when possible
+    /// (e.g., JPEG lossless DCT transform). The output will have correct
+    /// visual orientation.
+    #[default]
+    Correct,
+
+    /// Resolve EXIF orientation, then apply an additional transform.
+    ///
+    /// The decoder coalesces the combined operation when possible.
+    /// For example, if EXIF says Rotate90 and the hint says Rotate180,
+    /// the decoder applies Rotate270 in a single step.
+    CorrectAndTransform(Orientation),
+
+    /// Ignore EXIF orientation. Apply exactly this transform.
+    ///
+    /// The EXIF orientation is not consulted. The given transform is
+    /// applied literally.
+    ExactTransform(Orientation),
+}
 
 /// Chroma upsampling method for subsampled JPEG images (4:2:0, 4:2:2, 4:4:0).
 ///
