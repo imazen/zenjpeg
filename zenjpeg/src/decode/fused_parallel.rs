@@ -518,6 +518,19 @@ impl<'a> JpegParser<'a> {
             .map(|(group_idx, rgb_chunk)| {
                 let first_raw = group_idx * group_stride;
                 let last_raw_excl = ((group_idx + 1) * group_stride).min(num_raw_segments);
+
+                // Truncated files may have fewer restart segments than expected,
+                // leaving trailing RGB chunks with no data to decode. Return empty
+                // warnings — the RGB chunk remains zeroed (black).
+                if first_raw >= num_raw_segments {
+                    return Ok(SegmentWarnings {
+                        had_ac_overflow: false,
+                        had_invalid_huffman: false,
+                        truncation_mcu: None,
+                        had_padding_error: false,
+                    });
+                }
+
                 let group_first_pixel_row = (first_raw * mcu_rows_per_ri) * 8;
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -835,6 +848,18 @@ impl<'a> JpegParser<'a> {
             .map(|(group_idx, rgb_chunk)| {
                 let first_raw = group_idx * group_stride;
                 let last_raw_excl = ((group_idx + 1) * group_stride).min(num_raw_segments);
+
+                // Truncated files may have fewer restart segments than expected,
+                // leaving trailing RGB chunks with no data to decode.
+                if first_raw >= num_raw_segments {
+                    return Ok(SegmentWarnings {
+                        had_ac_overflow: false,
+                        had_invalid_huffman: false,
+                        truncation_mcu: None,
+                        had_padding_error: false,
+                    });
+                }
+
                 let group_first_pixel_row = (first_raw * mcu_rows_per_ri) * mcu_pixel_height;
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -1142,6 +1167,18 @@ impl<'a> JpegParser<'a> {
             .map(|(group_idx, rgb_chunk)| {
                 let first_raw = group_idx * group_stride;
                 let last_raw_excl = ((group_idx + 1) * group_stride).min(num_raw_segments);
+
+                // Truncated files may have fewer restart segments than expected,
+                // leaving trailing RGB chunks with no data to decode.
+                if first_raw >= num_raw_segments {
+                    return Ok(SegmentWarnings {
+                        had_ac_overflow: false,
+                        had_invalid_huffman: false,
+                        truncation_mcu: None,
+                        had_padding_error: false,
+                    });
+                }
+
                 let group_first_pixel_row = (first_raw * mcu_rows_per_ri) * mcu_pixel_height;
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -1509,6 +1546,21 @@ impl<'a> JpegParser<'a> {
             .map(|(group_idx, rgb_chunk)| {
                 let first_raw = group_idx * group_stride;
                 let last_raw_excl = ((group_idx + 1) * group_stride).min(num_raw_segments);
+
+                // Truncated files may have fewer restart segments than expected,
+                // leaving trailing RGB chunks with no data to decode.
+                if first_raw >= num_raw_segments {
+                    return Ok((
+                        SegmentWarnings {
+                            had_ac_overflow: false,
+                            had_invalid_huffman: false,
+                            truncation_mcu: None,
+                            had_padding_error: false,
+                        },
+                        Vec::new(),
+                    ));
+                }
+
                 let group_first_pixel_row = (first_raw * mcu_rows_per_ri) * mcu_pixel_height;
 
                 let mut coeffs_buf = [0i16; DCT_BLOCK_SIZE];
@@ -1919,10 +1971,113 @@ impl<'a> JpegParser<'a> {
         let (any_ac, any_huff, first_trunc, any_pad) =
             Self::aggregate_fused_warnings(seg_warnings)?;
 
-        // Note: boundary fixup was only needed for SeparableBiased (removed).
-        // Triangle uses the extended-buffer approach which handles boundaries
-        // correctly without a separate fixup pass.
-        let _ = seg_boundaries;
+        // Boundary fixup pass: each raw segment starts with edge-replicated
+        // above/below chroma context.  At the junction between consecutive
+        // segments the two rows adjacent to the boundary (bottom of seg N,
+        // top of seg N+1) used the wrong vertical neighbour.  Re-upsample
+        // those two rows with correct cross-segment chroma context and
+        // re-do the color conversion.
+        {
+            use super::upsample::upsample_h2v2_libjpeg_row;
+
+            let is_rgb_jpeg = self.is_rgb_jpeg();
+
+            for i in 0..seg_boundaries.len().saturating_sub(1) {
+                let prev_seg = &seg_boundaries[i];
+                let next_seg = &seg_boundaries[i + 1];
+
+                let boundary_pixel_row = (i + 1) * mcu_rows_per_ri * mcu_pixel_height;
+                let bot_pixel_row = boundary_pixel_row - 1;
+                let top_pixel_row = boundary_pixel_row;
+
+                if top_pixel_row >= height {
+                    continue;
+                }
+
+                // Fix bottom row (last pixel row of segment i)
+                // near = last chroma row of seg i, far = first chroma row of seg i+1
+                {
+                    let mut cb_row = vec![0i16; y_strip_width];
+                    let mut cr_row = vec![0i16; y_strip_width];
+                    let in_w = c_strip_width.min(downsampled_w);
+                    upsample_h2v2_libjpeg_row(
+                        &prev_seg.last_cb_row[..in_w],
+                        &next_seg.first_cb_row[..in_w],
+                        &mut cb_row,
+                        in_w,
+                        y_cols_this_image,
+                        false,
+                    );
+                    upsample_h2v2_libjpeg_row(
+                        &prev_seg.last_cr_row[..in_w],
+                        &next_seg.first_cr_row[..in_w],
+                        &mut cr_row,
+                        in_w,
+                        y_cols_this_image,
+                        false,
+                    );
+                    let rgb_off = bot_pixel_row * rgb_row_bytes;
+                    if rgb_off + y_cols_this_image * 3 <= rgb.len() {
+                        if is_rgb_jpeg {
+                            for px in 0..y_cols_this_image {
+                                rgb[rgb_off + px * 3] = prev_seg.last_y_row[px].clamp(0, 255) as u8;
+                                rgb[rgb_off + px * 3 + 1] = cb_row[px].clamp(0, 255) as u8;
+                                rgb[rgb_off + px * 3 + 2] = cr_row[px].clamp(0, 255) as u8;
+                            }
+                        } else {
+                            crate::color::ycbcr_planes_i16_to_rgb_u8(
+                                &prev_seg.last_y_row[..y_cols_this_image],
+                                &cb_row[..y_cols_this_image],
+                                &cr_row[..y_cols_this_image],
+                                &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                            );
+                        }
+                    }
+                }
+
+                // Fix top row (first pixel row of segment i+1)
+                // near = first chroma row of seg i+1, far = last chroma row of seg i
+                {
+                    let mut cb_row = vec![0i16; y_strip_width];
+                    let mut cr_row = vec![0i16; y_strip_width];
+                    let in_w = c_strip_width.min(downsampled_w);
+                    upsample_h2v2_libjpeg_row(
+                        &next_seg.first_cb_row[..in_w],
+                        &prev_seg.last_cb_row[..in_w],
+                        &mut cb_row,
+                        in_w,
+                        y_cols_this_image,
+                        true,
+                    );
+                    upsample_h2v2_libjpeg_row(
+                        &next_seg.first_cr_row[..in_w],
+                        &prev_seg.last_cr_row[..in_w],
+                        &mut cr_row,
+                        in_w,
+                        y_cols_this_image,
+                        true,
+                    );
+                    let rgb_off = top_pixel_row * rgb_row_bytes;
+                    if rgb_off + y_cols_this_image * 3 <= rgb.len() {
+                        if is_rgb_jpeg {
+                            for px in 0..y_cols_this_image {
+                                rgb[rgb_off + px * 3] =
+                                    next_seg.first_y_row[px].clamp(0, 255) as u8;
+                                rgb[rgb_off + px * 3 + 1] = cb_row[px].clamp(0, 255) as u8;
+                                rgb[rgb_off + px * 3 + 2] = cr_row[px].clamp(0, 255) as u8;
+                            }
+                        } else {
+                            crate::color::ycbcr_planes_i16_to_rgb_u8(
+                                &next_seg.first_y_row[..y_cols_this_image],
+                                &cb_row[..y_cols_this_image],
+                                &cr_row[..y_cols_this_image],
+                                &mut rgb[rgb_off..rgb_off + y_cols_this_image * 3],
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         Ok((
             FusedResult(rgb),
