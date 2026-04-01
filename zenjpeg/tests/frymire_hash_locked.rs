@@ -683,13 +683,29 @@ fn test_frymire_hashes_locked() {
         let jpeg = config.encode(&rgb, width, height, *quality as f32);
         let actual_hash = sha256_hex(&jpeg);
 
+        if jpeg.len() != *expected_size || actual_hash != *expected_hash {
+            // Print replacement entry for easy copy-paste into EXPECTED_HASHES
+            eprintln!(
+                "    (\"{}\", {}, \"{}\", {}),",
+                config_name,
+                quality,
+                actual_hash,
+                jpeg.len()
+            );
+        }
+
         assert_eq!(
             jpeg.len(),
             *expected_size,
-            "{} Q{}: size mismatch!\n  expected: {} bytes\n  actual:   {} bytes",
+            "{} Q{}: size mismatch!\n  expected: {} bytes\n  actual:   {} bytes\n\
+             Replacement: (\"{}\", {}, \"{}\", {}),",
             config_name,
             quality,
             expected_size,
+            jpeg.len(),
+            config_name,
+            quality,
+            actual_hash,
             jpeg.len()
         );
 
