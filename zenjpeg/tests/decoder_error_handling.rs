@@ -861,7 +861,7 @@ fn test_reject_dht_symbol_count_over_256() {
         data.push(if i == 15 { 17 } else { 16 });
     }
     // Values (257 bytes — we won't even get here, but fill anyway)
-    data.extend(core::iter::repeat(0u8).take(num_values));
+    data.extend(core::iter::repeat_n(0u8, num_values));
 
     // SOS + EOI (won't reach these)
     data.extend_from_slice(&[
