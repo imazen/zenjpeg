@@ -332,8 +332,20 @@ impl<'a> JpegParser<'a> {
 
     /// Parse DRI (Define Restart Interval) marker.
     pub(super) fn parse_restart_interval(&mut self) -> Result<()> {
-        let _length = self.read_u16()?;
+        let length = self.read_u16()?;
         self.restart_interval = self.read_u16()?;
+
+        // DRI marker must be exactly 4 bytes (2-byte length + 2-byte interval).
+        // Consume any extra bytes to prevent parser desync on malformed input.
+        if length != 4 {
+            let extra = (length as usize).saturating_sub(4);
+            if self.position + extra > self.data.len() {
+                return Err(Error::invalid_jpeg_data("DRI marker length exceeds data"));
+            }
+            self.position += extra;
+            self.warn(DecodeWarning::MalformedSegmentSkipped)?;
+        }
+
         Ok(())
     }
 
