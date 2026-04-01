@@ -86,11 +86,9 @@ impl<'a> JpegParser<'a> {
                 if self.position + 2 <= self.data.len() {
                     let len = ((self.data[self.position] as usize) << 8)
                         | self.data[self.position + 1] as usize;
-                    if len >= 2 {
-                        self.position += len;
-                    } else {
-                        self.position += 2; // Skip at least the length field
-                    }
+                    let skip = if len >= 2 { len } else { 2 };
+                    // Clamp to data end to prevent OOB advance
+                    self.position = (self.position + skip).min(self.data.len());
                 }
                 self.warn(DecodeWarning::MalformedSegmentSkipped)?;
                 Ok(())
@@ -436,7 +434,11 @@ impl<'a> JpegParser<'a> {
             }
             return Err(Error::invalid_jpeg_data("segment length too short"));
         }
-        self.position += length - 2;
+        let skip = length - 2;
+        if self.position + skip > self.data.len() {
+            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+        }
+        self.position += skip;
         Ok(())
     }
 
@@ -451,6 +453,11 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data("segment length too short"));
         }
         let data_len = length - 2;
+
+        // Validate that segment data doesn't extend past input
+        if self.position + data_len > self.data.len() {
+            return Err(Error::invalid_jpeg_data("segment length exceeds data"));
+        }
 
         // Always check for APP14 Adobe marker (needed for CMYK/YCCK detection)
         if marker == MARKER_APP14 && self.position + data_len <= self.data.len() {
