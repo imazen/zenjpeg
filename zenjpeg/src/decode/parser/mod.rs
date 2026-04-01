@@ -1104,6 +1104,28 @@ fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
                     } else if (0xD0..=0xD7).contains(&marker) {
                         // RST marker (no length)
                         pos += 2;
+                    } else if marker == 0xDA {
+                        // SOS — skip marker header, then scan entropy data
+                        if pos + 4 > data.len() {
+                            break;
+                        }
+                        let len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+                        pos += 2 + len;
+                        // Scan past entropy-coded data
+                        while pos < data.len().saturating_sub(1) {
+                            if data[pos] == 0xFF {
+                                let next = data[pos + 1];
+                                if next == 0x00 || next == 0xFF {
+                                    pos += if next == 0x00 { 2 } else { 1 };
+                                } else if (0xD0..=0xD7).contains(&next) {
+                                    pos += 2;
+                                } else {
+                                    break; // Real marker
+                                }
+                            } else {
+                                pos += 1;
+                            }
+                        }
                     } else if (0xC0..=0xFE).contains(&marker) {
                         // Marker with length field
                         if pos + 4 > data.len() {

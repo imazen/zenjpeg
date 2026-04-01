@@ -203,10 +203,23 @@ pub fn encode_with_gainmap_format(
     let primary_xmp = generate_primary_xmp(gainmap_final.len());
 
     // Create encoder segments with primary XMP and gain map (with metadata)
-    let segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
+    let mut segments = EncoderSegments::new().set_xmp(&primary_xmp).add_mpf_image(
         gainmap_final,
         crate::encode::extras::MpfImageType::Undefined,
     );
+
+    // Inject version-only ISO 21496-1 APP2 in primary JPEG when ISO format is enabled,
+    // matching the canonical Ultra HDR structure used by Adobe Photoshop and libultrahdr.
+    let include_iso = matches!(
+        metadata_format,
+        GainMapEncodingFormat::Iso21496 | GainMapEncodingFormat::Both
+    );
+    if include_iso {
+        // Build APP2 data: URN namespace + version-only payload (min_version=0, writer_version=0)
+        let mut iso_app2_data = b"urn:iso:std:iso:ts:21496:-1\0".to_vec();
+        iso_app2_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        segments = segments.add_raw(0xE2, iso_app2_data);
+    }
 
     // Encode base SDR image with the segments
     let base_jpeg = encode_sdr_base(sdr, encoder_config, segments, stop)?;
@@ -287,7 +300,7 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
             ));
         }
     };
-    let expected_size = (height * hdr.stride) as usize;
+    let expected_size = (height as usize).saturating_mul(hdr.stride as usize);
     if hdr.data.len() < expected_size {
         return Err(Error::invalid_buffer_size(expected_size, hdr.data.len()));
     }
@@ -323,7 +336,9 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
 /// Extract linear RGB from an HDR image at the given pixel position.
 /// Uses bounds-checked access to avoid panics on malformed data.
 fn get_linear_rgb_safe(img: &RawImage, x: u32, y: u32, bytes_per_pixel: usize) -> [f32; 3] {
-    let idx = (y * img.stride + x * bytes_per_pixel as u32) as usize;
+    let idx = (y as usize)
+        .saturating_mul(img.stride as usize)
+        .saturating_add((x as usize).saturating_mul(bytes_per_pixel));
 
     match img.format {
         UhdrPixelFormat::Rgba32F => {

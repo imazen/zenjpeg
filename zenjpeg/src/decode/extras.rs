@@ -1024,8 +1024,11 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
 
     let mp_entry_offset = mp_entry_offset?;
 
-    // Each MP entry is 16 bytes
+    // Each MP entry is 16 bytes. Cap against actual data size to prevent
+    // OOM on crafted inputs with inflated mp_entry_count.
     let num_images = (mp_entry_count / 16) as usize;
+    let max_from_data = data.len().saturating_sub(mp_entry_offset) / 16;
+    let num_images = num_images.min(max_from_data).min(256);
     let mut images = Vec::with_capacity(num_images);
 
     for i in 0..num_images {

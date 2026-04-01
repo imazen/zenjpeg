@@ -36,11 +36,54 @@ pub(crate) fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
         if remaining[i] == SOI[0] && remaining[i + 1] == SOI[1] {
             let gm_start = primary_end + i;
 
-            // Find the corresponding EOI
-            for j in (i + 2)..remaining.len().saturating_sub(1) {
-                if remaining[j] == EOI[0] && remaining[j + 1] == EOI[1] {
-                    let gm_end = primary_end + j + 2;
-                    return Some(data[gm_start..gm_end].to_vec());
+            // Find the corresponding EOI by properly parsing marker structure
+            // (naive byte scan for 0xFF 0xD9 can false-match inside entropy data)
+            let mut pos = i + 2;
+            while pos < remaining.len().saturating_sub(1) {
+                if remaining[pos] != 0xFF {
+                    pos += 1;
+                    continue;
+                }
+                let marker = remaining[pos + 1];
+                match marker {
+                    0xD9 => {
+                        let gm_end = primary_end + pos + 2;
+                        return Some(data[gm_start..gm_end].to_vec());
+                    }
+                    0x00 => pos += 2,   // byte stuffing
+                    0xFF => pos += 1,   // fill byte
+                    0xDA => {
+                        // SOS — skip header, then scan entropy data
+                        if pos + 4 > remaining.len() {
+                            break;
+                        }
+                        let len =
+                            u16::from_be_bytes([remaining[pos + 2], remaining[pos + 3]]) as usize;
+                        pos += 2 + len;
+                        while pos < remaining.len().saturating_sub(1) {
+                            if remaining[pos] == 0xFF {
+                                let next = remaining[pos + 1];
+                                if next == 0x00 || next == 0xFF {
+                                    pos += if next == 0x00 { 2 } else { 1 };
+                                } else if (0xD0..=0xD7).contains(&next) {
+                                    pos += 2;
+                                } else {
+                                    break; // Real marker
+                                }
+                            } else {
+                                pos += 1;
+                            }
+                        }
+                    }
+                    m if (0xD0..=0xD7).contains(&m) => pos += 2,
+                    _ => {
+                        if pos + 4 > remaining.len() {
+                            break;
+                        }
+                        let len =
+                            u16::from_be_bytes([remaining[pos + 2], remaining[pos + 3]]) as usize;
+                        pos += 2 + len;
+                    }
                 }
             }
 
@@ -151,6 +194,9 @@ pub(crate) fn compute_gainmap_target(
     gm_src_w: u32,
     gm_src_h: u32,
 ) -> (u32, u32) {
+    if primary_src_w == 0 || primary_src_h == 0 {
+        return (gm_src_w.max(1), gm_src_h.max(1));
+    }
     let scale_x = primary_dst_w as f64 / primary_src_w as f64;
     let scale_y = primary_dst_h as f64 / primary_src_h as f64;
     let gm_dst_w = (gm_src_w as f64 * scale_x).round().max(1.0) as u32;
