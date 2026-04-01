@@ -1,6 +1,6 @@
 [package]
 name = "zenjpeg"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/zenjpeg"

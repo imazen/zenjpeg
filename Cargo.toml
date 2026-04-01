@@ -94,8 +94,8 @@ kamadak-exif = "0.6"
 img-parts = "0.4"
 
 # Our ultrahdr crates
-ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr" }
-ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.4.0", default-features = false }
+ultrahdr-rs = "0.3.4"
+ultrahdr-core = { version = "0.4.0", default-features = false }
 
 # Layout + resize pipeline
 zenlayout = "0.2"

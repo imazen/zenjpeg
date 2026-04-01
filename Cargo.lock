@@ -2320,7 +2320,9 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "ultrahdr-core"
-version = "0.4.0"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9d7e2e6a6ca5d57125411cbca12972536b1a741634d2acaa31e70c2347168a1"
 dependencies = [
  "archmage 0.9.16",
  "bytemuck",
@@ -2335,7 +2337,8 @@ dependencies = [
 [[package]]
 name = "ultrahdr-core"
 version = "0.4.0"
-source = "git+https://github.com/imazen/ultrahdr#03c34882fba296b56616601dc0653efd5faba2d9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01015be39d1868f1582778471668616c421a417375dc0f78b1bc60bf2852f410"
 dependencies = [
  "archmage 0.9.16",
  "bytemuck",
@@ -2349,8 +2352,9 @@ dependencies = [
 
 [[package]]
 name = "ultrahdr-rs"
-version = "0.4.0"
-source = "git+https://github.com/imazen/ultrahdr#03c34882fba296b56616601dc0653efd5faba2d9"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10b03d862d401001ea1de7346ddfffa66159306394aba77170d7988caf7f2fe8"
 dependencies = [
  "bytemuck",
  "enough",
@@ -2359,7 +2363,7 @@ dependencies = [
  "moxcms 0.8.1",
  "rgb",
  "thiserror",
- "ultrahdr-core 0.4.0 (git+https://github.com/imazen/ultrahdr)",
+ "ultrahdr-core 0.3.4",
  "wide 1.2.0",
 ]
 
@@ -3017,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "zenjpeg"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "aligned-vec",
  "almost-enough",
