@@ -50,8 +50,8 @@ pub(crate) fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
                         let gm_end = primary_end + pos + 2;
                         return Some(data[gm_start..gm_end].to_vec());
                     }
-                    0x00 => pos += 2,   // byte stuffing
-                    0xFF => pos += 1,   // fill byte
+                    0x00 => pos += 2, // byte stuffing
+                    0xFF => pos += 1, // fill byte
                     0xDA => {
                         // SOS — skip header, then scan entropy data
                         if pos + 4 > remaining.len() {
