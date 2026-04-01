@@ -188,12 +188,7 @@ fn debug_arithmetic_output() {
         println!("djpeg not found, skipping reference comparison");
         return;
     };
-    println!(
-        "Reference: {}x{}, {} bytes",
-        ref_w,
-        ref_h,
-        ref_rgb.len()
-    );
+    println!("Reference: {}x{}, {} bytes", ref_w, ref_h, ref_rgb.len());
 
     // Count differences by magnitude
     let mut diff_hist = [0usize; 256];
