@@ -72,6 +72,9 @@ pub mod wasm_simd;
 pub mod deringing;
 #[cfg(feature = "parallel")]
 #[doc(hidden)]
+pub mod fused_parallel_encode;
+#[cfg(feature = "parallel")]
+#[doc(hidden)]
 pub mod parallel;
 #[doc(hidden)]
 pub mod streaming;
