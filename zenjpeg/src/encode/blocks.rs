@@ -467,7 +467,7 @@ impl ComputedConfig {
 /// Uses `build_nonzero_mask` (with archmage dispatch) for SIMD — no need for
 /// `#[autoversion]` since this function is pure integer bit manipulation.
 #[inline]
-fn collect_block_frequencies_simd(
+pub(crate) fn collect_block_frequencies_simd(
     coeffs: &[i16; DCT_BLOCK_SIZE],
     prev_dc: i16,
     dc_freq: &mut FrequencyCounter,
