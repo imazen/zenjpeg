@@ -507,6 +507,158 @@ fn compute_segment_aq(
     Ok(all)
 }
 
+/// Compute full-image AQ map and per-segment AQ maps for comparison.
+/// Returns (full_map, segmented_map, blocks_w, blocks_h, restart_mcu_rows).
+#[cfg(test)]
+pub(crate) fn compare_aq_maps(
+    rgb_pixels: &[u8],
+    width: usize,
+    height: usize,
+    subsampling: Subsampling,
+    y_quant_01: u16,
+    restart_mcu_rows: usize,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize, usize)> {
+    let (h_samp, v_samp) = match subsampling {
+        Subsampling::S444 => (1, 1),
+        Subsampling::S422 => (2, 1),
+        Subsampling::S420 => (2, 2),
+        Subsampling::S440 => (1, 2),
+    };
+    let mcu_height = v_samp * 8;
+    let padded_width = ((width + h_samp * 8 - 1) / (h_samp * 8)) * h_samp * 8;
+    let blocks_w = padded_width / 8;
+    let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+    // Color convert full image to Y
+    let mut y_plane = vec![0.0f32; height * padded_width];
+    let mut cb = vec![0.0f32; height * padded_width];
+    let mut cr = vec![0.0f32; height * padded_width];
+    crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
+        rgb_pixels, &mut y_plane, &mut cb, &mut cr, width, height, padded_width, 3,
+    );
+    if width < padded_width {
+        for row in 0..height {
+            let off = row * padded_width;
+            let v = y_plane[off + width - 1];
+            for x in width..padded_width { y_plane[off + x] = v; }
+        }
+    }
+
+    // Full-image AQ
+    let full_map = compute_segment_aq(
+        &y_plane, width, height, padded_width, subsampling, y_quant_01,
+    )?;
+    let blocks_h = full_map.len() / blocks_w;
+
+    // Per-segment AQ
+    let rows_per_seg = restart_mcu_rows;
+    let num_segments = (mcu_rows + rows_per_seg - 1) / rows_per_seg;
+    let mut seg_map = vec![0.0f32; full_map.len()];
+
+    for seg_idx in 0..num_segments {
+        let mcu_start = seg_idx * rows_per_seg;
+        let mcu_count = rows_per_seg.min(mcu_rows - mcu_start);
+        let px_start = mcu_start * mcu_height;
+        let px_end = ((mcu_start + mcu_count) * mcu_height).min(height);
+        let seg_h = px_end - px_start;
+
+        let seg_y = &y_plane[px_start * padded_width..];
+        let seg_aq = compute_segment_aq(seg_y, width, seg_h, padded_width, subsampling, y_quant_01)?;
+
+        let block_row_start = mcu_start * v_samp;
+        let n = seg_aq.len().min(mcu_count * v_samp * blocks_w);
+        let dst = block_row_start * blocks_w;
+        seg_map[dst..dst + n].copy_from_slice(&seg_aq[..n]);
+    }
+
+    Ok((full_map, seg_map, blocks_w, blocks_h, restart_mcu_rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore] // Requires test image
+    fn analyze_aq_boundary_pattern() {
+        let img = std::fs::read("/mnt/v/input/BRAG/karwin-luo-4k-420-q85-baseline.jpg").unwrap();
+        let decoded = crate::decode::Decoder::new()
+            .output_format(crate::decoder::PixelFormat::Rgb)
+            .decode(&img, enough::Unstoppable).unwrap();
+        let (w, h) = (decoded.width as usize, decoded.height as usize);
+        let pixels = decoded.pixels_u8().unwrap();
+
+        let enc = crate::encode::EncoderConfig::ycbcr(85.0, crate::encode::ChromaSubsampling::Quarter)
+            .progressive(false);
+        let inner = enc.encode_from_bytes(w as u32, h as u32, crate::encode::PixelLayout::Rgb8Srgb).unwrap();
+        let y_quant_01 = inner.inner().quant_context().y_quant.values[1];
+
+        let (full, seg, bw, bh, rmr) = compare_aq_maps(
+            pixels, w, h, Subsampling::S420, y_quant_01, 4,
+        ).unwrap();
+
+        let v_samp = 2;
+        eprintln!("Block grid: {}x{}, segments of {} MCU rows ({} block rows)\n",
+            bw, bh, rmr, rmr * v_samp);
+
+        eprintln!("{:>4} {:>10} {:>10} {:>10} {:>4}",
+            "row", "max_abs", "mean_diff", "rms", "seg");
+
+        let mut boundary_rms_sum = 0.0f64;
+        let mut boundary_count = 0;
+        let mut interior_rms_sum = 0.0f64;
+        let mut interior_count = 0;
+
+        for by in 0..bh {
+            let start = by * bw;
+            let end = (start + bw).min(full.len()).min(seg.len());
+            if start >= end { break; }
+
+            let mut max_abs = 0.0f32;
+            let mut sum = 0.0f64;
+            let mut sum_sq = 0.0f64;
+            for i in start..end {
+                let d = seg[i] - full[i];
+                max_abs = max_abs.max(d.abs());
+                sum += d as f64;
+                sum_sq += (d * d) as f64;
+            }
+            let n = (end - start) as f64;
+            let rms = (sum_sq / n).sqrt();
+
+            let mcu_row = by / v_samp;
+            let local_block = by % (rmr * v_samp);
+            let is_first = local_block < 2;
+            let is_last = local_block >= rmr * v_samp - 2;
+            let is_boundary = (is_first && mcu_row > 0) || (is_last && mcu_row + 1 < (h + 15) / 16);
+            let seg_idx = mcu_row / rmr;
+
+            if is_boundary {
+                boundary_rms_sum += sum_sq;
+                boundary_count += end - start;
+            } else {
+                interior_rms_sum += sum_sq;
+                interior_count += end - start;
+            }
+
+            if rms > 0.0001 || is_boundary {
+                eprintln!("{:>4} {:>10.6} {:>10.6} {:>10.6} {:>4}{}",
+                    by, max_abs, sum / n, rms, seg_idx,
+                    if is_boundary { " <<<" } else { "" });
+            }
+        }
+
+        eprintln!("\nBoundary blocks RMS: {:.6} ({} blocks)",
+            (boundary_rms_sum / boundary_count.max(1) as f64).sqrt(), boundary_count);
+        eprintln!("Interior blocks RMS: {:.6} ({} blocks)",
+            (interior_rms_sum / interior_count.max(1) as f64).sqrt(), interior_count);
+        eprintln!("Blocks with |diff| > 0.01: {}",
+            full.iter().zip(seg.iter()).filter(|(f, s)| (*s - *f).abs() > 0.01).count());
+        eprintln!("Blocks with |diff| > 0.001: {}",
+            full.iter().zip(seg.iter()).filter(|(f, s)| (*s - *f).abs() > 0.001).count());
+    }
+}
+
 fn new_frequencies() -> HuffmanSymbolFrequencies {
     HuffmanSymbolFrequencies {
         dc_luma: FrequencyCounter::new(),
