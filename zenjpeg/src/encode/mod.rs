@@ -71,6 +71,8 @@ pub mod wasm_simd;
 /// backgrounds. Enabled by default with no quality penalty for photographic content.
 pub mod deringing;
 #[cfg(feature = "parallel")]
+mod fused_parallel_encode;
+#[cfg(feature = "parallel")]
 #[doc(hidden)]
 pub mod parallel;
 #[doc(hidden)]
@@ -79,6 +81,8 @@ pub mod streaming;
 pub mod streaming_builder;
 #[doc(hidden)]
 pub mod strip;
+#[cfg(feature = "parallel")]
+mod symbol_stream;
 
 // v2 types moved to encode root (v2/mod.rs re-exports these for compatibility)
 pub mod byte_encoders;

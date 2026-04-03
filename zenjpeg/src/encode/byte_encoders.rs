@@ -35,6 +35,12 @@ pub struct BytesEncoder {
 }
 
 impl BytesEncoder {
+    /// Access inner streaming encoder (for fused parallel encoder).
+    #[cfg(feature = "parallel")]
+    pub(crate) fn inner(&self) -> &StreamingEncoder {
+        &self.inner
+    }
+
     pub(crate) fn new(
         config: EncoderConfig,
         width: u32,
