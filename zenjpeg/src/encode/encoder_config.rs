@@ -1113,6 +1113,80 @@ impl EncoderConfig {
         enc.finish_into(output)
     }
 
+    /// Encode RGB8 pixels using fused parallel encoding with optimized Huffman tables.
+    ///
+    /// Parallelizes the full pipeline (color convert → AQ → DCT → quantize → entropy)
+    /// across restart segments. Produces baseline sequential JPEG with restart markers.
+    ///
+    /// Best for latency-sensitive single-image encoding. For high-concurrency proxy
+    /// servers, sequential `encode_bytes` with OS-level parallelism is more CPU-efficient.
+    ///
+    /// Requires `parallel` feature. Returns error if image is too small for parallelism.
+    #[cfg(feature = "parallel")]
+    pub fn encode_bytes_parallel(&self, data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+        let enc = self.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+        let inner = enc.inner();
+        let config = inner.config();
+        let quant = inner.quant_context();
+
+        let restart_mcu_rows = {
+            let (h_samp, _) = match config.subsampling {
+                crate::types::Subsampling::S444 => (1usize, 1usize),
+                crate::types::Subsampling::S422 => (2, 1),
+                crate::types::Subsampling::S420 => (2, 2),
+                crate::types::Subsampling::S440 => (1, 2),
+            };
+            let mcu_cols = (width as usize + h_samp * 8 - 1) / (h_samp * 8);
+            if config.restart_interval > 0 {
+                config.restart_interval as usize / mcu_cols.max(1)
+            } else {
+                4
+            }
+        };
+
+        let quality = self.quality.to_internal();
+
+        let (scan_data, tables) = super::fused_parallel_encode::fused_parallel_encode(
+            data,
+            width,
+            height,
+            config.subsampling,
+            quality,
+            &quant.y_quant.values,
+            &quant.cb_quant.values,
+            &quant.cr_quant.values,
+            &quant.y_zero_bias,
+            &quant.cb_zero_bias,
+            &quant.cr_zero_bias,
+            restart_mcu_rows,
+            true,
+            true,
+        )?;
+
+        let mut output = Vec::with_capacity(scan_data.len() + 1024);
+        config.write_header(&mut output)?;
+        config.write_quant_tables(
+            &mut output,
+            &quant.y_quant,
+            &quant.cb_quant,
+            &quant.cr_quant,
+        )?;
+        let is_extended = config.force_sof1
+            || quant.y_quant.precision > 0
+            || quant.cb_quant.precision > 0
+            || quant.cr_quant.precision > 0;
+        config.write_frame_header_ex(&mut output, is_extended)?;
+        config.write_huffman_tables_optimized(&mut output, &tables)?;
+        if config.restart_interval > 0 {
+            config.write_restart_interval(&mut output)?;
+        }
+        config.write_scan_header(&mut output)?;
+        output.extend_from_slice(&scan_data);
+        output.push(0xFF);
+        output.push(crate::foundation::consts::MARKER_EOI);
+        Ok(output)
+    }
+
     // === Resource Estimation ===
 
     /// Estimate peak memory usage for encoding an image of the given dimensions.
