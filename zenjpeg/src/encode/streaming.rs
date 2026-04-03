@@ -103,6 +103,18 @@ pub(crate) struct StreamingEncoder {
 }
 
 impl StreamingEncoder {
+    /// Access the computed config (for fused parallel encode).
+    #[cfg(feature = "parallel")]
+    pub(crate) fn config(&self) -> &ComputedConfig {
+        &self.config
+    }
+
+    /// Access the quant context from the strip processor (for fused parallel encode).
+    #[cfg(feature = "parallel")]
+    pub(crate) fn quant_context(&self) -> &super::strip::QuantContext {
+        &self.processor.quant
+    }
+
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
     /// Use the builder methods to configure quality, subsampling, etc.

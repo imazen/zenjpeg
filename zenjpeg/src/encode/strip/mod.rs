@@ -424,7 +424,7 @@ pub struct StripProcessor {
     pending: PendingBuffers,
 
     // === Quantization context ===
-    quant: QuantContext,
+    pub(crate) quant: QuantContext,
 
     // Block dimensions accessible via self.layout.*
 
