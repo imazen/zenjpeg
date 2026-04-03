@@ -178,23 +178,50 @@ pub fn fused_parallel_encode_optimized(
     // =========================================================================
     // Single pass: parallel color convert → AQ → DCT → quantize → symbol capture
     // =========================================================================
-    let symbol_results: Vec<Result<SegmentSymbols>> = (0..num_segments)
-        .into_par_iter()
-        .map(|seg_idx| {
+
+    // Pre-allocate result slots to avoid per-segment Vec allocation in rayon closures
+    let est_symbols_per_seg = {
+        let mcu_cols = shared.mcu_cols;
+        let seg_mcus = mcu_cols * rows_per_seg;
+        seg_mcus * (shared.h_samp * shared.v_samp + 2) * 5
+    };
+    let mut all_symbols: Vec<Option<SegmentSymbols>> = (0..num_segments)
+        .map(|_| Some(SegmentSymbols {
+            stream: SymbolStream::with_capacity(est_symbols_per_seg),
+            frequencies: new_frequencies(),
+        }))
+        .collect();
+
+    // Run parallel quantization, writing into pre-allocated slots
+    let errors: Vec<Option<crate::error::Error>> = all_symbols
+        .par_iter_mut()
+        .enumerate()
+        .map(|(seg_idx, slot)| {
             let mcu_row_start = seg_idx * rows_per_seg;
             let mcu_row_count = rows_per_seg.min(mcu_rows - mcu_row_start);
             let restart_num = (seg_idx % 8) as u8;
-            quantize_to_symbols(rgb_pixels, &shared, mcu_row_start, mcu_row_count, restart_num)
+            // Take the pre-allocated slot, fill it, put it back
+            let mut seg = slot.take().unwrap();
+            seg.stream.symbols.clear();
+            seg.stream.flags.clear();
+            match quantize_to_symbols_into(
+                rgb_pixels, &shared, mcu_row_start, mcu_row_count, restart_num, &mut seg,
+            ) {
+                Ok(()) => { *slot = Some(seg); None }
+                Err(e) => Some(e)
+            }
         })
         .collect();
 
+    // Check errors
+    for e in errors.into_iter().flatten() {
+        return Err(e);
+    }
+
     // Merge frequencies
-    let mut all_symbols = Vec::with_capacity(num_segments);
     let mut merged_freqs = new_frequencies();
-    for r in symbol_results {
-        let seg = r?;
+    for seg in all_symbols.iter().flatten() {
         merged_freqs.add(&seg.frequencies);
-        all_symbols.push(seg);
     }
 
     // Build optimal tables
@@ -206,7 +233,8 @@ pub fn fused_parallel_encode_optimized(
     let segments: Vec<Result<EncodedSegment>> = all_symbols
         .into_par_iter()
         .enumerate()
-        .map(|(seg_idx, seg)| {
+        .map(|(seg_idx, slot)| {
+            let seg = slot.expect("segment should be filled");
             let restart_num = (seg_idx % 8) as u8;
             let data = seg.stream.encode_with_tables(
                 &tables.dc_luma.table,
@@ -227,15 +255,15 @@ pub fn fused_parallel_encode_optimized(
 // =============================================================================
 
 /// Single pass: color convert → AQ → DCT → quantize → R-D optimize → symbol capture.
-/// Returns the symbol stream + frequencies. No coefficients stored.
-fn quantize_to_symbols(
+/// Writes into a pre-allocated SegmentSymbols (symbols + frequencies).
+fn quantize_to_symbols_into(
     rgb_pixels: &[u8],
     shared: &SharedEncodeConfig,
     mcu_row_start: usize,
     mcu_row_count: usize,
-    restart_num: u8,
-) -> Result<SegmentSymbols> {
-    use super::symbol_stream::{SymbolStream, block_to_symbols};
+    _restart_num: u8,
+    out: &mut SegmentSymbols,
+) -> Result<()> {
     let blocks_w = shared.blocks_w;
     let mcu_cols = shared.mcu_cols;
     let h_samp = shared.h_samp;
@@ -276,8 +304,7 @@ fn quantize_to_symbols(
         let mut prev_dc_cr: i16 = 0;
         let lambda = 0.001f32;
 
-        let est_symbols = total_mcus * (h_samp * v_samp + 2) * 5;
-        let mut stream = SymbolStream::with_capacity(est_symbols);
+        // Use out.stream directly (mutable borrow through function parameter)
 
         for local_mcu_row in 0..mcu_row_count {
             let is_first_mcu_row = local_mcu_row == 0;
@@ -303,7 +330,7 @@ fn quantize_to_symbols(
                         );
                         optimize_block_rd(&mut q, &shared.y_quant.values, aq_scale, lambda);
                         bias_dc_at_restart(&mut q, is_first_mcu);
-                        block_to_symbols(&mut stream, &q, &mut prev_dc_y, false);
+                        block_to_symbols(&mut out.stream, &q, &mut prev_dc_y, false);
                     }
                 }
                 {
@@ -312,7 +339,7 @@ fn quantize_to_symbols(
                         &forward_dct_8x8_wide(&cb), &shared.cb_zero_bias, 0.0,
                     );
                     optimize_block_rd(&mut cb_q, &shared.cb_quant.values, 1.0, lambda);
-                    block_to_symbols(&mut stream, &cb_q, &mut prev_dc_cb, true);
+                    block_to_symbols(&mut out.stream, &cb_q, &mut prev_dc_cb, true);
                 }
                 {
                     let cr = extract_block_from_strip_wide(&bufs.cr_plane, mcu_col, local_mcu_row, c_width);
@@ -320,19 +347,19 @@ fn quantize_to_symbols(
                         &forward_dct_8x8_wide(&cr), &shared.cr_zero_bias, 0.0,
                     );
                     optimize_block_rd(&mut cr_q, &shared.cr_quant.values, 1.0, lambda);
-                    block_to_symbols(&mut stream, &cr_q, &mut prev_dc_cr, true);
+                    block_to_symbols(&mut out.stream, &cr_q, &mut prev_dc_cr, true);
                 }
             }
         }
 
         // Collect frequencies from the symbol stream
-        let mut freqs = new_frequencies();
-        stream.collect_frequencies(
-            &mut freqs.dc_luma, &mut freqs.ac_luma,
-            &mut freqs.dc_chroma, &mut freqs.ac_chroma,
+        out.frequencies = new_frequencies();
+        out.stream.collect_frequencies(
+            &mut out.frequencies.dc_luma, &mut out.frequencies.ac_luma,
+            &mut out.frequencies.dc_chroma, &mut out.frequencies.ac_chroma,
         );
 
-        Ok(SegmentSymbols { stream, frequencies: freqs })
+        Ok(())
     })
 }
 
