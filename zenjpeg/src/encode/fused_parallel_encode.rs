@@ -192,24 +192,33 @@ pub fn fused_parallel_encode_optimized(
         }))
         .collect();
 
-    // Run parallel quantization, writing into pre-allocated slots
+    // Limit parallelism to physical cores (SMT threads hurt due to L1/L2 contention).
+    // Group segments into chunks so we spawn ~physical_cores tasks, not num_segments.
+    let max_tasks = (rayon::current_num_threads() / 2).max(2).min(num_segments);
+    let chunk_size = (num_segments + max_tasks - 1) / max_tasks;
+
+    // Run parallel quantization in grouped chunks
     let errors: Vec<Option<crate::error::Error>> = all_symbols
-        .par_iter_mut()
+        .par_chunks_mut(chunk_size)
         .enumerate()
-        .map(|(seg_idx, slot)| {
-            let mcu_row_start = seg_idx * rows_per_seg;
-            let mcu_row_count = rows_per_seg.min(mcu_rows - mcu_row_start);
-            let restart_num = (seg_idx % 8) as u8;
-            // Take the pre-allocated slot, fill it, put it back
-            let mut seg = slot.take().unwrap();
-            seg.stream.symbols.clear();
-            seg.stream.flags.clear();
-            match quantize_to_symbols_into(
-                rgb_pixels, &shared, mcu_row_start, mcu_row_count, restart_num, &mut seg,
-            ) {
-                Ok(()) => { *slot = Some(seg); None }
-                Err(e) => Some(e)
+        .map(|(chunk_idx, chunk)| {
+            let base_seg = chunk_idx * chunk_size;
+            for (i, slot) in chunk.iter_mut().enumerate() {
+                let seg_idx = base_seg + i;
+                let mcu_row_start = seg_idx * rows_per_seg;
+                let mcu_row_count = rows_per_seg.min(mcu_rows - mcu_row_start);
+                let restart_num = (seg_idx % 8) as u8;
+                let mut seg = slot.take().unwrap();
+                seg.stream.symbols.clear();
+                seg.stream.flags.clear();
+                match quantize_to_symbols_into(
+                    rgb_pixels, &shared, mcu_row_start, mcu_row_count, restart_num, &mut seg,
+                ) {
+                    Ok(()) => { *slot = Some(seg); }
+                    Err(e) => return Some(e),
+                }
             }
+            None
         })
         .collect();
 
