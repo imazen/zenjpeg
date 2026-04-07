@@ -6,7 +6,7 @@
 
 #![no_main]
 
-use zenjpeg::decode::Decoder;
+use zenjpeg::decoder::Decoder;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

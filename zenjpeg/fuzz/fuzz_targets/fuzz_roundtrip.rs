@@ -1,4 +1,4 @@
-//! Fuzz target for encode→decode roundtrip testing.
+//! Fuzz target for encode-then-decode roundtrip testing.
 //!
 //! Uses structured fuzzing via `arbitrary` to generate valid image parameters,
 //! then tests that encoding followed by decoding produces consistent results.
@@ -10,9 +10,8 @@
 
 use arbitrary::Arbitrary;
 use enough::Unstoppable;
-use zenjpeg::decode::Decoder;
-use zenjpeg::decoder::PixelFormat;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::decoder::{Decoder, PixelFormat};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use libfuzzer_sys::fuzz_target;
 
 /// Structured input for roundtrip fuzzing.
@@ -74,15 +73,17 @@ fuzz_target!(|input: RoundtripInput| {
     };
 
     // Decode
-    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-    let decoded = match decoder.decode(&encoded) {
+    let decoder = Decoder::new()
+        .output_format(PixelFormat::Rgb)
+        .max_pixels(4_000_000);
+    let decoded = match decoder.decode(&encoded, Unstoppable) {
         Ok(img) => img,
-        Err(_e) => {
-            // TODO: Some subsampling+mode combinations have known issues
-            // For now, skip rather than panic to allow fuzzing other paths
-            // Known issue: HalfVertical + Progressive fails to decode
-            return;
-        }
+        Err(_) => return,
+    };
+
+    let decoded_pixels = match decoded.pixels_u8() {
+        Some(p) => p,
+        None => return,
     };
 
     // Verify dimensions match
@@ -100,7 +101,7 @@ fuzz_target!(|input: RoundtripInput| {
     // Verify pixel count matches
     let expected_size = (width * height * 3) as usize;
     assert_eq!(
-        decoded.data.len(),
+        decoded_pixels.len(),
         expected_size,
         "Pixel buffer size mismatch"
     );

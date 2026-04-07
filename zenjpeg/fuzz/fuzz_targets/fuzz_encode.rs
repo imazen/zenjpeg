@@ -7,7 +7,7 @@
 
 use arbitrary::Arbitrary;
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use libfuzzer_sys::fuzz_target;
 
 /// Structured input for encoder fuzzing.

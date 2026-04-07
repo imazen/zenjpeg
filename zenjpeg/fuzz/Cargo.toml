@@ -72,3 +72,10 @@ path = "fuzz_targets/fuzz_push_decode.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_decode_limits"
+path = "fuzz_targets/fuzz_decode_limits.rs"
+test = false
+doc = false
+bench = false

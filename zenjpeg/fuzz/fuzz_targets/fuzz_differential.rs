@@ -1,44 +1,48 @@
-//! Differential fuzz target comparing jpegli against reference decoders.
+//! Differential fuzz target comparing zenjpeg against reference decoders.
 //!
 //! This target decodes the same JPEG data with multiple decoders and checks
-//! for consistency. It helps find cases where jpegli behaves differently
+//! for consistency. It helps find cases where zenjpeg behaves differently
 //! from established decoders.
 //!
 //! Note: This requires zune-jpeg as a dependency.
 
 #![no_main]
 
-use zenjpeg::decode::Decoder;
-use zenjpeg::types::PixelFormat;
+use zenjpeg::decoder::{Decoder, PixelFormat};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    // Decode with jpegli
-    let jpegli_result = Decoder::new()
+    // Decode with zenjpeg
+    let zenjpeg_result = Decoder::new()
         .output_format(PixelFormat::Rgb)
-        .decode(data);
+        .max_pixels(4_000_000)
+        .decode(data, enough::Unstoppable);
 
     // Decode with zune-jpeg (reference)
     let zune_result = decode_with_zune(data);
 
-    match (&jpegli_result, &zune_result) {
+    match (&zenjpeg_result, &zune_result) {
         // Both succeed - check for reasonable similarity
-        (Ok(jpegli_img), Ok(zune_img)) => {
+        (Ok(zenjpeg_img), Ok(zune_img)) => {
+            let zj_pixels = match zenjpeg_img.pixels_u8() {
+                Some(p) => p,
+                None => return,
+            };
             // Dimensions must match exactly
             assert_eq!(
-                jpegli_img.width, zune_img.width,
-                "Width mismatch: jpegli={} zune={}",
-                jpegli_img.width, zune_img.width
+                zenjpeg_img.width, zune_img.width,
+                "Width mismatch: zenjpeg={} zune={}",
+                zenjpeg_img.width, zune_img.width
             );
             assert_eq!(
-                jpegli_img.height, zune_img.height,
-                "Height mismatch: jpegli={} zune={}",
-                jpegli_img.height, zune_img.height
+                zenjpeg_img.height, zune_img.height,
+                "Height mismatch: zenjpeg={} zune={}",
+                zenjpeg_img.height, zune_img.height
             );
 
             // Pixel values should be close (allowing for decoder differences)
             // JPEG decoding can have small differences due to IDCT implementations
-            let max_diff = compute_max_diff(&jpegli_img.data, &zune_img.data);
+            let max_diff = compute_max_diff(zj_pixels, &zune_img.data);
             assert!(
                 max_diff <= 4,
                 "Pixel values differ too much: max_diff={}",
@@ -52,12 +56,10 @@ fuzz_target!(|data: &[u8]| {
         // One succeeds, one fails - potential issue
         // Note: Different decoders have different strictness, so we only log
         (Ok(_), Err(_)) => {
-            // jpegli accepted what zune rejected - jpegli might be more lenient
-            // This is not necessarily a bug, but worth noting
+            // zenjpeg accepted what zune rejected - might be more lenient
         }
         (Err(_), Ok(_)) => {
-            // jpegli rejected what zune accepted - jpegli might be stricter
-            // This could indicate a parsing bug in jpegli
+            // zenjpeg rejected what zune accepted - might be stricter
         }
     }
 });

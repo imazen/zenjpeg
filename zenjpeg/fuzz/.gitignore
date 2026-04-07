@@ -2,6 +2,7 @@
 target/
 artifacts/
 coverage/
+*.profraw
 
 # Ignore corpus except manually-created seed JPEGs
 corpus/*

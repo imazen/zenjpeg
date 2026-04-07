@@ -1,0 +1,75 @@
+# JPEG marker dictionary for fuzzing
+# SOI - Start of Image
+"\xFF\xD8"
+# EOI - End of Image
+"\xFF\xD9"
+# APP0 - JFIF
+"\xFF\xE0"
+# APP1 - EXIF/XMP
+"\xFF\xE1"
+# APP2 - ICC Profile
+"\xFF\xE2"
+# APP13 - Photoshop/IPTC
+"\xFF\xED"
+# APP14 - Adobe
+"\xFF\xEE"
+# SOF0 - Baseline DCT
+"\xFF\xC0"
+# SOF1 - Extended Sequential
+"\xFF\xC1"
+# SOF2 - Progressive DCT
+"\xFF\xC2"
+# SOF3 - Lossless
+"\xFF\xC3"
+# SOF9 - Arithmetic coding
+"\xFF\xC9"
+# SOF10 - Progressive arithmetic
+"\xFF\xCA"
+# DHT - Define Huffman Table
+"\xFF\xC4"
+# DQT - Define Quantization Table
+"\xFF\xDB"
+# SOS - Start of Scan
+"\xFF\xDA"
+# DRI - Define Restart Interval
+"\xFF\xDD"
+# RST0-RST7 - Restart Markers
+"\xFF\xD0"
+"\xFF\xD1"
+"\xFF\xD2"
+"\xFF\xD3"
+"\xFF\xD4"
+"\xFF\xD5"
+"\xFF\xD6"
+"\xFF\xD7"
+# COM - Comment
+"\xFF\xFE"
+# DNL - Define Number of Lines
+"\xFF\xDC"
+# DHP - Define Hierarchical Progression
+"\xFF\xDE"
+# MPF marker (Multi-Picture Format)
+"\xFF\xE2"
+# JFIF identifier
+"JFIF"
+# Exif identifier
+"Exif"
+# Adobe identifier
+"Adobe"
+# ICC_PROFILE identifier
+"ICC_PROFILE"
+# XMP identifier
+"http://ns.adobe.com/xap/1.0/"
+# MPF identifier
+"MPF\x00"
+# Common JFIF version
+"\x01\x01"
+"\x01\x02"
+# SOI+APP0 combo
+"\xFF\xD8\xFF\xE0"
+# SOI+APP1 combo
+"\xFF\xD8\xFF\xE1"
+# SOI+SOF0 combo
+"\xFF\xD8\xFF\xC0"
+# Byte-stuffed 0xFF
+"\xFF\x00"

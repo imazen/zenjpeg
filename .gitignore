@@ -21,6 +21,9 @@ target/
 # Fuzz build artifacts and crashes
 fuzz/target/
 fuzz/artifacts/
+fuzz/corpus/
+fuzz/coverage/
+*.profraw
 
 # Profiling
 perf.data
