@@ -645,6 +645,15 @@ impl DecodeConfig {
         let mut parser =
             JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
         parser.read_header()?;
+
+        // Reject height=0 (DNL mode) since read_info cannot resolve it
+        // without scanning image data
+        if parser.height == 0 {
+            return Err(Error::unsupported_feature(
+                "DNL mode (height=0 in SOF) requires full decode to determine height",
+            ));
+        }
+
         Ok(parser.info())
     }
 

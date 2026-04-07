@@ -1749,6 +1749,13 @@ impl<'a> ScanlineReader<'a> {
             let src_row_bytes = img_width * bpp;
             let crop_y = self.crop.map_or(0, |c| c.y as usize);
 
+            let max_image_row = crop_y + out_height;
+            if max_image_row * src_row_bytes > buffer.len() {
+                return Err(Error::internal(
+                    "buffered RGB data too small for image dimensions",
+                ));
+            }
+
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
@@ -2035,18 +2042,39 @@ impl<'a> ScanlineReader<'a> {
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
             let img_width = self.width as usize;
-            let src_row_bytes = img_width * 3;
+            let bpp = if self.num_components == 1 { 1 } else { 3 };
+            let src_row_bytes = img_width * bpp;
             let crop_y = self.crop.map_or(0, |c| c.y as usize);
+
+            let max_image_row = crop_y + out_height;
+            if max_image_row * src_row_bytes > buffer.len() {
+                return Err(Error::internal(
+                    "buffered RGB data too small for image dimensions",
+                ));
+            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
-                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
-                for x in 0..out_width {
-                    out_row[x * 3] = buffer[src_offset + x * 3 + 2]; // B
-                    out_row[x * 3 + 1] = buffer[src_offset + x * 3 + 1]; // G
-                    out_row[x * 3 + 2] = buffer[src_offset + x * 3]; // R
+
+                if bpp == 3 {
+                    let src_offset = image_row * src_row_bytes + crop_x * 3;
+                    for x in 0..out_width {
+                        out_row[x * 3] = buffer[src_offset + x * 3 + 2]; // B
+                        out_row[x * 3 + 1] = buffer[src_offset + x * 3 + 1]; // G
+                        out_row[x * 3 + 2] = buffer[src_offset + x * 3]; // R
+                    }
+                } else {
+                    // Grayscale buffer → expand to BGR
+                    let src_offset = image_row * src_row_bytes + crop_x;
+                    for x in 0..out_width {
+                        let v = buffer[src_offset + x];
+                        out_row[x * 3] = v;
+                        out_row[x * 3 + 1] = v;
+                        out_row[x * 3 + 2] = v;
+                    }
                 }
+
                 rows_written += 1;
                 self.current_row += 1;
             }
@@ -2153,15 +2181,33 @@ impl<'a> ScanlineReader<'a> {
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
             let img_width = self.width as usize;
-            let src_row_bytes = img_width * 3;
+            let bpp = if self.num_components == 1 { 1 } else { 3 };
+            let src_row_bytes = img_width * bpp;
             let crop_y = self.crop.map_or(0, |c| c.y as usize);
+
+            let max_image_row = crop_y + out_height;
+            if max_image_row * src_row_bytes > buffer.len() {
+                return Err(Error::internal(
+                    "buffered RGB data too small for image dimensions",
+                ));
+            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
-                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                if swap_rb {
+                if bpp == 1 {
+                    // Grayscale buffer → expand to 4bpp
+                    let src_offset = image_row * src_row_bytes + crop_x;
+                    for x in 0..out_width {
+                        let v = buffer[src_offset + x];
+                        out_row[x * 4] = v;
+                        out_row[x * 4 + 1] = v;
+                        out_row[x * 4 + 2] = v;
+                        out_row[x * 4 + 3] = 255;
+                    }
+                } else if swap_rb {
+                    let src_offset = image_row * src_row_bytes + crop_x * 3;
                     for x in 0..out_width {
                         out_row[x * 4] = buffer[src_offset + x * 3 + 2]; // B
                         out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1]; // G
@@ -2169,6 +2215,7 @@ impl<'a> ScanlineReader<'a> {
                         out_row[x * 4 + 3] = 255;
                     }
                 } else {
+                    let src_offset = image_row * src_row_bytes + crop_x * 3;
                     for x in 0..out_width {
                         out_row[x * 4] = buffer[src_offset + x * 3];
                         out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
@@ -2266,19 +2313,40 @@ impl<'a> ScanlineReader<'a> {
         if let Some(ref buffer) = self.buffered_rgb {
             let mut rows_written = 0;
             let img_width = self.width as usize;
-            let src_row_bytes = img_width * 3;
+            let bpp = if self.num_components == 1 { 1 } else { 3 };
+            let src_row_bytes = img_width * bpp;
             let crop_y = self.crop.map_or(0, |c| c.y as usize);
+
+            // Bounds check: ensure buffer is large enough for all rows we might read
+            let max_image_row = crop_y + out_height;
+            if max_image_row * src_row_bytes > buffer.len() {
+                return Err(Error::internal(
+                    "buffered RGB data too small for image dimensions",
+                ));
+            }
 
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
-                let src_offset = image_row * src_row_bytes + crop_x * 3;
                 let out_row = output.rows_mut().nth(rows_written).unwrap();
 
-                for x in 0..out_width {
-                    out_row[x * 4] = srgb_to_linear(buffer[src_offset + x * 3]);
-                    out_row[x * 4 + 1] = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
-                    out_row[x * 4 + 2] = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
-                    out_row[x * 4 + 3] = 1.0;
+                if bpp == 3 {
+                    let src_offset = image_row * src_row_bytes + crop_x * 3;
+                    for x in 0..out_width {
+                        out_row[x * 4] = srgb_to_linear(buffer[src_offset + x * 3]);
+                        out_row[x * 4 + 1] = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
+                        out_row[x * 4 + 2] = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
+                        out_row[x * 4 + 3] = 1.0;
+                    }
+                } else {
+                    // Grayscale buffer → expand to RGBA f32
+                    let src_offset = image_row * src_row_bytes + crop_x;
+                    for x in 0..out_width {
+                        let v = srgb_to_linear(buffer[src_offset + x]);
+                        out_row[x * 4] = v;
+                        out_row[x * 4 + 1] = v;
+                        out_row[x * 4 + 2] = v;
+                        out_row[x * 4 + 3] = 1.0;
+                    }
                 }
 
                 rows_written += 1;
@@ -2385,6 +2453,12 @@ impl<'a> ScanlineReader<'a> {
 
             if self.num_components == 1 {
                 // Grayscale: Y only, Cb/Cr are zero
+                let max_image_row = crop_y + out_height;
+                if max_image_row * img_width > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_offset = image_row * img_width + crop_x;
@@ -2402,6 +2476,12 @@ impl<'a> ScanlineReader<'a> {
             } else {
                 // Color: convert RGB to YCbCr using BT.601
                 let src_row_bytes = img_width * 3;
+                let max_image_row = crop_y + out_height;
+                if max_image_row * src_row_bytes > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_start = image_row * src_row_bytes + crop_x * 3;
@@ -2641,6 +2721,12 @@ impl<'a> ScanlineReader<'a> {
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
+                let max_image_row = crop_y + out_height;
+                if max_image_row * img_width > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_offset = image_row * img_width + crop_x;
@@ -2654,6 +2740,12 @@ impl<'a> ScanlineReader<'a> {
             } else {
                 // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
                 let src_row_bytes = img_width * 3;
+                let max_image_row = crop_y + out_height;
+                if max_image_row * src_row_bytes > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_start = image_row * src_row_bytes + crop_x * 3;
@@ -2731,6 +2823,12 @@ impl<'a> ScanlineReader<'a> {
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
+                let max_image_row = crop_y + out_height;
+                if max_image_row * img_width > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_offset = image_row * img_width + crop_x;
@@ -2746,6 +2844,12 @@ impl<'a> ScanlineReader<'a> {
             } else {
                 // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
                 let src_row_bytes = img_width * 3;
+                let max_image_row = crop_y + out_height;
+                if max_image_row * src_row_bytes > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_start = image_row * src_row_bytes + crop_x * 3;
@@ -2823,6 +2927,12 @@ impl<'a> ScanlineReader<'a> {
 
             if self.num_components == 1 {
                 // Grayscale buffer (1 byte per pixel)
+                let max_image_row = crop_y + out_height;
+                if max_image_row * img_width > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_offset = image_row * img_width + crop_x;
@@ -2838,6 +2948,12 @@ impl<'a> ScanlineReader<'a> {
             } else {
                 // Color buffer (RGB8): convert to linear grayscale
                 let src_row_bytes = img_width * 3;
+                let max_image_row = crop_y + out_height;
+                if max_image_row * src_row_bytes > buffer.len() {
+                    return Err(Error::internal(
+                        "buffered RGB data too small for image dimensions",
+                    ));
+                }
                 while rows_written < max_rows && self.current_row < out_height {
                     let image_row = crop_y + self.current_row;
                     let src_start = image_row * src_row_bytes + crop_x * 3;
