@@ -40,9 +40,24 @@ fuzz_target!(|data: &[u8]| {
                 zenjpeg_img.height, zune_img.height
             );
 
+            // Normalize zune output to RGB so we can compare with zenjpeg's RGB output.
+            // zune-jpeg returns grayscale as 1 byte/pixel for grayscale JPEGs even when
+            // RGB is requested via DecoderOptions, so we expand it here.
+            let pixel_count = (zenjpeg_img.width as usize) * (zenjpeg_img.height as usize);
+            let zune_rgb: Vec<u8> = if zune_img.data.len() == pixel_count {
+                // Grayscale → expand each Y to (Y, Y, Y)
+                zune_img.data.iter().flat_map(|&y| [y, y, y]).collect()
+            } else if zune_img.data.len() == pixel_count * 3 {
+                zune_img.data.clone()
+            } else {
+                // Some other layout (CMYK, YCbCr) — skip the comparison rather than
+                // raise a false positive on a format mismatch.
+                return;
+            };
+
             // Pixel values should be close (allowing for decoder differences)
             // JPEG decoding can have small differences due to IDCT implementations
-            let max_diff = compute_max_diff(zj_pixels, &zune_img.data);
+            let max_diff = compute_max_diff(zj_pixels, &zune_rgb);
             assert!(
                 max_diff <= 4,
                 "Pixel values differ too much: max_diff={}",
