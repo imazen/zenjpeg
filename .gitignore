@@ -61,3 +61,14 @@ Thumbs.db
 .idea/
 .vscode/
 *.iml
+
+# Tooling noise
+.superwork/
+.claude/
+copter-report/
+.zenbench/
+.external-cache/
+Cargo.toml.original.txt
+*.rs.local
+*.profdata
+fuzz-*.log

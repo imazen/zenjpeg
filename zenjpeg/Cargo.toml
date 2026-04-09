@@ -29,6 +29,17 @@ exclude = [
     "xyb.md",
     "QUALITY_INVESTIGATION.md",
     ".gitignore",
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
 ]
 
 [lib]
