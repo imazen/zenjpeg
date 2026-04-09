@@ -4,8 +4,5 @@ artifacts/
 coverage/
 *.profraw
 
-# Ignore corpus except manually-created seed JPEGs
-corpus/*
-!corpus/seed/
-corpus/seed/*
-!corpus/seed/*.jpg
+# Ignore corpus (bulk seeds backed up to /mnt/v/input/zenjpeg/fuzz-seeds/)
+corpus/
