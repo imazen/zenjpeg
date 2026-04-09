@@ -79,34 +79,18 @@ fuzz_target!(|data: &[u8]| {
     }
 });
 
-/// Decode JPEG using zune-jpeg.
-///
-/// Returns `Err(())` for progressive JPEGs because zune-jpeg 0.4.x has assertion
-/// failures (panics) in its bitstream reader on certain malformed progressive inputs
-/// (e.g. `self.bits_left >= n` in bitstream.rs:407 on truncated progressive scans).
-/// Since fuzz targets compile with `panic=abort`, we cannot catch these panics and
-/// must avoid triggering them by skipping progressive decode entirely.
+/// Decode JPEG using zune-jpeg as a reference decoder.
 fn decode_with_zune(data: &[u8]) -> Result<DecodedImage, ()> {
+    use zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
 
-    let mut decoder = JpegDecoder::new(data);
+    let mut decoder = JpegDecoder::new(ZCursor::new(data));
 
-    // Get dimensions
-    decoder.decode_headers().map_err(|_| ())?;
+    // Decode (headers + pixels in one call)
+    let pixels = decoder.decode().map_err(|_| ())?;
     let info = decoder.info().ok_or(())?;
-
-    // Skip progressive JPEGs: zune-jpeg 0.4.x panics (assertion failure) on certain
-    // malformed progressive inputs during bitstream decoding. Since fuzz targets use
-    // panic=abort, we cannot recover from these panics.
-    if info.sof.is_progressive() {
-        return Err(());
-    }
-
     let width = info.width as u32;
     let height = info.height as u32;
-
-    // Decode pixels
-    let pixels = decoder.decode().map_err(|_| ())?;
 
     Ok(DecodedImage {
         width,

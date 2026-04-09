@@ -12,7 +12,8 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 enough = "0.4.3"
-zune-jpeg = "0.4"
+zune-jpeg = "0.5"
+zune-core = "0.5"
 
 zenpixels = { version = "0.2.1", default-features = false }
 
