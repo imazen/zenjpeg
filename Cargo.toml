@@ -94,7 +94,7 @@ kamadak-exif = "0.6"
 img-parts = "0.4"
 
 # Our ultrahdr crates
-ultrahdr-rs = "0.3.4"
+ultrahdr-rs = "0.3.5"
 ultrahdr-core = { version = "0.4.0", default-features = false }
 
 # Layout + resize pipeline
