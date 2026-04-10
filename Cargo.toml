@@ -40,7 +40,7 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 
 # Quality metrics
 dssim-core = "3.4"
-fast-ssim2 = { version = "0.7.3", features = ["imgref"] }
+fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)

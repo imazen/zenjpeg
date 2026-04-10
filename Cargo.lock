@@ -864,9 +864,9 @@ dependencies = [
 
 [[package]]
 name = "fast-ssim2"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d19773db28d67da461802ddac4ac4c12fb9b67a9039449f13a677c79b8ef5710"
+checksum = "d0bbcfa44e1cabf11af96ece5e9273f4dc238f2a557668e70f80cfd662fae25b"
 dependencies = [
  "archmage 0.9.17",
  "imgref",
@@ -3066,7 +3066,7 @@ dependencies = [
  "criterion",
  "dssim-core",
  "enough",
- "fast-ssim2 0.7.3",
+ "fast-ssim2 0.8.0",
  "getrandom 0.3.4",
  "image",
  "img-parts",
@@ -3119,7 +3119,7 @@ dependencies = [
  "butteraugli 0.9.0",
  "dssim-core",
  "enough",
- "fast-ssim2 0.7.3",
+ "fast-ssim2 0.8.0",
  "imgref",
  "jpegli-internals-sys",
  "libc",
