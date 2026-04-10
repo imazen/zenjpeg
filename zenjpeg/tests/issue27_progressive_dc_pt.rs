@@ -74,11 +74,7 @@ fn test_issue27_progressive_dc_point_transform_al1() {
     let expected = 255u8;
     let mut max_diff = 0u8;
     for (i, &px) in pixels.iter().enumerate() {
-        let diff = if px > expected {
-            px - expected
-        } else {
-            expected - px
-        };
+        let diff = px.abs_diff(expected);
         if diff > max_diff {
             max_diff = diff;
             eprintln!(
@@ -115,9 +111,7 @@ fn build_progressive_jpeg_dc_only(dc_diff: i16, al: u8) -> Vec<u8> {
 
     // DQT: Q[0] = 1 (identity quantization for easy verification)
     buf.extend_from_slice(&[0xFF, 0xDB, 0x00, 0x43, 0x00]);
-    for _ in 0..64 {
-        buf.push(1); // All quant values = 1
-    }
+    buf.extend(std::iter::repeat_n(1u8, 64)); // All quant values = 1
 
     // SOF2 (progressive): 8x8 grayscale, 1 component
     buf.extend_from_slice(&[
@@ -143,9 +137,7 @@ fn build_progressive_jpeg_dc_only(dc_diff: i16, al: u8) -> Vec<u8> {
     buf.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x14, 0x00]);
     // BITS: 1 code of length 1, rest 0
     buf.push(0x01); // 1 code of length 1
-    for _ in 0..15 {
-        buf.push(0x00);
-    }
+    buf.extend(std::iter::repeat_n(0x00u8, 15));
     // VALUES: the single code maps to our category
     buf.push(category);
 
@@ -158,7 +150,7 @@ fn build_progressive_jpeg_dc_only(dc_diff: i16, al: u8) -> Vec<u8> {
     let mut bits_in_accum: u32 = 0;
 
     // Huffman code: single bit `0`
-    bit_accum = (bit_accum << 1) | 0;
+    bit_accum <<= 1;
     bits_in_accum += 1;
 
     // Extra bits

@@ -62,11 +62,6 @@ fn main() {
                 .unwrap();
             enc.push_packed(&all_pixels, enough::Unstoppable).unwrap();
             let out = enc.finish().unwrap();
-            let overhead = if name != "baseline-fixed" {
-                String::new()
-            } else {
-                String::new()
-            };
             eprintln!("  {name}: {} bytes", out.len());
         }
         let _ = all_pixels; // drop before streaming
