@@ -520,7 +520,29 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
-    decoder.decode().expect("decode failed")
+    match decoder.decode() {
+        Ok(pixels) => pixels,
+        Err(zune_err) => {
+            // zune-jpeg has known issues with some cjpegli 4:4:0 output on ARM.
+            // Fall back to zenjpeg decoder and save the file for upstream reporting.
+            eprintln!("zune-jpeg decode failed ({zune_err}), falling back to zenjpeg decoder");
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                data.len().hash(&mut h);
+                data.get(..64).unwrap_or(data).hash(&mut h);
+                h.finish()
+            };
+            let path = format!("/tmp/zune_fail_{hash:016x}.jpg");
+            let _ = std::fs::write(&path, data);
+            eprintln!("  saved failing JPEG to {path}");
+            zenjpeg::decoder::Decoder::new()
+                .decode(data, enough::Unstoppable)
+                .expect("zenjpeg fallback decode also failed")
+                .into_pixels_u8()
+                .unwrap()
+        }
+    }
 }
 
 /// Decode using zenjpeg with ICC profile support (required for XYB)
