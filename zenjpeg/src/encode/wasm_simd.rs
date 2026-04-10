@@ -338,7 +338,6 @@ pub fn wasm_forward_dct_8x8(token: Wasm128Token, input: &[f32; 64], output: &mut
 
 // Tests would go here (similar to ARM version)
 
-
 // ============================================================================
 // Chroma Upsampling (for decoder)
 // ============================================================================
