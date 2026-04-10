@@ -151,11 +151,11 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.16"
+version = "0.9.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "906d90739870dc217c19bac4b3d11541817679e875bc3ae03e66458f44ccac6b"
+checksum = "0636b11e613995a7c80768d523829ff5b969ce6ec93dabc911681419af155e77"
 dependencies = [
- "archmage-macros 0.9.16",
+ "archmage-macros 0.9.17",
  "safe_unaligned_simd",
 ]
 
@@ -172,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.16"
+version = "0.9.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2377968d27d15b6e6117b60026a12a76de7e79a40e1ac664158e2bc562d6d95"
+checksum = "bb5260d826eecd637c893974ae899753e21fd9d4b1f7098114263a1e18921d91"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -253,7 +253,7 @@ dependencies = [
  "pastey",
  "rayon",
  "thiserror",
- "v_frame",
+ "v_frame 0.3.9",
  "y4m",
 ]
 
@@ -268,7 +268,7 @@ dependencies = [
  "log",
  "nom",
  "num-rational",
- "v_frame",
+ "v_frame 0.3.9",
 ]
 
 [[package]]
@@ -371,7 +371,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c28a6704cdf610e0dfe761e2f289a3cac568db9128db12393f9463b4bf4fc76"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "imgref",
  "magetypes",
  "rayon",
@@ -858,22 +858,22 @@ dependencies = [
  "safe_unaligned_simd",
  "thiserror",
  "wide 1.2.0",
- "yuvxyb",
+ "yuvxyb 0.4.2",
  "yuvxyb-math",
 ]
 
 [[package]]
 name = "fast-ssim2"
-version = "0.7.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57b14f283599922955989d328a7f8f805e03146fe96616aa60639a16cd478b7e"
+checksum = "d19773db28d67da461802ddac4ac4c12fb9b67a9039449f13a677c79b8ef5710"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "imgref",
  "magetypes",
  "num-traits",
  "thiserror",
- "yuvxyb",
+ "yuvxyb 0.5.0",
  "yuvxyb-math",
 ]
 
@@ -1336,7 +1336,7 @@ version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89fff1763e96ac82dbe8462fb1a9eff462477a87caaf8f14d808900486d72829"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "bytemuck",
  "magetypes",
  "num-traits",
@@ -1365,11 +1365,11 @@ dependencies = [
 
 [[package]]
 name = "magetypes"
-version = "0.9.16"
+version = "0.9.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "397ac3d7c230570d454406a00bcb74e7b21551eadfa44242463030581631877e"
+checksum = "b191a3b6fec8d6d661546026def896e050a7c111d1b4acf5df1b9e3478458e02"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
 ]
 
 [[package]]
@@ -1888,7 +1888,7 @@ dependencies = [
  "rand_chacha",
  "simd_helpers",
  "thiserror",
- "v_frame",
+ "v_frame 0.3.9",
  "wasm-bindgen",
 ]
 
@@ -2324,7 +2324,7 @@ version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9d7e2e6a6ca5d57125411cbca12972536b1a741634d2acaa31e70c2347168a1"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "bytemuck",
  "enough",
  "half",
@@ -2340,7 +2340,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01015be39d1868f1582778471668616c421a417375dc0f78b1bc60bf2852f410"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "bytemuck",
  "enough",
  "half",
@@ -2405,6 +2405,18 @@ checksum = "666b7727c8875d6ab5db9533418d7c764233ac9c0cff1d469aec8fa127597be2"
 dependencies = [
  "aligned-vec",
  "num-traits",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "v_frame"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a50ca82950482a3877e88aac250a2aa8fbc6719a36d499e2200eb8ba11b6bc61"
+dependencies = [
+ "aligned-vec",
+ "num-traits",
+ "thiserror",
  "wasm-bindgen",
 ]
 
@@ -2972,7 +2984,21 @@ dependencies = [
  "av-data",
  "log",
  "num-traits",
- "v_frame",
+ "v_frame 0.3.9",
+ "yuvxyb-math",
+]
+
+[[package]]
+name = "yuvxyb"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31479712d30fd1200143579a79840ed039f0bc772017a089ea5c1bfa0bcb1c2a"
+dependencies = [
+ "av-data",
+ "log",
+ "num-traits",
+ "v_frame 0.5.1",
+ "wide 1.2.0",
  "yuvxyb-math",
 ]
 
@@ -2981,6 +3007,9 @@ name = "yuvxyb-math"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
+dependencies = [
+ "wide 1.2.0",
+]
 
 [[package]]
 name = "zenbench"
@@ -3002,7 +3031,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f495c5d65335f189f977cb2ecb25528d6e4e8b0cc0303e853f3ceb633e71187a"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "magetypes",
  "safe_unaligned_simd",
 ]
@@ -3021,12 +3050,12 @@ dependencies = [
 
 [[package]]
 name = "zenjpeg"
-version = "0.8.2"
+version = "0.8.4"
 dependencies = [
  "aligned-vec",
  "almost-enough",
  "approx",
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "bincode",
  "butteraugli 0.9.0",
  "bytemuck",
@@ -3037,7 +3066,7 @@ dependencies = [
  "criterion",
  "dssim-core",
  "enough",
- "fast-ssim2 0.7.1",
+ "fast-ssim2 0.7.3",
  "getrandom 0.3.4",
  "image",
  "img-parts",
@@ -3090,7 +3119,7 @@ dependencies = [
  "butteraugli 0.9.0",
  "dssim-core",
  "enough",
- "fast-ssim2 0.7.1",
+ "fast-ssim2 0.7.3",
  "imgref",
  "jpegli-internals-sys",
  "libc",
@@ -3128,7 +3157,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52ad4a4323713328fb5d2ddb88a7d29295460a1de63c59b11da71e3f6a5b5737"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "imgref",
  "libm",
  "linear-srgb",
@@ -3147,7 +3176,7 @@ version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7808c21d59f7658993c961a1e84008bdf55f61cd5fb7c08c62b4cce4d475c71c"
 dependencies = [
- "archmage 0.9.16",
+ "archmage 0.9.17",
  "bytemuck",
  "imgref",
  "linear-srgb",

@@ -1415,7 +1415,7 @@ See the [ultrahdr README](https://github.com/imazen/ultrahdr#known-differences-f
 use dssim::Dssim;
 
 // SSIMULACRA2 (higher = better, 100 = identical)
-use fast_ssim2::compute_frame_ssimulacra2;
+use fast_ssim2::compute_ssimulacra2;
 
 // Butteraugli (lower = better, <1.0 = good)
 use butteraugli::compute_butteraugli;

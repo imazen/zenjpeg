@@ -92,48 +92,15 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 
 #[allow(dead_code)] // Available for quality metric comparisons when needed
 fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
+    use imgref::{Img, ImgVec};
 
-    let orig_rgb: Vec<[f32; 3]> = orig
-        .chunks(3)
-        .map(|c| {
-            [
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
-            ]
-        })
-        .collect();
-    let comp_rgb: Vec<[f32; 3]> = comp
-        .chunks(3)
-        .map(|c| {
-            [
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
-            ]
-        })
-        .collect();
+    let orig_pixels: Vec<[u8; 3]> = orig.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let comp_pixels: Vec<[u8; 3]> = comp.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
 
-    let orig_frame = Rgb::new(
-        orig_rgb,
-        width,
-        height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let orig_img: ImgVec<[u8; 3]> = Img::new(orig_pixels, width, height);
+    let comp_img: ImgVec<[u8; 3]> = Img::new(comp_pixels, width, height);
 
-    let comp_frame = Rgb::new(
-        comp_rgb,
-        width,
-        height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
-
-    compute_frame_ssimulacra2(orig_frame, comp_frame).unwrap_or(0.0)
+    fast_ssim2::compute_ssimulacra2(orig_img.as_ref(), comp_img.as_ref()).unwrap_or(0.0)
 }
 
 #[allow(dead_code)] // Available for quality metric comparisons when needed

@@ -4,7 +4,7 @@
 //! consistent results that match C++ implementations.
 
 use dssim_core::Dssim;
-use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
+use imgref::{Img, ImgVec};
 use rgb::RGBA8;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
@@ -26,44 +26,13 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 }
 
 fn compute_ssimulacra2(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
-    // Convert RGB bytes to Rgb frame (normalized to 0-1 range)
-    let orig_rgb = Rgb::new(
-        original
-            .chunks(3)
-            .map(|c| {
-                [
-                    c[0] as f32 / 255.0,
-                    c[1] as f32 / 255.0,
-                    c[2] as f32 / 255.0,
-                ]
-            })
-            .collect(),
-        width,
-        height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let orig_pixels: Vec<[u8; 3]> = original.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let dist_pixels: Vec<[u8; 3]> = distorted.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
 
-    let dist_rgb = Rgb::new(
-        distorted
-            .chunks(3)
-            .map(|c| {
-                [
-                    c[0] as f32 / 255.0,
-                    c[1] as f32 / 255.0,
-                    c[2] as f32 / 255.0,
-                ]
-            })
-            .collect(),
-        width,
-        height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let orig_img: ImgVec<[u8; 3]> = Img::new(orig_pixels, width, height);
+    let dist_img: ImgVec<[u8; 3]> = Img::new(dist_pixels, width, height);
 
-    compute_frame_ssimulacra2(orig_rgb, dist_rgb).unwrap_or(-1.0)
+    fast_ssim2::compute_ssimulacra2(orig_img.as_ref(), dist_img.as_ref()).unwrap_or(-1.0)
 }
 
 fn encode_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {

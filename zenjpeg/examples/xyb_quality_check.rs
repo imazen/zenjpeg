@@ -2,7 +2,7 @@
 
 use butteraugli::ButteraugliParams;
 use enough::Unstoppable;
-use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
+use imgref::{Img, ImgVec};
 use std::fs;
 use std::io::Write;
 use std::process::Command;
@@ -90,65 +90,19 @@ fn main() {
 
         // Compute quality metrics on the incorrectly-decoded XYB
         // (This is what SSIM2 sees since it doesn't understand XYB)
-        let orig_rgb = Rgb::new(
-            rgb.chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
+        let to_pixels =
+            |data: &[u8]| -> Vec<[u8; 3]> { data.chunks(3).map(|c| [c[0], c[1], c[2]]).collect() };
 
-        let rust_rgb = Rgb::new(
-            rust_decoded
-                .pixels_u8()
-                .unwrap()
-                .chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
+        let orig_img: ImgVec<[u8; 3]> = Img::new(to_pixels(rgb), width, height);
+        let rust_img: ImgVec<[u8; 3]> =
+            Img::new(to_pixels(rust_decoded.pixels_u8().unwrap()), width, height);
+        let cpp_img: ImgVec<[u8; 3]> =
+            Img::new(to_pixels(cpp_decoded.pixels_u8().unwrap()), width, height);
 
-        let cpp_rgb = Rgb::new(
-            cpp_decoded
-                .pixels_u8()
-                .unwrap()
-                .chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
-
-        let rust_ssim2 = compute_frame_ssimulacra2(orig_rgb.clone(), rust_rgb).unwrap();
-        let cpp_ssim2 = compute_frame_ssimulacra2(orig_rgb, cpp_rgb).unwrap();
+        let rust_ssim2 =
+            fast_ssim2::compute_ssimulacra2(orig_img.as_ref(), rust_img.as_ref()).unwrap();
+        let cpp_ssim2 =
+            fast_ssim2::compute_ssimulacra2(orig_img.as_ref(), cpp_img.as_ref()).unwrap();
 
         println!("\nSSIMULACRA2 (raw XYB treated as sRGB - NOT correct metric for XYB!):");
         println!("  Rust XYB: {:.2}", rust_ssim2);

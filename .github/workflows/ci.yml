@@ -230,6 +230,14 @@ jobs:
       - name: Test (all features + C++ FFI parity)
         run: cargo test -p zenjpeg --release --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__ffi-tests,__test-utils"
 
+      - name: Upload failing JPEGs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zune-fail-${{ matrix.os }}-${{ github.sha }}
+          path: /tmp/zune_fail_*.jpg
+          if-no-files-found: ignore
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

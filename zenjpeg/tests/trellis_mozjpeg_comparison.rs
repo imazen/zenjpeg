@@ -406,7 +406,7 @@ fn trellis_block_parity_edge_cases() {
 
 mod full_encode {
     use super::*;
-    use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
+    use imgref::{Img, ImgVec};
     use zenjpeg::encoder::{
         ChromaSubsampling, EncoderConfig, MozjpegTables, PixelLayout, QuantTablePreset,
     };
@@ -518,41 +518,13 @@ mod full_encode {
 
     fn compute_ssim2(original: &[u8], jpeg_bytes: &[u8], width: usize, height: usize) -> f64 {
         let decoded = decode_jpeg_to_rgb(jpeg_bytes);
-        let orig_rgb = Rgb::new(
-            original
-                .chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
-        let dec_rgb = Rgb::new(
-            decoded
-                .chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
-        compute_frame_ssimulacra2(orig_rgb, dec_rgb).unwrap_or(-999.0)
+        let orig_pixels: Vec<[u8; 3]> = original.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+        let dec_pixels: Vec<[u8; 3]> = decoded.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+
+        let orig_img: ImgVec<[u8; 3]> = Img::new(orig_pixels, width, height);
+        let dec_img: ImgVec<[u8; 3]> = Img::new(dec_pixels, width, height);
+
+        fast_ssim2::compute_ssimulacra2(orig_img.as_ref(), dec_img.as_ref()).unwrap_or(-999.0)
     }
 
     #[derive(Clone)]
