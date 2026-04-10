@@ -123,7 +123,6 @@ fn extract_block_sequential(
     block_y: usize,
     padded_width: usize,
 ) -> zenjpeg::foundation::simd_types::Block8x8f {
-    use wide::f32x8;
     use zenjpeg::foundation::simd_types::Block8x8f;
 
     let start_x = block_x * 8;

@@ -20,7 +20,7 @@ pub(crate) fn is_ultrahdr_xmp(xmp: &str) -> bool {
 /// JPEG is found.
 pub(crate) fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
     const SOI: [u8; 2] = [0xFF, 0xD8];
-    const EOI: [u8; 2] = [0xFF, 0xD9];
+    const _EOI: [u8; 2] = [0xFF, 0xD9];
 
     // Find the primary JPEG's EOI by scanning for marker boundaries.
     let primary_end = find_primary_eoi(data)?;

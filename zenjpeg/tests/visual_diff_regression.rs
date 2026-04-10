@@ -1,4 +1,5 @@
 #![cfg(feature = "__ffi-tests")]
+#![allow(deprecated)]
 //! Visual regression tests: generate diff images comparing zenjpeg vs mozjpeg decoder output.
 //!
 //! Uses zensim-regress to produce side-by-side comparison montages (Expected | Actual | Diff)

@@ -162,7 +162,7 @@ pub(crate) fn fused_parallel_encode(
         })
         .collect();
 
-    for e in errors.into_iter().flatten() {
+    if let Some(e) = errors.into_iter().flatten().next() {
         return Err(e);
     }
 
@@ -394,7 +394,7 @@ fn color_convert(
     y_plane: &mut [f32],
     cb_plane: &mut [f32],
     cr_plane: &mut [f32],
-    c_width: usize,
+    _c_width: usize,
 ) {
     let px_start = mcu_row_start * cfg.mcu_height;
     let bpp = 3;
