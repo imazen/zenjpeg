@@ -799,6 +799,7 @@ fn test_simd_color_conversion_in_isolation() {
 /// Compare scanline reader RGB8 vs decode() streaming RGB on a STANDARD sRGB 4:4:4 JPEG.
 /// If this also shows diffs, the bug is not specific to wide-gamut images.
 #[test]
+#[ignore = "requires corpus"]
 fn compare_scanline_vs_streaming_standard_444() {
     use imgref::ImgRefMut;
 
