@@ -521,6 +521,18 @@ impl<'a> JpegParser<'a> {
         if self.force_f32_idct {
             return false;
         }
+        // XYB color space needs coefficient-based decode: the streaming path
+        // assumes YCbCr→RGB conversion, which produces wrong colors for XYB.
+        // Coefficient storage is required so the output stage can run the
+        // XYB→linear→sRGB conversion.
+        if self
+            .icc_profile
+            .as_ref()
+            .map(|p| crate::color::icc::is_xyb_profile(p))
+            .unwrap_or(false)
+        {
+            return false;
+        }
         // Must have 3 components (YCbCr). Grayscale excluded: streaming produces
         // 1 bpp but output path expects RGB 3 bpp in streaming_rgb.
         if self.num_components != 3 {

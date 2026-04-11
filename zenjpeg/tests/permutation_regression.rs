@@ -94,53 +94,51 @@ fn max_abs_diff(a: &[u8], b: &[u8]) -> u8 {
     m
 }
 
-// ── Bug 1: cjpegli XYB sequential mode (-p 0) ──────────────────────────────
+// ── Bug 1 (FIXED): cjpegli XYB sequential mode (-p 0) ──────────────────────
 //
-// cjpegli --xyb -p 0 --chroma_subsampling={444,422,420} produces JPEG files
-// zenjpeg fails to decode with "internal error: no decoded data". Works at
-// -p 1/-p 2 for any subsampling, and at -p 0 only for --chroma_subsampling=440.
-// 720 files in the generated corpus exhibit this; the three fixtures below
-// are the smallest representatives of each broken subsampling.
+// Was: cjpegli --xyb -p 0 --chroma_subsampling={444,422,420} produced JPEGs
+// that zenjpeg rejected with "internal error: no decoded data". Root cause:
+// `can_use_streaming()` did not exclude XYB files, so the baseline streaming
+// path (which hard-codes YCbCr→RGB fused output) ran on XYB data without
+// storing coefficients, and the XYB-aware output stage later found the
+// coefficient buffer empty. Fixed by excluding XYB from streaming — XYB
+// files now take the coefficient-storage path, which correctly runs the
+// XYB→linear→sRGB conversion.
+//
+// These fixtures now assert successful decode. The three broken subsampling
+// variants all decode as expected 7×7 RGB images.
 
-const XYB_EXPECTED_ERR: &str = "no decoded data";
+fn assert_xyb_decodes(data: &[u8], label: &str) {
+    let (w, h, pixels) = decode_zen(data)
+        .unwrap_or_else(|e| panic!("{label} must decode after XYB streaming fix: {e}"));
+    assert_eq!((w, h), (7, 7), "{label}: dims");
+    assert_eq!(
+        pixels.len(),
+        7 * 7 * 3,
+        "{label}: expected 7×7 RGB output, got {} bytes",
+        pixels.len()
+    );
+}
 
 #[test]
-fn xyb_p0_sub444_fails() {
+fn xyb_p0_sub444_decodes() {
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/xyb_p0_sub444_d12_noise7x7.jpg");
-    let err = decode_zen(data).expect_err(
-        "XYB -p 0 sub=444 currently fails; if this decodes, the bug is fixed — update the test",
-    );
-    assert!(
-        err.contains(XYB_EXPECTED_ERR),
-        "bug signature changed: {err}"
-    );
+    assert_xyb_decodes(data, "XYB p=0 sub=444");
 }
 
 #[test]
-fn xyb_p0_sub422_fails() {
+fn xyb_p0_sub422_decodes() {
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/xyb_p0_sub422_d12_noise7x7.jpg");
-    let err = decode_zen(data).expect_err(
-        "XYB -p 0 sub=422 currently fails; if this decodes, the bug is fixed — update the test",
-    );
-    assert!(
-        err.contains(XYB_EXPECTED_ERR),
-        "bug signature changed: {err}"
-    );
+    assert_xyb_decodes(data, "XYB p=0 sub=422");
 }
 
 #[test]
-fn xyb_p0_sub420_fails() {
+fn xyb_p0_sub420_decodes() {
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/xyb_p0_sub420_d12_noise7x7.jpg");
-    let err = decode_zen(data).expect_err(
-        "XYB -p 0 sub=420 currently fails; if this decodes, the bug is fixed — update the test",
-    );
-    assert!(
-        err.contains(XYB_EXPECTED_ERR),
-        "bug signature changed: {err}"
-    );
+    assert_xyb_decodes(data, "XYB p=0 sub=420");
 }
 
 // ── Bug 2: non-uniform chroma subsampling (-sample 2x2,2x1,1x2) ────────────
