@@ -303,6 +303,7 @@ pub enum Strictness {
     /// - DNL marker conflicts with SOF height (ignored)
     /// - End-of-scan fill bits that don't form valid Huffman codes
     /// - Missing DHT markers (falls back to ITU-T T.81 K.3 standard tables)
+    /// - Zero quantization values (clamped to 1, matching libjpeg-turbo)
     ///
     /// Errors on structural violations (like mozjpeg's ERREXIT):
     /// - Bad DQT/DHT table structure
@@ -329,7 +330,6 @@ pub enum Strictness {
     /// Maximum compatibility: accept anything libjpeg-turbo accepts.
     ///
     /// Includes all Lenient recovery, plus:
-    /// - Zero quantization values (clamped to 1)
     /// - Malformed segment lengths (skipped)
     /// - Restart marker sequence mismatches (resynced)
     ///

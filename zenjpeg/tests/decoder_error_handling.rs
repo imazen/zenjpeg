@@ -6,7 +6,7 @@
 //! The kCompressed0 test data is a minimal valid 1x1 grayscale JPEG.
 
 use enough::Unstoppable;
-use zenjpeg::decoder::Decoder;
+use zenjpeg::decoder::{Decoder, Strictness};
 
 // ============================================================================
 // Test Data (from C++ error_handling_test.cc lines 1005-1054)
@@ -69,6 +69,12 @@ const SOS_OFFSET: usize = 296;
 /// Helper to parse compressed data and return success/failure.
 fn parse_compressed(data: &[u8]) -> bool {
     let decoder = Decoder::new();
+    decoder.decode(data, Unstoppable).is_ok()
+}
+
+/// Helper to parse compressed data in Strict mode and return success/failure.
+fn parse_compressed_strict(data: &[u8]) -> bool {
+    let decoder = Decoder::new().strictness(Strictness::Strict);
     decoder.decode(data, Unstoppable).is_ok()
 }
 
@@ -189,13 +195,20 @@ fn test_invalid_dqt_table_index_0x05() {
 
 /// Test DQT with zero quant value.
 /// C++ test: DecoderErrorHandlingTest.InvalidDQT (zero quant value)
+///
+/// Strict mode rejects zero quant values. Balanced/Lenient/Permissive clamp to 1
+/// (matching libjpeg-turbo behavior). See issue #42.
 #[test]
 fn test_invalid_dqt_zero_quant_k0() {
     let mut compressed = COMPRESSED_0.to_vec();
     compressed[DQT_OFFSET + 5] = 0;
     assert!(
-        !parse_compressed(&compressed),
-        "Should reject DQT with zero quant at k=0"
+        !parse_compressed_strict(&compressed),
+        "Strict should reject DQT with zero quant at k=0"
+    );
+    assert!(
+        parse_compressed(&compressed),
+        "Balanced should clamp zero quant to 1 at k=0"
     );
 }
 
@@ -204,8 +217,12 @@ fn test_invalid_dqt_zero_quant_k1() {
     let mut compressed = COMPRESSED_0.to_vec();
     compressed[DQT_OFFSET + 5 + 1] = 0;
     assert!(
-        !parse_compressed(&compressed),
-        "Should reject DQT with zero quant at k=1"
+        !parse_compressed_strict(&compressed),
+        "Strict should reject DQT with zero quant at k=1"
+    );
+    assert!(
+        parse_compressed(&compressed),
+        "Balanced should clamp zero quant to 1 at k=1"
     );
 }
 
@@ -214,8 +231,12 @@ fn test_invalid_dqt_zero_quant_k17() {
     let mut compressed = COMPRESSED_0.to_vec();
     compressed[DQT_OFFSET + 5 + 17] = 0;
     assert!(
-        !parse_compressed(&compressed),
-        "Should reject DQT with zero quant at k=17"
+        !parse_compressed_strict(&compressed),
+        "Strict should reject DQT with zero quant at k=17"
+    );
+    assert!(
+        parse_compressed(&compressed),
+        "Balanced should clamp zero quant to 1 at k=17"
     );
 }
 
@@ -224,8 +245,12 @@ fn test_invalid_dqt_zero_quant_k63() {
     let mut compressed = COMPRESSED_0.to_vec();
     compressed[DQT_OFFSET + 5 + 63] = 0;
     assert!(
-        !parse_compressed(&compressed),
-        "Should reject DQT with zero quant at k=63"
+        !parse_compressed_strict(&compressed),
+        "Strict should reject DQT with zero quant at k=63"
+    );
+    assert!(
+        parse_compressed(&compressed),
+        "Balanced should clamp zero quant to 1 at k=63"
     );
 }
 
@@ -937,5 +962,58 @@ fn test_extraneous_inter_marker_bytes_balanced() {
         }),
         "should have ExtraneousBytesSkipped warning, got: {:?}",
         warnings
+    );
+}
+
+// ============================================================================
+// Lossless JPEG (SOF3/SOF7/SOF11) detection — issue #46
+// ============================================================================
+
+/// SOF3 (0xC3) detected via synthetic minimal marker.
+#[test]
+fn test_lossless_sof3_synthetic() {
+    // SOI + SOF3 marker (0xFF 0xC3) with minimal length
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF3"),
+        "got: {msg}"
+    );
+}
+
+/// SOF7 (0xC7) — lossless differential — should be rejected.
+#[test]
+fn test_lossless_sof7_synthetic() {
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xC7, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF7"),
+        "got: {msg}"
+    );
+}
+
+/// SOF11 (0xCB) — arithmetic lossless — should be rejected.
+#[test]
+fn test_lossless_sof11_synthetic() {
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xCB, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF11"),
+        "got: {msg}"
     );
 }

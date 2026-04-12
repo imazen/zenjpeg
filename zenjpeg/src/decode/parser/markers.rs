@@ -10,7 +10,8 @@ use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DAC,
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
-    MARKER_SOF9, MARKER_SOF10, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    MARKER_SOF3, MARKER_SOF7, MARKER_SOF9, MARKER_SOF10, MARKER_SOF11, MAX_COMPONENTS,
+    MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
@@ -45,6 +46,21 @@ impl<'a> JpegParser<'a> {
                     self.mode = JpegMode::ArithmeticProgressive;
                     self.parse_frame_header()?;
                     return Ok(());
+                }
+                MARKER_SOF3 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF3) is not supported",
+                    ));
+                }
+                MARKER_SOF7 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF7) is not supported",
+                    ));
+                }
+                MARKER_SOF11 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF11) is not supported",
+                    ));
                 }
                 MARKER_DQT => self.parse_header_marker(|s| s.parse_quant_table())?,
                 MARKER_DHT => self.parse_header_marker(|s| s.parse_huffman_table())?,
@@ -210,7 +226,7 @@ impl<'a> JpegParser<'a> {
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
-            let permissive = self.strictness == Strictness::Permissive;
+            let strict = self.strictness == Strictness::Strict;
             let mut had_zero = false;
 
             if precision == 0 {
@@ -218,7 +234,7 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u8()? as u16;
                     if val == 0 {
-                        if permissive {
+                        if !strict {
                             zigzag_values[i] = 1; // Clamp to 1
                             had_zero = true;
                             continue;
@@ -236,7 +252,7 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u16()?;
                     if val == 0 {
-                        if permissive {
+                        if !strict {
                             zigzag_values[i] = 1; // Clamp to 1
                             had_zero = true;
                             continue;
