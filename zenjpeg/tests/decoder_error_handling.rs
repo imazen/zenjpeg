@@ -1044,6 +1044,131 @@ fn sos_se_out_of_range_ijg_block_size() {
     );
 }
 
+/// IJG libjpeg v9+ with `-block 16` produces progressive JPEGs where the
+/// first SOS marker has num_components=0 (a non-standard extension for large
+/// DCT block sizes). The decoder should return UnsupportedFeature, not the
+/// confusing "SOS num_components is zero" parse error.
+#[test]
+fn sos_zero_components_ijg_block_size_16() {
+    let data = include_bytes!("testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    assert!(result.is_err(), "should reject block_size=16 JPEG");
+
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("block size") || err_msg.contains("SOS with zero components"),
+        "error should mention non-standard block size, got: {err_msg}"
+    );
+    // Must NOT be the old confusing message
+    assert!(
+        !err_msg.contains("SOS num_components is zero"),
+        "should not use the old confusing error message, got: {err_msg}"
+    );
+}
+
+/// IJG libjpeg v9+ with `-block 1` produces JPEGs where DQT tables have only
+/// 1 coefficient entry (1x1 DCT block) instead of the standard 64 entries (8x8).
+/// The decoder should return UnsupportedFeature, not "DQT marker length mismatch".
+#[test]
+fn dqt_short_table_ijg_block_size_1() {
+    // Synthetic minimal JPEG with a 1-entry DQT (block_size=1).
+    // DQT marker: FF DB 00 04 00 10
+    //   length=4 (2 bytes length + 1 byte info + 1 byte value)
+    //   info=0x00 (precision=0, table_idx=0)
+    //   value=0x10 (quant value 16)
+    // SOF0: 1x1 grayscale, 1 component
+    // SOS + minimal entropy data + EOI
+    #[rustfmt::skip]
+    let data: &[u8] = &[
+        // SOI
+        0xFF, 0xD8,
+        // DQT: 1-entry table (block_size=1)
+        0xFF, 0xDB, 0x00, 0x04, 0x00, 0x10,
+        // SOF0: 8-bit, 1x1, 1 component
+        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+        // DHT (minimal DC table)
+        0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01,
+        0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02,
+        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        // SOS
+        0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00,
+        // Minimal entropy data
+        0x00,
+        // EOI
+        0xFF, 0xD9,
+    ];
+
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    assert!(result.is_err(), "should reject block_size=1 JPEG");
+
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("block size") || err_msg.contains("fewer than 64"),
+        "error should mention non-standard block size, got: {err_msg}"
+    );
+    // Must NOT be the old confusing message
+    assert!(
+        !err_msg.contains("DQT marker length mismatch"),
+        "should not use the old confusing error message, got: {err_msg}"
+    );
+}
+
+/// Block_size=1 DQT with 16-bit precision should also be detected.
+#[test]
+fn dqt_short_table_16bit_ijg_block_size_1() {
+    // DQT with precision=1 (16-bit) and 1 entry: length = 2 + 1 + 2 = 5
+    #[rustfmt::skip]
+    let data: &[u8] = &[
+        // SOI
+        0xFF, 0xD8,
+        // DQT: 1-entry 16-bit table (block_size=1)
+        0xFF, 0xDB, 0x00, 0x05, 0x10, 0x00, 0x10,
+        // SOF1: 8-bit, 1x1, 1 component (SOF1 for 16-bit quant)
+        0xFF, 0xC1, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+        // EOI
+        0xFF, 0xD9,
+    ];
+
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    assert!(result.is_err(), "should reject 16-bit block_size=1 JPEG");
+
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("block size") || err_msg.contains("fewer than 64"),
+        "error should mention non-standard block size, got: {err_msg}"
+    );
+}
+
+/// Block_size=16 detection should work at all strictness levels.
+#[test]
+fn sos_zero_components_all_strictness_levels() {
+    let data = include_bytes!("testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
+
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_err(),
+            "should reject block_size=16 JPEG at {strictness:?}"
+        );
+
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("block size"),
+            "error at {strictness:?} should mention block size, got: {err_msg}"
+        );
+    }
+}
+
 // ============================================================================
 // Arithmetic coding overflow edge cases (issue #44)
 //
