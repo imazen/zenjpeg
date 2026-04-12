@@ -1040,3 +1040,143 @@ fn sos_se_out_of_range_ijg_block_size() {
         "error should mention non-standard block size or Se > 63, got: {err_msg}"
     );
 }
+
+// ============================================================================
+// Arithmetic coding overflow edge cases (issue #44)
+//
+// libjpeg-turbo handles these with WARNMS(JWRN_ARITH_BAD_CODE) + return TRUE,
+// treating overflows as end-of-scan warnings. Our Balanced (default) mode
+// matches this behavior; Strict mode rejects them.
+// ============================================================================
+
+/// AC spectral overflow: run-of-zeros pushes coefficient index past Se.
+/// Produced by IJG libjpeg v9b arithmetic coder.
+/// Strict mode should reject; Balanced (default) should decode with warning.
+#[test]
+fn arith_ac_spectral_overflow_strict_rejects() {
+    let data = include_bytes!("testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
+    let result = Decoder::new()
+        .strictness(Strictness::Strict)
+        .decode(data, Unstoppable);
+    assert!(
+        result.is_err(),
+        "Strict mode should reject AC spectral overflow"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("arithmetic") || err_msg.contains("spectral overflow"),
+        "error should mention arithmetic overflow, got: {err_msg}"
+    );
+}
+
+#[test]
+fn arith_ac_spectral_overflow_balanced_recovers() {
+    let data = include_bytes!("testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
+    let result = Decoder::new()
+        .strictness(Strictness::Balanced)
+        .decode(data, Unstoppable);
+    assert!(
+        result.is_ok(),
+        "Balanced mode should recover from AC spectral overflow, got: {}",
+        result.unwrap_err()
+    );
+    let info = result.unwrap();
+    assert!(
+        info.warnings()
+            .iter()
+            .any(|w| format!("{w}").contains("arithmetic")),
+        "should emit ArithmeticBadCode warning, warnings: {:?}",
+        info.warnings()
+    );
+}
+
+/// AC magnitude overflow fixture: progressive arithmetic JPEG (SOF10) from
+/// libjpeg-turbo 2.0.3. This file was categorized as triggering AC magnitude
+/// overflow in the all-the-images corpus scan. Our current decoder handles the
+/// file without hitting the overflow path. Verify it decodes cleanly in all
+/// strictness modes (regression guard for arithmetic progressive decode).
+#[test]
+fn arith_ac_magnitude_fixture_decodes_all_modes() {
+    let data = include_bytes!("testdata/all_the_images/arith_ac_magnitude_turbo203.jpg");
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_ok(),
+            "arith_ac_magnitude should decode at {strictness:?}, got: {}",
+            result.unwrap_err()
+        );
+    }
+}
+
+/// DC magnitude overflow fixture: sequential arithmetic JPEG (SOF9) from
+/// libjpeg-turbo 1.3.0. This file was categorized as triggering DC magnitude
+/// overflow in the all-the-images corpus scan. Our current decoder handles the
+/// file without hitting the overflow path. Verify it decodes cleanly in all
+/// strictness modes (regression guard for arithmetic sequential decode).
+#[test]
+fn arith_dc_magnitude_fixture_decodes_all_modes() {
+    let data = include_bytes!("testdata/all_the_images/arith_dc_magnitude_turbo130.jpg");
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_ok(),
+            "arith_dc_magnitude should decode at {strictness:?}, got: {}",
+            result.unwrap_err()
+        );
+    }
+}
+
+// ============================================================================
+// Arithmetic coding with restart markers
+// ============================================================================
+
+/// Arithmetic-coded JPEG with DRI=1 (restart interval of 1 MCU).
+///
+/// Produced by libjpeg-turbo 1.3.0. This is a valid 7x7 SOF9 (arithmetic
+/// sequential) JPEG with 3 components at 1:1 subsampling. DRI=1 means restart
+/// markers appear every 1 MCU. With 3 components per MCU, the restart counter
+/// must be decremented per-MCU (not per-block) to avoid false "expected restart
+/// marker" errors.
+///
+/// Regression test for issue #43: restart_interval was being counted per-block
+/// instead of per-MCU in the arithmetic decoder, causing valid files to fail.
+#[test]
+fn arith_sequential_with_dri_decodes() {
+    let data = include_bytes!("testdata/all_the_images/restart_marker_turbo130.jpg");
+
+    // Should decode at all strictness levels
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_ok(),
+            "arithmetic JPEG with DRI=1 should decode at {strictness:?}, got: {}",
+            result.unwrap_err()
+        );
+        let info = result.unwrap();
+        assert_eq!(info.width(), 7);
+        assert_eq!(info.height(), 7);
+        // 7x7 RGB = 147 bytes
+        assert_eq!(info.pixels_u8().unwrap().len(), 147);
+    }
+}
