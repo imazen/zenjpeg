@@ -1179,4 +1179,66 @@ fn arith_sequential_with_dri_decodes() {
         // 7x7 RGB = 147 bytes
         assert_eq!(info.pixels_u8().unwrap().len(), 147);
     }
+/// libjpeg-turbo 2.0.3. In Strict mode, the parser hits "extraneous bytes
+/// between markers" before reaching the arithmetic overflow. In Balanced mode,
+/// extraneous bytes are skipped and the file decodes.
+#[test]
+fn arith_ac_magnitude_fixture_balanced_recovers() {
+    let data = include_bytes!("testdata/all_the_images/arith_ac_magnitude_turbo203.jpg");
+    // Strict rejects due to extraneous bytes (a different issue)
+    let strict = Decoder::new()
+        .strictness(Strictness::Strict)
+        .decode(data, Unstoppable);
+    assert!(strict.is_err(), "Strict should reject this file");
+
+    // Balanced recovers
+    let balanced = Decoder::new()
+        .strictness(Strictness::Balanced)
+        .decode(data, Unstoppable);
+    assert!(
+        balanced.is_ok(),
+        "Balanced should decode AC magnitude fixture, got: {}",
+        balanced.unwrap_err()
+    );
+}
+
+/// DC magnitude overflow: decoded DC magnitude bits exceed valid range.
+/// Produced by libjpeg-turbo 1.3.0 arithmetic coder.
+/// Strict mode should reject; Balanced (default) should decode with warning.
+#[test]
+fn arith_dc_magnitude_overflow_strict_rejects() {
+    let data = include_bytes!("testdata/all_the_images/arith_dc_magnitude_turbo130.jpg");
+    let result = Decoder::new()
+        .strictness(Strictness::Strict)
+        .decode(data, Unstoppable);
+    assert!(
+        result.is_err(),
+        "Strict mode should reject DC magnitude overflow"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("arithmetic") || err_msg.contains("magnitude overflow"),
+        "error should mention arithmetic overflow, got: {err_msg}"
+    );
+}
+
+#[test]
+fn arith_dc_magnitude_overflow_balanced_recovers() {
+    let data = include_bytes!("testdata/all_the_images/arith_dc_magnitude_turbo130.jpg");
+    let result = Decoder::new()
+        .strictness(Strictness::Balanced)
+        .decode(data, Unstoppable);
+    assert!(
+        result.is_ok(),
+        "Balanced mode should recover from DC magnitude overflow, got: {}",
+        result.unwrap_err()
+    );
+    let info = result.unwrap();
+    assert!(
+        info.warnings()
+            .iter()
+            .any(|w| format!("{w}").contains("arithmetic")),
+        "should emit ArithmeticBadCode warning, warnings: {:?}",
+        info.warnings()
+    );
 }
