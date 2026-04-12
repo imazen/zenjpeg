@@ -1177,45 +1177,27 @@ fn sos_zero_components_all_strictness_levels() {
 // matches this behavior; Strict mode rejects them.
 // ============================================================================
 
-/// AC spectral overflow: run-of-zeros pushes coefficient index past Se.
-/// Produced by IJG libjpeg v9b arithmetic coder.
-/// Strict mode should reject; Balanced (default) should decode with warning.
+/// AC spectral overflow fixture: arithmetic-coded JPEG produced by IJG
+/// libjpeg v9b. The arithmetic scan fix (actual vs MCU-padded block counts)
+/// allows this file to decode cleanly at all strictness levels.
 #[test]
-fn arith_ac_spectral_overflow_strict_rejects() {
+fn arith_ac_spectral_fixture_decodes_all_modes() {
     let data = include_bytes!("testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
-    let result = Decoder::new()
-        .strictness(Strictness::Strict)
-        .decode(data, Unstoppable);
-    assert!(
-        result.is_err(),
-        "Strict mode should reject AC spectral overflow"
-    );
-    let err_msg = format!("{}", result.unwrap_err());
-    assert!(
-        err_msg.contains("arithmetic") || err_msg.contains("spectral overflow"),
-        "error should mention arithmetic overflow, got: {err_msg}"
-    );
-}
-
-#[test]
-fn arith_ac_spectral_overflow_balanced_recovers() {
-    let data = include_bytes!("testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
-    let result = Decoder::new()
-        .strictness(Strictness::Balanced)
-        .decode(data, Unstoppable);
-    assert!(
-        result.is_ok(),
-        "Balanced mode should recover from AC spectral overflow, got: {}",
-        result.unwrap_err()
-    );
-    let info = result.unwrap();
-    assert!(
-        info.warnings()
-            .iter()
-            .any(|w| format!("{w}").contains("arithmetic")),
-        "should emit ArithmeticBadCode warning, warnings: {:?}",
-        info.warnings()
-    );
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_ok(),
+            "AC spectral fixture should decode at {strictness:?}, got: {}",
+            result.unwrap_err()
+        );
+    }
 }
 
 /// AC magnitude overflow fixture: progressive arithmetic JPEG (SOF10) from
@@ -1306,5 +1288,45 @@ fn arith_sequential_with_dri_decodes() {
         assert_eq!(info.height(), 7);
         // 7x7 RGB = 147 bytes
         assert_eq!(info.pixels_u8().unwrap().len(), 147);
+    }
+}
+
+/// Progressive arithmetic-coded JPEG with DRI=1 and 4:2:0 subsampling.
+///
+/// Produced by libjpeg-turbo 2.0.3. This is a 23x29 SOF10 (arithmetic
+/// progressive) JPEG with 3 components at 2x2/1x1/1x1 subsampling. DRI=1
+/// means restart markers appear every 1 MCU. Non-interleaved AC scans
+/// iterate over actual block counts (ceil(X_i/8)), which differ from
+/// MCU-padded block counts when image dimensions are not MCU-aligned.
+///
+/// Regression test: the arithmetic progressive decoder was using MCU-padded
+/// block counts (mcu_cols * h_samp) for AC scan iteration instead of actual
+/// block counts, causing it to decode extra non-existent blocks past the
+/// scan boundary and hitting the next scan's DAC marker instead of a restart
+/// marker.
+#[test]
+fn arith_progressive_with_dri_decodes() {
+    let data = include_bytes!("testdata/all_the_images/arith_prog_dri_turbo203.jpg");
+
+    // Should decode at all strictness levels
+    for strictness in [
+        Strictness::Strict,
+        Strictness::Balanced,
+        Strictness::Lenient,
+        Strictness::Permissive,
+    ] {
+        let result = Decoder::new()
+            .strictness(strictness)
+            .decode(data, Unstoppable);
+        assert!(
+            result.is_ok(),
+            "progressive arithmetic JPEG with DRI=1 and 4:2:0 should decode at {strictness:?}, got: {}",
+            result.unwrap_err()
+        );
+        let info = result.unwrap();
+        assert_eq!(info.width(), 23);
+        assert_eq!(info.height(), 29);
+        // 23x29 RGB = 2001 bytes
+        assert_eq!(info.pixels_u8().unwrap().len(), 2001);
     }
 }

@@ -231,25 +231,67 @@ impl<'a> JpegParser<'a> {
         let is_first_scan = ah == 0;
 
         if is_dc_scan {
-            // DC scan
-            if is_first_scan {
-                self.decode_arith_dc_first(
-                    &mut decoder,
-                    scan_components,
-                    mcu_cols,
-                    mcu_rows,
-                    al,
-                    stop,
-                )?;
+            // DC scan - can be interleaved (multiple components) or
+            // non-interleaved (single component).
+            if scan_components.len() == 1 {
+                // Non-interleaved DC scan: blocks in raster order.
+                // Use actual block counts for iteration, padded stride for storage.
+                let (comp_idx, dc_tbl, _ac_tbl) = scan_components[0];
+                let h_samp = self.components[comp_idx].h_samp_factor as usize;
+                let v_samp = self.components[comp_idx].v_samp_factor as usize;
+                let width = self.width as usize;
+                let height = self.height as usize;
+                let max_h = max_h_samp as usize;
+                let max_v = max_v_samp as usize;
+                let scaled_w = (width * h_samp + max_h - 1) / max_h;
+                let scaled_h = (height * v_samp + max_v - 1) / max_v;
+                let comp_blocks_h = (scaled_w + 7) / 8;
+                let comp_blocks_v = (scaled_h + 7) / 8;
+                let padded_blocks_h = mcu_cols * h_samp;
+
+                if is_first_scan {
+                    self.decode_arith_dc_first_noninterleaved(
+                        &mut decoder,
+                        comp_idx,
+                        dc_tbl as usize,
+                        comp_blocks_h,
+                        comp_blocks_v,
+                        padded_blocks_h,
+                        al,
+                        stop,
+                    )?;
+                } else {
+                    self.decode_arith_dc_refine_noninterleaved(
+                        &mut decoder,
+                        comp_idx,
+                        comp_blocks_h,
+                        comp_blocks_v,
+                        padded_blocks_h,
+                        al,
+                        stop,
+                    )?;
+                }
             } else {
-                self.decode_arith_dc_refine(
-                    &mut decoder,
-                    scan_components,
-                    mcu_cols,
-                    mcu_rows,
-                    al,
-                    stop,
-                )?;
+                // Interleaved DC scan: blocks in MCU order.
+                if is_first_scan {
+                    self.decode_arith_dc_first(
+                        &mut decoder,
+                        scan_components,
+                        mcu_cols,
+                        mcu_rows,
+                        al,
+                        stop,
+                    )?;
+                } else {
+                    self.decode_arith_dc_refine(
+                        &mut decoder,
+                        scan_components,
+                        mcu_cols,
+                        mcu_rows,
+                        al,
+                        stop,
+                    )?;
+                }
             }
         } else {
             // AC scan (single component only)
@@ -260,13 +302,32 @@ impl<'a> JpegParser<'a> {
             }
             let (comp_idx, _dc_tbl, ac_tbl) = scan_components[0];
 
+            // Non-interleaved AC scans encode blocks in raster order.
+            // The JPEG spec says ceil(X_i/8) blocks per row, NOT MCU-padded.
+            // Storage uses MCU-padded stride (mcu_cols * h_samp) to match
+            // the output path. Iterate actual block counts, store with
+            // padded stride. This matches the Huffman progressive path.
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let width = self.width as usize;
+            let height = self.height as usize;
+            let max_h = max_h_samp as usize;
+            let max_v = max_v_samp as usize;
+            let scaled_w = (width * h_samp + max_h - 1) / max_h;
+            let scaled_h = (height * v_samp + max_v - 1) / max_v;
+            let comp_blocks_h = (scaled_w + 7) / 8;
+            let comp_blocks_v = (scaled_h + 7) / 8;
+            // Storage stride: MCU-padded (matches output path)
+            let padded_blocks_h = mcu_cols * h_samp;
+
             if is_first_scan {
                 self.decode_arith_ac_first(
                     &mut decoder,
                     comp_idx,
                     ac_tbl as usize,
-                    mcu_cols,
-                    mcu_rows,
+                    comp_blocks_h,
+                    comp_blocks_v,
+                    padded_blocks_h,
                     ss,
                     se,
                     al,
@@ -277,8 +338,9 @@ impl<'a> JpegParser<'a> {
                     &mut decoder,
                     comp_idx,
                     ac_tbl as usize,
-                    mcu_cols,
-                    mcu_rows,
+                    comp_blocks_h,
+                    comp_blocks_v,
+                    padded_blocks_h,
                     ss,
                     se,
                     al,
@@ -295,7 +357,7 @@ impl<'a> JpegParser<'a> {
         Ok(())
     }
 
-    /// Decode DC first scan (progressive arithmetic).
+    /// Decode interleaved DC first scan (progressive arithmetic).
     fn decode_arith_dc_first(
         &mut self,
         decoder: &mut ArithmeticDecoder,
@@ -348,7 +410,7 @@ impl<'a> JpegParser<'a> {
         Ok(())
     }
 
-    /// Decode DC refinement scan (progressive arithmetic).
+    /// Decode interleaved DC refinement scan (progressive arithmetic).
     fn decode_arith_dc_refine(
         &mut self,
         decoder: &mut ArithmeticDecoder,
@@ -394,31 +456,117 @@ impl<'a> JpegParser<'a> {
         Ok(())
     }
 
+    /// Decode non-interleaved DC first scan (progressive arithmetic).
+    ///
+    /// For single-component DC scans, each block is its own MCU.
+    /// Uses actual block counts for iteration, padded stride for storage.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_arith_dc_first_noninterleaved(
+        &mut self,
+        decoder: &mut ArithmeticDecoder,
+        comp_idx: usize,
+        dc_tbl: usize,
+        comp_blocks_h: usize,
+        comp_blocks_v: usize,
+        padded_blocks_h: usize,
+        al: u8,
+        stop: &impl Stop,
+    ) -> Result<()> {
+        let total_blocks = comp_blocks_h * comp_blocks_v;
+        let mut block_count = 0usize;
+
+        for block_y in 0..comp_blocks_v {
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..comp_blocks_h {
+                let block_idx = block_y * padded_blocks_h + block_x;
+
+                match decoder.decode_dc_first(comp_idx, dc_tbl, al)? {
+                    ScanRead::Value(dc) => {
+                        self.coeffs[comp_idx][block_idx][0] = dc;
+                    }
+                    ScanRead::EndOfScan | ScanRead::Truncated => {
+                        // Truncated - leave as zero
+                    }
+                }
+
+                // Each block is one MCU in a single-component scan.
+                block_count += 1;
+                if block_count < total_blocks {
+                    decoder.check_restart_mcu()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Decode non-interleaved DC refinement scan (progressive arithmetic).
+    ///
+    /// For single-component DC scans, each block is its own MCU.
+    /// Uses actual block counts for iteration, padded stride for storage.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_arith_dc_refine_noninterleaved(
+        &mut self,
+        decoder: &mut ArithmeticDecoder,
+        comp_idx: usize,
+        comp_blocks_h: usize,
+        comp_blocks_v: usize,
+        padded_blocks_h: usize,
+        al: u8,
+        stop: &impl Stop,
+    ) -> Result<()> {
+        let total_blocks = comp_blocks_h * comp_blocks_v;
+        let mut block_count = 0usize;
+
+        for block_y in 0..comp_blocks_v {
+            if stop.should_stop() {
+                return Err(Error::cancelled());
+            }
+
+            for block_x in 0..comp_blocks_h {
+                let block_idx = block_y * padded_blocks_h + block_x;
+
+                decoder.decode_dc_refine(&mut self.coeffs[comp_idx][block_idx], al)?;
+
+                // Each block is one MCU in a single-component scan.
+                block_count += 1;
+                if block_count < total_blocks {
+                    decoder.check_restart_mcu()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Decode AC first scan (progressive arithmetic).
     ///
     /// For single-component progressive AC scans, each block is its own MCU
     /// (the scan is non-interleaved), so restart handling is per-block.
+    ///
+    /// `comp_blocks_h`/`comp_blocks_v` are the actual block counts from the
+    /// JPEG spec (ceil(X_i/8)), while `padded_blocks_h` is the MCU-padded
+    /// stride used for coefficient storage indexing.
     #[allow(clippy::too_many_arguments)]
     fn decode_arith_ac_first(
         &mut self,
         decoder: &mut ArithmeticDecoder,
         comp_idx: usize,
         ac_tbl: usize,
-        mcu_cols: usize,
-        mcu_rows: usize,
+        comp_blocks_h: usize,
+        comp_blocks_v: usize,
+        padded_blocks_h: usize,
         ss: u8,
         se: u8,
         al: u8,
         stop: &impl Stop,
     ) -> Result<()> {
-        let h_samp = self.components[comp_idx].h_samp_factor as usize;
-        let v_samp = self.components[comp_idx].v_samp_factor as usize;
-        let comp_blocks_h = mcu_cols * h_samp;
-        let comp_blocks_v = mcu_rows * v_samp;
         let total_blocks = comp_blocks_h * comp_blocks_v;
 
         // AC progressive scans process blocks in raster order (not MCU order).
         // For single-component scans, each block is one MCU.
+        // Iterate actual block counts (from JPEG spec), store with padded stride.
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
@@ -427,7 +575,7 @@ impl<'a> JpegParser<'a> {
             }
 
             for block_x in 0..comp_blocks_h {
-                let block_idx = block_y * comp_blocks_h + block_x;
+                let block_idx = block_y * padded_blocks_h + block_x;
                 decoder.decode_ac_first(
                     &mut self.coeffs[comp_idx][block_idx],
                     &mut self.nonzero_bitmaps[comp_idx][block_idx],
@@ -451,25 +599,27 @@ impl<'a> JpegParser<'a> {
     ///
     /// For single-component progressive AC scans, each block is its own MCU
     /// (the scan is non-interleaved), so restart handling is per-block.
+    ///
+    /// `comp_blocks_h`/`comp_blocks_v` are the actual block counts from the
+    /// JPEG spec (ceil(X_i/8)), while `padded_blocks_h` is the MCU-padded
+    /// stride used for coefficient storage indexing.
     #[allow(clippy::too_many_arguments)]
     fn decode_arith_ac_refine(
         &mut self,
         decoder: &mut ArithmeticDecoder,
         comp_idx: usize,
         ac_tbl: usize,
-        mcu_cols: usize,
-        mcu_rows: usize,
+        comp_blocks_h: usize,
+        comp_blocks_v: usize,
+        padded_blocks_h: usize,
         ss: u8,
         se: u8,
         al: u8,
         stop: &impl Stop,
     ) -> Result<()> {
-        let h_samp = self.components[comp_idx].h_samp_factor as usize;
-        let v_samp = self.components[comp_idx].v_samp_factor as usize;
-        let comp_blocks_h = mcu_cols * h_samp;
-        let comp_blocks_v = mcu_rows * v_samp;
         let total_blocks = comp_blocks_h * comp_blocks_v;
 
+        // Iterate actual block counts (from JPEG spec), store with padded stride.
         let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
@@ -478,7 +628,7 @@ impl<'a> JpegParser<'a> {
             }
 
             for block_x in 0..comp_blocks_h {
-                let block_idx = block_y * comp_blocks_h + block_x;
+                let block_idx = block_y * padded_blocks_h + block_x;
                 decoder.decode_ac_refine(
                     &mut self.coeffs[comp_idx][block_idx],
                     &mut self.nonzero_bitmaps[comp_idx][block_idx],
