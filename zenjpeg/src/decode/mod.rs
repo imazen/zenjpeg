@@ -3617,3 +3617,19 @@ mod quality_estimation_tests {
         );
     }
 }
+
+/// Decode a JPEG and return the raw DCT coefficients per component.
+///
+/// Each component is a `Vec<[i16; 64]>` of blocks in raster order (left-to-right,
+/// top-to-bottom). Coefficients are in JPEG zigzag order within each block.
+///
+/// Only available with the `__test-utils` feature.
+#[cfg(feature = "__test-utils")]
+pub fn decode_coefficients(
+    data: &[u8],
+) -> crate::error::Result<Vec<Vec<[i16; crate::foundation::consts::DCT_BLOCK_SIZE]>>> {
+    use enough::Unstoppable;
+    let mut parser = parser::JpegParser::new(data, 0, None)?;
+    parser.decode(&Unstoppable)?;
+    Ok(parser.coeffs)
+}
