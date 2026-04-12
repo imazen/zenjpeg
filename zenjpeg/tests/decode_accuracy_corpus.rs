@@ -18,8 +18,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn corpus() -> Option<codec_corpus::Corpus> {
-    codec_corpus::Corpus::new().ok()
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
 }
 
 fn collect_jpgs(dir: &Path) -> Vec<PathBuf> {
@@ -320,22 +321,12 @@ fn percentile(values: &[u8], pct: usize) -> u8 {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_decode_accuracy() {
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpgs(&corpus);
     eprintln!("Found {} JPEG files in conformance corpus\n", files.len());
@@ -584,22 +575,12 @@ fn corpus_decode_accuracy() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_libjpeg_compat_vs_djpeg() {
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpgs(&corpus);
     eprintln!(
@@ -733,25 +714,15 @@ fn corpus_libjpeg_compat_vs_djpeg() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn investigate_rst_diff() {
     use zenjpeg::decode::ChromaUpsampling;
     use zenjpeg::decoder::Decoder;
 
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus_dir = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus_dir = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
     let path = corpus_dir.join("rst_1block.jpg");
     if !path.exists() {
         eprintln!("File not found");
@@ -853,22 +824,12 @@ fn investigate_rst_diff() {
 /// sit at partial MCU boundaries where chroma upsampling and IDCT clipping interact.
 /// This test verifies those specific pixels aren't worse than interior pixels.
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn border_pixel_accuracy() {
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpgs(&corpus);
 

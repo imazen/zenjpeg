@@ -12,8 +12,9 @@ use enough::Unstoppable;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn corpus() -> Option<codec_corpus::Corpus> {
-    codec_corpus::Corpus::new().ok()
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
 }
 
 fn collect_jpgs(dir: &Path) -> Vec<PathBuf> {
@@ -359,22 +360,12 @@ fn verify_crop_scanline_with_transform(
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_buffered() {
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus_dir = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus_dir = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpgs(&corpus_dir);
     eprintln!("Testing {} files via decode() crop path\n", files.len());
@@ -442,22 +433,12 @@ fn corpus_crop_buffered() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_scanline() {
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus_dir = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus_dir = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpgs(&corpus_dir);
     eprintln!(
@@ -528,24 +509,14 @@ fn corpus_crop_scanline() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_with_transforms() {
     use zenjpeg::lossless::LosslessTransform;
 
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus_dir = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus_dir = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let transforms = [
         ("Rotate90", LosslessTransform::Rotate90),
@@ -635,24 +606,14 @@ fn corpus_crop_with_transforms() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_scanline_with_transforms() {
     use zenjpeg::lossless::LosslessTransform;
 
-    let c = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let corpus_dir = match c.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let c = corpus();
+    let corpus_dir = c
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let transforms = [
         ("Rotate90", LosslessTransform::Rotate90),

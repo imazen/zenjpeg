@@ -8,8 +8,9 @@ use enough::Unstoppable;
 use std::fs;
 use std::path::Path;
 
-fn corpus() -> Option<codec_corpus::Corpus> {
-    codec_corpus::Corpus::new().ok()
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
 }
 
 fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -132,29 +133,15 @@ fn test_decoder(
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn compare_decoder_leniency() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
-    let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
+    let invalid_dir = corpus
+        .get("jpeg-conformance/invalid")
+        .expect("corpus.get(jpeg-conformance/invalid)");
 
     // Load all files into memory
     let valid_files: Vec<_> = collect_jpgs(&valid_dir)
@@ -294,25 +281,15 @@ fn compare_decoder_leniency() {
 ///
 /// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- truncated_error_detail --nocapture --ignored
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn truncated_error_detail() {
     use zenjpeg::decoder::{Decoder, Strictness};
 
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let nonconf = match corpus.get("jpeg-conformance/non-conformant") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let nonconf = corpus
+        .get("jpeg-conformance/non-conformant")
+        .expect("corpus.get(jpeg-conformance/non-conformant)");
 
     let test_files = [
         "truncated/missing_eoi.jpg",
@@ -390,30 +367,16 @@ fn decode_djpeg(data: &[u8]) -> Result<(), String> {
 ///
 /// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- compare_strictness --nocapture --ignored
 #[test]
-#[ignore]
+#[ignore = "requires codec-corpus (network on first run)"]
 fn compare_strictness_vs_libjpeg_turbo() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
-    let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
+    let invalid_dir = corpus
+        .get("jpeg-conformance/invalid")
+        .expect("corpus.get(jpeg-conformance/invalid)");
 
     // Load files
     let valid_files: Vec<_> = collect_jpgs(&valid_dir)
@@ -427,13 +390,9 @@ fn compare_strictness_vs_libjpeg_turbo() {
         .collect();
 
     // Load non-conformant files from all subdirectories
-    let nonconf_base = match corpus.get("jpeg-conformance/non-conformant") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping non-conformant: {e}");
-            return;
-        }
-    };
+    let nonconf_base = corpus
+        .get("jpeg-conformance/non-conformant")
+        .expect("corpus.get(jpeg-conformance/non-conformant)");
     let nonconf_files: Vec<_> = collect_jpgs(&nonconf_base)
         .into_iter()
         .filter_map(|p| fs::read(&p).ok().map(|d| (p, d)))
