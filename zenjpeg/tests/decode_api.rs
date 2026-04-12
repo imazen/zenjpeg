@@ -6,7 +6,7 @@ use enough::Unstoppable;
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use test_utils::{TestImage, generate_gradient_d, read_test_data};
+use test_utils::{TestImage, generate_gradient_d, read_test_data_required};
 
 use test_case::test_case;
 use zenjpeg::{
@@ -194,15 +194,11 @@ fn test_decode_reuse_decoder() {
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_flower_420() {
-    let jpeg_data = read_test_data("jxl/flower/flower.png.im_q85_420.jpg");
-    if jpeg_data.is_none() {
-        eprintln!("Skipping: testdata not available");
-        return;
-    }
+    let jpeg_data = read_test_data_required("jxl/flower/flower.png.im_q85_420.jpg");
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap(), Unstoppable)
+        .decode(&jpeg_data, Unstoppable)
         .expect("decode flower failed");
 
     // flower.png is 2268x1512
@@ -213,15 +209,11 @@ fn test_decode_flower_420() {
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_flower_444() {
-    let jpeg_data = read_test_data("jxl/flower/flower.png.im_q85_444.jpg");
-    if jpeg_data.is_none() {
-        eprintln!("Skipping: testdata not available");
-        return;
-    }
+    let jpeg_data = read_test_data_required("jxl/flower/flower.png.im_q85_444.jpg");
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap(), Unstoppable)
+        .decode(&jpeg_data, Unstoppable)
         .expect("decode flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -231,15 +223,11 @@ fn test_decode_flower_444() {
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_flower_progressive() {
-    let jpeg_data = read_test_data("jxl/flower/flower.png.im_q85_420_progr.jpg");
-    if jpeg_data.is_none() {
-        eprintln!("Skipping: testdata not available");
-        return;
-    }
+    let jpeg_data = read_test_data_required("jxl/flower/flower.png.im_q85_420_progr.jpg");
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap(), Unstoppable)
+        .decode(&jpeg_data, Unstoppable)
         .expect("decode progressive flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -249,15 +237,11 @@ fn test_decode_flower_progressive() {
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_flower_grayscale() {
-    let jpeg_data = read_test_data("jxl/flower/flower.png.im_q85_gray.jpg");
-    if jpeg_data.is_none() {
-        eprintln!("Skipping: testdata not available");
-        return;
-    }
+    let jpeg_data = read_test_data_required("jxl/flower/flower.png.im_q85_gray.jpg");
 
     let decoder = Decoder::new();
     let decoded = decoder
-        .decode(&jpeg_data.unwrap(), Unstoppable)
+        .decode(&jpeg_data, Unstoppable)
         .expect("decode grayscale flower failed");
 
     assert_eq!(decoded.width, 2268);
@@ -282,13 +266,12 @@ fn test_decode_various_subsampling() {
     let decoder = Decoder::new();
 
     for filename in &subsampling_files {
-        if let Some(jpeg_data) = read_test_data(filename) {
-            let decoded = decoder
-                .decode(&jpeg_data, Unstoppable)
-                .unwrap_or_else(|_| panic!("decode {} failed", filename));
-            assert_eq!(decoded.width, 2268, "Width mismatch for {}", filename);
-            assert_eq!(decoded.height, 1512, "Height mismatch for {}", filename);
-        }
+        let jpeg_data = read_test_data_required(filename);
+        let decoded = decoder
+            .decode(&jpeg_data, Unstoppable)
+            .unwrap_or_else(|_| panic!("decode {} failed", filename));
+        assert_eq!(decoded.width, 2268, "Width mismatch for {}", filename);
+        assert_eq!(decoded.height, 1512, "Height mismatch for {}", filename);
     }
 }
 
