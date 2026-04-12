@@ -580,7 +580,7 @@ Four levels controlling error tolerance during decode:
 | Truncated data | Error | Pad zeros | Pad zeros | Pad zeros |
 | Bad restart count | Error | Error | Warn | Resync fwd |
 | RST sequence wrong | Error | Error | Error | Accept any |
-| Zero quant value | Error | Error | Error | Clamp to 1 |
+| Zero quant value | Error | Clamp to 1 | Clamp to 1 | Clamp to 1 |
 | Malformed segment | Error | Error | Error | Skip |
 | Bad Huffman idx | Error | Error | Error | Clamp to 0 |
 | Malformed DNL | Error | Error | Error | Skip |

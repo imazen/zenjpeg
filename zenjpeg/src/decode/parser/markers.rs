@@ -210,7 +210,7 @@ impl<'a> JpegParser<'a> {
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
-            let permissive = self.strictness == Strictness::Permissive;
+            let strict = self.strictness == Strictness::Strict;
             let mut had_zero = false;
 
             if precision == 0 {
@@ -218,7 +218,7 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u8()? as u16;
                     if val == 0 {
-                        if permissive {
+                        if !strict {
                             zigzag_values[i] = 1; // Clamp to 1
                             had_zero = true;
                             continue;
@@ -236,7 +236,7 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u16()?;
                     if val == 0 {
-                        if permissive {
+                        if !strict {
                             zigzag_values[i] = 1; // Clamp to 1
                             had_zero = true;
                             continue;
