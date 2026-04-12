@@ -269,6 +269,7 @@ fn downsample_1x2_simd_inplace_impl(
 ///
 /// This is the ground truth implementation that AVX2 versions are tested against.
 #[cfg(test)]
+#[allow(dead_code)] // Reference implementation for AVX2 validation
 #[inline]
 fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
     debug_assert!(data.len() >= 16);
