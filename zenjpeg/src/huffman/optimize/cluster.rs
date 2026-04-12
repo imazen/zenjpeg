@@ -20,21 +20,21 @@ pub enum SlotReplacement {
     #[default]
     RoundRobin,
     /// Replace the slot whose histogram has the fewest total symbols.
-    /// Rationale: a small cluster has less data, so losing its tailored
-    /// table causes less encoding cost increase.
     SmallestCount,
     /// Replace the slot whose histogram can be re-merged into another
-    /// existing slot at the lowest cost. Computes the merge cost of
-    /// each slot into each other slot, picks the cheapest eviction.
+    /// existing slot at the lowest cost.
     LowestEvictionCost,
     /// Replace the slot that was least recently assigned or updated.
-    /// Older assignments are more likely to be superseded by newer,
-    /// more relevant histogram distributions.
     OldestSlot,
     /// Replace the slot with the highest current encoding cost.
-    /// Rationale: if a slot is already expensive, replacing its table
-    /// with a fresh one may improve overall efficiency.
     HighestSlotCost,
+    /// Round-robin greedy pass followed by iterative refinement.
+    ///
+    /// After the standard greedy clustering, performs 1-opt refinement:
+    /// for each context, try moving it to every other existing cluster.
+    /// Keep any move that reduces total encoding cost. Repeat until
+    /// no improvement is found (typically converges in 1-2 passes).
+    Refined,
 }
 
 /// Result of histogram clustering.
@@ -355,6 +355,11 @@ pub fn cluster_histograms_with_strategy(
         result.merge_log = merge_log;
     }
 
+    // Post-greedy refinement pass for the Refined strategy
+    if strategy == SlotReplacement::Refined {
+        refine_clustering(histograms, &mut result);
+    }
+
     result
 }
 
@@ -427,5 +432,183 @@ fn pick_replacement_slot(
                 .max_by(|&a, &b| slot_costs[a].partial_cmp(&slot_costs[b]).unwrap_or(core::cmp::Ordering::Equal))
                 .unwrap_or(0)
         }
+
+        SlotReplacement::Refined => {
+            // Refined uses RoundRobin for the greedy pass; refinement happens after.
+            (result.slot_ids.last().copied().unwrap_or(0) + 1) % 4
+        }
     }
+}
+
+/// Iterative 1-opt refinement of cluster assignments.
+///
+/// For each non-empty context, tries moving it to every other cluster.
+/// If moving reduces total encoding cost, applies the move. Repeats
+/// until a full pass produces no improvement.
+///
+/// The cluster histograms are rebuilt from the original per-context
+/// histograms after each move, so costs are always exact.
+fn refine_clustering(
+    histograms: &[FrequencyCounter],
+    result: &mut ClusterResult,
+) {
+    // Collect non-empty context indices
+    let active: Vec<usize> = (0..histograms.len())
+        .filter(|&i| !histograms[i].is_empty_histogram())
+        .collect();
+
+    if active.is_empty() || result.num_clusters <= 1 {
+        return;
+    }
+
+    // Rebuild cluster histograms from scratch (greedy pass accumulates
+    // incrementally, which is correct but makes subtract error-prone)
+    fn rebuild_cluster_histograms(
+        histograms: &[FrequencyCounter],
+        context_map: &[usize],
+        num_clusters: usize,
+        active: &[usize],
+    ) -> Vec<FrequencyCounter> {
+        let mut clusters = vec![FrequencyCounter::new(); num_clusters];
+        for &ctx in active {
+            let cluster = context_map[ctx];
+            if cluster < num_clusters {
+                clusters[cluster].add(&histograms[ctx]);
+            }
+        }
+        clusters
+    }
+
+    result.cluster_histograms = rebuild_cluster_histograms(
+        histograms,
+        &result.context_map,
+        result.num_clusters,
+        &active,
+    );
+
+    // Compute per-cluster costs
+    let mut cluster_costs: Vec<f64> = result
+        .cluster_histograms
+        .iter()
+        .map(|h| {
+            if h.is_empty_histogram() {
+                0.0
+            } else {
+                h.estimate_encoding_cost()
+            }
+        })
+        .collect();
+
+    let mut total_cost: f64 = cluster_costs.iter().sum();
+
+    // Iterative 1-opt: try moving each context to a better cluster
+    const MAX_PASSES: usize = 10;
+    for _pass in 0..MAX_PASSES {
+        let mut improved = false;
+
+        for &ctx in &active {
+            let current_cluster = result.context_map[ctx];
+            let ctx_histo = &histograms[ctx];
+
+            // Cost of current cluster WITHOUT this context
+            let mut without = result.cluster_histograms[current_cluster].clone();
+            without.subtract(ctx_histo);
+            let cost_without = if without.is_empty_histogram() {
+                0.0 // Cluster becomes empty — saves the whole table
+            } else {
+                without.estimate_encoding_cost()
+            };
+
+            // Savings from removing this context from its current cluster
+            let removal_savings = cluster_costs[current_cluster] - cost_without;
+
+            // Try adding to each other cluster
+            let mut best_target = current_cluster;
+            let mut best_delta = 0.0_f64; // Must improve to move
+
+            for target in 0..result.num_clusters {
+                if target == current_cluster {
+                    continue;
+                }
+
+                let combined = result.cluster_histograms[target].combined(ctx_histo);
+                let cost_combined = combined.estimate_encoding_cost();
+                let addition_cost = cost_combined - cluster_costs[target];
+
+                // Net delta: cost of adding to target - savings from removing from current
+                let delta = addition_cost - removal_savings;
+                if delta < best_delta {
+                    best_delta = delta;
+                    best_target = target;
+                }
+            }
+
+            if best_target != current_cluster {
+                // Apply the move
+                result.cluster_histograms[current_cluster].subtract(ctx_histo);
+                result.cluster_histograms[best_target].add(ctx_histo);
+                result.context_map[ctx] = best_target;
+
+                // Update costs
+                cluster_costs[current_cluster] = if result.cluster_histograms[current_cluster].is_empty_histogram() {
+                    0.0
+                } else {
+                    result.cluster_histograms[current_cluster].estimate_encoding_cost()
+                };
+                cluster_costs[best_target] = result.cluster_histograms[best_target].estimate_encoding_cost();
+
+                total_cost = cluster_costs.iter().sum();
+                improved = true;
+            }
+        }
+
+        if !improved {
+            break;
+        }
+    }
+
+    // Remove empty clusters and compact
+    let _ = total_cost; // Used for debugging; suppress warning
+    compact_clusters(result, histograms);
+}
+
+/// Remove empty clusters and renumber context_map and slot_ids.
+fn compact_clusters(result: &mut ClusterResult, histograms: &[FrequencyCounter]) {
+    // Find non-empty clusters
+    let mut old_to_new = vec![usize::MAX; result.num_clusters];
+    let mut new_histograms = Vec::new();
+    let mut new_slot_ids = Vec::new();
+
+    for (old_idx, histo) in result.cluster_histograms.iter().enumerate() {
+        if !histo.is_empty_histogram() {
+            let new_idx = new_histograms.len();
+            old_to_new[old_idx] = new_idx;
+            new_histograms.push(histo.clone());
+            if old_idx < result.slot_ids.len() {
+                new_slot_ids.push(result.slot_ids[old_idx]);
+            } else {
+                new_slot_ids.push(new_idx % 4);
+            }
+        }
+    }
+
+    // If nothing was removed, no compaction needed
+    if new_histograms.len() == result.num_clusters {
+        return;
+    }
+
+    // Remap context_map
+    for ctx in 0..result.context_map.len() {
+        let old = result.context_map[ctx];
+        if old < old_to_new.len() && old_to_new[old] != usize::MAX {
+            result.context_map[ctx] = old_to_new[old];
+        } else if !histograms[ctx].is_empty_histogram() {
+            // Context was in a cluster that got emptied — assign to cluster 0
+            result.context_map[ctx] = 0;
+        }
+    }
+
+    result.cluster_histograms = new_histograms;
+    result.slot_ids = new_slot_ids;
+    result.num_clusters = result.cluster_histograms.len();
 }

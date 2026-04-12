@@ -1,8 +1,8 @@
-//! Compare Huffman clustering slot replacement strategies across corpus images.
+//! Compare progressive encoding optimizations across corpus images.
 //!
-//! Encodes each image with progressive mode using each of the 5 slot replacement
-//! strategies, then compares file sizes. Only progressive mode triggers the
-//! replacement code path (baseline has <=4 contexts, all fit in 4 slots).
+//! Tests:
+//! 1. Huffman clustering refinement (1-opt post-greedy pass)
+//! 2. Extended scan script search (13 split points vs 5)
 //!
 //! Usage:
 //!   cargo run --release -p zenjpeg --example cluster_strategy_compare
@@ -11,16 +11,56 @@
 
 use std::path::Path;
 
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, SlotReplacement};
+use zenjpeg::encoder::{
+    ChromaSubsampling, EncoderConfig, PixelLayout, ScanStrategy, SlotReplacement,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const STRATEGIES: &[(SlotReplacement, &str)] = &[
-    (SlotReplacement::RoundRobin, "RoundRobin"),
-    (SlotReplacement::SmallestCount, "SmallestCnt"),
-    (SlotReplacement::LowestEvictionCost, "LowestEvict"),
-    (SlotReplacement::OldestSlot, "OldestSlot"),
-    (SlotReplacement::HighestSlotCost, "HighestCost"),
+/// Each encoding configuration to compare.
+struct EncodingVariant {
+    name: &'static str,
+    strategy: SlotReplacement,
+    scan: ScanStrategy,
+}
+
+const VARIANTS: &[EncodingVariant] = &[
+    // Baseline: default progressive (jpegli scan script, RoundRobin clustering)
+    EncodingVariant {
+        name: "progressive",
+        strategy: SlotReplacement::RoundRobin,
+        scan: ScanStrategy::Default,
+    },
+    // 1-opt refined clustering
+    EncodingVariant {
+        name: "prog+refine",
+        strategy: SlotReplacement::Refined,
+        scan: ScanStrategy::Default,
+    },
+    // optimize_scans (5 split points)
+    EncodingVariant {
+        name: "opt_scans",
+        strategy: SlotReplacement::RoundRobin,
+        scan: ScanStrategy::Search,
+    },
+    // optimize_scans + refined clustering
+    EncodingVariant {
+        name: "opt+refine",
+        strategy: SlotReplacement::Refined,
+        scan: ScanStrategy::Search,
+    },
+    // Extended scan search (13 split points)
+    EncodingVariant {
+        name: "opt_ext",
+        strategy: SlotReplacement::RoundRobin,
+        scan: ScanStrategy::SearchExtended,
+    },
+    // Extended scan search + refined clustering
+    EncodingVariant {
+        name: "ext+refine",
+        strategy: SlotReplacement::Refined,
+        scan: ScanStrategy::SearchExtended,
+    },
 ];
 
 const QUALITIES: &[f32] = &[50.0, 75.0, 85.0, 95.0];
@@ -53,16 +93,16 @@ fn load_png(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, bytes))
 }
 
-fn encode_with_strategy(
+fn encode_with(
     width: u32,
     height: u32,
     pixels: &[u8],
     quality: f32,
-    strategy: SlotReplacement,
+    variant: &EncodingVariant,
 ) -> std::result::Result<Vec<u8>, String> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
-        .progressive(true)
-        .slot_replacement(strategy);
+        .scan_strategy(variant.scan)
+        .slot_replacement(variant.strategy);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .map_err(|e| format!("setup: {e}"))?;
@@ -71,13 +111,7 @@ fn encode_with_strategy(
     enc.finish().map_err(|e| format!("finish: {e}"))
 }
 
-/// Per-image result for all strategies at one quality level.
-struct ImageResult {
-    name: String,
-    sizes: Vec<usize>, // one per strategy, indexed same as STRATEGIES
-}
-
-fn run_corpus(corpus_path: &Path, quality: f32) -> Vec<ImageResult> {
+fn run_corpus(corpus_path: &Path, quality: f32) -> Vec<(String, Vec<usize>)> {
     let mut entries: Vec<_> = std::fs::read_dir(corpus_path)
         .expect("read dir")
         .filter_map(|e| e.ok())
@@ -107,14 +141,14 @@ fn run_corpus(corpus_path: &Path, quality: f32) -> Vec<ImageResult> {
             None => continue,
         };
 
-        let mut sizes = Vec::with_capacity(STRATEGIES.len());
+        let mut sizes = Vec::with_capacity(VARIANTS.len());
         let mut ok = true;
 
-        for &(strategy, _) in STRATEGIES {
-            match encode_with_strategy(width, height, &pixels, quality, strategy) {
+        for variant in VARIANTS {
+            match encode_with(width, height, &pixels, quality, variant) {
                 Ok(jpeg) => sizes.push(jpeg.len()),
                 Err(e) => {
-                    eprintln!("  SKIP {name}: {e}");
+                    eprintln!("  SKIP {name} ({e})");
                     ok = false;
                     break;
                 }
@@ -122,7 +156,7 @@ fn run_corpus(corpus_path: &Path, quality: f32) -> Vec<ImageResult> {
         }
 
         if ok {
-            results.push(ImageResult { name, sizes });
+            results.push((name, sizes));
         }
     }
 
@@ -133,12 +167,12 @@ fn main() -> Result<()> {
     let corpus = codec_corpus::Corpus::new()?;
 
     // Header
-    print!("{:<8} {:<6}", "Corpus", "Q");
-    for &(_, label) in STRATEGIES {
-        print!(" {:>12}", label);
+    print!("{:<6} {:>3}", "Corpus", "Q");
+    for v in VARIANTS {
+        print!(" {:>12}", v.name);
     }
-    println!("  {:>8} {:>8}", "best_vs_rr", "best_name");
-    println!("{}", "-".repeat(100));
+    println!();
+    println!("{}", "-".repeat(6 + 4 + VARIANTS.len() * 13));
 
     for corpus_set in CORPORA {
         let corpus_path = match corpus.get(corpus_set.rel_path) {
@@ -161,46 +195,36 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            // Sum sizes across all images for each strategy
-            let mut totals = vec![0usize; STRATEGIES.len()];
-            for r in &results {
-                for (i, &sz) in r.sizes.iter().enumerate() {
+            let mut totals = vec![0usize; VARIANTS.len()];
+            for (_, sizes) in &results {
+                for (i, &sz) in sizes.iter().enumerate() {
                     totals[i] += sz;
                 }
             }
 
-            let rr_total = totals[0] as f64;
+            let baseline = totals[0] as f64;
 
-            // Find best strategy (smallest total)
-            let (best_idx, &best_total) = totals.iter().enumerate().min_by_key(|&(_, &t)| t).unwrap();
-            let best_pct = (best_total as f64 - rr_total) / rr_total * 100.0;
-
-            print!("{:<8} {:<6}", corpus_set.name, quality as u32);
+            print!("{:<6} {:>3}", corpus_set.name, quality as u32);
             for (i, &total) in totals.iter().enumerate() {
-                let pct = (total as f64 - rr_total) / rr_total * 100.0;
                 if i == 0 {
-                    // RoundRobin is baseline, show absolute
                     print!(" {:>12}", total);
                 } else {
-                    print!(" {:>+11.4}%", pct);
+                    let pct = (total as f64 - baseline) / baseline * 100.0;
+                    print!(" {:>+11.3}%", pct);
                 }
             }
-            println!(
-                "  {:>+7.4}% {}",
-                best_pct,
-                STRATEGIES[best_idx].1,
-            );
+            println!();
         }
     }
 
-    // Per-image detail for images where strategies diverge
-    println!("\n\n=== Per-image details (images where any strategy differs from RoundRobin) ===\n");
-    print!("{:<8} {:<6} {:<22}", "Corpus", "Q", "Image");
-    for &(_, label) in STRATEGIES {
-        print!(" {:>12}", label);
+    // Per-image detail for images where opt_ext differs from opt_scans
+    println!("\n=== Per-image: opt_ext vs opt_scans (images where they differ) ===\n");
+    print!("{:<6} {:>3} {:<22}", "Corpus", "Q", "Image");
+    for v in VARIANTS {
+        print!(" {:>12}", v.name);
     }
     println!();
-    println!("{}", "-".repeat(110));
+    println!("{}", "-".repeat(6 + 4 + 22 + VARIANTS.len() * 13));
 
     for corpus_set in CORPORA {
         let corpus_path = match corpus.get(corpus_set.rel_path) {
@@ -210,17 +234,16 @@ fn main() -> Result<()> {
 
         for &quality in QUALITIES {
             let results = run_corpus(&corpus_path, quality);
-
-            for r in &results {
-                // Only show if any strategy differs from RoundRobin
-                let rr = r.sizes[0];
-                if r.sizes.iter().all(|&s| s == rr) {
+            for (name, sizes) in &results {
+                // Show if any variant differs from baseline by more than 10 bytes
+                let baseline = sizes[0];
+                if sizes.iter().skip(1).all(|&s| (s as i64 - baseline as i64).unsigned_abs() < 10) {
                     continue;
                 }
 
-                print!("{:<8} {:<6} {:<22}", corpus_set.name, quality as u32, r.name);
-                for &sz in &r.sizes {
-                    let diff = sz as i64 - rr as i64;
+                print!("{:<6} {:>3} {:<22}", corpus_set.name, quality as u32, name);
+                for (i, &sz) in sizes.iter().enumerate() {
+                    let diff = sz as i64 - baseline as i64;
                     if diff == 0 {
                         print!(" {:>12}", sz);
                     } else {

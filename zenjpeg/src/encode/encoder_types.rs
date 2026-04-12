@@ -1192,6 +1192,15 @@ pub enum ScanStrategy {
     /// Typically saves 1-3% vs fixed scripts, at the cost of ~2x encode time.
     Search,
 
+    /// Extended search with 13 frequency split points (vs 5 in Search).
+    ///
+    /// Tests splits at [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32],
+    /// providing finer granularity in the low-frequency range where most
+    /// photographic energy concentrates.
+    ///
+    /// Typically saves an additional 0.1-0.5% over Search, at ~3x encode time.
+    SearchExtended,
+
     /// mozjpeg's default progressive script.
     ///
     /// - Frequency split at AC coefficients 8/9
@@ -1383,6 +1392,9 @@ pub enum ProgressiveScanMode {
     /// DC interleaving) and picks the smallest. Typically saves 1-3% vs
     /// fixed scripts, at the cost of ~2x encode time.
     ProgressiveSearch,
+
+    /// Progressive JPEG with extended scan search (13 split points).
+    ProgressiveSearchExtended,
 }
 
 impl ProgressiveScanMode {
@@ -1401,6 +1413,7 @@ impl ProgressiveScanMode {
             Self::Baseline | Self::Progressive => ScanStrategy::Default,
             Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
             Self::ProgressiveSearch => ScanStrategy::Search,
+            Self::ProgressiveSearchExtended => ScanStrategy::SearchExtended,
         }
     }
 }

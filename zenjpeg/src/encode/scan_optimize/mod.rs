@@ -47,7 +47,38 @@ pub(crate) fn generate_candidate_scripts(
     cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
     num_components: u8,
 ) -> Result<Vec<Vec<ProgressiveScan>>> {
-    let config = ScanSearchConfig::default();
+    generate_candidate_scripts_with_config(
+        y_blocks,
+        cb_blocks,
+        cr_blocks,
+        num_components,
+        ScanSearchConfig::default(),
+    )
+}
+
+pub(crate) fn generate_candidate_scripts_extended(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    num_components: u8,
+) -> Result<Vec<Vec<ProgressiveScan>>> {
+    generate_candidate_scripts_with_config(
+        y_blocks,
+        cb_blocks,
+        cr_blocks,
+        num_components,
+        ScanSearchConfig::extended(),
+    )
+}
+
+fn generate_candidate_scripts_with_config(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    num_components: u8,
+    config: ScanSearchConfig,
+) -> Result<Vec<Vec<ProgressiveScan>>> {
+    let config = config;
 
     // === Pre-generate all candidate scripts for cache warming ===
     let split_points: &[u8] = &config.frequency_splits;

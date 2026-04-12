@@ -291,6 +291,7 @@ impl EncoderConfig {
         self.progressive(match strategy {
             ScanStrategy::Default => ProgressiveScanMode::Progressive,
             ScanStrategy::Search => ProgressiveScanMode::ProgressiveSearch,
+            ScanStrategy::SearchExtended => ProgressiveScanMode::ProgressiveSearchExtended,
             ScanStrategy::Mozjpeg => ProgressiveScanMode::ProgressiveMozjpeg,
         })
     }

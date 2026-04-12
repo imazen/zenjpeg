@@ -131,7 +131,7 @@ pub(crate) fn generate_search_scans(
     scans.push(TrialScan::ac(0, 1, 63, 0, 0));
 
     // Scans 13-22: Frequency split tests
-    for &split in &config.frequency_splits {
+    for &split in config.frequency_splits {
         scans.push(TrialScan::ac(0, 1, split, 0, 0));
         scans.push(TrialScan::ac(0, split + 1, 63, 0, 0));
     }
@@ -164,7 +164,7 @@ pub(crate) fn generate_search_scans(
         scans.push(TrialScan::ac(2, 1, 63, 0, 0));
 
         // Frequency split tests (5 pairs × 2 components)
-        for &split in &config.frequency_splits {
+        for &split in config.frequency_splits {
             scans.push(TrialScan::ac(1, 1, split, 0, 0));
             scans.push(TrialScan::ac(1, split + 1, 63, 0, 0));
             scans.push(TrialScan::ac(2, 1, split, 0, 0));
@@ -197,7 +197,7 @@ fn generate_grayscale_search_scans(config: &ScanSearchConfig) -> Vec<TrialScan> 
     scans.push(TrialScan::ac(0, 1, 63, 0, 0));
 
     // Frequency split tests
-    for &split in &config.frequency_splits {
+    for &split in config.frequency_splits {
         scans.push(TrialScan::ac(0, 1, split, 0, 0));
         scans.push(TrialScan::ac(0, split + 1, 63, 0, 0));
     }

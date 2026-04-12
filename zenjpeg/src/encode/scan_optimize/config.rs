@@ -13,23 +13,40 @@ pub(crate) struct ScanSearchConfig {
     pub al_max_luma: u8,
     /// Maximum successive approximation level for chroma (default: 2).
     pub al_max_chroma: u8,
-    /// Frequency split points to test (default: [2, 8, 5, 12, 18]).
-    pub frequency_splits: [u8; 5],
+    /// Frequency split points to test.
+    pub frequency_splits: &'static [u8],
     /// DC scan optimization mode (0=interleaved, 1=separate, 2=luma+chroma pair).
     pub dc_scan_opt_mode: u8,
 }
+
+/// Original mozjpeg split points.
+const MOZJPEG_SPLITS: &[u8] = &[2, 5, 8, 12, 18];
+
+/// Extended split points: finer granularity in the 1-10 range where most
+/// photographic energy concentrates, plus wider spacing for high frequencies.
+const EXTENDED_SPLITS: &[u8] = &[1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32];
 
 impl Default for ScanSearchConfig {
     fn default() -> Self {
         Self {
             al_max_luma: 3,
             al_max_chroma: 2,
-            frequency_splits: [2, 8, 5, 12, 18],
+            frequency_splits: MOZJPEG_SPLITS,
             // Use separate DC scans (mode 1) because zenjpeg's progressive
             // tokenizer stores blocks per-component in raster order, not
             // MCU-interleaved. Interleaved DC (mode 0) would require MCU-aware
             // iteration to handle subsampled images correctly.
             dc_scan_opt_mode: 1,
+        }
+    }
+}
+
+impl ScanSearchConfig {
+    /// Config with extended frequency split points for deeper search.
+    pub fn extended() -> Self {
+        Self {
+            frequency_splits: EXTENDED_SPLITS,
+            ..Self::default()
         }
     }
 }

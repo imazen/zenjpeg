@@ -153,7 +153,9 @@ impl ComputedConfig {
     pub(crate) fn get_progressive_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
         match self.scan_strategy {
             ScanStrategy::Default => self.get_jpegli_scan_script(is_color),
-            ScanStrategy::Search => self.get_jpegli_scan_script(is_color), // Search uses trial encoding
+            ScanStrategy::Search | ScanStrategy::SearchExtended => {
+                self.get_jpegli_scan_script(is_color) // Search uses trial encoding
+            }
             ScanStrategy::Mozjpeg => self.get_mozjpeg_scan_script(is_color),
         }
     }
@@ -371,17 +373,29 @@ impl ComputedConfig {
         let is_color = !self.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
 
-        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb {
+        if (self.scan_strategy == ScanStrategy::Search
+            || self.scan_strategy == ScanStrategy::SearchExtended)
+            && !self.use_xyb
+        {
             // Generate multiple candidate scan scripts and trial-encode each.
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
             // use actual encoding for the final selection.
-            let candidates = super::scan_optimize::generate_candidate_scripts(
-                y_blocks,
-                cb_blocks,
-                cr_blocks,
-                num_components as u8,
-            )?;
+            let candidates = if self.scan_strategy == ScanStrategy::SearchExtended {
+                super::scan_optimize::generate_candidate_scripts_extended(
+                    y_blocks,
+                    cb_blocks,
+                    cr_blocks,
+                    num_components as u8,
+                )?
+            } else {
+                super::scan_optimize::generate_candidate_scripts(
+                    y_blocks,
+                    cb_blocks,
+                    cr_blocks,
+                    num_components as u8,
+                )?
+            };
 
             let mut best_output = Vec::new();
             for (i, candidate) in candidates.iter().enumerate() {
