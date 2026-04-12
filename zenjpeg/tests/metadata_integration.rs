@@ -6,6 +6,7 @@
 //! - `ultrahdr`: Ultra HDR JPEG encoding (using jpegli as base encoder)
 
 use rgb::RGB;
+use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation};
 
 /// Create a test image with a gradient pattern.
@@ -1127,4 +1128,44 @@ mod extended_xmp {
         assert_eq!(decoded.len(), xmp.len());
         assert_eq!(decoded, xmp);
     }
+}
+
+// ============================================================================
+// read_info metadata tests (moved from src/decode/mod.rs for #28)
+// ============================================================================
+
+#[test]
+fn test_read_info_includes_metadata_fields() {
+    let jpeg = encode_test_jpeg(64, 64, 85.0);
+
+    let decoder = Decoder::new();
+    let info = decoder.read_info(&jpeg);
+
+    assert!(info.is_ok(), "read_info should succeed on valid JPEG");
+
+    let info = info.unwrap();
+    // Verify metadata fields exist on JpegInfo (even if None for a plain JPEG)
+    let _ = &info.icc_profile;
+    let _ = &info.exif;
+    let _ = &info.xmp;
+}
+
+#[test]
+fn test_read_info_extracts_metadata() {
+    // UltraHDR sample has XMP metadata
+    let jpeg = include_bytes!("images/ultrahdr_sample.jpg");
+
+    let decoder = Decoder::new();
+    let info = decoder
+        .read_info(jpeg)
+        .expect("Should decode ultrahdr_sample.jpg");
+
+    if info.has_icc_profile {
+        assert!(
+            info.icc_profile.is_some(),
+            "If has_icc_profile is true, icc_profile should be Some"
+        );
+    }
+    // UltraHDR sample should have XMP
+    assert!(info.xmp.is_some(), "ultrahdr_sample.jpg should have XMP");
 }

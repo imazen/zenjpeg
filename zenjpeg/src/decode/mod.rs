@@ -2908,68 +2908,8 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod metadata_tests {
-    use super::*;
-
-    #[test]
-    fn test_read_info_includes_metadata_fields() {
-        // Create minimal valid JPEG
-        let jpeg = include_bytes!("../../tests/outputs/1_q85.jpg");
-
-        let decoder = Decoder::new();
-        let info = decoder.read_info(jpeg);
-
-        // Should successfully parse
-        assert!(info.is_ok(), "read_info should succeed on valid JPEG");
-
-        let info = info.unwrap();
-
-        // New fields should exist (even if None)
-        // This tests that the struct has been extended with metadata fields
-        let _ = &info.icc_profile;
-        let _ = &info.exif;
-        let _ = &info.xmp;
-
-        println!("✅ JpegInfo includes icc_profile, exif, and xmp fields");
-    }
-
-    #[test]
-    fn test_read_info_extracts_metadata() {
-        // Test with UltraHDR sample which has XMP
-        let jpeg = include_bytes!("../../tests/images/ultrahdr_sample.jpg");
-
-        let decoder = Decoder::new();
-        let info = decoder
-            .read_info(jpeg)
-            .expect("Should decode ultrahdr_sample.jpg");
-
-        // Check that metadata extraction doesn't require full decode
-        println!(
-            "Image: {}x{}",
-            info.dimensions.width, info.dimensions.height
-        );
-
-        if info.has_icc_profile {
-            assert!(
-                info.icc_profile.is_some(),
-                "If has_icc_profile is true, icc_profile should be Some"
-            );
-            println!(
-                "✅ ICC profile extracted: {} bytes",
-                info.icc_profile.as_ref().unwrap().len()
-            );
-        }
-
-        if let Some(ref xmp) = info.xmp {
-            println!("✅ XMP extracted: {} chars", xmp.len());
-        }
-
-        if let Some(ref exif) = info.exif {
-            println!("✅ EXIF extracted: {} bytes", exif.len());
-        }
-    }
-}
+// metadata_tests moved to tests/metadata_integration.rs to avoid
+// include_bytes! referencing test fixtures excluded from published crate (#28)
 #[cfg(test)]
 mod limits_tests {
     use super::*;
