@@ -141,50 +141,57 @@ fn xyb_p0_sub420_decodes() {
     assert_xyb_decodes(data, "XYB p=0 sub=420");
 }
 
-// ── Bug 2: non-uniform chroma subsampling (-sample 2x2,2x1,1x2) ────────────
+// ── Bug 2 (FIXED): non-uniform chroma subsampling `-sample 2x2,2x1,1x2` ────
 //
-// cjpeg with Y:(2H,2V), Cb:(2H,1V), Cr:(1H,2V) produces JPEG files zenjpeg
-// decodes with max pixel diff up to 49 vs mozjpeg. Normal subsampling
-// (444/422/420/440/411) has max diff ≤ 7 across the full corpus. 162 files
-// in the generated corpus exhibit this.
+// Was: cjpeg with Y:(2H,2V), Cb:(2H,1V), Cr:(1H,2V) produced files zenjpeg
+// decoded with wrong pixels (max diff up to 49 vs mozjpeg on 96×72 sources).
+// All four fast paths correctly gated asymmetric chroma, so these files
+// reached the f32 generic decode path in `parser/output.rs::to_pixels`.
+// That path already allocates per-component planes with per-component
+// sampling factors and applies per-component upsamplers — but it was
+// reading the block-padded region of the chroma plane without edge-
+// replicating the last real row/column first, so the upsamplers saw
+// stale IDCT output from the padding blocks at image boundaries.
+//
+// Fix: `upsample_planes_f32` now materializes a padded copy of the
+// component plane with the last real row / column replicated into the
+// padding region before dispatching to the upsampler — mirroring
+// libjpeg-turbo's `set_bottom_pointers`. Only allocates when the image
+// isn't MCU-aligned and the component is actually subsampled; no-op
+// for aligned files.
+//
+// Also adds a missing asymmetric-chroma guard to `fused_parallel.rs` so
+// files with Cb≠Cr fall through to the sequential coefficient path
+// instead of the parallel fused path (which hard-codes symmetric chroma).
 
-#[test]
-fn mixed1_q5_has_small_diff() {
-    // Q5 noise_96x72: recorded max_diff = 10 vs mozjpeg. Asserting > 8 so
-    // the test fails when the bug is fixed (expected post-fix: ≤ 7).
-    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
-    let (zw, zh, zp) = decode_zen(data).expect("decodes");
-    let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
-    assert_eq!((zw, zh), (mw, mh));
+fn assert_decodes_close_to_mozjpeg(data: &[u8], label: &str, threshold: u8) {
+    let (zw, zh, zp) =
+        decode_zen(data).unwrap_or_else(|e| panic!("{label}: zen decode failed: {e}"));
+    let (mw, mh, mp) =
+        decode_mozjpeg_rgb(data).unwrap_or_else(|e| panic!("{label}: moz decode failed: {e}"));
+    assert_eq!((zw, zh), (mw, mh), "{label}: dim mismatch");
     let zrgb = normalize_to_rgb(zw, zh, zp);
     let mrgb = normalize_to_rgb(mw, mh, mp);
     let max = max_abs_diff(&zrgb, &mrgb);
     assert!(
-        max > 8,
-        "mixed1 Q5 max_diff={max} (expected > 8 while bug exists). \
-         If max_diff ≤ 8, the non-uniform-subsampling bug is fixed — \
-         update or remove this test"
+        max <= threshold,
+        "{label} max_diff={max} exceeds threshold {threshold} vs mozjpeg"
     );
 }
 
 #[test]
-fn mixed1_q75_has_large_diff() {
-    // Q75 patches_96x72: recorded max_diff = 49 vs mozjpeg. Asserting > 30
-    // to leave headroom for small changes while still failing on a real fix.
+fn mixed1_q5_decodes_correctly() {
+    // noise_96x72, Q5, `cjpeg -sample 2x2,2x1,1x2`. Pre-fix max_diff was 10.
+    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    assert_decodes_close_to_mozjpeg(data, "mixed1 Q5 noise_96x72", 7);
+}
+
+#[test]
+fn mixed1_q75_decodes_correctly() {
+    // patches_96x72, Q75, `cjpeg -sample 2x2,2x1,1x2`. Pre-fix max_diff was 49.
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/mixed1_q75_patches_96x72.jpg");
-    let (zw, zh, zp) = decode_zen(data).expect("decodes");
-    let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
-    assert_eq!((zw, zh), (mw, mh));
-    let zrgb = normalize_to_rgb(zw, zh, zp);
-    let mrgb = normalize_to_rgb(mw, mh, mp);
-    let max = max_abs_diff(&zrgb, &mrgb);
-    assert!(
-        max > 30,
-        "mixed1 Q75 max_diff={max} (expected > 30 while bug exists). \
-         If max_diff ≤ 30, the non-uniform-subsampling bug is fixed — \
-         update or remove this test"
-    );
+    assert_decodes_close_to_mozjpeg(data, "mixed1 Q75 patches_96x72", 7);
 }
 
 // ── Bug 3 (FIXED): cjpegli -p 0 Huffman / AC errors ────────────────────────

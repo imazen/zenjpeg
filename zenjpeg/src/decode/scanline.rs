@@ -888,6 +888,18 @@ impl<'a> ScanlineReader<'a> {
         if self.num_components == 1 {
             return 0;
         }
+        // Reports a single chroma height — only valid when Cb and Cr share
+        // sampling factors. Asymmetric files are routed through the buffered
+        // f32 path in `Decoder::scanline_reader` before reaching this point.
+        debug_assert!(
+            self.strip.v_samp[1] == self.strip.v_samp[2]
+                && self.strip.h_samp[1] == self.strip.h_samp[2],
+            "chroma_height requires symmetric Cb/Cr; got Cb=({},{}) Cr=({},{})",
+            self.strip.h_samp[1],
+            self.strip.v_samp[1],
+            self.strip.h_samp[2],
+            self.strip.v_samp[2]
+        );
         // Wave-only readers have a dummy strip; derive from wave_state
         #[cfg(feature = "parallel")]
         if let Some(ref ws) = self.wave_state {

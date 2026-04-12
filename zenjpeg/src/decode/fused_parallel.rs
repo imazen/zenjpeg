@@ -217,6 +217,18 @@ impl<'a> JpegParser<'a> {
             return Ok(false);
         }
 
+        // Non-uniform chroma subsampling (Cb and Cr have different sampling
+        // factors, e.g. `cjpeg -sample 2x2,2x1,1x2`). All fused decode paths
+        // here assume Cb and Cr share the same chroma strip layout. The
+        // sequential f32 generic path in `output.rs` handles per-component
+        // sampling correctly; fall through to it.
+        let cb_cr_asymmetric = num_comps == 3
+            && (self.components[1].h_samp_factor != self.components[2].h_samp_factor
+                || self.components[1].v_samp_factor != self.components[2].v_samp_factor);
+        if cb_cr_asymmetric {
+            return Ok(false);
+        }
+
         // Select fused path
         let chroma_upsampling = self.chroma_upsampling;
         let idct_method = self.idct_method;

@@ -887,7 +887,7 @@ impl<'a> JpegParser<'a> {
     /// Full-res components are clipped to image dimensions without interpolation.
     fn upsample_planes_f32(
         &self,
-        comp_planes_f32: &[Vec<f32>],
+        comp_planes_f32: &mut [Vec<f32>],
         comp_infos: &[CompInfo],
         max_h_samp: u8,
         max_v_samp: u8,
@@ -899,11 +899,58 @@ impl<'a> JpegParser<'a> {
         let mut planes_f32 = Vec::with_capacity(comp_infos.len());
 
         for (comp_idx, info) in comp_infos.iter().enumerate() {
-            let comp_plane = &comp_planes_f32[comp_idx];
-
             let plane = if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
                 let scale_x = max_h_samp as usize / info.h_samp;
                 let scale_y = max_v_samp as usize / info.v_samp;
+
+                // Edge-replicate the block-padding region of the chroma plane
+                // before upsampling, mirroring libjpeg-turbo's
+                // `set_bottom_pointers`. Non-MCU-aligned images have stale
+                // IDCT output in the padding rows/columns, and the fancy
+                // upsamplers read `input[(in_y+1) * stride + in_x]` at image
+                // boundaries, which otherwise lands inside the garbage region.
+                //
+                // Only touches O(comp_width + comp_height) elements in the
+                // padding area; MCU-aligned files skip it entirely.
+                let real_w =
+                    (width * info.h_samp + (max_h_samp as usize) - 1) / (max_h_samp as usize);
+                let real_h =
+                    (height * info.v_samp + (max_v_samp as usize) - 1) / (max_v_samp as usize);
+                let pad_right = real_w < info.comp_width && real_w > 0;
+                let pad_bottom = real_h < info.comp_height && real_h > 0;
+
+                if pad_right || pad_bottom {
+                    let comp_plane = &mut comp_planes_f32[comp_idx];
+                    let cw = info.comp_width;
+
+                    // Right-edge column replication over real content rows.
+                    if pad_right {
+                        for row in 0..real_h {
+                            let row_start = row * cw;
+                            let last = comp_plane[row_start + real_w - 1];
+                            for x in real_w..cw {
+                                comp_plane[row_start + x] = last;
+                            }
+                        }
+                    }
+
+                    // Bottom-edge row replication (picks up any right-pad fill
+                    // from the previous step).
+                    if pad_bottom {
+                        let src_start = (real_h - 1) * cw;
+                        let src_end = src_start + cw;
+                        // Split the vec so we can borrow src immutably and
+                        // dst mutably at the same time without allocating.
+                        let (before_dst, dst_slab) = comp_plane.split_at_mut(real_h * cw);
+                        let src_row = &before_dst[src_start..src_end];
+                        for row_idx in 0..(info.comp_height - real_h) {
+                            let dst_start = row_idx * cw;
+                            dst_slab[dst_start..dst_start + cw].copy_from_slice(src_row);
+                        }
+                    }
+                }
+
+                let comp_plane: &[f32] = &comp_planes_f32[comp_idx];
 
                 match chroma_upsampling {
                     super::super::ChromaUpsampling::Triangle => upsample_libjpeg_f32(
@@ -931,6 +978,7 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             } else {
+                let comp_plane = &comp_planes_f32[comp_idx];
                 // Full resolution — clip to image dimensions
                 let mut plane = vec![0.0f32; output_size];
                 for py in 0..height {
@@ -1161,7 +1209,7 @@ impl<'a> JpegParser<'a> {
 
         // Upsample and convert to output format
         let planes_f32 = self.upsample_planes_f32(
-            &comp_planes_f32,
+            &mut comp_planes_f32,
             &comp_infos,
             max_h_samp,
             max_v_samp,
@@ -1382,7 +1430,7 @@ impl<'a> JpegParser<'a> {
 
         // Upsample and convert to output format
         let planes_f32 = self.upsample_planes_f32(
-            &comp_planes_f32,
+            &mut comp_planes_f32,
             &comp_infos,
             max_h_samp,
             max_v_samp,
@@ -1551,7 +1599,7 @@ impl<'a> JpegParser<'a> {
 
         // Upsample chroma and return planes
         let mut planes_f32 = self.upsample_planes_f32(
-            &comp_planes_f32,
+            &mut comp_planes_f32,
             &comp_infos,
             max_h_samp,
             max_v_samp,
