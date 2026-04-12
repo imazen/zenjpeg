@@ -335,6 +335,7 @@ impl StreamingEncoder {
             force_sof1: builder.force_sof1,
             separate_chroma_tables: builder.separate_chroma_tables,
             scan_strategy: builder.scan_strategy,
+            slot_replacement: builder.slot_replacement,
         };
 
         #[allow(unused_mut)]

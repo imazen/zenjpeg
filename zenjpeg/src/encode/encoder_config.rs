@@ -59,6 +59,8 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+    /// Slot replacement strategy for Huffman clustering in progressive mode.
+    pub(crate) slot_replacement: crate::huffman::optimize::SlotReplacement,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -211,6 +213,7 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            slot_replacement: crate::huffman::optimize::SlotReplacement::default(),
         }
     }
 
@@ -290,6 +293,16 @@ impl EncoderConfig {
             ScanStrategy::Search => ProgressiveScanMode::ProgressiveSearch,
             ScanStrategy::Mozjpeg => ProgressiveScanMode::ProgressiveMozjpeg,
         })
+    }
+
+    /// Sets the Huffman clustering slot replacement strategy.
+    ///
+    /// Only affects progressive mode encoding where more than 4 histogram
+    /// contexts exist. Controls which DHT slot is evicted when all 4 are full.
+    #[must_use]
+    pub fn slot_replacement(mut self, strategy: crate::huffman::optimize::SlotReplacement) -> Self {
+        self.slot_replacement = strategy;
+        self
     }
 
     #[doc(hidden)]

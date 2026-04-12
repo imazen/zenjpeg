@@ -154,6 +154,12 @@ pub struct ComputedConfig {
     /// `hybrid_config` instead.
     #[cfg(feature = "trellis")]
     pub trellis: Option<super::trellis::TrellisConfig>,
+
+    /// Slot replacement strategy for Huffman table clustering.
+    ///
+    /// Controls which DHT slot is evicted when all 4 are full during
+    /// progressive Huffman optimization. Only affects progressive mode.
+    pub slot_replacement: crate::huffman::optimize::SlotReplacement,
 }
 
 /// Minimum MCUs per restart segment. Below this, restart overhead
@@ -293,6 +299,7 @@ impl Default for ComputedConfig {
             separate_chroma_tables: true,
             #[cfg(feature = "trellis")]
             trellis: None,
+            slot_replacement: crate::huffman::optimize::SlotReplacement::default(),
         }
     }
 }

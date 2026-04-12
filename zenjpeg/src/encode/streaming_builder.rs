@@ -61,6 +61,8 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
     pub(crate) quant_source: QuantTableSource,
+    /// Slot replacement strategy for Huffman clustering.
+    pub(crate) slot_replacement: crate::huffman::optimize::SlotReplacement,
 }
 
 impl StreamingEncoderBuilder {
@@ -92,6 +94,7 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "trellis")]
             trellis: None,
             quant_source: QuantTableSource::default(),
+            slot_replacement: crate::huffman::optimize::SlotReplacement::default(),
         }
     }
 
@@ -327,6 +330,13 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
         self.scan_strategy = strategy;
+        self
+    }
+
+    /// Sets the Huffman clustering slot replacement strategy.
+    #[must_use]
+    pub(crate) fn slot_replacement(mut self, strategy: crate::huffman::optimize::SlotReplacement) -> Self {
+        self.slot_replacement = strategy;
         self
     }
 

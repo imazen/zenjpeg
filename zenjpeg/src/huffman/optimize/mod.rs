@@ -57,7 +57,7 @@ pub mod progressive;
 pub mod tokens;
 
 // Re-export commonly used types
-pub use cluster::ContextConfig;
+pub use cluster::{ContextConfig, SlotReplacement};
 pub use frequency::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 pub use progressive::ProgressiveTokenBuffer;
 pub use tokens::{ScanTokenInfo, Token};

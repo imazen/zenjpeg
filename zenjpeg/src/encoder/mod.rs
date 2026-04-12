@@ -179,6 +179,7 @@ pub use crate::encode::tables::presets::{MozjpegTables, QuantTablePreset};
 /// Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
 /// or pass custom tables to [`EncoderConfig::custom_huffman_tables()`].
 pub use crate::huffman::optimize::HuffmanTableSet;
+pub use crate::huffman::optimize::SlotReplacement;
 pub use crate::types::HuffmanMethod;
 
 // === Cancellation support ===

@@ -8,7 +8,7 @@
 use crate::error::Result;
 use tinyvec::ArrayVec;
 
-use super::cluster::cluster_histograms;
+use super::cluster::{cluster_histograms, cluster_histograms_with_strategy, SlotReplacement};
 use super::frequency::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 use super::tokens::{RefToken, ScanTokenInfo, Token};
 
@@ -269,6 +269,56 @@ impl ProgressiveTokenBuffer {
         // AC slot IDs for on-demand DHT emission
         let ac_slot_ids = ac_clusters.slot_ids.clone();
 
+        Ok((context_map, dc_clusters.num_clusters, tables, ac_slot_ids))
+    }
+
+    /// Like [`generate_optimized_tables`], but with a configurable slot replacement strategy.
+    pub fn generate_optimized_tables_with_strategy(
+        &self,
+        max_dc_clusters: usize,
+        max_ac_clusters: usize,
+        num_dc_contexts: usize,
+        force_baseline: bool,
+        strategy: SlotReplacement,
+    ) -> Result<(Vec<usize>, usize, Vec<OptimizedTable>, Vec<usize>)> {
+        let dc_histograms: Vec<_> = self.counters[..num_dc_contexts].to_vec();
+        let ac_histograms: Vec<_> = self.counters[num_dc_contexts..].to_vec();
+
+        let dc_clusters =
+            cluster_histograms_with_strategy(&dc_histograms, max_dc_clusters, force_baseline, strategy);
+        let ac_clusters =
+            cluster_histograms_with_strategy(&ac_histograms, max_ac_clusters, force_baseline, strategy);
+
+        let mut context_map = Vec::with_capacity(self.num_contexts);
+        for ctx in 0..num_dc_contexts {
+            context_map.push(dc_clusters.context_map[ctx]);
+        }
+        let dc_offset = dc_clusters.num_clusters;
+        for ctx in 0..ac_histograms.len() {
+            context_map.push(dc_offset + ac_clusters.context_map[ctx]);
+        }
+
+        let mut tables = Vec::new();
+        for histo in &dc_clusters.cluster_histograms {
+            if histo.is_empty_histogram() {
+                let mut default = FrequencyCounter::new();
+                default.count(0);
+                tables.push(default.generate_table_with_dht()?);
+            } else {
+                tables.push(histo.generate_table_with_dht()?);
+            }
+        }
+        for histo in &ac_clusters.cluster_histograms {
+            if histo.is_empty_histogram() {
+                let mut default = FrequencyCounter::new();
+                default.count(0);
+                tables.push(default.generate_table_with_dht()?);
+            } else {
+                tables.push(histo.generate_table_with_dht()?);
+            }
+        }
+
+        let ac_slot_ids = ac_clusters.slot_ids.clone();
         Ok((context_map, dc_clusters.num_clusters, tables, ac_slot_ids))
     }
 

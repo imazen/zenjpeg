@@ -154,6 +154,8 @@ impl BytesEncoder {
             builder = builder.parallel(true);
         }
 
+        builder = builder.slot_replacement(config.slot_replacement);
+
         // Apply trellis or hybrid quantization config
         #[cfg(feature = "trellis")]
         {
@@ -1031,6 +1033,8 @@ impl YCbCrPlanarEncoder {
             config.color_mode,
             super::encoder_types::ColorMode::Xyb { .. }
         ));
+
+        builder = builder.slot_replacement(config.slot_replacement);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {

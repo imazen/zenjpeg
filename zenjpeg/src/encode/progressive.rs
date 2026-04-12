@@ -514,11 +514,12 @@ impl ComputedConfig {
 
         // ========== GENERATE OPTIMIZED TABLES ==========
         let (context_map, num_dc_tables, tables, ac_slot_ids) = token_buffer
-            .generate_optimized_tables(
+            .generate_optimized_tables_with_strategy(
                 4,  // max DC clusters
                 12, // max AC clusters
                 context_config.ac_offset,
                 false, // force_baseline
+                self.slot_replacement,
             )?;
 
         // ========== WRITE JPEG STRUCTURE ==========

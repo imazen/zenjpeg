@@ -8,6 +8,35 @@
 
 use super::frequency::FrequencyCounter;
 
+/// Strategy for replacing a DHT slot when all 4 are full.
+///
+/// JPEG allows at most 4 Huffman tables per type (DC/AC). When progressive
+/// encoding creates more logical histogram clusters than physical slots,
+/// the algorithm must evict one slot to make room. This enum controls
+/// which slot is chosen for eviction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SlotReplacement {
+    /// Round-robin: cycle through slots 0-3. Matches C++ jpegli behavior.
+    #[default]
+    RoundRobin,
+    /// Replace the slot whose histogram has the fewest total symbols.
+    /// Rationale: a small cluster has less data, so losing its tailored
+    /// table causes less encoding cost increase.
+    SmallestCount,
+    /// Replace the slot whose histogram can be re-merged into another
+    /// existing slot at the lowest cost. Computes the merge cost of
+    /// each slot into each other slot, picks the cheapest eviction.
+    LowestEvictionCost,
+    /// Replace the slot that was least recently assigned or updated.
+    /// Older assignments are more likely to be superseded by newer,
+    /// more relevant histogram distributions.
+    OldestSlot,
+    /// Replace the slot with the highest current encoding cost.
+    /// Rationale: if a slot is already expensive, replacing its table
+    /// with a fresh one may improve overall efficiency.
+    HighestSlotCost,
+}
+
 /// Result of histogram clustering.
 #[derive(Clone, Debug)]
 pub struct ClusterResult {
@@ -169,29 +198,56 @@ impl ContextConfig {
 
 /// Clusters histograms to minimize total encoding cost.
 ///
+/// Uses the default round-robin slot replacement strategy (matching C++ jpegli).
+///
+/// See [`cluster_histograms_with_strategy`] for alternative replacement strategies.
+pub fn cluster_histograms(
+    histograms: &[FrequencyCounter],
+    max_clusters: usize,
+    force_baseline: bool,
+) -> ClusterResult {
+    cluster_histograms_with_strategy(
+        histograms,
+        max_clusters,
+        force_baseline,
+        SlotReplacement::RoundRobin,
+    )
+}
+
+/// Clusters histograms to minimize total encoding cost, with configurable
+/// slot replacement strategy.
+///
 /// This implements the C++ ClusterJpegHistograms algorithm (entropy_coding.cc:584-642):
 /// 1. Process histograms in order
 /// 2. For each, find best existing cluster to merge with
 /// 3. If merging saves bits, merge; otherwise create new cluster
 /// 4. Respect max_clusters limit (typically 2 for baseline, 4 for extended)
 ///
+/// When all 4 DHT slots are occupied and a new cluster is needed,
+/// the `strategy` parameter controls which slot is evicted.
+///
 /// # Arguments
 /// * `histograms` - Symbol counts per context
 /// * `max_clusters` - Maximum clusters (2 for baseline sequential, 4 for progressive)
 /// * `force_baseline` - If true, limit to 2 clusters for baseline JPEG compatibility
+/// * `strategy` - Slot replacement strategy when all 4 slots are full
 ///
 /// # Returns
 /// ClusterResult with context-to-cluster mapping, merged histograms, and slot IDs
-pub fn cluster_histograms(
+pub fn cluster_histograms_with_strategy(
     histograms: &[FrequencyCounter],
     max_clusters: usize,
     force_baseline: bool,
+    strategy: SlotReplacement,
 ) -> ClusterResult {
     let mut result = ClusterResult::new(histograms.len());
 
     // Track which cluster is in each slot and its cost
     let mut slot_histograms: Vec<usize> = Vec::new(); // cluster index per slot
     let mut slot_costs: Vec<f64> = Vec::new();
+    // Track assignment order for OldestSlot strategy (lower = older)
+    let mut slot_age: Vec<usize> = Vec::new();
+    let mut age_counter: usize = 0;
 
     // Effective max clusters: 2 for baseline, up to max_clusters otherwise
     // Note: More clusters can be created than slots (4) - slot IDs cycle with modulo 4
@@ -253,13 +309,22 @@ pub fn cluster_histograms(
                 // We have a free slot
                 slot_histograms.push(cluster_idx);
                 slot_costs.push(best_cost);
+                slot_age.push(age_counter);
+                age_counter += 1;
                 result.slot_ids.push(num_slots);
             } else {
-                // No free slot - round-robin replacement
-                // (C++ TODO: find best histogram to replace)
-                let replace_slot = (result.slot_ids.last().copied().unwrap_or(0) + 1) % 4;
+                // No free slot — pick which to replace based on strategy
+                let replace_slot = pick_replacement_slot(
+                    strategy,
+                    &result,
+                    &slot_histograms,
+                    &slot_costs,
+                    &slot_age,
+                );
                 slot_histograms[replace_slot] = cluster_idx;
                 slot_costs[replace_slot] = best_cost;
+                slot_age[replace_slot] = age_counter;
+                age_counter += 1;
                 result.slot_ids.push(replace_slot);
             }
         } else {
@@ -269,6 +334,12 @@ pub fn cluster_histograms(
             result.cluster_histograms[cluster_idx].add(histo);
             result.context_map[ctx_idx] = cluster_idx;
             slot_costs[target_slot] += best_cost;
+
+            // Update age on merge (slot was just used)
+            if target_slot < slot_age.len() {
+                slot_age[target_slot] = age_counter;
+                age_counter += 1;
+            }
 
             // slot_id already assigned to this cluster
 
@@ -285,4 +356,76 @@ pub fn cluster_histograms(
     }
 
     result
+}
+
+/// Pick which of the 4 occupied slots to replace when a new cluster is needed.
+fn pick_replacement_slot(
+    strategy: SlotReplacement,
+    result: &ClusterResult,
+    slot_histograms: &[usize],
+    slot_costs: &[f64],
+    slot_age: &[usize],
+) -> usize {
+    debug_assert!(slot_histograms.len() == 4);
+
+    match strategy {
+        SlotReplacement::RoundRobin => {
+            // C++ jpegli behavior: cycle through slots
+            (result.slot_ids.last().copied().unwrap_or(0) + 1) % 4
+        }
+
+        SlotReplacement::SmallestCount => {
+            // Replace the slot with the fewest total symbols
+            (0..4)
+                .min_by_key(|&s| result.cluster_histograms[slot_histograms[s]].total())
+                .unwrap_or(0)
+        }
+
+        SlotReplacement::LowestEvictionCost => {
+            // For each slot, compute cost of re-merging its histogram into
+            // the best of the other 3 slots. Pick the cheapest eviction.
+            let mut best_evict_slot = 0;
+            let mut best_evict_cost = f64::MAX;
+
+            for candidate in 0..4 {
+                let candidate_histo = &result.cluster_histograms[slot_histograms[candidate]];
+
+                // Find cheapest merge target among the other 3 slots
+                let mut cheapest_remerge = f64::MAX;
+                for other in 0..4 {
+                    if other == candidate {
+                        continue;
+                    }
+                    let other_histo = &result.cluster_histograms[slot_histograms[other]];
+                    let combined = other_histo.combined(candidate_histo);
+                    let combined_cost = combined.estimate_encoding_cost();
+                    let remerge_cost = combined_cost - slot_costs[other];
+                    if remerge_cost < cheapest_remerge {
+                        cheapest_remerge = remerge_cost;
+                    }
+                }
+
+                if cheapest_remerge < best_evict_cost {
+                    best_evict_cost = cheapest_remerge;
+                    best_evict_slot = candidate;
+                }
+            }
+
+            best_evict_slot
+        }
+
+        SlotReplacement::OldestSlot => {
+            // Replace the slot that was assigned/updated longest ago
+            (0..4)
+                .min_by_key(|&s| slot_age.get(s).copied().unwrap_or(0))
+                .unwrap_or(0)
+        }
+
+        SlotReplacement::HighestSlotCost => {
+            // Replace the slot with the highest current encoding cost
+            (0..4)
+                .max_by(|&a, &b| slot_costs[a].partial_cmp(&slot_costs[b]).unwrap_or(core::cmp::Ordering::Equal))
+                .unwrap_or(0)
+        }
+    }
 }
