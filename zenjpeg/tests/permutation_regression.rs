@@ -28,72 +28,6 @@ fn decode_zen(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     Ok((w, h, pixels))
 }
 
-fn decode_mozjpeg_rgb(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    use mozjpeg_sys::*;
-    use std::mem;
-
-    unsafe {
-        let mut err: jpeg_error_mgr = mem::zeroed();
-        jpeg_std_error(&mut err);
-
-        let mut cinfo: jpeg_decompress_struct = mem::zeroed();
-        cinfo.common.err = &mut err;
-        jpeg_create_decompress(&mut cinfo);
-
-        jpeg_mem_src(&mut cinfo, data.as_ptr(), data.len() as _);
-        if jpeg_read_header(&mut cinfo, true as boolean) != 1 {
-            jpeg_destroy_decompress(&mut cinfo);
-            return Err("mozjpeg: bad header".into());
-        }
-        cinfo.out_color_space = J_COLOR_SPACE::JCS_RGB;
-        if jpeg_start_decompress(&mut cinfo) == 0 {
-            jpeg_destroy_decompress(&mut cinfo);
-            return Err("mozjpeg: start_decompress failed".into());
-        }
-        let width = cinfo.output_width;
-        let height = cinfo.output_height;
-        let row_stride = width as usize * cinfo.output_components as usize;
-        let mut out = vec![0u8; height as usize * row_stride];
-        while cinfo.output_scanline < height {
-            let offset = cinfo.output_scanline as usize * row_stride;
-            let mut row_ptr = out[offset..].as_mut_ptr();
-            jpeg_read_scanlines(&mut cinfo, &mut row_ptr, 1);
-        }
-        jpeg_finish_decompress(&mut cinfo);
-        jpeg_destroy_decompress(&mut cinfo);
-        Ok((width, height, out))
-    }
-}
-
-fn normalize_to_rgb(w: u32, h: u32, pixels: Vec<u8>) -> Vec<u8> {
-    let n = w as usize * h as usize;
-    if pixels.len() == n * 3 {
-        pixels
-    } else if pixels.len() == n {
-        let mut rgb = Vec::with_capacity(n * 3);
-        for v in pixels {
-            rgb.push(v);
-            rgb.push(v);
-            rgb.push(v);
-        }
-        rgb
-    } else {
-        panic!("unexpected pixel length {} for {w}x{h}", pixels.len());
-    }
-}
-
-fn max_abs_diff(a: &[u8], b: &[u8]) -> u8 {
-    assert_eq!(a.len(), b.len());
-    let mut m = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        let d = (*x as i16 - *y as i16).unsigned_abs() as u8;
-        if d > m {
-            m = d;
-        }
-    }
-    m
-}
-
 // ── Bug 1 (FIXED): cjpegli XYB sequential mode (-p 0) ──────────────────────
 //
 // Was: cjpegli --xyb -p 0 --chroma_subsampling={444,422,420} produced JPEGs
@@ -141,50 +75,45 @@ fn xyb_p0_sub420_decodes() {
     assert_xyb_decodes(data, "XYB p=0 sub=420");
 }
 
-// ── Bug 2: non-uniform chroma subsampling (-sample 2x2,2x1,1x2) ────────────
+// ── Bug 2 (REJECTED): non-uniform chroma subsampling `-sample 2x2,2x1,1x2` ─
 //
-// cjpeg with Y:(2H,2V), Cb:(2H,1V), Cr:(1H,2V) produces JPEG files zenjpeg
-// decodes with max pixel diff up to 49 vs mozjpeg. Normal subsampling
-// (444/422/420/440/411) has max diff ≤ 7 across the full corpus. 162 files
-// in the generated corpus exhibit this.
+// Was: cjpeg with Y:(2H,2V), Cb:(2H,1V), Cr:(1H,2V) produced files zenjpeg
+// silently decoded with wrong pixels (max diff up to 49 vs mozjpeg on 96×72
+// sources). The entire decode pipeline — buffer allocation, upsample
+// dispatch, color conversion — assumes both chroma components share the
+// same ratio relative to luma. Fixing this properly requires per-chroma-
+// component upsampling buffers and dispatch, which is a substantial
+// refactor. Non-uniform chroma subsampling is vanishingly rare in real-
+// world JPEGs (standard encoders don't produce it by default; we triggered
+// it intentionally via cjpeg's exotic `-sample` syntax).
+//
+// Decision: reject at parse time with UnsupportedFeature rather than
+// silently produce wrong pixels. This follows the zero-tolerance rule for
+// image corruption. If we ever need to support it, the fix lives in
+// parser/markers.rs (remove the rejection), pipeline.rs (per-component
+// chroma buffer sizing), and output.rs (per-component upsample dispatch).
 
-#[test]
-fn mixed1_q5_has_small_diff() {
-    // Q5 noise_96x72: recorded max_diff = 10 vs mozjpeg. Asserting > 8 so
-    // the test fails when the bug is fixed (expected post-fix: ≤ 7).
-    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
-    let (zw, zh, zp) = decode_zen(data).expect("decodes");
-    let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
-    assert_eq!((zw, zh), (mw, mh));
-    let zrgb = normalize_to_rgb(zw, zh, zp);
-    let mrgb = normalize_to_rgb(mw, mh, mp);
-    let max = max_abs_diff(&zrgb, &mrgb);
+fn assert_mixed_chroma_rejected(data: &[u8], label: &str) {
+    let err = decode_zen(data)
+        .err()
+        .unwrap_or_else(|| panic!("{label} should return an error, got success"));
     assert!(
-        max > 8,
-        "mixed1 Q5 max_diff={max} (expected > 8 while bug exists). \
-         If max_diff ≤ 8, the non-uniform-subsampling bug is fixed — \
-         update or remove this test"
+        err.contains("non-uniform chroma subsampling"),
+        "{label}: unexpected error signature: {err}"
     );
 }
 
 #[test]
-fn mixed1_q75_has_large_diff() {
-    // Q75 patches_96x72: recorded max_diff = 49 vs mozjpeg. Asserting > 30
-    // to leave headroom for small changes while still failing on a real fix.
+fn mixed1_q5_rejected() {
+    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    assert_mixed_chroma_rejected(data, "mixed1 Q5");
+}
+
+#[test]
+fn mixed1_q75_rejected() {
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/mixed1_q75_patches_96x72.jpg");
-    let (zw, zh, zp) = decode_zen(data).expect("decodes");
-    let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
-    assert_eq!((zw, zh), (mw, mh));
-    let zrgb = normalize_to_rgb(zw, zh, zp);
-    let mrgb = normalize_to_rgb(mw, mh, mp);
-    let max = max_abs_diff(&zrgb, &mrgb);
-    assert!(
-        max > 30,
-        "mixed1 Q75 max_diff={max} (expected > 30 while bug exists). \
-         If max_diff ≤ 30, the non-uniform-subsampling bug is fixed — \
-         update or remove this test"
-    );
+    assert_mixed_chroma_rejected(data, "mixed1 Q75");
 }
 
 // ── Bug 3 (FIXED): cjpegli -p 0 Huffman / AC errors ────────────────────────

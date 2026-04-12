@@ -180,6 +180,37 @@ impl<'a> JpegParser<'a> {
             self.components[i].quant_table_idx = quant_idx;
         }
 
+        // Reject non-uniform chroma subsampling for traditional YCbCr JPEGs
+        // (Cb and Cr with different h_samp or v_samp factors). The decode
+        // pipeline — buffer allocation, upsample dispatch, YCbCr→RGB — assumes
+        // both chroma components share the same ratio relative to luma.
+        // Silently producing wrong pixels would violate the zero-tolerance
+        // correctness rule. Example trigger: `cjpeg -sample 2x2,2x1,1x2`.
+        //
+        // Skip the check when component IDs are 'R','G','B' (82, 71, 66):
+        // those are RGB or XYB JPEGs where per-component sampling factors are
+        // a legitimate encoding choice (XYB even uses R=G=(2,2), B=(1,1) by
+        // design). In those color spaces there's no chroma subsampling at all.
+        if self.num_components == 3 {
+            let ids = [
+                self.components[0].id,
+                self.components[1].id,
+                self.components[2].id,
+            ];
+            let is_rgb_ids = ids == [b'R', b'G', b'B'];
+            if !is_rgb_ids {
+                let cb_h = self.components[1].h_samp_factor;
+                let cb_v = self.components[1].v_samp_factor;
+                let cr_h = self.components[2].h_samp_factor;
+                let cr_v = self.components[2].v_samp_factor;
+                if cb_h != cr_h || cb_v != cr_v {
+                    return Err(Error::unsupported_feature(
+                        "non-uniform chroma subsampling: Cb and Cr have different sampling factors",
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
