@@ -1,7 +1,7 @@
-//! Issue #7 regression: Triangle upsampling vs mozjpeg on Canon 5D JPEG.
+//! Issue #7 regression: Triangle upsampling vs mozjpeg on 4:2:0 JPEG.
 //!
-//! Decodes a Canon EOS 5D Mark IV sRGB JPEG (800x537, baseline 4:2:0, DRI)
-//! and compares zenjpeg Triangle decode against mozjpeg-sys (libjpeg-turbo FFI).
+//! Decodes a 4:2:0 JPEG from the codec-corpus and compares zenjpeg Triangle
+//! decode against mozjpeg-sys (libjpeg-turbo FFI).
 //!
 //! Triangle upsampling with default Jpegli IDCT: max_diff <= 3.
 //! Triangle upsampling with IdctMethod::Libjpeg: max_diff <= 2.
@@ -9,39 +9,20 @@
 //! Run: cargo test --release -p zenjpeg --test issue7_repro --features decoder -- --nocapture
 
 use enough::Unstoppable;
-use std::path::PathBuf;
 use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::decode::{ChromaUpsampling, Decoder, IdctMethod};
 
-const CORPUS_PATH: &str = "imageflow/test_inputs/canon_5d_srgb.jpg";
-const FALLBACK_URL: &str = "https://imageflow-resources.s3.us-west-2.amazonaws.com/test_inputs/wide-gamut/srgb-reference/canon_eos_5d_mark_iv/wmc_81b268fc64ea796c.jpg";
+/// 4:2:0 JPEG from codec-corpus for triangle upsampling regression testing.
+const CORPUS_PATH: &str = "imageflow/test_inputs/waterhouse.jpg";
 
-/// Fetch test image via codec-corpus (auto-download), falling back to S3.
+/// Fetch test image via codec-corpus (auto-download on first access).
 fn fetch_test_image() -> Vec<u8> {
-    // Try codec-corpus first
-    if let Ok(corpus) = codec_corpus::Corpus::new()
-        && let Ok(path) = corpus.get(CORPUS_PATH)
-    {
-        return std::fs::read(path).expect("read corpus image");
-    }
-    // Fallback: download from S3 with local cache
-    let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("test-cache");
-    std::fs::create_dir_all(&cache_dir).expect("create cache dir");
-    let cached = cache_dir.join("issue7_canon_5d.jpg");
-    if let Ok(data) = std::fs::read(&cached) {
-        return data;
-    }
-    let resp = std::process::Command::new("curl")
-        .args(["-sfL", "-o", cached.to_str().unwrap(), FALLBACK_URL])
-        .status()
-        .expect("curl not found");
-    assert!(
-        resp.success(),
-        "failed to download test image from {FALLBACK_URL}"
-    );
-    std::fs::read(&cached).expect("read cached image")
+    let corpus = codec_corpus::Corpus::new()
+        .expect("codec-corpus initialization failed (set CODEC_CORPUS_CACHE if needed)");
+    let path = corpus
+        .get(CORPUS_PATH)
+        .unwrap_or_else(|e| panic!("corpus.get({CORPUS_PATH}) failed: {e}"));
+    std::fs::read(&path).expect("read corpus image")
 }
 
 /// Decode JPEG with mozjpeg-sys (libjpeg-turbo FFI) — the reference implementation.
