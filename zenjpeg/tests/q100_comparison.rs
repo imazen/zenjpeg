@@ -85,12 +85,19 @@ fn test_q100_rust_vs_cpp() {
     let rust_time = rust_start.elapsed();
 
     // C++ Q100 encoding - BASELINE (sequential) mode
-    let tmp_png = "/tmp/q100_test_input.png";
-    std::fs::write(tmp_png, &png_data).unwrap();
-    let cpp_out = "/tmp/q100_cpp_output.jpg";
+    let tmp_dir = std::env::temp_dir();
+    let tmp_png = tmp_dir.join("q100_test_input.png");
+    std::fs::write(&tmp_png, &png_data).unwrap();
+    let cpp_out = tmp_dir.join("q100_cpp_output.jpg");
     let cpp_start = Instant::now();
     let status = Command::new(&cjpegli_path)
-        .args([tmp_png, cpp_out, "-q", "100", "--progressive_level=0"])
+        .args([
+            tmp_png.to_str().unwrap(),
+            cpp_out.to_str().unwrap(),
+            "-q",
+            "100",
+            "--progressive_level=0",
+        ])
         .output()
         .unwrap();
     let cpp_time = cpp_start.elapsed();
@@ -102,7 +109,7 @@ fn test_q100_rust_vs_cpp() {
         );
         return;
     }
-    let cpp_jpeg = std::fs::read(cpp_out).unwrap();
+    let cpp_jpeg = std::fs::read(&cpp_out).unwrap();
 
     // Decode and compute quality
     let (rust_decoded, rw, rh) = decode_jpeg(&rust_jpeg).unwrap();
@@ -147,6 +154,7 @@ fn test_q100_rust_vs_cpp() {
     );
 
     // Save for manual inspection
-    std::fs::write("/tmp/q100_rust_output.jpg", &rust_jpeg).unwrap();
-    println!("\n  Saved: /tmp/q100_rust_output.jpg, /tmp/q100_cpp_output.jpg");
+    let rust_out = tmp_dir.join("q100_rust_output.jpg");
+    std::fs::write(&rust_out, &rust_jpeg).unwrap();
+    println!("\n  Saved: {} {}", rust_out.display(), cpp_out.display());
 }

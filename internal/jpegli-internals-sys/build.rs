@@ -165,6 +165,12 @@ fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) {
     if !target.contains("msvc") {
         build.flag("-Wno-unused-parameter");
         build.flag("-Wno-sign-compare");
+        // Promote infinite-recursion to a hard error so the next typo
+        // (like the aligned_alloc_xplat self-call we shipped for two weeks)
+        // breaks the build instead of silently producing an FFI that
+        // returns zero buffers at runtime. Clang-specific; GCC ignores it
+        // because the warning name doesn't exist there.
+        build.flag_if_supported("-Werror=infinite-recursion");
     }
 
     build.compile("jpegli_test_ffi");

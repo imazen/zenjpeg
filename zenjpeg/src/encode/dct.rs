@@ -893,6 +893,8 @@ mod tests {
 
     #[test]
     fn test_dct_dc_only() {
+        // Lock prevents permutation tests from disabling AVX2 while we summon tokens.
+        let _lock = archmage::testing::lock_token_testing();
         // Constant block should have only DC coefficient
         let input = [128.0f32; DCT_BLOCK_SIZE];
         let output = forward_dct_8x8(&input);
@@ -913,6 +915,7 @@ mod tests {
 
     #[test]
     fn test_dct_zero_block() {
+        let _lock = archmage::testing::lock_token_testing();
         let input = [0.0f32; DCT_BLOCK_SIZE];
         let output = forward_dct_8x8(&input);
 
@@ -923,6 +926,7 @@ mod tests {
 
     #[test]
     fn test_dct_u8_level_shift() {
+        let _lock = archmage::testing::lock_token_testing();
         // All 128s should produce near-zero output (after -128 shift)
         let input = [128u8; DCT_BLOCK_SIZE];
         let output = forward_dct_8x8_u8(&input);
@@ -951,6 +955,7 @@ mod tests {
 
     #[test]
     fn test_simd_transpose_matches_scalar() {
+        let _lock = archmage::testing::lock_token_testing();
         let mut input = [0.0f32; 64];
         for i in 0..64 {
             input[i] = (i as f32 * 1.7).sin() * 100.0;
@@ -975,6 +980,7 @@ mod tests {
 
     #[test]
     fn test_simd_dct_rows_matches_scalar() {
+        let _lock = archmage::testing::lock_token_testing();
         // Test with various input patterns
         let patterns: Vec<[f32; 64]> = vec![
             // Constant block
@@ -1043,6 +1049,7 @@ mod tests {
 
     #[test]
     fn test_aan_dct_matches_recursive() {
+        let _lock = archmage::testing::lock_token_testing();
         // Test AAN DCT against recursive implementation with various patterns
         let patterns: Vec<[f32; 64]> = vec![
             // Constant block
