@@ -106,14 +106,14 @@ impl<'a> JpegParser<'a> {
         let al = ah_al & 0x0F;
 
         // Validate spectral selection (must be 0-63, and Ss <= Se)
-        if ss > 63 {
-            return Err(Error::invalid_jpeg_data(
-                "SOS Ss (spectral start) out of range",
-            ));
-        }
-        if se > 63 {
-            return Err(Error::invalid_jpeg_data(
-                "SOS Se (spectral end) out of range",
+        //
+        // IJG libjpeg v9+ with `-block N` (N > 8) produces non-standard JPEGs
+        // where Se can be up to N*N-1 (e.g., block 16 → Se up to 255). These
+        // require fundamentally different DCT sizes and are not supported by any
+        // decoder except IJG's own.
+        if ss > 63 || se > 63 {
+            return Err(Error::unsupported_feature(
+                "non-standard DCT block size (Ss or Se > 63, IJG libjpeg v9+ extension)",
             ));
         }
         if ss > se {
