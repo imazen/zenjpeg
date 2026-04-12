@@ -7,8 +7,6 @@
 //! - Chroma downsampling
 //! - Strip padding (horizontal and vertical)
 
-#![allow(dead_code)]
-
 use crate::encode::encoder_types::DownsamplingMethod;
 use crate::error::Result;
 use crate::types::{PixelFormat, Subsampling};

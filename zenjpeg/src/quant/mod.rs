@@ -6,8 +6,6 @@
 //! - Quality parameter handling (traditional and butteraugli distance)
 //! - Adaptive quantization support
 
-#![allow(dead_code)] // Quality conversion tables and reference implementations
-
 // Adaptive quantization submodule
 pub mod aq;
 
@@ -42,9 +40,11 @@ pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
 /// CMA-ES optimized for best butteraugli Pareto distance.
 /// Trained on low-bpp regime (q30/40/50) which generalizes well across q25-99.
 /// Holdout: +0.46 mean Pareto, 76% wins across q1-100.
+#[cfg(test)]
 pub(crate) const OPTIMIZED_GLOBAL_SCALE: f32 = 5.608994;
 
 /// Optimized per-frequency exponents for butteraugli-targeted encoding (4:2:0).
+#[cfg(test)]
 #[rustfmt::skip]
 pub(crate) const OPTIMIZED_FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
     0.9290, 0.5055, 0.4091, 0.0500, 1.3343, 0.0500, 0.0500, 0.0500,
@@ -59,9 +59,11 @@ pub(crate) const OPTIMIZED_FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
 
 /// Optimized global scale for 4:4:4 subsampling (butteraugli-targeted).
 /// Holdout: +0.39 mean Pareto, 72% wins across q1-100.
+#[allow(dead_code)] // CMA-ES trained value for future 4:4:4 optimization
 pub(crate) const OPTIMIZED_GLOBAL_SCALE_444: f32 = 5.101017;
 
 /// Optimized per-frequency exponents for 4:4:4 subsampling.
+#[allow(dead_code)] // CMA-ES trained value for future 4:4:4 optimization
 #[rustfmt::skip]
 pub(crate) const OPTIMIZED_FREQUENCY_EXPONENT_444: [f32; DCT_BLOCK_SIZE] = [
     0.6889, 0.0500, 0.0500, 0.0500, 0.5657, 1.0443, 1.0567, 0.0500,

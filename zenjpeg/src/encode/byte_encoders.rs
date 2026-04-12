@@ -427,6 +427,7 @@ const MAX_ICC_BYTES_PER_MARKER: usize = 65519;
 ///
 /// Inserts APP2 markers right after SOI (and any existing APP0/APP1 markers).
 /// Large profiles are automatically chunked per ICC spec.
+#[allow(dead_code)] // Consuming variant; _inplace version is used instead
 fn inject_icc_profile(jpeg: Vec<u8>, icc_data: &[u8]) -> Vec<u8> {
     if icc_data.is_empty() {
         return jpeg;
@@ -514,13 +515,16 @@ const EXIF_SIGNATURE: &[u8; 6] = b"Exif\0\0";
 const MAX_EXIF_BYTES: usize = 65527;
 
 /// XMP namespace signature for APP1 marker.
+#[allow(dead_code)] // Used by inject_xmp (consuming variant, not currently called)
 const XMP_NAMESPACE: &[u8; 29] = b"http://ns.adobe.com/xap/1.0/\0";
 
 /// Maximum XMP data bytes per APP1 marker segment.
 /// APP1 max length is 65535, minus 2 (length) - 29 (namespace) = 65504.
+#[allow(dead_code)] // Used by inject_xmp (consuming variant, not currently called)
 const MAX_XMP_BYTES: usize = 65504;
 
 /// Inject EXIF data into a JPEG as APP1 marker, right after SOI.
+#[allow(dead_code)] // Consuming variant; _inplace version is used instead
 fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
     if exif_data.is_empty() {
         return jpeg;
@@ -557,6 +561,7 @@ fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
 /// Inject XMP data into a JPEG as APP1 marker.
 ///
 /// Inserts after SOI and any existing APP1 (EXIF) markers.
+#[allow(dead_code)] // Consuming variant; _inplace version is used instead
 fn inject_xmp(mut jpeg: Vec<u8>, xmp_data: &[u8]) -> Vec<u8> {
     inject_xmp_inplace(&mut jpeg, xmp_data);
     jpeg

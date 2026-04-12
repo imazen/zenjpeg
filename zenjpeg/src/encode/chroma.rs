@@ -23,8 +23,6 @@
 //! Gamma-aware methods work in linear RGB space to preserve perceptual accuracy.
 //! The iterative variant additionally handles out-of-gamut clipping for best quality.
 
-#![allow(dead_code)]
-
 use crate::color;
 use crate::color::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
 use crate::error::{Error, Result};

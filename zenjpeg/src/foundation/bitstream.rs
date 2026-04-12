@@ -3,8 +3,6 @@
 //! This module provides bit-level I/O with byte stuffing (0xFF -> 0xFF 0x00)
 //! as required by JPEG.
 
-#![allow(dead_code)]
-
 use crate::error::{Error, Result, ScanRead, ScanResult};
 use crate::foundation::instrumented_vec::{ProfiledVec, ProfiledVecExt};
 

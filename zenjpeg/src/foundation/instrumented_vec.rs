@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Used when alloc-instrument feature is enabled
 //! Instrumented Vec for allocation analysis.
 //!
 //! When `alloc-instrument` feature is enabled, allocations are tracked and

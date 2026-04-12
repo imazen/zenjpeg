@@ -76,6 +76,7 @@ pub fn linear_f32_to_srgb_255_fast(x: f32) -> f32 {
 }
 
 /// Alias for `linear_to_srgb_255` (compatibility).
+#[cfg(test)]
 #[inline]
 pub fn linear_f32_to_srgb_255_lut(x: f32) -> f32 {
     linear_to_srgb_255(x)

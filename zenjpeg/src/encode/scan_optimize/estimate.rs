@@ -237,6 +237,7 @@ impl<'a> ScanHistogramCache<'a> {
 ///
 /// Prefer [`ScanHistogramCache::estimate_all_scan_sizes_cached`] when multiple
 /// estimation passes share the same block data.
+#[allow(dead_code)] // Non-cached estimation path; cached version preferred
 pub(crate) fn estimate_all_scan_sizes(
     scans: &[TrialScan],
     y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -283,6 +284,7 @@ pub(crate) fn estimate_all_scan_sizes(
 ///
 /// Counts DC delta categories (the standard JPEG DC difference encoding)
 /// and estimates encoding cost from the resulting Huffman code lengths.
+#[allow(dead_code)] // Helper for estimate_all_scan_sizes
 fn estimate_dc_scan(counter: &mut FrequencyCounter, blocks: &[[i16; DCT_BLOCK_SIZE]]) -> usize {
     counter.reset();
 
@@ -323,6 +325,7 @@ fn estimate_dc_scan(counter: &mut FrequencyCounter, blocks: &[[i16; DCT_BLOCK_SI
 /// within the spectral range [ss, se]. Properly accumulates EOB runs
 /// across blocks (progressive JPEG merges consecutive empty blocks into
 /// a single EOB run symbol + extra bits, rather than individual EOBs).
+#[allow(dead_code)] // Helper for estimate_all_scan_sizes
 fn estimate_ac_first_scan(
     counter: &mut FrequencyCounter,
     blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -418,6 +421,7 @@ fn estimate_ac_first_scan(
 ///
 /// Refbits (1 bit per previously-nonzero coefficient) are NOT Huffman-coded,
 /// so we track them separately. EOB runs are accumulated across blocks.
+#[allow(dead_code)] // Helper for estimate_all_scan_sizes
 fn estimate_ac_refinement_scan(
     blocks: &[[i16; DCT_BLOCK_SIZE]],
     ss: u8,
@@ -505,6 +509,7 @@ const SOS_HEADER_BITS: usize = 84;
 /// evaluation (where clustering is not applicable).
 ///
 /// This matches the SCAN_OVERHEAD constant in select.rs.
+#[allow(dead_code)] // Used by estimate_all_scan_sizes
 const SCAN_OVERHEAD_BITS: usize = 150;
 
 /// Estimate the total encoded cost of a complete progressive scan script.
@@ -521,6 +526,7 @@ const SCAN_OVERHEAD_BITS: usize = 150;
 /// - Adds SOS header overhead per scan
 ///
 /// Returns the estimated total cost in bits.
+#[allow(dead_code)] // Complete script cost estimation (not yet integrated)
 pub(crate) fn estimate_script_cost(
     script: &[super::super::config::ProgressiveScan],
     y_blocks: &[[i16; DCT_BLOCK_SIZE]],

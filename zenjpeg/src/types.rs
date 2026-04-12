@@ -1,7 +1,5 @@
 //! Core types for jpegli.
 
-#![allow(dead_code)]
-
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 /// Color space representation.

@@ -4,8 +4,6 @@
 //! for progressive JPEG encoding. This module validates scan scripts to
 //! ensure they produce valid JPEG files.
 
-#![allow(dead_code)]
-
 use crate::error::{Error, Result};
 
 /// A single scan in a progressive JPEG.

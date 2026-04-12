@@ -36,6 +36,7 @@ const K_VOFFSET_RATIO: f32 = (K_SG_VOFFSET * K_INV_LOG2E + K_EPSILON_RATIO) / K_
 const K_DEN_MUL_RATIO: f32 = K_INV_LOG2E * K_SG_MUL * K_INPUT_SCALING * K_INPUT_SCALING;
 
 const K_MASKING_LOG_OFFSET: f32 = 28.0;
+#[allow(dead_code)] // Reference constant from C++ jpegli; only the derived K_MASKING_MUL_SQRT is used
 const K_MASKING_MUL: f32 = 211.50759899638012;
 const K_MASKING_MUL_SQRT: f32 = 145433.00828779556; // (K_MASKING_MUL * 1e8).sqrt()
 

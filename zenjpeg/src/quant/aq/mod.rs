@@ -29,8 +29,6 @@
 //! - `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
 //! - `tests/aq_locked_tests.rs` for invariant tests
 
-#![allow(dead_code)]
-
 use std::f32::consts::PI;
 
 use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};

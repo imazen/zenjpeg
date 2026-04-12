@@ -4,7 +4,6 @@
 //! Computation uses scalar loops (portable) or `magetypes` (archmage dispatch).
 //! The array storage is layout-compatible with SIMD vectors (32-byte aligned).
 
-#![allow(dead_code)]
 #![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
 
 use archmage::prelude::*;

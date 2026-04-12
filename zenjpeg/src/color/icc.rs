@@ -17,7 +17,6 @@
 //! // ICC profile is automatically applied if present
 //! ```
 
-#![allow(dead_code)]
 #![allow(unused_imports)] // Imports used by decoder-only functions
 
 use crate::error::{Error, Result};

@@ -16,8 +16,6 @@
 //! Locked test values are derived from frymire.png (1118x1105) Y plane.
 //! To regenerate: `cargo test --lib adaptive_quant_simd -- --nocapture`
 
-#![allow(dead_code)]
-
 use crate::foundation::aligned_alloc::{AlignedVec, AllocError, try_alloc_zeroed};
 use archmage::prelude::*;
 use magetypes::simd::backends::F32x8Backend;
@@ -918,6 +916,7 @@ fn fuzzy_erosion_row_simd_impl(
     out: &mut [f32],
 ) -> usize {
     #[allow(non_camel_case_types)]
+    #[allow(dead_code)] // Used by SIMD variants but not scalar variant from #[magetypes]
     type f32x8 = GenericF32x8<Token>;
 
     let row_above_y = (y as isize - 1).clamp(0, max_y as isize) as usize;
@@ -2045,6 +2044,9 @@ pub(crate) mod archmage_impl {
     /// - Gather 9 values from 3x3 neighborhood
     /// - Find 4 smallest values
     /// - Compute weighted sum: 0.125*v0 + 0.075*v1 + 0.06*v2 + 0.05*v3
+    // Failed exploration: 3x slower than scalar (see CLAUDE.md "Fuzzy Erosion SIMD").
+    // Kept as reference for the fully-unrolled approach.
+    #[allow(dead_code)]
     pub fn mage_compute_fuzzy_erosion_row(
         pre_erosion_buffer: &[f32],
         pe_w: usize,

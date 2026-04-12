@@ -30,8 +30,6 @@
 //! let jpeg = encoder.finish()?;
 //! ```
 
-#![allow(dead_code)]
-
 use crate::encode::config::ComputedConfig;
 use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
@@ -414,6 +412,7 @@ impl StreamingEncoder {
     }
 
     /// Returns the expected number of bytes per row.
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     #[must_use]
     pub(crate) fn bytes_per_row(&self) -> usize {
         self.bytes_per_row
@@ -421,6 +420,7 @@ impl StreamingEncoder {
 
     /// Returns the total height of the image.
     #[must_use]
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     pub(crate) fn height(&self) -> usize {
         self.height
     }
@@ -445,6 +445,7 @@ impl StreamingEncoder {
     /// In streaming mode, blocks are encoded immediately on each strip flush.
     /// In buffered mode (default), all blocks are buffered and encoded at `finish()`.
     #[must_use]
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     pub(crate) fn is_streaming(&self) -> bool {
         self.streaming.is_some()
     }
@@ -458,6 +459,7 @@ impl StreamingEncoder {
     /// Returns an error if:
     /// - Row length doesn't match expected bytes per row
     /// - All rows have already been pushed
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// - Internal processing fails
     pub(crate) fn push_row(&mut self, row: &[u8]) -> Result<()> {
         self.push_row_with_stop(row, Unstoppable)
@@ -507,6 +509,7 @@ impl StreamingEncoder {
     /// Returns an error if:
     /// - Data length doesn't match expected size
     /// - Too many rows would be pushed
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// - Internal processing fails
     pub(crate) fn push_rows(&mut self, data: &[u8], num_rows: usize) -> Result<()> {
         self.push_rows_with_stop(data, num_rows, Unstoppable)
@@ -849,6 +852,7 @@ impl StreamingEncoder {
     ///
     /// Returns an error if:
     /// - Not all rows have been pushed
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// - JPEG generation fails
     pub(crate) fn finish(self) -> Result<Vec<u8>> {
         self.finish_with_stop(Unstoppable)
@@ -873,6 +877,7 @@ impl StreamingEncoder {
         Ok((output, counts))
     }
 
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// Finishes encoding with cancellation support.
     pub(crate) fn finish_with_stop(self, stop: impl Stop) -> Result<Vec<u8>> {
         let mut output = Vec::new();
@@ -1098,6 +1103,7 @@ impl StreamingEncoder {
         Ok(())
     }
 
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// Builds JPEG output from processed blocks.
     fn build_jpeg_from_blocks(
         config: &ComputedConfig,
@@ -1174,6 +1180,7 @@ impl StreamingEncoder {
         }
     }
 
+    #[allow(dead_code)] // Internal API; BytesEncoder has its own wrapper
     /// Builds sequential JPEG output from processed blocks.
     fn build_jpeg_sequential(
         config: &ComputedConfig,

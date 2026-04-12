@@ -2,8 +2,6 @@
 //!
 //! Provides `EntropyEncoder` for baseline and progressive JPEG encoding.
 
-#![allow(dead_code)]
-
 use crate::encode::build_nonzero_mask;
 use crate::error::{Error, Result};
 use crate::foundation::bitstream::BitWriter;

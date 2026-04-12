@@ -354,6 +354,7 @@ impl ComputedConfig {
     }
 
     /// Writes standard Huffman tables in a single DHT segment.
+    #[allow(dead_code)] // Standard table fallback; optimized version preferred
     pub(crate) fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
         use crate::huffman::{
             STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,

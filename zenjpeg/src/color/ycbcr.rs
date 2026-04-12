@@ -7,8 +7,6 @@
 //!
 //! SIMD optimization via archmage/magetypes generics with multi-tier dispatch.
 
-#![allow(dead_code)] // Multiple conversion variants for different pipelines
-
 use crate::error::Result;
 use crate::foundation::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
 use crate::foundation::consts::{
@@ -1004,6 +1002,7 @@ pub fn ycbcr_to_rgb_i16_x16(
 }
 
 /// Scalar implementation of integer YCbCr to RGB for 16 pixels.
+#[cfg(test)]
 #[inline]
 fn ycbcr_to_rgb_i16_x16_scalar(
     y: &[i16; 16],
@@ -1289,6 +1288,7 @@ fn ycbcr_to_rgb_i16_x16_avx2(
 /// This function is decorated with `#[autoversion]` to generate optimized versions
 /// for different SIMD instruction sets (AVX2, SSE4.1, NEON) with runtime dispatch.
 /// Writing to separate planes allows better autovectorization than interleaved output.
+#[allow(dead_code)] // Alternative codepath for plane-based output (not currently used)
 #[archmage::autoversion]
 fn ycbcr_to_rgb_planes_autovec(
     y_plane: &[i16],
@@ -1319,6 +1319,7 @@ fn ycbcr_to_rgb_planes_autovec(
 }
 
 /// Interleave R, G, B planes into RGB buffer.
+#[allow(dead_code)] // Helper for ycbcr_to_rgb_planes_autovec (not currently used)
 #[archmage::autoversion]
 fn interleave_rgb_planes(r: &[u8], g: &[u8], b: &[u8], rgb: &mut [u8]) {
     let len = r.len();
