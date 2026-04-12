@@ -19,8 +19,9 @@ use zenjpeg::decoder::Decoder;
 // Corpus Discovery
 // ============================================================================
 
-fn corpus() -> Option<codec_corpus::Corpus> {
-    codec_corpus::Corpus::new().ok()
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
 }
 
 /// Collect all JPEG files from a directory recursively.
@@ -65,23 +66,14 @@ fn collect_jpeg_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Test that decoder doesn't panic on fuzz corpus.
 /// These files may be malformed - we just verify no panics or crashes.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_no_panic() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let fuzz_dir = corpus
+        .get("zune/fuzz-corpus/jpeg")
+        .expect("corpus.get(zune/fuzz-corpus/jpeg)");
 
     let files = collect_jpeg_files(&fuzz_dir);
     println!("Testing {} fuzz corpus files", files.len());
@@ -114,29 +106,16 @@ fn test_fuzz_corpus_no_panic() {
 }
 
 /// Test a sample of fuzz corpus with detailed output.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_sample() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let fuzz_dir = corpus
+        .get("zune/fuzz-corpus/jpeg")
+        .expect("corpus.get(zune/fuzz-corpus/jpeg)");
     let files = collect_jpeg_files(&fuzz_dir);
-
-    if files.is_empty() {
-        eprintln!("Skipping: no fuzz files found");
-        return;
-    }
+    assert!(!files.is_empty(), "corpus directory contains no JPEG files");
 
     let decoder = Decoder::new();
 
@@ -168,23 +147,14 @@ fn test_fuzz_corpus_sample() {
 // Zune Test Images
 // ============================================================================
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_progressive() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("zune/test-images/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus
+        .get("zune/test-images/jpeg")
+        .expect("corpus.get(zune/test-images/jpeg)");
 
     let decoder = Decoder::new();
 
@@ -214,23 +184,14 @@ fn test_zune_progressive() {
     }
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_sampling_factors() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("zune/test-images/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus
+        .get("zune/test-images/jpeg")
+        .expect("corpus.get(zune/test-images/jpeg)");
 
     let decoder = Decoder::new();
 
@@ -270,23 +231,14 @@ fn test_zune_sampling_factors() {
     }
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_edge_cases() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("zune/test-images/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus
+        .get("zune/test-images/jpeg")
+        .expect("corpus.get(zune/test-images/jpeg)");
 
     let decoder = Decoder::new();
 
@@ -332,23 +284,14 @@ fn test_zune_edge_cases() {
 // Image-rs Test Images
 // ============================================================================
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_image_rs_progressive() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("image-rs/test-images/jpg/progressive") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus
+        .get("image-rs/test-images/jpg/progressive")
+        .expect("corpus.get(image-rs/test-images/jpg/progressive)");
 
     let decoder = Decoder::new();
     let files = collect_jpeg_files(&test_dir);
@@ -374,23 +317,14 @@ fn test_image_rs_progressive() {
     }
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_image_rs_general() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("image-rs/test-images/jpg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus
+        .get("image-rs/test-images/jpg")
+        .expect("corpus.get(image-rs/test-images/jpg)");
 
     let decoder = Decoder::new();
 
@@ -429,23 +363,12 @@ fn test_image_rs_general() {
 // mozjpeg Test Images
 // ============================================================================
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_mozjpeg_images() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let test_dir = match corpus.get("mozjpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let test_dir = corpus.get("mozjpeg").expect("corpus.get(mozjpeg)");
 
     let decoder = Decoder::new();
 
@@ -506,29 +429,16 @@ fn test_mozjpeg_images() {
 // Comparison with Reference Decoder
 // ============================================================================
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_vs_reference() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let fuzz_dir = corpus
+        .get("zune/fuzz-corpus/jpeg")
+        .expect("corpus.get(zune/fuzz-corpus/jpeg)");
     let files = collect_jpeg_files(&fuzz_dir);
-
-    if files.is_empty() {
-        eprintln!("Skipping: no fuzz files found");
-        return;
-    }
+    assert!(!files.is_empty(), "corpus directory contains no JPEG files");
 
     let jpegli_decoder = Decoder::new();
     let mut both_succeed = 0;
@@ -608,23 +518,14 @@ const KNOWN_DECODER_BUGS: &[&str] = &[
 
 /// Test valid JPEGs that MUST decode correctly.
 /// These are reference images, camera samples, and feature variants.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_valid() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpeg_files(&valid_dir);
     println!("Testing {} valid JPEG conformance files", files.len());
@@ -698,23 +599,14 @@ fn test_jpeg_conformance_valid() {
 
 /// Test invalid JPEGs that MUST be rejected gracefully.
 /// The decoder MUST return an error, not panic or crash.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_invalid() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let invalid_dir = match corpus.get("jpeg-conformance/invalid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let invalid_dir = corpus
+        .get("jpeg-conformance/invalid")
+        .expect("corpus.get(jpeg-conformance/invalid)");
 
     let files = collect_jpeg_files(&invalid_dir);
     println!("Testing {} invalid JPEG conformance files", files.len());
@@ -780,23 +672,14 @@ fn test_jpeg_conformance_invalid() {
 
 /// Test non-conformant JPEGs that MAY be rejected or recovered.
 /// Documents our decoder's behavior on edge cases.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_non_conformant() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let non_conformant_dir = match corpus.get("jpeg-conformance/non-conformant") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let non_conformant_dir = corpus
+        .get("jpeg-conformance/non-conformant")
+        .expect("corpus.get(jpeg-conformance/non-conformant)");
 
     let decoder = Decoder::new();
 
@@ -868,23 +751,14 @@ fn test_jpeg_conformance_non_conformant() {
 }
 
 /// Compare our decoder behavior with jpeg-decoder on conformance suite.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_vs_reference() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let files = collect_jpeg_files(&valid_dir);
     println!("Comparing {} valid files against jpeg-decoder", files.len());
@@ -947,21 +821,11 @@ fn test_jpeg_conformance_vs_reference() {
 #[test]
 #[ignore = "slow test - run with --ignored"]
 fn test_full_fuzz_corpus() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
+    let corpus = corpus();
 
-    let fuzz_dir = match corpus.get("zune/fuzz-corpus/jpeg") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let fuzz_dir = corpus
+        .get("zune/fuzz-corpus/jpeg")
+        .expect("corpus.get(zune/fuzz-corpus/jpeg)");
     let files = collect_jpeg_files(&fuzz_dir);
 
     println!("Testing ALL {} fuzz corpus files", files.len());
