@@ -279,6 +279,13 @@ impl FrequencyCounter {
         }
     }
 
+    /// Subtracts another histogram's counts from this one (saturating at 0).
+    pub fn subtract(&mut self, other: &FrequencyCounter) {
+        for i in 0..257 {
+            self.counts[i] = (self.counts[i] - other.counts[i]).max(0);
+        }
+    }
+
     /// Creates a new histogram that is the sum of two histograms.
     pub fn combined(&self, other: &FrequencyCounter) -> FrequencyCounter {
         let mut result = self.clone();
