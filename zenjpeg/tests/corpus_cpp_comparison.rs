@@ -173,6 +173,7 @@ fn load_png(path: &Path) -> Result<ImageData, codec_eval::Error> {
     })
 }
 
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build and CID22-512 corpus"]
 fn test_corpus_comparison() {

@@ -43,6 +43,7 @@ fn compute_dssim(orig: &[u8], w1: u32, h1: u32, comp: &[u8], w2: u32, h2: u32) -
     attr.compare(&orig_img, comp_img).0.into()
 }
 
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_q100_rust_vs_cpp() {
     let cjpegli_path = match find_cjpegli() {

@@ -280,6 +280,7 @@ fn compare_decoder_leniency() {
 /// Show specific error messages for truncated files in each mode.
 ///
 /// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- truncated_error_detail --nocapture --ignored
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore = "requires codec-corpus (network on first run)"]
 fn truncated_error_detail() {

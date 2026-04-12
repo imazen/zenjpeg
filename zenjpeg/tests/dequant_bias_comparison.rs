@@ -17,8 +17,9 @@ mod comparison {
     use std::path::PathBuf;
     use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-    fn corpus() -> Option<codec_corpus::Corpus> {
-        codec_corpus::Corpus::new().ok()
+    fn corpus() -> codec_corpus::Corpus {
+        codec_corpus::Corpus::new()
+            .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)")
     }
 
     fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {

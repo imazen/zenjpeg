@@ -21,6 +21,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, width, height))
 }
 
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires testdata and C++ cjpegli"]
 fn compare_rust_cpp_420() {

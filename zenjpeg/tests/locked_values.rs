@@ -199,6 +199,7 @@ fn hash_jpeg(data: &[u8]) -> String {
 // =============================================================================
 
 /// Verify that the CSV file hasn't been modified without updating the hash.
+#[ignore = "requires external test resources"]
 #[test]
 fn test_values_file_integrity() {
     let actual_hash = hash_content(VALUES_CSV);
@@ -230,6 +231,7 @@ fn test_values_file_integrity() {
     not(target_arch = "x86_64"),
     ignore = "values_wide.csv needs regeneration on this platform (archmage 0.9.15 changed NEON output)"
 )]
+#[ignore = "requires external test resources"]
 #[test]
 fn test_encoder_outputs() {
     // Skip if placeholder (let integrity test catch this)

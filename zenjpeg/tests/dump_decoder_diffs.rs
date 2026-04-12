@@ -113,6 +113,7 @@ fn print_diff(label: &str, a: &Option<(u32, u32, Vec<u8>)>, b: &Option<(u32, u32
     }
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore = "requires corpus + output dir"]
 fn dump_diffs() {

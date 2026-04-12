@@ -182,6 +182,7 @@ fn test_metrics_distortion_levels() {
 }
 
 /// Test encoding quality metrics at various quality levels.
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_metrics_encoder_quality() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");

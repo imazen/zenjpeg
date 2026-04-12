@@ -24,6 +24,7 @@ fn load_test_image(path: &str) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
+#[ignore = "requires external test resources"]
 #[test]
 fn test_grayscale_decode_basic() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
@@ -56,6 +57,7 @@ fn test_grayscale_decode_basic() {
     );
 }
 
+#[ignore = "requires external test resources"]
 #[test]
 fn test_grayscale_decode_to_rgb() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
@@ -92,6 +94,7 @@ fn test_grayscale_decode_to_rgb() {
     }
 }
 
+#[ignore = "requires external test resources"]
 #[test]
 #[ignore] // Grayscale scanline reading not yet supported
 fn test_grayscale_scanline_reader() {
@@ -133,6 +136,7 @@ fn test_grayscale_scanline_reader() {
     }
 }
 
+#[ignore = "requires external test resources"]
 #[test]
 #[cfg(feature = "ultrahdr")]
 fn test_ultrahdr_gainmap_extraction() {
@@ -194,6 +198,7 @@ fn test_ultrahdr_gainmap_extraction() {
     }
 }
 
+#[ignore = "requires external test resources"]
 #[test]
 #[cfg(feature = "ultrahdr")]
 fn test_gainmap_grayscale_decode_streaming() {

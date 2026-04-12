@@ -88,6 +88,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     jpeg
 }
 
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build"]
 fn test_filesize_comparison_synthetic() {
@@ -152,6 +153,7 @@ fn test_filesize_comparison_synthetic() {
     }
 }
 
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build and test image"]
 fn test_filesize_comparison_photo() {

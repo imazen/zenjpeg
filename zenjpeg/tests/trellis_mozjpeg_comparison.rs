@@ -589,6 +589,7 @@ mod full_encode {
     /// - Color conversion: slightly different RGB→YCbCr implementations
     /// - Huffman optimization: different algorithms for table construction
     /// - Deringing: different overshoot deringing implementations
+    #[ignore = "requires external test resources"]
     #[test]
     #[ignore] // Requires CID22 corpus
     fn full_encode_robidoux_comparison() {
@@ -859,6 +860,7 @@ mod full_encode {
     /// - Baseline without trellis: ±1% (DCT precision, color conversion, Huffman opt)
     /// - Baseline with trellis: ±2% (above + trellis RateTable vs DerivedTable rounding)
     /// - Progressive: larger (different scan scripts between encoders)
+    #[ignore = "requires external test resources"]
     #[test]
     #[ignore] // Requires CID22 corpus + C cjpeg binary + mozjpeg-tables feature
     fn c_mozjpeg_robidoux_comparison() {

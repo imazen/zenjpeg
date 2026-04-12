@@ -356,6 +356,7 @@ mod cpp_comparison {
     }
 
     /// Compare DQT tables between Rust and C++ at very low quality.
+    #[ignore = "requires C++ jpegli build"]
     #[test]
     #[ignore] // Requires cjpegli binary
     fn test_16bit_quant_cpp_comparison() {

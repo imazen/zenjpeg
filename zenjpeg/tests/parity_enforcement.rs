@@ -227,6 +227,7 @@ fn test_image(
 }
 
 /// Test image on flower_small at Q90
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build and test images"]
 fn test_parity_flower_q90() {
@@ -253,6 +254,7 @@ fn test_parity_flower_q90() {
 }
 
 /// Test CID22 large image (complex photo, ~621KB PNG)
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_large() {
@@ -285,6 +287,7 @@ fn test_parity_cid22_large() {
 }
 
 /// Test CID22 medium-large image (typical photo, ~459KB PNG)
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_medium_large() {
@@ -322,6 +325,7 @@ fn test_parity_cid22_medium_large() {
 }
 
 /// Test CID22 medium image (moderate complexity, ~348KB PNG)
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_medium() {
@@ -359,6 +363,7 @@ fn test_parity_cid22_medium() {
 }
 
 /// Test CID22 small image (graphics, ~77KB PNG)
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_small() {

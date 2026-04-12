@@ -341,6 +341,7 @@ fn test_rst_markers_swapped() {
 // ============================================================================
 
 /// Insert junk bytes (not 0xFF) before a RST marker.
+#[ignore = "requires external test resources"]
 #[test]
 fn test_junk_before_rst_marker() {
     let jpeg = make_large_dri_jpeg();
@@ -370,6 +371,7 @@ fn test_junk_before_rst_marker() {
 
 /// Decode a valid DRI JPEG, then decode one with a wrong RST number in permissive mode.
 /// The output should be mostly correct (only the segment after the bad RST is affected).
+#[ignore = "requires external test resources"]
 #[test]
 fn test_rst_resync_output_quality() {
     let jpeg = make_large_dri_jpeg();

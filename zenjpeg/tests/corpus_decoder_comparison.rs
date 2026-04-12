@@ -251,6 +251,7 @@ fn process_file(path: &Path) -> Option<CompareResult> {
     Some(result)
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore = "requires corpus-builder corpus"]
 fn compare_decoders_on_corpus() {

@@ -119,6 +119,7 @@ fn test_dequant_equivalence() {
 
 /// Compare `decode()` RGB output with scanline_reader RGB output on local test images.
 /// If these differ, the streaming path (decode_baseline_streaming_rgb) is confirmed buggy.
+#[ignore = "requires testdata"]
 #[test]
 fn compare_decode_vs_scanline_rgb() {
     use imgref::ImgRefMut;

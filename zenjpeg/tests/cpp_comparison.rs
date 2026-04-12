@@ -113,6 +113,7 @@ fn test_file_size_scaling() {
 // Decode C++ Encoded JPEGs
 // ============================================================================
 
+#[ignore = "requires testdata"]
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_cpp_flower_420() {
@@ -127,6 +128,7 @@ fn test_decode_cpp_flower_420() {
     }
 }
 
+#[ignore = "requires testdata"]
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_cpp_flower_444() {
@@ -141,6 +143,7 @@ fn test_decode_cpp_flower_444() {
     }
 }
 
+#[ignore = "requires testdata"]
 #[test]
 #[ignore = "requires testdata"]
 fn test_decode_cpp_flower_progressive() {
@@ -158,6 +161,7 @@ fn test_decode_cpp_flower_progressive() {
 // Quality Comparison Tests
 // ============================================================================
 
+#[ignore = "requires testdata"]
 #[test]
 #[ignore = "requires testdata"]
 fn test_quality_vs_cpp_decoded() {

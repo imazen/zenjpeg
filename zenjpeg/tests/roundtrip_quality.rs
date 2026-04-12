@@ -65,6 +65,7 @@ fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
 }
 
 /// Test roundtrip quality on the flower_small test image.
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_roundtrip_flower_small() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");

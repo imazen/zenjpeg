@@ -238,6 +238,7 @@ fn test_cropped_image(
 
 /// Test edge handling with REAL corpus images cropped to partial MCU dimensions.
 /// Strict 1% size tolerance.
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires cjpegli binary and corpus"]
 fn test_strip_edge_real_images() {
@@ -502,6 +503,7 @@ fn test_strip_edge_real_images() {
 }
 
 /// Quick synthetic test - kept for fast CI, but not authoritative
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "requires cjpegli binary"]
 fn test_strip_edge_synthetic_quick() {

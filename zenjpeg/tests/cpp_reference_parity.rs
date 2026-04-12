@@ -127,6 +127,7 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
 
 /// Test that Rust jpegli produces similar file sizes to C++ jpegli.
 /// Threshold: within 5% of C++ file size.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore = "requires kodak corpus"]
 fn test_file_size_parity() {
@@ -227,6 +228,7 @@ fn test_file_size_parity() {
 
 /// Test that Rust jpegli produces similar quality (DSSIM) to C++ jpegli.
 /// Threshold: DSSIM within 20% of C++ (relative).
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore = "requires kodak corpus"]
 fn test_dssim_parity() {

@@ -491,6 +491,7 @@ fn print_summary() {
 }
 
 /// Generate all reference values (run this to update the locked values)
+#[ignore = "requires external test resources"]
 #[test]
 #[ignore] // Run with: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 fn generate_all_values() {

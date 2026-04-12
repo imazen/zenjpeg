@@ -508,6 +508,7 @@ fn encode_with_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: i32)
 }
 
 /// Real JPEG from corpus (if available).
+#[ignore = "requires external test resources"]
 #[test]
 fn test_visual_diff_corpus_photo() {
     let corpus_files = ["/home/lilith/work/zen/zenjpeg/zenjpeg/fuzz/corpus/seed/flower_420.jpg"];

@@ -1243,6 +1243,7 @@ fn test_strict_boundary_parity_vs_zune_and_mozjpeg() {
 }
 
 /// Test with real corpus images — the most realistic test.
+#[ignore = "requires testdata"]
 #[test]
 fn test_fancy_420_corpus_all_paths() {
     let corpus_paths = [

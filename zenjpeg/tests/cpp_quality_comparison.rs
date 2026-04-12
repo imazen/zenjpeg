@@ -19,6 +19,7 @@ fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) ->
 }
 
 /// Compare Rust vs C++ at various quality levels.
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_cpp_quality_comparison() {
     let width = 128u32;

@@ -43,6 +43,7 @@ fn decode_with_zune(data: &[u8]) -> (Vec<u8>, usize, usize) {
 }
 
 /// Test decoding 4:4:4 JPEG from ImageMagick
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_decode_im_q85_444() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_444.jpg");
@@ -75,6 +76,7 @@ fn test_decode_im_q85_444() {
 /// Test decoding non-interleaved 4:4:4 JPEG
 /// Note: zune-jpeg may handle non-interleaved scans differently than mozjpeg
 /// TODO: Investigate why DSSIM is high with zune-jpeg reference
+#[ignore = "requires C++ jpegli build"]
 #[test]
 #[ignore = "zune-jpeg/jpegli non-interleaved compatibility needs investigation"]
 fn test_decode_444_non_interleaved() {
@@ -106,6 +108,7 @@ fn test_decode_444_non_interleaved() {
 }
 
 /// Test that 4:2:0 decoding works with MCU interleaving
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_decode_420_mcu_interleaved() {
     let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_420.jpg");
@@ -140,6 +143,7 @@ fn test_decode_420_mcu_interleaved() {
 }
 
 /// Test decoding grayscale JPEG
+#[ignore = "requires C++ jpegli build"]
 #[test]
 fn test_decode_grayscale() {
     let path =
