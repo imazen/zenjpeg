@@ -8,8 +8,8 @@ use std::fs;
 use std::path::Path;
 use zenjpeg::decoder::{Decoder, Strictness};
 
-fn corpus() -> Option<codec_corpus::Corpus> {
-    codec_corpus::Corpus::new().ok()
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new().expect("codec-corpus init failed")
 }
 
 fn collect_jpgs(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -51,22 +51,13 @@ fn decode_file_with_strictness(
     ))
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_valid_files() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(\"jpeg-conformance/valid\")");
     let files = collect_jpgs(&dir);
 
     println!("\n=== VALID FILES ({} total) ===", files.len());
@@ -106,22 +97,13 @@ fn test_valid_files() {
     );
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_invalid_files() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let dir = match corpus.get("jpeg-conformance/invalid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let dir = corpus
+        .get("jpeg-conformance/invalid")
+        .expect("corpus.get(\"jpeg-conformance/invalid\")");
     let files = collect_jpgs(&dir);
 
     println!("\n=== INVALID FILES ({} total) ===", files.len());
@@ -166,22 +148,13 @@ fn test_invalid_files() {
     }
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_nonconformant_files() {
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let dir = match corpus.get("jpeg-conformance/non-conformant") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let dir = corpus
+        .get("jpeg-conformance/non-conformant")
+        .expect("corpus.get(\"jpeg-conformance/non-conformant\")");
     let files = collect_jpgs(&dir);
 
     println!("\n=== NON-CONFORMANT FILES ({} total) ===", files.len());
@@ -236,24 +209,15 @@ fn test_nonconformant_files() {
     );
 }
 
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_cmyk_files() {
     println!("\n=== CMYK/YCCK FILES ===\n");
 
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(\"jpeg-conformance/valid\")");
 
     let cmyk_files = ["cmyk_logo.jpg", "cymk.jpg"];
 
@@ -289,31 +253,18 @@ fn test_cmyk_files() {
 /// - Valid files: should decode with all modes
 /// - Non-conformant files: Strict may reject more than Lenient
 /// - Invalid files: should be rejected by all modes
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_strictness_modes() {
     println!("\n=== STRICTNESS MODE COMPARISON ===\n");
 
-    let corpus = match corpus() {
-        Some(c) => c,
-        None => {
-            eprintln!("Skipping: corpus unavailable");
-            return;
-        }
-    };
-    let valid_dir = match corpus.get("jpeg-conformance/valid") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
-    let nonconf_dir = match corpus.get("jpeg-conformance/non-conformant") {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Skipping: {e}");
-            return;
-        }
-    };
+    let corpus = corpus();
+    let valid_dir = corpus
+        .get("jpeg-conformance/valid")
+        .expect("corpus.get(\"jpeg-conformance/valid\")");
+    let nonconf_dir = corpus
+        .get("jpeg-conformance/non-conformant")
+        .expect("corpus.get(\"jpeg-conformance/non-conformant\")");
 
     // Test valid files with all strictness modes
     let valid_files = collect_jpgs(&valid_dir);

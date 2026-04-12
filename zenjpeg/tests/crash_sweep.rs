@@ -293,19 +293,18 @@ fn sweep_libjpeg_turbo_files() {
 // Codec-corpus sweep tests (auto-downloads on first run)
 // ============================================================================
 
+fn corpus() -> codec_corpus::Corpus {
+    codec_corpus::Corpus::new().expect("codec-corpus init failed")
+}
+
 /// Sweep codec-corpus jpeg-conformance/valid — all MUST decode.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_valid() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Skipping: codec-corpus unavailable ({e})");
-            return;
-        }
-    };
+    let corpus = corpus();
     let dir = corpus
         .get("jpeg-conformance/valid")
-        .expect("failed to get jpeg-conformance/valid");
+        .expect("corpus.get(jpeg-conformance/valid)");
 
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
@@ -351,18 +350,13 @@ fn sweep_corpus_jpeg_valid() {
 }
 
 /// Sweep codec-corpus jpeg-conformance/invalid — all MUST error, MUST NOT panic.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_invalid() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Skipping: codec-corpus unavailable ({e})");
-            return;
-        }
-    };
+    let corpus = corpus();
     let dir = corpus
         .get("jpeg-conformance/invalid")
-        .expect("failed to get jpeg-conformance/invalid");
+        .expect("corpus.get(jpeg-conformance/invalid)");
 
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
@@ -400,18 +394,13 @@ fn sweep_corpus_jpeg_invalid() {
 }
 
 /// Sweep codec-corpus jpeg-conformance/non-conformant — MUST NOT panic, may decode or error.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_nonconformant() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Skipping: codec-corpus unavailable ({e})");
-            return;
-        }
-    };
+    let corpus = corpus();
     let dir = corpus
         .get("jpeg-conformance/non-conformant")
-        .expect("failed to get jpeg-conformance/non-conformant");
+        .expect("corpus.get(jpeg-conformance/non-conformant)");
 
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
@@ -452,18 +441,13 @@ fn sweep_corpus_jpeg_nonconformant() {
 }
 
 /// Sweep zune fuzz corpus (1,836 files) — MUST NOT panic.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_zune_fuzz() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Skipping: codec-corpus unavailable ({e})");
-            return;
-        }
-    };
+    let corpus = corpus();
     let dir = corpus
         .get("zune/fuzz-corpus/jpeg")
-        .expect("failed to get zune/fuzz-corpus/jpeg");
+        .expect("corpus.get(zune/fuzz-corpus/jpeg)");
 
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
@@ -504,18 +488,13 @@ fn sweep_corpus_zune_fuzz() {
 }
 
 /// Sweep codec-corpus crash-repro files (large files from upstream bug reports) — MUST NOT panic.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_crash_repro() {
-    let corpus = match codec_corpus::Corpus::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Skipping: codec-corpus unavailable ({e})");
-            return;
-        }
-    };
+    let corpus = corpus();
     let dir = corpus
         .get("jpeg-conformance/crash-repro")
-        .expect("failed to get jpeg-conformance/crash-repro");
+        .expect("corpus.get(jpeg-conformance/crash-repro)");
 
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
