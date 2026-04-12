@@ -1852,57 +1852,78 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 let _ = self.reader.ensure_bits();
 
                 while k <= se_usize {
-                    // Refill when bits are low. Fast lookup needs 9 bits minimum;
-                    // 25 covers one full Huffman event (16-bit code + 1 sign + 8 refine).
+                    // Refill when bits are low.
                     if self.reader.bits_available() < 25 {
                         let _ = self.reader.ensure_bits();
-                        if self.reader.bits_available() < 9 {
-                            break; // Not enough for even a fast Huffman lookup
-                        }
                     }
 
-                    // Huffman decode: peek_top is safe because we have >= 9 bits.
-                    // Fast lookup (positive) always has code_len <= 9, so no overflow.
-                    let bits9 = self.reader.peek_top(9) as usize;
-                    let lookup = ac_table.fast_lookup[bits9];
-                    let symbol = if lookup >= 0 {
-                        let code_len = (lookup >> 8) as u8;
-                        self.reader.skip_bits_fast(code_len);
-                        (lookup & 0xFF) as u8
-                    } else {
-                        // Slow path: extended codes need up to 16 bits
-                        if self.reader.bits_available() < 16 {
-                            let _ = self.reader.refill();
-                        }
-                        if self.reader.bits_available() >= 16 {
-                            let bits16 = self.reader.peek_top(16);
-                            if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
-                                self.reader.skip_bits_fast(len);
-                                sym
-                            } else {
-                                break;
-                            }
+                    // Huffman decode with tiered fallback: fast (≥9 bits) →
+                    // slow (≥16 bits) → bit-by-bit (any count). The previous
+                    // code broke out of the loop when < 9 bits remained,
+                    // skipping refinement of the last coefficients in the last
+                    // block of a scan. The bit-by-bit fallback handles this
+                    // correctly by reading one bit at a time.
+                    let symbol = if self.reader.bits_available() >= 9 {
+                        let bits9 = self.reader.peek_top(9) as usize;
+                        let lookup = ac_table.fast_lookup[bits9];
+                        if lookup >= 0 {
+                            let code_len = (lookup >> 8) as u8;
+                            self.reader.skip_bits_fast(code_len);
+                            (lookup & 0xFF) as u8
                         } else {
-                            // Edge case: near restart marker or end of scan,
-                            // fewer than 16 bits available. Fall back to
-                            // bit-by-bit Huffman decode.
-                            let mut code = 0u32;
-                            let mut found_symbol = None;
-                            for len in 1..=16usize {
-                                let bit = self.reader.read_bit_refine();
-                                code = (code << 1) | (bit as u32);
-                                if (code as i32) <= ac_table.maxcode[len] {
-                                    let idx = (code as i32 + ac_table.valoffset[len]) as usize;
-                                    if idx < ac_table.values.len() {
-                                        found_symbol = Some(ac_table.values[idx]);
-                                        break;
+                            // Code is > 9 bits — try slow path with 16-bit peek
+                            if self.reader.bits_available() < 16 {
+                                let _ = self.reader.refill();
+                            }
+                            if self.reader.bits_available() >= 16 {
+                                let bits16 = self.reader.peek_top(16);
+                                if let Some((sym, len)) = ac_table.decode_slow(bits16 as i32) {
+                                    self.reader.skip_bits_fast(len);
+                                    sym
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                // < 16 bits: bit-by-bit fallback (below)
+                                let mut code = 0u32;
+                                let mut found_symbol = None;
+                                for len in 1..=16usize {
+                                    let bit = self.reader.read_bit_refine();
+                                    code = (code << 1) | (bit as u32);
+                                    if (code as i32) <= ac_table.maxcode[len] {
+                                        let idx = (code as i32 + ac_table.valoffset[len]) as usize;
+                                        if idx < ac_table.values.len() {
+                                            found_symbol = Some(ac_table.values[idx]);
+                                            break;
+                                        }
                                     }
                                 }
+                                match found_symbol {
+                                    Some(sym) => sym,
+                                    None => break,
+                                }
                             }
-                            match found_symbol {
-                                Some(sym) => sym,
-                                None => break,
+                        }
+                    } else {
+                        // < 9 bits after refill: near end of scan or restart
+                        // marker. Use bit-by-bit Huffman fallback so the last
+                        // block's high-frequency coefficients still get refined.
+                        let mut code = 0u32;
+                        let mut found_symbol = None;
+                        for len in 1..=16usize {
+                            let bit = self.reader.read_bit_refine();
+                            code = (code << 1) | (bit as u32);
+                            if (code as i32) <= ac_table.maxcode[len] {
+                                let idx = (code as i32 + ac_table.valoffset[len]) as usize;
+                                if idx < ac_table.values.len() {
+                                    found_symbol = Some(ac_table.values[idx]);
+                                    break;
+                                }
                             }
+                        }
+                        match found_symbol {
+                            Some(sym) => sym,
+                            None => break,
                         }
                     };
 
