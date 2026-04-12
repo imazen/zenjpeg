@@ -75,10 +75,16 @@ pub const MARKER_APP14: u8 = 0xEE;
 /// Comment marker
 pub const MARKER_COM: u8 = 0xFE;
 
+/// Start of Frame (Lossless Sequential)
+pub const MARKER_SOF3: u8 = 0xC3;
+/// Start of Frame (Lossless Differential)
+pub const MARKER_SOF7: u8 = 0xC7;
 /// Start of Frame (Arithmetic Sequential DCT)
 pub const MARKER_SOF9: u8 = 0xC9;
 /// Start of Frame (Arithmetic Progressive DCT)
 pub const MARKER_SOF10: u8 = 0xCA;
+/// Start of Frame (Arithmetic Lossless)
+pub const MARKER_SOF11: u8 = 0xCB;
 /// Define Arithmetic Coding conditioning
 pub const MARKER_DAC: u8 = 0xCC;
 
