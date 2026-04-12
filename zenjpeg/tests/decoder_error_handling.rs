@@ -939,3 +939,30 @@ fn test_extraneous_inter_marker_bytes_balanced() {
         warnings
     );
 }
+
+// ============================================================================
+// Non-standard IJG libjpeg v9+ block size rejection
+// ============================================================================
+
+/// IJG libjpeg v9+ with `-block N` (N > 8) produces non-standard JPEGs where
+/// Se (spectral selection end) exceeds 63. These require fundamentally different
+/// DCT sizes and are not decodable by standard JPEG decoders.
+///
+/// The decoder should return an `UnsupportedFeature` error with a clear message
+/// mentioning the non-standard block size, not a confusing "out of range" error.
+#[test]
+fn sos_se_out_of_range_ijg_block_size() {
+    let data = include_bytes!("testdata/all_the_images/sos_se_outofrange_libjpeg9b.jpg");
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    assert!(
+        result.is_err(),
+        "should reject non-standard block size JPEG"
+    );
+
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("block size") || err_msg.contains("Se > 63"),
+        "error should mention non-standard block size or Se > 63, got: {err_msg}"
+    );
+}
