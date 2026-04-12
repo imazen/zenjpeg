@@ -29,9 +29,19 @@ impl<'a> JpegParser<'a> {
         let length = self.read_u16()?;
         let num_components = self.read_u8()?;
 
-        // Validate num_components in scan
+        // Validate num_components in scan.
+        //
+        // IJG libjpeg v9+ with `-block 16` produces progressive JPEGs where the
+        // first SOS has num_components=0 (a non-standard extension for large DCT
+        // block sizes). Detect this and return UnsupportedFeature instead of a
+        // confusing "SOS num_components is zero" parse error.
         if num_components == 0 {
-            return Err(Error::invalid_jpeg_data("SOS num_components is zero"));
+            // SOS length=6 with Ns=0 is the IJG block_size>8 signature:
+            // the scan structure uses 0-component scans for coefficient selection
+            // ranges beyond the standard 0..63.
+            return Err(Error::unsupported_feature(
+                "non-standard DCT block size (SOS with zero components, IJG libjpeg v9+ extension)",
+            ));
         }
         if num_components > self.num_components {
             return Err(Error::invalid_jpeg_data(

@@ -223,6 +223,39 @@ impl<'a> JpegParser<'a> {
                 ));
             }
 
+            // Detect non-standard DCT block sizes (IJG libjpeg v9+ extension).
+            //
+            // Standard JPEG uses 8x8 DCT blocks, so each DQT table has exactly 64
+            // coefficients: 64 bytes (8-bit precision) or 128 bytes (16-bit precision).
+            // IJG libjpeg v9+ with `-block N` produces N*N coefficients per table.
+            //
+            // block_size=1 → 1 entry (DQT too short for standard 64)
+            // block_size=16 → 256 entries (DQT too long for standard 64)
+            //
+            // Remaining bytes for this table's values (after the info byte):
+            let standard_value_bytes: i32 = if precision == 0 { 64 } else { 128 };
+            let remaining_for_values = length - 1; // subtract info byte already read
+
+            if remaining_for_values < standard_value_bytes {
+                // Fewer bytes than a standard 8x8 table — could be block_size < 8.
+                // Check if the count is a perfect square (N*N for some N).
+                let entry_count = if precision == 0 {
+                    remaining_for_values
+                } else {
+                    remaining_for_values / 2
+                };
+                if entry_count > 0 {
+                    let sqrt = (entry_count as u32).isqrt();
+                    if sqrt * sqrt == entry_count as u32 && sqrt != 8 {
+                        return Err(Error::unsupported_feature(
+                            "non-standard DCT block size (DQT has fewer than 64 entries, IJG libjpeg v9+ extension)",
+                        ));
+                    }
+                }
+                // Not a recognizable block size — fall through to the generic mismatch error
+                return Err(Error::invalid_jpeg_data("DQT marker length mismatch"));
+            }
+
             // Read values in zigzag order (as stored in JPEG)
             let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
@@ -273,7 +306,10 @@ impl<'a> JpegParser<'a> {
                 })?;
             }
 
-            // Validate DQT marker length consistency
+            // Validate DQT marker length consistency.
+            // After reading exactly 64 entries, if length < 0, the marker was too short
+            // (caught above). If length is unexpectedly large, the DQT may contain more
+            // than 64 entries per table (e.g., block_size=16 → 256 entries).
             if length < 0 {
                 return Err(Error::invalid_jpeg_data("DQT marker length mismatch"));
             }
