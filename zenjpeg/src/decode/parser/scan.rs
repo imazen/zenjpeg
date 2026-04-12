@@ -634,7 +634,7 @@ impl<'a> JpegParser<'a> {
             decoder.set_permissive_rst(true);
         }
 
-        for (comp_idx, dc_table, ac_table) in scan_components {
+        for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
 
@@ -648,7 +648,9 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             };
-            decoder.set_dc_table(*comp_idx, dc_table_ref);
+            // Install at the FILE table index (matches how decode_block_into
+            // looks it up via ac_table_idx/dc_table_idx), not comp_idx.
+            decoder.set_dc_table(dc_idx, dc_table_ref);
 
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
@@ -660,7 +662,7 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             };
-            decoder.set_ac_table(*comp_idx, ac_table_ref);
+            decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
         // Allocate strip buffers for one MCU row (8 rows of pixels)
@@ -943,7 +945,7 @@ impl<'a> JpegParser<'a> {
         if self.strictness != Strictness::Strict {
             decoder.set_permissive_rst(true);
         }
-        for (comp_idx, dc_table, ac_table) in scan_components {
+        for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
@@ -956,7 +958,7 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             };
-            decoder.set_dc_table(*comp_idx, dc_table_ref);
+            decoder.set_dc_table(dc_idx, dc_table_ref);
             let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
                 Some(table) => table,
                 None => {
@@ -967,7 +969,7 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             };
-            decoder.set_ac_table(*comp_idx, ac_table_ref);
+            decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
         // ---- Buffer allocation ----

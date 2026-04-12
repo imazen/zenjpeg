@@ -67,7 +67,12 @@ fn decode_zenjpeg(data: &[u8]) -> Result<Decoded, String> {
         }
         rgb
     } else {
-        return Err(format!("unexpected pixel length {} for {}x{}", raw.len(), w, h));
+        return Err(format!(
+            "unexpected pixel length {} for {}x{}",
+            raw.len(),
+            w,
+            h
+        ));
     };
     Ok(Decoded {
         width: w as u32,
@@ -201,8 +206,7 @@ fn zensim_regress(a: &Decoded, b: &Decoded) -> Option<(f64, String)> {
     let w = a.width as usize;
     let h = a.height as usize;
     let stride = w * 3;
-    let expected =
-        StridedBytes::try_new(&a.pixels, w, h, stride, PixelFormat::Srgb8Rgb).ok()?;
+    let expected = StridedBytes::try_new(&a.pixels, w, h, stride, PixelFormat::Srgb8Rgb).ok()?;
     let actual = StridedBytes::try_new(&b.pixels, w, h, stride, PixelFormat::Srgb8Rgb).ok()?;
     let tol = RegressionTolerance::off_by_one();
     let report = check_regression(&zsim, &expected, &actual, &tol).ok()?;
@@ -237,11 +241,7 @@ fn jpeg_sof_marker(data: &[u8]) -> Option<u8> {
         }
         let marker = data[i + 1];
         // SOFn: 0xC0..=0xCF except 0xC4 (DHT), 0xC8 (JPG reserved), 0xCC (DAC)
-        if (0xC0..=0xCF).contains(&marker)
-            && marker != 0xC4
-            && marker != 0xC8
-            && marker != 0xCC
-        {
+        if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
             return Some(marker);
         }
         // Reached entropy-coded data or end without SOF.
@@ -289,12 +289,12 @@ fn read_manifest(manifest_path: &Path) -> Result<Vec<ManifestRow>, String> {
     let mut out = Vec::new();
     let mut lines = reader.lines();
     // Skip header
-    if let Some(Ok(hdr)) = lines.next() {
-        if !hdr.starts_with("hash\t") {
-            return Err(format!("unexpected header: {hdr}"));
-        }
+    if let Some(Ok(hdr)) = lines.next()
+        && !hdr.starts_with("hash\t")
+    {
+        return Err(format!("unexpected header: {hdr}"));
     }
-    for line in lines.flatten() {
+    for line in lines.map_while(Result::ok) {
         let mut it = line.splitn(7, '\t');
         let hash = it.next().unwrap_or("").to_string();
         let rel_path = it.next().unwrap_or("").to_string();
@@ -530,9 +530,12 @@ fn write_result_row(w: &mut BufWriter<File>, r: &FileResult) -> std::io::Result<
         } else {
             (0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         };
-    let zen_err = r.zen_err.replace('\t', " ").replace('\n', " ");
-    let moz_err = r.moz_err.replace('\t', " ").replace('\n', " ");
-    let score = r.zensim_score.map(|s| format!("{s:.3}")).unwrap_or_default();
+    let zen_err = r.zen_err.replace(['\t', '\n'], " ");
+    let moz_err = r.moz_err.replace(['\t', '\n'], " ");
+    let score = r
+        .zensim_score
+        .map(|s| format!("{s:.3}"))
+        .unwrap_or_default();
     let cat = r.zensim_category.clone().unwrap_or_default();
     writeln!(
         w,
@@ -572,9 +575,8 @@ fn write_header(w: &mut BufWriter<File>) -> std::io::Result<()> {
 #[test]
 #[ignore = "requires pre-generated corpus via `cargo run --release --example gen_permutation_corpus`"]
 fn validate_permutation_corpus() {
-    let out_dir = PathBuf::from(
-        std::env::var("ZENJPEG_PERM_OUT").unwrap_or_else(|_| DEFAULT_OUT.into()),
-    );
+    let out_dir =
+        PathBuf::from(std::env::var("ZENJPEG_PERM_OUT").unwrap_or_else(|_| DEFAULT_OUT.into()));
     let manifest_path = out_dir.join("manifest.tsv");
     if !manifest_path.exists() {
         panic!(
@@ -585,10 +587,10 @@ fn validate_permutation_corpus() {
     }
 
     let mut rows = read_manifest(&manifest_path).expect("read manifest");
-    if let Ok(limit_str) = std::env::var("ZENJPEG_PERM_LIMIT") {
-        if let Ok(n) = limit_str.parse::<usize>() {
-            rows.truncate(n);
-        }
+    if let Ok(limit_str) = std::env::var("ZENJPEG_PERM_LIMIT")
+        && let Ok(n) = limit_str.parse::<usize>()
+    {
+        rows.truncate(n);
     }
 
     let report_path = std::env::var("ZENJPEG_PERM_REPORT")

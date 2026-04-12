@@ -152,8 +152,7 @@ fn xyb_p0_sub420_decodes() {
 fn mixed1_q5_has_small_diff() {
     // Q5 noise_96x72: recorded max_diff = 10 vs mozjpeg. Asserting > 8 so
     // the test fails when the bug is fixed (expected post-fix: ≤ 7).
-    let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
     let (zw, zh, zp) = decode_zen(data).expect("decodes");
     let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
     assert_eq!((zw, zh), (mw, mh));
@@ -188,37 +187,43 @@ fn mixed1_q75_has_large_diff() {
     );
 }
 
-// ── Bug 3: cjpegli -p 0 Huffman / AC errors ────────────────────────────────
+// ── Bug 3 (FIXED): cjpegli -p 0 Huffman / AC errors ────────────────────────
 //
-// cjpegli -p 0 on specific noise/edges source dimensions at sub=422/444
-// produces JPEG files zenjpeg rejects with "invalid Huffman table 0: invalid
-// code" or "AC coefficient index out of bounds". mozjpeg decodes these fine.
-// 21 files in the generated corpus exhibit this.
+// Was: cjpegli -p 0 on noise/edges sources at sub=422/444 produced JPEGs
+// zenjpeg rejected with "invalid Huffman table 0: invalid code" or
+// "AC coefficient index out of bounds". mozjpeg, zune-jpeg, and jpeg-decoder
+// all handled the same files.
+//
+// Root cause: the baseline streaming decode paths in parser/scan.rs installed
+// Huffman tables via `decoder.set_*_table(*comp_idx, ...)`, passing the
+// COMPONENT index instead of the FILE TABLE INDEX that decode_block_into
+// later looks up. For the usual arrangement (Y=AC0, Cb=AC1, Cr=AC1), file
+// index and component index produce the same final layout by coincidence.
+// For cjpegli-optimized files where Y and Cb share AC table 0 and Cr uses
+// AC table 1, Cr's real table (file AC 1) was stored at slot 2, but decode
+// looked up slot 1 — reading Cb's table (file AC 0) for Cr blocks. The
+// resulting desync propagated until the decoder tripped on a bogus code or
+// an out-of-range run.
+//
+// Fix: install tables at `dc_idx` / `ac_idx` like the non-streaming path
+// already did (parser/scan.rs:274,286 and parser/progressive.rs:124,136).
 
-#[test]
-fn cjpegli_p0_huffman_error() {
-    // noise_47x63 at distance 5, sub=422, p=0 → "invalid Huffman table 0"
-    let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/cjpegli_p0_huffman_noise_47x63_d5.jpg");
-    let err = decode_zen(data).expect_err(
-        "cjpegli p=0 Huffman bug: currently fails; if this decodes, bug is fixed",
-    );
-    assert!(
-        err.contains("Huffman") || err.contains("huffman"),
-        "bug signature changed: {err}"
-    );
+fn assert_decodes_ok(data: &[u8], label: &str) {
+    decode_zen(data).unwrap_or_else(|e| panic!("{label} must decode after table-slot fix: {e}"));
 }
 
 #[test]
-fn cjpegli_p0_ac_error() {
-    // noise_64x64 at distance 5, sub=422, p=0 → "AC coefficient index out of bounds"
+fn cjpegli_p0_huffman_decodes() {
+    // noise_47x63 at distance 5, sub=422, p=0
+    let data: &[u8] =
+        include_bytes!("testdata/permutation_regression/cjpegli_p0_huffman_noise_47x63_d5.jpg");
+    assert_decodes_ok(data, "cjpegli p=0 Huffman fixture");
+}
+
+#[test]
+fn cjpegli_p0_ac_decodes() {
+    // noise_64x64 at distance 5, sub=422, p=0
     let data: &[u8] =
         include_bytes!("testdata/permutation_regression/cjpegli_p0_ac_noise_64x64_d5.jpg");
-    let err = decode_zen(data).expect_err(
-        "cjpegli p=0 AC bug: currently fails; if this decodes, bug is fixed",
-    );
-    assert!(
-        err.contains("AC coefficient") || err.contains("out of bounds"),
-        "bug signature changed: {err}"
-    );
+    assert_decodes_ok(data, "cjpegli p=0 AC fixture");
 }
