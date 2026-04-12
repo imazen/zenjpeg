@@ -2,6 +2,7 @@
 //!
 //! This module handles decoding of arithmetic-coded JPEG scans (SOF9/SOF10).
 
+use crate::decode::config::{DecodeWarning, Strictness};
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
@@ -76,6 +77,9 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
+        // Match libjpeg-turbo: overflow conditions are warnings, not errors
+        decoder.set_lenient(self.strictness != Strictness::Strict);
+
         // Reset decoder for this scan
         decoder.reset_for_scan();
 
@@ -128,6 +132,10 @@ impl<'a> JpegParser<'a> {
                     }
                 }
             }
+        }
+
+        if decoder.had_overflow() {
+            self.warn(DecodeWarning::ArithmeticBadCode)?;
         }
 
         self.position += decoder.position();
@@ -203,6 +211,9 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
+        // Match libjpeg-turbo: overflow conditions are warnings, not errors
+        decoder.set_lenient(self.strictness != Strictness::Strict);
+
         // Reset for scan (clears stats appropriate for this scan type)
         decoder.reset_for_scan();
 
@@ -264,6 +275,10 @@ impl<'a> JpegParser<'a> {
                     stop,
                 )?;
             }
+        }
+
+        if decoder.had_overflow() {
+            self.warn(DecodeWarning::ArithmeticBadCode)?;
         }
 
         self.position += decoder.position();

@@ -268,6 +268,7 @@ pub enum ParallelStrategy {
 /// | Bad Huffman at end-of-scan | Invalid | JWRN_HUFF_BAD_CODE (use 0) | Error | EndOfScan | EndOfScan | EndOfScan |
 /// | Missing DHT before scan | Invalid (B.2.4.2) | std_huff_tables() fallback | Error | Std tables | Std tables | Std tables |
 /// | Progressive scan truncated | Invalid | JWRN_HIT_MARKER (fill 0) | Error | Fill zeros | Fill zeros | Fill zeros |
+/// | Arith spectral/mag overflow | Invalid | JWRN_ARITH_BAD_CODE (EOS) | Error | EndOfScan | EndOfScan | EndOfScan |
 /// | AC index overflow | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB | Treat as EOB |
 /// | Invalid Huffman mid-scan | Invalid | ERREXIT (fatal) | Error | Error | Treat as EOB | Treat as EOB |
 /// | Zero quant value in DQT | Invalid | ERREXIT (fatal) | Error | Error | Error | Clamp to 1 |
@@ -450,6 +451,17 @@ pub enum DecodeWarning {
         /// Number of non-0xFF bytes skipped before a valid marker was found.
         count: u32,
     },
+
+    /// Arithmetic coding overflow (bad code) recovered.
+    ///
+    /// Matches libjpeg-turbo's `JWRN_ARITH_BAD_CODE` warning. The arithmetic
+    /// decoder encountered a spectral overflow (AC coefficient index exceeded
+    /// spectral selection range) or magnitude overflow (decoded magnitude
+    /// exceeded valid range). Remaining coefficients in the affected block
+    /// are left as-is and subsequent blocks return immediately (end-of-scan).
+    ///
+    /// Recovered in Balanced, Lenient, and Permissive modes.
+    ArithmeticBadCode,
 }
 
 impl core::fmt::Display for DecodeWarning {
@@ -504,6 +516,12 @@ impl core::fmt::Display for DecodeWarning {
             }
             Self::ExtraneousBytesSkipped { count } => {
                 write!(f, "{} extraneous byte(s) skipped between markers", count)
+            }
+            Self::ArithmeticBadCode => {
+                write!(
+                    f,
+                    "arithmetic coding overflow (bad code); treated as end-of-scan"
+                )
             }
         }
     }

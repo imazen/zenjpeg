@@ -291,6 +291,11 @@ pub struct ArithmeticDecoder<'data> {
     ac_kx: [u8; NUM_ARITH_TBLS],
     restart_interval: u16,
     restarts_to_go: u32,
+    /// When true, overflow conditions are treated as end-of-scan (matching
+    /// libjpeg-turbo's WARNMS + return TRUE behavior) instead of hard errors.
+    lenient: bool,
+    /// Set when an overflow was encountered in lenient mode.
+    had_overflow: bool,
 }
 
 impl<'data> ArithmeticDecoder<'data> {
@@ -307,7 +312,21 @@ impl<'data> ArithmeticDecoder<'data> {
             ac_kx: [5; NUM_ARITH_TBLS],
             restart_interval: 0,
             restarts_to_go: 0,
+            lenient: false,
+            had_overflow: false,
         }
+    }
+
+    /// Enable lenient mode: overflow conditions are treated as end-of-scan
+    /// (matching libjpeg-turbo's WARNMS behavior) instead of hard errors.
+    pub fn set_lenient(&mut self, lenient: bool) {
+        self.lenient = lenient;
+    }
+
+    /// Returns true if an overflow was encountered and silently recovered
+    /// (only possible in lenient mode).
+    pub fn had_overflow(&self) -> bool {
+        self.had_overflow
     }
 
     pub fn set_restart_interval(&mut self, interval: u16) {
@@ -401,6 +420,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 m <<= 1;
                 if m == 0x8000 {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(self.last_dc_val[ci]));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic DC magnitude overflow"));
                 }
                 st += 1;
@@ -469,6 +492,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
@@ -487,6 +514,10 @@ impl<'data> ArithmeticDecoder<'data> {
                     m <<= 1;
                     if m == 0x8000 {
                         self.state.ct = -1;
+                        if self.lenient {
+                            self.had_overflow = true;
+                            return Ok(ScanRead::Value(()));
+                        }
                         return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
                     st += 1;
@@ -599,6 +630,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
@@ -616,6 +651,10 @@ impl<'data> ArithmeticDecoder<'data> {
                     m <<= 1;
                     if m == 0x8000 {
                         self.state.ct = -1;
+                        if self.lenient {
+                            self.had_overflow = true;
+                            return Ok(ScanRead::Value(()));
+                        }
                         return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
                     st += 1;
@@ -718,6 +757,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
