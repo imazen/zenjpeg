@@ -557,40 +557,9 @@ fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
 /// Inject XMP data into a JPEG as APP1 marker.
 ///
 /// Inserts after SOI and any existing APP1 (EXIF) markers.
-fn inject_xmp(jpeg: Vec<u8>, xmp_data: &[u8]) -> Vec<u8> {
-    if xmp_data.is_empty() {
-        return jpeg;
-    }
-
-    // Truncate if too large
-    let xmp_len = xmp_data.len().min(MAX_XMP_BYTES);
-
-    // Build XMP APP1 marker
-    let mut marker = Vec::with_capacity(4 + 29 + xmp_len);
-    marker.push(0xFF);
-    marker.push(0xE1); // APP1
-
-    // Length: 2 (length field) + 29 (namespace) + data
-    let segment_length = 2 + 29 + xmp_len;
-    marker.push((segment_length >> 8) as u8);
-    marker.push(segment_length as u8);
-
-    // XMP namespace
-    marker.extend_from_slice(XMP_NAMESPACE);
-
-    // XMP data
-    marker.extend_from_slice(&xmp_data[..xmp_len]);
-
-    // Find insertion point: after SOI and any existing EXIF APP1 markers
-    let insert_pos = find_xmp_insert_position(&jpeg);
-
-    // Construct new JPEG with XMP marker inserted
-    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
-    result.extend_from_slice(&jpeg[..insert_pos]);
-    result.extend_from_slice(&marker);
-    result.extend_from_slice(&jpeg[insert_pos..]);
-
-    result
+fn inject_xmp(mut jpeg: Vec<u8>, xmp_data: &[u8]) -> Vec<u8> {
+    inject_xmp_inplace(&mut jpeg, xmp_data);
+    jpeg
 }
 
 /// Find the position to insert XMP marker (after SOI and EXIF APP1).
@@ -677,30 +646,28 @@ fn inject_xmp_inplace(jpeg: &mut Vec<u8>, xmp_data: &[u8]) {
         return;
     }
 
-    // Truncate if too large
-    let xmp_len = xmp_data.len().min(MAX_XMP_BYTES);
+    // Delegate to EncoderSegments for proper extended XMP handling
+    let segments = super::extras::EncoderSegments::new();
+    let xmp_str = core::str::from_utf8(xmp_data).unwrap_or("");
+    let segments = segments.set_xmp(xmp_str);
 
-    // Build XMP APP1 marker
-    let mut marker = Vec::with_capacity(4 + 29 + xmp_len);
-    marker.push(0xFF);
-    marker.push(0xE1); // APP1
-
-    // Length: 2 (length field) + 29 (namespace) + data
-    let segment_length = 2 + 29 + xmp_len;
-    marker.push((segment_length >> 8) as u8);
-    marker.push(segment_length as u8);
-
-    // XMP namespace
-    marker.extend_from_slice(XMP_NAMESPACE);
-
-    // XMP data
-    marker.extend_from_slice(&xmp_data[..xmp_len]);
-
-    // Find insertion point: after SOI and any existing EXIF APP1 markers
+    // Build all APP1 markers from segments
     let insert_pos = find_xmp_insert_position(jpeg);
+    let mut markers = Vec::new();
+    for seg in segments.segments() {
+        if seg.segment_type == super::extras::SegmentType::Xmp
+            || seg.segment_type == super::extras::SegmentType::XmpExtended
+        {
+            let seg_len = 2 + seg.data.len();
+            markers.push(0xFF);
+            markers.push(0xE1);
+            markers.push((seg_len >> 8) as u8);
+            markers.push(seg_len as u8);
+            markers.extend_from_slice(&seg.data);
+        }
+    }
 
-    // Insert using splice
-    jpeg.splice(insert_pos..insert_pos, marker);
+    jpeg.splice(insert_pos..insert_pos, markers);
 }
 
 /// Inject encoder segments into a JPEG in-place.

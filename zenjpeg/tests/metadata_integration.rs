@@ -989,3 +989,142 @@ mod cross_crate_tests {
     }
 }
 */
+
+// ── Extended XMP round-trip tests ───────────────────────────────────────────
+
+#[cfg(feature = "decoder")]
+mod extended_xmp {
+    use super::*;
+    use enough::Unstoppable;
+    use zenjpeg::decoder::Decoder;
+
+    /// Generate fake XMP of exactly `n` bytes.
+    fn make_xmp(n: usize) -> String {
+        let prefix = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="">"#;
+        let suffix = r#"</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>"#;
+        let overhead = prefix.len() + suffix.len();
+        let padding = n.saturating_sub(overhead);
+        // Fill with valid XML attribute to reach target size
+        let fill = format!(
+            r#" xmlns:pad="x" pad:d="{}"#,
+            "X".repeat(padding.saturating_sub(22))
+        );
+        let mut s = String::with_capacity(n);
+        s.push_str(prefix);
+        s.push_str(&fill[..fill.len().min(padding)]);
+        s.push_str(suffix);
+        // Pad or truncate to exact length
+        while s.len() < n {
+            s.push(' ');
+        }
+        s.truncate(n);
+        s
+    }
+
+    fn encode_with_xmp_str(xmp: &str) -> Vec<u8> {
+        let w = 16u32;
+        let h = 16;
+        let pixels = create_test_image(w, h);
+        let cfg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None);
+        let mut enc = cfg
+            .request()
+            .xmp(xmp.as_bytes())
+            .encode_from_rgb::<RGB<u8>>(w, h)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn standard_xmp_fits_in_one_segment() {
+        let xmp = make_xmp(1000);
+        let jpeg = encode_with_xmp_str(&xmp);
+        let ns = b"http://ns.adobe.com/xap/1.0/\0";
+        let ext_ns = b"http://ns.adobe.com/xmp/extension/\0";
+        assert!(
+            jpeg.windows(ns.len()).any(|w| w == ns),
+            "standard XMP namespace present"
+        );
+        assert!(
+            !jpeg.windows(ext_ns.len()).any(|w| w == ext_ns),
+            "no extended XMP for small payload"
+        );
+    }
+
+    #[test]
+    fn extended_xmp_splits_large_payload() {
+        // 100KB XMP — needs extended
+        let xmp = make_xmp(100_000);
+        let jpeg = encode_with_xmp_str(&xmp);
+        let ns = b"http://ns.adobe.com/xap/1.0/\0";
+        let ext_ns = b"http://ns.adobe.com/xmp/extension/\0";
+        assert!(
+            jpeg.windows(ns.len()).any(|w| w == ns),
+            "standard XMP present"
+        );
+        let ext_count = jpeg.windows(ext_ns.len()).filter(|w| *w == ext_ns).count();
+        assert!(ext_count >= 1, "at least one extended XMP segment");
+    }
+
+    #[test]
+    fn extended_xmp_round_trips_through_decoder() {
+        let xmp = make_xmp(100_000);
+        let jpeg = encode_with_xmp_str(&xmp);
+
+        // Decode and extract XMP
+        let result = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let extras = result.extras().expect("extras present");
+        let decoded_xmp = extras.xmp().expect("XMP round-tripped");
+
+        assert_eq!(decoded_xmp.len(), xmp.len(), "XMP length preserved");
+        assert_eq!(decoded_xmp, xmp, "XMP content preserved exactly");
+    }
+
+    #[test]
+    fn extended_xmp_boundary_65502() {
+        // Exactly at the boundary: should NOT need extended
+        let xmp = make_xmp(65502);
+        let jpeg = encode_with_xmp_str(&xmp);
+        let ext_ns = b"http://ns.adobe.com/xmp/extension/\0";
+        assert!(
+            !jpeg.windows(ext_ns.len()).any(|w| w == ext_ns),
+            "65502 bytes fits in standard"
+        );
+    }
+
+    #[test]
+    fn extended_xmp_boundary_65503() {
+        // One byte over: needs extended
+        let xmp = make_xmp(65503);
+        let jpeg = encode_with_xmp_str(&xmp);
+        let ext_ns = b"http://ns.adobe.com/xmp/extension/\0";
+        assert!(
+            jpeg.windows(ext_ns.len()).any(|w| w == ext_ns),
+            "65503 needs extended"
+        );
+
+        // Round-trip
+        let result = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let decoded = result.extras().unwrap().xmp().unwrap();
+        assert_eq!(decoded, xmp);
+    }
+
+    #[test]
+    fn extended_xmp_200kb_multi_chunk() {
+        // 200KB needs multiple extended chunks
+        let xmp = make_xmp(200_000);
+        let jpeg = encode_with_xmp_str(&xmp);
+        let ext_ns = b"http://ns.adobe.com/xmp/extension/\0";
+        let ext_count = jpeg.windows(ext_ns.len()).filter(|w| *w == ext_ns).count();
+        assert!(
+            ext_count >= 3,
+            "200KB needs 3+ extended chunks, got {ext_count}"
+        );
+
+        // Round-trip
+        let result = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+        let decoded = result.extras().unwrap().xmp().unwrap();
+        assert_eq!(decoded.len(), xmp.len());
+        assert_eq!(decoded, xmp);
+    }
+}

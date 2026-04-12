@@ -180,6 +180,10 @@ pub struct AdobeInfo {
 /// 65535 - 2 (length) - 29 (namespace) - 2 (padding) = 65502
 const MAX_STANDARD_XMP_BYTES: usize = 65502;
 
+/// Maximum payload bytes per extended XMP chunk.
+/// 65533 (max segment data) - 35 (namespace) - 32 (GUID) - 4 (total_len) - 4 (offset) = 65458
+const MAX_EXTENDED_XMP_CHUNK_BYTES: usize = 65458;
+
 /// Maximum bytes per ICC chunk.
 /// 65535 - 2 (length) - 12 (signature) - 2 (chunk info) = 65519
 const MAX_ICC_CHUNK_BYTES: usize = 65519;
@@ -426,18 +430,60 @@ impl EncoderSegments {
                 segment_type: SegmentType::Xmp,
             });
         } else {
-            // Extended XMP - split across segments
-            // TODO: Implement extended XMP splitting
-            // For now, truncate to standard XMP size
-            let truncated = &xmp_bytes[..MAX_STANDARD_XMP_BYTES];
-            let mut data = Vec::with_capacity(XMP_NAMESPACE.len() + truncated.len());
+            // Extended XMP: split across multiple APP1 segments per the
+            // Adobe XMP Part 3 spec. The standard segment gets the first
+            // MAX_STANDARD_XMP_BYTES of the XMP string. Remaining bytes go
+            // into one or more extended segments, each prefixed with the
+            // extended namespace, a 32-char MD5 hex GUID of the full XMP,
+            // total extended length (u32 BE), and chunk offset (u32 BE).
+
+            // 1. Compute MD5 GUID of the full XMP
+            use md5::{Digest, Md5};
+            let guid = {
+                let hash = Md5::digest(xmp_bytes);
+                let mut hex = [0u8; 32];
+                for (i, byte) in hash.iter().enumerate() {
+                    let hi = byte >> 4;
+                    let lo = byte & 0x0F;
+                    hex[i * 2] = if hi < 10 { b'0' + hi } else { b'A' + hi - 10 };
+                    hex[i * 2 + 1] = if lo < 10 { b'0' + lo } else { b'A' + lo - 10 };
+                }
+                hex
+            };
+
+            // 2. Standard segment: first portion of XMP
+            let standard_bytes = &xmp_bytes[..MAX_STANDARD_XMP_BYTES];
+            let mut data = Vec::with_capacity(XMP_NAMESPACE.len() + standard_bytes.len());
             data.extend_from_slice(XMP_NAMESPACE);
-            data.extend_from_slice(truncated);
+            data.extend_from_slice(standard_bytes);
             self.segments.push(EncoderSegment {
                 marker: 0xE1,
                 data,
                 segment_type: SegmentType::Xmp,
             });
+
+            // 3. Extended segments: remaining bytes in chunks
+            let extended_bytes = &xmp_bytes[MAX_STANDARD_XMP_BYTES..];
+            let total_extended_len = extended_bytes.len() as u32;
+
+            for (chunk_idx, chunk) in extended_bytes
+                .chunks(MAX_EXTENDED_XMP_CHUNK_BYTES)
+                .enumerate()
+            {
+                let offset = (chunk_idx * MAX_EXTENDED_XMP_CHUNK_BYTES) as u32;
+                let header_len = XMP_EXTENDED_NAMESPACE.len() + 32 + 4 + 4;
+                let mut data = Vec::with_capacity(header_len + chunk.len());
+                data.extend_from_slice(XMP_EXTENDED_NAMESPACE);
+                data.extend_from_slice(&guid);
+                data.extend_from_slice(&total_extended_len.to_be_bytes());
+                data.extend_from_slice(&offset.to_be_bytes());
+                data.extend_from_slice(chunk);
+                self.segments.push(EncoderSegment {
+                    marker: 0xE1,
+                    data,
+                    segment_type: SegmentType::XmpExtended,
+                });
+            }
         }
 
         self
