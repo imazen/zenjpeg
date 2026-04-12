@@ -69,29 +69,20 @@ fn load_png_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, width, height))
 }
 
-/// Get gb82 corpus directory. Tries codec-corpus crate first, then local paths.
-fn get_gb82_dir() -> Option<PathBuf> {
-    // Try codec-corpus crate
-    if let Ok(corpus) = codec_corpus::Corpus::new()
-        && let Ok(dir) = corpus.get("gb82")
-    {
-        return Some(dir);
-    }
-    // Fallback to known local path
-    let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata");
-    // gb82 may not be there, but check common locations
-    [
-        PathBuf::from("/home/lilith/work/codec-eval/codec-corpus/gb82"),
-        local,
-    ]
-    .into_iter()
-    .find(|candidate| candidate.exists() && candidate.join("baby-lossless.png").exists())
+/// Get gb82 corpus directory via codec-corpus (auto-downloads).
+fn get_gb82_dir() -> PathBuf {
+    let corpus = codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)");
+    corpus.get("gb82").expect("corpus.get(gb82)")
 }
 
-/// Get CID22 training directory.
-fn get_cid22_dir() -> Option<PathBuf> {
-    let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get("CID22/CID22-512/training").ok()
+/// Get CID22 training directory via codec-corpus (auto-downloads).
+fn get_cid22_dir() -> PathBuf {
+    let corpus = codec_corpus::Corpus::new()
+        .expect("codec-corpus init failed (set CODEC_CORPUS_CACHE if needed)");
+    corpus
+        .get("CID22/CID22-512/training")
+        .expect("corpus.get(CID22/CID22-512/training)")
 }
 
 /// Load all PNG images from a directory. Returns vec of (name, pixels, width, height).
@@ -117,7 +108,7 @@ fn load_pngs_from_dir(dir: &Path, max: usize) -> Vec<(String, Vec<u8>, u32, u32)
 
 /// Load specific named images from gb82.
 fn load_gb82_images(names: &[&str]) -> Option<Vec<(String, Vec<u8>, u32, u32)>> {
-    let dir = get_gb82_dir()?;
+    let dir = get_gb82_dir();
     let mut images = Vec::new();
     for name in names {
         let path = dir.join(format!("{name}-lossless.png"));
@@ -245,15 +236,11 @@ fn quality_sweep_multi(
 
 /// YCbCr 4:4:4 quality sweep on gb82 photos: scores must be monotonically
 /// non-decreasing (within tolerance) and never drop below minimum thresholds.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_ycbcr_444_quality_monotonic() {
-    let images = match load_gb82_images(&["baby", "bulb", "city", "flowers", "guitar", "waves"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["baby", "bulb", "city", "flowers", "guitar", "waves"])
+        .expect("gb82 corpus images not found");
 
     let qualities: Vec<u32> = (50..=99).step_by(5).collect();
 
@@ -321,15 +308,11 @@ fn test_ycbcr_444_quality_monotonic() {
 }
 
 /// YCbCr 4:2:0 quality sweep: same monotonicity checks, plus chroma-specific thresholds.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_ycbcr_420_quality_monotonic() {
-    let images = match load_gb82_images(&["baby", "bulb", "city", "flowers", "guitar", "waves"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["baby", "bulb", "city", "flowers", "guitar", "waves"])
+        .expect("gb82 corpus images not found");
 
     let qualities: Vec<u32> = (50..=99).step_by(5).collect();
 
@@ -369,18 +352,13 @@ fn test_ycbcr_420_quality_monotonic() {
 /// Bug #6 specifically affected: bulb, baby, girl at certain Q levels with 4:2:0 + trellis.
 ///
 /// Root cause was progressive decoder truncation near restart markers (commit 08ef601).
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore] // Requires gb82 corpus
 fn test_420_auto_optimize_no_catastrophic() {
     // These are the exact images that triggered bug #1
     let bug_images = ["bulb", "baby", "girl", "city", "flowers"];
-    let images = match load_gb82_images(&bug_images) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available (need bulb/baby/girl for bug #1 test)");
-            return;
-        }
-    };
+    let images = load_gb82_images(&bug_images).expect("gb82 corpus images not found");
 
     let qualities: Vec<u32> = (70..=99).collect(); // Every Q level in auto_optimize range
 
@@ -431,16 +409,12 @@ fn test_420_auto_optimize_no_catastrophic() {
 /// 4:4:4 with auto_optimize: should never have catastrophic drops.
 /// Previously failed (waves Q97 hit 47.7) due to progressive decoder truncation bug.
 /// Fixed in commit 08ef601.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore] // Requires gb82 corpus
 fn test_444_auto_optimize_quality() {
-    let images = match load_gb82_images(&["baby", "bulb", "guitar", "waves"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["baby", "bulb", "guitar", "waves"])
+        .expect("gb82 corpus images not found");
 
     let qualities: Vec<u32> = (70..=99).step_by(3).collect();
 
@@ -469,15 +443,11 @@ fn test_444_auto_optimize_quality() {
 
 /// XYB encode/decode roundtrip at all quality levels on real images.
 /// Catches: XYB Huffman corruption (bug #3), undecodable output.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_xyb_roundtrip_all_qualities() {
-    let images = match load_gb82_images(&["baby", "guitar", "waves"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images =
+        load_gb82_images(&["baby", "guitar", "waves"]).expect("gb82 corpus images not found");
 
     let qualities: Vec<u32> = (10..=99).step_by(5).collect();
 
@@ -526,15 +496,10 @@ fn test_xyb_roundtrip_all_qualities() {
 
 /// Decoder consistency: streaming vs scanline must produce identical output
 /// on real photographic content.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_decoder_path_consistency() {
-    let images = match load_gb82_images(&["baby", "guitar"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["baby", "guitar"]).expect("gb82 corpus images not found");
 
     let qualities = [50, 75, 90, 95];
     let z = Zensim::new(ZensimProfile::latest());
@@ -594,16 +559,11 @@ fn test_decoder_path_consistency() {
 
 /// Statistical quality check across CID22 corpus (many diverse images).
 /// Verifies mean quality is reasonable and no single image is catastrophically bad.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore] // Requires CID22 corpus download
 fn test_cid22_quality_statistics() {
-    let dir = match get_cid22_dir() {
-        Some(d) => d,
-        None => {
-            eprintln!("Skipping: CID22 corpus not available");
-            return;
-        }
-    };
+    let dir = get_cid22_dir();
 
     let images = load_pngs_from_dir(&dir, 20); // First 20 for speed
     assert!(
@@ -659,16 +619,12 @@ fn test_cid22_quality_statistics() {
 }
 
 /// Diagnostic: compare auto_optimize vs plain vs trellis-baseline to isolate the bug.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore]
 fn diagnostic_trellis_vs_plain() {
-    let images = match load_gb82_images(&["bulb", "city", "flowers"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images =
+        load_gb82_images(&["bulb", "city", "flowers"]).expect("gb82 corpus images not found");
 
     println!("\n=== Trellis vs Plain Diagnostic ===");
     println!(
@@ -728,16 +684,11 @@ fn diagnostic_trellis_vs_plain() {
 }
 
 /// Diagnostic: decode with djpeg (libjpeg-turbo) to check if it's encoder or decoder bug.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore]
 fn diagnostic_cross_decoder() {
-    let images = match load_gb82_images(&["bulb"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
 
     println!("\n=== Cross-decoder check for {name} Q90 vs Q91 ===");
@@ -819,16 +770,11 @@ fn diagnostic_cross_decoder() {
 /// coefficients are encoded as both baseline and progressive. If the progressive
 /// decoder reconstructs different coefficients, this prints the exact positions
 /// and values that differ.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore]
 fn diagnostic_coefficient_comparison() {
-    let images = match load_gb82_images(&["bulb"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
     let decoder = Decoder::new();
 
@@ -947,16 +893,11 @@ fn diagnostic_coefficient_comparison() {
 
 /// Diagnostic: check scan structure of progressive JPEGs at Q90 vs Q91.
 /// Verifies whether the issue is scan truncation or coefficient corruption.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore]
 fn diagnostic_scan_structure() {
-    let images = match load_gb82_images(&["bulb"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
 
     println!("\n=== Scan structure comparison for {name} Q90 vs Q91 ===");
@@ -1022,18 +963,13 @@ fn diagnostic_scan_structure() {
 }
 
 /// Diagnostic: isolate whether the bug is from trellis, progressive, or their combination.
+#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 #[ignore]
 fn diagnostic_isolate_trellis_progressive() {
     use zenjpeg::encode::trellis::HybridConfig;
 
-    let images = match load_gb82_images(&["bulb"]) {
-        Some(imgs) => imgs,
-        None => {
-            eprintln!("Skipping: gb82 corpus not available");
-            return;
-        }
-    };
+    let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
 
     println!("\n=== Isolating trellis vs progressive for {name} ===");
