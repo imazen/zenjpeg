@@ -150,6 +150,22 @@ impl StripProcessor {
     ) -> Result<Self> {
         let is_grayscale = num_components == 1;
 
+        // StripProcessor assumes Cb and Cr share the same sampling factors.
+        // Asymmetric chroma should be routed through the f32 generic path in
+        // output.rs (see `cb_h != cr_h` guards in scanline_reader /
+        // Decoder::decode / can_use_fast_i16_subsampled). If any caller slips
+        // through, panic loudly in debug builds rather than silently producing
+        // wrong chroma.
+        debug_assert!(
+            num_components < 3 || (h_samp[1] == h_samp[2] && v_samp[1] == v_samp[2]),
+            "StripProcessor requires symmetric Cb/Cr sampling factors; \
+             got Cb=({},{}) Cr=({},{})",
+            h_samp[1],
+            v_samp[1],
+            h_samp[2],
+            v_samp[2]
+        );
+
         let (max_h_samp, max_v_samp) = if is_grayscale {
             (h_samp[0], v_samp[0])
         } else {
