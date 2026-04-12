@@ -284,5 +284,109 @@ pub fn cluster_histograms(
         result.merge_log = merge_log;
     }
 
+    // Refine: try moving each context to a better cluster.
+    // The greedy pass is order-dependent — early contexts always get their own
+    // cluster even if a later context would share well. This 1-opt pass fixes
+    // suboptimal assignments after all histograms are known.
+    refine_clustering(histograms, &mut result);
+
     result
+}
+
+/// Iterative 1-opt refinement of cluster assignments.
+///
+/// For each non-empty context, tries moving it to every other cluster.
+/// If moving reduces total encoding cost, applies the move. Repeats
+/// until a full pass produces no improvement.
+fn refine_clustering(histograms: &[FrequencyCounter], result: &mut ClusterResult) {
+    let active: Vec<usize> = (0..histograms.len())
+        .filter(|&i| !histograms[i].is_empty_histogram())
+        .collect();
+
+    if active.is_empty() || result.num_clusters <= 1 {
+        return;
+    }
+
+    // Rebuild cluster histograms from scratch for exact accounting
+    let mut clusters = vec![FrequencyCounter::new(); result.num_clusters];
+    for &ctx in &active {
+        let cluster = result.context_map[ctx];
+        if cluster < result.num_clusters {
+            clusters[cluster].add(&histograms[ctx]);
+        }
+    }
+    result.cluster_histograms = clusters;
+
+    let mut cluster_costs: Vec<f64> = result
+        .cluster_histograms
+        .iter()
+        .map(|h| {
+            if h.is_empty_histogram() {
+                0.0
+            } else {
+                h.estimate_encoding_cost()
+            }
+        })
+        .collect();
+
+    const MAX_PASSES: usize = 10;
+    for _ in 0..MAX_PASSES {
+        let mut improved = false;
+
+        for &ctx in &active {
+            let current = result.context_map[ctx];
+            let ctx_histo = &histograms[ctx];
+
+            // Cost of current cluster without this context
+            let mut without = result.cluster_histograms[current].clone();
+            without.subtract(ctx_histo);
+            let cost_without = if without.is_empty_histogram() {
+                0.0
+            } else {
+                without.estimate_encoding_cost()
+            };
+            let removal_savings = cluster_costs[current] - cost_without;
+
+            // Try each other cluster as a target.
+            // Require savings > 1 DHT header (136 bits) to avoid moves where
+            // the estimated gain is swallowed by slot redefinition overhead
+            // that the cost estimator doesn't model.
+            let mut best_target = current;
+            let mut best_delta = -136.0_f64;
+
+            for target in 0..result.num_clusters {
+                if target == current {
+                    continue;
+                }
+                let combined = result.cluster_histograms[target].combined(ctx_histo);
+                let addition_cost = combined.estimate_encoding_cost() - cluster_costs[target];
+                let delta = addition_cost - removal_savings;
+                if delta < best_delta {
+                    best_delta = delta;
+                    best_target = target;
+                }
+            }
+
+            if best_target != current {
+                result.cluster_histograms[current].subtract(ctx_histo);
+                result.cluster_histograms[best_target].add(ctx_histo);
+                result.context_map[ctx] = best_target;
+
+                cluster_costs[current] = if result.cluster_histograms[current].is_empty_histogram()
+                {
+                    0.0
+                } else {
+                    result.cluster_histograms[current].estimate_encoding_cost()
+                };
+                cluster_costs[best_target] =
+                    result.cluster_histograms[best_target].estimate_encoding_cost();
+
+                improved = true;
+            }
+        }
+
+        if !improved {
+            break;
+        }
+    }
 }
