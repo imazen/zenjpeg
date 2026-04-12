@@ -939,3 +939,56 @@ fn test_extraneous_inter_marker_bytes_balanced() {
         warnings
     );
 }
+
+// ============================================================================
+// Lossless JPEG (SOF3/SOF7/SOF11) detection — issue #46
+// ============================================================================
+
+/// SOF3 (0xC3) detected via synthetic minimal marker.
+#[test]
+fn test_lossless_sof3_synthetic() {
+    // SOI + SOF3 marker (0xFF 0xC3) with minimal length
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF3"),
+        "got: {msg}"
+    );
+}
+
+/// SOF7 (0xC7) — lossless differential — should be rejected.
+#[test]
+fn test_lossless_sof7_synthetic() {
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xC7, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF7"),
+        "got: {msg}"
+    );
+}
+
+/// SOF11 (0xCB) — arithmetic lossless — should be rejected.
+#[test]
+fn test_lossless_sof11_synthetic() {
+    let data: &[u8] = &[
+        0xFF, 0xD8, 0xFF, 0xCB, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    ];
+    let decoder = Decoder::new();
+    let result = decoder.decode(data, Unstoppable);
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("lossless") && msg.contains("SOF11"),
+        "got: {msg}"
+    );
+}

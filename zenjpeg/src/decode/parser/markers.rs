@@ -10,7 +10,8 @@ use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_APP14, MARKER_COM, MARKER_DAC,
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
-    MARKER_SOF9, MARKER_SOF10, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    MARKER_SOF3, MARKER_SOF7, MARKER_SOF9, MARKER_SOF10, MARKER_SOF11, MAX_COMPONENTS,
+    MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::JpegMode;
@@ -45,6 +46,21 @@ impl<'a> JpegParser<'a> {
                     self.mode = JpegMode::ArithmeticProgressive;
                     self.parse_frame_header()?;
                     return Ok(());
+                }
+                MARKER_SOF3 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF3) is not supported",
+                    ));
+                }
+                MARKER_SOF7 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF7) is not supported",
+                    ));
+                }
+                MARKER_SOF11 => {
+                    return Err(Error::unsupported_feature(
+                        "lossless JPEG (SOF11) is not supported",
+                    ));
                 }
                 MARKER_DQT => self.parse_header_marker(|s| s.parse_quant_table())?,
                 MARKER_DHT => self.parse_header_marker(|s| s.parse_huffman_table())?,
