@@ -54,7 +54,9 @@ fn lcg(seed: &mut u64) -> u32 {
 
 fn gen_noise(w: u32, h: u32, c: u32, seed: u64) -> Vec<u8> {
     let mut s = seed;
-    (0..(w * h * c)).map(|_| (lcg(&mut s) & 0xff) as u8).collect()
+    (0..(w * h * c))
+        .map(|_| (lcg(&mut s) & 0xff) as u8)
+        .collect()
 }
 
 fn gen_noise_patches(w: u32, h: u32, c: u32, seed: u64) -> Vec<u8> {
@@ -238,7 +240,14 @@ fn build_sources(tmp: &Path) -> Vec<Source> {
     }
 
     // Grayscale sources
-    for &(w, h) in &[(16u32, 16), (17, 19), (32, 32), (33, 31), (65, 63), (128, 128)] {
+    for &(w, h) in &[
+        (16u32, 16),
+        (17, 19),
+        (32, 32),
+        (33, 31),
+        (65, 63),
+        (128, 128),
+    ] {
         push(
             &format!("noise_{w}x{h}_gray"),
             w,
@@ -300,7 +309,11 @@ fn build_tasks(sources: &[Source], quick: bool) -> Vec<Task> {
     for (idx, src) in sources.iter().enumerate() {
         if src.channels == 1 {
             // Gray axis: quality × progressive × optimize × restart × dct
-            let dct_methods: &[&str] = if quick { &["int"] } else { &["int", "fast", "float"] };
+            let dct_methods: &[&str] = if quick {
+                &["int"]
+            } else {
+                &["int", "fast", "float"]
+            };
             for &q in qualities {
                 for prog in &[false, true] {
                     for opt in &[false, true] {
@@ -323,9 +336,8 @@ fn build_tasks(sources: &[Source], quick: bool) -> Vec<Task> {
                                     args.push("-restart".into());
                                     args.push(r.to_string());
                                 }
-                                let desc = format!(
-                                    "q={q} prog={prog} opt={opt} rst={r} dct={dct} gray"
-                                );
+                                let desc =
+                                    format!("q={q} prog={prog} opt={opt} rst={r} dct={dct} gray");
                                 out.push(Task {
                                     tool: "cjpeg",
                                     source_idx: idx,
@@ -379,9 +391,8 @@ fn build_tasks(sources: &[Source], quick: bool) -> Vec<Task> {
                                     args.push("-restart".into());
                                     args.push(r.to_string());
                                 }
-                                let desc = format!(
-                                    "q={q} prog={prog} opt={opt} rst={r} sub={sub_name}"
-                                );
+                                let desc =
+                                    format!("q={q} prog={prog} opt={opt} rst={r} sub={sub_name}");
                                 out.push(Task {
                                     tool: "cjpeg",
                                     source_idx: idx,
@@ -456,11 +467,7 @@ fn build_tasks(sources: &[Source], quick: bool) -> Vec<Task> {
                     out.push(Task {
                         tool: "cjpeg",
                         source_idx: idx,
-                        args: vec![
-                            "-quality".into(),
-                            q.to_string(),
-                            "-arithmetic".into(),
-                        ],
+                        args: vec!["-quality".into(), q.to_string(), "-arithmetic".into()],
                         desc: format!("q={q} arith"),
                         expect_zenjpeg_fail: true,
                     });
@@ -714,7 +721,8 @@ fn run_task(task: &Task, source: &Source, worker_id: usize) -> Option<TaskOutput
 // ── Main ───────────────────────────────────────────────────────────────────
 
 fn main() {
-    let out_dir = PathBuf::from(env::var("ZENJPEG_PERM_OUT").unwrap_or_else(|_| DEFAULT_OUT.into()));
+    let out_dir =
+        PathBuf::from(env::var("ZENJPEG_PERM_OUT").unwrap_or_else(|_| DEFAULT_OUT.into()));
     let cap_mb: u64 = env::var("ZENJPEG_PERM_CAP_MB")
         .ok()
         .and_then(|s| s.parse().ok())

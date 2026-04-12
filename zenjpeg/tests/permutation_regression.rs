@@ -152,8 +152,7 @@ fn xyb_p0_sub420_decodes() {
 fn mixed1_q5_has_small_diff() {
     // Q5 noise_96x72: recorded max_diff = 10 vs mozjpeg. Asserting > 8 so
     // the test fails when the bug is fixed (expected post-fix: ≤ 7).
-    let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
     let (zw, zh, zp) = decode_zen(data).expect("decodes");
     let (mw, mh, mp) = decode_mozjpeg_rgb(data).expect("mozjpeg decodes");
     assert_eq!((zw, zh), (mw, mh));
