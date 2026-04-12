@@ -5,8 +5,6 @@
 //!
 //! This is a pure Rust port of libjpeg-turbo's jdarith.c implementation.
 
-#![allow(dead_code)]
-
 use crate::error::{Error, Result, ScanRead, ScanResult};
 
 /// Number of DC statistics bins per table.

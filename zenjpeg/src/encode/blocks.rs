@@ -885,6 +885,7 @@ impl ComputedConfig {
     }
 
     /// Encodes XYB raster-ordered blocks using standard (non-optimized) Huffman tables.
+    #[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
     pub(crate) fn encode_with_tables_xyb_standard_raster(
         &self,
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],

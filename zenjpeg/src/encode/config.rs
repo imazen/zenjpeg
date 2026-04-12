@@ -2,8 +2,6 @@
 //!
 //! This module contains all configuration-related types for the JPEG encoder.
 
-#![allow(dead_code)]
-
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
@@ -82,6 +80,8 @@ pub struct ComputedConfig {
     /// Custom encoding tables (escape hatch for experimentation).
     /// Not part of public API.
     #[doc(hidden)]
+    #[allow(dead_code)]
+    // Set but not read from ComputedConfig; read from StreamingEncoderBuilder
     pub(crate) encoding_tables: Option<Box<crate::encode::tuning::EncodingTables>>,
 
     // EncodingBackend removed - strip-based encoding is now the only backend

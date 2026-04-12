@@ -2,8 +2,7 @@
 //!
 //! This module provides image generation, quality verification, and test data
 //! access utilities matching the C++ jpegli test infrastructure.
-
-#![allow(dead_code)] // Test utilities - not all used in every test configuration
+#![allow(dead_code)] // Shared utilities — items used selectively by different test binaries
 
 use std::path::PathBuf;
 

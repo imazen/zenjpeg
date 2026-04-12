@@ -4,8 +4,6 @@
 //! merging similar symbol frequency histograms to reduce the number of
 //! Huffman tables needed in the JPEG file.
 
-#![allow(dead_code)]
-
 use super::frequency::FrequencyCounter;
 
 /// Result of histogram clustering.

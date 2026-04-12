@@ -777,6 +777,7 @@ pub fn hybrid_quantize_block_simple(
 // ============================================================================
 
 /// Get the AQ map, using custom if provided or computing from Y plane.
+#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
 #[inline]
 pub(crate) fn get_aq_map_or_compute(
     config: &ComputedConfig,
@@ -800,6 +801,7 @@ pub(crate) fn get_aq_map_or_compute(
 /// 1. If `trellis` is set (mozjpeg-compat API), use it directly
 /// 2. Else if `hybrid_config.enabled`, use hybrid AQ+trellis mode
 /// 3. Else return None (no trellis quantization)
+#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
 #[inline]
 pub(crate) fn create_hybrid_ctx(config: &ComputedConfig) -> Option<HybridQuantContext> {
     // First check for explicit TrellisConfig (mozjpeg-compat API)
@@ -826,6 +828,7 @@ pub(crate) fn create_hybrid_ctx(config: &ComputedConfig) -> Option<HybridQuantCo
 /// This inline helper centralizes the hybrid vs non-hybrid dispatch logic.
 /// When `hybrid_ctx` is Some, uses trellis quantization; otherwise uses
 /// standard zero-bias quantization.
+#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
 #[inline]
 pub(crate) fn quantize_block_dispatch(
     dct: &[f32; DCT_BLOCK_SIZE],
@@ -971,6 +974,7 @@ impl HybridQuantContext {
 /// For XYB mode:
 /// - X and Y use luma tables (both are full-resolution "luma-like" channels)
 /// - B uses chroma tables (downsampled blue channel)
+#[allow(dead_code)] // XYB block-based encoding path (not yet integrated)
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn quantize_all_blocks_xyb_with_aq(
     x_plane: &[f32],

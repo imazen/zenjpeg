@@ -8,8 +8,6 @@
 //! - **archmage path** (x86_64): AVX2+FMA via `archmage_idct::mage_inverse_dct_8x8`
 //! - **generic path** (fallback): Portable SIMD via magetypes generics with multi-tier dispatch
 
-#![allow(dead_code)]
-
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
@@ -247,10 +245,12 @@ mod simd {
     }
 
     /// SIMD-optimized 8x8 transpose using magetypes generics.
+    #[cfg(test)]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         incant!(transpose_8x8_simd_impl(input, output));
     }
 
+    #[cfg(test)]
     #[magetypes(v3, neon, wasm128, scalar)]
     fn transpose_8x8_simd_impl(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]

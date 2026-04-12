@@ -20,8 +20,6 @@
 //! - **SIMD helpers**: Cube root, matrix operations
 //! - **SIMD XYB conversion**: High-performance pixel format converters
 
-#![allow(dead_code)] // Reference implementations and alternative codepaths
-
 use crate::foundation::consts::{
     XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT, XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX,
 };
@@ -136,6 +134,7 @@ pub fn srgb_to_linear_fast(v: f32) -> f32 {
 /// sRGB to linear using C++ jpegli's rational polynomial approximation.
 ///
 /// Matches `TF_SRGB::DisplayFromEncoded` in libjxl's transfer_functions-inl.h.
+#[allow(dead_code)] // Reference implementation for validation against C++ jpegli
 #[inline]
 #[must_use]
 fn srgb_to_linear_poly(x: f32) -> f32 {

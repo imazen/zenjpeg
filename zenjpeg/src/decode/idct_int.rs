@@ -16,8 +16,6 @@
 //! - x86_64 AVX2: generic 1.64x faster than scalar
 //! - aarch64 NEON: generic 1.11x faster than scalar
 
-#![allow(dead_code)]
-
 use archmage::prelude::*;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 

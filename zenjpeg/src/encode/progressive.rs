@@ -333,6 +333,7 @@ impl ComputedConfig {
     /// * `y_quant` - Y quantization table
     /// * `cb_quant` - Cb quantization table
     /// * `cr_quant` - Cr quantization table
+    #[allow(dead_code)] // Convenience wrapper; _into variant is used instead
     pub(crate) fn encode_progressive_from_blocks(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],

@@ -12,8 +12,6 @@
 //! - Pre-computed category lookup table (4KB) for O(1) category lookup
 //! - Combined Huffman code + extra bits writes to reduce write_bits calls
 
-#![allow(dead_code)]
-
 #[cfg(feature = "decoder")]
 pub mod arithmetic;
 #[cfg(feature = "decoder")]

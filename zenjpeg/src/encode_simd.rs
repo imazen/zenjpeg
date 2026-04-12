@@ -20,8 +20,6 @@
 //!
 //! All functions have tests to verify parity with scalar implementations.
 
-#![allow(dead_code)]
-
 use archmage::prelude::*;
 use magetypes::simd::backends::F32x8Backend;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
@@ -271,6 +269,7 @@ fn downsample_1x2_simd_inplace_impl(
 ///
 /// This is the ground truth implementation that AVX2 versions are tested against.
 #[cfg(test)]
+#[allow(dead_code)] // Reference implementation for AVX2 validation
 #[inline]
 fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
     debug_assert!(data.len() >= 16);
@@ -578,6 +577,7 @@ fn rgb_to_ycbcr_scalar(
 /// * `cb_plane` - Output Cb plane (must be at least `num_pixels` elements)
 /// * `cr_plane` - Output Cr plane (must be at least `num_pixels` elements)
 /// * `num_pixels` - Number of pixels to process
+#[cfg(not(feature = "yuv"))]
 #[inline]
 pub fn rgb_to_ycbcr_planes_simd_inplace(
     rgb_data: &[u8],
@@ -638,6 +638,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 /// Fallback implementation using magetypes generic f32x8 (portable SIMD)
 ///
 /// Uses `incant!` for multi-tier SIMD dispatch (AVX2+FMA, NEON, WASM128, scalar).
+#[cfg(not(feature = "yuv"))]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -650,6 +651,7 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     ));
 }
 
+#[cfg(not(feature = "yuv"))]
 #[magetypes(v3, neon, wasm128, scalar)]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback_impl(
     token: Token,
@@ -753,6 +755,7 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback_impl(
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
+#[cfg(not(feature = "yuv"))]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
     y_plane: &mut [f32],
@@ -765,6 +768,7 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
     ));
 }
 
+#[cfg(not(feature = "yuv"))]
 #[magetypes(v3, neon, wasm128, scalar)]
 fn rgba_to_ycbcr_planes_simd_inplace_impl(
     token: Token,
@@ -868,6 +872,7 @@ fn rgba_to_ycbcr_planes_simd_inplace_impl(
 }
 
 /// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
+#[cfg(not(feature = "yuv"))]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -880,6 +885,7 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
     ));
 }
 
+#[cfg(not(feature = "yuv"))]
 #[magetypes(v3, neon, wasm128, scalar)]
 fn bgr_to_ycbcr_planes_simd_inplace_impl(
     token: Token,
@@ -983,6 +989,7 @@ fn bgr_to_ycbcr_planes_simd_inplace_impl(
 }
 
 /// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
+#[cfg(not(feature = "yuv"))]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
     y_plane: &mut [f32],
@@ -995,6 +1002,7 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
     ));
 }
 
+#[cfg(not(feature = "yuv"))]
 #[magetypes(v3, neon, wasm128, scalar)]
 fn bgra_to_ycbcr_planes_simd_inplace_impl(
     token: Token,
@@ -1116,6 +1124,7 @@ fn bgra_to_ycbcr_planes_simd_inplace_impl(
 /// * `height` - Number of rows to process
 /// * `y_stride` - Y output stride (typically padded_width)
 /// * `bpp` - Bytes per pixel (3 for RGB)
+#[cfg(not(feature = "yuv"))]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -1627,6 +1636,7 @@ fn bgr_to_ycbcr_strided_inplace_impl(
 /// * `height` - Plane height
 /// * `bx` - Block x coordinate (in blocks)
 /// * `by` - Block y coordinate (in blocks)
+#[allow(dead_code)] // Used by quantize_all_blocks_xyb_with_aq (XYB trellis path, not yet integrated)
 #[inline]
 pub fn extract_block_xyb_simd(
     plane: &[f32],
@@ -1638,6 +1648,7 @@ pub fn extract_block_xyb_simd(
     incant!(extract_block_xyb_simd_impl(plane, width, height, bx, by))
 }
 
+#[allow(dead_code)] // Used by extract_block_xyb_simd
 #[magetypes(v3, neon, wasm128, scalar)]
 fn extract_block_xyb_simd_impl(
     token: Token,

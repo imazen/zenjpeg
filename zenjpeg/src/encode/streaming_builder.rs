@@ -3,8 +3,6 @@
 //! Split from `streaming.rs` for readability. The builder configures encoding
 //! parameters; the actual encoder lives in [`super::streaming::StreamingEncoder`].
 
-#![allow(dead_code)]
-
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
@@ -115,6 +113,7 @@ impl StreamingEncoderBuilder {
     /// - 2.0 = medium quality
     /// - 3.0+ = low quality
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn distance(mut self, distance: f32) -> Self {
         self.quality = Quality::ApproxButteraugli(distance);
         self
@@ -158,6 +157,7 @@ impl StreamingEncoderBuilder {
 
     /// Sets the JPEG encoding mode.
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn mode(mut self, mode: JpegMode) -> Self {
         self.mode = mode;
         self
@@ -175,6 +175,7 @@ impl StreamingEncoderBuilder {
     /// Convenience wrapper: `true` → `HuffmanStrategy::Optimize`,
     /// `false` → `HuffmanStrategy::Fixed`.
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
         self.huffman = if enable {
             HuffmanStrategy::Optimize
@@ -199,6 +200,7 @@ impl StreamingEncoderBuilder {
     ///
     /// Has no effect for 4:4:4 subsampling (no downsampling needed).
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn sharp_yuv(mut self, enable: bool) -> Self {
         self.chroma_downsampling = if enable {
             DownsamplingMethod::GammaAwareIterative
@@ -249,6 +251,7 @@ impl StreamingEncoderBuilder {
     /// Custom tables can come from [`crate::huffman::trained`] (pre-trained on image
     /// corpora) or from a previous encoding pass via [`crate::huffman::optimize::FrequencyCounter`].
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn custom_huffman_tables(
         mut self,
         tables: crate::huffman::optimize::HuffmanTableSet,
@@ -332,6 +335,7 @@ impl StreamingEncoderBuilder {
 
     /// Enables progressive scan optimization (legacy API).
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn optimize_scans(mut self, enable: bool) -> Self {
         self.scan_strategy = if enable {
             ScanStrategy::Search
@@ -344,6 +348,7 @@ impl StreamingEncoderBuilder {
     /// Enables hybrid quantization (jpegli AQ + mozjpeg trellis).
     #[cfg(feature = "trellis")]
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
         self.hybrid_config = if enable {
             super::trellis::HybridConfig::default()
@@ -378,6 +383,7 @@ impl StreamingEncoderBuilder {
 
     /// Sets a custom AQ (adaptive quantization) strength map.
     #[must_use]
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
         self
@@ -396,6 +402,7 @@ impl StreamingEncoderBuilder {
     ///
     /// This is the simplest way to encode an image. For streaming scenarios
     /// where you want to push rows incrementally, use `.start()` instead.
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
@@ -421,6 +428,7 @@ impl StreamingEncoderBuilder {
     }
 
     /// Encodes a complete image buffer with cancellation support.
+    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn encode_with_stop(self, data: &[u8], stop: impl enough::Stop) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;

@@ -243,6 +243,7 @@ pub(crate) mod simd {
 
     /// SIMD-optimized 8x8 transpose with archmage runtime dispatch.
     /// Uses magetypes AVX2 intrinsics when available, falls back to generic.
+    #[cfg(test)]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         #[cfg(target_arch = "x86_64")]
         if let Some(token) = archmage::X64V3Token::summon() {
@@ -254,6 +255,7 @@ pub(crate) mod simd {
 
     /// AVX2 transpose using magetypes intrinsics (load → transpose → store).
     #[cfg(target_arch = "x86_64")]
+    #[allow(dead_code)] // Called by test-only transpose_8x8_simd
     #[arcane]
     fn mage_transpose_8x8(_token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
         let mut rows = mf32x8::load_8x8(input);
@@ -262,6 +264,7 @@ pub(crate) mod simd {
     }
 
     /// Generic transpose fallback using magetypes generics.
+    #[cfg(test)]
     #[magetypes(v3, neon, wasm128, scalar)]
     #[inline(always)]
     fn transpose_8x8_generic(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {

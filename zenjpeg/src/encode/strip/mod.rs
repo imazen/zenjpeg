@@ -35,8 +35,6 @@
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
-#![allow(dead_code)]
-
 mod convert;
 
 use crate::encode::encoder_types::DownsamplingMethod;
@@ -266,6 +264,7 @@ impl PendingBuffers {
 
     /// Current Y buffer (mutable, being filled).
     #[inline]
+    #[allow(dead_code)] // Accessor for double-buffered pending blocks
     fn current_y_mut(&mut self) -> &mut Vec<Block8x8f> {
         let idx = self.current_idx();
         &mut self.y[idx]
@@ -273,6 +272,7 @@ impl PendingBuffers {
 
     /// Current Cb buffer (mutable, being filled).
     #[inline]
+    #[allow(dead_code)] // Accessor for double-buffered pending blocks
     fn current_cb_mut(&mut self) -> &mut Vec<Block8x8f> {
         let idx = self.current_idx();
         &mut self.cb[idx]
@@ -280,6 +280,7 @@ impl PendingBuffers {
 
     /// Current Cr buffer (mutable, being filled).
     #[inline]
+    #[allow(dead_code)] // Accessor for double-buffered pending blocks
     fn current_cr_mut(&mut self) -> &mut Vec<Block8x8f> {
         let idx = self.current_idx();
         &mut self.cr[idx]
@@ -293,12 +294,14 @@ impl PendingBuffers {
 
     /// Previous Cb buffer (awaiting quantization).
     #[inline]
+    #[allow(dead_code)] // Accessor for double-buffered pending blocks
     fn prev_cb(&self) -> &Vec<Block8x8f> {
         &self.cb[self.prev_idx()]
     }
 
     /// Previous Cr buffer (awaiting quantization).
     #[inline]
+    #[allow(dead_code)] // Accessor for double-buffered pending blocks
     fn prev_cr(&self) -> &Vec<Block8x8f> {
         &self.cr[self.prev_idx()]
     }
@@ -870,6 +873,7 @@ impl StripProcessor {
     /// In YCbCr mode this is `y_strip`. In XYB mode, the Y perceptual channel
     /// is stored in `cb_strip` (component index 1), not `y_strip` (which holds X).
     /// C++ jpegli uses `y_channel = (jpeg_color_space == JCS_RGB) ? 1 : 0`.
+    #[allow(dead_code)] // XYB encoding path (not yet integrated into streaming)
     fn aq_input_strip(&self) -> &[f32] {
         if self.layout.use_xyb {
             &self.cb_strip

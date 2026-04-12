@@ -31,6 +31,7 @@ pub(crate) struct LayoutParams {
     /// (height + 7) / 8
     pub blocks_h: usize,
     /// padded_width / 8
+    #[allow(dead_code)] // Computed for completeness; used by block-based XYB path
     pub padded_blocks_w: usize,
 
     // === Chroma geometry ===
@@ -47,6 +48,7 @@ pub(crate) struct LayoutParams {
     pub c_blocks_w: usize,
     pub c_blocks_h: usize,
     pub total_c_blocks: usize,
+    #[allow(dead_code)] // Computed for completeness; used by block-based chroma path
     pub padded_c_blocks_w: usize,
 
     // === XYB B-channel geometry ===
@@ -62,10 +64,13 @@ pub(crate) struct LayoutParams {
 
     // === MCU grid (for restart markers / streaming) ===
     /// Horizontal sampling factor (1 for 444/440, 2 for 422/420)
+    #[allow(dead_code)] // Computed for completeness; available for MCU grid calculations
     pub h_samp: usize,
     /// MCU columns: ceil(y_blocks_w / h_samp)
+    #[allow(dead_code)] // Computed for completeness; available for MCU grid calculations
     pub mcu_cols: usize,
     /// MCU rows: ceil(y_blocks_h / v_samp)
+    #[allow(dead_code)] // Computed for completeness; available for MCU grid calculations
     pub mcu_rows: usize,
     /// Total MCUs in the image
     pub total_mcus: usize,

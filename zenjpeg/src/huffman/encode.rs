@@ -5,8 +5,6 @@
 //! - Huffman table building from symbol frequencies
 //! - Lookup table generation for fast encoding/decoding
 
-#![allow(dead_code)]
-
 use crate::error::{Error, Result};
 
 /// Builds a Huffman encode table at compile time from JPEG-format bits and values.

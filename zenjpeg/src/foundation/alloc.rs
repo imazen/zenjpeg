@@ -13,8 +13,6 @@
 //! `ProfiledVec<T>` which logs utilization stats on drop. This helps identify
 //! over-allocated buffers.
 
-#![allow(dead_code)] // Tracking utilities and optional alloc helpers
-
 use crate::error::{Error, Result};
 
 // Re-export for use by callers who want to profile specific allocations

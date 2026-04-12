@@ -3,7 +3,6 @@
 //! This module provides token types for capturing symbols and extra bits
 //! during a first pass, then replaying them with optimized Huffman tables.
 
-#![allow(dead_code)]
 #![allow(clippy::wrong_self_convention)]
 
 use super::frequency::FrequencyCounter;

@@ -29,11 +29,6 @@
 //! let jpeg = enc.finish()?;
 //! ```
 
-// Many functions in this module are used conditionally via feature flags
-// (test-utils, trellis, parallel) or from examples/benchmarks. The broad
-// allow prevents noise from conditional compilation.
-#![allow(dead_code)]
-
 // Internal implementation modules (pub for internal crate re-exports)
 mod blocks;
 #[doc(hidden)]
@@ -172,6 +167,7 @@ use crate::types::{EdgePadding, EdgePaddingConfig};
 
 /// Converts coefficients from natural order to zigzag order, writing directly to destination.
 /// Avoids allocation when writing to pre-allocated block arrays.
+#[allow(dead_code)] // Used by XYB trellis quantization path (not yet integrated)
 #[inline]
 fn natural_to_zigzag_into(natural: &[i16; DCT_BLOCK_SIZE], dest: &mut [i16; DCT_BLOCK_SIZE]) {
     for i in 0..DCT_BLOCK_SIZE {
