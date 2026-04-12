@@ -2,6 +2,7 @@
 //!
 //! This module handles decoding of arithmetic-coded JPEG scans (SOF9/SOF10).
 
+use crate::decode::config::{DecodeWarning, Strictness};
 use crate::entropy::ArithmeticDecoder;
 use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks, try_alloc_filled};
@@ -76,10 +77,16 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
+        // Match libjpeg-turbo: overflow conditions are warnings, not errors
+        decoder.set_lenient(self.strictness != Strictness::Strict);
+
         // Reset decoder for this scan
         decoder.reset_for_scan();
 
+        let total_mcus = mcu_rows * mcu_cols;
+
         // Decode MCUs
+        let mut mcu_count = 0usize;
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
             if stop.should_stop() {
@@ -127,7 +134,18 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
+
+                // Handle restart markers at the MCU level (not per-block).
+                // DRI counts MCUs. Skip on the last MCU — no trailing restart.
+                mcu_count += 1;
+                if mcu_count < total_mcus {
+                    decoder.check_restart_mcu()?;
+                }
             }
+        }
+
+        if decoder.had_overflow() {
+            self.warn(DecodeWarning::ArithmeticBadCode)?;
         }
 
         self.position += decoder.position();
@@ -203,6 +221,9 @@ impl<'a> JpegParser<'a> {
             decoder.set_ac_conditioning(tbl, self.arith_ac_kx[tbl]);
         }
 
+        // Match libjpeg-turbo: overflow conditions are warnings, not errors
+        decoder.set_lenient(self.strictness != Strictness::Strict);
+
         // Reset for scan (clears stats appropriate for this scan type)
         decoder.reset_for_scan();
 
@@ -266,6 +287,10 @@ impl<'a> JpegParser<'a> {
             }
         }
 
+        if decoder.had_overflow() {
+            self.warn(DecodeWarning::ArithmeticBadCode)?;
+        }
+
         self.position += decoder.position();
         Ok(())
     }
@@ -280,6 +305,9 @@ impl<'a> JpegParser<'a> {
         al: u8,
         stop: &impl Stop,
     ) -> Result<()> {
+        let total_mcus = mcu_rows * mcu_cols;
+        let mut mcu_count = 0usize;
+
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
             if stop.should_stop() {
@@ -309,6 +337,12 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
+
+                // Handle restart markers at the MCU level.
+                mcu_count += 1;
+                if mcu_count < total_mcus {
+                    decoder.check_restart_mcu()?;
+                }
             }
         }
         Ok(())
@@ -324,6 +358,9 @@ impl<'a> JpegParser<'a> {
         al: u8,
         stop: &impl Stop,
     ) -> Result<()> {
+        let total_mcus = mcu_rows * mcu_cols;
+        let mut mcu_count = 0usize;
+
         for mcu_y in 0..mcu_rows {
             // Check for cancellation at each MCU row
             if stop.should_stop() {
@@ -346,12 +383,21 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
+
+                // Handle restart markers at the MCU level.
+                mcu_count += 1;
+                if mcu_count < total_mcus {
+                    decoder.check_restart_mcu()?;
+                }
             }
         }
         Ok(())
     }
 
     /// Decode AC first scan (progressive arithmetic).
+    ///
+    /// For single-component progressive AC scans, each block is its own MCU
+    /// (the scan is non-interleaved), so restart handling is per-block.
     #[allow(clippy::too_many_arguments)]
     fn decode_arith_ac_first(
         &mut self,
@@ -369,8 +415,11 @@ impl<'a> JpegParser<'a> {
         let v_samp = self.components[comp_idx].v_samp_factor as usize;
         let comp_blocks_h = mcu_cols * h_samp;
         let comp_blocks_v = mcu_rows * v_samp;
+        let total_blocks = comp_blocks_h * comp_blocks_v;
 
-        // AC progressive scans process blocks in raster order (not MCU order)
+        // AC progressive scans process blocks in raster order (not MCU order).
+        // For single-component scans, each block is one MCU.
+        let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
             if stop.should_stop() {
@@ -387,12 +436,21 @@ impl<'a> JpegParser<'a> {
                     se,
                     al,
                 )?;
+
+                // Each block is one MCU in a single-component scan.
+                block_count += 1;
+                if block_count < total_blocks {
+                    decoder.check_restart_mcu()?;
+                }
             }
         }
         Ok(())
     }
 
     /// Decode AC refinement scan (progressive arithmetic).
+    ///
+    /// For single-component progressive AC scans, each block is its own MCU
+    /// (the scan is non-interleaved), so restart handling is per-block.
     #[allow(clippy::too_many_arguments)]
     fn decode_arith_ac_refine(
         &mut self,
@@ -410,7 +468,9 @@ impl<'a> JpegParser<'a> {
         let v_samp = self.components[comp_idx].v_samp_factor as usize;
         let comp_blocks_h = mcu_cols * h_samp;
         let comp_blocks_v = mcu_rows * v_samp;
+        let total_blocks = comp_blocks_h * comp_blocks_v;
 
+        let mut block_count = 0usize;
         for block_y in 0..comp_blocks_v {
             // Check for cancellation at each block row
             if stop.should_stop() {
@@ -427,6 +487,12 @@ impl<'a> JpegParser<'a> {
                     se,
                     al,
                 )?;
+
+                // Each block is one MCU in a single-component scan.
+                block_count += 1;
+                if block_count < total_blocks {
+                    decoder.check_restart_mcu()?;
+                }
             }
         }
         Ok(())

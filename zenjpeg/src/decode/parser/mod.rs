@@ -298,6 +298,7 @@ impl<'a> JpegParser<'a> {
                 DecodeWarning::MalformedSegmentSkipped => "malformed segment length",
                 DecodeWarning::RestartMarkerResync { .. } => "restart marker resync required",
                 DecodeWarning::ExtraneousBytesSkipped { .. } => "extraneous bytes between markers",
+                DecodeWarning::ArithmeticBadCode => "arithmetic coding overflow (bad code)",
             }));
         }
         // Deduplicate: don't add the same warning twice

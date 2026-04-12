@@ -289,6 +289,11 @@ pub struct ArithmeticDecoder<'data> {
     ac_kx: [u8; NUM_ARITH_TBLS],
     restart_interval: u16,
     restarts_to_go: u32,
+    /// When true, overflow conditions are treated as end-of-scan (matching
+    /// libjpeg-turbo's WARNMS + return TRUE behavior) instead of hard errors.
+    lenient: bool,
+    /// Set when an overflow was encountered in lenient mode.
+    had_overflow: bool,
 }
 
 impl<'data> ArithmeticDecoder<'data> {
@@ -305,7 +310,21 @@ impl<'data> ArithmeticDecoder<'data> {
             ac_kx: [5; NUM_ARITH_TBLS],
             restart_interval: 0,
             restarts_to_go: 0,
+            lenient: false,
+            had_overflow: false,
         }
+    }
+
+    /// Enable lenient mode: overflow conditions are treated as end-of-scan
+    /// (matching libjpeg-turbo's WARNMS behavior) instead of hard errors.
+    pub fn set_lenient(&mut self, lenient: bool) {
+        self.lenient = lenient;
+    }
+
+    /// Returns true if an overflow was encountered and silently recovered
+    /// (only possible in lenient mode).
+    pub fn had_overflow(&self) -> bool {
+        self.had_overflow
     }
 
     pub fn set_restart_interval(&mut self, interval: u16) {
@@ -349,7 +368,7 @@ impl<'data> ArithmeticDecoder<'data> {
         self.restarts_to_go = self.restart_interval as u32;
     }
 
-    pub fn process_restart(&mut self) -> Result<()> {
+    fn process_restart(&mut self) -> Result<()> {
         if let Some(marker) = self.state.unread_marker.take()
             && !(0xD0..=0xD7).contains(&marker)
         {
@@ -367,6 +386,22 @@ impl<'data> ArithmeticDecoder<'data> {
         self.state.reset();
         self.restarts_to_go = self.restart_interval as u32;
 
+        Ok(())
+    }
+
+    /// Check if a restart marker is due after completing an MCU, and process it.
+    ///
+    /// Must be called once per MCU (not per block). DRI counts MCUs, not blocks.
+    /// For interleaved scans, call after all blocks of all components in the MCU.
+    /// For single-component progressive AC scans, each block is its own MCU.
+    pub fn check_restart_mcu(&mut self) -> Result<()> {
+        if self.restart_interval == 0 {
+            return Ok(());
+        }
+        self.restarts_to_go -= 1;
+        if self.restarts_to_go == 0 {
+            self.process_restart()?;
+        }
         Ok(())
     }
 
@@ -399,6 +434,11 @@ impl<'data> ArithmeticDecoder<'data> {
                 m <<= 1;
                 if m == 0x8000 {
                     self.state.ct = -1;
+                    if self.lenient {
+                        // Match libjpeg-turbo: WARNMS + return TRUE (treat as end-of-scan)
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(self.last_dc_val[ci]));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic DC magnitude overflow"));
                 }
                 st += 1;
@@ -467,6 +507,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
@@ -485,6 +529,10 @@ impl<'data> ArithmeticDecoder<'data> {
                     m <<= 1;
                     if m == 0x8000 {
                         self.state.ct = -1;
+                        if self.lenient {
+                            self.had_overflow = true;
+                            return Ok(ScanRead::Value(()));
+                        }
                         return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
                     st += 1;
@@ -517,6 +565,10 @@ impl<'data> ArithmeticDecoder<'data> {
     }
 
     /// Decodes a full block (DC + AC) for sequential mode.
+    ///
+    /// Note: restart marker handling is NOT done here. The caller must call
+    /// `check_restart_mcu()` once per MCU (after all blocks in the MCU are
+    /// decoded). DRI counts MCUs, not individual blocks.
     pub fn decode_block(
         &mut self,
         block: &mut [i16; 64],
@@ -524,10 +576,6 @@ impl<'data> ArithmeticDecoder<'data> {
         dc_tbl: usize,
         ac_tbl: usize,
     ) -> ScanResult<()> {
-        if self.restart_interval > 0 && self.restarts_to_go == 0 {
-            self.process_restart()?;
-        }
-
         let dc = match self.decode_dc(ci, dc_tbl)? {
             ScanRead::Value(v) => v,
             other => return Ok(other.map(|_| ())),
@@ -535,10 +583,6 @@ impl<'data> ArithmeticDecoder<'data> {
         block[0] = dc;
 
         self.decode_ac(block, ac_tbl, 63)?;
-
-        if self.restart_interval > 0 {
-            self.restarts_to_go -= 1;
-        }
 
         Ok(ScanRead::Value(()))
     }
@@ -597,6 +641,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
@@ -614,6 +662,10 @@ impl<'data> ArithmeticDecoder<'data> {
                     m <<= 1;
                     if m == 0x8000 {
                         self.state.ct = -1;
+                        if self.lenient {
+                            self.had_overflow = true;
+                            return Ok(ScanRead::Value(()));
+                        }
                         return Err(Error::invalid_jpeg_data("arithmetic AC magnitude overflow"));
                     }
                     st += 1;
@@ -716,6 +768,10 @@ impl<'data> ArithmeticDecoder<'data> {
                 k += 1;
                 if k > se as usize {
                     self.state.ct = -1;
+                    if self.lenient {
+                        self.had_overflow = true;
+                        return Ok(ScanRead::Value(()));
+                    }
                     return Err(Error::invalid_jpeg_data("arithmetic AC spectral overflow"));
                 }
             }
