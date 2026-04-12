@@ -108,9 +108,9 @@ fn test_dispatch_parity() {
                         if jpeg != *ref_jpeg {
                             let size_diff =
                                 (jpeg.len() as i64 - ref_jpeg.len() as i64).unsigned_abs();
-                            // Known: v4x token permutation causes small divergence at Q90
-                            // due to FP ordering differences in AQ pre_erosion.
-                            // Size diffs ≤16 bytes are tolerated (content may also differ).
+                            // Known: v4x token permutation causes small divergence
+                            // at Q90 due to FP ordering in AQ pre_erosion.
+                            // Size diffs ≤16 bytes are tolerated.
                             if size_diff <= 16 {
                                 eprintln!(
                                     "  (known parity gap at {perm}: {} vs {} bytes, size_diff={})",
@@ -158,6 +158,9 @@ fn min_zensim_score(quality: u8) -> f64 {
 
 #[test]
 fn test_quality_floor() {
+    // Lock prevents test_dispatch_parity's token permutation from changing
+    // SIMD dispatch tiers mid-encode on a concurrent thread.
+    let _lock = archmage::testing::lock_token_testing();
     let (rgb, w, h) = load_frymire();
 
     let zensim = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
@@ -222,6 +225,7 @@ const EXPECTED_SIZES: &[(&str, u8, usize)] = &[
 
 #[test]
 fn test_size_regression() {
+    let _lock = archmage::testing::lock_token_testing();
     let (rgb, w, h) = load_frymire();
 
     for &(config_name, quality, expected_size) in EXPECTED_SIZES {
@@ -265,6 +269,7 @@ fn test_size_regression() {
 
 #[test]
 fn test_content_checksums() {
+    let _lock = archmage::testing::lock_token_testing();
     let checksums_dir = std::path::Path::new("tests/checksums");
     std::fs::create_dir_all(checksums_dir).ok();
 
