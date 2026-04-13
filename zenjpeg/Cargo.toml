@@ -60,7 +60,6 @@ whereat = { workspace = true }  # Error tracing with location tracking
 thiserror = { workspace = true }  # Error derive macros
 # lcms2 removed — use moxcms (pure Rust) instead
 moxcms = { workspace = true, optional = true }
-zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 # Mandatory dependency — will be replaced with archmage-based code eventually.
