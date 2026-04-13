@@ -53,7 +53,7 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
-zenpixels = { workspace = true , version = "0.2.2" }
+zenpixels = { workspace = true }
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 md-5 = "0.10.6"  # MD5 for Extended XMP GUID (spec-mandated)
 linear-srgb = { workspace = true }
