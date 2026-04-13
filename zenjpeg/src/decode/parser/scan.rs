@@ -40,7 +40,7 @@ impl<'a> JpegParser<'a> {
             // the scan structure uses 0-component scans for coefficient selection
             // ranges beyond the standard 0..63.
             return Err(Error::unsupported_feature(
-                "non-standard DCT block size (SOS with zero components, IJG libjpeg v9+ extension)",
+                "This JPEG uses non-standard DCT block sizes (SOS with zero components) and is not standards-compliant. It was likely created with IJG libjpeg v9+ or v10, which support proprietary block size extensions that no other decoder implements.",
             ));
         }
         if num_components > self.num_components {
@@ -123,7 +123,7 @@ impl<'a> JpegParser<'a> {
         // decoder except IJG's own.
         if ss > 63 || se > 63 {
             return Err(Error::unsupported_feature(
-                "non-standard DCT block size (Ss or Se > 63, IJG libjpeg v9+ extension)",
+                "This JPEG uses non-standard DCT block sizes (spectral selection beyond 0..63) and is not standards-compliant. It was likely created with IJG libjpeg v9+ or v10, which support proprietary block size extensions that no other decoder implements.",
             ));
         }
         if ss > se {

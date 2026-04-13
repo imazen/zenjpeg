@@ -248,7 +248,7 @@ impl<'a> JpegParser<'a> {
                     let sqrt = (entry_count as u32).isqrt();
                     if sqrt * sqrt == entry_count as u32 && sqrt != 8 {
                         return Err(Error::unsupported_feature(
-                            "non-standard DCT block size (DQT has fewer than 64 entries, IJG libjpeg v9+ extension)",
+                            "This JPEG uses non-standard DCT block sizes (DQT table is not 64 entries) and is not standards-compliant. It was likely created with IJG libjpeg v9+ or v10, which support proprietary block size extensions that no other decoder implements.",
                         ));
                     }
                 }
