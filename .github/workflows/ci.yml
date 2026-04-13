@@ -128,6 +128,8 @@ jobs:
 
       - name: Test (i686)
         run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+        env:
+          CODEC_CORPUS_CACHE: /tmp/codec-corpus
 
   cpp-parity:
     name: C++ Parity (${{ matrix.os }})

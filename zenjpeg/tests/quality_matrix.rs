@@ -38,6 +38,7 @@ const SSIM2_TOLERANCE: f64 = 0.5;
 /// Tolerance for SSIMULACRA2 absolute minimum (quality floor)
 const SSIM2_MIN_TOLERANCE: f64 = 1.0;
 
+/// Tolerance for file size comparison (percentage difference from reference).
 /// Tolerance for file size comparison (percentage difference from reference)
 const SIZE_TOLERANCE_PERCENT: f64 = 2.0;
 
@@ -678,15 +679,16 @@ fn assert_results(results: &[ConfigResult], reference: &[reference::RefData; 6],
             ref_ssim2 - SSIM2_MIN_TOLERANCE
         );
 
-        // Check file size within tolerance
+        // Check file size within tolerance (quality-dependent)
+        let tolerance = SIZE_TOLERANCE_PERCENT;
         let size_diff_percent = 100.0 * (r.rust_size as f64 - ref_size as f64) / ref_size as f64;
         assert!(
-            size_diff_percent.abs() <= SIZE_TOLERANCE_PERCENT,
+            size_diff_percent.abs() <= tolerance,
             "{} Q{}: Size diff {:.1}% exceeds tolerance {:.1}% (rust={}, ref={})",
             name,
             r.quality,
             size_diff_percent,
-            SIZE_TOLERANCE_PERCENT,
+            tolerance,
             r.rust_size,
             ref_size
         );
@@ -720,8 +722,8 @@ fn test_ycbcr_444_baseline() {
     );
 }
 
+#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
-#[ignore = "known bug: progressive Q10 size diff ~2.8% vs C++ (exceeds 2% threshold)"]
 fn test_ycbcr_444_progressive() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
@@ -767,8 +769,8 @@ fn test_ycbcr_422_baseline() {
     );
 }
 
+#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
-#[ignore = "known bug: progressive Q10 size diff ~2.9% vs C++ (exceeds 2% threshold)"]
 fn test_ycbcr_422_progressive() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
@@ -814,8 +816,8 @@ fn test_ycbcr_420_baseline() {
     );
 }
 
+#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
-#[ignore = "known bug: progressive Q10 size diff ~2.8% vs C++ (exceeds 2% threshold)"]
 fn test_ycbcr_420_progressive() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
@@ -861,8 +863,8 @@ fn test_ycbcr_440_baseline() {
     );
 }
 
+#[ignore = "issue #23: progressive Q10 ~2.8% size excess vs C++ jpegli"]
 #[test]
-#[ignore = "known bug: progressive Q10 size diff ~2.8% vs C++ (exceeds 2% threshold)"]
 fn test_ycbcr_440_progressive() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
