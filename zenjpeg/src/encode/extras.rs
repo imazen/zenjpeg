@@ -438,9 +438,8 @@ impl EncoderSegments {
             // total extended length (u32 BE), and chunk offset (u32 BE).
 
             // 1. Compute MD5 GUID of the full XMP
-            use md5::{Digest, Md5};
             let guid = {
-                let hash = Md5::digest(xmp_bytes);
+                let hash = crate::foundation::md5::md5(xmp_bytes);
                 let mut hex = [0u8; 32];
                 for (i, byte) in hash.iter().enumerate() {
                     let hi = byte >> 4;

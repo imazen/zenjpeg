@@ -11,6 +11,7 @@ pub mod alloc;
 pub mod bitstream;
 pub mod consts;
 pub mod instrumented_vec;
+pub(crate) mod md5;
 pub mod simd_types;
 
 // Re-export commonly used items at module level
