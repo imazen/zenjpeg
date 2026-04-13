@@ -359,7 +359,7 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn ycbcr_planes_f32_to_rgb_u8_impl(
     token: Token,
     y_plane: &[f32],
@@ -456,7 +456,7 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn ycbcr_planes_f32_to_rgb_f32_impl(
     token: Token,
     y_plane: &[f32],
@@ -541,7 +541,7 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn gray_f32_to_rgb_u8_impl(token: Token, y_plane: &[f32], rgb: &mut [u8]) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
@@ -593,7 +593,7 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn gray_f32_to_rgb_f32_impl(token: Token, y_plane: &[f32], rgb: &mut [f32]) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
@@ -640,7 +640,7 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn gray_f32_to_gray_u8_impl(token: Token, y_plane: &[f32], output: &mut [u8]) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
@@ -684,7 +684,7 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn gray_f32_to_gray_f32_impl(token: Token, y_plane: &[f32], output: &mut [f32]) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
@@ -1038,7 +1038,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 /// fixed-point math as the scalar and AVX2 versions. Generic across
 /// all platforms (x86 AVX2, NEON, WASM128, scalar).
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn ycbcr_to_rgb_i16_x8_generic(
     token: Token,
     y: &[i16],
@@ -1729,7 +1729,7 @@ fn ycbcr_planes_i16_to_rgb_u8_avx512(
 /// Processes 4 chroma pixels → 8 output pixels per i32x4 pass.
 /// Each chroma value is duplicated horizontally (box filter).
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn fused_h2v2_box_ycbcr_to_rgb_u8_generic(
     token: Token,
     y_row: &[i16],
@@ -1918,7 +1918,7 @@ pub fn fused_h2v2_box_ycbcr_to_rgb_u8(
 /// Triangle filter for chroma (scalar, has neighbor dependencies), then
 /// vectorized i32x4 color conversion for batches of 4 output pixels.
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn fused_h2v2_hfancy_ycbcr_to_rgb_u8_generic(
     token: Token,
     y_row: &[i16],

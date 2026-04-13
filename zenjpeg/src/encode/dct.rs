@@ -266,7 +266,7 @@ pub(crate) mod simd {
     /// Generic transpose fallback using magetypes generics.
     #[cfg(test)]
     #[magetypes(v3, neon, wasm128, scalar)]
-    #[inline(always)]
+    #[inline]
     fn transpose_8x8_generic(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;

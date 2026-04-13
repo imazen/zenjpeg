@@ -191,7 +191,7 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn pre_erosion_row_impl(
     token: Token,
     row: &[f32],
@@ -321,7 +321,7 @@ pub fn pre_erosion_row_padded(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn pre_erosion_row_padded_impl(
     token: Token,
     row: &[f32],
@@ -457,7 +457,7 @@ fn downsample_4x_sum(input: &[f32], output: &mut [f32]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn downsample_4x_sum_impl(token: Token, input: &[f32], output: &mut [f32]) {
     let _ = token; // used by magetypes for autovectorization
     let width = input.len();
@@ -739,7 +739,7 @@ pub fn per_block_modulations_row(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn per_block_modulations_row_impl(
     token: Token,
     input: &[f32],
@@ -906,7 +906,7 @@ pub fn fuzzy_erosion_row_simd(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn fuzzy_erosion_row_simd_impl(
     token: Token,
     pre_erosion: &[f32],
@@ -1096,7 +1096,7 @@ pub fn compute_fuzzy_erosion_blocks_simd(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
+#[inline]
 fn compute_fuzzy_erosion_blocks_simd_impl(
     token: Token,
     pre_erosion_buffer: &[f32],
@@ -2774,7 +2774,7 @@ fn test_ratio_of_derivatives_x8(input: [f32; 8]) -> [f32; 8] {
         incant!(test_ratio_of_derivatives_x8_impl(input))
     }
     #[magetypes(v3, neon, wasm128, scalar)]
-    #[inline(always)]
+    #[inline]
     fn test_ratio_of_derivatives_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
@@ -2791,7 +2791,7 @@ fn test_ratio_of_derivatives_inv_x8(input: [f32; 8]) -> [f32; 8] {
         incant!(test_ratio_of_derivatives_inv_x8_impl(input))
     }
     #[magetypes(v3, neon, wasm128, scalar)]
-    #[inline(always)]
+    #[inline]
     fn test_ratio_of_derivatives_inv_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
@@ -2808,7 +2808,7 @@ fn test_masking_sqrt_x8(input: [f32; 8]) -> [f32; 8] {
         incant!(test_masking_sqrt_x8_impl(input))
     }
     #[magetypes(v3, neon, wasm128, scalar)]
-    #[inline(always)]
+    #[inline]
     fn test_masking_sqrt_x8_impl(token: Token, input: [f32; 8]) -> [f32; 8] {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
@@ -2839,7 +2839,7 @@ fn test_pre_erosion_pixel_x8(
         ))
     }
     #[magetypes(v3, neon, wasm128, scalar)]
-    #[inline(always)]
+    #[inline]
     fn test_pre_erosion_pixel_x8_impl(
         token: Token,
         pixels: [f32; 8],
