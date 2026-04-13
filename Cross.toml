@@ -5,6 +5,7 @@
 passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
+    "CODEC_CORPUS_CACHE",
 ]
 
 # i686 (32-bit x86 Linux)
