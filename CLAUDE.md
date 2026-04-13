@@ -866,6 +866,27 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
+7. **progressive3.jpg macOS Intel decode failure (2026-04-12)** -
+   `border_pixel_accuracy` test in `decode_accuracy_corpus.rs` reports Interior=255
+   max_diff vs djpeg for `progressive3.jpg` (650x470 SOF2 progressive 4:4:4, 11 scans)
+   on `macos-26-intel` CI runner ONLY. Passes on Linux x86_64, macOS ARM, Windows.
+   - Image structure: 1x1 sampling, MCU=8x8, 650%8=2 (right edge), 470%8=6 (bottom edge)
+   - Y component has AC point transforms (Al=2) with 2 refinement scans
+   - Cb/Cr have split AC bands ([1..2] and [3..63])
+   - No restart markers (DRI=0)
+   - Does NOT reproduce locally (Linux x86_64 Ryzen 9 7950X): zen vs zune max_diff=0,
+     zen vs jpeg-decoder max_diff=3 (normal IDCT rounding)
+   - Possible causes: (a) SIMD dispatch difference if macOS Intel CPU lacks AVX2 and
+     scalar fallback has a bug, (b) compiler codegen difference on macOS Darwin target,
+     (c) `djpeg` on macOS Intel runner is IJG libjpeg 9d (not turbo) producing different
+     progressive output, (d) platform-specific integer overflow behavior in progressive
+     coefficient accumulation
+   - Test: `cargo test --release -p zenjpeg --features decoder --test progressive3_decode -- --nocapture`
+   - Files: `zenjpeg/tests/progressive3_decode.rs` (new diagnostic test),
+     `zenjpeg/tests/decode_accuracy_corpus.rs:825` (`border_pixel_accuracy`)
+   - Next steps: check macOS Intel CI logs for SIMD capability, verify djpeg version,
+     try forcing scalar IDCT path to reproduce
+
 ### Fixed / Resolved Bugs (historical reference)
 
 - **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
