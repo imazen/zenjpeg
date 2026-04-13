@@ -876,16 +876,27 @@ sensitivity tables, and preset baselines.
    - No restart markers (DRI=0)
    - Does NOT reproduce locally (Linux x86_64 Ryzen 9 7950X): zen vs zune max_diff=0,
      zen vs jpeg-decoder max_diff=3 (normal IDCT rounding)
-   - Possible causes: (a) SIMD dispatch difference if macOS Intel CPU lacks AVX2 and
-     scalar fallback has a bug, (b) compiler codegen difference on macOS Darwin target,
-     (c) `djpeg` on macOS Intel runner is IJG libjpeg 9d (not turbo) producing different
-     progressive output, (d) platform-specific integer overflow behavior in progressive
-     coefficient accumulation
+   - **Most likely cause:** `border_pixel_accuracy` compares against `djpeg` CLI
+     (via `find_turbo_djpeg()` fallback to system `djpeg`). On macOS Intel CI, no
+     libjpeg-turbo is installed (only the cpp-parity job does that). The system `djpeg`
+     is likely IJG libjpeg (not turbo), installed as a transitive Homebrew dependency.
+     IJG libjpeg may decode this specific progressive scan pattern (AC first with Al=2
+     point transforms + dual refinement scans) differently or incorrectly. The fact that
+     BottomEdge=1 and Corner=0 are FINE while Interior=255 is WRONG strongly suggests
+     the reference decoder is the problem, not zenjpeg.
+   - **Alternative causes:** (a) SIMD dispatch difference if macOS Intel CPU lacks AVX2
+     and scalar fallback has a bug, (b) compiler codegen difference on macOS Darwin
+     target, (c) platform-specific integer overflow in progressive coefficient accumulation
+   - **Evidence against zenjpeg bug:** On Linux x86_64, zenjpeg matches zune-jpeg
+     (max_diff=0) and jpeg-decoder crate (max_diff=3, normal IDCT rounding). Both
+     reference decoders are pure Rust with no platform-specific code paths.
    - Test: `cargo test --release -p zenjpeg --features decoder --test progressive3_decode -- --nocapture`
-   - Files: `zenjpeg/tests/progressive3_decode.rs` (new diagnostic test),
-     `zenjpeg/tests/decode_accuracy_corpus.rs:825` (`border_pixel_accuracy`)
-   - Next steps: check macOS Intel CI logs for SIMD capability, verify djpeg version,
-     try forcing scalar IDCT path to reproduce
+   - Files: `zenjpeg/tests/progressive3_decode.rs` (new diagnostic test comparing
+     against pure-Rust decoders), `zenjpeg/tests/decode_accuracy_corpus.rs:825`
+   - **Next steps:** (1) Add `djpeg -version` output to CI for diagnosis, (2) Check
+     if `border_pixel_accuracy` should skip images when djpeg is IJG not turbo,
+     (3) Consider building libjpeg-turbo in the test job for consistent reference,
+     (4) Run `progressive3_decode` test on macOS Intel CI to verify zenjpeg is correct
 
 ### Fixed / Resolved Bugs (historical reference)
 
