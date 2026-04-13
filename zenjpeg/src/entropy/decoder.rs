@@ -1602,16 +1602,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                 let mut k = ss as usize;
                 'block: while k <= se_usize {
-                    // Peek 9 bits for Huffman lookup. peek_bits_refill handles
+                    // Peek FAST_BITS for Huffman lookup. peek_bits_refill handles
                     // refill internally and returns None only when truly exhausted
                     // (unlike ensure_bits which demands 32 bits).
-                    // Peek 9 bits for Huffman + fast_ac lookup.
-                    // When <9 bits remain after refill, use peek_top(9) with
+                    // When <FAST_BITS bits remain after refill, use peek_top with
                     // available-bits validation (the MSB-aligned zero-padding
                     // still gives a valid fast_lookup index for codes ≤ avail bits).
+                    let fast_bits = HuffmanDecodeTable::FAST_BITS as u8;
                     let bits9;
                     let partial_peek;
-                    match self.reader.peek_bits_refill(9) {
+                    match self.reader.peek_bits_refill(fast_bits) {
                         Some(b) => {
                             bits9 = b;
                             partial_peek = false;
@@ -1621,12 +1621,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             if avail == 0 {
                                 return Ok(false);
                             }
-                            bits9 = self.reader.peek_top(9);
+                            bits9 = self.reader.peek_top(fast_bits);
                             partial_peek = true;
                         }
                     };
 
-                    // Try fast_ac combined lookup first (9-bit → symbol + value)
+                    // Try fast_ac combined lookup first (FAST_BITS → symbol + value)
                     if !partial_peek && let Some(fast_ac_arr) = fast_ac {
                         let entry = fast_ac_arr[bits9 as usize];
                         if entry != 0 {
@@ -1750,20 +1750,21 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// bit-by-bit (any count). Returns `Some(symbol)` or `None` to signal
     /// "can't decode, break the outer loop."
     ///
-    /// Extracted so the bit-by-bit fallback isn't duplicated for the ≥9 and <9
-    /// entry points — one copy serves both, reducing icache pressure in the
-    /// 12KB `decode_progressive_scan` function.
+    /// Extracted so the bit-by-bit fallback isn't duplicated for the ≥FAST_BITS
+    /// and <FAST_BITS entry points — one copy serves both, reducing icache
+    /// pressure in the 12KB `decode_progressive_scan` function.
     #[inline(always)]
     fn decode_refine_symbol(&mut self, ac_table: &HuffmanDecodeTable) -> Option<u8> {
-        if self.reader.bits_available() >= 9 {
-            let bits9 = self.reader.peek_top(9) as usize;
-            let lookup = ac_table.fast_lookup[bits9];
+        let fast_bits = HuffmanDecodeTable::FAST_BITS as u8;
+        if self.reader.bits_available() >= fast_bits {
+            let bits_fb = self.reader.peek_top(fast_bits) as usize;
+            let lookup = ac_table.fast_lookup[bits_fb];
             if lookup >= 0 {
                 let code_len = (lookup >> 8) as u8;
                 self.reader.skip_bits_fast(code_len);
                 return Some((lookup & 0xFF) as u8);
             }
-            // Code is > 9 bits — try slow path with 16-bit peek
+            // Code is > FAST_BITS — try slow path with 16-bit peek
             if self.reader.bits_available() < 16 {
                 let _ = self.reader.refill();
             }
@@ -1777,7 +1778,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 };
             }
         }
-        // < 9 bits after refill, or < 16 after fast lookup miss: bit-by-bit.
+        // < FAST_BITS after refill, or < 16 after fast lookup miss: bit-by-bit.
         let mut code = 0u32;
         for len in 1..=16usize {
             let bit = self.reader.read_bit_refine();

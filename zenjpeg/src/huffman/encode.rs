@@ -269,7 +269,7 @@ pub struct HuffmanDecodeTable {
 
 impl HuffmanDecodeTable {
     /// Number of bits for fast lookup table.
-    pub const FAST_BITS: usize = 9;
+    pub const FAST_BITS: usize = 10;
 
     /// Creates a new empty decode table.
     #[must_use]

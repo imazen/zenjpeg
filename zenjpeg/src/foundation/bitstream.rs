@@ -504,6 +504,30 @@ impl<'a> BitReader<'a> {
             return true;
         }
 
+        // Try fast 8-byte path first when we have room for 5+ bytes.
+        // Load 8 bytes, SWAR-check for 0xFF, then consume as many complete
+        // bytes as fit. This nearly doubles the bits loaded per refill vs
+        // the 4-byte path, reducing refill frequency in the decode hot loop.
+        if self.bits_in_buffer <= 24 {
+            if let Some(chunk) = self.data.get(self.position..self.position + 8) {
+                let bytes: [u8; 8] = chunk.try_into().unwrap();
+                let word = u64::from_be_bytes(bytes);
+
+                if !has_byte_0xff_u64(word) {
+                    let load_bytes = ((64 - self.bits_in_buffer) / 8) as usize; // 5-8 bytes
+                    let load_bits = (load_bytes as u8) * 8;
+                    self.position += load_bytes;
+                    // Extract the top `load_bytes` bytes from word and place
+                    // them in the freed positions of aligned_buffer.
+                    let loaded = word >> (64 - load_bits);
+                    self.aligned_buffer |= loaded << (64 - self.bits_in_buffer - load_bits);
+                    self.bits_in_buffer += load_bits;
+                    return true;
+                }
+                // Has 0xFF — fall through to 4-byte or slow path
+            }
+        }
+
         // Try fast 4-byte path (no 0xFF bytes)
         // Use get() + try_into to give compiler a single bounds check and u32 load
         if let Some(chunk) = self.data.get(self.position..self.position + 4) {

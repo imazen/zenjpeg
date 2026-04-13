@@ -252,6 +252,11 @@ harness = false
 required-features = ["decoder"]
 
 [[bench]]
+name = "huffman_decode"
+harness = false
+required-features = ["decoder"]
+
+[[bench]]
 name = "decode_mozjpeg"
 harness = false
 required-features = ["decoder"]
