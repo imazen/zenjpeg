@@ -297,7 +297,8 @@ fn corpus() -> codec_corpus::Corpus {
     codec_corpus::Corpus::new().expect("codec-corpus init failed")
 }
 
-/// Sweep codec-corpus jpeg-conformance/valid — all MUST decode.
+/// Sweep codec-corpus jpeg-conformance/valid — all MUST decode or be
+/// explicitly unsupported (e.g. 12-bit precision).
 #[test]
 fn sweep_corpus_jpeg_valid() {
     let corpus = corpus();
@@ -311,24 +312,39 @@ fn sweep_corpus_jpeg_valid() {
 
     let mut panics = Vec::new();
     let mut failures = Vec::new();
+    let mut unsupported = Vec::new();
     let mut ok = 0usize;
 
     for path in &files {
         match test_file(path) {
             TestResult::Ok => ok += 1,
-            TestResult::Error(e) => failures.push((path.clone(), e)),
+            TestResult::Error(e) => {
+                if e.contains("UnsupportedFeature") {
+                    unsupported.push((path.clone(), e));
+                } else {
+                    failures.push((path.clone(), e));
+                }
+            }
             TestResult::Panic(msg) => panics.push((path.clone(), msg)),
             TestResult::NotJpeg => {}
         }
     }
 
     eprintln!(
-        "\njpeg-conformance/valid: {} ok, {} failures, {} panics (of {} files)",
+        "\njpeg-conformance/valid: {} ok, {} unsupported, {} failures, {} panics (of {} files)",
         ok,
+        unsupported.len(),
         failures.len(),
         panics.len(),
         files.len()
     );
+    for (p, e) in &unsupported {
+        eprintln!(
+            "  unsupported: {}",
+            p.file_name().unwrap().to_string_lossy()
+        );
+        let _ = e; // reason available if needed
+    }
 
     assert!(
         panics.is_empty(),

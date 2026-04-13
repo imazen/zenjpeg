@@ -611,6 +611,16 @@ impl<'a> JpegParser<'a> {
         self.position = 2; // Skip SOI
         self.read_header()?;
 
+        // Reject non-8-bit precision before attempting decode.
+        // 12-bit Extended Sequential uses different level shift (+2048 vs +128)
+        // and output scaling — decoding as 8-bit produces completely wrong pixels.
+        if self.precision != 8 {
+            return Err(Error::unsupported_feature(
+                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
+                 Only 8-bit precision is currently implemented.",
+            ));
+        }
+
         // Track whether we've decoded at least one scan (for truncation recovery)
         let mut scans_decoded = 0u32;
 

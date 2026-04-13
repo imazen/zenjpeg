@@ -926,16 +926,14 @@ fn border_pixel_accuracy() {
 
         // Flag if border is worse than interior
         let worst_border = right_max.max(bottom_max).max(corner_max);
-        // Skip files where interior is already very wrong (e.g. 12-bit JPEGs
-        // decoded as 8-bit) — these aren't border bugs, they're unsupported precision
-        let flag = if interior_max > 10 {
-            " (skipped: interior already wrong)"
-        } else if worst_border > interior_max + 1 {
-            any_border_worse = true;
+        let flag = if worst_border > interior_max + 1 {
             " !!!"
         } else {
             ""
         };
+        if worst_border > interior_max + 1 {
+            any_border_worse = true;
+        }
 
         eprintln!(
             "{:<45} {:>5} {:>5} {:>4} {:>5} {:>10} {:>10} {:>10} {:>10}{}",

@@ -858,12 +858,13 @@ sensitivity tables, and preset baselines.
    commit d2a1af25).** Both `trellis_use_lambda_weight_tbl` and `trellis_num_loops` deleted
    from ExpertConfig, TrellisConfig, and HybridConfig.
 
-~~6. **Progressive Q10 encoder ~2.8% larger than C++ jpegli (2026-03-31, issue #23)**~~ —
-   **RESOLVED (2026-04-12).** Tests un-ignored with quality-dependent size tolerance:
-   Q10 uses 3.5% (accommodates extreme-quantization Huffman/DCT rounding differences),
-   Q30+ keeps strict 2.0%. The 2.8% Q10 gap is a legitimate rounding difference at
-   extreme quantization, not a bug — quality (SSIM2) is identical.
-   - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive`
+6. **Progressive Q10 encoder ~2.8% larger than C++ jpegli (2026-03-31, issue #23)** -
+   At Q10 progressive, Rust produces ~3KB more entropy-coded scan data than C++.
+   Same scan count, same DHT sizes. Rust Q10 SSIM2 is +4.12 pts better than C++,
+   suggesting Rust preserves more AC coefficients at extreme quantization. Need to
+   investigate whether this is a quality mapping difference or DCT rounding.
+   - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
+   - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
 ### Fixed / Resolved Bugs (historical reference)
 
