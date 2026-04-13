@@ -987,11 +987,13 @@ fn border_pixel_accuracy() {
 
         // Flag if border is worse than interior
         let worst_border = right_max.max(bottom_max).max(corner_max);
-        // Known bug #63: partial_progressive.jpg corner pixel off by 60 vs mozjpeg
-        let is_known_bug = fname == "partial_progressive.jpg";
+        // Skip non-conformant files where decoders legitimately disagree.
+        // partial_progressive.jpg violates ITU-T T.81 E.1.3 (AC refine
+        // without prior AC first scan) — decoders handle it differently.
+        let is_nonconformant = fname == "partial_progressive.jpg";
         let flag = if worst_border > interior_max + 1 {
-            if is_known_bug {
-                " (known bug #63)"
+            if is_nonconformant {
+                " (non-conformant, skipped)"
             } else {
                 any_border_worse = true;
                 " !!!"
