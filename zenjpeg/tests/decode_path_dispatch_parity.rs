@@ -351,6 +351,81 @@ fn test_cases() -> Vec<TestCase> {
             progressive: true,
             restart_mcu_rows: 0,
         },
+        // 4:4:0 baseline — vertical-only chroma subsampling (h1v2)
+        TestCase {
+            name: "440_32x32",
+            width: 32,
+            height: 32,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        TestCase {
+            name: "440_64x64",
+            width: 64,
+            height: 64,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        // Non-MCU-aligned 4:4:0 — MCU is 8x16 for 440, so odd heights are critical
+        TestCase {
+            name: "440_33x33",
+            width: 33,
+            height: 33,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        TestCase {
+            name: "440_47x31",
+            width: 47,
+            height: 31,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        TestCase {
+            name: "440_100x50",
+            width: 100,
+            height: 50,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        TestCase {
+            name: "440_49x255",
+            width: 49,
+            height: 255,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: false,
+            restart_mcu_rows: 0,
+        },
+        // 4:4:0 progressive — coefficient buffering path
+        TestCase {
+            name: "440_prog_64x64",
+            width: 64,
+            height: 64,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: true,
+            restart_mcu_rows: 0,
+        },
+        TestCase {
+            name: "440_prog_33x33",
+            width: 33,
+            height: 33,
+            subsampling: ChromaSubsampling::HalfVertical,
+            quality: 85.0,
+            progressive: true,
+            restart_mcu_rows: 0,
+        },
         // Low quality — larger quant values exercise different coefficient ranges
         TestCase {
             name: "420_q50_64x64",
@@ -775,6 +850,191 @@ fn h2v1_decode_dispatch_parity() {
                 );
                 first_report = false;
             }
+        }
+    }
+}
+
+/// 4:4:0 (vertical-only) upsampling dispatch parity.
+///
+/// Tests decode() vs scanline_reader() consistency for 4:4:0 subsampling
+/// across all SIMD tiers. 4:4:0 uses vertical-only chroma upsampling (h1v2)
+/// with different boundary fixup code than 4:2:0 (h2v2).
+///
+/// Regression test for GitHub issue #22: scanline vs decode inconsistency
+/// for non-standard sampling modes.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn h1v2_decode_dispatch_parity() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    let sizes: &[(u32, u32)] = &[(64, 64), (33, 33), (49, 255), (128, 64), (47, 31), (96, 72)];
+    let mut first_report = true;
+
+    for &(w, h) in sizes {
+        for (pat_name, pixels) in [
+            ("red_blue", make_red_blue_blocks(w as usize, h as usize)),
+            ("noise", make_noise(w as usize, h as usize)),
+        ] {
+            let jpeg = encode_jpeg(
+                &pixels,
+                w,
+                h,
+                ChromaSubsampling::HalfVertical,
+                85.0,
+                false,
+                0,
+            );
+
+            let ref_full = decode_full(&jpeg, ChromaUpsampling::Triangle);
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let full = decode_full(&jpeg, ChromaUpsampling::Triangle);
+                let scanline = decode_scanline(&jpeg, ChromaUpsampling::Triangle);
+
+                // Internal consistency: decode() vs scanline_reader()
+                let path_diff = max_diff(&full, &scanline);
+                assert!(
+                    path_diff <= 2,
+                    "440 {w}x{h} {pat_name}: full vs scanline diff={path_diff} at {perm}"
+                );
+
+                // Stability across tiers
+                let full_vs_ref = max_diff(&full, &ref_full);
+                assert!(
+                    full_vs_ref <= 2,
+                    "440 {w}x{h} {pat_name}: full vs ref diff={full_vs_ref} at {perm}"
+                );
+
+                // NearestNeighbor: internal consistency only
+                let full_nn = decode_full(&jpeg, ChromaUpsampling::NearestNeighbor);
+                let scanline_nn = decode_scanline(&jpeg, ChromaUpsampling::NearestNeighbor);
+                let nn_diff = max_diff(&full_nn, &scanline_nn);
+                assert!(
+                    nn_diff <= 2,
+                    "440 {w}x{h} {pat_name} NN: full vs scanline diff={nn_diff} at {perm}"
+                );
+            });
+
+            if first_report {
+                eprintln!("h1v2 dispatch: {report}");
+                assert!(
+                    report.permutations_run >= 2,
+                    "expected at least 2 permutations"
+                );
+                first_report = false;
+            }
+        }
+    }
+}
+
+/// 4:4:0 progressive decode dispatch parity.
+///
+/// Progressive forces coefficient buffering path. Both decode() and
+/// scanline_reader() use the same buffered path, so output must be identical.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn progressive_440_dispatch_parity() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    let sizes: &[(u32, u32)] = &[(64, 64), (33, 33), (49, 255)];
+    let mut first_report = true;
+
+    for &(w, h) in sizes {
+        let pixels = make_red_blue_blocks(w as usize, h as usize);
+        let jpeg = encode_jpeg(
+            &pixels,
+            w,
+            h,
+            ChromaSubsampling::HalfVertical,
+            85.0,
+            true, // progressive
+            0,
+        );
+
+        for &(upsample_name, upsampling) in &[
+            ("Triangle", ChromaUpsampling::Triangle),
+            ("NearestNeighbor", ChromaUpsampling::NearestNeighbor),
+        ] {
+            let ref_full = decode_full(&jpeg, upsampling);
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let full = decode_full(&jpeg, upsampling);
+                let scanline = decode_scanline(&jpeg, upsampling);
+
+                // Progressive: both paths use coefficient buffering, should match exactly
+                let path_diff = max_diff(&full, &scanline);
+                assert!(
+                    path_diff == 0,
+                    "prog440 {w}x{h} {upsample_name}: full vs scanline diff={path_diff} at {perm}"
+                );
+
+                // Stability across tiers
+                let full_vs_ref = max_diff(&full, &ref_full);
+                assert!(
+                    full_vs_ref <= 2,
+                    "prog440 {w}x{h} {upsample_name}: full vs ref diff={full_vs_ref} at {perm}"
+                );
+            });
+
+            if first_report {
+                eprintln!("progressive 440 dispatch: {report}");
+                assert!(
+                    report.permutations_run >= 2,
+                    "expected at least 2 permutations"
+                );
+                first_report = false;
+            }
+        }
+    }
+}
+
+/// MCU boundary behavior for 4:4:0: boundary rows must not have systematically
+/// larger diffs than interior rows.
+///
+/// 4:4:0 MCU height is 16 (max_v_samp=2). Boundary fixup operates at
+/// MCU row transitions in the vertical direction.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn h1v2_mcu_boundary_no_systematic_shift() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    let sizes: &[(u32, u32)] = &[(64, 64), (128, 128), (33, 33), (100, 50)];
+    let mut first_report = true;
+
+    for &(w, h) in sizes {
+        let pixels = make_red_blue_blocks(w as usize, h as usize);
+        let jpeg = encode_jpeg(
+            &pixels,
+            w,
+            h,
+            ChromaSubsampling::HalfVertical,
+            85.0,
+            false,
+            0,
+        );
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let full = decode_full(&jpeg, ChromaUpsampling::Triangle);
+            let scanline = decode_scanline(&jpeg, ChromaUpsampling::Triangle);
+
+            let ww = w as usize;
+            let hh = h as usize;
+
+            // streaming vs scanline: must match everywhere, especially boundaries
+            let (bnd_ss, int_ss) = boundary_interior_max(&full, &scanline, ww, hh, 16);
+            assert!(
+                bnd_ss <= 2 && int_ss <= 2,
+                "440 {w}x{h}: streaming vs scanline boundary={bnd_ss} interior={int_ss} at {perm}"
+            );
+        });
+
+        if first_report {
+            eprintln!("h1v2 boundary_shift dispatch: {report}");
+            assert!(
+                report.permutations_run >= 2,
+                "expected at least 2 permutations"
+            );
+            first_report = false;
         }
     }
 }
