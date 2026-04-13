@@ -136,7 +136,7 @@ mod comparison {
     #[test]
     #[ignore = "requires CID22 corpus"]
     fn compare_decoder_quality() {
-        let corpus = corpus().expect("codec-corpus not found");
+        let corpus = corpus();
         let cid22 = corpus
             .get("CID22/CID22-512/validation")
             .expect("CID22 corpus not found");
@@ -262,7 +262,7 @@ mod comparison {
     #[test]
     #[ignore = "requires CID22 corpus"]
     fn compare_decoder_quality_frymire() {
-        let corpus = corpus().expect("codec-corpus not found");
+        let corpus = corpus();
         let frymire_dir = corpus
             .get("imageflow/test_inputs")
             .expect("imageflow corpus not found");
@@ -338,7 +338,7 @@ mod comparison {
     #[test]
     #[ignore = "requires CID22 corpus"]
     fn compare_decoder_pairwise() {
-        let corpus = corpus().expect("codec-corpus not found");
+        let corpus = corpus();
         let cid22 = corpus
             .get("CID22/CID22-512/validation")
             .expect("CID22 corpus not found");
