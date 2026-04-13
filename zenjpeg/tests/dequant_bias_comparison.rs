@@ -134,7 +134,7 @@ mod comparison {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "requires CID22 corpus"]
     fn compare_decoder_quality() {
         let corpus = corpus().expect("codec-corpus not found");
         let cid22 = corpus
@@ -260,7 +260,7 @@ mod comparison {
 
     /// Frymire quality sweep: single photographic image (1118x1105), fine quality steps.
     #[test]
-    #[ignore]
+    #[ignore = "requires CID22 corpus"]
     fn compare_decoder_quality_frymire() {
         let corpus = corpus().expect("codec-corpus not found");
         let frymire_dir = corpus
@@ -336,7 +336,7 @@ mod comparison {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "requires CID22 corpus"]
     fn compare_decoder_pairwise() {
         let corpus = corpus().expect("codec-corpus not found");
         let cid22 = corpus

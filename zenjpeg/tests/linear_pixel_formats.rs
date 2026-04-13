@@ -331,7 +331,7 @@ fn test_linear_format_subsampling_modes() {
 /// IGNORED: XYB encoding via legacy path has a bug with chroma block indexing.
 /// See CLAUDE.md "Known Bugs" #2 about XYB quality gap.
 #[test]
-#[ignore]
+#[ignore = "requires test images"]
 fn test_xyb_with_linear_formats() {
     let width = 64;
     let height = 64;

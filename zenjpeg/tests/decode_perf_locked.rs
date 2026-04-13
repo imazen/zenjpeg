@@ -186,7 +186,7 @@ fn test_decode_perf_baseline_2048() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmarking utility"]
 fn test_decode_perf_progressive_1024() {
     let jpeg = create_test_jpeg(1024, 1024, true);
     eprintln!("Progressive 1024x1024 JPEG (no DRI): {} bytes", jpeg.len());
@@ -228,7 +228,7 @@ fn test_decode_perf_progressive_1024() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmarking utility"]
 fn test_decode_perf_progressive_2048() {
     let jpeg = create_test_jpeg(2048, 2048, true);
     eprintln!("Progressive 2048x2048 JPEG (no DRI): {} bytes", jpeg.len());

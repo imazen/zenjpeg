@@ -301,7 +301,7 @@ fn test_encoder_outputs() {
 /// Only runs when REGENERATE_LOCKED_VALUES=1 is set.
 /// Always fails after writing to force hash update.
 #[test]
-#[ignore]
+#[ignore = "utility for regenerating locked values"]
 fn regenerate_values() {
     if std::env::var("REGENERATE_LOCKED_VALUES").is_err() {
         panic!(

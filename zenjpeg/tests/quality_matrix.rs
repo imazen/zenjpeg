@@ -947,7 +947,7 @@ fn test_xyb_444_progressive() {
 
 /// Generate reference values (run with --nocapture to see output)
 #[test]
-#[ignore]
+#[ignore = "utility for generating reference values"]
 fn generate_reference_values() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");

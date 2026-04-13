@@ -250,7 +250,7 @@ fn calculate_ssim2(rgb1: &[u8], rgb2: &[u8], width: usize, height: usize) -> f64
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires C++ jpegli build"]
 fn test_edge_tile_ssim2_comparison() {
     let corpus_path = find_corpus_path().expect("Corpus not found");
     let cjpegli = cjpegli_path().expect("cjpegli not found");
