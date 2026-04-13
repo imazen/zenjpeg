@@ -377,7 +377,7 @@ fn decode_mozjpeg_ycbcr(data: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Compare the coefficient path (correct) with the scanline path (buggy?)
 /// using the native i16 YCbCr output.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn compare_streaming_vs_coefficient_ycbcr() {
     let path = zenjpeg_bench_utils::corpus_builder_dir()
         .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
@@ -532,7 +532,7 @@ fn compare_streaming_vs_coefficient_ycbcr() {
 /// Compare streaming decode RGB output vs manually-computed RGB from scanline YCbCr.
 /// This isolates whether the bug is in SIMD color conversion or in the streaming IDCT data.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn compare_streaming_rgb_vs_manual_scalar_rgb() {
     let path = zenjpeg_bench_utils::corpus_builder_dir()
         .join("wide-gamut/adobe-rgb/flickr_841c1e16a9a5484a.jpg");
@@ -669,7 +669,7 @@ fn compare_streaming_rgb_vs_manual_scalar_rgb() {
 
 /// Test the SIMD color conversion in isolation by passing correct i16 YCbCr through it.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn test_simd_color_conversion_in_isolation() {
     use zenjpeg::color::ycbcr::ycbcr_planes_i16_to_rgb_u8;
 
@@ -800,7 +800,7 @@ fn test_simd_color_conversion_in_isolation() {
 /// Compare scanline reader RGB8 vs decode() streaming RGB on a STANDARD sRGB 4:4:4 JPEG.
 /// If this also shows diffs, the bug is not specific to wide-gamut images.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn compare_scanline_vs_streaming_standard_444() {
     use imgref::ImgRefMut;
 
@@ -856,7 +856,7 @@ fn compare_scanline_vs_streaming_standard_444() {
 
 /// Compare Jpegli vs Libjpeg IDCT on an Adobe RGB image.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn compare_streaming_libjpeg_idct_adobe_rgb() {
     use imgref::ImgRefMut;
 
@@ -942,7 +942,7 @@ fn compare_streaming_libjpeg_idct_adobe_rgb() {
 /// If scanline RGB8 matches mozjpeg but decode() doesn't, the streaming path's
 /// IDCT/buffer management is wrong.
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn compare_scanline_rgb8_vs_streaming_decode() {
     use imgref::ImgRefMut;
 
@@ -1451,7 +1451,7 @@ fn test_nonstandard_sampling_ycbcr_i16() {
 /// - wide-gamut/adobe-rgb/reddit_ac470c0702018bb7.jpg: max=17, mean=0.298
 /// - source_jpegs/7ccea196894ff1ad.jpg: max=11, mean=0.320
 #[test]
-#[ignore = "requires corpus + output dir"]
+#[ignore = "requires local corpus-builder directory and output dir"]
 fn diagnose_top3_outlier_diffs() {
     let corpus = zenjpeg_bench_utils::corpus_builder_dir();
     let out_dir = std::path::Path::new("/mnt/v/output/zenjpeg/diff-investigation");
@@ -1638,7 +1638,7 @@ fn diagnose_top3_outlier_diffs() {
 /// Diagnose WHERE zen-vs-zune diffs occur on the 4 corpus outlier files.
 /// Are they on MCU boundaries? Image edges? Interior?
 #[test]
-#[ignore = "requires corpus"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 fn diagnose_zen_vs_zune_outlier_locations() {
     let corpus = zenjpeg_bench_utils::corpus_builder_dir();
 

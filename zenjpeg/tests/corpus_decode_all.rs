@@ -126,7 +126,7 @@ fn process_file(path: &Path) -> DecodeResult {
     }
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 #[test]
 fn decode_all_corpus_files() {
     let corpus = corpus_dir();

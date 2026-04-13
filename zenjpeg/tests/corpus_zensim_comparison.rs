@@ -264,7 +264,7 @@ fn process_file(path: &Path, base: &Path) -> Option<CompareResult> {
     })
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
+#[ignore = "requires local corpus-builder directory (set CORPUS_BUILDER_DIR)"]
 #[test]
 fn zensim_compare_decoders() {
     let corpus = corpus_dir();
