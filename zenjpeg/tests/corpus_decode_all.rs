@@ -128,7 +128,6 @@ fn process_file(path: &Path) -> DecodeResult {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires corpus-builder corpus"]
 fn decode_all_corpus_files() {
     let corpus = corpus_dir();
     if !corpus.exists() {

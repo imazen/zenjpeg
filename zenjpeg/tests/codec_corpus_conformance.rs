@@ -66,7 +66,6 @@ fn collect_jpeg_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Test that decoder doesn't panic on fuzz corpus.
 /// These files may be malformed - we just verify no panics or crashes.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_no_panic() {
     let corpus = corpus();
@@ -106,7 +105,6 @@ fn test_fuzz_corpus_no_panic() {
 }
 
 /// Test a sample of fuzz corpus with detailed output.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_sample() {
     let corpus = corpus();
@@ -147,7 +145,6 @@ fn test_fuzz_corpus_sample() {
 // Zune Test Images
 // ============================================================================
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_progressive() {
     let corpus = corpus();
@@ -184,7 +181,6 @@ fn test_zune_progressive() {
     }
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_sampling_factors() {
     let corpus = corpus();
@@ -231,7 +227,6 @@ fn test_zune_sampling_factors() {
     }
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_zune_edge_cases() {
     let corpus = corpus();
@@ -284,7 +279,6 @@ fn test_zune_edge_cases() {
 // Image-rs Test Images
 // ============================================================================
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_image_rs_progressive() {
     let corpus = corpus();
@@ -317,7 +311,6 @@ fn test_image_rs_progressive() {
     }
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_image_rs_general() {
     let corpus = corpus();
@@ -363,7 +356,6 @@ fn test_image_rs_general() {
 // mozjpeg Test Images
 // ============================================================================
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_mozjpeg_images() {
     let corpus = corpus();
@@ -429,7 +421,6 @@ fn test_mozjpeg_images() {
 // Comparison with Reference Decoder
 // ============================================================================
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_fuzz_corpus_vs_reference() {
     let corpus = corpus();
@@ -518,7 +509,6 @@ const KNOWN_DECODER_BUGS: &[&str] = &[
 
 /// Test valid JPEGs that MUST decode correctly.
 /// These are reference images, camera samples, and feature variants.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_valid() {
     let corpus = corpus();
@@ -599,7 +589,6 @@ fn test_jpeg_conformance_valid() {
 
 /// Test invalid JPEGs that MUST be rejected gracefully.
 /// The decoder MUST return an error, not panic or crash.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_invalid() {
     let corpus = corpus();
@@ -672,7 +661,6 @@ fn test_jpeg_conformance_invalid() {
 
 /// Test non-conformant JPEGs that MAY be rejected or recovered.
 /// Documents our decoder's behavior on edge cases.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_non_conformant() {
     let corpus = corpus();
@@ -751,7 +739,6 @@ fn test_jpeg_conformance_non_conformant() {
 }
 
 /// Compare our decoder behavior with jpeg-decoder on conformance suite.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_jpeg_conformance_vs_reference() {
     let corpus = corpus();

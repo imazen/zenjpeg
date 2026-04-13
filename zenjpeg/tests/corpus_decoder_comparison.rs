@@ -253,7 +253,6 @@ fn process_file(path: &Path) -> Option<CompareResult> {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires corpus-builder corpus"]
 fn compare_decoders_on_corpus() {
     let corpus = corpus_dir_path();
     if !corpus.exists() {

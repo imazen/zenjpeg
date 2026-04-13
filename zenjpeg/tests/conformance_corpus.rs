@@ -51,7 +51,6 @@ fn decode_file_with_strictness(
     ))
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_valid_files() {
     let corpus = corpus();
@@ -97,7 +96,6 @@ fn test_valid_files() {
     );
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_invalid_files() {
     let corpus = corpus();
@@ -148,7 +146,6 @@ fn test_invalid_files() {
     }
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_nonconformant_files() {
     let corpus = corpus();
@@ -209,7 +206,6 @@ fn test_nonconformant_files() {
     );
 }
 
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_cmyk_files() {
     println!("\n=== CMYK/YCCK FILES ===\n");
@@ -253,7 +249,6 @@ fn test_cmyk_files() {
 /// - Valid files: should decode with all modes
 /// - Non-conformant files: Strict may reject more than Lenient
 /// - Invalid files: should be rejected by all modes
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn test_strictness_modes() {
     println!("\n=== STRICTNESS MODE COMPARISON ===\n");

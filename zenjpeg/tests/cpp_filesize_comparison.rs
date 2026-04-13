@@ -90,7 +90,6 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build"]
 fn test_filesize_comparison_synthetic() {
     let test_cases = [
         (8, 8, "8x8"),
@@ -155,7 +154,6 @@ fn test_filesize_comparison_synthetic() {
 
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build and test image"]
 fn test_filesize_comparison_photo() {
     let png_path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !png_path.exists() {

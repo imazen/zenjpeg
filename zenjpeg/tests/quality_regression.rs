@@ -353,8 +353,7 @@ fn test_ycbcr_420_quality_monotonic() {
 ///
 /// Root cause was progressive decoder truncation near restart markers (commit 08ef601).
 #[ignore = "requires codec-corpus (network on first run)"]
-#[test]
-#[ignore] // Requires gb82 corpus
+#[test] // Requires gb82 corpus
 fn test_420_auto_optimize_no_catastrophic() {
     // These are the exact images that triggered bug #1
     let bug_images = ["bulb", "baby", "girl", "city", "flowers"];
@@ -410,8 +409,7 @@ fn test_420_auto_optimize_no_catastrophic() {
 /// Previously failed (waves Q97 hit 47.7) due to progressive decoder truncation bug.
 /// Fixed in commit 08ef601.
 #[ignore = "requires codec-corpus (network on first run)"]
-#[test]
-#[ignore] // Requires gb82 corpus
+#[test] // Requires gb82 corpus
 fn test_444_auto_optimize_quality() {
     let images = load_gb82_images(&["baby", "bulb", "guitar", "waves"])
         .expect("gb82 corpus images not found");
@@ -560,8 +558,7 @@ fn test_decoder_path_consistency() {
 /// Statistical quality check across CID22 corpus (many diverse images).
 /// Verifies mean quality is reasonable and no single image is catastrophically bad.
 #[ignore = "requires codec-corpus (network on first run)"]
-#[test]
-#[ignore] // Requires CID22 corpus download
+#[test] // Requires CID22 corpus download
 fn test_cid22_quality_statistics() {
     let dir = get_cid22_dir();
 
@@ -621,7 +618,6 @@ fn test_cid22_quality_statistics() {
 /// Diagnostic: compare auto_optimize vs plain vs trellis-baseline to isolate the bug.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore]
 fn diagnostic_trellis_vs_plain() {
     let images =
         load_gb82_images(&["bulb", "city", "flowers"]).expect("gb82 corpus images not found");
@@ -686,7 +682,6 @@ fn diagnostic_trellis_vs_plain() {
 /// Diagnostic: decode with djpeg (libjpeg-turbo) to check if it's encoder or decoder bug.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore]
 fn diagnostic_cross_decoder() {
     let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
@@ -772,7 +767,6 @@ fn diagnostic_cross_decoder() {
 /// and values that differ.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore]
 fn diagnostic_coefficient_comparison() {
     let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
@@ -895,7 +889,6 @@ fn diagnostic_coefficient_comparison() {
 /// Verifies whether the issue is scan truncation or coefficient corruption.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore]
 fn diagnostic_scan_structure() {
     let images = load_gb82_images(&["bulb"]).expect("gb82 corpus images not found");
     let (name, pixels, w, h) = &images[0];
@@ -965,7 +958,6 @@ fn diagnostic_scan_structure() {
 /// Diagnostic: isolate whether the bug is from trellis, progressive, or their combination.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore]
 fn diagnostic_isolate_trellis_progressive() {
     use zenjpeg::encode::trellis::HybridConfig;
 

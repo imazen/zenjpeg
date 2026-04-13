@@ -115,7 +115,6 @@ fn test_file_size_scaling() {
 
 #[ignore = "requires testdata"]
 #[test]
-#[ignore = "requires testdata"]
 fn test_decode_cpp_flower_420() {
     if let Some((width, height, pixels)) = decode_test_jpeg("jxl/flower/flower.png.im_q85_420.jpg")
     {
@@ -130,7 +129,6 @@ fn test_decode_cpp_flower_420() {
 
 #[ignore = "requires testdata"]
 #[test]
-#[ignore = "requires testdata"]
 fn test_decode_cpp_flower_444() {
     if let Some((width, height, pixels)) = decode_test_jpeg("jxl/flower/flower.png.im_q85_444.jpg")
     {
@@ -145,7 +143,6 @@ fn test_decode_cpp_flower_444() {
 
 #[ignore = "requires testdata"]
 #[test]
-#[ignore = "requires testdata"]
 fn test_decode_cpp_flower_progressive() {
     if let Some((width, height, _)) = decode_test_jpeg("jxl/flower/flower.png.im_q85_420_progr.jpg")
     {
@@ -163,7 +160,6 @@ fn test_decode_cpp_flower_progressive() {
 
 #[ignore = "requires testdata"]
 #[test]
-#[ignore = "requires testdata"]
 fn test_quality_vs_cpp_decoded() {
     // Load original PNG
     let png_result = load_png("jxl/flower/flower.png");

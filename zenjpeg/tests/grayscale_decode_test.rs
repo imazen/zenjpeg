@@ -95,8 +95,7 @@ fn test_grayscale_decode_to_rgb() {
 }
 
 #[ignore = "requires external test resources"]
-#[test]
-#[ignore] // Grayscale scanline reading not yet supported
+#[test] // Grayscale scanline reading not yet supported
 fn test_grayscale_scanline_reader() {
     let Some(data) = load_test_image(GRAY_TEST_IMAGE) else {
         eprintln!("Skipping test: {} not found", GRAY_TEST_IMAGE);

@@ -282,7 +282,6 @@ fn compare_decoder_leniency() {
 /// Run with: cargo test --release --features decoder -p zenjpeg --test decoder_leniency_comparison -- truncated_error_detail --nocapture --ignored
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn truncated_error_detail() {
     use zenjpeg::decoder::{Decoder, Strictness};
 

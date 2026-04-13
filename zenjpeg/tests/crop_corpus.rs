@@ -360,7 +360,6 @@ fn verify_crop_scanline_with_transform(
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_buffered() {
     let c = corpus();
     let corpus_dir = c
@@ -433,7 +432,6 @@ fn corpus_crop_buffered() {
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_scanline() {
     let c = corpus();
     let corpus_dir = c
@@ -509,7 +507,6 @@ fn corpus_crop_scanline() {
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_with_transforms() {
     use zenjpeg::lossless::LosslessTransform;
 
@@ -606,7 +603,6 @@ fn corpus_crop_with_transforms() {
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_crop_scanline_with_transforms() {
     use zenjpeg::lossless::LosslessTransform;
 

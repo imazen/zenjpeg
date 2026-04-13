@@ -219,8 +219,7 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
 }
 
 #[ignore = "requires external test resources"]
-#[test]
-#[ignore] // Requires C++ jpegli FFI build and corpus images
+#[test] // Requires C++ jpegli FFI build and corpus images
 fn test_comprehensive_cpp_comparison() {
     let max_images = std::env::var("MAX_IMAGES")
         .ok()

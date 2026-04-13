@@ -129,7 +129,6 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
 /// Threshold: within 5% of C++ file size.
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires kodak corpus"]
 fn test_file_size_parity() {
     let reference = match load_reference_data() {
         Some(r) => r,
@@ -230,7 +229,6 @@ fn test_file_size_parity() {
 /// Threshold: DSSIM within 20% of C++ (relative).
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires kodak corpus"]
 fn test_dssim_parity() {
     let reference = match load_reference_data() {
         Some(r) => r,

@@ -266,7 +266,6 @@ fn process_file(path: &Path, base: &Path) -> Option<CompareResult> {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires corpus-builder corpus and cms feature"]
 fn zensim_compare_decoders() {
     let corpus = corpus_dir();
     if !corpus.exists() {

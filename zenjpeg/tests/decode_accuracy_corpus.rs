@@ -321,7 +321,6 @@ fn percentile(values: &[u8], pct: usize) -> u8 {
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_decode_accuracy() {
     let c = corpus();
     let corpus = c
@@ -575,7 +574,6 @@ fn corpus_decode_accuracy() {
 }
 
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn corpus_libjpeg_compat_vs_djpeg() {
     let c = corpus();
     let corpus = c
@@ -824,7 +822,6 @@ fn investigate_rst_diff() {
 /// sit at partial MCU boundaries where chroma upsampling and IDCT clipping interact.
 /// This test verifies those specific pixels aren't worse than interior pixels.
 #[test]
-#[ignore = "requires codec-corpus (network on first run)"]
 fn border_pixel_accuracy() {
     let c = corpus();
     let corpus = c

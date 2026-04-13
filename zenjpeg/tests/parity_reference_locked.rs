@@ -492,8 +492,7 @@ fn print_summary() {
 
 /// Generate all reference values (run this to update the locked values)
 #[ignore = "requires external test resources"]
-#[test]
-#[ignore] // Run with: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
+#[test] // Run with: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 fn generate_all_values() {
     let (rgb, width, height) = load_test_image();
     let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/1.png");

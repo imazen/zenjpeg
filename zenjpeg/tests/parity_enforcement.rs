@@ -229,7 +229,6 @@ fn test_image(
 /// Test image on flower_small at Q90
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build and test images"]
 fn test_parity_flower_q90() {
     let png_path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
 
@@ -256,7 +255,6 @@ fn test_parity_flower_q90() {
 /// Test CID22 large image (complex photo, ~621KB PNG)
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_large() {
     let png_path = match fetch_corpus_image("1459534.png") {
         Some(p) => p,
@@ -289,7 +287,6 @@ fn test_parity_cid22_large() {
 /// Test CID22 medium-large image (typical photo, ~459KB PNG)
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_medium_large() {
     let png_path = match fetch_corpus_image("2504911.png") {
         Some(p) => p,
@@ -327,7 +324,6 @@ fn test_parity_cid22_medium_large() {
 /// Test CID22 medium image (moderate complexity, ~348KB PNG)
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_medium() {
     let png_path = match fetch_corpus_image("3616956.png") {
         Some(p) => p,
@@ -365,7 +361,6 @@ fn test_parity_cid22_medium() {
 /// Test CID22 small image (graphics, ~77KB PNG)
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires C++ cjpegli build, downloads test image if needed"]
 fn test_parity_cid22_small() {
     let png_path = match fetch_corpus_image("nicubunu_Game_baddie_Policeman.png") {
         Some(p) => p,

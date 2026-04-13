@@ -78,7 +78,6 @@ fn test_decode_im_q85_444() {
 /// TODO: Investigate why DSSIM is high with zune-jpeg reference
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "zune-jpeg/jpegli non-interleaved compatibility needs investigation"]
 fn test_decode_444_non_interleaved() {
     let path = zenjpeg::test_utils::get_testdata_dir()
         .join("jxl/flower/flower_small.q85_444_non_interleaved.jpg");

@@ -128,7 +128,6 @@ fn test_arithmetic_jpeg_decode_coefficients() {
 /// Skipped when djpeg is not installed (e.g. Windows CI).
 #[ignore = "requires external test resources"]
 #[test]
-#[ignore = "arithmetic decode has known max_diff=23 vs libjpeg-turbo"]
 fn test_arithmetic_jpeg_reference_comparison() {
     let data = std::fs::read(TESTIMGARI_PATH).expect("failed to read testimgari.jpg");
     let decoder = Decoder::new();

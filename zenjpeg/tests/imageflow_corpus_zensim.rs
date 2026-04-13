@@ -409,7 +409,6 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_corpus_zensim_vs_mozjpeg() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
@@ -874,7 +873,6 @@ fn process_decoder_parity(img: &LoadedImage, quality: u8) -> DecoderParityResult
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_decoder_parity_mozjpeg_files() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
@@ -1190,7 +1188,6 @@ fn process_cross(img: &LoadedImage, quality: u8) -> CrossResult {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_encoder_cross_comparison() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,
@@ -1478,7 +1475,6 @@ fn process_size_match(img: &LoadedImage, moz_quality: u8) -> SizeMatchResult {
 
 #[ignore = "requires codec-corpus (network on first run)"]
 #[test]
-#[ignore = "requires imageflow corpus and decoder/trellis features"]
 fn imageflow_size_matched_quality() {
     let corpus = match corpus_dir() {
         Some(d) if d.exists() => d,

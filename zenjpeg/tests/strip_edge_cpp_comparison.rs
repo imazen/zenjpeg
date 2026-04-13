@@ -240,7 +240,6 @@ fn test_cropped_image(
 /// Strict 1% size tolerance.
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires cjpegli binary and corpus"]
 fn test_strip_edge_real_images() {
     let cjpegli = match cjpegli_path() {
         Some(p) => p,
@@ -505,7 +504,6 @@ fn test_strip_edge_real_images() {
 /// Quick synthetic test - kept for fast CI, but not authoritative
 #[ignore = "requires C++ jpegli build"]
 #[test]
-#[ignore = "requires cjpegli binary"]
 fn test_strip_edge_synthetic_quick() {
     let cjpegli = match cjpegli_path() {
         Some(p) => p,

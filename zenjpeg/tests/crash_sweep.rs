@@ -298,7 +298,6 @@ fn corpus() -> codec_corpus::Corpus {
 }
 
 /// Sweep codec-corpus jpeg-conformance/valid — all MUST decode.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_valid() {
     let corpus = corpus();
@@ -350,7 +349,6 @@ fn sweep_corpus_jpeg_valid() {
 }
 
 /// Sweep codec-corpus jpeg-conformance/invalid — all MUST error, MUST NOT panic.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_invalid() {
     let corpus = corpus();
@@ -394,7 +392,6 @@ fn sweep_corpus_jpeg_invalid() {
 }
 
 /// Sweep codec-corpus jpeg-conformance/non-conformant — MUST NOT panic, may decode or error.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_jpeg_nonconformant() {
     let corpus = corpus();
@@ -441,7 +438,6 @@ fn sweep_corpus_jpeg_nonconformant() {
 }
 
 /// Sweep zune fuzz corpus (1,836 files) — MUST NOT panic.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_zune_fuzz() {
     let corpus = corpus();
@@ -488,7 +484,6 @@ fn sweep_corpus_zune_fuzz() {
 }
 
 /// Sweep codec-corpus crash-repro files (large files from upstream bug reports) — MUST NOT panic.
-#[ignore = "requires codec-corpus (network on first run)"]
 #[test]
 fn sweep_corpus_crash_repro() {
     let corpus = corpus();
