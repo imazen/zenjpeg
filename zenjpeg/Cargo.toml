@@ -46,7 +46,6 @@ exclude = [
 name = "zenjpeg"
 
 [dependencies]
-wide = { workspace = true }
 aligned-vec = { workspace = true }
 bytemuck = { workspace = true }
 rgb = { workspace = true }
@@ -83,6 +82,7 @@ zenresize = { workspace = true, optional = true, features = ["layout"] }
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
+wide = { workspace = true }
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
 test-case = { workspace = true }
