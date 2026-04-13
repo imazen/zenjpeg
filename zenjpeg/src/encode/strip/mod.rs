@@ -143,7 +143,7 @@ pub(crate) fn extract_block_from_strip_wide(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn extract_block_impl(
     token: Token,
     strip: &[f32],

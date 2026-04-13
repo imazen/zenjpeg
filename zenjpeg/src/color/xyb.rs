@@ -517,7 +517,7 @@ pub fn xyb_planes_to_rgb_buffer(
 /// Uses `cbrt_midp()` for hardware-accelerated cube root (~3 ULP precision,
 /// better than C++ jpegli's ~6 ULP). Dispatches to AVX2+FMA on x86_64,
 /// NEON on aarch64, WASM SIMD128 on wasm32, or scalar fallback.
-#[inline]
+#[inline(always)]
 fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
     token: T,
     r_arr: [f32; 8],
@@ -592,7 +592,7 @@ fn generic_linear_rgb_to_scaled_xyb<T: magetypes::simd::backends::F32x8Convert>(
 }
 
 /// Generic SIMD core: linear RGB → XYB (no JPEG scaling), in-place on `[[f32; 3]]`.
-#[inline]
+#[inline(always)]
 fn generic_linear_rgb_to_xyb_inplace<T: magetypes::simd::backends::F32x8Convert>(
     token: T,
     pixels: &mut [[f32; 3]],
@@ -825,7 +825,7 @@ pub fn srgb_to_scaled_xyb_planes_simd_inplace(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn srgb_to_scaled_xyb_planes_rgb_impl(
     token: Token,
     rgb_data: &[u8],
@@ -898,7 +898,7 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn srgb_to_scaled_xyb_planes_rgba_impl(
     token: Token,
     rgba_data: &[u8],
@@ -971,7 +971,7 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn srgb_to_scaled_xyb_planes_bgra_impl(
     token: Token,
     bgra_data: &[u8],
@@ -1034,7 +1034,7 @@ pub fn linear_rgb_to_xyb_simd(pixels: &mut [[f32; 3]]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn linear_rgb_to_xyb_simd_impl(token: Token, pixels: &mut [[f32; 3]]) {
     generic_linear_rgb_to_xyb_inplace(token, pixels);
 
@@ -1055,7 +1055,7 @@ pub fn linear_rgb_to_xyb_simd_255(pixels: &mut [[f32; 3]]) {
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn linear_rgb_to_xyb_simd_255_impl(token: Token, pixels: &mut [[f32; 3]]) {
     generic_linear_rgb_to_xyb_inplace(token, pixels);
 
@@ -1101,7 +1101,7 @@ pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32],
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn xyb_planes_to_rgb_u8_impl(
     token: Token,
     plane0: &[f32],
@@ -1197,7 +1197,7 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
 }
 
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn xyb_planes_to_rgb_f32_impl(
     token: Token,
     plane0: &[f32],

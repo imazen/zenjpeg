@@ -342,7 +342,7 @@ impl Default for Block8x8i32 {
 /// Uses f32x8 for threshold/multiply and i32x8 for blend/round.
 /// On x86 AVX2+FMA this is true 256-bit; on NEON/WASM it's polyfilled via pairs.
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn mage_quantize_block_zigzag(
     token: Token,
     block: &Block8x8f,
@@ -393,7 +393,7 @@ fn mage_quantize_block_zigzag(
 
 /// Magetypes-generic quantize, natural order output.
 #[magetypes(v3, neon, wasm128, scalar)]
-#[inline]
+#[inline(always)]
 fn mage_quantize_block(
     token: Token,
     block: &Block8x8f,
