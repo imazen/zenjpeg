@@ -7,10 +7,9 @@
 fn sharp_yuv_iteration_sweep() {
     // Speed sweep only — no decoder needed.
 
-    let corpus_dir = std::path::Path::new(
-        &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
-    )
-    .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
+    let corpus_dir =
+        std::path::Path::new(&std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()))
+            .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
 
     let mut paths: Vec<_> = std::fs::read_dir(&corpus_dir)
         .expect("CID22 corpus required")
@@ -34,7 +33,10 @@ fn sharp_yuv_iteration_sweep() {
         })
         .collect();
 
-    eprintln!("=== Sharp YUV Iteration Sweep (Q85, {} images) ===", images.len());
+    eprintln!(
+        "=== Sharp YUV Iteration Sweep (Q85, {} images) ===",
+        images.len()
+    );
     eprintln!("{:>6} {:>8} {:>10}", "iters", "error", "time_ms");
 
     let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
@@ -93,13 +95,4 @@ fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
     Some((rgb, info.width, info.height))
-}
-
-fn mean_abs_err(a: &[u8], b: &[u8]) -> f64 {
-    let n = a.len().min(b.len());
-    let mut s = 0u64;
-    for i in 0..n {
-        s += a[i].abs_diff(b[i]) as u64;
-    }
-    s as f64 / n as f64
 }

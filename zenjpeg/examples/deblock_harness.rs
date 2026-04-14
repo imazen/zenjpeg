@@ -507,12 +507,26 @@ mod triage_impl {
             for bx in 0..nbx {
                 match logicmap[by * nbx + bx] {
                     BlockClass::Uniform => convolve_block(
-                        &src, plane, width, height, bx, by,
-                        &DEBLOCK_KERNEL, 7, DEBLOCK_NORM,
+                        &src,
+                        plane,
+                        width,
+                        height,
+                        bx,
+                        by,
+                        &DEBLOCK_KERNEL,
+                        7,
+                        DEBLOCK_NORM,
                     ),
                     BlockClass::Transitional => convolve_block(
-                        &src, plane, width, height, bx, by,
-                        &DERING_KERNEL, 3, DERING_NORM,
+                        &src,
+                        plane,
+                        width,
+                        height,
+                        bx,
+                        by,
+                        &DERING_KERNEL,
+                        3,
+                        DERING_NORM,
                     ),
                     BlockClass::Busy => {}
                 }
@@ -770,11 +784,7 @@ impl DeblockStrategy for TriageGated {
 
     fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
         let probe = detect::probe(jpeg_bytes).ok()?;
-        let dc_quant = probe
-            .dqt_tables
-            .first()
-            .map(|t| t.values[0])
-            .unwrap_or(1);
+        let dc_quant = probe.dqt_tables.first().map(|t| t.values[0]).unwrap_or(1);
 
         // Above this DC_quant the filter under-performs baseline at every
         // threshold we tested (16…512). Skip to baseline.
@@ -2259,8 +2269,7 @@ fn parse_args() -> Args {
                 // Comma-separated allow-list. Baseline is always retained so
                 // the delta tables still have a reference column.
                 let list = iter.next().unwrap_or_default();
-                let wanted: Vec<String> =
-                    list.split(',').map(|s| s.trim().to_string()).collect();
+                let wanted: Vec<String> = list.split(',').map(|s| s.trim().to_string()).collect();
                 args.strategies.retain(|s| {
                     let n = s.name();
                     n == "baseline" || wanted.iter().any(|w| w == n)
@@ -2278,9 +2287,7 @@ fn parse_args() -> Args {
                 eprintln!("  --bench          Benchmark decode timing per strategy");
                 eprintln!("  --corpus <name>  gb82, cid22, gb82-sc, or gb82+cid22 (default)");
                 eprintln!("  --images <N>     Max images per corpus");
-                eprintln!(
-                    "  --strategy <csv> Run only these strategies (baseline is always kept)"
-                );
+                eprintln!("  --strategy <csv> Run only these strategies (baseline is always kept)");
                 eprintln!("  --verbose        Per-image output");
                 eprintln!();
                 eprintln!("With no flags, runs both --generate and --measure.");

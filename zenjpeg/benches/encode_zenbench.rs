@@ -21,8 +21,8 @@ fn noise_patches(w: usize, h: usize) -> Vec<u8> {
 }
 
 fn bench_encode(suite: &mut Suite) {
-    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use zenjpeg::encode::EncoderConfig;
+    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 
     let rgb_4k: &'static [u8] = Box::leak(noise_patches(3840, 2160).into_boxed_slice());
 
@@ -30,15 +30,18 @@ fn bench_encode(suite: &mut Suite) {
         g.bench("4:2:0 progressive", move |b| {
             b.iter(|| {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
-                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+                config
+                    .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                    .unwrap()
             })
         });
 
         g.bench("4:2:0 sharp progressive", move |b| {
             b.iter(|| {
-                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-                    .sharp_yuv(true);
-                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).sharp_yuv(true);
+                config
+                    .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                    .unwrap()
             })
         });
     });
@@ -64,7 +67,10 @@ fn bench_encode(suite: &mut Suite) {
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let config = zenyuv::SharpYuvConfig { max_iterations: 4, ..Default::default() };
+            let config = zenyuv::SharpYuvConfig {
+                max_iterations: 4,
+                ..Default::default()
+            };
             b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
 
@@ -73,7 +79,10 @@ fn bench_encode(suite: &mut Suite) {
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let config = zenyuv::SharpYuvConfig { max_iterations: 1, ..Default::default() };
+            let config = zenyuv::SharpYuvConfig {
+                max_iterations: 1,
+                ..Default::default()
+            };
             b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
 
@@ -82,7 +91,10 @@ fn bench_encode(suite: &mut Suite) {
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let config = zenyuv::SharpYuvConfig { max_iterations: 0, ..Default::default() };
+            let config = zenyuv::SharpYuvConfig {
+                max_iterations: 0,
+                ..Default::default()
+            };
             b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
     });

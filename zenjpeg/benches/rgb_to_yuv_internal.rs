@@ -6,7 +6,7 @@
 
 use zenbench::prelude::*;
 
-use zenyuv::{rgb_to_yuv420, rgb_to_yuv444};
+use zenyuv::{Matrix, Range, YuvContext};
 
 use yuv::{
     BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
@@ -40,12 +40,13 @@ fn bench_444(suite: &mut Suite) {
             let rgb: &'static [u8] = Box::leak(noise_patches(size, size).into_boxed_slice());
             let n = size * size;
 
-            g.bench("internal (magetypes f32+FMA)", move |b| {
+            g.bench("zenyuv (YuvContext)", move |b| {
+                let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
                 let mut y = vec![0u8; n];
                 let mut u = vec![0u8; n];
                 let mut v = vec![0u8; n];
                 b.iter(|| {
-                    rgb_to_yuv444(rgb, &mut y, &mut u, &mut v, size, size);
+                    ctx.encode_444_u8(rgb, &mut y, &mut u, &mut v, size, size);
                 })
             });
 
@@ -87,12 +88,13 @@ fn bench_420(suite: &mut Suite) {
             let cw = size / 2;
             let cn = cw * cw;
 
-            g.bench("internal (magetypes f32+FMA)", move |b| {
+            g.bench("zenyuv (YuvContext)", move |b| {
+                let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
                 let mut y = vec![0u8; n];
                 let mut u = vec![0u8; cn];
                 let mut v = vec![0u8; cn];
                 b.iter(|| {
-                    rgb_to_yuv420(rgb, &mut y, &mut u, &mut v, size, size);
+                    ctx.encode_420_u8(rgb, &mut y, &mut u, &mut v, size, size);
                 })
             });
 

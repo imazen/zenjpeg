@@ -7,8 +7,8 @@
 mod tests {
     use enough::Unstoppable;
     use zenjpeg::decode::Decoder;
-    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use zenjpeg::encode::EncoderConfig;
+    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
 
     fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
         let file = std::fs::File::open(path).ok()?;
@@ -51,10 +51,9 @@ mod tests {
 
     #[test]
     fn sharp_yuv_jpeg_quality() {
-        let corpus_dir = std::path::Path::new(
-            &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
-        )
-        .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
+        let corpus_dir =
+            std::path::Path::new(&std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()))
+                .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
 
         let mut paths: Vec<_> = std::fs::read_dir(&corpus_dir)
             .ok()
@@ -76,7 +75,10 @@ mod tests {
             return;
         }
 
-        eprintln!("=== JPEG Roundtrip Quality (Q85 4:2:0, {} images) ===", paths.len());
+        eprintln!(
+            "=== JPEG Roundtrip Quality (Q85 4:2:0, {} images) ===",
+            paths.len()
+        );
         eprintln!(
             "{:>15} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
             "image", "box_err", "box_kb", "sharp_er", "sharp_kb", "444_err", "444_kb"
@@ -103,17 +105,26 @@ mod tests {
                 .unwrap();
             let box_kb = jpeg_box.len() as f64 / 1024.0;
             let dec = Decoder::new();
-            let rt_box = dec.decode(&jpeg_box, Unstoppable).unwrap().pixels_u8().unwrap().to_vec();
+            let rt_box = dec
+                .decode(&jpeg_box, Unstoppable)
+                .unwrap()
+                .pixels_u8()
+                .unwrap()
+                .to_vec();
             let box_err = mean_abs_err(&rgb, &rt_box);
 
             // Sharp YUV 4:2:0
-            let cfg_sharp = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-                .sharp_yuv(true);
+            let cfg_sharp = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).sharp_yuv(true);
             let jpeg_sharp = cfg_sharp
                 .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
                 .unwrap();
             let sharp_kb = jpeg_sharp.len() as f64 / 1024.0;
-            let rt_sharp = dec.decode(&jpeg_sharp, Unstoppable).unwrap().pixels_u8().unwrap().to_vec();
+            let rt_sharp = dec
+                .decode(&jpeg_sharp, Unstoppable)
+                .unwrap()
+                .pixels_u8()
+                .unwrap()
+                .to_vec();
             let sharp_err = mean_abs_err(&rgb, &rt_sharp);
 
             // 4:4:4 (no subsampling, maximum chroma quality)
@@ -122,7 +133,12 @@ mod tests {
                 .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
                 .unwrap();
             let four44_kb = jpeg_444.len() as f64 / 1024.0;
-            let rt_444 = dec.decode(&jpeg_444, Unstoppable).unwrap().pixels_u8().unwrap().to_vec();
+            let rt_444 = dec
+                .decode(&jpeg_444, Unstoppable)
+                .unwrap()
+                .pixels_u8()
+                .unwrap()
+                .to_vec();
             let four44_err = mean_abs_err(&rgb, &rt_444);
 
             let name = p.file_stem().unwrap().to_string_lossy();
@@ -152,11 +168,13 @@ mod tests {
             "MEAN"
         );
         eprintln!();
-        eprintln!("sharp vs box: error {:.2}%, size {:.2}%",
+        eprintln!(
+            "sharp vs box: error {:.2}%, size {:.2}%",
             (avg_sharp - avg_box) / avg_box * 100.0,
             (avg_sharp_kb - avg_box_kb) / avg_box_kb * 100.0
         );
-        eprintln!("444 vs box:   error {:.2}%, size {:.2}%",
+        eprintln!(
+            "444 vs box:   error {:.2}%, size {:.2}%",
             (avg_444 - avg_box) / avg_box * 100.0,
             (avg_444_kb - avg_box_kb) / avg_box_kb * 100.0
         );

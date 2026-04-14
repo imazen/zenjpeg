@@ -35,7 +35,14 @@ pub fn gamma_aware_strip_420(
     use_iterative: bool,
 ) {
     zenyuv_strip_420(
-        rgb_strip, y_strip, cb_down, cr_down, width, strip_height, bpp, use_iterative,
+        rgb_strip,
+        y_strip,
+        cb_down,
+        cr_down,
+        width,
+        strip_height,
+        bpp,
+        use_iterative,
     );
 }
 
@@ -78,10 +85,16 @@ fn zenyuv_strip_420(
 
     let mut ws = zenyuv::sharp::SharpYuvWorkspace::new(cw);
     zenyuv::sharp::rgb_to_yuv420_sharp_f32(
-        rgb_input, y_strip, cb_down, cr_down,
-        width, strip_height,
-        zenyuv::Range::Full, zenyuv::Matrix::Bt601,
-        &config, &mut ws,
+        rgb_input,
+        y_strip,
+        cb_down,
+        cr_down,
+        width,
+        strip_height,
+        zenyuv::Range::Full,
+        zenyuv::Matrix::Bt601,
+        &config,
+        &mut ws,
     );
 }
 
@@ -162,13 +175,22 @@ fn compute_y_plane_from_rgb(
 
 /// Gamma-aware chroma for a 2x1 block (4:2:2).
 fn gamma_aware_chroma_2x1_strip(
-    data: &[u8], width: usize, _height: usize, bpp: usize, cx: usize, y: usize,
+    data: &[u8],
+    width: usize,
+    _height: usize,
+    bpp: usize,
+    cx: usize,
+    y: usize,
 ) -> (f32, f32) {
     let x0 = cx * 2;
     let x1 = (x0 + 1).min(width - 1);
     let get = |x: usize| -> (f32, f32, f32) {
         let i = (y * width + x) * bpp;
-        (srgb_u8_to_linear(data[i]), srgb_u8_to_linear(data[i + 1]), srgb_u8_to_linear(data[i + 2]))
+        (
+            srgb_u8_to_linear(data[i]),
+            srgb_u8_to_linear(data[i + 1]),
+            srgb_u8_to_linear(data[i + 2]),
+        )
     };
     let (lr0, lg0, lb0) = get(x0);
     let (lr1, lg1, lb1) = get(x1);
@@ -176,20 +198,29 @@ fn gamma_aware_chroma_2x1_strip(
     let g = linear_to_srgb_fast((lg0 + lg1) * 0.5) * 255.0;
     let b = linear_to_srgb_fast((lb0 + lb1) * 0.5) * 255.0;
     {
-            let (_, cb, cr) = crate::color::rgb_to_ycbcr_f32(r, g, b);
-            (cb, cr)
-        }
+        let (_, cb, cr) = crate::color::rgb_to_ycbcr_f32(r, g, b);
+        (cb, cr)
+    }
 }
 
 /// Gamma-aware chroma for a 1x2 block (4:4:0).
 fn gamma_aware_chroma_1x2_strip(
-    data: &[u8], width: usize, height: usize, bpp: usize, x: usize, cy: usize,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    bpp: usize,
+    x: usize,
+    cy: usize,
 ) -> (f32, f32) {
     let y0 = cy * 2;
     let y1 = (y0 + 1).min(height - 1);
     let get = |y: usize| -> (f32, f32, f32) {
         let i = (y * width + x) * bpp;
-        (srgb_u8_to_linear(data[i]), srgb_u8_to_linear(data[i + 1]), srgb_u8_to_linear(data[i + 2]))
+        (
+            srgb_u8_to_linear(data[i]),
+            srgb_u8_to_linear(data[i + 1]),
+            srgb_u8_to_linear(data[i + 2]),
+        )
     };
     let (lr0, lg0, lb0) = get(y0);
     let (lr1, lg1, lb1) = get(y1);
@@ -197,14 +228,20 @@ fn gamma_aware_chroma_1x2_strip(
     let g = linear_to_srgb_fast((lg0 + lg1) * 0.5) * 255.0;
     let b = linear_to_srgb_fast((lb0 + lb1) * 0.5) * 255.0;
     {
-            let (_, cb, cr) = crate::color::rgb_to_ycbcr_f32(r, g, b);
-            (cb, cr)
-        }
+        let (_, cb, cr) = crate::color::rgb_to_ycbcr_f32(r, g, b);
+        (cb, cr)
+    }
 }
 
 /// Iterative chroma for a 2x1 block (4:2:2). Scalar Newton step.
 fn iterative_chroma_2x1_strip(
-    data: &[u8], y_plane: &[f32], width: usize, _height: usize, bpp: usize, cx: usize, y: usize,
+    data: &[u8],
+    y_plane: &[f32],
+    width: usize,
+    _height: usize,
+    bpp: usize,
+    cx: usize,
+    y: usize,
 ) -> (f32, f32) {
     let x0 = cx * 2;
     let x1 = (x0 + 1).min(width - 1);
@@ -221,7 +258,13 @@ fn iterative_chroma_2x1_strip(
 
 /// Iterative chroma for a 1x2 block (4:4:0). Scalar Newton step.
 fn iterative_chroma_1x2_strip(
-    data: &[u8], y_plane: &[f32], width: usize, height: usize, bpp: usize, x: usize, cy: usize,
+    data: &[u8],
+    y_plane: &[f32],
+    width: usize,
+    height: usize,
+    bpp: usize,
+    x: usize,
+    cy: usize,
 ) -> (f32, f32) {
     let y0 = cy * 2;
     let y1 = (y0 + 1).min(height - 1);
@@ -238,7 +281,13 @@ fn iterative_chroma_1x2_strip(
 
 /// Newton-step iterative refinement for N pixels sharing one Cb/Cr.
 /// Uses the correct inverse-matrix Jacobian (same math as zenyuv's sharp kernel).
-fn iterative_refine_n(y_vals: &[f32], orig: &[(f32, f32, f32)], cb: &mut f32, cr: &mut f32, n: usize) {
+fn iterative_refine_n(
+    y_vals: &[f32],
+    orig: &[(f32, f32, f32)],
+    cb: &mut f32,
+    cr: &mut f32,
+    n: usize,
+) {
     use crate::foundation::consts::*;
     // Inverse matrix coefficients for BT.601 full range.
     let cb_to_g: f32 = YCBCR_CB_TO_G;
@@ -277,13 +326,18 @@ fn get_bpp(pixel_format: PixelFormat) -> Result<usize> {
     match pixel_format {
         PixelFormat::Rgb => Ok(3),
         PixelFormat::Rgba => Ok(4),
-        _ => Err(Error::unsupported_feature("only RGB/RGBA supported for gamma-aware chroma")),
+        _ => Err(Error::unsupported_feature(
+            "only RGB/RGBA supported for gamma-aware chroma",
+        )),
     }
 }
 
 /// Convert a full image with gamma-aware 4:2:0 downsampling.
 pub fn convert_gamma_aware_420(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -293,13 +347,27 @@ pub fn convert_gamma_aware_420(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(c_size, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(c_size, "chroma")?;
-    gamma_aware_strip_420(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, 0, height, bpp, false);
+    gamma_aware_strip_420(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        0,
+        height,
+        bpp,
+        false,
+    );
     Ok((y_plane, cb_plane, cr_plane, c_width, c_height))
 }
 
 /// Convert a full image with iterative 4:2:0 downsampling (Sharp YUV).
 pub fn convert_gamma_aware_iterative_420(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -309,13 +377,27 @@ pub fn convert_gamma_aware_iterative_420(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(c_size, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(c_size, "chroma")?;
-    gamma_aware_strip_420(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, 0, height, bpp, true);
+    gamma_aware_strip_420(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        0,
+        height,
+        bpp,
+        true,
+    );
     Ok((y_plane, cb_plane, cr_plane, c_width, c_height))
 }
 
 /// Convert a full image with gamma-aware 4:2:2 downsampling.
 pub fn convert_gamma_aware_422(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -323,13 +405,25 @@ pub fn convert_gamma_aware_422(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(checked_size_2d(c_width, height)?, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(checked_size_2d(c_width, height)?, "chroma")?;
-    gamma_aware_strip_422(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, bpp, false);
+    gamma_aware_strip_422(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        bpp,
+        false,
+    );
     Ok((y_plane, cb_plane, cr_plane, c_width, height))
 }
 
 /// Convert a full image with iterative 4:2:2 downsampling.
 pub fn convert_gamma_aware_iterative_422(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -337,13 +431,25 @@ pub fn convert_gamma_aware_iterative_422(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(checked_size_2d(c_width, height)?, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(checked_size_2d(c_width, height)?, "chroma")?;
-    gamma_aware_strip_422(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, bpp, true);
+    gamma_aware_strip_422(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        bpp,
+        true,
+    );
     Ok((y_plane, cb_plane, cr_plane, c_width, height))
 }
 
 /// Convert a full image with gamma-aware 4:4:0 downsampling.
 pub fn convert_gamma_aware_440(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -351,13 +457,25 @@ pub fn convert_gamma_aware_440(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(checked_size_2d(width, c_height)?, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(checked_size_2d(width, c_height)?, "chroma")?;
-    gamma_aware_strip_440(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, bpp, false);
+    gamma_aware_strip_440(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        bpp,
+        false,
+    );
     Ok((y_plane, cb_plane, cr_plane, width, c_height))
 }
 
 /// Convert a full image with iterative 4:4:0 downsampling.
 pub fn convert_gamma_aware_iterative_440(
-    data: &[u8], width: usize, height: usize, pixel_format: PixelFormat,
+    data: &[u8],
+    width: usize,
+    height: usize,
+    pixel_format: PixelFormat,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
     let bpp = get_bpp(pixel_format)?;
     let num_pixels = checked_size_2d(width, height)?;
@@ -365,7 +483,16 @@ pub fn convert_gamma_aware_iterative_440(
     let mut y_plane = try_alloc_zeroed_f32(num_pixels, "chroma")?;
     let mut cb_plane = try_alloc_zeroed_f32(checked_size_2d(width, c_height)?, "chroma")?;
     let mut cr_plane = try_alloc_zeroed_f32(checked_size_2d(width, c_height)?, "chroma")?;
-    gamma_aware_strip_440(data, &mut y_plane, &mut cb_plane, &mut cr_plane, width, height, bpp, true);
+    gamma_aware_strip_440(
+        data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        width,
+        height,
+        bpp,
+        true,
+    );
     Ok((y_plane, cb_plane, cr_plane, width, c_height))
 }
 
@@ -392,7 +519,8 @@ mod tests {
         let w = 16;
         let h = 8;
         let rgb = alloc::vec![128u8; w * h * 3];
-        let (y, cb, cr, cw, ch) = convert_gamma_aware_iterative_420(&rgb, w, h, PixelFormat::Rgb).unwrap();
+        let (y, cb, cr, cw, ch) =
+            convert_gamma_aware_iterative_420(&rgb, w, h, PixelFormat::Rgb).unwrap();
         assert_eq!(cw, 8);
         assert_eq!(ch, 4);
         assert!((y[0] - 128.0).abs() < 2.0);

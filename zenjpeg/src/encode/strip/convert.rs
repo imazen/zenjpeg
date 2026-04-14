@@ -830,7 +830,6 @@ impl StripProcessor {
         Ok(())
     }
 
-
     /// Rearranges only the Y strip from packed to padded layout.
     /// Used by gamma-aware conversion where Cb/Cr go directly to cb_down/cr_down.
     pub(super) fn rearrange_y_strip_only(&mut self, strip_height: usize) {

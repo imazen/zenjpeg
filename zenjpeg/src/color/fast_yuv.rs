@@ -179,7 +179,16 @@ pub fn bgr_to_ycbcr_strided_fast(
             .collect()
     };
 
-    rgb_to_ycbcr_strided_fast(&rgb_converted, y_plane, cb_plane, cr_plane, width, height, y_stride, 3);
+    rgb_to_ycbcr_strided_fast(
+        &rgb_converted,
+        y_plane,
+        cb_plane,
+        cr_plane,
+        width,
+        height,
+        y_stride,
+        3,
+    );
 }
 
 /// Convert RGB to YCbCr 4:2:0 using pre-allocated u8 buffers.
@@ -364,7 +373,9 @@ mod tests {
         let mut ty = alloc::vec![0u8; w * h];
         let mut tu = alloc::vec![0u8; cw * ch];
         let mut tv = alloc::vec![0u8; cw * ch];
-        rgb_to_ycbcr_420_reuse(&rgb, &mut y, &mut cb, &mut cr, &mut ty, &mut tu, &mut tv, w, h, w, 3);
+        rgb_to_ycbcr_420_reuse(
+            &rgb, &mut y, &mut cb, &mut cr, &mut ty, &mut tu, &mut tv, w, h, w, 3,
+        );
         // Gray input → Y≈128, Cb≈128, Cr≈128
         assert!((y[0] - 128.0).abs() < 2.0, "Y={}", y[0]);
         assert!((cb[0] - 128.0).abs() < 2.0, "Cb={}", cb[0]);
