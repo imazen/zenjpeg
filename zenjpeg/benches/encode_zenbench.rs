@@ -1,5 +1,4 @@
 //! Full-pipeline encode benchmark: measures complete RGB→JPEG at Q85.
-//! Compares 4:4:4 vs 4:2:0, with and without sharp_yuv.
 //!
 //! Run: `cargo bench --bench encode_zenbench`
 
@@ -25,35 +24,40 @@ fn bench_encode(suite: &mut Suite) {
     use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use zenjpeg::encode::EncoderConfig;
 
-    for &size in &[256usize, 512, 1024] {
-        let rgb: &'static [u8] = Box::leak(noise_patches(size, size).into_boxed_slice());
-        let w = size as u32;
-        let h = size as u32;
+    // 4K UHD: 3840x2160 = 8.3M pixels
+    let rgb_4k: &'static [u8] = Box::leak(noise_patches(3840, 2160).into_boxed_slice());
 
-        suite.group(format!("encode_q85/{size}"), |g| {
-            g.bench("4:4:4", move |b| {
-                b.iter(|| {
-                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None);
-                    config.encode_bytes(rgb, w, h, PixelLayout::Rgb8Srgb).unwrap()
-                })
-            });
-
-            g.bench("4:2:0", move |b| {
-                b.iter(|| {
-                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
-                    config.encode_bytes(rgb, w, h, PixelLayout::Rgb8Srgb).unwrap()
-                })
-            });
-
-            g.bench("4:2:0 sharp", move |b| {
-                b.iter(|| {
-                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-                        .sharp_yuv(true);
-                    config.encode_bytes(rgb, w, h, PixelLayout::Rgb8Srgb).unwrap()
-                })
-            });
+    suite.group("encode_q85_4k", |g| {
+        g.bench("4:4:4 progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None);
+                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+            })
         });
-    }
+
+        g.bench("4:2:0 progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+            })
+        });
+
+        g.bench("4:2:0 baseline", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                    .progressive(false);
+                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+            })
+        });
+
+        g.bench("4:2:0 sharp progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                    .sharp_yuv(true);
+                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+            })
+        });
+    });
 }
 
 zenbench::main!(bench_encode);
