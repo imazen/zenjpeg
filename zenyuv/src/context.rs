@@ -148,7 +148,8 @@ impl YuvContext {
         );
     }
 
-    /// Sharp 4:2:0 encode. f32 output.
+    /// Sharp 4:2:0 encode. f32 output. No u8 intermediate — Y computed as f32,
+    /// Cb/Cr written directly from the iteration workspace.
     pub fn encode_sharp_420_f32(
         &mut self,
         rgb: &[u8],
@@ -159,28 +160,16 @@ impl YuvContext {
         height: usize,
         config: &SharpYuvConfig,
     ) {
-        let n = width * height;
         let cw = width.div_ceil(2);
-        let ch = height.div_ceil(2);
-        let c_size = cw * ch;
         self.ensure_sharp_ws(cw);
-        self.ensure_f32_temps(n, c_size);
-
-        // Take workspace out to split the borrow.
-        let mut ws = self.sharp_ws.take().unwrap();
-        let temps = self.f32_temps.as_mut().unwrap();
-        crate::sharp::rgb_to_yuv420_sharp_with_workspace(
-            rgb,
-            &mut temps.y[..n], &mut temps.cb[..c_size], &mut temps.cr[..c_size],
-            width, height,
-            self.range, self.matrix,
+        let range = self.range;
+        let matrix = self.matrix;
+        crate::sharp::rgb_to_yuv420_sharp_f32(
+            rgb, y, cb, cr, width, height,
+            range, matrix,
             &self.luts, config,
-            &mut ws,
+            self.sharp_ws.as_mut().unwrap(),
         );
-        u8_to_f32(&temps.y[..n], &mut y[..n]);
-        u8_to_f32(&temps.cb[..c_size], &mut cb[..c_size]);
-        u8_to_f32(&temps.cr[..c_size], &mut cr[..c_size]);
-        self.sharp_ws = Some(ws);
     }
 
     /// Lazy-allocate sharp workspace on first use.

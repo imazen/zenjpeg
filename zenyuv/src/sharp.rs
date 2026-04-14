@@ -73,7 +73,40 @@ pub fn rgb_to_yuv420_sharp_with_workspace(
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
 
-    sharp_iterate_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
+    sharp_iterate_rows_u8(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
+}
+
+/// f32 output: Y + Cb/Cr all as f32. No u8 intermediate, no throwaway allocs.
+///
+/// Y is computed from RGB as f32 (scalar, per row during SoA extraction).
+/// Cb/Cr come from the iteration loop which already works in f32.
+/// Zero narrowing-then-widening — the f32 values flow straight to output.
+pub fn rgb_to_yuv420_sharp_f32(
+    rgb: &[u8],
+    y: &mut [f32],
+    cb: &mut [f32],
+    cr: &mut [f32],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+    _luts: &GammaLuts,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let n = width * height;
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+    assert!(cb.len() >= cw * ch);
+    assert!(cr.len() >= cw * ch);
+    assert!(ws.chroma_width() >= cw);
+
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+
+    sharp_iterate_rows_f32(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
 }
 
 /// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
@@ -113,7 +146,7 @@ pub fn rgb_to_yuv420_sharp(
     // Per-row SoA workspace. Caller can pre-allocate via SharpYuvWorkspace
     // and pass it across strip calls to avoid per-call allocation.
     let mut workspace = SharpYuvWorkspace::new(cw);
-    sharp_iterate_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut workspace);
+    sharp_iterate_rows_u8(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut workspace);
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to
@@ -170,26 +203,19 @@ impl SharpYuvWorkspace {
     }
 }
 
-fn sharp_iterate_rows(
+/// Core iteration loop, outputting u8 Cb/Cr (with clamp+round narrowing).
+fn sharp_iterate_rows_u8(
     rgb: &[u8],
     y: &[u8],
     cb: &mut [u8],
     cr: &mut [u8],
-    width: usize,
-    height: usize,
-    cw: usize,
-    ch: usize,
-    fwd: &ForwardCoeffs,
-    inv: &InverseCoeffs,
-    config: &SharpYuvConfig,
-    ws: &mut SharpYuvWorkspace,
+    width: usize, height: usize, cw: usize, ch: usize,
+    fwd: &ForwardCoeffs, inv: &InverseCoeffs,
+    config: &SharpYuvConfig, ws: &mut SharpYuvWorkspace,
 ) {
-
     for cy_idx in 0..ch {
         let row_top = cy_idx * 2;
         let row_bot = (row_top + 1).min(height - 1);
-
-        // Extract 2×2 block data into SoA + compute initial Cb/Cr estimate.
         extract_soa_row(
             rgb, y, row_top, row_bot, width, cw,
             &mut ws.y0s, &mut ws.y1s, &mut ws.y2s, &mut ws.y3s,
@@ -197,11 +223,8 @@ fn sharp_iterate_rows(
             &mut ws.or1, &mut ws.og1, &mut ws.ob1,
             &mut ws.or2, &mut ws.og2, &mut ws.ob2,
             &mut ws.or3, &mut ws.og3, &mut ws.ob3,
-            &mut ws.cb_f, &mut ws.cr_f,
-            fwd,
+            &mut ws.cb_f, &mut ws.cr_f, fwd,
         );
-
-        // Run #[autoversion] iterative refinement on this row of blocks.
         sharp_iterate_all_blocks(
             &ws.y0s[..cw], &ws.y1s[..cw], &ws.y2s[..cw], &ws.y3s[..cw],
             &ws.or0[..cw], &ws.og0[..cw], &ws.ob0[..cw],
@@ -209,17 +232,85 @@ fn sharp_iterate_rows(
             &ws.or2[..cw], &ws.og2[..cw], &ws.ob2[..cw],
             &ws.or3[..cw], &ws.og3[..cw], &ws.ob3[..cw],
             &mut ws.cb_f[..cw], &mut ws.cr_f[..cw],
-            &inv, &fwd,
-            config.max_iterations,
-            config.convergence_threshold,
+            inv, fwd, config.max_iterations, config.convergence_threshold,
         );
-
-        // Write back this row.
         let row_off = cy_idx * cw;
         for cx_idx in 0..cw {
             cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
             cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
+    }
+}
+
+/// f32 output: Y computed inline during SoA extraction, Cb/Cr written directly
+/// from the iteration f32 workspace. No u8 intermediate at any stage.
+fn sharp_iterate_rows_f32(
+    rgb: &[u8],
+    y_f32: &mut [f32],
+    cb_f32: &mut [f32],
+    cr_f32: &mut [f32],
+    width: usize, height: usize, cw: usize, ch: usize,
+    fwd: &ForwardCoeffs, inv: &InverseCoeffs,
+    config: &SharpYuvConfig, ws: &mut SharpYuvWorkspace,
+) {
+    for cy_idx in 0..ch {
+        let row_top = cy_idx * 2;
+        let row_bot = (row_top + 1).min(height - 1);
+
+        // Compute Y as f32 directly for both rows (no u8 intermediate).
+        for row in [row_top, row_bot] {
+            if row == row_bot && row_bot == row_top {
+                // Odd height last row: already done.
+                break;
+            }
+            for x in 0..width {
+                let i = (row * width + x) * 3;
+                let r = rgb[i] as f32;
+                let g = rgb[i + 1] as f32;
+                let b = rgb[i + 2] as f32;
+                y_f32[row * width + x] =
+                    fwd.yr_f * r + fwd.yg_f * g + fwd.yb_f * b + fwd.y_bias_f;
+            }
+        }
+
+        // Build a temporary u8 Y view for extract_soa_row (it reads Y as u8).
+        // We clamp the f32 Y to u8 for the SoA extraction, but the OUTPUT Y stays f32.
+        // The iteration kernel reads Y from the SoA (ws.y0s etc) which are f32 anyway.
+        // So we just need to fill the SoA Y values from our f32 Y.
+        for cx_idx in 0..cw {
+            let x0 = cx_idx * 2;
+            let x1 = (x0 + 1).min(width - 1);
+            ws.y0s[cx_idx] = y_f32[row_top * width + x0];
+            ws.y1s[cx_idx] = y_f32[row_top * width + x1];
+            ws.y2s[cx_idx] = y_f32[row_bot * width + x0];
+            ws.y3s[cx_idx] = y_f32[row_bot * width + x1];
+        }
+
+        // Extract RGB into SoA + box-average initial Cb/Cr.
+        extract_soa_row_rgb_only(
+            rgb, row_top, row_bot, width, cw,
+            &mut ws.or0, &mut ws.og0, &mut ws.ob0,
+            &mut ws.or1, &mut ws.og1, &mut ws.ob1,
+            &mut ws.or2, &mut ws.og2, &mut ws.ob2,
+            &mut ws.or3, &mut ws.og3, &mut ws.ob3,
+            &mut ws.cb_f, &mut ws.cr_f, fwd,
+        );
+
+        // Iterate.
+        sharp_iterate_all_blocks(
+            &ws.y0s[..cw], &ws.y1s[..cw], &ws.y2s[..cw], &ws.y3s[..cw],
+            &ws.or0[..cw], &ws.og0[..cw], &ws.ob0[..cw],
+            &ws.or1[..cw], &ws.og1[..cw], &ws.ob1[..cw],
+            &ws.or2[..cw], &ws.og2[..cw], &ws.ob2[..cw],
+            &ws.or3[..cw], &ws.og3[..cw], &ws.ob3[..cw],
+            &mut ws.cb_f[..cw], &mut ws.cr_f[..cw],
+            inv, fwd, config.max_iterations, config.convergence_threshold,
+        );
+
+        // Write Cb/Cr directly as f32 — no u8 narrowing.
+        let row_off = cy_idx * cw;
+        cb_f32[row_off..row_off + cw].copy_from_slice(&ws.cb_f[..cw]);
+        cr_f32[row_off..row_off + cw].copy_from_slice(&ws.cr_f[..cw]);
     }
 }
 
@@ -292,6 +383,61 @@ fn extract_soa_row(
         let b_avg = (ob0[cx] + ob1[cx] + ob2[cx] + ob3[cx]) * 0.25;
         cb_f[cx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
         cr_f[cx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+    }
+}
+
+/// RGB-only SoA extraction (Y filled separately by f32 path).
+#[archmage::autoversion]
+fn extract_soa_row_rgb_only(
+    rgb: &[u8],
+    row_top: usize, row_bot: usize, width: usize, cw: usize,
+    or0: &mut [f32], og0: &mut [f32], ob0: &mut [f32],
+    or1: &mut [f32], og1: &mut [f32], ob1: &mut [f32],
+    or2: &mut [f32], og2: &mut [f32], ob2: &mut [f32],
+    or3: &mut [f32], og3: &mut [f32], ob3: &mut [f32],
+    cb_f: &mut [f32], cr_f: &mut [f32],
+    fwd: &ForwardCoeffs,
+) {
+    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
+    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+    let bulk_cw = width / 2;
+    let cb_r = fwd.cb_r_f;
+    let cb_g = fwd.cb_g_f;
+    let cb_b = fwd.cb_b_f;
+    let cr_r = fwd.cr_r_f;
+    let cr_g = fwd.cr_g_f;
+    let cr_b = fwd.cr_b_f;
+    let uv_bias = fwd.uv_bias_f;
+
+    for cx in 0..bulk_cw {
+        let ri = cx * 2 * 3;
+        let r0 = rgb_top[ri] as f32;     let g0 = rgb_top[ri + 1] as f32; let b0 = rgb_top[ri + 2] as f32;
+        let r1 = rgb_top[ri + 3] as f32; let g1 = rgb_top[ri + 4] as f32; let b1 = rgb_top[ri + 5] as f32;
+        let r2 = rgb_bot[ri] as f32;     let g2 = rgb_bot[ri + 1] as f32; let b2 = rgb_bot[ri + 2] as f32;
+        let r3 = rgb_bot[ri + 3] as f32; let g3 = rgb_bot[ri + 4] as f32; let b3 = rgb_bot[ri + 5] as f32;
+        or0[cx] = r0; og0[cx] = g0; ob0[cx] = b0;
+        or1[cx] = r1; og1[cx] = g1; ob1[cx] = b1;
+        or2[cx] = r2; og2[cx] = g2; ob2[cx] = b2;
+        or3[cx] = r3; og3[cx] = g3; ob3[cx] = b3;
+        let r_avg = (r0 + r1 + r2 + r3) * 0.25;
+        let g_avg = (g0 + g1 + g2 + g3) * 0.25;
+        let b_avg = (b0 + b1 + b2 + b3) * 0.25;
+        cb_f[cx] = cb_r * r_avg + cb_g * g_avg + cb_b * b_avg + uv_bias;
+        cr_f[cx] = cr_r * r_avg + cr_g * g_avg + cr_b * b_avg + uv_bias;
+    }
+    // Edge block for odd width.
+    if cw > bulk_cw {
+        let x0 = bulk_cw * 2;
+        let ri = x0 * 3;
+        or0[bulk_cw] = rgb_top[ri] as f32; og0[bulk_cw] = rgb_top[ri+1] as f32; ob0[bulk_cw] = rgb_top[ri+2] as f32;
+        or1[bulk_cw] = or0[bulk_cw]; og1[bulk_cw] = og0[bulk_cw]; ob1[bulk_cw] = ob0[bulk_cw];
+        or2[bulk_cw] = rgb_bot[ri] as f32; og2[bulk_cw] = rgb_bot[ri+1] as f32; ob2[bulk_cw] = rgb_bot[ri+2] as f32;
+        or3[bulk_cw] = or2[bulk_cw]; og3[bulk_cw] = og2[bulk_cw]; ob3[bulk_cw] = ob2[bulk_cw];
+        let r_avg = (or0[bulk_cw]+or1[bulk_cw]+or2[bulk_cw]+or3[bulk_cw]) * 0.25;
+        let g_avg = (og0[bulk_cw]+og1[bulk_cw]+og2[bulk_cw]+og3[bulk_cw]) * 0.25;
+        let b_avg = (ob0[bulk_cw]+ob1[bulk_cw]+ob2[bulk_cw]+ob3[bulk_cw]) * 0.25;
+        cb_f[bulk_cw] = cb_r*r_avg + cb_g*g_avg + cb_b*b_avg + uv_bias;
+        cr_f[bulk_cw] = cr_r*r_avg + cr_g*g_avg + cr_b*b_avg + uv_bias;
     }
 }
 
