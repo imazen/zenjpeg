@@ -1029,7 +1029,7 @@ fn test_lossless_sof11_synthetic() {
 /// mentioning the non-standard block size, not a confusing "out of range" error.
 #[test]
 fn sos_se_out_of_range_ijg_block_size() {
-    let data = include_bytes!("testdata/all_the_images/sos_se_outofrange_libjpeg9b.jpg");
+    let data = include_bytes!("../testdata/all_the_images/sos_se_outofrange_libjpeg9b.jpg");
     let decoder = Decoder::new();
     let result = decoder.decode(data, Unstoppable);
     assert!(
@@ -1050,7 +1050,7 @@ fn sos_se_out_of_range_ijg_block_size() {
 /// confusing "SOS num_components is zero" parse error.
 #[test]
 fn sos_zero_components_ijg_block_size_16() {
-    let data = include_bytes!("testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
+    let data = include_bytes!("../testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
     let decoder = Decoder::new();
     let result = decoder.decode(data, Unstoppable);
     assert!(result.is_err(), "should reject block_size=16 JPEG");
@@ -1145,7 +1145,7 @@ fn dqt_short_table_16bit_ijg_block_size_1() {
 /// Block_size=16 detection should work at all strictness levels.
 #[test]
 fn sos_zero_components_all_strictness_levels() {
-    let data = include_bytes!("testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
+    let data = include_bytes!("../testdata/all_the_images/sos_zero_components_libjpeg9b.jpg");
 
     for strictness in [
         Strictness::Strict,
@@ -1182,7 +1182,7 @@ fn sos_zero_components_all_strictness_levels() {
 /// allows this file to decode cleanly at all strictness levels.
 #[test]
 fn arith_ac_spectral_fixture_decodes_all_modes() {
-    let data = include_bytes!("testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
+    let data = include_bytes!("../testdata/all_the_images/arith_ac_spectral_libjpeg9b.jpg");
     for strictness in [
         Strictness::Strict,
         Strictness::Balanced,
@@ -1207,7 +1207,7 @@ fn arith_ac_spectral_fixture_decodes_all_modes() {
 /// strictness modes (regression guard for arithmetic progressive decode).
 #[test]
 fn arith_ac_magnitude_fixture_decodes_all_modes() {
-    let data = include_bytes!("testdata/all_the_images/arith_ac_magnitude_turbo203.jpg");
+    let data = include_bytes!("../testdata/all_the_images/arith_ac_magnitude_turbo203.jpg");
     for strictness in [
         Strictness::Strict,
         Strictness::Balanced,
@@ -1232,7 +1232,7 @@ fn arith_ac_magnitude_fixture_decodes_all_modes() {
 /// strictness modes (regression guard for arithmetic sequential decode).
 #[test]
 fn arith_dc_magnitude_fixture_decodes_all_modes() {
-    let data = include_bytes!("testdata/all_the_images/arith_dc_magnitude_turbo130.jpg");
+    let data = include_bytes!("../testdata/all_the_images/arith_dc_magnitude_turbo130.jpg");
     for strictness in [
         Strictness::Strict,
         Strictness::Balanced,
@@ -1266,7 +1266,7 @@ fn arith_dc_magnitude_fixture_decodes_all_modes() {
 /// instead of per-MCU in the arithmetic decoder, causing valid files to fail.
 #[test]
 fn arith_sequential_with_dri_decodes() {
-    let data = include_bytes!("testdata/all_the_images/restart_marker_turbo130.jpg");
+    let data = include_bytes!("../testdata/all_the_images/restart_marker_turbo130.jpg");
 
     // Should decode at all strictness levels
     for strictness in [
@@ -1306,7 +1306,7 @@ fn arith_sequential_with_dri_decodes() {
 /// marker.
 #[test]
 fn arith_progressive_with_dri_decodes() {
-    let data = include_bytes!("testdata/all_the_images/arith_prog_dri_turbo203.jpg");
+    let data = include_bytes!("../testdata/all_the_images/arith_prog_dri_turbo203.jpg");
 
     // Should decode at all strictness levels
     for strictness in [

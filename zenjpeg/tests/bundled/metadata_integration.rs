@@ -1153,7 +1153,7 @@ fn test_read_info_includes_metadata_fields() {
 #[test]
 fn test_read_info_extracts_metadata() {
     // UltraHDR sample has XMP metadata
-    let jpeg = include_bytes!("images/ultrahdr_sample.jpg");
+    let jpeg = include_bytes!("../images/ultrahdr_sample.jpg");
 
     let decoder = Decoder::new();
     let info = decoder

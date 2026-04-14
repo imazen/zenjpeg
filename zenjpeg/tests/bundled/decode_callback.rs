@@ -1,10 +1,7 @@
 //! Tests for the push-based callback decode API (decode_rows / decode_rows_f32).
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
+use crate::test_utils::generate_gradient_d;
 use enough::Unstoppable;
-use test_utils::generate_gradient_d;
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},

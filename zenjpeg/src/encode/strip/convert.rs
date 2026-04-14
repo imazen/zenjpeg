@@ -591,8 +591,6 @@ impl StripProcessor {
         rgb_strip: &[u8],
         strip_height: usize,
     ) -> Result<()> {
-        use crate::color::xyb::srgb_to_scaled_xyb;
-
         let width = self.layout.width;
         let padded_width = self.layout.padded_width;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -621,89 +619,133 @@ impl StripProcessor {
         // - X in y_strip with padded stride
         // - Y in cb_strip with packed stride
         // - B in cr_strip with packed stride
+
+        // 8-bit sRGB formats: use SIMD batch conversion (one row at a time due to
+        // y_strip having padded_width stride vs cb/cr_strip having width stride).
+        // The SIMD functions output scaled XYB; we multiply by 255.0 afterward
+        // to match the JPEG sample range expected downstream.
+        let uses_simd_batch = matches!(
+            self.pixel_format,
+            PixelFormat::Rgb
+                | PixelFormat::Rgba
+                | PixelFormat::Bgr
+                | PixelFormat::Bgra
+                | PixelFormat::Bgrx
+        );
+
         for row in 0..strip_height {
             let y_row_start = row * padded_width;
             let cbcr_row_start = row * width;
+            let row_byte_start = row * width * bpp;
 
-            for x in 0..width {
-                let src_idx = (row * width + x) * bpp;
+            if uses_simd_batch {
+                let row_bytes = &rgb_strip[row_byte_start..row_byte_start + width * bpp];
 
-                // Get linear RGB values based on pixel format
-                let (r_linear, g_linear, b_linear): (f32, f32, f32) = match self.pixel_format {
-                    // 8-bit sRGB: convert to linear first
-                    PixelFormat::Rgb | PixelFormat::Rgba => {
-                        let r = rgb_strip[src_idx];
-                        let g = rgb_strip[src_idx + 1];
-                        let b = rgb_strip[src_idx + 2];
-                        // Use existing sRGB path (converts internally)
-                        let (sx, sy, sb) = srgb_to_scaled_xyb(r, g, b);
-                        // Store directly and continue
-                        self.y_strip[y_row_start + x] = sx * 255.0;
-                        self.cb_strip[cbcr_row_start + x] = sy * 255.0;
-                        self.cr_strip[cbcr_row_start + x] = sb * 255.0;
-                        continue;
-                    }
-                    PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => {
-                        let r = rgb_strip[src_idx + 2];
-                        let g = rgb_strip[src_idx + 1];
-                        let b = rgb_strip[src_idx];
-                        let (sx, sy, sb) = srgb_to_scaled_xyb(r, g, b);
-                        self.y_strip[y_row_start + x] = sx * 255.0;
-                        self.cb_strip[cbcr_row_start + x] = sy * 255.0;
-                        self.cr_strip[cbcr_row_start + x] = sb * 255.0;
-                        continue;
-                    }
-                    // 16-bit linear: read and normalize to 0-1
-                    PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
-                        let r = u16::from_ne_bytes([rgb_strip[src_idx], rgb_strip[src_idx + 1]])
-                            as f32
-                            / 65535.0;
-                        let g = u16::from_ne_bytes([rgb_strip[src_idx + 2], rgb_strip[src_idx + 3]])
-                            as f32
-                            / 65535.0;
-                        let b = u16::from_ne_bytes([rgb_strip[src_idx + 4], rgb_strip[src_idx + 5]])
-                            as f32
-                            / 65535.0;
-                        (r, g, b)
-                    }
-                    // Float linear: read directly
-                    PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
-                        let r = f32::from_ne_bytes([
-                            rgb_strip[src_idx],
-                            rgb_strip[src_idx + 1],
-                            rgb_strip[src_idx + 2],
-                            rgb_strip[src_idx + 3],
-                        ]);
-                        let g = f32::from_ne_bytes([
-                            rgb_strip[src_idx + 4],
-                            rgb_strip[src_idx + 5],
-                            rgb_strip[src_idx + 6],
-                            rgb_strip[src_idx + 7],
-                        ]);
-                        let b = f32::from_ne_bytes([
-                            rgb_strip[src_idx + 8],
-                            rgb_strip[src_idx + 9],
-                            rgb_strip[src_idx + 10],
-                            rgb_strip[src_idx + 11],
-                        ]);
-                        (r, g, b)
-                    }
-                    _ => unreachable!(),
-                };
+                // Borrow each strip field independently for the SIMD call.
+                // The block scope ensures these mutable borrows are released
+                // before the * 255.0 scaling loops below.
+                {
+                    let x_out = &mut self.y_strip[y_row_start..y_row_start + width];
+                    let y_out = &mut self.cb_strip[cbcr_row_start..cbcr_row_start + width];
+                    let b_out = &mut self.cr_strip[cbcr_row_start..cbcr_row_start + width];
 
-                // Convert linear RGB to XYB directly (XYB is defined in linear space)
-                // Scale to match C++ jpegli's expected range (0-255 linear input)
-                let (scaled_x, scaled_y, scaled_b) = crate::color::xyb::linear_rgb_to_xyb_255(
-                    r_linear * 255.0,
-                    g_linear * 255.0,
-                    b_linear * 255.0,
-                );
+                    match self.pixel_format {
+                        PixelFormat::Rgb => {
+                            crate::color::xyb::srgb_to_scaled_xyb_planes_simd_inplace(
+                                row_bytes, x_out, y_out, b_out, width,
+                            );
+                        }
+                        PixelFormat::Rgba => {
+                            crate::color::xyb::srgb_to_scaled_xyb_planes_simd_rgba_inplace(
+                                row_bytes, x_out, y_out, b_out, width,
+                            );
+                        }
+                        PixelFormat::Bgra | PixelFormat::Bgrx => {
+                            crate::color::xyb::srgb_to_scaled_xyb_planes_simd_bgra_inplace(
+                                row_bytes, x_out, y_out, b_out, width,
+                            );
+                        }
+                        PixelFormat::Bgr => {
+                            crate::color::xyb::srgb_to_scaled_xyb_planes_simd_bgr_inplace(
+                                row_bytes, x_out, y_out, b_out, width,
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                }
 
-                // Store: X→y_strip, Y→cb_strip, B→cr_strip
-                // Scale to JPEG sample range for level shift consistency
-                self.y_strip[y_row_start + x] = scaled_x * 255.0;
-                self.cb_strip[cbcr_row_start + x] = scaled_y * 255.0;
-                self.cr_strip[cbcr_row_start + x] = scaled_b * 255.0;
+                // Scale from scaled-XYB to JPEG sample range (* 255.0)
+                for v in &mut self.y_strip[y_row_start..y_row_start + width] {
+                    *v *= 255.0;
+                }
+                for v in &mut self.cb_strip[cbcr_row_start..cbcr_row_start + width] {
+                    *v *= 255.0;
+                }
+                for v in &mut self.cr_strip[cbcr_row_start..cbcr_row_start + width] {
+                    *v *= 255.0;
+                }
+            } else {
+                // Scalar path for linear float/16-bit formats
+                for x in 0..width {
+                    let src_idx = row_byte_start + x * bpp;
+
+                    let (r_linear, g_linear, b_linear): (f32, f32, f32) = match self.pixel_format {
+                        // 16-bit linear: read and normalize to 0-1
+                        PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
+                            let r = u16::from_ne_bytes([rgb_strip[src_idx], rgb_strip[src_idx + 1]])
+                                as f32
+                                / 65535.0;
+                            let g = u16::from_ne_bytes([
+                                rgb_strip[src_idx + 2],
+                                rgb_strip[src_idx + 3],
+                            ]) as f32
+                                / 65535.0;
+                            let b = u16::from_ne_bytes([
+                                rgb_strip[src_idx + 4],
+                                rgb_strip[src_idx + 5],
+                            ]) as f32
+                                / 65535.0;
+                            (r, g, b)
+                        }
+                        // Float linear: read directly
+                        PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
+                            let r = f32::from_ne_bytes([
+                                rgb_strip[src_idx],
+                                rgb_strip[src_idx + 1],
+                                rgb_strip[src_idx + 2],
+                                rgb_strip[src_idx + 3],
+                            ]);
+                            let g = f32::from_ne_bytes([
+                                rgb_strip[src_idx + 4],
+                                rgb_strip[src_idx + 5],
+                                rgb_strip[src_idx + 6],
+                                rgb_strip[src_idx + 7],
+                            ]);
+                            let b = f32::from_ne_bytes([
+                                rgb_strip[src_idx + 8],
+                                rgb_strip[src_idx + 9],
+                                rgb_strip[src_idx + 10],
+                                rgb_strip[src_idx + 11],
+                            ]);
+                            (r, g, b)
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    // Convert linear RGB to XYB directly (XYB is defined in linear space)
+                    // Scale to match C++ jpegli's expected range (0-255 linear input)
+                    let (scaled_x, scaled_y, scaled_b) = crate::color::xyb::linear_rgb_to_xyb_255(
+                        r_linear * 255.0,
+                        g_linear * 255.0,
+                        b_linear * 255.0,
+                    );
+
+                    // Store: X→y_strip, Y→cb_strip, B→cr_strip
+                    // Scale to JPEG sample range for level shift consistency
+                    self.y_strip[y_row_start + x] = scaled_x * 255.0;
+                    self.cb_strip[cbcr_row_start + x] = scaled_y * 255.0;
+                    self.cr_strip[cbcr_row_start + x] = scaled_b * 255.0;
+                }
             }
 
             // Edge-pad X (y_strip) row

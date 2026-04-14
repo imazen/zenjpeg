@@ -3,10 +3,7 @@
 //! Tests matching C++ jpegli decode_api_test.cc functionality.
 use enough::Unstoppable;
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
-use test_utils::{TestImage, generate_gradient_d, read_test_data_required};
+use crate::test_utils::{TestImage, generate_gradient_d, read_test_data_required};
 
 use test_case::test_case;
 use zenjpeg::{
@@ -66,7 +63,7 @@ fn test_decode_basic() {
 #[test]
 fn test_decode_grayscale() {
     // Create grayscale JPEG
-    let img = test_utils::generate_gradient_h(64, 64, 1);
+    let img = crate::test_utils::generate_gradient_h(64, 64, 1);
     let config = EncoderConfig::grayscale(90.0);
     let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 

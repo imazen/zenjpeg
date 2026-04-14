@@ -4,10 +4,7 @@
 //! image quality and file size.
 use enough::Unstoppable;
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
-use test_utils::{
+use crate::test_utils::{
     TestImage, distance_rms, generate_color_bars, generate_gradient_d, max_pixel_diff,
     read_test_data,
 };
@@ -353,7 +350,7 @@ fn test_color_edge_444() {
 
 #[test]
 fn test_grayscale_no_subsampling() {
-    let img = test_utils::generate_gradient_h(128, 128, 1);
+    let img = crate::test_utils::generate_gradient_h(128, 128, 1);
     let config = EncoderConfig::grayscale(90.0);
     let jpeg = encode_gray(128, 128, &img.pixels, &config);
 
@@ -441,7 +438,7 @@ fn test_rgb_has_three_components() {
 
 #[test]
 fn test_grayscale_has_one_component() {
-    let img = test_utils::generate_gradient_h(64, 64, 1);
+    let img = crate::test_utils::generate_gradient_h(64, 64, 1);
     let config = EncoderConfig::grayscale(85.0);
     let jpeg = encode_gray(64, 64, &img.pixels, &config);
 

@@ -123,21 +123,21 @@ fn assert_xyb_decodes(data: &[u8], label: &str) {
 #[test]
 fn xyb_p0_sub444_decodes() {
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/xyb_p0_sub444_d12_noise7x7.jpg");
+        include_bytes!("../testdata/permutation_regression/xyb_p0_sub444_d12_noise7x7.jpg");
     assert_xyb_decodes(data, "XYB p=0 sub=444");
 }
 
 #[test]
 fn xyb_p0_sub422_decodes() {
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/xyb_p0_sub422_d12_noise7x7.jpg");
+        include_bytes!("../testdata/permutation_regression/xyb_p0_sub422_d12_noise7x7.jpg");
     assert_xyb_decodes(data, "XYB p=0 sub=422");
 }
 
 #[test]
 fn xyb_p0_sub420_decodes() {
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/xyb_p0_sub420_d12_noise7x7.jpg");
+        include_bytes!("../testdata/permutation_regression/xyb_p0_sub420_d12_noise7x7.jpg");
     assert_xyb_decodes(data, "XYB p=0 sub=420");
 }
 
@@ -182,7 +182,8 @@ fn assert_decodes_close_to_mozjpeg(data: &[u8], label: &str, threshold: u8) {
 #[test]
 fn mixed1_q5_decodes_correctly() {
     // noise_96x72, Q5, `cjpeg -sample 2x2,2x1,1x2`. Pre-fix max_diff was 10.
-    let data: &[u8] = include_bytes!("testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    let data: &[u8] =
+        include_bytes!("../testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
     assert_decodes_close_to_mozjpeg(data, "mixed1 Q5 noise_96x72", 7);
 }
 
@@ -190,7 +191,7 @@ fn mixed1_q5_decodes_correctly() {
 fn mixed1_q75_decodes_correctly() {
     // patches_96x72, Q75, `cjpeg -sample 2x2,2x1,1x2`. Pre-fix max_diff was 49.
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/mixed1_q75_patches_96x72.jpg");
+        include_bytes!("../testdata/permutation_regression/mixed1_q75_patches_96x72.jpg");
     assert_decodes_close_to_mozjpeg(data, "mixed1 Q75 patches_96x72", 7);
 }
 
@@ -223,7 +224,7 @@ fn assert_decodes_ok(data: &[u8], label: &str) {
 fn cjpegli_p0_huffman_decodes() {
     // noise_47x63 at distance 5, sub=422, p=0
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/cjpegli_p0_huffman_noise_47x63_d5.jpg");
+        include_bytes!("../testdata/permutation_regression/cjpegli_p0_huffman_noise_47x63_d5.jpg");
     assert_decodes_ok(data, "cjpegli p=0 Huffman fixture");
 }
 
@@ -231,6 +232,6 @@ fn cjpegli_p0_huffman_decodes() {
 fn cjpegli_p0_ac_decodes() {
     // noise_64x64 at distance 5, sub=422, p=0
     let data: &[u8] =
-        include_bytes!("testdata/permutation_regression/cjpegli_p0_ac_noise_64x64_d5.jpg");
+        include_bytes!("../testdata/permutation_regression/cjpegli_p0_ac_noise_64x64_d5.jpg");
     assert_decodes_ok(data, "cjpegli p=0 AC fixture");
 }

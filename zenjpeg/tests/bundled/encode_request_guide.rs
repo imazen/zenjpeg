@@ -31,10 +31,7 @@
 //!     └── .encode() / .encode_from_*()   (direct, no request layer)
 //! ```
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
-use test_utils::generate_checkerboard;
+use crate::test_utils::generate_checkerboard;
 use zenjpeg::encoder::{
     ChromaSubsampling, EncodeRequest, EncoderConfig, Exif, Orientation, PixelLayout, Unstoppable,
 };

@@ -4,10 +4,7 @@
 //! and various *_test.cc files.
 use enough::Unstoppable;
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
-use test_utils::{TestImage, generate_gradient_d};
+use crate::test_utils::{TestImage, generate_gradient_d};
 
 use zenjpeg::{
     decoder::Decoder,

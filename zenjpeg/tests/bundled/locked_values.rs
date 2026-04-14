@@ -33,7 +33,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 /// SHA-256 hash of normalized values_archmage.csv (LF line endings, no trailing whitespace).
 /// Updated 2026-04-14: zenyuv integer math replaces yuv crate f32 for 4:2:0/4:4:4
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "a24a533307c315e685d3ee01e924a97e4d6b94d8ab94d32fd93d389237eddc2a";
+const VALUES_FILE_HASH: &str = "9ea74424b4669979574e882e20432ff0234e14ed4a905c33af653e33bf29c78b";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
@@ -44,10 +44,10 @@ const VALUES_FILE_HASH: &str = "1eaf3785274279445c1b2a5f21127d0dfcfdbdfa8138c242
 // =============================================================================
 
 #[cfg(target_arch = "x86_64")]
-const VALUES_CSV: &str = include_str!("locked_values/values_archmage.csv");
+const VALUES_CSV: &str = include_str!("../locked_values/values_archmage.csv");
 
 #[cfg(not(target_arch = "x86_64"))]
-const VALUES_CSV: &str = include_str!("locked_values/values_wide.csv");
+const VALUES_CSV: &str = include_str!("../locked_values/values_wide.csv");
 
 #[cfg(target_arch = "x86_64")]
 const SIMD_VARIANT: &str = "archmage";

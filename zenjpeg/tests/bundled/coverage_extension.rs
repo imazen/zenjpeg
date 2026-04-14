@@ -4,10 +4,7 @@
 //! by the main codec_coverage tests.
 use enough::Unstoppable;
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
-
-use test_utils::{generate_gradient_d, generate_noise};
+use crate::test_utils::{generate_gradient_d, generate_noise};
 use zenjpeg::{
     color::icc::TargetColorSpace,
     decoder::{ChromaUpsampling, ColorSpace, Decoder, Dimensions, OutputTarget},
@@ -188,7 +185,7 @@ mod entropy_coverage {
     #[test]
     fn eob_run_encoding() {
         // Solid color image should have many EOB runs
-        let img = test_utils::generate_solid(128, 128, 128, 3);
+        let img = crate::test_utils::generate_solid(128, 128, 128, 3);
 
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
@@ -251,7 +248,7 @@ mod color_coverage {
     #[test]
     fn grayscale_from_rgb() {
         // Encode RGB but with grayscale-like content
-        let img = test_utils::generate_gradient_h(64, 64, 3);
+        let img = crate::test_utils::generate_gradient_h(64, 64, 3);
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
@@ -337,7 +334,7 @@ mod decode_coverage {
     #[test]
     fn decode_grayscale_to_rgb() {
         // Encode grayscale
-        let img = test_utils::generate_gradient_h(64, 64, 1);
+        let img = crate::test_utils::generate_gradient_h(64, 64, 1);
         let config = EncoderConfig::grayscale(90.0);
         let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 
@@ -522,7 +519,7 @@ mod xyb_coverage {
         ];
 
         for (r, g, b) in colors {
-            let img = test_utils::generate_solid_rgb(32, 32, r, g, b);
+            let img = crate::test_utils::generate_solid_rgb(32, 32, r, g, b);
             let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
             let jpeg = encode_rgb(32, 32, &img.pixels, &config).expect("XYB encode failed");
 
@@ -585,7 +582,7 @@ mod bitstream_coverage {
         let jpeg_noise = encode_rgb(64, 64, &noise.pixels, &config).expect("noise encode failed");
 
         // Image with low entropy (solid color)
-        let solid = test_utils::generate_solid(64, 64, 128, 3);
+        let solid = crate::test_utils::generate_solid(64, 64, 128, 3);
         let jpeg_solid = encode_rgb(64, 64, &solid.pixels, &config).expect("solid encode failed");
 
         // Noise should produce larger file
@@ -607,10 +604,10 @@ mod huffman_coverage {
         let patterns = [
             ("gradient", generate_gradient_d(128, 128, 3)),
             ("noise", generate_noise(128, 128, 42, 3)),
-            ("solid", test_utils::generate_solid(128, 128, 128, 3)),
+            ("solid", crate::test_utils::generate_solid(128, 128, 128, 3)),
             (
                 "checkerboard",
-                test_utils::generate_checkerboard(128, 128, 8, 3),
+                crate::test_utils::generate_checkerboard(128, 128, 8, 3),
             ),
         ];
 
@@ -642,9 +639,9 @@ mod aq_coverage {
         let patterns = [
             generate_gradient_d(128, 128, 3),
             generate_noise(128, 128, 42, 3),
-            test_utils::generate_solid(128, 128, 128, 3),
-            test_utils::generate_checkerboard(128, 128, 8, 3),
-            test_utils::generate_color_bars(128, 64),
+            crate::test_utils::generate_solid(128, 128, 128, 3),
+            crate::test_utils::generate_checkerboard(128, 128, 8, 3),
+            crate::test_utils::generate_color_bars(128, 64),
         ];
 
         for (i, img) in patterns.iter().enumerate() {
@@ -706,7 +703,7 @@ mod scan_script_coverage {
 
     #[test]
     fn progressive_grayscale() {
-        let img = test_utils::generate_gradient_h(64, 64, 1);
+        let img = crate::test_utils::generate_gradient_h(64, 64, 1);
 
         let config = EncoderConfig::grayscale(90.0).progressive(true);
         let jpeg =
