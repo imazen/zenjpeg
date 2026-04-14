@@ -606,4 +606,86 @@ mod tests {
             assert!(yv >= 16 && yv <= 235, "Y={yv} outside limited range");
         }
     }
+
+    /// Compare sharp YUV quality: measure reconstruction error (encode→decode
+    /// roundtrip) for box-average, our sharp, and the yuv crate's sharp.
+    #[test]
+    fn sharp_yuv_quality_comparison() {
+        let (w, h) = (256, 256);
+        let rgb = make_pattern(w, h);
+        let n = w * h;
+        let cw = w / 2;
+        let ch = h / 2;
+
+        // 1. Plain box-average 4:2:0
+        let mut y_box = vec![0u8; n];
+        let mut cb_box = vec![0u8; cw * ch];
+        let mut cr_box = vec![0u8; cw * ch];
+        rgb_to_yuv420(&rgb, &mut y_box, &mut cb_box, &mut cr_box, w, h);
+
+        let mut rt_box = vec![0u8; n * 3];
+        yuv420_to_rgb(&y_box, &cb_box, &cr_box, &mut rt_box, w, h);
+        let box_max = max_abs_err(&rgb, &rt_box);
+        let box_mean = mean_abs_err(&rgb, &rt_box);
+
+        // 2. Our sharp YUV (box initial + iterative refinement)
+        let mut y_sharp = vec![0u8; n];
+        let mut cb_sharp = vec![0u8; cw * ch];
+        let mut cr_sharp = vec![0u8; cw * ch];
+        let luts = GammaLuts::srgb();
+        let config = SharpYuvConfig::default();
+        sharp::rgb_to_yuv420_sharp(
+            &rgb, &mut y_sharp, &mut cb_sharp, &mut cr_sharp, w, h,
+            Range::Full, Matrix::Bt601, &luts, &config,
+        );
+
+        let mut rt_sharp = vec![0u8; n * 3];
+        yuv420_to_rgb(&y_sharp, &cb_sharp, &cr_sharp, &mut rt_sharp, w, h);
+        let sharp_max = max_abs_err(&rgb, &rt_sharp);
+        let sharp_mean = mean_abs_err(&rgb, &rt_sharp);
+
+        // 3. yuv crate's sharp YUV (reference)
+        let mut ref_img = yuv::YuvPlanarImageMut::alloc(
+            w as u32, h as u32,
+            yuv::YuvChromaSubsampling::Yuv420,
+        );
+        yuv::rgb_to_sharp_yuv420(
+            &mut ref_img,
+            &rgb,
+            (w * 3) as u32,
+            yuv::YuvRange::Full,
+            yuv::YuvStandardMatrix::Bt601,
+            yuv::SharpYuvGammaTransfer::Srgb,
+        ).unwrap();
+
+        let ry = ref_img.y_plane.borrow();
+        let ru = ref_img.u_plane.borrow();
+        let rv = ref_img.v_plane.borrow();
+
+        let mut rt_yuv = vec![0u8; n * 3];
+        yuv420_to_rgb(ry, ru, rv, &mut rt_yuv, w, h);
+        let yuv_max = max_abs_err(&rgb, &rt_yuv);
+        let yuv_mean = mean_abs_err(&rgb, &rt_yuv);
+
+        // 4. Chroma-plane comparison: our sharp vs yuv crate's sharp
+        let cb_vs_yuv_max = max_abs_err(&cb_sharp, ru);
+        let cr_vs_yuv_max = max_abs_err(&cr_sharp, rv);
+        let cb_vs_yuv_mean = mean_abs_err(&cb_sharp, ru);
+        let cr_vs_yuv_mean = mean_abs_err(&cr_sharp, rv);
+
+        eprintln!("=== Sharp YUV Quality Comparison (256x256, BT.601 Full) ===");
+        eprintln!("Roundtrip error (encode→decode→compare to original RGB):");
+        eprintln!("  box average: max={box_max:3}  mean={box_mean:.4}");
+        eprintln!("  our sharp:   max={sharp_max:3}  mean={sharp_mean:.4}");
+        eprintln!("  yuv sharp:   max={yuv_max:3}  mean={yuv_mean:.4}");
+        eprintln!("Chroma plane diff (our sharp vs yuv crate sharp):");
+        eprintln!("  Cb: max={cb_vs_yuv_max:3}  mean={cb_vs_yuv_mean:.4}");
+        eprintln!("  Cr: max={cr_vs_yuv_max:3}  mean={cr_vs_yuv_mean:.4}");
+
+        // Sharp should be better than or equal to box average.
+        assert!(
+            sharp_mean <= box_mean + 0.01,
+            "sharp mean {sharp_mean:.4} should not be worse than box {box_mean:.4}"
+        );
+    }
 }
