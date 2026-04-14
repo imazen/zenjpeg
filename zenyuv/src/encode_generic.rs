@@ -158,10 +158,10 @@ pub(crate) fn rgb_to_yuv420_generic(
                 .clamp(0, 255) as u8;
     }
 
-    // Chroma: iterate 2x2 blocks, integer math matching AVX2 fused path.
-    // AVX2 does: avg_epu8(top, bot) then maddubs pair-sum → pmaddwd at PREC+1.
-    // Scalar equivalent: sum all 4 u8 values, multiply by i16 coeff,
-    // add uv_bias_420 (at PREC+1), shift right by PREC+1.
+    // Chroma: iterate 2x2 blocks, replicating the exact AVX2 sequence:
+    //   1. avg_epu8(top, bot) → (a + b + 1) / 2 (ceil on odd)
+    //   2. maddubs pair-sum → sum adjacent averaged values
+    //   3. pmaddwd with coefficients, + uv_bias_420, >> (PREC+1)
     let mut cy = 0usize;
     let mut row = 0usize;
     while row < height {
@@ -176,43 +176,31 @@ pub(crate) fn rgb_to_yuv420_generic(
             let i10 = (row1 * width + col) * 3;
             let i11 = (row1 * width + col1) * 3;
 
-            // Sum of 4 u8 values (range [0, 1020]).
-            let r_sum = rgb[i00] as i32 + rgb[i01] as i32 + rgb[i10] as i32 + rgb[i11] as i32;
-            let g_sum = rgb[i00 + 1] as i32
-                + rgb[i01 + 1] as i32
-                + rgb[i10 + 1] as i32
-                + rgb[i11 + 1] as i32;
-            let b_sum = rgb[i00 + 2] as i32
-                + rgb[i01 + 2] as i32
-                + rgb[i10 + 2] as i32
-                + rgb[i11 + 2] as i32;
+            // Step 1: vertical avg_epu8 — (a + b + 1) / 2 per column
+            let r_v0 = (rgb[i00] as i32 + rgb[i10] as i32 + 1) / 2;
+            let r_v1 = (rgb[i01] as i32 + rgb[i11] as i32 + 1) / 2;
+            let g_v0 = (rgb[i00 + 1] as i32 + rgb[i10 + 1] as i32 + 1) / 2;
+            let g_v1 = (rgb[i01 + 1] as i32 + rgb[i11 + 1] as i32 + 1) / 2;
+            let b_v0 = (rgb[i00 + 2] as i32 + rgb[i10 + 2] as i32 + 1) / 2;
+            let b_v1 = (rgb[i01 + 2] as i32 + rgb[i11 + 2] as i32 + 1) / 2;
 
-            // Integer multiply + bias at PREC+1, shift right by PREC+1.
-            // This matches the AVX2 path: avg_epu8 halves, maddubs sums pairs,
-            // pmaddwd at PREC+1 with uv_bias_420.
-            //
-            // Note: AVX2 does (avg_epu8 + maddubs) which is NOT identical to
-            // raw 4-pixel sum due to avg_epu8 rounding. For the generic path,
-            // we use the f32 average approach to match quality, but this means
-            // the generic 4:2:0 chroma may differ by ±1 from AVX2.
-            // This is acceptable since 4:2:0 chroma dispatch parity is hard to
-            // achieve perfectly (avg_epu8 rounds up on odd sums).
-            let r_avg = (r_sum + 2) / 4; // round-to-nearest, matching avg_epu8 behavior
-            let g_avg = (g_sum + 2) / 4;
-            let b_avg = (b_sum + 2) / 4;
+            // Step 2: horizontal pair-sum (maddubs with all-ones)
+            let r_ps = r_v0 + r_v1; // range [0, 510]
+            let g_ps = g_v0 + g_v1;
+            let b_ps = b_v0 + b_v1;
 
-            // Now treat as single-pixel with integer coefficients at PREC.
-            cb[cy * cw + cx] = ((r_avg * coeffs.cb_r as i32
-                + g_avg * coeffs.cb_g as i32
-                + b_avg * coeffs.cb_b as i32
-                + coeffs.uv_bias)
-                >> PREC)
+            // Step 3: pmaddwd at PREC+1, shift by PREC+1
+            cb[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
+                + g_ps * coeffs.cb_g as i32
+                + b_ps * coeffs.cb_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
                 .clamp(0, 255) as u8;
-            cr[cy * cw + cx] = ((r_avg * coeffs.cr_r as i32
-                + g_avg * coeffs.cr_g as i32
-                + b_avg * coeffs.cr_b as i32
-                + coeffs.uv_bias)
-                >> PREC)
+            cr[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
+                + g_ps * coeffs.cr_g as i32
+                + b_ps * coeffs.cr_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
                 .clamp(0, 255) as u8;
 
             cx += 1;

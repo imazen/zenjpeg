@@ -31,8 +31,9 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 // =============================================================================
 
 /// SHA-256 hash of normalized values_archmage.csv (LF line endings, no trailing whitespace).
+/// Updated 2026-04-14: zenyuv integer math replaces yuv crate f32 for 4:2:0/4:4:4
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "f2aa555e7fe8f4329b9dd195c98c8bca75818f8c247da5e39f45c70b32440e60";
+const VALUES_FILE_HASH: &str = "a24a533307c315e685d3ee01e924a97e4d6b94d8ab94d32fd93d389237eddc2a";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
