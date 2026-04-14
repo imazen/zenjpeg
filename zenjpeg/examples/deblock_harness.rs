@@ -412,7 +412,296 @@ impl DeblockStrategy for Boundary4Tap {
 
 // ---------------------------------------------------------------------------
 // Strategy: Triage (US 7,079,703 B2 three-category pixel-domain filter)
+//
+// Kept here (not in the library) because the full-corpus evaluation showed it
+// can't beat bilateral_bnd / boundary_4tap at any quality level. Useful as an
+// academic reference for the patent but not a shippable deblocker.
 // ---------------------------------------------------------------------------
+
+/// Triage filter implementation — ported verbatim from the earlier
+/// `zenjpeg::deblock::triage` module after it was removed from the library.
+#[allow(dead_code)]
+mod triage_impl {
+    const BLOCK: usize = 8;
+
+    // 3×3 deringing low-pass kernel from the patent, divided by its sum.
+    //   [1 3 1]
+    //   [3 6 3]  / 22
+    //   [1 3 1]
+    const DERING_KERNEL: [i32; 9] = [1, 3, 1, 3, 6, 3, 1, 3, 1];
+    const DERING_NORM: f32 = 22.0;
+
+    // 7×7 Gaussian deblocking kernel (σ = 1 pixel, scaled by 1024 and rounded).
+    //   [  0    2    7   11    7    2    0]
+    //   [  2   19   84  139   84   19    2]
+    //   [  7   84  377  621  377   84    7]
+    //   [ 11  139  621 1024  621  139   11] / 6436
+    //   [  7   84  377  621  377   84    7]
+    //   [  2   19   84  139   84   19    2]
+    //   [  0    2    7   11    7    2    0]
+    #[rustfmt::skip]
+    const DEBLOCK_KERNEL: [i32; 49] = [
+        0,   2,   7,  11,   7,   2,  0,
+        2,  19,  84, 139,  84,  19,  2,
+        7,  84, 377, 621, 377,  84,  7,
+       11, 139, 621,1024, 621, 139, 11,
+        7,  84, 377, 621, 377,  84,  7,
+        2,  19,  84, 139,  84,  19,  2,
+        0,   2,   7,  11,   7,   2,  0,
+    ];
+    const DEBLOCK_NORM: f32 = 6436.0;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct TriageConfig {
+        pub uniform_threshold: u32,
+    }
+
+    impl Default for TriageConfig {
+        fn default() -> Self {
+            Self {
+                uniform_threshold: 64,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum BlockClass {
+        Uniform,
+        Transitional,
+        Busy,
+    }
+
+    pub fn filter_plane_triage(
+        plane: &mut [f32],
+        width: usize,
+        height: usize,
+        config: TriageConfig,
+    ) {
+        assert!(plane.len() >= width * height, "plane buffer too small");
+
+        let nbx = width / BLOCK;
+        let nby = height / BLOCK;
+        if nbx < 3 || nby < 3 {
+            return;
+        }
+
+        let varmap = compute_varmap(plane, width, nbx, nby);
+        let logicmap = build_logicmap(&varmap, nbx, nby, config.uniform_threshold as i64);
+
+        let mut needs_work = false;
+        for &c in &logicmap {
+            if !matches!(c, BlockClass::Busy) {
+                needs_work = true;
+                break;
+            }
+        }
+        if !needs_work {
+            return;
+        }
+
+        // Kernels must read from the original plane; one clone beats a
+        // full-plane convolution pass.
+        let src: Vec<f32> = plane[..width * height].to_vec();
+
+        for by in 0..nby {
+            for bx in 0..nbx {
+                match logicmap[by * nbx + bx] {
+                    BlockClass::Uniform => convolve_block(
+                        &src, plane, width, height, bx, by,
+                        &DEBLOCK_KERNEL, 7, DEBLOCK_NORM,
+                    ),
+                    BlockClass::Transitional => convolve_block(
+                        &src, plane, width, height, bx, by,
+                        &DERING_KERNEL, 3, DERING_NORM,
+                    ),
+                    BlockClass::Busy => {}
+                }
+            }
+        }
+    }
+
+    fn compute_varmap(plane: &[f32], width: usize, nbx: usize, nby: usize) -> Vec<i64> {
+        let mut out = vec![0i64; nbx * nby];
+        for by in 0..nby {
+            for bx in 0..nbx {
+                let y0 = by * BLOCK;
+                let x0 = bx * BLOCK;
+                let mut sum = 0.0_f64;
+                for y in y0..y0 + BLOCK {
+                    let row = &plane[y * width + x0..y * width + x0 + BLOCK];
+                    for &p in row {
+                        sum += p as f64;
+                    }
+                }
+                let mean = sum / 64.0;
+                let mut sq = 0.0_f64;
+                for y in y0..y0 + BLOCK {
+                    let row = &plane[y * width + x0..y * width + x0 + BLOCK];
+                    for &p in row {
+                        let d = p as f64 - mean;
+                        sq += d * d;
+                    }
+                }
+                // Sample variance (N-1 = 63), matches Mathematica Variance[].
+                out[by * nbx + bx] = (sq / 63.0).round() as i64;
+            }
+        }
+        out
+    }
+
+    fn build_logicmap(varmap: &[i64], nbx: usize, nby: usize, thresh1: i64) -> Vec<BlockClass> {
+        let mut out = vec![BlockClass::Busy; nbx * nby];
+        for i in 1..nby - 1 {
+            for j in 1..nbx - 1 {
+                let v = |di: isize, dj: isize| -> i64 {
+                    let ii = (i as isize + di) as usize;
+                    let jj = (j as isize + dj) as usize;
+                    varmap[ii * nbx + jj]
+                };
+                let centre = v(0, 0);
+                let mut sum9: i64 = 0;
+                for m in -1..=1 {
+                    for n in -1..=1 {
+                        sum9 += v(m, n);
+                    }
+                }
+                let mean9 = sum9 as f64 / 9.0;
+                let mut ssq = 0.0_f64;
+                for m in -1..=1 {
+                    for n in -1..=1 {
+                        let d = v(m, n) as f64 - mean9;
+                        ssq += d * d;
+                    }
+                }
+                let stdvar = (ssq / 8.0).sqrt().round() as i64;
+                let uniform = mean9.round() as i64;
+
+                let leftavg = (v(-1, -1) + v(0, -1) + v(1, -1)) / 3;
+                let rightavg = (v(-1, 1) + v(0, 1) + v(1, 1)) / 3;
+                let topavg = (v(-1, -1) + v(-1, 0) + v(-1, 1)) / 3;
+                let botavg = (v(1, -1) + v(1, 0) + v(1, 1)) / 3;
+                let corner1 = (v(-1, -1) + v(0, -1) + v(-1, 0)) / 3;
+                let corner2 = (v(1, -1) + v(0, -1) + v(1, 0)) / 3;
+                let corner3 = (v(-1, 1) + v(-1, 0) + v(0, 1)) / 3;
+                let corner4 = (v(1, 1) + v(0, 1) + v(1, 0)) / 3;
+
+                let idx = i * nbx + j;
+
+                if uniform <= thresh1 {
+                    out[idx] = BlockClass::Uniform;
+                    continue;
+                }
+                if centre > thresh1
+                    && (leftavg <= thresh1
+                        || rightavg <= thresh1
+                        || topavg <= thresh1
+                        || botavg <= thresh1
+                        || corner1 <= thresh1
+                        || corner2 <= thresh1
+                        || corner3 <= thresh1
+                        || corner4 <= thresh1)
+                {
+                    out[idx] = BlockClass::Transitional;
+                    continue;
+                }
+                let mut any_quiet_neighbour = false;
+                'outer: for m in -1..=1_isize {
+                    for n in -1..=1_isize {
+                        if (m, n) == (0, 0) {
+                            continue;
+                        }
+                        if v(m, n) <= thresh1 {
+                            any_quiet_neighbour = true;
+                            break 'outer;
+                        }
+                    }
+                }
+                if centre > thresh1 && any_quiet_neighbour {
+                    out[idx] = BlockClass::Transitional;
+                    continue;
+                }
+                if (centre - uniform).abs() <= 2 * stdvar {
+                    out[idx] = BlockClass::Busy;
+                    continue;
+                }
+                out[idx] = BlockClass::Transitional;
+            }
+        }
+        out
+    }
+
+    #[inline]
+    fn convolve_block(
+        src: &[f32],
+        dst: &mut [f32],
+        width: usize,
+        height: usize,
+        bx: usize,
+        by: usize,
+        kernel: &[i32],
+        size: usize,
+        norm: f32,
+    ) {
+        debug_assert!(size * size == kernel.len());
+        debug_assert!(size % 2 == 1);
+        let radius = size / 2;
+        let inv_norm = 1.0_f32 / norm;
+        let x0 = bx * BLOCK;
+        let y0 = by * BLOCK;
+        let interior = x0 >= radius
+            && y0 >= radius
+            && x0 + BLOCK + radius <= width
+            && y0 + BLOCK + radius <= height;
+
+        if interior {
+            for y in y0..y0 + BLOCK {
+                let row_out = y * width;
+                for x in x0..x0 + BLOCK {
+                    let mut acc = 0.0_f32;
+                    let sy0 = y - radius;
+                    let sx0 = x - radius;
+                    for dy in 0..size {
+                        let row_in = (sy0 + dy) * width + sx0;
+                        let krow = dy * size;
+                        for dx in 0..size {
+                            acc += src[row_in + dx] * kernel[krow + dx] as f32;
+                        }
+                    }
+                    dst[row_out + x] = (acc * inv_norm).clamp(0.0, 255.0);
+                }
+            }
+            return;
+        }
+
+        for y in y0..y0 + BLOCK {
+            let row_out = y * width;
+            for x in x0..x0 + BLOCK {
+                let mut acc = 0.0_f32;
+                for dy in 0..size {
+                    let sy = clamp_edge(y as isize + dy as isize - radius as isize, height);
+                    let row_in = sy * width;
+                    let krow = dy * size;
+                    for dx in 0..size {
+                        let sx = clamp_edge(x as isize + dx as isize - radius as isize, width);
+                        acc += src[row_in + sx] * kernel[krow + dx] as f32;
+                    }
+                }
+                dst[row_out + x] = (acc * inv_norm).clamp(0.0, 255.0);
+            }
+        }
+    }
+
+    #[inline]
+    fn clamp_edge(i: isize, len: usize) -> usize {
+        if i < 0 {
+            0
+        } else if i >= len as isize {
+            len - 1
+        } else {
+            i as usize
+        }
+    }
+}
 
 /// Per-block classification of the luma plane into uniform / transitional /
 /// busy, then assembly from a 7×7 Gaussian deblock, a 3×3 low-pass dering, or
@@ -448,11 +737,11 @@ impl DeblockStrategy for TriageDecode {
 
         // Patent is luma-only: filter plane 0, leave chroma untouched.
         if let Some(luma) = cp.planes.first_mut() {
-            zenjpeg::deblock::filter_plane_triage(
+            triage_impl::filter_plane_triage(
                 &mut luma.data,
                 luma.width,
                 luma.height,
-                zenjpeg::deblock::TriageConfig {
+                triage_impl::TriageConfig {
                     uniform_threshold: self.uniform_threshold,
                 },
             );
@@ -502,11 +791,11 @@ impl DeblockStrategy for TriageGated {
 
         let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
         if let Some(luma) = cp.planes.first_mut() {
-            zenjpeg::deblock::filter_plane_triage(
+            triage_impl::filter_plane_triage(
                 &mut luma.data,
                 luma.width,
                 luma.height,
-                zenjpeg::deblock::TriageConfig { uniform_threshold },
+                triage_impl::TriageConfig { uniform_threshold },
             );
         }
         Some(planes_to_rgb(&cp))
