@@ -5,6 +5,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use archmage::prelude::*;
 use crate::types::{ForwardCoeffs, pack_i16_pair, PREC};
 
 /// 4:4:4 WASM SIMD128 encode kernel. Returns number of pixels processed.

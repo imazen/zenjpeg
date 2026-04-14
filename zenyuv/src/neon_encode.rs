@@ -5,6 +5,7 @@
 
 #![cfg(target_arch = "aarch64")]
 
+use archmage::prelude::*;
 use crate::types::ForwardCoeffs;
 
 /// 4:4:4 NEON encode kernel. Returns number of pixels processed (multiple of 16).
@@ -38,7 +39,7 @@ pub(crate) fn rgb_to_yuv444_neon(
         let src = &rgb[base * 3..base * 3 + 48];
 
         // vld3q_u8: deinterleave 48 bytes into 3 x uint8x16_t (R, G, B).
-        let rgb_deint = vld3q_u8(src.as_ptr());
+        let rgb_deint = vld3q_u8(<&[u8; 48]>::try_from(src).unwrap());
         let r_u8 = rgb_deint.0;
         let g_u8 = rgb_deint.1;
         let b_u8 = rgb_deint.2;
@@ -48,18 +49,18 @@ pub(crate) fn rgb_to_yuv444_neon(
         let g_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(g_u8)));
         let b_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(b_u8)));
 
-        let y_lo = compute_channel_neon(r_lo, g_lo, b_lo, yr, yg, yb, y_bias_v);
-        let cb_lo = compute_channel_neon(r_lo, g_lo, b_lo, cb_r, cb_g, cb_b, uv_bias_v);
-        let cr_lo = compute_channel_neon(r_lo, g_lo, b_lo, cr_r, cr_g, cr_b, uv_bias_v);
+        let y_lo = compute_channel_neon(token, r_lo, g_lo, b_lo, yr, yg, yb, y_bias_v);
+        let cb_lo = compute_channel_neon(token, r_lo, g_lo, b_lo, cb_r, cb_g, cb_b, uv_bias_v);
+        let cr_lo = compute_channel_neon(token, r_lo, g_lo, b_lo, cr_r, cr_g, cr_b, uv_bias_v);
 
         // Process high 8 pixels.
         let r_hi = vreinterpretq_s16_u16(vmovl_high_u8(r_u8));
         let g_hi = vreinterpretq_s16_u16(vmovl_high_u8(g_u8));
         let b_hi = vreinterpretq_s16_u16(vmovl_high_u8(b_u8));
 
-        let y_hi = compute_channel_neon(r_hi, g_hi, b_hi, yr, yg, yb, y_bias_v);
-        let cb_hi = compute_channel_neon(r_hi, g_hi, b_hi, cb_r, cb_g, cb_b, uv_bias_v);
-        let cr_hi = compute_channel_neon(r_hi, g_hi, b_hi, cr_r, cr_g, cr_b, uv_bias_v);
+        let y_hi = compute_channel_neon(token, r_hi, g_hi, b_hi, yr, yg, yb, y_bias_v);
+        let cb_hi = compute_channel_neon(token, r_hi, g_hi, b_hi, cb_r, cb_g, cb_b, uv_bias_v);
+        let cr_hi = compute_channel_neon(token, r_hi, g_hi, b_hi, cr_r, cr_g, cr_b, uv_bias_v);
 
         // Narrow i16 -> u8 (saturating) and combine.
         let y_u8 = vcombine_u8(
@@ -76,9 +77,9 @@ pub(crate) fn rgb_to_yuv444_neon(
         );
 
         // Store.
-        vst1q_u8(y_out[base..].as_mut_ptr(), y_u8);
-        vst1q_u8(cb_out[base..].as_mut_ptr(), cb_u8);
-        vst1q_u8(cr_out[base..].as_mut_ptr(), cr_u8);
+        vst1q_u8(<&mut [u8; 16]>::try_from(&mut y_out[base..base+16]).unwrap(), y_u8);
+        vst1q_u8(<&mut [u8; 16]>::try_from(&mut cb_out[base..base+16]).unwrap(), cb_u8);
+        vst1q_u8(<&mut [u8; 16]>::try_from(&mut cr_out[base..base+16]).unwrap(), cr_u8);
     }
     blocks * 16
 }
@@ -86,8 +87,9 @@ pub(crate) fn rgb_to_yuv444_neon(
 /// Compute one YCbCr channel for 8 pixels using NEON multiply-accumulate.
 /// Returns i16x8 result ready for narrowing.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[rite]
 fn compute_channel_neon(
+    _token: archmage::NeonToken,
     r: core::arch::aarch64::int16x8_t,
     g: core::arch::aarch64::int16x8_t,
     b: core::arch::aarch64::int16x8_t,

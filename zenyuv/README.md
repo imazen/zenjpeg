@@ -96,10 +96,10 @@ ctx.encode_sharp_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480, &config);
 
 | Platform | ISA | Kernel | Pixels/iter |
 |----------|-----|--------|-------------|
-| x86-64 | AVX2+FMA | Hand-tuned `#[arcane]` pmaddwd | 32 (encode) |
-| aarch64 | NEON | Auto-vectorized via magetypes | 8 |
-| wasm32 | SIMD128 | Auto-vectorized via magetypes | 8 |
-| All others | Scalar | magetypes `f32x8` fallback | 8 |
+| x86-64 | AVX2+FMA | `#[arcane]` pmaddwd + pshufb deinterleave | 32 |
+| aarch64 | NEON | `#[arcane]` vld3q_u8 deinterleave + vmulq | 16 |
+| wasm32 | SIMD128 | `#[arcane]` i32x4_dot_i16x8 | 16 |
+| All others | Scalar | magetypes `f32x8` auto-vectorized | 8 |
 
 SIMD tier is selected at runtime via archmage token dispatch (`X64V3Token::summon()` etc.). No compile-time target features required.
 

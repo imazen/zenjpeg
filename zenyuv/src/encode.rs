@@ -52,6 +52,15 @@ pub fn rgb_to_yuv444_with(
         return;
     }
 
+    #[cfg(target_arch = "aarch64")]
+    if let Some(token) = archmage::NeonToken::summon() {
+        let done = crate::neon_encode::rgb_to_yuv444_neon(token, rgb, y, cb, cr, n, &coeffs);
+        if done < n {
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, &coeffs);
+        }
+        return;
+    }
+
     incant!(crate::encode_generic::rgb_to_yuv444_generic(rgb, y, cb, cr, n, &coeffs));
 }
 

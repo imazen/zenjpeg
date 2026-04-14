@@ -49,17 +49,11 @@ mod avx2_encode;
 #[cfg(target_arch = "x86_64")]
 mod avx2_decode;
 
-// Hand-tuned NEON/WASM kernels exist but are not dispatched. archmage's
-// #[arcane] doesn't apply #[target_feature(enable = "neon")] on aarch64
-// where NEON is baseline (filed as archmage issue). The magetypes generic
-// path (#[magetypes(neon, wasm128)]) generates correct SIMD code for both
-// platforms via auto-vectorization — verified via QEMU cross-testing.
-//
-// When archmage fixes this, uncomment and wire into encode.rs dispatch:
-// #[cfg(target_arch = "aarch64")]
-// mod neon_encode;
-// #[cfg(target_arch = "wasm32")]
-// mod wasm_encode;
+#[cfg(target_arch = "aarch64")]
+mod neon_encode;
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
