@@ -238,79 +238,134 @@ mod tests {
         assert_eq!(cr, [128, 128]);
     }
 
-    /// Verify all SIMD dispatch tiers produce output within +/-1 of each other
-    /// for 4:4:4. AVX2 uses 15-bit fixed-point while generic uses f32 FMA.
+    /// All combinations of Matrix × Range that must produce byte-identical
+    /// output across SIMD dispatch tiers.
+    const ALL_MATRIX_RANGE: &[(Matrix, Range, &str)] = &[
+        (Matrix::Bt601, Range::Full, "BT.601 Full"),
+        (Matrix::Bt601, Range::Limited, "BT.601 Limited"),
+        (Matrix::Bt709, Range::Full, "BT.709 Full"),
+        (Matrix::Bt709, Range::Limited, "BT.709 Limited"),
+        (Matrix::Bt2020, Range::Full, "BT.2020 Full"),
+        (Matrix::Bt2020, Range::Limited, "BT.2020 Limited"),
+    ];
+
+    /// Verify all SIMD dispatch tiers produce BYTE-IDENTICAL output for 4:4:4
+    /// across every matrix and range combination. All tiers use the same
+    /// 15-bit fixed-point integer math → any drift is a bug.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn yuv444_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
-        let rgb = make_pattern(256, 256);
-        let n = 256 * 256;
-        let mut y_ref = vec![0u8; n];
-        let mut cb_ref = vec![0u8; n];
-        let mut cr_ref = vec![0u8; n];
-        {
-            let mut c = ctx();
-            c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, 256, 256);
-        }
+        // Odd dimensions to exercise the scalar tail.
+        let (w, h) = (257, 129);
+        let rgb = make_pattern(w, h);
+        let n = w * h;
 
-        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-            let mut y = vec![0u8; n];
-            let mut cb = vec![0u8; n];
-            let mut cr = vec![0u8; n];
+        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+            let mut y_ref = vec![0u8; n];
+            let mut cb_ref = vec![0u8; n];
+            let mut cr_ref = vec![0u8; n];
             {
-                let mut c = ctx();
-                c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 256);
+                let mut c = YuvContext::new(range, matrix);
+                c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
             }
-            let ym = max_abs_err(&y, &y_ref);
-            let cbm = max_abs_err(&cb, &cb_ref);
-            let crm = max_abs_err(&cr, &cr_ref);
-            assert!(
-                ym <= 1 && cbm <= 1 && crm <= 1,
-                "tier parity exceeded +/-1 at {perm}: Y={ym} Cb={cbm} Cr={crm}"
-            );
-        });
-        std::eprintln!("yuv444 dispatch parity: {report}");
-        assert!(report.permutations_run >= 2, "need at least 2 permutations");
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let mut y = vec![0u8; n];
+                let mut cb = vec![0u8; n];
+                let mut cr = vec![0u8; n];
+                {
+                    let mut c = YuvContext::new(range, matrix);
+                    c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+                }
+                assert_eq!(y, y_ref, "{name}: Y not byte-identical at {perm}");
+                assert_eq!(cb, cb_ref, "{name}: Cb not byte-identical at {perm}");
+                assert_eq!(cr, cr_ref, "{name}: Cr not byte-identical at {perm}");
+            });
+            std::eprintln!("yuv444 dispatch parity ({name}): {report}");
+            assert!(report.permutations_run >= 2, "need at least 2 permutations");
+        }
     }
 
-    /// Verify all SIMD dispatch tiers produce output within +/-1 for 4:2:0.
+    /// Verify all SIMD dispatch tiers produce BYTE-IDENTICAL output for 4:2:0
+    /// across every matrix and range combination. Odd dimensions exercise
+    /// the scalar tail + odd-row chroma path.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn yuv420_dispatch_parity() {
         use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
-        let (w, h) = (256, 256);
+        // Odd dimensions: tests width tail (33 cols not fitting in 32-wide SIMD),
+        // odd height, and the odd-last-row chroma fallback.
+        let (w, h) = (257usize, 129usize);
+        let cw = w.div_ceil(2);
+        let ch = h.div_ceil(2);
         let rgb = make_pattern(w, h);
-        let cw = w / 2;
-        let ch = h / 2;
-        let mut y_ref = vec![0u8; w * h];
-        let mut cb_ref = vec![0u8; cw * ch];
-        let mut cr_ref = vec![0u8; cw * ch];
-        {
-            let mut c = ctx();
-            c.encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
-        }
 
-        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-            let mut y = vec![0u8; w * h];
-            let mut cb = vec![0u8; cw * ch];
-            let mut cr = vec![0u8; cw * ch];
+        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+            let mut y_ref = vec![0u8; w * h];
+            let mut cb_ref = vec![0u8; cw * ch];
+            let mut cr_ref = vec![0u8; cw * ch];
             {
-                let mut c = ctx();
-                c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+                let mut c = YuvContext::new(range, matrix);
+                c.encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
             }
-            let ym = max_abs_err(&y, &y_ref);
-            let cbm = max_abs_err(&cb, &cb_ref);
-            let crm = max_abs_err(&cr, &cr_ref);
-            assert!(
-                ym <= 1 && cbm <= 1 && crm <= 1,
-                "tier parity exceeded +/-1 at {perm}: Y={ym} Cb={cbm} Cr={crm}"
-            );
-        });
-        std::eprintln!("yuv420 dispatch parity: {report}");
-        assert!(report.permutations_run >= 2, "need at least 2 permutations");
+
+            let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+                let mut y = vec![0u8; w * h];
+                let mut cb = vec![0u8; cw * ch];
+                let mut cr = vec![0u8; cw * ch];
+                {
+                    let mut c = YuvContext::new(range, matrix);
+                    c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+                }
+                assert_eq!(y, y_ref, "{name}: Y not byte-identical at {perm}");
+                assert_eq!(cb, cb_ref, "{name}: Cb not byte-identical at {perm}");
+                assert_eq!(cr, cr_ref, "{name}: Cr not byte-identical at {perm}");
+            });
+            std::eprintln!("yuv420 dispatch parity ({name}): {report}");
+            assert!(report.permutations_run >= 2, "need at least 2 permutations");
+        }
+    }
+
+    /// Reference implementation using f64 (not f32) for maximum precision.
+    /// Bit-exactness to this reference is NOT expected — our integer math has
+    /// ±1 rounding differences from true f64. This is our accuracy ceiling.
+    fn ycbcr_reference_f64(r: u8, g: u8, b: u8, matrix: Matrix, range: Range) -> (u8, u8, u8) {
+        let (kr, kb) = match matrix {
+            Matrix::Bt601 => (0.299f64, 0.114),
+            Matrix::Bt709 => (0.2126, 0.0722),
+            Matrix::Bt2020 => (0.2627, 0.0593),
+        };
+        let kg = 1.0 - kr - kb;
+        let (rf, gf, bf) = (r as f64, g as f64, b as f64);
+
+        let (y, cb, cr) = match range {
+            Range::Full => {
+                let y = kr * rf + kg * gf + kb * bf;
+                let cb =
+                    -0.5 * kr / (1.0 - kb) * rf + -0.5 * kg / (1.0 - kb) * gf + 0.5 * bf + 128.0;
+                let cr =
+                    0.5 * rf + -0.5 * kg / (1.0 - kr) * gf + -0.5 * kb / (1.0 - kr) * bf + 128.0;
+                (y, cb, cr)
+            }
+            Range::Limited => {
+                let sy = 219.0 / 255.0;
+                let suv = 224.0 / 255.0;
+                let y = (kr * rf + kg * gf + kb * bf) * sy + 16.0;
+                let cb = (-0.5 * kr / (1.0 - kb) * rf + -0.5 * kg / (1.0 - kb) * gf + 0.5 * bf)
+                    * suv
+                    + 128.0;
+                let cr = (0.5 * rf + -0.5 * kg / (1.0 - kr) * gf + -0.5 * kb / (1.0 - kr) * bf)
+                    * suv
+                    + 128.0;
+                (y, cb, cr)
+            }
+        };
+
+        let clamp = |v: f64| -> u8 { (v.round() as i32).clamp(0, 255) as u8 };
+        (clamp(y), clamp(cb), clamp(cr))
     }
 
     /// Exhaustive single-pixel precision: all 256^3 RGB inputs through 4:4:4.
@@ -365,6 +420,170 @@ mod tests {
         std::eprintln!(
             "exhaustive 256^3: max diff Y={max_diff_y} Cb={max_diff_cb} Cr={max_diff_cr}"
         );
+    }
+
+    /// Exhaustive 4:4:4 accuracy for ALL Matrix × Range combinations against
+    /// f64 reference. Integer fixed-point should be within ±1 of true f64 at
+    /// every RGB input.
+    #[test]
+    #[ignore]
+    fn exhaustive_all_matrix_range_444() {
+        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+            let mut ctx_combo = YuvContext::new(range, matrix);
+            let mut max_diff_y = 0u8;
+            let mut max_diff_cb = 0u8;
+            let mut max_diff_cr = 0u8;
+            let mut sum_y = 0u64;
+            let mut sum_cb = 0u64;
+            let mut sum_cr = 0u64;
+
+            for g in 0..=255u8 {
+                for b in 0..=255u8 {
+                    let mut rgb = [0u8; 256 * 3];
+                    for r in 0..=255u8 {
+                        rgb[r as usize * 3] = r;
+                        rgb[r as usize * 3 + 1] = g;
+                        rgb[r as usize * 3 + 2] = b;
+                    }
+                    let mut y = [0u8; 256];
+                    let mut cb = [0u8; 256];
+                    let mut cr = [0u8; 256];
+                    ctx_combo.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 1);
+
+                    for r in 0..=255u8 {
+                        let (y_ref, cb_ref, cr_ref) = ycbcr_reference_f64(r, g, b, matrix, range);
+                        let dy = y[r as usize].abs_diff(y_ref);
+                        let dcb = cb[r as usize].abs_diff(cb_ref);
+                        let dcr = cr[r as usize].abs_diff(cr_ref);
+                        max_diff_y = max_diff_y.max(dy);
+                        max_diff_cb = max_diff_cb.max(dcb);
+                        max_diff_cr = max_diff_cr.max(dcr);
+                        sum_y += dy as u64;
+                        sum_cb += dcb as u64;
+                        sum_cr += dcr as u64;
+                        assert!(
+                            dy <= 1 && dcb <= 1 && dcr <= 1,
+                            "{name} R={r} G={g} B={b}: Y {}/{y_ref} Cb {}/{cb_ref} Cr {}/{cr_ref}",
+                            y[r as usize],
+                            cb[r as usize],
+                            cr[r as usize],
+                        );
+                    }
+                }
+            }
+            let total = 256u64.pow(3);
+            std::eprintln!(
+                "{name}: max Y={max_diff_y} Cb={max_diff_cb} Cr={max_diff_cr} | mean Y={:.5} Cb={:.5} Cr={:.5}",
+                sum_y as f64 / total as f64,
+                sum_cb as f64 / total as f64,
+                sum_cr as f64 / total as f64,
+            );
+        }
+    }
+
+    /// Exhaustive 4:2:0 accuracy on uniform 2×2 blocks (R=G=B same across block).
+    /// Covers all 256³ RGB values through the chroma averaging path.
+    #[test]
+    #[ignore]
+    fn exhaustive_all_matrix_range_420_uniform() {
+        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+            let mut ctx_combo = YuvContext::new(range, matrix);
+            let mut max_diff_y = 0u8;
+            let mut max_diff_cb = 0u8;
+            let mut max_diff_cr = 0u8;
+
+            // Build a 256×2 image where each column is a constant 2×2 block
+            // with varying (R, G, B). Iterate over G, B; encode all 256 R at once.
+            for g in 0..=255u8 {
+                for b in 0..=255u8 {
+                    let mut rgb = vec![0u8; 256 * 2 * 3];
+                    for row in 0..2 {
+                        for r in 0..=255u8 {
+                            let p = (row * 256 + r as usize) * 3;
+                            rgb[p] = r;
+                            rgb[p + 1] = g;
+                            rgb[p + 2] = b;
+                        }
+                    }
+                    let mut y = [0u8; 256 * 2];
+                    let mut cb = [0u8; 128];
+                    let mut cr = [0u8; 128];
+                    ctx_combo.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 2);
+
+                    // For each 2×2 block, verify against f64 reference.
+                    // With uniform R/G/B across the block, the chroma average
+                    // equals the pixel value exactly (avg_epu8 is identity).
+                    for block_x in 0..128 {
+                        let r0 = (block_x * 2) as u8;
+                        let r1 = (block_x * 2 + 1) as u8;
+                        // Y values should match 4:4:4 exactly.
+                        let (y_ref0, _, _) = ycbcr_reference_f64(r0, g, b, matrix, range);
+                        let (y_ref1, _, _) = ycbcr_reference_f64(r1, g, b, matrix, range);
+                        let dy0 = y[block_x * 2].abs_diff(y_ref0);
+                        let dy1 = y[block_x * 2 + 1].abs_diff(y_ref1);
+                        max_diff_y = max_diff_y.max(dy0).max(dy1);
+
+                        // Chroma: f64 reference using the average of the 4 RGB values.
+                        // For uniform block: avg_r = (r0 + r1) / 2 rounded.
+                        let avg_r = (r0 as f64 + r1 as f64) / 2.0;
+                        let (_, cb_ref, cr_ref) =
+                            chroma_reference_f64(avg_r, g as f64, b as f64, matrix, range);
+                        let dcb = cb[block_x].abs_diff(cb_ref);
+                        let dcr = cr[block_x].abs_diff(cr_ref);
+                        max_diff_cb = max_diff_cb.max(dcb);
+                        max_diff_cr = max_diff_cr.max(dcr);
+                        // 4:2:0 chroma can differ by up to 2 from true f64 due
+                        // to the two-step avg_epu8 + maddubs rounding sequence.
+                        assert!(
+                            dcb <= 2 && dcr <= 2,
+                            "{name} block R=[{r0},{r1}] G={g} B={b}: Cb {}/{cb_ref} Cr {}/{cr_ref}",
+                            cb[block_x],
+                            cr[block_x],
+                        );
+                    }
+                }
+            }
+            std::eprintln!(
+                "{name} 4:2:0 uniform: max Y={max_diff_y} Cb={max_diff_cb} Cr={max_diff_cr}"
+            );
+        }
+    }
+
+    /// f64 reference for chroma only (averaged RGB input).
+    fn chroma_reference_f64(
+        rf: f64,
+        gf: f64,
+        bf: f64,
+        matrix: Matrix,
+        range: Range,
+    ) -> (u8, u8, u8) {
+        let (kr, kb) = match matrix {
+            Matrix::Bt601 => (0.299f64, 0.114),
+            Matrix::Bt709 => (0.2126, 0.0722),
+            Matrix::Bt2020 => (0.2627, 0.0593),
+        };
+        let kg = 1.0 - kr - kb;
+        let (cb, cr) = match range {
+            Range::Full => {
+                let cb =
+                    -0.5 * kr / (1.0 - kb) * rf + -0.5 * kg / (1.0 - kb) * gf + 0.5 * bf + 128.0;
+                let cr =
+                    0.5 * rf + -0.5 * kg / (1.0 - kr) * gf + -0.5 * kb / (1.0 - kr) * bf + 128.0;
+                (cb, cr)
+            }
+            Range::Limited => {
+                let suv = 224.0 / 255.0;
+                let cb = (-0.5 * kr / (1.0 - kb) * rf + -0.5 * kg / (1.0 - kb) * gf + 0.5 * bf)
+                    * suv
+                    + 128.0;
+                let cr = (0.5 * rf + -0.5 * kg / (1.0 - kr) * gf + -0.5 * kb / (1.0 - kr) * bf)
+                    * suv
+                    + 128.0;
+                (cb, cr)
+            }
+        };
+        let clamp = |v: f64| -> u8 { (v.round() as i32).clamp(0, 255) as u8 };
+        (0, clamp(cb), clamp(cr))
     }
 
     // ── Decode tests ───────────────────────────────────────────────────────
