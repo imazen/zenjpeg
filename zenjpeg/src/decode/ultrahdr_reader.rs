@@ -717,12 +717,7 @@ impl<'a> UltraHdrReader<'a> {
 /// Convert sRGB u8 to linear f32.
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
-    let s = srgb as f32 / 255.0;
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
+    linear_srgb::tf::srgb_to_linear(srgb as f32 / 255.0)
 }
 
 /// Convert a buffer of sRGB RGB8 pixels to linear f32 RGB.
