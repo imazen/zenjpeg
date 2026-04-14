@@ -162,6 +162,23 @@ Benchmark against `yuv` crate at every size from 256 to 4096. Must be faster or 
 - [ ] crates.io publish
 - [ ] Upstream zen crates switch from path dep to version dep
 
+## Cross-Platform Golden Results
+
+Need a way to verify all platforms produce identical output without storing large reference files in git.
+
+**Approach ideas (needs investigation):**
+- Hash full output planes per (matrix, range, subsampling, depth) for a fixed set of test patterns. Store only the hashes (~40 bytes each). If a platform diverges, the hash catches it.
+- For rounding boundary cases (where f32 vs i16 disagree by ±1): identify the specific input values that hit boundaries, store those as a small "boundary test corpus" (~1KB). Hash the rest.
+- Could generate deterministic test patterns procedurally (same seed across platforms) so no stored inputs needed — just stored output hashes.
+- The 256³ exhaustive test already covers all u8 inputs for 4:4:4. Hash the full 16.7M output (Y+Cb+Cr = 50MB → one SHA-256 per plane per tier). Store 6 hashes.
+- For multi-tier parity: if AVX2 and scalar differ by ±1 at some inputs, we need separate golden hashes per tier OR define the scalar path as canonical and allow ±1 from it on all platforms.
+
+**Problem:** different SIMD tiers (AVX2 fixed-point vs f32 FMA) produce ±1 differences at rounding boundaries. A single golden hash per platform won't work unless we pick ONE canonical implementation and force all tiers to match it exactly (e.g., always use the f32 path as reference, even if AVX2 is faster).
+
+**Pragmatic approach:** define the scalar f32 path as the reference. Store SHA-256 hashes of its output for a set of test patterns. On CI: run scalar, verify hash matches. Then run SIMD tiers, verify ±1 vs scalar. This gives cross-platform determinism (f32 math is IEEE 754, should be identical) plus tier-correctness (±1 tolerance).
+
+**TODO:** implement this after the module restructure stabilizes.
+
 ## Known Gaps vs yuv crate
 
 1. **Decode direction** — yuv has full YCbCr→RGB; we have nothing yet. zenavif calls ~37 decode variants.
