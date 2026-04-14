@@ -65,8 +65,10 @@ pub use sharp::SharpYuvConfig;
 
 // Crate-internal re-exports for tests. NOT public API.
 #[allow(unused_imports)]
+#[allow(dead_code)]
 pub(crate) use encode::{rgb_to_yuv444, rgb_to_yuv444_with, rgb_to_yuv420, rgb_to_yuv420_with};
 #[allow(unused_imports)]
+#[allow(dead_code)]
 pub(crate) use decode::{
     yuv444_to_rgb, yuv444_to_rgb_with, yuv420_to_rgb, yuv420_to_rgb_with,
     yuv420_to_rgb_bilinear, yuv420_to_rgb_bilinear_with,

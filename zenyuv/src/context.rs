@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use crate::gamma::GammaLuts;
 use crate::sharp::{SharpYuvConfig, SharpYuvWorkspace};
-use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
+use crate::types::{Matrix, Range};
 
 /// Reusable YUV encoder context. Holds precomputed coefficients and gamma LUTs.
 ///
@@ -24,8 +24,6 @@ use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 /// - f32 box-average: lazy u8 temp buffers (for u8→f32 conversion)
 /// - u8/f32 sharp: lazy u8 temps + lazy sharp workspace (18 f32 arrays)
 pub struct YuvContext {
-    pub(crate) fwd: ForwardCoeffs,
-    pub(crate) inv: InverseCoeffs,
     range: Range,
     matrix: Matrix,
     /// Gamma LUTs — heap-allocated lazily on first sharp call (1KB).
@@ -55,8 +53,6 @@ impl YuvContext {
     /// No buffers allocated until first use — zero cost for u8 box-average.
     pub fn new(range: Range, matrix: Matrix) -> Self {
         Self {
-            fwd: ForwardCoeffs::new(matrix, range),
-            inv: InverseCoeffs::new(matrix, range),
             range,
             matrix,
             luts: None,

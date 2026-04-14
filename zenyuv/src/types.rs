@@ -54,6 +54,7 @@ pub struct ForwardCoeffs {
 
 /// Inverse (YCbCr->RGB) coefficients for decode.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub struct InverseCoeffs {
     /// Y scale factor (1.0 for full range, 255/219 for limited)
     pub y_coeff: f32,
@@ -70,11 +71,18 @@ pub struct InverseCoeffs {
     /// UV offset (always -128)
     pub uv_offset: f32,
     /// 15-bit fixed-point versions for integer kernels.
+    #[allow(dead_code)]
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub y_coeff_i: i32,
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub cr_to_r_i: i32,
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub cr_to_g_i: i32,
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub cb_to_g_i: i32,
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub cb_to_b_i: i32,
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     pub y_offset_i: i32,
 }
 
