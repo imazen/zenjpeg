@@ -3020,10 +3020,10 @@ impl<'a> ScanlineReader<'a> {
     }
 }
 
-/// Convert sRGB u8 to linear f32.
+/// Convert sRGB u8 to linear f32 via 256-entry LUT.
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
-    linear_srgb::tf::srgb_to_linear(srgb as f32 / 255.0)
+    linear_srgb::default::srgb_u8_to_linear(srgb)
 }
 
 /// Convert sRGB f32 (0.0-1.0) to linear f32.
