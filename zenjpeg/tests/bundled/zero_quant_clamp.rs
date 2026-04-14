@@ -10,7 +10,7 @@ use enough::Unstoppable;
 use zenjpeg::decoder::{Decoder, Strictness};
 
 /// Fixture: 1x1 grayscale JPEG from IJG libjpeg-9b at Q=1 with zero quant values.
-const FIXTURE: &[u8] = include_bytes!("testdata/all_the_images/quant_zero_libjpeg9b.jpg");
+const FIXTURE: &[u8] = include_bytes!("../testdata/all_the_images/quant_zero_libjpeg9b.jpg");
 
 #[test]
 fn balanced_decodes_zero_quant() {

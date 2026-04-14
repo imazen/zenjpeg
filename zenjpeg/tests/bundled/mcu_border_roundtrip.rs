@@ -17,10 +17,8 @@
 
 use enough::Unstoppable;
 
-#[path = "../src/test_utils.rs"]
-mod test_utils;
 
-use test_utils::TestImage;
+use crate::test_utils::TestImage;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
@@ -31,7 +29,7 @@ use zenjpeg::{
 /// Generate a noise+patches test image. Uses deterministic PRNG with patches
 /// of solid color to exercise both smooth and textured DCT blocks.
 fn test_image_rgb(width: u32, height: u32) -> TestImage {
-    let mut img = test_utils::generate_noise(width, height, 42, 3);
+    let mut img = crate::test_utils::generate_noise(width, height, 42, 3);
     // Add some 8×8 solid patches for more realistic content
     let patch_colors: &[(u8, u8, u8)] =
         &[(200, 50, 30), (30, 180, 60), (50, 40, 210), (220, 200, 40)];
@@ -54,7 +52,7 @@ fn test_image_rgb(width: u32, height: u32) -> TestImage {
 }
 
 fn test_image_gray(width: u32, height: u32) -> TestImage {
-    test_utils::generate_noise(width, height, 42, 1)
+    crate::test_utils::generate_noise(width, height, 42, 1)
 }
 
 /// Encode → decode roundtrip. Returns (decoded_width, decoded_height).
