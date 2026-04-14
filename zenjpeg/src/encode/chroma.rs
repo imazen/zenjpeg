@@ -324,27 +324,83 @@ pub fn gamma_aware_strip_420(
     bpp: usize,
     use_iterative: bool,
 ) {
-    // Compute Y at full resolution using SIMD
-    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
-
-    // Compute chroma at half resolution
-    let c_width = (width + 1) / 2;
-    let c_strip_height = (strip_height + 1) / 2;
-
-    for cy in 0..c_strip_height {
-        for cx in 0..c_width {
-            let (cb, cr) = if use_iterative {
-                iterative_chroma_2x2_strip(rgb_strip, y_strip, width, strip_height, bpp, cx, cy)
-            } else {
-                gamma_aware_chroma_2x2_strip(rgb_strip, width, strip_height, bpp, cx, cy)
-            };
-            cb_down[cy * c_width + cx] = cb;
-            cr_down[cy * c_width + cx] = cr;
+    if use_iterative {
+        // Delegate to zenyuv's optimized sharp YUV (#[autoversion] SIMD).
+        sharp_strip_420_via_zenyuv(rgb_strip, y_strip, cb_down, cr_down, width, strip_height, bpp);
+    } else {
+        // Non-iterative gamma-aware: keep the scalar path.
+        compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+        let c_width = (width + 1) / 2;
+        let c_strip_height = (strip_height + 1) / 2;
+        for cy in 0..c_strip_height {
+            for cx in 0..c_width {
+                let (cb, cr) =
+                    gamma_aware_chroma_2x2_strip(rgb_strip, width, strip_height, bpp, cx, cy);
+                cb_down[cy * c_width + cx] = cb;
+                cr_down[cy * c_width + cx] = cr;
+            }
         }
     }
-
-    // Suppress unused warnings
     let _ = (strip_y, image_height);
+}
+
+/// Delegate sharp YUV to zenyuv's #[autoversion] kernel for the iterative
+/// (GammaAwareIterative) case. Handles RGBA stripping and u8→f32 conversion.
+fn sharp_strip_420_via_zenyuv(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+) {
+    let num_pixels = width * strip_height;
+    let c_width = (width + 1) / 2;
+    let c_height = (strip_height + 1) / 2;
+    let c_size = c_width * c_height;
+
+    // Strip alpha if RGBA.
+    let rgb_only: Vec<u8>;
+    let rgb_input = if bpp == 4 {
+        rgb_only = rgb_strip
+            .chunks_exact(4)
+            .take(num_pixels)
+            .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
+            .collect();
+        &rgb_only
+    } else {
+        rgb_strip
+    };
+
+    // Call zenyuv sharp.
+    let mut y_u8 = vec![0u8; num_pixels];
+    let mut cb_u8 = vec![0u8; c_size];
+    let mut cr_u8 = vec![0u8; c_size];
+
+    let luts = zenyuv::GammaLuts::srgb();
+    let config = zenyuv::SharpYuvConfig::default();
+    zenyuv::sharp::rgb_to_yuv420_sharp(
+        rgb_input,
+        &mut y_u8,
+        &mut cb_u8,
+        &mut cr_u8,
+        width,
+        strip_height,
+        zenyuv::Range::Full,
+        zenyuv::Matrix::Bt601,
+        &luts,
+        &config,
+    );
+
+    // Convert u8 → f32.
+    for i in 0..num_pixels {
+        y_strip[i] = y_u8[i] as f32;
+    }
+    for i in 0..c_size {
+        cb_down[i] = cb_u8[i] as f32;
+        cr_down[i] = cr_u8[i] as f32;
+    }
 }
 
 /// Computes gamma-aware chroma for a strip of image data (4:2:2 mode).
