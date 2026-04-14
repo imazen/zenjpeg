@@ -1,0 +1,53 @@
+# zenyuv development commands
+
+# Run all tests
+test:
+    cargo test --release -p zenyuv
+
+# Run tests including exhaustive 256³ roundtrip (slow, ~30s)
+test-exhaustive:
+    cargo test --release -p zenyuv -- --include-ignored
+
+# Benchmark against yuv crate (zenbench, interleaved)
+bench:
+    cargo bench --bench rgb_to_yuv_internal
+
+# Benchmark specific size
+bench-size SIZE:
+    cargo bench --bench rgb_to_yuv_internal -- --group=rgb_to_yuv_444/{{SIZE}}
+
+# Run brute-force SIMD dispatch parity tests
+test-simd-parity:
+    cargo test --release -p zenyuv -- dispatch_parity --nocapture
+
+# Check no_std builds (no alloc, no std)
+check-nostd:
+    cargo check -p zenyuv --no-default-features
+
+# Test NEON via QEMU (requires cross + qemu-user-static)
+test-neon:
+    cross test -p zenyuv --target aarch64-unknown-linux-gnu --release
+
+# Test WASM (requires wasm-pack)
+test-wasm:
+    cd zenyuv && wasm-pack test --node -- --release
+
+# Test 32-bit (requires cross)
+test-i686:
+    cross test -p zenyuv --target i686-unknown-linux-gnu --release
+
+# Run clippy
+clippy:
+    cargo clippy -p zenyuv -- -D warnings
+
+# Format
+fmt:
+    cargo fmt -p zenyuv
+
+# Full CI-equivalent local check
+ci: fmt clippy test test-simd-parity check-nostd
+    @echo "Local CI passed"
+
+# Full cross-platform check (slow)
+ci-cross: ci test-neon test-wasm test-i686
+    @echo "Cross-platform CI passed"

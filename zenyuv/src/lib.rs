@@ -948,4 +948,119 @@ mod tests {
         assert_eq!(cb, [128, 128]);
         assert_eq!(cr, [128, 128]);
     }
+
+    /// Verify all SIMD dispatch tiers produce output within ±1 of each other
+    /// for 4:4:4. AVX2 uses 15-bit fixed-point (pmaddwd) while the generic
+    /// fallback uses f32 FMA — they round differently at boundaries.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn yuv444_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let rgb = make_pattern(256, 256);
+        let n = 256 * 256;
+        let mut y_ref = vec![0u8; n];
+        let mut cb_ref = vec![0u8; n];
+        let mut cr_ref = vec![0u8; n];
+        rgb_to_yuv444(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, 256, 256);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let mut y = vec![0u8; n];
+            let mut cb = vec![0u8; n];
+            let mut cr = vec![0u8; n];
+            rgb_to_yuv444(&rgb, &mut y, &mut cb, &mut cr, 256, 256);
+            let ym = max_abs_err(&y, &y_ref);
+            let cbm = max_abs_err(&cb, &cb_ref);
+            let crm = max_abs_err(&cr, &cr_ref);
+            assert!(ym <= 1 && cbm <= 1 && crm <= 1,
+                "tier parity exceeded ±1 at {perm}: Y={ym} Cb={cbm} Cr={crm}");
+        });
+        std::eprintln!("yuv444 dispatch parity: {report}");
+        assert!(report.permutations_run >= 2, "need at least 2 permutations");
+    }
+
+    /// Verify all SIMD dispatch tiers produce output within ±1 for 4:2:0.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn yuv420_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let (w, h) = (256, 256);
+        let rgb = make_pattern(w, h);
+        let cw = w / 2;
+        let ch = h / 2;
+        let mut y_ref = vec![0u8; w * h];
+        let mut cb_ref = vec![0u8; cw * ch];
+        let mut cr_ref = vec![0u8; cw * ch];
+        rgb_to_yuv420(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; cw * ch];
+            let mut cr = vec![0u8; cw * ch];
+            rgb_to_yuv420(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            let ym = max_abs_err(&y, &y_ref);
+            let cbm = max_abs_err(&cb, &cb_ref);
+            let crm = max_abs_err(&cr, &cr_ref);
+            assert!(ym <= 1 && cbm <= 1 && crm <= 1,
+                "tier parity exceeded ±1 at {perm}: Y={ym} Cb={cbm} Cr={crm}");
+        });
+        std::eprintln!("yuv420 dispatch parity: {report}");
+        assert!(report.permutations_run >= 2, "need at least 2 permutations");
+    }
+
+    /// Exhaustive single-pixel precision: all 256³ RGB inputs through 4:4:4,
+    /// verify Y/Cb/Cr are in expected range and that the scalar reference
+    /// matches the SIMD output for every input.
+    #[test]
+    #[ignore] // ~30s, run with `cargo test -- --ignored`
+    fn exhaustive_all_rgb_values() {
+        // Compute reference via scalar (1 pixel at a time)
+        let mut max_diff_y = 0u8;
+        let mut max_diff_cb = 0u8;
+        let mut max_diff_cr = 0u8;
+
+        // Process in batches of 256 pixels (one full R sweep per batch)
+        for g in 0..=255u8 {
+            for b in 0..=255u8 {
+                // Build a row of 256 pixels: R=0..255, G=g, B=b
+                let mut rgb = [0u8; 256 * 3];
+                for r in 0..=255u8 {
+                    rgb[r as usize * 3] = r;
+                    rgb[r as usize * 3 + 1] = g;
+                    rgb[r as usize * 3 + 2] = b;
+                }
+                let mut y = [0u8; 256];
+                let mut cb = [0u8; 256];
+                let mut cr = [0u8; 256];
+                rgb_to_yuv444(&rgb, &mut y, &mut cb, &mut cr, 256, 1);
+
+                // Verify against scalar reference
+                for r in 0..=255u8 {
+                    let rf = r as f32;
+                    let gf = g as f32;
+                    let bf = b as f32;
+                    let y_ref = clamp_round(YR * rf + YG * gf + YB * bf);
+                    let cb_ref = clamp_round(CB_R * rf + CB_G * gf + CB_B * bf + CHROMA_BIAS);
+                    let cr_ref = clamp_round(CR_R * rf + CR_G * gf + CR_B * bf + CHROMA_BIAS);
+
+                    let dy = y[r as usize].abs_diff(y_ref);
+                    let dcb = cb[r as usize].abs_diff(cb_ref);
+                    let dcr = cr[r as usize].abs_diff(cr_ref);
+                    max_diff_y = max_diff_y.max(dy);
+                    max_diff_cb = max_diff_cb.max(dcb);
+                    max_diff_cr = max_diff_cr.max(dcr);
+
+                    assert!(
+                        dy <= 1 && dcb <= 1 && dcr <= 1,
+                        "R={r} G={g} B={b}: Y {}/{y_ref} Cb {}/{cb_ref} Cr {}/{cr_ref}",
+                        y[r as usize], cb[r as usize], cr[r as usize],
+                    );
+                }
+            }
+        }
+        std::eprintln!(
+            "exhaustive 256³: max diff Y={max_diff_y} Cb={max_diff_cb} Cr={max_diff_cr}"
+        );
+    }
 }
