@@ -97,7 +97,6 @@ sha2 = "0.10"
 jpeg-decoder = "0.3.2"
 zune-jpeg.workspace = true
 zune-core = "0.5.1"
-codec-corpus = "1"
 tempfile = "3"
 
 
@@ -110,6 +109,8 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 
 # Native-only dev dependencies (don't compile for WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Corpus loader pulls fd-lock (file locking) which doesn't build on WASM
+codec-corpus = "1"
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
 zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
 # mozjpeg/libjpeg-turbo with NASM SIMD for decode speed comparison

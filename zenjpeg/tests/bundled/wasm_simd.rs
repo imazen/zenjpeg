@@ -1,7 +1,7 @@
 //! WASM SIMD128 verification tests.
 //!
 //! These tests verify that WASM SIMD128 is properly enabled and working.
-//! Run with: RUSTFLAGS="-C target-feature=+simd128" cargo test --target wasm32-wasip1 --features wasm-simd
+//! Run with: RUSTFLAGS="-C target-feature=+simd128" cargo test --target wasm32-wasip1 --features __wasm-simd
 
 #![cfg(all(target_arch = "wasm32", feature = "__wasm-simd"))]
 

@@ -97,12 +97,12 @@ jobs:
       - name: Build WASM benchmark
         if: matrix.wasm
         run: |
-          RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 -p jpegli-wasm-bench
+          RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 -p zenjpeg --example wasm_bench --no-default-features --features "std,decoder"
 
       - name: Run WASM benchmarks
         if: matrix.wasm
         run: |
-          wasmtime run --wasm simd target/wasm32-wasip1/release/wasm_bench.wasm 2>&1 | tee bench_output.txt
+          wasmtime run --wasm simd target/wasm32-wasip1/release/examples/wasm_bench.wasm 2>&1 | tee bench_output.txt
 
       - name: Parse benchmark results
         id: parse

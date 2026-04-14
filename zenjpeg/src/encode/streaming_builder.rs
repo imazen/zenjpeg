@@ -291,12 +291,53 @@ impl StreamingEncoderBuilder {
     }
 
     /// Starts a streaming encoder for row-by-row input.
-    ///
-    /// Use this when you want to push rows incrementally (e.g., from a decoder
-    /// or generator). For encoding a complete buffer at once, use `.encode()`
-    /// instead.
     pub(crate) fn start(self) -> Result<StreamingEncoder> {
         StreamingEncoder::from_builder(self)
+    }
+
+    /// Convenience: set `HuffmanStrategy::Optimize` or `HuffmanStrategy::Fixed`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
+        self.huffman = if enable {
+            HuffmanStrategy::Optimize
+        } else {
+            HuffmanStrategy::Fixed
+        };
+        self
+    }
+
+    /// Convenience: wrap a `HuffmanTableSet` in `HuffmanStrategy::Custom`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn custom_huffman_tables(
+        mut self,
+        tables: crate::huffman::optimize::HuffmanTableSet,
+    ) -> Self {
+        self.huffman = HuffmanStrategy::Custom(Box::new(tables));
+        self
+    }
+
+    /// One-shot encode: push the whole buffer and finish.
+    #[cfg(test)]
+    pub(crate) fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let bpp = self.pixel_format.bytes_per_pixel();
+        let expected_size = width * height * bpp;
+        if data.len() != expected_size {
+            return Err(crate::error::Error::invalid_buffer_size(
+                expected_size,
+                data.len(),
+            ));
+        }
+        let mut encoder = self.start()?;
+        let row_size = width * bpp;
+        for y in 0..height {
+            let start = y * row_size;
+            encoder.push_row(&data[start..start + row_size])?;
+        }
+        encoder.finish()
     }
 
 
