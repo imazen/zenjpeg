@@ -7,7 +7,7 @@
 use zenjpeg::decoder::Decoder;
 use zenjpeg::lossless::LosslessTransform;
 
-static CMYK_DATA: &[u8] = include_bytes!("testdata/cymk.jpg");
+static CMYK_DATA: &[u8] = include_bytes!("../testdata/cymk.jpg");
 
 /// Non-dimension-swapping transform on CMYK — this panicked before the fix.
 #[test]

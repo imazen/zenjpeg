@@ -80,7 +80,7 @@ fn must_not_panic_any_config(data: &[u8]) -> Result<(), String> {
 
 #[test]
 fn crash_314_mcu_oob() {
-    let data = include_bytes!("crash_repro/crash_314_mcu_oob.jpg");
+    let data = include_bytes!("../crash_repro/crash_314_mcu_oob.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -96,7 +96,7 @@ fn crash_314_mcu_oob() {
 
 #[test]
 fn crash_315_upsampler_assert() {
-    let data = include_bytes!("crash_repro/crash_315_upsampler_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_315_upsampler_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -112,7 +112,7 @@ fn crash_315_upsampler_assert() {
 
 #[test]
 fn crash_316_bitstream_assert() {
-    let data = include_bytes!("crash_repro/crash_316_bitstream_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_316_bitstream_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -128,7 +128,7 @@ fn crash_316_bitstream_assert() {
 
 #[test]
 fn crash_218_mcu_prog_oob() {
-    let data = include_bytes!("crash_repro/crash_218_mcu_prog_oob.jpg");
+    let data = include_bytes!("../crash_repro/crash_218_mcu_prog_oob.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -145,7 +145,7 @@ fn crash_218_mcu_prog_oob() {
 
 #[test]
 fn crash_236_upsampler_assert() {
-    let data = include_bytes!("crash_repro/crash_236_upsampler_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_236_upsampler_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -160,7 +160,7 @@ fn crash_236_upsampler_assert() {
 
 #[test]
 fn crash_257_mcu_prog_oob() {
-    let data = include_bytes!("crash_repro/crash_257_mcu_prog_oob.jpg");
+    let data = include_bytes!("../crash_repro/crash_257_mcu_prog_oob.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -175,7 +175,7 @@ fn crash_257_mcu_prog_oob() {
 
 #[test]
 fn crash_262_panic1_mcu_assert() {
-    let data = include_bytes!("crash_repro/crash_262_panic1_mcu_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_262_panic1_mcu_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -186,7 +186,7 @@ fn crash_262_panic1_mcu_assert() {
 
 #[test]
 fn crash_262_panic2_mcu_prog_unwrap() {
-    let data = include_bytes!("crash_repro/crash_262_panic2_mcu_prog_unwrap.jpg");
+    let data = include_bytes!("../crash_repro/crash_262_panic2_mcu_prog_unwrap.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -197,7 +197,7 @@ fn crash_262_panic2_mcu_prog_unwrap() {
 
 #[test]
 fn crash_262_panic3_mcu_prog_range() {
-    let data = include_bytes!("crash_repro/crash_262_panic3_mcu_prog_range.jpg");
+    let data = include_bytes!("../crash_repro/crash_262_panic3_mcu_prog_range.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -212,7 +212,7 @@ fn crash_262_panic3_mcu_prog_range() {
 
 #[test]
 fn crash_297_div_by_zero() {
-    let data = include_bytes!("crash_repro/crash_297_div_by_zero.jpg");
+    let data = include_bytes!("../crash_repro/crash_297_div_by_zero.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -227,7 +227,7 @@ fn crash_297_div_by_zero() {
 
 #[test]
 fn crash_300_bitstream_assert() {
-    let data = include_bytes!("crash_repro/crash_300_bitstream_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_300_bitstream_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -242,7 +242,7 @@ fn crash_300_bitstream_assert() {
 
 #[test]
 fn crash_301_mcu_range_3200() {
-    let data = include_bytes!("crash_repro/crash_301_mcu_range_3200.jpg");
+    let data = include_bytes!("../crash_repro/crash_301_mcu_range_3200.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -257,7 +257,7 @@ fn crash_301_mcu_range_3200() {
 
 #[test]
 fn crash_302_bitstream_assert() {
-    let data = include_bytes!("crash_repro/crash_302_bitstream_assert.jpg");
+    let data = include_bytes!("../crash_repro/crash_302_bitstream_assert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -272,7 +272,7 @@ fn crash_302_bitstream_assert() {
 
 #[test]
 fn crash_309_mcu_range_2176() {
-    let data = include_bytes!("crash_repro/crash_309_mcu_range_2176.jpg");
+    let data = include_bytes!("../crash_repro/crash_309_mcu_range_2176.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -287,7 +287,7 @@ fn crash_309_mcu_range_2176() {
 
 #[test]
 fn crash_324_idct_mul_overflow() {
-    let data = include_bytes!("crash_repro/crash_324_idct_mul_overflow.jpg");
+    let data = include_bytes!("../crash_repro/crash_324_idct_mul_overflow.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -302,7 +302,7 @@ fn crash_324_idct_mul_overflow() {
 
 #[test]
 fn crash_331_worker_color_convert() {
-    let data = include_bytes!("crash_repro/crash_331_worker_color_convert.jpg");
+    let data = include_bytes!("../crash_repro/crash_331_worker_color_convert.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),
@@ -320,7 +320,7 @@ macro_rules! crash_219_test {
     ($name:ident, $file:literal) => {
         #[test]
         fn $name() {
-            let data = include_bytes!(concat!("crash_repro/", $file));
+            let data = include_bytes!(concat!("../crash_repro/", $file));
             let result = must_not_panic_any_config(data);
             assert!(result.is_ok(), "Panic on {}: {:?}", $file, result.err());
         }
@@ -417,7 +417,7 @@ crash_219_test!(
 
 #[test]
 fn crash_negate_overflow_i16min_gather_block() {
-    let data = include_bytes!("crash_repro/crash_negate_overflow_i16min_gather_block.jpg");
+    let data = include_bytes!("../crash_repro/crash_negate_overflow_i16min_gather_block.jpg");
     let result = must_not_panic_any_config(data);
     assert!(
         result.is_ok(),

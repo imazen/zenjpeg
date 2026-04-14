@@ -43,10 +43,10 @@ const VALUES_FILE_HASH: &str = "1eaf3785274279445c1b2a5f21127d0dfcfdbdfa8138c242
 // =============================================================================
 
 #[cfg(target_arch = "x86_64")]
-const VALUES_CSV: &str = include_str!("locked_values/values_archmage.csv");
+const VALUES_CSV: &str = include_str!("../locked_values/values_archmage.csv");
 
 #[cfg(not(target_arch = "x86_64"))]
-const VALUES_CSV: &str = include_str!("locked_values/values_wide.csv");
+const VALUES_CSV: &str = include_str!("../locked_values/values_wide.csv");
 
 #[cfg(target_arch = "x86_64")]
 const SIMD_VARIANT: &str = "archmage";

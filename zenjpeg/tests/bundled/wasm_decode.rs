@@ -30,7 +30,7 @@ fn setup() {
 
 /// UltraHDR gain map - 64x64 grayscale JPEG extracted from test_ultrahdr.jpg.
 /// This is a real gain map from an HDR photo that crashes browser WASM decode.
-const GAINMAP_GRAY_64X64: &[u8] = include_bytes!("../fuzz/corpus/seed/gainmap_gray_64x64.jpg");
+const GAINMAP_GRAY_64X64: &[u8] = include_bytes!("../../fuzz/corpus/seed/gainmap_gray_64x64.jpg");
 
 /// Test RGB decode works in WASM - this should always pass.
 #[wasm_bindgen_test]
@@ -162,7 +162,7 @@ fn test_wasm_decode_flower_gray() {
     setup();
 
     // Load the flower_gray.jpg from fuzz corpus
-    const FLOWER_GRAY: &[u8] = include_bytes!("../fuzz/corpus/seed/flower_gray.jpg");
+    const FLOWER_GRAY: &[u8] = include_bytes!("../../fuzz/corpus/seed/flower_gray.jpg");
 
     let decoder = Decoder::new();
     let decoded = decoder

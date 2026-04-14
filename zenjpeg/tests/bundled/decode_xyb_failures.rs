@@ -29,7 +29,7 @@ fn try_decode(data: &[u8]) -> Result<(), String> {
 /// Decoder must reject gracefully (not panic).
 #[test]
 fn xyb_huffman_512_q50_corrupted_rejects() {
-    let data = include_bytes!("testdata/decode_failures/xyb_huffman_512_q50.jpg");
+    let data = include_bytes!("../testdata/decode_failures/xyb_huffman_512_q50.jpg");
     let result = try_decode(data);
     assert!(
         result.is_err(),
@@ -45,7 +45,7 @@ fn xyb_huffman_512_q50_corrupted_rejects() {
 /// Pre-fix corrupted file: same root cause as Q50 but at Q15.
 #[test]
 fn xyb_huffman_512_q15_corrupted_rejects() {
-    let data = include_bytes!("testdata/decode_failures/xyb_huffman_512_q15.jpg");
+    let data = include_bytes!("../testdata/decode_failures/xyb_huffman_512_q15.jpg");
     let result = try_decode(data);
     assert!(
         result.is_err(),
@@ -61,21 +61,21 @@ fn xyb_huffman_512_q15_corrupted_rejects() {
 /// Post-fix XYB 1024x1024 with restart markers: should decode correctly.
 #[test]
 fn xyb_rst_1024_q60() {
-    let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q60.jpg");
+    let data = include_bytes!("../testdata/decode_failures/xyb_rst_1024_q60.jpg");
     let result = try_decode(data);
     assert!(result.is_ok(), "decode failed: {}", result.unwrap_err());
 }
 
 #[test]
 fn xyb_rst_1024_q15() {
-    let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q15.jpg");
+    let data = include_bytes!("../testdata/decode_failures/xyb_rst_1024_q15.jpg");
     let result = try_decode(data);
     assert!(result.is_ok(), "decode failed: {}", result.unwrap_err());
 }
 
 #[test]
 fn xyb_rst_1024_q20() {
-    let data = include_bytes!("testdata/decode_failures/xyb_rst_1024_q20.jpg");
+    let data = include_bytes!("../testdata/decode_failures/xyb_rst_1024_q20.jpg");
     let result = try_decode(data);
     assert!(result.is_ok(), "decode failed: {}", result.unwrap_err());
 }
