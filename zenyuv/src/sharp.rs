@@ -8,6 +8,9 @@
 //! `&ForwardCoeffs` / `&InverseCoeffs`. All functions are `#[inline(always)]`
 //! so they can be called from `#[arcane]` SIMD regions in the future.
 
+use archmage::prelude::*;
+use magetypes::simd::generic::f32x4 as GenericF32x4;
+
 use crate::gamma::{self, GammaLuts};
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
@@ -182,51 +185,111 @@ fn iterative_chroma_2x2(
         get_rgb(x1, y1),
     ];
 
-    // Initial estimate via gamma-aware averaging.
-    let (mut cb, mut cr) =
-        gamma_aware_chroma_2x2(rgb, width, height, cx, cy, fwd, luts, config.srgb_delinearize);
+    // Initial estimate: simple box-average of RGB → forward matrix.
+    // Faster than gamma-aware averaging (skips 12 LUT lookups + 3 polynomial
+    // evals per block), and the iterative loop corrects the initial error within
+    // 1-2 iterations regardless.
+    let r_avg = (orig[0].0 + orig[1].0 + orig[2].0 + orig[3].0) * 0.25;
+    let g_avg = (orig[0].1 + orig[1].1 + orig[2].1 + orig[3].1) * 0.25;
+    let b_avg = (orig[0].2 + orig[1].2 + orig[2].2 + orig[3].2) * 0.25;
+    let mut cb = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+    let mut cr = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
 
-    // Adjustment weights derived from the forward Cb/Cr matrix rows.
-    let adj_cb_r = fwd.cb_r_f;
-    let adj_cb_g = fwd.cb_g_f;
-    let adj_cb_b = fwd.cb_b_f;
-    let adj_cr_r = fwd.cr_r_f;
-    let adj_cr_g = fwd.cr_g_f;
-    let adj_cr_b = fwd.cr_b_f;
+    // Run the iterative loop via SIMD (f32x4 across the 4 pixels in the block).
+    incant!(iterative_refine_4wide(
+        &y_vals,
+        &[orig[0].0, orig[1].0, orig[2].0, orig[3].0],
+        &[orig[0].1, orig[1].1, orig[2].1, orig[3].1],
+        &[orig[0].2, orig[1].2, orig[2].2, orig[3].2],
+        cb, cr, fwd, inv, config
+    ))
+}
+
+/// SIMD iterative refinement: processes all 4 pixels of one 2×2 block in
+/// parallel via f32x4. Each pixel has independent Y but shares Cb/Cr.
+///
+/// Operations per iteration:
+/// - Reconstruct: 4 FMA ops per channel × 3 channels = 12 FMAs (f32x4)
+/// - Error: 3 subs + 3 abs (f32x4)
+/// - Adjustment: 6 FMAs (f32x4), then reduce_add to scalar
+/// - Update: 2 FMAs + 2 clamps (scalar)
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn iterative_refine_4wide(
+    token: Token,
+    y_vals: &[f32; 4],
+    orig_r: &[f32; 4],
+    orig_g: &[f32; 4],
+    orig_b: &[f32; 4],
+    mut cb: f32,
+    mut cr: f32,
+    fwd: &ForwardCoeffs,
+    inv: &InverseCoeffs,
+    config: &SharpYuvConfig,
+) -> (f32, f32) {
+    #[allow(non_camel_case_types)]
+    type f32x4 = GenericF32x4<Token>;
+
+    let y_v = f32x4::from_array(token, *y_vals);
+    let or_v = f32x4::from_array(token, *orig_r);
+    let og_v = f32x4::from_array(token, *orig_g);
+    let ob_v = f32x4::from_array(token, *orig_b);
+
+    // Inverse matrix coefficients broadcast.
+    let y_coeff_v = f32x4::splat(token, inv.y_coeff);
+    let y_off_v = f32x4::splat(token, inv.y_offset);
+    let cr_to_r_v = f32x4::splat(token, inv.cr_to_r);
+    let cr_to_g_v = f32x4::splat(token, inv.cr_to_g);
+    let cb_to_g_v = f32x4::splat(token, inv.cb_to_g);
+    let cb_to_b_v = f32x4::splat(token, inv.cb_to_b);
+    let uv_center = inv.uv_offset.abs();
+
+    // Forward matrix adjustment weights broadcast.
+    let adj_cb_r_v = f32x4::splat(token, fwd.cb_r_f);
+    let adj_cb_g_v = f32x4::splat(token, fwd.cb_g_f);
+    let adj_cb_b_v = f32x4::splat(token, fwd.cb_b_f);
+    let adj_cr_r_v = f32x4::splat(token, fwd.cr_r_f);
+    let adj_cr_g_v = f32x4::splat(token, fwd.cr_g_f);
+    let adj_cr_b_v = f32x4::splat(token, fwd.cr_b_f);
+
+    let zero_v = f32x4::splat(token, 0.0);
+    let max_v = f32x4::splat(token, 255.0);
+
+    // Pre-compute Y-dependent term: y_coeff * (Y - y_offset). Constant per iter.
+    let y_adj_v = y_coeff_v * (y_v - y_off_v);
 
     for _ in 0..config.max_iterations {
-        let mut total_error = 0.0f32;
-        let mut cb_adj = 0.0f32;
-        let mut cr_adj = 0.0f32;
+        let cb_c = cb - uv_center;
+        let cr_c = cr - uv_center;
+        let cb_c_v = f32x4::splat(token, cb_c);
+        let cr_c_v = f32x4::splat(token, cr_c);
 
-        for i in 0..4 {
-            let (orig_r, orig_g, orig_b) = orig[i];
-            let yv = y_vals[i];
+        // Reconstruct RGB: rec = y_adj + coeff * cb_c/cr_c, clamped to [0,255].
+        let rec_r = (y_adj_v + cr_to_r_v * cr_c_v).max(zero_v).min(max_v);
+        let rec_g = (y_adj_v + cr_to_g_v * cr_c_v + cb_to_g_v * cb_c_v)
+            .max(zero_v)
+            .min(max_v);
+        let rec_b = (y_adj_v + cb_to_b_v * cb_c_v).max(zero_v).min(max_v);
 
-            // Reconstruct RGB from Y + current Cb/Cr via inverse matrix.
-            let cb_centered = cb - inv.uv_offset.abs(); // uv_offset is -128
-            let cr_centered = cr - inv.uv_offset.abs();
-            let y_adj = inv.y_coeff * (yv - inv.y_offset);
-            let rec_r = (y_adj + inv.cr_to_r * cr_centered).clamp(0.0, 255.0);
-            let rec_g =
-                (y_adj + inv.cr_to_g * cr_centered + inv.cb_to_g * cb_centered).clamp(0.0, 255.0);
-            let rec_b = (y_adj + inv.cb_to_b * cb_centered).clamp(0.0, 255.0);
+        // Error per pixel (f32x4).
+        let err_r = or_v - rec_r;
+        let err_g = og_v - rec_g;
+        let err_b = ob_v - rec_b;
 
-            let err_r = orig_r - rec_r;
-            let err_g = orig_g - rec_g;
-            let err_b = orig_b - rec_b;
-
-            total_error += err_r.abs() + err_g.abs() + err_b.abs();
-
-            cb_adj += adj_cb_b * err_b + adj_cb_r * err_r + adj_cb_g * err_g;
-            cr_adj += adj_cr_r * err_r + adj_cr_g * err_g + adj_cr_b * err_b;
-        }
-
+        // Convergence: sum of absolute errors across all 4 pixels.
+        let abs_err = err_r.abs() + err_g.abs() + err_b.abs();
+        let total_error = abs_err.reduce_add();
         if total_error < config.convergence_threshold {
             break;
         }
 
-        // Damped update: average over 4 pixels, scale by 0.5 to prevent oscillation.
+        // Adjustment per pixel (f32x4), then horizontal sum to get total adjustment.
+        let cb_adj_v = adj_cb_r_v * err_r + adj_cb_g_v * err_g + adj_cb_b_v * err_b;
+        let cr_adj_v = adj_cr_r_v * err_r + adj_cr_g_v * err_g + adj_cr_b_v * err_b;
+        let cb_adj = cb_adj_v.reduce_add();
+        let cr_adj = cr_adj_v.reduce_add();
+
+        // Damped update: average 4 pixels × 0.5 damping.
         let scale = 0.25 * 0.5;
         cb = (cb + cb_adj * scale).clamp(0.0, 255.0);
         cr = (cr + cr_adj * scale).clamp(0.0, 255.0);

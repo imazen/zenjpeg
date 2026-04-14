@@ -1,4 +1,4 @@
-//! Full-pipeline encode benchmark: measures complete RGB→JPEG at Q85.
+//! Full-pipeline encode benchmark + isolated sharp YUV component timing.
 //!
 //! Run: `cargo bench --bench encode_zenbench`
 
@@ -24,28 +24,12 @@ fn bench_encode(suite: &mut Suite) {
     use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
     use zenjpeg::encode::EncoderConfig;
 
-    // 4K UHD: 3840x2160 = 8.3M pixels
     let rgb_4k: &'static [u8] = Box::leak(noise_patches(3840, 2160).into_boxed_slice());
 
     suite.group("encode_q85_4k", |g| {
-        g.bench("4:4:4 progressive", move |b| {
-            b.iter(|| {
-                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None);
-                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
-            })
-        });
-
         g.bench("4:2:0 progressive", move |b| {
             b.iter(|| {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
-                config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
-            })
-        });
-
-        g.bench("4:2:0 baseline", move |b| {
-            b.iter(|| {
-                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-                    .progressive(false);
                 config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
             })
         });
@@ -55,6 +39,64 @@ fn bench_encode(suite: &mut Suite) {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
                     .sharp_yuv(true);
                 config.encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb).unwrap()
+            })
+        });
+    });
+
+    // Isolated sharp YUV benchmark: just the color conversion, no DCT/entropy.
+    let rgb_1k: &'static [u8] = Box::leak(noise_patches(1024, 1024).into_boxed_slice());
+
+    suite.group("sharp_yuv_isolated/1024", |g| {
+        let (w, h) = (1024usize, 1024);
+        let cw = w / 2;
+        let ch = h / 2;
+
+        g.bench("plain 4:2:0", move |b| {
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; cw * ch];
+            let mut cr = vec![0u8; cw * ch];
+            b.iter(|| zenyuv::rgb_to_yuv420(rgb_1k, &mut y, &mut cb, &mut cr, w, h))
+        });
+
+        g.bench("sharp iter=4 (default)", move |b| {
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; cw * ch];
+            let mut cr = vec![0u8; cw * ch];
+            let luts = zenyuv::GammaLuts::srgb();
+            let config = zenyuv::SharpYuvConfig::default();
+            b.iter(|| {
+                zenyuv::rgb_to_yuv420_sharp(
+                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
+                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
+                )
+            })
+        });
+
+        g.bench("sharp iter=1", move |b| {
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; cw * ch];
+            let mut cr = vec![0u8; cw * ch];
+            let luts = zenyuv::GammaLuts::srgb();
+            let config = zenyuv::SharpYuvConfig { max_iterations: 1, ..Default::default() };
+            b.iter(|| {
+                zenyuv::rgb_to_yuv420_sharp(
+                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
+                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
+                )
+            })
+        });
+
+        g.bench("sharp iter=0 (gamma-aware only)", move |b| {
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; cw * ch];
+            let mut cr = vec![0u8; cw * ch];
+            let luts = zenyuv::GammaLuts::srgb();
+            let config = zenyuv::SharpYuvConfig { max_iterations: 0, ..Default::default() };
+            b.iter(|| {
+                zenyuv::rgb_to_yuv420_sharp(
+                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
+                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
+                )
             })
         });
     });
