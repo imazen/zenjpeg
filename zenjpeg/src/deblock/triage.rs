@@ -131,30 +131,59 @@ pub fn filter_plane_triage(
     let varmap = compute_varmap(plane, width, nbx, nby);
     let logicmap = build_logicmap(&varmap, nbx, nby, config.uniform_threshold as i64);
 
-    // Decide which filtered images are actually needed — skip the O(49 W H)
-    // deblock pass if no block is labelled uniform, etc.
-    let mut need_dering = false;
-    let mut need_deblock = false;
+    // Count how much work the convolutions actually have to do. If the whole
+    // image is Busy we can skip the source snapshot entirely.
+    let mut n_uniform = 0usize;
+    let mut n_transitional = 0usize;
     for &c in &logicmap {
         match c {
-            BlockClass::Uniform => need_deblock = true,
-            BlockClass::Transitional => need_dering = true,
+            BlockClass::Uniform => n_uniform += 1,
+            BlockClass::Transitional => n_transitional += 1,
             BlockClass::Busy => {}
         }
     }
+    if n_uniform == 0 && n_transitional == 0 {
+        return;
+    }
 
-    let dering = if need_dering {
-        convolve(plane, width, height, &DERING_KERNEL, 3, DERING_NORM)
-    } else {
-        Vec::new()
-    };
-    let deblock = if need_deblock {
-        convolve(plane, width, height, &DEBLOCK_KERNEL, 7, DEBLOCK_NORM)
-    } else {
-        Vec::new()
-    };
+    // The kernels must read from the original plane; blocks we've already
+    // overwritten would contaminate neighbouring block outputs. One clone
+    // is cheaper than a full-plane convolution pass.
+    let src: alloc::vec::Vec<f32> = plane[..width * height].to_vec();
 
-    assemble(plane, width, nbx, nby, &logicmap, &dering, &deblock);
+    for by in 0..nby {
+        for bx in 0..nbx {
+            match logicmap[by * nbx + bx] {
+                BlockClass::Uniform => {
+                    convolve_block(
+                        &src,
+                        plane,
+                        width,
+                        height,
+                        bx,
+                        by,
+                        &DEBLOCK_KERNEL,
+                        7,
+                        DEBLOCK_NORM,
+                    );
+                }
+                BlockClass::Transitional => {
+                    convolve_block(
+                        &src,
+                        plane,
+                        width,
+                        height,
+                        bx,
+                        by,
+                        &DERING_KERNEL,
+                        3,
+                        DERING_NORM,
+                    );
+                }
+                BlockClass::Busy => {}
+            }
+        }
+    }
 }
 
 /// Classify every 8×8 block of a plane according to the patent algorithm and
@@ -323,39 +352,74 @@ fn build_logicmap(
     out
 }
 
-/// Convolve a plane with a square integer kernel of radius `radius`
-/// (`size = 2*radius + 1`). Output is the same size, edge pixels use clamp-to-
-/// edge sampling, values are clamped to \[0, 255\].
-fn convolve(
-    plane: &[f32],
+/// Convolve a single 8×8 block from `src` with a square integer kernel and
+/// write the result into the corresponding 8×8 region of `dst`. Edge pixels
+/// use clamp-to-edge sampling; outputs are clamped to \[0, 255\].
+///
+/// Most blocks are in the interior of the plane, where clamping never fires.
+/// We specialise that path so the hot loop is a plain 7×7 / 3×3 FMA sweep
+/// with no per-tap bounds check.
+#[inline]
+fn convolve_block(
+    src: &[f32],
+    dst: &mut [f32],
     width: usize,
     height: usize,
+    bx: usize,
+    by: usize,
     kernel: &[i32],
     size: usize,
     norm: f32,
-) -> Vec<f32> {
+) {
     debug_assert!(size * size == kernel.len());
     debug_assert!(size % 2 == 1);
-    let radius = (size / 2) as isize;
-    let mut out = vec![0.0_f32; width * height];
+    let radius = size / 2;
     let inv_norm = 1.0_f32 / norm;
 
-    for y in 0..height {
-        for x in 0..width {
+    let x0 = bx * BLOCK;
+    let y0 = by * BLOCK;
+
+    // Interior fast path: the full kernel footprint fits without clamping.
+    let interior =
+        x0 >= radius && y0 >= radius && x0 + BLOCK + radius <= width && y0 + BLOCK + radius <= height;
+
+    if interior {
+        for y in y0..y0 + BLOCK {
+            let row_out = y * width;
+            for x in x0..x0 + BLOCK {
+                let mut acc = 0.0_f32;
+                let sy0 = y - radius;
+                let sx0 = x - radius;
+                for dy in 0..size {
+                    let row_in = (sy0 + dy) * width + sx0;
+                    let krow = dy * size;
+                    for dx in 0..size {
+                        acc += src[row_in + dx] * kernel[krow + dx] as f32;
+                    }
+                }
+                dst[row_out + x] = (acc * inv_norm).clamp(0.0, 255.0);
+            }
+        }
+        return;
+    }
+
+    // Boundary path: clamp-to-edge sampling per tap.
+    for y in y0..y0 + BLOCK {
+        let row_out = y * width;
+        for x in x0..x0 + BLOCK {
             let mut acc = 0.0_f32;
             for dy in 0..size {
-                let sy = clamp_edge(y as isize + dy as isize - radius, height);
-                let row_off = sy * width;
+                let sy = clamp_edge(y as isize + dy as isize - radius as isize, height);
+                let row_in = sy * width;
                 let krow = dy * size;
                 for dx in 0..size {
-                    let sx = clamp_edge(x as isize + dx as isize - radius, width);
-                    acc += plane[row_off + sx] * kernel[krow + dx] as f32;
+                    let sx = clamp_edge(x as isize + dx as isize - radius as isize, width);
+                    acc += src[row_in + sx] * kernel[krow + dx] as f32;
                 }
             }
-            out[y * width + x] = (acc * inv_norm).clamp(0.0, 255.0);
+            dst[row_out + x] = (acc * inv_norm).clamp(0.0, 255.0);
         }
     }
-    out
 }
 
 #[inline]
@@ -366,33 +430,6 @@ fn clamp_edge(i: isize, len: usize) -> usize {
         len - 1
     } else {
         i as usize
-    }
-}
-
-fn assemble(
-    plane: &mut [f32],
-    width: usize,
-    nbx: usize,
-    nby: usize,
-    logicmap: &[BlockClass],
-    dering: &[f32],
-    deblock: &[f32],
-) {
-    for by in 0..nby {
-        for bx in 0..nbx {
-            let src: &[f32] = match logicmap[by * nbx + bx] {
-                BlockClass::Busy => continue,
-                BlockClass::Uniform => deblock,
-                BlockClass::Transitional => dering,
-            };
-            let x0 = bx * BLOCK;
-            for y in by * BLOCK..(by + 1) * BLOCK {
-                let row = y * width;
-                let dst = &mut plane[row + x0..row + x0 + BLOCK];
-                let s = &src[row + x0..row + x0 + BLOCK];
-                dst.copy_from_slice(s);
-            }
-        }
     }
 }
 
@@ -490,6 +527,109 @@ mod tests {
         assert_eq!(d as f32, DERING_NORM);
         let b: i32 = DEBLOCK_KERNEL.iter().sum();
         assert_eq!(b as f32, DEBLOCK_NORM);
+    }
+
+    /// Reference implementation: full-plane convolve then per-block copy.
+    /// Used by `per_block_matches_full_plane` to guard against boundary /
+    /// ordering bugs in the per-block fast path.
+    fn filter_plane_triage_reference(
+        plane: &mut [f32],
+        width: usize,
+        height: usize,
+        config: TriageConfig,
+    ) {
+        let nbx = width / BLOCK;
+        let nby = height / BLOCK;
+        if nbx < 3 || nby < 3 {
+            return;
+        }
+        let varmap = compute_varmap(plane, width, nbx, nby);
+        let logicmap = build_logicmap(&varmap, nbx, nby, config.uniform_threshold as i64);
+
+        let mut full_conv = |kernel: &[i32], size: usize, norm: f32| -> Vec<f32> {
+            let radius = size / 2;
+            let inv_norm = 1.0_f32 / norm;
+            let mut out = vec![0.0_f32; width * height];
+            for y in 0..height {
+                for x in 0..width {
+                    let mut acc = 0.0_f32;
+                    for dy in 0..size {
+                        let sy = clamp_edge(y as isize + dy as isize - radius as isize, height);
+                        let row_in = sy * width;
+                        let krow = dy * size;
+                        for dx in 0..size {
+                            let sx =
+                                clamp_edge(x as isize + dx as isize - radius as isize, width);
+                            acc += plane[row_in + sx] * kernel[krow + dx] as f32;
+                        }
+                    }
+                    out[y * width + x] = (acc * inv_norm).clamp(0.0, 255.0);
+                }
+            }
+            out
+        };
+        let dering = full_conv(&DERING_KERNEL, 3, DERING_NORM);
+        let deblock = full_conv(&DEBLOCK_KERNEL, 7, DEBLOCK_NORM);
+
+        for by in 0..nby {
+            for bx in 0..nbx {
+                let src: &[f32] = match logicmap[by * nbx + bx] {
+                    BlockClass::Busy => continue,
+                    BlockClass::Uniform => &deblock,
+                    BlockClass::Transitional => &dering,
+                };
+                let x0 = bx * BLOCK;
+                for y in by * BLOCK..(by + 1) * BLOCK {
+                    let row = y * width;
+                    plane[row + x0..row + x0 + BLOCK].copy_from_slice(&src[row + x0..row + x0 + BLOCK]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn per_block_matches_full_plane() {
+        // Build an image that exercises all three block classes AND both
+        // interior and plane-edge block positions: a flat background
+        // (uniform), a noisy strip (busy), and a smooth-to-noisy transition.
+        let w = 72; // 9 blocks wide
+        let h = 56; // 7 blocks tall
+        let mut plane = vec![0.0_f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let val = if x < 24 {
+                    40.0 // left third: flat → uniform blocks
+                } else if x < 48 {
+                    // middle third: gradient — transitional-ish
+                    40.0 + (x - 24) as f32 * 6.0
+                } else if (x + y) % 2 == 0 {
+                    20.0 // right third: checkerboard → busy
+                } else {
+                    230.0
+                };
+                plane[y * w + x] = val;
+            }
+        }
+
+        let mut fast = plane.clone();
+        let mut slow = plane;
+        filter_plane_triage(&mut fast, w, h, TriageConfig::default());
+        filter_plane_triage_reference(&mut slow, w, h, TriageConfig::default());
+
+        // Must be byte-identical — the per-block fast path is supposed to
+        // produce the same arithmetic as the full-plane reference.
+        assert_eq!(fast.len(), slow.len());
+        for (i, (&a, &b)) in fast.iter().zip(slow.iter()).enumerate() {
+            if a.to_bits() != b.to_bits() {
+                let x = i % w;
+                let y = i / w;
+                panic!(
+                    "pixel ({x},{y}) mismatch: fast={a} (0x{:x}) vs ref={b} (0x{:x})",
+                    a.to_bits(),
+                    b.to_bits()
+                );
+            }
+        }
     }
 
     #[test]

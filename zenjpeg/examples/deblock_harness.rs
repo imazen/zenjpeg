@@ -1894,6 +1894,21 @@ fn parse_args() -> Args {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(usize::MAX);
             }
+            "--strategy" | "--strategies" => {
+                // Comma-separated allow-list. Baseline is always retained so
+                // the delta tables still have a reference column.
+                let list = iter.next().unwrap_or_default();
+                let wanted: Vec<String> =
+                    list.split(',').map(|s| s.trim().to_string()).collect();
+                args.strategies.retain(|s| {
+                    let n = s.name();
+                    n == "baseline" || wanted.iter().any(|w| w == n)
+                });
+                if args.strategies.is_empty() {
+                    eprintln!("--strategy: no matches for {list:?}");
+                    std::process::exit(1);
+                }
+            }
             "--verbose" | "-v" => args.verbose = true,
             "--help" | "-h" => {
                 eprintln!("Usage: deblock_harness [OPTIONS]");
@@ -1902,6 +1917,9 @@ fn parse_args() -> Args {
                 eprintln!("  --bench          Benchmark decode timing per strategy");
                 eprintln!("  --corpus <name>  gb82, cid22, gb82-sc, or gb82+cid22 (default)");
                 eprintln!("  --images <N>     Max images per corpus");
+                eprintln!(
+                    "  --strategy <csv> Run only these strategies (baseline is always kept)"
+                );
                 eprintln!("  --verbose        Per-image output");
                 eprintln!();
                 eprintln!("With no flags, runs both --generate and --measure.");
