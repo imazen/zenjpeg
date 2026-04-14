@@ -51,7 +51,7 @@ Encode benchmarks on a Ryzen 9 7950X (WSL2), AVX2 dispatch. Compared against the
 
 Sharp YUV minimizes chroma reconstruction error in gamma-encoded RGB space. Standard box-average chroma subsampling (4:2:0) discards spatial information, producing visible color bleeding at high-contrast edges. Sharp YUV iteratively adjusts Cb/Cr values to minimize the L2 error between the original RGB and the reconstructed RGB after chroma upsampling.
 
-zenyuv uses a Newton-step refinement approach: compute the reconstruction error gradient per 2x2 block, then apply a direct correction. Two iterations are enough to converge for most content. This replaces the original scalar loop (as in libwebp's SharpYUV) with vectorized gradient computation, achieving a **25x speedup** over the scalar reference implementation.
+zenyuv uses an L2-optimal Newton step: for each 2x2 chroma block, compute the exact reconstruction error using the inverse color matrix Jacobian, then apply the analytically derived correction. Two iterations converge where traditional forward-matrix gradient methods need 4+. The iteration loop is vectorized across blocks via magetypes `f32x8`, achieving a **25x speedup** over the original scalar implementation with better quality (correct Jacobian vs hand-tuned damping constants).
 
 Configure via `SharpYuvConfig`:
 
@@ -59,11 +59,7 @@ Configure via `SharpYuvConfig`:
 use zenyuv::{YuvContext, Range, Matrix, SharpYuvConfig};
 
 let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-let config = SharpYuvConfig {
-    max_iterations: 2,        // Newton steps (default: 2)
-    convergence_threshold: 0.1,
-    ..SharpYuvConfig::default()
-};
+let config = SharpYuvConfig::default(); // 2 Newton iterations
 
 let rgb = vec![128u8; 640 * 480 * 3];
 let mut y  = vec![0u8; 640 * 480];
@@ -100,9 +96,9 @@ ctx.encode_sharp_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480, &config);
 
 | Platform | ISA | Kernel | Pixels/iter |
 |----------|-----|--------|-------------|
-| x86-64 | AVX2+FMA | Native `#[arcane]` pmaddwd | 32 (encode), TBD (decode) |
-| aarch64 | NEON | Native `#[arcane]` | 16 |
-| wasm32 | SIMD128 | Native `#[arcane]` | 16 |
+| x86-64 | AVX2+FMA | Hand-tuned `#[arcane]` pmaddwd | 32 (encode) |
+| aarch64 | NEON | Auto-vectorized via magetypes | 8 |
+| wasm32 | SIMD128 | Auto-vectorized via magetypes | 8 |
 | All others | Scalar | magetypes `f32x8` fallback | 8 |
 
 SIMD tier is selected at runtime via archmage token dispatch (`X64V3Token::summon()` etc.). No compile-time target features required.
