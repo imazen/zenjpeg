@@ -446,6 +446,12 @@ pub struct StripProcessor {
     /// Enable overshoot deringing (on by default)
     deringing: bool,
 
+    // === RD-OPT histogram collection ===
+    /// When enabled, collects DCT coefficient histograms for content-adaptive
+    /// quantization table refinement (Ratnakar & Livny RD-OPT algorithm).
+    #[cfg(feature = "rdopt")]
+    rdopt_ctx: Option<crate::encode::rdopt::RdOptContext>,
+
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
@@ -718,6 +724,10 @@ impl StripProcessor {
             // Optional preprocessing (deringing on by default)
             deringing: true,
 
+            // RD-OPT histogram collection (disabled by default)
+            #[cfg(feature = "rdopt")]
+            rdopt_ctx: None,
+
             // Trellis quantization (disabled by default)
             #[cfg(feature = "trellis")]
             hybrid_ctx: None,
@@ -850,6 +860,21 @@ impl StripProcessor {
     #[cfg(feature = "trellis")]
     pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
+    }
+
+    /// Enables RD-OPT histogram collection for table refinement.
+    #[cfg(feature = "rdopt")]
+    pub fn enable_rdopt(&mut self, lambda: f32, enable_thresholds: bool) {
+        self.rdopt_ctx = Some(crate::encode::rdopt::RdOptContext::new(
+            lambda,
+            enable_thresholds,
+        ));
+    }
+
+    /// Takes the RD-OPT context out (after finalize), consuming the histograms.
+    #[cfg(feature = "rdopt")]
+    pub fn take_rdopt_context(&mut self) -> Option<crate::encode::rdopt::RdOptContext> {
+        self.rdopt_ctx.take()
     }
 
     /// Returns whether XYB mode is enabled.
@@ -1318,6 +1343,20 @@ impl StripProcessor {
             .is_some_and(|ctx| ctx.is_dc_trellis_enabled());
         #[cfg(not(feature = "trellis"))]
         let store_dc_raw = false;
+
+        // RD-OPT: accumulate DCT coefficient histograms before quantization
+        #[cfg(feature = "rdopt")]
+        if let Some(ref mut ctx) = self.rdopt_ctx {
+            for dct in self.pending.y[buffer_idx].iter() {
+                ctx.accumulate_y(dct);
+            }
+            for dct in self.pending.cb[buffer_idx].iter() {
+                ctx.accumulate_cb(dct);
+            }
+            for dct in self.pending.cr[buffer_idx].iter() {
+                ctx.accumulate_cr(dct);
+            }
+        }
 
         // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {

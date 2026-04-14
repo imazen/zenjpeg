@@ -164,6 +164,13 @@ impl BytesEncoder {
             }
         }
 
+        // Apply RD-OPT table refinement
+        #[cfg(feature = "rdopt")]
+        {
+            builder = builder.rdopt_refine(config.rdopt_refine);
+            builder = builder.rdopt_thresholds(config.rdopt_thresholds);
+        }
+
         builder.start()
     }
 
@@ -1007,6 +1014,13 @@ impl YCbCrPlanarEncoder {
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             builder = builder.parallel(true);
+        }
+
+        // Apply RD-OPT table refinement
+        #[cfg(feature = "rdopt")]
+        {
+            builder = builder.rdopt_refine(config.rdopt_refine);
+            builder = builder.rdopt_thresholds(config.rdopt_thresholds);
         }
 
         builder.start()

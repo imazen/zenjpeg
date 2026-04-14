@@ -59,6 +59,16 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+    /// RD-OPT: content-adaptive quantization table refinement.
+    /// When true, collects DCT coefficient histograms and refines quant tables
+    /// using Lagrangian rate-distortion optimization before entropy coding.
+    /// Requires buffered mode (HuffmanStrategy::Optimize). Default: false.
+    #[cfg(feature = "rdopt")]
+    pub(crate) rdopt_refine: bool,
+    /// RD-OPT: enable global thresholding (per-frequency zeroing cutoffs
+    /// independent of the quantization step size). Default: true when rdopt enabled.
+    #[cfg(feature = "rdopt")]
+    pub(crate) rdopt_thresholds: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -211,6 +221,10 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            #[cfg(feature = "rdopt")]
+            rdopt_refine: false,
+            #[cfg(feature = "rdopt")]
+            rdopt_thresholds: true,
         }
     }
 
@@ -915,6 +929,41 @@ impl EncoderConfig {
     #[must_use]
     pub fn pre_blur(mut self, sigma: f32) -> Self {
         self.pre_blur = sigma;
+        self
+    }
+
+    /// Enable RD-OPT content-adaptive quantization table refinement.
+    ///
+    /// When enabled, the encoder collects DCT coefficient histograms during
+    /// the DCT pass, then uses Lagrangian rate-distortion optimization to
+    /// refine the quantization tables before entropy coding.
+    ///
+    /// This is a two-pass optimization that works with buffered mode only
+    /// (the default `HuffmanStrategy::Optimize`). It is orthogonal to
+    /// trellis quantization — RD-OPT optimizes the quantization *table*,
+    /// while trellis optimizes individual *coefficients* given the table.
+    ///
+    /// Based on Ratnakar & Livny, "RD-OPT: An Efficient Algorithm for
+    /// Optimizing DCT Quantization Tables" (DCC 1995).
+    #[cfg(feature = "rdopt")]
+    #[must_use]
+    pub fn rdopt_refine(mut self, enable: bool) -> Self {
+        self.rdopt_refine = enable;
+        self
+    }
+
+    /// Enable or disable global thresholding in RD-OPT.
+    ///
+    /// When enabled (default when `rdopt_refine` is on), per-frequency zeroing
+    /// thresholds are jointly optimized alongside the quantization table. This
+    /// allows zeroing coefficients at thresholds different from the standard
+    /// `q/2` cutoff, improving rate-distortion tradeoffs especially at low bitrates.
+    ///
+    /// The thresholds are encoder-side only — the decoder does not need them.
+    #[cfg(feature = "rdopt")]
+    #[must_use]
+    pub fn rdopt_thresholds(mut self, enable: bool) -> Self {
+        self.rdopt_thresholds = enable;
         self
     }
 

@@ -59,6 +59,12 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
     pub(crate) quant_source: QuantTableSource,
+    /// RD-OPT: enable content-adaptive quantization table refinement.
+    #[cfg(feature = "rdopt")]
+    pub(crate) rdopt_refine: bool,
+    /// RD-OPT: enable global thresholding.
+    #[cfg(feature = "rdopt")]
+    pub(crate) rdopt_thresholds: bool,
 }
 
 impl StreamingEncoderBuilder {
@@ -90,6 +96,10 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "trellis")]
             trellis: None,
             quant_source: QuantTableSource::default(),
+            #[cfg(feature = "rdopt")]
+            rdopt_refine: false,
+            #[cfg(feature = "rdopt")]
+            rdopt_thresholds: true,
         }
     }
 
@@ -386,6 +396,22 @@ impl StreamingEncoderBuilder {
     #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
+        self
+    }
+
+    /// Enables RD-OPT content-adaptive quantization table refinement.
+    #[must_use]
+    #[cfg(feature = "rdopt")]
+    pub(crate) fn rdopt_refine(mut self, enable: bool) -> Self {
+        self.rdopt_refine = enable;
+        self
+    }
+
+    /// Enables RD-OPT global thresholding.
+    #[must_use]
+    #[cfg(feature = "rdopt")]
+    pub(crate) fn rdopt_thresholds(mut self, enable: bool) -> Self {
+        self.rdopt_thresholds = enable;
         self
     }
 

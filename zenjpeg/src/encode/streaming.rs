@@ -98,6 +98,10 @@ pub(crate) struct StreamingEncoder {
 
     /// Streaming-through state. None = buffered mode (default).
     streaming: Option<StreamingOutputState>,
+
+    /// RD-OPT: enable content-adaptive table refinement in finish path.
+    #[cfg(feature = "rdopt")]
+    rdopt_refine: bool,
 }
 
 impl StreamingEncoder {
@@ -300,6 +304,14 @@ impl StreamingEncoder {
             }
         }
 
+        // Enable RD-OPT histogram collection if configured (buffered mode only)
+        #[cfg(feature = "rdopt")]
+        if builder.rdopt_refine && !enable_streaming {
+            let lambda =
+                crate::encode::rdopt::lambda_from_distance(builder.quality.to_distance());
+            processor.enable_rdopt(lambda, builder.rdopt_thresholds);
+        }
+
         let strip_height = processor.strip_height();
         let bytes_per_row = width * builder.pixel_format.bytes_per_pixel();
 
@@ -402,6 +414,8 @@ impl StreamingEncoder {
             cb_quant,
             cr_quant,
             streaming,
+            #[cfg(feature = "rdopt")]
+            rdopt_refine: builder.rdopt_refine,
         })
     }
 
@@ -954,13 +968,55 @@ impl StreamingEncoder {
         } else {
             // Buffered mode: build complete JPEG from all blocks
             let config = self.config;
-            let y_quant = self.y_quant;
-            let cb_quant = self.cb_quant;
-            let cr_quant = self.cr_quant;
+            let mut y_quant = self.y_quant;
+            let mut cb_quant = self.cb_quant;
+            let mut cr_quant = self.cr_quant;
             let width = self.width;
             let height = self.height;
 
-            let strip_output = self.processor.finalize()?;
+            // RD-OPT: take histogram context before finalize consumes processor
+            #[cfg(feature = "rdopt")]
+            let rdopt_ctx = if self.rdopt_refine {
+                self.processor.take_rdopt_context()
+            } else {
+                None
+            };
+
+            let mut strip_output = self.processor.finalize()?;
+
+            // RD-OPT: apply content-adaptive global thresholding.
+            //
+            // We keep the base quant tables unchanged (avoiding re-quantization
+            // error) and only zero out coefficients where the R-D analysis shows
+            // the rate savings outweigh the quality cost. This is always safe:
+            // zeroing a coefficient can only reduce file size, and the quality
+            // impact is bounded by the quant step.
+            #[cfg(feature = "rdopt")]
+            if let Some(ctx) = rdopt_ctx {
+                let weights = crate::encode::rdopt::default_perceptual_weights();
+
+                // Compute thresholds for each component
+                let y_opt = ctx.optimize_component(0, &y_quant, &weights);
+                let cb_opt = ctx.optimize_component(1, &cb_quant, &weights);
+                let cr_opt = ctx.optimize_component(2, &cr_quant, &weights);
+
+                // Apply thresholding only (no table changes, no re-quantization)
+                crate::encode::rdopt::apply_global_thresholds(
+                    &mut strip_output.y_blocks,
+                    &y_quant,
+                    &y_opt.thresholds_natural,
+                );
+                crate::encode::rdopt::apply_global_thresholds(
+                    &mut strip_output.cb_blocks,
+                    &cb_quant,
+                    &cb_opt.thresholds_natural,
+                );
+                crate::encode::rdopt::apply_global_thresholds(
+                    &mut strip_output.cr_blocks,
+                    &cr_quant,
+                    &cr_opt.thresholds_natural,
+                );
+            }
 
             Self::build_jpeg_from_blocks_into(
                 &config,

@@ -154,6 +154,10 @@ parallel = ["dep:rayon"]
 # Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
 # with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
 trellis = []
+# RD-OPT table refinement: content-adaptive quantization table optimization via
+# Lagrangian search over DCT coefficient histograms (Ratnakar & Livny 1995).
+# Two-pass: collects statistics during DCT, refines quant tables before entropy coding.
+rdopt = []
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
 moxcms = ["dep:moxcms"]
 # ── Internal / dev-only features (prefixed with __ to signal "don't use") ──

@@ -109,6 +109,14 @@ pub mod tuning;
 #[cfg(feature = "trellis")]
 pub mod trellis;
 
+/// RD-OPT quantization table refinement (Ratnakar & Livny 1995).
+///
+/// Content-adaptive table optimization using DCT coefficient histograms
+/// and Lagrangian rate-distortion search. Includes global thresholding
+/// extension for per-frequency zeroing thresholds.
+#[cfg(feature = "rdopt")]
+pub(crate) mod rdopt;
+
 /// Expert configuration for external optimization (simulated annealing, etc.).
 ///
 /// Flattens all quality/size-affecting parameters into a single struct with
