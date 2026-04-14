@@ -61,6 +61,15 @@ pub fn rgb_to_yuv444_with(
         return;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    if let Some(token) = archmage::Wasm128Token::summon() {
+        let done = crate::wasm_encode::rgb_to_yuv444_wasm(token, rgb, y, cb, cr, n, &coeffs);
+        if done < n {
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n, &coeffs);
+        }
+        return;
+    }
+
     incant!(crate::encode_generic::rgb_to_yuv444_generic(
         rgb, y, cb, cr, n, &coeffs
     ));
@@ -106,6 +115,12 @@ pub fn rgb_to_yuv420_with(
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = archmage::X64V3Token::summon() {
         crate::avx2_encode::rgb_to_yuv420_avx2(token, rgb, y, cb, cr, width, height, cw, &coeffs);
+        return;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if let Some(token) = archmage::Wasm128Token::summon() {
+        crate::wasm_encode::rgb_to_yuv420_wasm(token, rgb, y, cb, cr, width, height, cw, &coeffs);
         return;
     }
 
@@ -196,5 +211,121 @@ pub(crate) fn rgb_to_yuv444_scalar_tail(
             + coeffs.uv_bias)
             >> PREC)
             .clamp(0, 255) as u8;
+    }
+}
+
+/// Scalar fallback for 4:2:0 columns/rows not covered by SIMD blocks.
+/// Replicates the exact AVX2 sequence: avg_epu8 vertical, maddubs horizontal,
+/// pmaddwd at PREC+1, shift by PREC+1. Arch-independent — called from both
+/// the AVX2 and WASM SIMD128 kernels.
+pub(crate) fn rgb_to_yuv420_scalar_tail(
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    width: usize,
+    height: usize,
+    cw: usize,
+    simd_cols: usize,
+    coeffs: &ForwardCoeffs,
+) {
+    use crate::types::PREC;
+    let row_stride = width * 3;
+
+    // Y for columns simd_cols..width (all rows).
+    for row in 0..height {
+        for col in simd_cols..width {
+            let p = row * row_stride + col * 3;
+            let r = rgb[p] as i32;
+            let g = rgb[p + 1] as i32;
+            let b = rgb[p + 2] as i32;
+            y_out[row * width + col] = ((r * coeffs.yr as i32
+                + g * coeffs.yg as i32
+                + b * coeffs.yb as i32
+                + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+        }
+    }
+
+    // Cb/Cr for chroma columns not covered by SIMD.
+    let simd_cx = simd_cols / 2;
+    let mut cy = 0usize;
+    let mut row = 0usize;
+    while row < height {
+        let row1 = (row + 1).min(height - 1);
+        let mut cx = simd_cx;
+        let mut col = simd_cols;
+        while col < width {
+            let col1 = (col + 1).min(width - 1);
+            let i00 = row * row_stride + col * 3;
+            let i01 = row * row_stride + col1 * 3;
+            let i10 = row1 * row_stride + col * 3;
+            let i11 = row1 * row_stride + col1 * 3;
+            let r_v0 = (rgb[i00] as i32 + rgb[i10] as i32 + 1) / 2;
+            let r_v1 = (rgb[i01] as i32 + rgb[i11] as i32 + 1) / 2;
+            let g_v0 = (rgb[i00 + 1] as i32 + rgb[i10 + 1] as i32 + 1) / 2;
+            let g_v1 = (rgb[i01 + 1] as i32 + rgb[i11 + 1] as i32 + 1) / 2;
+            let b_v0 = (rgb[i00 + 2] as i32 + rgb[i10 + 2] as i32 + 1) / 2;
+            let b_v1 = (rgb[i01 + 2] as i32 + rgb[i11 + 2] as i32 + 1) / 2;
+            let r_ps = r_v0 + r_v1;
+            let g_ps = g_v0 + g_v1;
+            let b_ps = b_v0 + b_v1;
+            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
+                + g_ps * coeffs.cb_g as i32
+                + b_ps * coeffs.cb_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
+                .clamp(0, 255) as u8;
+            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
+                + g_ps * coeffs.cr_g as i32
+                + b_ps * coeffs.cr_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
+                .clamp(0, 255) as u8;
+            cx += 1;
+            col += 2;
+        }
+        cy += 1;
+        row += 2;
+    }
+
+    // Odd last row in the SIMD-covered Y/chroma region.
+    if height % 2 == 1 {
+        let last_row = height - 1;
+        for col in 0..simd_cols.min(width) {
+            let p = last_row * row_stride + col * 3;
+            let r = rgb[p] as i32;
+            let g = rgb[p + 1] as i32;
+            let b = rgb[p + 2] as i32;
+            y_out[last_row * width + col] = ((r * coeffs.yr as i32
+                + g * coeffs.yg as i32
+                + b * coeffs.yb as i32
+                + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+        }
+        let cy = height / 2;
+        for cx in 0..simd_cx {
+            let col = cx * 2;
+            let col1 = (col + 1).min(width - 1);
+            let i00 = last_row * row_stride + col * 3;
+            let i01 = last_row * row_stride + col1 * 3;
+            let r_ps = rgb[i00] as i32 + rgb[i01] as i32;
+            let g_ps = rgb[i00 + 1] as i32 + rgb[i01 + 1] as i32;
+            let b_ps = rgb[i00 + 2] as i32 + rgb[i01 + 2] as i32;
+            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
+                + g_ps * coeffs.cb_g as i32
+                + b_ps * coeffs.cb_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
+                .clamp(0, 255) as u8;
+            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
+                + g_ps * coeffs.cr_g as i32
+                + b_ps * coeffs.cr_b as i32
+                + coeffs.uv_bias_420)
+                >> (PREC + 1))
+                .clamp(0, 255) as u8;
+        }
     }
 }

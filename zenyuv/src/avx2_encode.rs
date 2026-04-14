@@ -198,7 +198,7 @@ pub(crate) fn rgb_to_yuv420_avx2(
     }
 
     // Scalar tail: remaining columns, odd last row, etc.
-    rgb_to_yuv420_scalar_tail(
+    crate::encode::rgb_to_yuv420_scalar_tail(
         rgb,
         y_out,
         cb_out,
@@ -209,128 +209,6 @@ pub(crate) fn rgb_to_yuv420_avx2(
         col_blocks * 32,
         coeffs,
     );
-}
-
-/// Scalar fallback for columns/rows not covered by the 32-column SIMD blocks.
-/// Uses the same 15-bit fixed-point integer math as the AVX2 kernels.
-pub(crate) fn rgb_to_yuv420_scalar_tail(
-    rgb: &[u8],
-    y_out: &mut [u8],
-    cb_out: &mut [u8],
-    cr_out: &mut [u8],
-    width: usize,
-    height: usize,
-    cw: usize,
-    simd_cols: usize,
-    coeffs: &ForwardCoeffs,
-) {
-    use crate::types::PREC;
-    let row_stride = width * 3;
-
-    // Y for columns simd_cols..width (all rows).
-    for row in 0..height {
-        for col in simd_cols..width {
-            let p = row * row_stride + col * 3;
-            let r = rgb[p] as i32;
-            let g = rgb[p + 1] as i32;
-            let b = rgb[p + 2] as i32;
-            y_out[row * width + col] = ((r * coeffs.yr as i32
-                + g * coeffs.yg as i32
-                + b * coeffs.yb as i32
-                + coeffs.y_bias)
-                >> PREC)
-                .clamp(0, 255) as u8;
-        }
-    }
-
-    // Cb/Cr for all chroma columns that weren't fully handled by SIMD.
-    // Replicates the exact AVX2 sequence: avg_epu8 vertical, maddubs horizontal,
-    // pmaddwd at PREC+1, shift by PREC+1.
-    let simd_cx = simd_cols / 2;
-    let mut cy = 0usize;
-    let mut row = 0usize;
-    while row < height {
-        let row1 = (row + 1).min(height - 1);
-        let mut cx = simd_cx;
-        let mut col = simd_cols;
-        while col < width {
-            let col1 = (col + 1).min(width - 1);
-            let i00 = row * row_stride + col * 3;
-            let i01 = row * row_stride + col1 * 3;
-            let i10 = row1 * row_stride + col * 3;
-            let i11 = row1 * row_stride + col1 * 3;
-            // avg_epu8 vertical: (a + b + 1) / 2
-            let r_v0 = (rgb[i00] as i32 + rgb[i10] as i32 + 1) / 2;
-            let r_v1 = (rgb[i01] as i32 + rgb[i11] as i32 + 1) / 2;
-            let g_v0 = (rgb[i00 + 1] as i32 + rgb[i10 + 1] as i32 + 1) / 2;
-            let g_v1 = (rgb[i01 + 1] as i32 + rgb[i11 + 1] as i32 + 1) / 2;
-            let b_v0 = (rgb[i00 + 2] as i32 + rgb[i10 + 2] as i32 + 1) / 2;
-            let b_v1 = (rgb[i01 + 2] as i32 + rgb[i11 + 2] as i32 + 1) / 2;
-            // maddubs pair-sum
-            let r_ps = r_v0 + r_v1;
-            let g_ps = g_v0 + g_v1;
-            let b_ps = b_v0 + b_v1;
-            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
-                + g_ps * coeffs.cb_g as i32
-                + b_ps * coeffs.cb_b as i32
-                + coeffs.uv_bias_420)
-                >> (PREC + 1))
-                .clamp(0, 255) as u8;
-            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
-                + g_ps * coeffs.cr_g as i32
-                + b_ps * coeffs.cr_b as i32
-                + coeffs.uv_bias_420)
-                >> (PREC + 1))
-                .clamp(0, 255) as u8;
-            cx += 1;
-            col += 2;
-        }
-        cy += 1;
-        row += 2;
-    }
-
-    // Odd last row: Y was handled above if simd_cols < width, but for the
-    // SIMD-covered Y columns on the last odd row, we still need them.
-    if height % 2 == 1 {
-        let last_row = height - 1;
-        for col in 0..simd_cols.min(width) {
-            let p = last_row * row_stride + col * 3;
-            let r = rgb[p] as i32;
-            let g = rgb[p + 1] as i32;
-            let b = rgb[p + 2] as i32;
-            y_out[last_row * width + col] = ((r * coeffs.yr as i32
-                + g * coeffs.yg as i32
-                + b * coeffs.yb as i32
-                + coeffs.y_bias)
-                >> PREC)
-                .clamp(0, 255) as u8;
-        }
-        // Cb/Cr for the last odd chroma row (SIMD columns).
-        // Odd row: top == bottom, so avg_epu8 = identity.
-        let cy = height / 2;
-        for cx in 0..simd_cx {
-            let col = cx * 2;
-            let col1 = (col + 1).min(width - 1);
-            let i00 = last_row * row_stride + col * 3;
-            let i01 = last_row * row_stride + col1 * 3;
-            // No bottom row → avg_epu8(x, x) = x, pair-sum = col0 + col1
-            let r_ps = rgb[i00] as i32 + rgb[i01] as i32;
-            let g_ps = rgb[i00 + 1] as i32 + rgb[i01 + 1] as i32;
-            let b_ps = rgb[i00 + 2] as i32 + rgb[i01 + 2] as i32;
-            cb_out[cy * cw + cx] = ((r_ps * coeffs.cb_r as i32
-                + g_ps * coeffs.cb_g as i32
-                + b_ps * coeffs.cb_b as i32
-                + coeffs.uv_bias_420)
-                >> (PREC + 1))
-                .clamp(0, 255) as u8;
-            cr_out[cy * cw + cx] = ((r_ps * coeffs.cr_r as i32
-                + g_ps * coeffs.cr_g as i32
-                + b_ps * coeffs.cr_b as i32
-                + coeffs.uv_bias_420)
-                >> (PREC + 1))
-                .clamp(0, 255) as u8;
-        }
-    }
 }
 
 // ── AVX2 helper functions ──────────────────────────────────────────────────
