@@ -33,7 +33,7 @@ pub struct SharpYuvConfig {
 impl Default for SharpYuvConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 4,
+            max_iterations: 2,
             convergence_threshold: 0.1,
             gamma_aware_init: false,
             srgb_delinearize: true,
