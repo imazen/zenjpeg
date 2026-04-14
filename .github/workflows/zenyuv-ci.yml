@@ -1,0 +1,155 @@
+name: zenyuv CI
+
+on:
+  push:
+    paths:
+      - "zenyuv/**"
+      - ".github/workflows/zenyuv-ci.yml"
+  pull_request:
+    paths:
+      - "zenyuv/**"
+      - ".github/workflows/zenyuv-ci.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - macos-26-intel
+          - windows-11-arm
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: zenyuv-${{ matrix.os }}
+
+      - name: Test
+        run: cargo test -p zenyuv --release
+
+  i686:
+    name: Test (i686)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: zenyuv-cross-i686
+
+      - name: Test (i686)
+        run: cross test -p zenyuv --target i686-unknown-linux-gnu --release
+
+  wasm:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: zenyuv-wasm
+
+      - name: Build (WASM)
+        run: cargo build -p zenyuv --target wasm32-unknown-unknown
+
+  clippy:
+    name: Clippy (zenyuv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: zenyuv-clippy
+
+      - name: Clippy
+        run: cargo clippy -p zenyuv -- -D warnings
+
+  fmt:
+    name: Format (zenyuv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt -p zenyuv -- --check

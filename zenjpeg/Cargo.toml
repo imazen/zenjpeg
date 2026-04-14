@@ -63,6 +63,7 @@ rayon = { workspace = true, optional = true }  # For parallel encoding
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 # Mandatory dependency — will be replaced with archmage-based code eventually.
 yuv = { workspace = true }
+zenyuv = { workspace = true }
 # Token-based safe SIMD intrinsics (mandatory — always compiled in)
 archmage = { workspace = true }
 # Token-gated SIMD types (wraps archmage tokens)
@@ -83,6 +84,7 @@ zenresize = { workspace = true, optional = true, features = ["layout"] }
 
 [dev-dependencies]
 wide = { workspace = true }
+zenyuv = { workspace = true }
 # WASM-compatible dev dependencies
 almost-enough = { workspace = true }
 test-case = { workspace = true }
@@ -267,6 +269,14 @@ required-features = ["decoder"]
 name = "wide_migration"
 harness = false
 required-features = ["decoder", "parallel"]
+
+[[bench]]
+name = "rgb_to_yuv_internal"
+harness = false
+
+[[bench]]
+name = "encode_zenbench"
+harness = false
 
 [lints]
 workspace = true

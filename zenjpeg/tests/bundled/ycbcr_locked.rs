@@ -79,12 +79,13 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
 ];
 
 /// S420: identical between SIMD and non-SIMD
+/// Updated 2026-04-14: zenyuv integer math with exact avg_epu8 chroma parity
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 271315),
-    (70, 362380),
-    (85, 493820),
-    (90, 583172),
-    (95, 742408),
+    (50, 271379),
+    (70, 362435),
+    (85, 493918),
+    (90, 583278),
+    (95, 742384),
 ];
 
 #[cfg(target_arch = "x86_64")]
@@ -145,22 +146,24 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
     (95, 756381),
 ];
 
+/// Updated 2026-04-14: zenyuv integer math with exact avg_epu8 chroma parity
 #[cfg(target_arch = "x86_64")]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 262226),
-    (70, 349393),
-    (85, 475480),
-    (90, 561470),
-    (95, 714787),
+    (50, 262175),
+    (70, 349457),
+    (85, 475521),
+    (90, 561352),
+    (95, 714874),
 ];
 
+/// Updated 2026-04-14: zenyuv integer math — should now match x86_64
 #[cfg(not(target_arch = "x86_64"))]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 262226),
-    (70, 349393),
-    (85, 475480),
-    (90, 561486),
-    (95, 714787),
+    (50, 262175),
+    (70, 349457),
+    (85, 475521),
+    (90, 561352),
+    (95, 714874),
 ];
 
 #[cfg(target_arch = "x86_64")]
@@ -191,8 +194,9 @@ mod hashes {
     pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x2c0a6aca998d8042;
     pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x8491935fc04738a4;
     pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x4ac5a06df3bc5fe7;
-    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
-    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb3e29b767042bdf5;
+    // Updated 2026-04-14: zenyuv integer math
+    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xae68d13be4b55653;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb96b671ab7134448;
     pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x44a3acddda6d0591;
     pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x48d3cbff0f61e3e2;
 }
@@ -203,8 +207,9 @@ mod hashes {
     pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x4233015231b9e826;
     pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xff9fffa84d091a73;
     pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x88b176f2aaaf20a6;
-    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
-    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb3e29b767042bdf5;
+    // Updated 2026-04-14: zenyuv integer math — should now match x86_64
+    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xae68d13be4b55653;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xb96b671ab7134448;
     pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xef45fac2c99a3211;
     pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x396ad62cab795db0;
 }

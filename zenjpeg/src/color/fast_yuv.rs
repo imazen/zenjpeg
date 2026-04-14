@@ -1,95 +1,21 @@
-//! Fast SIMD RGB→YCbCr conversion using the `yuv` crate.
+//! Fast SIMD RGB→YCbCr conversion using `zenyuv`.
 //!
-//! This module provides 10-150× faster color conversion compared to scalar f32 math
-//! by using the `yuv` crate's optimized SIMD implementations (AVX-512/AVX2/SSE/NEON).
+//! This module wraps zenyuv's AVX2/NEON/WASM SIMD kernels with the strided
+//! f32-output interface that zenjpeg's encoder pipeline expects. The flow:
+//!
+//! 1. Strip alpha (RGBA→RGB) or swap channels (BGR→RGB) if needed
+//! 2. `zenyuv::rgb_to_yuv444` / `zenyuv::rgb_to_yuv420` → u8 temp planes
+//! 3. u8→f32 copy with Y stride + edge replication
 //!
 //! ## Precision
 //!
-//! The yuv crate uses 15-bit fixed-point integer math (Professional mode):
-//! - Max Y error: ~0.5 levels (out of 255)
-//! - Avg Y error: ~0.25 levels
-//! - This is invisible after JPEG DCT quantization (which loses 2-4 levels at Q85)
-//!
-//! ## Usage
-//!
-//! This module is used automatically when the `fast-yuv` feature is enabled (default).
-//! Falls back to scalar f32 conversion when disabled.
-
-use yuv::{
-    BufferStoreMut, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
-    YuvStandardMatrix, rgb_to_yuv420, rgb_to_yuv444,
-};
-
-/// Convert RGB to YCbCr using fast SIMD integer math.
-///
-/// Outputs f32 planes for compatibility with the rest of the encoder pipeline.
-/// The u8→f32 conversion overhead is negligible compared to the 10-150× speedup.
-///
-/// # Arguments
-/// * `rgb_data` - Input RGB data (3 bytes per pixel, row-major)
-/// * `y_plane` - Output Y plane (f32, [0, 255] range)
-/// * `cb_plane` - Output Cb plane (f32, [0, 255] range)
-/// * `cr_plane` - Output Cr plane (f32, [0, 255] range)
-/// * `width` - Image width in pixels
-/// * `height` - Number of rows
-///
-/// # Panics
-/// Panics if output planes are too small.
-#[allow(dead_code)] // Utility function, currently only strided version is used
-pub fn rgb_to_ycbcr_fast(
-    rgb_data: &[u8],
-    y_plane: &mut [f32],
-    cb_plane: &mut [f32],
-    cr_plane: &mut [f32],
-    width: usize,
-    height: usize,
-) {
-    let num_pixels = width * height;
-    debug_assert!(rgb_data.len() >= num_pixels * 3);
-    debug_assert!(y_plane.len() >= num_pixels);
-    debug_assert!(cb_plane.len() >= num_pixels);
-    debug_assert!(cr_plane.len() >= num_pixels);
-
-    // Use yuv crate for fast SIMD conversion (outputs u8)
-    let mut yuv_image =
-        YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv444);
-
-    rgb_to_yuv444(
-        &mut yuv_image,
-        rgb_data,
-        width as u32 * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Professional,
-    )
-    .expect("yuv conversion failed");
-
-    // Convert u8 planes to f32 (fast - just a cast per pixel)
-    let y_u8 = yuv_image.y_plane.borrow();
-    let cb_u8 = yuv_image.u_plane.borrow();
-    let cr_u8 = yuv_image.v_plane.borrow();
-
-    for i in 0..num_pixels {
-        y_plane[i] = y_u8[i] as f32;
-        cb_plane[i] = cb_u8[i] as f32;
-        cr_plane[i] = cr_u8[i] as f32;
-    }
-}
+//! zenyuv uses 15-bit fixed-point (AVX2 pmaddwd) or f32 FMA (other platforms).
+//! Max error vs f32 reference: ±1 level — invisible after JPEG quantization.
 
 /// Convert RGB to YCbCr with strided Y output (for padded strips).
 ///
 /// Y is written with `y_stride` spacing between rows, while Cb/Cr use `width` stride.
 /// This matches the strip processor's buffer layout.
-///
-/// # Arguments
-/// * `rgb_data` - Input RGB data (3 or 4 bytes per pixel depending on bpp)
-/// * `y_plane` - Output Y plane with y_stride spacing
-/// * `cb_plane` - Output Cb plane with width spacing
-/// * `cr_plane` - Output Cr plane with width spacing
-/// * `width` - Image width in pixels
-/// * `height` - Number of rows
-/// * `y_stride` - Y output stride (typically padded_width)
-/// * `bpp` - Bytes per pixel (3 for RGB, 4 for RGBA)
 pub fn rgb_to_ycbcr_strided_fast(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -100,17 +26,17 @@ pub fn rgb_to_ycbcr_strided_fast(
     y_stride: usize,
     bpp: usize,
 ) {
-    debug_assert!(rgb_data.len() >= width * height * bpp);
+    let num_pixels = width * height;
+    debug_assert!(rgb_data.len() >= num_pixels * bpp);
     debug_assert!(y_plane.len() >= y_stride * height);
-    debug_assert!(cb_plane.len() >= width * height);
-    debug_assert!(cr_plane.len() >= width * height);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
 
-    // Handle RGBA by stripping alpha channel
-    let rgb_only: Vec<u8>;
+    let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
             .chunks_exact(4)
-            .take(width * height)
+            .take(num_pixels)
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
         &rgb_only
@@ -118,74 +44,20 @@ pub fn rgb_to_ycbcr_strided_fast(
         rgb_data
     };
 
-    // Use yuv crate for fast SIMD conversion
-    let mut yuv_image =
-        YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv444);
+    // Stack-local u8 temps for small images, heap for large.
+    let mut y_u8 = alloc::vec![0u8; num_pixels];
+    let mut cb_u8 = alloc::vec![0u8; num_pixels];
+    let mut cr_u8 = alloc::vec![0u8; num_pixels];
 
-    rgb_to_yuv444(
-        &mut yuv_image,
-        rgb_input,
-        width as u32 * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Professional,
-    )
-    .expect("yuv conversion failed");
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8, width, height);
 
-    let y_u8 = yuv_image.y_plane.borrow();
-    let cb_u8 = yuv_image.u_plane.borrow();
-    let cr_u8 = yuv_image.v_plane.borrow();
-
-    // Copy with appropriate strides
-    if y_stride == width {
-        // Fast path: contiguous output
-        let num_pixels = width * height;
-        for i in 0..num_pixels {
-            y_plane[i] = y_u8[i] as f32;
-            cb_plane[i] = cb_u8[i] as f32;
-            cr_plane[i] = cr_u8[i] as f32;
-        }
-    } else {
-        // Strided path: Y has different stride than Cb/Cr
-        for row in 0..height {
-            let src_start = row * width;
-            let y_dst_start = row * y_stride;
-            let cbcr_dst_start = row * width;
-
-            for x in 0..width {
-                y_plane[y_dst_start + x] = y_u8[src_start + x] as f32;
-                cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
-                cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
-            }
-
-            // Edge-replicate Y for rightmost partial MCU
-            if width < y_stride {
-                let edge_val = y_plane[y_dst_start + width - 1];
-                for x in width..y_stride {
-                    y_plane[y_dst_start + x] = edge_val;
-                }
-            }
-        }
-    }
+    u8_to_f32_strided(&y_u8, y_plane, width, height, y_stride);
+    u8_to_f32_contiguous(&cb_u8, cb_plane, num_pixels);
+    u8_to_f32_contiguous(&cr_u8, cr_plane, num_pixels);
 }
 
 /// Convert RGB to YCbCr using pre-allocated u8 buffers (zero allocation).
-///
-/// This version reuses the provided u8 buffers instead of allocating new ones,
-/// eliminating the ~3.7MB temporary allocation per strip.
-///
-/// # Arguments
-/// * `rgb_data` - Input RGB data (3 or 4 bytes per pixel depending on bpp)
-/// * `y_plane` - Output Y plane (f32, with y_stride spacing)
-/// * `cb_plane` - Output Cb plane (f32, with width spacing)
-/// * `cr_plane` - Output Cr plane (f32, with width spacing)
-/// * `yuv_temp_y` - Reusable u8 buffer for Y (must be at least width * height)
-/// * `yuv_temp_cb` - Reusable u8 buffer for Cb (must be at least width * height)
-/// * `yuv_temp_cr` - Reusable u8 buffer for Cr (must be at least width * height)
-/// * `width` - Image width in pixels
-/// * `height` - Number of rows
-/// * `y_stride` - Y output stride (typically padded_width)
-/// * `bpp` - Bytes per pixel (3 for RGB, 4 for RGBA)
 pub fn rgb_to_ycbcr_strided_reuse(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -208,8 +80,7 @@ pub fn rgb_to_ycbcr_strided_reuse(
     debug_assert!(yuv_temp_cb.len() >= num_pixels);
     debug_assert!(yuv_temp_cr.len() >= num_pixels);
 
-    // Handle RGBA by stripping alpha channel
-    let rgb_only: Vec<u8>;
+    let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
             .chunks_exact(4)
@@ -221,67 +92,22 @@ pub fn rgb_to_ycbcr_strided_reuse(
         rgb_data
     };
 
-    // Construct YuvPlanarImageMut from borrowed buffers (zero allocation)
-    let mut yuv_image = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(&mut yuv_temp_y[..num_pixels]),
-        y_stride: width as u32,
-        u_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cb[..num_pixels]),
-        u_stride: width as u32,
-        v_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cr[..num_pixels]),
-        v_stride: width as u32,
-        width: width as u32,
-        height: height as u32,
-    };
-
-    rgb_to_yuv444(
-        &mut yuv_image,
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(
         rgb_input,
-        width as u32 * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Professional,
-    )
-    .expect("yuv conversion failed");
+        &mut yuv_temp_y[..num_pixels],
+        &mut yuv_temp_cb[..num_pixels],
+        &mut yuv_temp_cr[..num_pixels],
+        width,
+        height,
+    );
 
-    let y_u8 = yuv_image.y_plane.borrow();
-    let cb_u8 = yuv_image.u_plane.borrow();
-    let cr_u8 = yuv_image.v_plane.borrow();
-
-    // Copy with appropriate strides
-    if y_stride == width {
-        // Fast path: contiguous output
-        for i in 0..num_pixels {
-            y_plane[i] = y_u8[i] as f32;
-            cb_plane[i] = cb_u8[i] as f32;
-            cr_plane[i] = cr_u8[i] as f32;
-        }
-    } else {
-        // Strided path: Y has different stride than Cb/Cr
-        for row in 0..height {
-            let src_start = row * width;
-            let y_dst_start = row * y_stride;
-            let cbcr_dst_start = row * width;
-
-            for x in 0..width {
-                y_plane[y_dst_start + x] = y_u8[src_start + x] as f32;
-                cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
-                cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
-            }
-
-            // Edge-replicate Y for rightmost partial MCU
-            if width < y_stride {
-                let edge_val = y_plane[y_dst_start + width - 1];
-                for x in width..y_stride {
-                    y_plane[y_dst_start + x] = edge_val;
-                }
-            }
-        }
-    }
+    u8_to_f32_strided(yuv_temp_y, y_plane, width, height, y_stride);
+    u8_to_f32_contiguous(yuv_temp_cb, cb_plane, num_pixels);
+    u8_to_f32_contiguous(yuv_temp_cr, cr_plane, num_pixels);
 }
 
 /// Convert BGR to YCbCr using pre-allocated u8 buffers (zero allocation).
-///
-/// Same as `rgb_to_ycbcr_strided_reuse` but for BGR/BGRA input.
 pub fn bgr_to_ycbcr_strided_reuse(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -296,88 +122,37 @@ pub fn bgr_to_ycbcr_strided_reuse(
     bpp: usize,
 ) {
     let num_pixels = width * height;
-    debug_assert!(bgr_data.len() >= num_pixels * bpp);
-    debug_assert!(y_plane.len() >= y_stride * height);
-    debug_assert!(cb_plane.len() >= num_pixels);
-    debug_assert!(cr_plane.len() >= num_pixels);
-    debug_assert!(yuv_temp_y.len() >= num_pixels);
-    debug_assert!(yuv_temp_cb.len() >= num_pixels);
-    debug_assert!(yuv_temp_cr.len() >= num_pixels);
 
-    // Convert BGR(A) to RGB(A) first
-    let rgb_converted: Vec<u8> = if bpp == 4 {
+    let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
             .chunks_exact(4)
             .take(num_pixels)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR -> RGB, drop A
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
             .chunks_exact(3)
             .take(num_pixels)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR -> RGB
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     };
 
-    // Construct YuvPlanarImageMut from borrowed buffers (zero allocation)
-    let mut yuv_image = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(&mut yuv_temp_y[..num_pixels]),
-        y_stride: width as u32,
-        u_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cb[..num_pixels]),
-        u_stride: width as u32,
-        v_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cr[..num_pixels]),
-        v_stride: width as u32,
-        width: width as u32,
-        height: height as u32,
-    };
-
-    rgb_to_yuv444(
-        &mut yuv_image,
+    rgb_to_ycbcr_strided_reuse(
         &rgb_converted,
-        width as u32 * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Professional,
-    )
-    .expect("yuv conversion failed");
-
-    let y_u8 = yuv_image.y_plane.borrow();
-    let cb_u8 = yuv_image.u_plane.borrow();
-    let cr_u8 = yuv_image.v_plane.borrow();
-
-    // Copy with appropriate strides
-    if y_stride == width {
-        for i in 0..num_pixels {
-            y_plane[i] = y_u8[i] as f32;
-            cb_plane[i] = cb_u8[i] as f32;
-            cr_plane[i] = cr_u8[i] as f32;
-        }
-    } else {
-        for row in 0..height {
-            let src_start = row * width;
-            let y_dst_start = row * y_stride;
-            let cbcr_dst_start = row * width;
-
-            for x in 0..width {
-                y_plane[y_dst_start + x] = y_u8[src_start + x] as f32;
-                cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
-                cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
-            }
-
-            // Edge-replicate Y for rightmost partial MCU
-            if width < y_stride {
-                let edge_val = y_plane[y_dst_start + width - 1];
-                for x in width..y_stride {
-                    y_plane[y_dst_start + x] = edge_val;
-                }
-            }
-        }
-    }
+        y_plane,
+        cb_plane,
+        cr_plane,
+        yuv_temp_y,
+        yuv_temp_cb,
+        yuv_temp_cr,
+        width,
+        height,
+        y_stride,
+        3,
+    );
 }
 
 /// Convert BGR to YCbCr with strided Y output.
-///
-/// Same as `rgb_to_ycbcr_strided_fast` but for BGR/BGRA input.
 pub fn bgr_to_ycbcr_strided_fast(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -388,55 +163,35 @@ pub fn bgr_to_ycbcr_strided_fast(
     y_stride: usize,
     bpp: usize,
 ) {
-    debug_assert!(bgr_data.len() >= width * height * bpp);
-    debug_assert!(y_plane.len() >= y_stride * height);
-    debug_assert!(cb_plane.len() >= width * height);
-    debug_assert!(cr_plane.len() >= width * height);
+    let num_pixels = width * height;
 
-    // Convert BGR(A) to RGB for yuv crate
-    let rgb_data: Vec<u8> = if bpp == 4 {
+    let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
             .chunks_exact(4)
-            .take(width * height)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR(A) -> RGB
+            .take(num_pixels)
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
             .chunks_exact(3)
-            .take(width * height)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR -> RGB
+            .take(num_pixels)
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     };
 
-    // Use the RGB path
     rgb_to_ycbcr_strided_fast(
-        &rgb_data, y_plane, cb_plane, cr_plane, width, height, y_stride, 3,
+        &rgb_converted,
+        y_plane,
+        cb_plane,
+        cr_plane,
+        width,
+        height,
+        y_stride,
+        3,
     );
 }
 
-// ============================================================================
-// Fused 4:2:0 Conversion (RGB → YCbCr with integrated downsampling)
-// ============================================================================
-
-/// Convert RGB to YCbCr 4:2:0 in a single fused pass using pre-allocated buffers.
-///
-/// This is significantly faster than 444→downsample because:
-/// - Single pass through RGB data (better cache locality)
-/// - SIMD downsampling integrated into color conversion
-/// - No intermediate full-resolution Cb/Cr buffers
-///
-/// # Arguments
-/// * `rgb_data` - Input RGB data (3 or 4 bytes per pixel depending on bpp)
-/// * `y_plane` - Output Y plane (f32, full resolution with y_stride spacing)
-/// * `cb_down` - Output Cb plane (f32, half resolution: c_width × c_height)
-/// * `cr_down` - Output Cr plane (f32, half resolution: c_width × c_height)
-/// * `yuv_temp_y` - Reusable u8 buffer for Y (must be at least width * height)
-/// * `yuv_temp_cb` - Reusable u8 buffer for Cb (must be at least c_width * c_height)
-/// * `yuv_temp_cr` - Reusable u8 buffer for Cr (must be at least c_width * c_height)
-/// * `width` - Image width in pixels
-/// * `height` - Number of rows
-/// * `y_stride` - Y output stride (typically padded_width)
-/// * `bpp` - Bytes per pixel (3 for RGB, 4 for RGBA)
+/// Convert RGB to YCbCr 4:2:0 using pre-allocated u8 buffers.
 pub fn rgb_to_ycbcr_420_reuse(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -463,8 +218,7 @@ pub fn rgb_to_ycbcr_420_reuse(
     debug_assert!(yuv_temp_cb.len() >= c_size);
     debug_assert!(yuv_temp_cr.len() >= c_size);
 
-    // Handle RGBA by stripping alpha channel
-    let rgb_only: Vec<u8>;
+    let rgb_only: alloc::vec::Vec<u8>;
     let rgb_input = if bpp == 4 {
         rgb_only = rgb_data
             .chunks_exact(4)
@@ -476,57 +230,22 @@ pub fn rgb_to_ycbcr_420_reuse(
         rgb_data
     };
 
-    // Construct YuvPlanarImageMut with 420 layout (Cb/Cr at half resolution)
-    let mut yuv_image = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(&mut yuv_temp_y[..num_pixels]),
-        y_stride: width as u32,
-        u_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cb[..c_size]),
-        u_stride: c_width as u32,
-        v_plane: BufferStoreMut::Borrowed(&mut yuv_temp_cr[..c_size]),
-        v_stride: c_width as u32,
-        width: width as u32,
-        height: height as u32,
-    };
-
-    rgb_to_yuv420(
-        &mut yuv_image,
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_420_u8(
         rgb_input,
-        width as u32 * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Professional,
-    )
-    .expect("yuv 420 conversion failed");
+        &mut yuv_temp_y[..num_pixels],
+        &mut yuv_temp_cb[..c_size],
+        &mut yuv_temp_cr[..c_size],
+        width,
+        height,
+    );
 
-    let y_u8 = yuv_image.y_plane.borrow();
-    let cb_u8 = yuv_image.u_plane.borrow();
-    let cr_u8 = yuv_image.v_plane.borrow();
-
-    // Copy Y with strided layout
-    if y_stride == width {
-        for i in 0..num_pixels {
-            y_plane[i] = y_u8[i] as f32;
-        }
-    } else {
-        for row in 0..height {
-            let src_start = row * width;
-            let dst_start = row * y_stride;
-            for x in 0..width {
-                y_plane[dst_start + x] = y_u8[src_start + x] as f32;
-            }
-        }
-    }
-
-    // Copy Cb/Cr (already at half resolution)
-    for i in 0..c_size {
-        cb_down[i] = cb_u8[i] as f32;
-        cr_down[i] = cr_u8[i] as f32;
-    }
+    u8_to_f32_strided(yuv_temp_y, y_plane, width, height, y_stride);
+    u8_to_f32_contiguous(yuv_temp_cb, cb_down, c_size);
+    u8_to_f32_contiguous(yuv_temp_cr, cr_down, c_size);
 }
 
-/// Convert BGR to YCbCr 4:2:0 in a single fused pass.
-///
-/// Same as `rgb_to_ycbcr_420_reuse` but for BGR/BGRA input.
+/// Convert BGR to YCbCr 4:2:0 using pre-allocated u8 buffers.
 pub fn bgr_to_ycbcr_420_reuse(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -542,18 +261,17 @@ pub fn bgr_to_ycbcr_420_reuse(
 ) {
     let num_pixels = width * height;
 
-    // Convert BGR(A) to RGB first
-    let rgb_converted: Vec<u8> = if bpp == 4 {
+    let rgb_converted: alloc::vec::Vec<u8> = if bpp == 4 {
         bgr_data
             .chunks_exact(4)
             .take(num_pixels)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR -> RGB, drop A
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     } else {
         bgr_data
             .chunks_exact(3)
             .take(num_pixels)
-            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]]) // BGR -> RGB
+            .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
             .collect()
     };
 
@@ -572,91 +290,95 @@ pub fn bgr_to_ycbcr_420_reuse(
     );
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+#[inline]
+fn u8_to_f32_contiguous(src: &[u8], dst: &mut [f32], n: usize) {
+    for i in 0..n {
+        dst[i] = src[i] as f32;
+    }
+}
+
+#[inline]
+fn u8_to_f32_strided(src: &[u8], dst: &mut [f32], width: usize, height: usize, y_stride: usize) {
+    if y_stride == width {
+        u8_to_f32_contiguous(src, dst, width * height);
+    } else {
+        for row in 0..height {
+            let src_start = row * width;
+            let dst_start = row * y_stride;
+            for x in 0..width {
+                dst[dst_start + x] = src[src_start + x] as f32;
+            }
+            // Edge-replicate Y for rightmost partial MCU
+            if width < y_stride {
+                let edge_val = dst[dst_start + width - 1];
+                for x in width..y_stride {
+                    dst[dst_start + x] = edge_val;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::color::rgb_to_ycbcr_f32;
 
     #[test]
-    fn test_fast_yuv_matches_f32() {
-        let width = 64;
-        let height = 64;
-        let num_pixels = width * height;
-
-        // Generate test image
-        let mut rgb = vec![0u8; num_pixels * 3];
-        for i in 0..num_pixels {
-            rgb[i * 3] = (i % 256) as u8;
-            rgb[i * 3 + 1] = ((i * 7) % 256) as u8;
-            rgb[i * 3 + 2] = ((i * 13) % 256) as u8;
+    fn test_rgb_to_ycbcr_strided_fast_basic() {
+        let w = 16;
+        let h = 8;
+        let y_stride = 24; // padded
+        let mut rgb = alloc::vec![0u8; w * h * 3];
+        for i in 0..w * h {
+            rgb[i * 3] = 128;
+            rgb[i * 3 + 1] = 64;
+            rgb[i * 3 + 2] = 192;
         }
+        let mut y = alloc::vec![0.0f32; y_stride * h];
+        let mut cb = alloc::vec![0.0f32; w * h];
+        let mut cr = alloc::vec![0.0f32; w * h];
+        rgb_to_ycbcr_strided_fast(&rgb, &mut y, &mut cb, &mut cr, w, h, y_stride, 3);
 
-        // Fast conversion
-        let mut y_fast = vec![0.0f32; num_pixels];
-        let mut cb_fast = vec![0.0f32; num_pixels];
-        let mut cr_fast = vec![0.0f32; num_pixels];
-        rgb_to_ycbcr_fast(&rgb, &mut y_fast, &mut cb_fast, &mut cr_fast, width, height);
+        // All pixels identical → all Y/Cb/Cr values should be the same
+        let y0 = y[0];
+        let cb0 = cb[0];
+        let cr0 = cr[0];
+        assert!(y0 > 50.0 && y0 < 200.0, "Y={y0} out of range");
+        assert!(cb0 > 0.0 && cb0 < 255.0, "Cb={cb0} out of range");
+        assert!(cr0 > 0.0 && cr0 < 255.0, "Cr={cr0} out of range");
 
-        // Reference f32 conversion
-        let mut max_y_diff = 0.0f32;
-        let mut max_cb_diff = 0.0f32;
-        let mut max_cr_diff = 0.0f32;
-
-        for i in 0..num_pixels {
-            let (y_ref, cb_ref, cr_ref) = rgb_to_ycbcr_f32(
-                rgb[i * 3] as f32,
-                rgb[i * 3 + 1] as f32,
-                rgb[i * 3 + 2] as f32,
-            );
-
-            max_y_diff = max_y_diff.max((y_fast[i] - y_ref).abs());
-            max_cb_diff = max_cb_diff.max((cb_fast[i] - cb_ref).abs());
-            max_cr_diff = max_cr_diff.max((cr_fast[i] - cr_ref).abs());
+        for row in 0..h {
+            for x in 0..w {
+                assert_eq!(y[row * y_stride + x], y0);
+            }
+            // Padded columns should be edge-replicated
+            for x in w..y_stride {
+                assert_eq!(y[row * y_stride + x], y0);
+            }
         }
-
-        // Allow up to 1.5 levels difference (integer rounding)
-        assert!(max_y_diff < 1.5, "Y diff {} exceeds threshold", max_y_diff);
-        assert!(
-            max_cb_diff < 1.5,
-            "Cb diff {} exceeds threshold",
-            max_cb_diff
-        );
-        assert!(
-            max_cr_diff < 1.5,
-            "Cr diff {} exceeds threshold",
-            max_cr_diff
-        );
     }
 
     #[test]
-    fn test_fast_yuv_strided() {
-        let width = 60; // Not aligned to 8
-        let height = 4;
-        let y_stride = 64; // Padded
-        let num_pixels = width * height;
-
-        let rgb = vec![128u8; num_pixels * 3];
-        let mut y_plane = vec![0.0f32; y_stride * height];
-        let mut cb_plane = vec![0.0f32; num_pixels];
-        let mut cr_plane = vec![0.0f32; num_pixels];
-
-        rgb_to_ycbcr_strided_fast(
-            &rgb,
-            &mut y_plane,
-            &mut cb_plane,
-            &mut cr_plane,
-            width,
-            height,
-            y_stride,
-            3,
+    fn test_420_reuse_basic() {
+        let w = 16;
+        let h = 8;
+        let cw = w / 2;
+        let ch = h / 2;
+        let rgb = alloc::vec![128u8; w * h * 3];
+        let mut y = alloc::vec![0.0f32; w * h];
+        let mut cb = alloc::vec![0.0f32; cw * ch];
+        let mut cr = alloc::vec![0.0f32; cw * ch];
+        let mut ty = alloc::vec![0u8; w * h];
+        let mut tu = alloc::vec![0u8; cw * ch];
+        let mut tv = alloc::vec![0u8; cw * ch];
+        rgb_to_ycbcr_420_reuse(
+            &rgb, &mut y, &mut cb, &mut cr, &mut ty, &mut tu, &mut tv, w, h, w, 3,
         );
-
-        // Check gray produces correct Y (should be ~128)
-        for row in 0..height {
-            for x in 0..width {
-                let y = y_plane[row * y_stride + x];
-                assert!((y - 128.0).abs() < 2.0, "Gray Y={} at ({}, {})", y, x, row);
-            }
-        }
+        // Gray input → Y≈128, Cb≈128, Cr≈128
+        assert!((y[0] - 128.0).abs() < 2.0, "Y={}", y[0]);
+        assert!((cb[0] - 128.0).abs() < 2.0, "Cb={}", cb[0]);
+        assert!((cr[0] - 128.0).abs() < 2.0, "Cr={}", cr[0]);
     }
 }

@@ -1,0 +1,31 @@
+[package]
+name = "zenyuv"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Lilith River <lilith@imazen.io>"]
+description = "SIMD-optimized YUV↔RGB color matrix conversion (BT.601/709/2020)"
+license = "MIT OR Apache-2.0"
+keywords = ["yuv", "ycbcr", "simd", "color", "bt601"]
+categories = ["graphics", "multimedia::images", "no-std"]
+repository = "https://github.com/imazen/zenjpeg"
+readme = "README.md"
+exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", ".claude/", "justfile", "copter-report/"]
+
+[dependencies]
+archmage = { workspace = true }
+magetypes = { workspace = true }
+safe_unaligned_simd = { workspace = true }
+linear-srgb = { workspace = true }
+libm = "0.2"
+
+[dev-dependencies]
+yuv = { workspace = true }
+png = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
