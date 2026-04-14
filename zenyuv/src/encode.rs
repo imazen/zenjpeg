@@ -5,8 +5,8 @@
 
 extern crate alloc;
 
-use archmage::prelude::*;
 use crate::types::{ForwardCoeffs, Matrix, Range};
+use archmage::prelude::*;
 
 /// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes at full resolution (4:4:4).
 ///
@@ -61,7 +61,9 @@ pub fn rgb_to_yuv444_with(
         return;
     }
 
-    incant!(crate::encode_generic::rgb_to_yuv444_generic(rgb, y, cb, cr, n, &coeffs));
+    incant!(crate::encode_generic::rgb_to_yuv444_generic(
+        rgb, y, cb, cr, n, &coeffs
+    ));
 }
 
 /// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes with 4:2:0 subsampling.
@@ -107,7 +109,9 @@ pub fn rgb_to_yuv420_with(
         return;
     }
 
-    incant!(crate::encode_generic::rgb_to_yuv420_generic(rgb, y, cb, cr, width, height, &coeffs));
+    incant!(crate::encode_generic::rgb_to_yuv420_generic(
+        rgb, y, cb, cr, width, height, &coeffs
+    ));
 }
 
 /// Compute Y plane only (no Cb/Cr) at full resolution. Used by Sharp YUV
@@ -133,8 +137,15 @@ pub(crate) fn rgb_to_yuv444_y_only(
 
     #[cfg(target_arch = "x86_64")]
     if let Some(token) = archmage::X64V3Token::summon() {
-        let done =
-            crate::avx2_encode::rgb_to_yuv444_avx2(token, rgb, y, &mut cb_discard, &mut cr_discard, n, &coeffs);
+        let done = crate::avx2_encode::rgb_to_yuv444_avx2(
+            token,
+            rgb,
+            y,
+            &mut cb_discard,
+            &mut cr_discard,
+            n,
+            &coeffs,
+        );
         if done < n {
             rgb_to_yuv444_scalar_tail(rgb, y, &mut cb_discard, &mut cr_discard, done, n, &coeffs);
         }
@@ -166,8 +177,14 @@ pub(crate) fn rgb_to_yuv444_scalar_tail(
         let r = rgb[p] as f32;
         let g = rgb[p + 1] as f32;
         let b = rgb[p + 2] as f32;
-        y[i] = crate::clamp_round(coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f);
-        cb[i] = crate::clamp_round(coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f);
-        cr[i] = crate::clamp_round(coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f);
+        y[i] = crate::clamp_round(
+            coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
+        );
+        cb[i] = crate::clamp_round(
+            coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f,
+        );
+        cr[i] = crate::clamp_round(
+            coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f,
+        );
     }
 }

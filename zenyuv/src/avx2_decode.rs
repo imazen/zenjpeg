@@ -3,8 +3,8 @@
 //! YCbCr->RGB via mulhrs_epi16 (fixed-point multiply with rounding).
 //! 32 pixels per iteration for 4:4:4.
 
-use archmage::prelude::*;
 use crate::types::InverseCoeffs;
+use archmage::prelude::*;
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// 4:4:4 AVX2 decode kernel. Returns number of pixels processed (multiple of 16).
@@ -35,15 +35,12 @@ pub(crate) fn yuv444_to_rgb_avx2(
     for blk in 0..blocks {
         let base = blk * 16;
 
-        let y_raw = safe_simd::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&y_plane[base..base + 16]).unwrap(),
-        );
-        let cb_raw = safe_simd::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&cb_plane[base..base + 16]).unwrap(),
-        );
-        let cr_raw = safe_simd::_mm_loadu_si128(
-            <&[u8; 16]>::try_from(&cr_plane[base..base + 16]).unwrap(),
-        );
+        let y_raw =
+            safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&y_plane[base..base + 16]).unwrap());
+        let cb_raw =
+            safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&cb_plane[base..base + 16]).unwrap());
+        let cr_raw =
+            safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&cr_plane[base..base + 16]).unwrap());
 
         // Process low 8 and high 8 pixels.
         let y_lo = _mm_add_epi16(_mm_unpacklo_epi8(y_raw, zero128), y_off_v);
@@ -70,18 +67,9 @@ pub(crate) fn yuv444_to_rgb_avx2(
         let (out0, out1, out2) = interleave_rgb_sse(token, r_u8, g_u8, b_u8);
 
         let dst = &mut rgb[base * 3..base * 3 + 48];
-        safe_simd::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut dst[0..16]).unwrap(),
-            out0,
-        );
-        safe_simd::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut dst[16..32]).unwrap(),
-            out1,
-        );
-        safe_simd::_mm_storeu_si128(
-            <&mut [u8; 16]>::try_from(&mut dst[32..48]).unwrap(),
-            out2,
-        );
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut dst[0..16]).unwrap(), out0);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut dst[16..32]).unwrap(), out1);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(&mut dst[32..48]).unwrap(), out2);
     }
     blocks * 16
 }
@@ -111,10 +99,7 @@ fn inverse_matrix_sse(
     let r = _mm_add_epi16(y_scaled, _mm_mulhrs_epi16(cr, cr_to_r));
     let g = _mm_add_epi16(
         y_scaled,
-        _mm_add_epi16(
-            _mm_mulhrs_epi16(cb, cb_to_g),
-            _mm_mulhrs_epi16(cr, cr_to_g),
-        ),
+        _mm_add_epi16(_mm_mulhrs_epi16(cb, cb_to_g), _mm_mulhrs_epi16(cr, cr_to_g)),
     );
     let b = _mm_add_epi16(y_scaled, _mm_mulhrs_epi16(cb, cb_to_b));
 

@@ -12,7 +12,6 @@ extern crate alloc;
 
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
-
 /// Configuration for Sharp YUV chroma optimization.
 pub struct SharpYuvConfig {
     /// Maximum Newton-step iterations per 2×2 block (default: 2).
@@ -61,7 +60,9 @@ pub fn rgb_to_yuv420_sharp_with_workspace(
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
 
-    sharp_iterate_rows_u8(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
+    sharp_iterate_rows_u8(
+        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
+    );
 }
 
 /// f32 output: Y via fast SIMD (u8→f32 widen), Cb/Cr directly from iteration f32.
@@ -104,7 +105,9 @@ pub fn rgb_to_yuv420_sharp_f32(
     let inv = InverseCoeffs::new(matrix, range);
 
     // Cb/Cr: iteration produces f32 directly. SoA reads Y from u8 (via workspace).
-    sharp_iterate_rows_f32_hybrid(rgb, &y_u8, cb_f32, cr_f32, width, height, cw, ch, &fwd, &inv, config, ws);
+    sharp_iterate_rows_f32_hybrid(
+        rgb, &y_u8, cb_f32, cr_f32, width, height, cw, ch, &fwd, &inv, config, ws,
+    );
 }
 
 /// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
@@ -143,7 +146,20 @@ pub fn rgb_to_yuv420_sharp(
     // Per-row SoA workspace. Caller can pre-allocate via SharpYuvWorkspace
     // and pass it across strip calls to avoid per-call allocation.
     let mut workspace = SharpYuvWorkspace::new(cw);
-    sharp_iterate_rows_u8(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut workspace);
+    sharp_iterate_rows_u8(
+        rgb,
+        y,
+        cb,
+        cr,
+        width,
+        height,
+        cw,
+        ch,
+        &fwd,
+        &inv,
+        config,
+        &mut workspace,
+    );
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to
@@ -206,30 +222,68 @@ fn sharp_iterate_rows_u8(
     y: &[u8],
     cb: &mut [u8],
     cr: &mut [u8],
-    width: usize, height: usize, cw: usize, ch: usize,
-    fwd: &ForwardCoeffs, inv: &InverseCoeffs,
-    config: &SharpYuvConfig, ws: &mut SharpYuvWorkspace,
+    width: usize,
+    height: usize,
+    cw: usize,
+    ch: usize,
+    fwd: &ForwardCoeffs,
+    inv: &InverseCoeffs,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
 ) {
     for cy_idx in 0..ch {
         let row_top = cy_idx * 2;
         let row_bot = (row_top + 1).min(height - 1);
         extract_soa_row(
-            rgb, y, row_top, row_bot, width, cw,
-            &mut ws.y0s, &mut ws.y1s, &mut ws.y2s, &mut ws.y3s,
-            &mut ws.or0, &mut ws.og0, &mut ws.ob0,
-            &mut ws.or1, &mut ws.og1, &mut ws.ob1,
-            &mut ws.or2, &mut ws.og2, &mut ws.ob2,
-            &mut ws.or3, &mut ws.og3, &mut ws.ob3,
-            &mut ws.cb_f, &mut ws.cr_f, fwd,
+            rgb,
+            y,
+            row_top,
+            row_bot,
+            width,
+            cw,
+            &mut ws.y0s,
+            &mut ws.y1s,
+            &mut ws.y2s,
+            &mut ws.y3s,
+            &mut ws.or0,
+            &mut ws.og0,
+            &mut ws.ob0,
+            &mut ws.or1,
+            &mut ws.og1,
+            &mut ws.ob1,
+            &mut ws.or2,
+            &mut ws.og2,
+            &mut ws.ob2,
+            &mut ws.or3,
+            &mut ws.og3,
+            &mut ws.ob3,
+            &mut ws.cb_f,
+            &mut ws.cr_f,
+            fwd,
         );
         sharp_iterate_all_blocks(
-            &ws.y0s[..cw], &ws.y1s[..cw], &ws.y2s[..cw], &ws.y3s[..cw],
-            &ws.or0[..cw], &ws.og0[..cw], &ws.ob0[..cw],
-            &ws.or1[..cw], &ws.og1[..cw], &ws.ob1[..cw],
-            &ws.or2[..cw], &ws.og2[..cw], &ws.ob2[..cw],
-            &ws.or3[..cw], &ws.og3[..cw], &ws.ob3[..cw],
-            &mut ws.cb_f[..cw], &mut ws.cr_f[..cw],
-            inv, fwd, config.max_iterations, config.convergence_threshold,
+            &ws.y0s[..cw],
+            &ws.y1s[..cw],
+            &ws.y2s[..cw],
+            &ws.y3s[..cw],
+            &ws.or0[..cw],
+            &ws.og0[..cw],
+            &ws.ob0[..cw],
+            &ws.or1[..cw],
+            &ws.og1[..cw],
+            &ws.ob1[..cw],
+            &ws.or2[..cw],
+            &ws.og2[..cw],
+            &ws.ob2[..cw],
+            &ws.or3[..cw],
+            &ws.og3[..cw],
+            &ws.ob3[..cw],
+            &mut ws.cb_f[..cw],
+            &mut ws.cr_f[..cw],
+            inv,
+            fwd,
+            config.max_iterations,
+            config.convergence_threshold,
         );
         let row_off = cy_idx * cw;
         for cx_idx in 0..cw {
@@ -245,30 +299,68 @@ fn sharp_iterate_rows_f32_hybrid(
     y_u8: &[u8],
     cb_f32: &mut [f32],
     cr_f32: &mut [f32],
-    width: usize, height: usize, cw: usize, ch: usize,
-    fwd: &ForwardCoeffs, inv: &InverseCoeffs,
-    config: &SharpYuvConfig, ws: &mut SharpYuvWorkspace,
+    width: usize,
+    height: usize,
+    cw: usize,
+    ch: usize,
+    fwd: &ForwardCoeffs,
+    inv: &InverseCoeffs,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
 ) {
     for cy_idx in 0..ch {
         let row_top = cy_idx * 2;
         let row_bot = (row_top + 1).min(height - 1);
         extract_soa_row(
-            rgb, y_u8, row_top, row_bot, width, cw,
-            &mut ws.y0s, &mut ws.y1s, &mut ws.y2s, &mut ws.y3s,
-            &mut ws.or0, &mut ws.og0, &mut ws.ob0,
-            &mut ws.or1, &mut ws.og1, &mut ws.ob1,
-            &mut ws.or2, &mut ws.og2, &mut ws.ob2,
-            &mut ws.or3, &mut ws.og3, &mut ws.ob3,
-            &mut ws.cb_f, &mut ws.cr_f, fwd,
+            rgb,
+            y_u8,
+            row_top,
+            row_bot,
+            width,
+            cw,
+            &mut ws.y0s,
+            &mut ws.y1s,
+            &mut ws.y2s,
+            &mut ws.y3s,
+            &mut ws.or0,
+            &mut ws.og0,
+            &mut ws.ob0,
+            &mut ws.or1,
+            &mut ws.og1,
+            &mut ws.ob1,
+            &mut ws.or2,
+            &mut ws.og2,
+            &mut ws.ob2,
+            &mut ws.or3,
+            &mut ws.og3,
+            &mut ws.ob3,
+            &mut ws.cb_f,
+            &mut ws.cr_f,
+            fwd,
         );
         sharp_iterate_all_blocks(
-            &ws.y0s[..cw], &ws.y1s[..cw], &ws.y2s[..cw], &ws.y3s[..cw],
-            &ws.or0[..cw], &ws.og0[..cw], &ws.ob0[..cw],
-            &ws.or1[..cw], &ws.og1[..cw], &ws.ob1[..cw],
-            &ws.or2[..cw], &ws.og2[..cw], &ws.ob2[..cw],
-            &ws.or3[..cw], &ws.og3[..cw], &ws.ob3[..cw],
-            &mut ws.cb_f[..cw], &mut ws.cr_f[..cw],
-            inv, fwd, config.max_iterations, config.convergence_threshold,
+            &ws.y0s[..cw],
+            &ws.y1s[..cw],
+            &ws.y2s[..cw],
+            &ws.y3s[..cw],
+            &ws.or0[..cw],
+            &ws.og0[..cw],
+            &ws.ob0[..cw],
+            &ws.or1[..cw],
+            &ws.og1[..cw],
+            &ws.ob1[..cw],
+            &ws.or2[..cw],
+            &ws.og2[..cw],
+            &ws.ob2[..cw],
+            &ws.or3[..cw],
+            &ws.og3[..cw],
+            &ws.ob3[..cw],
+            &mut ws.cb_f[..cw],
+            &mut ws.cr_f[..cw],
+            inv,
+            fwd,
+            config.max_iterations,
+            config.convergence_threshold,
         );
         // Write Cb/Cr as f32 directly — no u8 narrowing.
         let row_off = cy_idx * cw;
@@ -276,7 +368,6 @@ fn sharp_iterate_rows_f32_hybrid(
         cr_f32[row_off..row_off + cw].copy_from_slice(&ws.cr_f[..cw]);
     }
 }
-
 
 /// Extract one chroma row of 2×2 block data into SoA arrays + box-average
 /// initial Cb/Cr.
@@ -293,12 +384,24 @@ fn extract_soa_row(
     row_bot: usize,
     width: usize,
     cw: usize,
-    y0s: &mut [f32], y1s: &mut [f32], y2s: &mut [f32], y3s: &mut [f32],
-    or0: &mut [f32], og0: &mut [f32], ob0: &mut [f32],
-    or1: &mut [f32], og1: &mut [f32], ob1: &mut [f32],
-    or2: &mut [f32], og2: &mut [f32], ob2: &mut [f32],
-    or3: &mut [f32], og3: &mut [f32], ob3: &mut [f32],
-    cb_f: &mut [f32], cr_f: &mut [f32],
+    y0s: &mut [f32],
+    y1s: &mut [f32],
+    y2s: &mut [f32],
+    y3s: &mut [f32],
+    or0: &mut [f32],
+    og0: &mut [f32],
+    ob0: &mut [f32],
+    or1: &mut [f32],
+    og1: &mut [f32],
+    ob1: &mut [f32],
+    or2: &mut [f32],
+    og2: &mut [f32],
+    ob2: &mut [f32],
+    or3: &mut [f32],
+    og3: &mut [f32],
+    ob3: &mut [f32],
+    cb_f: &mut [f32],
+    cr_f: &mut [f32],
     fwd: &ForwardCoeffs,
 ) {
     // Pre-slice the two Y rows and two RGB rows as contiguous spans.
@@ -314,10 +417,8 @@ fn extract_soa_row(
     let bulk_cw = width / 2;
 
     extract_soa_bulk(
-        rgb_top, rgb_bot, y_top, y_bot, bulk_cw,
-        y0s, y1s, y2s, y3s,
-        or0, og0, ob0, or1, og1, ob1, or2, og2, ob2, or3, og3, ob3,
-        cb_f, cr_f, fwd,
+        rgb_top, rgb_bot, y_top, y_bot, bulk_cw, y0s, y1s, y2s, y3s, or0, og0, ob0, or1, og1, ob1,
+        or2, og2, ob2, or3, og3, ob3, cb_f, cr_f, fwd,
     );
 
     // Edge: last block if width is odd (x1 = x0, replicates last column).
@@ -350,7 +451,6 @@ fn extract_soa_row(
     }
 }
 
-
 /// Bulk inner loop: contiguous row slices, no edge checks.
 /// `#[autoversion]` generates AVX2/SSE/NEON variants. LLVM can vectorize
 /// the u8→f32 widening and the box-average FMA because:
@@ -359,15 +459,29 @@ fn extract_soa_row(
 /// - Output slices are written sequentially (no aliasing between them)
 #[archmage::autoversion]
 fn extract_soa_bulk(
-    rgb_top: &[u8], rgb_bot: &[u8],
-    y_top: &[u8], y_bot: &[u8],
+    rgb_top: &[u8],
+    rgb_bot: &[u8],
+    y_top: &[u8],
+    y_bot: &[u8],
     bulk_cw: usize,
-    y0s: &mut [f32], y1s: &mut [f32], y2s: &mut [f32], y3s: &mut [f32],
-    or0: &mut [f32], og0: &mut [f32], ob0: &mut [f32],
-    or1: &mut [f32], og1: &mut [f32], ob1: &mut [f32],
-    or2: &mut [f32], og2: &mut [f32], ob2: &mut [f32],
-    or3: &mut [f32], og3: &mut [f32], ob3: &mut [f32],
-    cb_f: &mut [f32], cr_f: &mut [f32],
+    y0s: &mut [f32],
+    y1s: &mut [f32],
+    y2s: &mut [f32],
+    y3s: &mut [f32],
+    or0: &mut [f32],
+    og0: &mut [f32],
+    ob0: &mut [f32],
+    or1: &mut [f32],
+    og1: &mut [f32],
+    ob1: &mut [f32],
+    or2: &mut [f32],
+    og2: &mut [f32],
+    ob2: &mut [f32],
+    or3: &mut [f32],
+    og3: &mut [f32],
+    ob3: &mut [f32],
+    cb_f: &mut [f32],
+    cr_f: &mut [f32],
     fwd: &ForwardCoeffs,
 ) {
     // Coefficients as locals so LLVM can hoist them to registers.
@@ -405,10 +519,18 @@ fn extract_soa_bulk(
         let g3 = rgb_bot[ri + 4] as f32;
         let b3 = rgb_bot[ri + 5] as f32;
 
-        or0[cx] = r0; og0[cx] = g0; ob0[cx] = b0;
-        or1[cx] = r1; og1[cx] = g1; ob1[cx] = b1;
-        or2[cx] = r2; og2[cx] = g2; ob2[cx] = b2;
-        or3[cx] = r3; og3[cx] = g3; ob3[cx] = b3;
+        or0[cx] = r0;
+        og0[cx] = g0;
+        ob0[cx] = b0;
+        or1[cx] = r1;
+        og1[cx] = g1;
+        ob1[cx] = b1;
+        or2[cx] = r2;
+        og2[cx] = g2;
+        ob2[cx] = b2;
+        or3[cx] = r3;
+        og3[cx] = g3;
+        ob3[cx] = b3;
 
         // Box-average initial Cb/Cr.
         let r_avg = (r0 + r1 + r2 + r3) * 0.25;
@@ -440,20 +562,50 @@ fn extract_soa_bulk(
 ///
 /// Similarly for Cr: ∂R/∂Cr = cr_to_r, ∂G/∂Cr = cr_to_g, ∂B/∂Cr = 0.
 fn sharp_iterate_all_blocks(
-    y0: &[f32], y1: &[f32], y2: &[f32], y3: &[f32],
-    or0: &[f32], og0: &[f32], ob0: &[f32],
-    or1: &[f32], og1: &[f32], ob1: &[f32],
-    or2: &[f32], og2: &[f32], ob2: &[f32],
-    or3: &[f32], og3: &[f32], ob3: &[f32],
-    cb_f: &mut [f32], cr_f: &mut [f32],
-    inv: &InverseCoeffs, _fwd: &ForwardCoeffs,
+    y0: &[f32],
+    y1: &[f32],
+    y2: &[f32],
+    y3: &[f32],
+    or0: &[f32],
+    og0: &[f32],
+    ob0: &[f32],
+    or1: &[f32],
+    og1: &[f32],
+    ob1: &[f32],
+    or2: &[f32],
+    og2: &[f32],
+    ob2: &[f32],
+    or3: &[f32],
+    og3: &[f32],
+    ob3: &[f32],
+    cb_f: &mut [f32],
+    cr_f: &mut [f32],
+    inv: &InverseCoeffs,
+    _fwd: &ForwardCoeffs,
     max_iterations: u32,
     _convergence_threshold: f32,
 ) {
     incant!(sharp_iterate_simd(
-        y0, y1, y2, y3,
-        or0, og0, ob0, or1, og1, ob1, or2, og2, ob2, or3, og3, ob3,
-        cb_f, cr_f, inv, max_iterations
+        y0,
+        y1,
+        y2,
+        y3,
+        or0,
+        og0,
+        ob0,
+        or1,
+        og1,
+        ob1,
+        or2,
+        og2,
+        ob2,
+        or3,
+        og3,
+        ob3,
+        cb_f,
+        cr_f,
+        inv,
+        max_iterations
     ));
 }
 
@@ -464,12 +616,24 @@ use magetypes::simd::generic::f32x8 as GenericF32x8;
 #[inline(always)]
 fn sharp_iterate_simd(
     token: Token,
-    y0: &[f32], y1: &[f32], y2: &[f32], y3: &[f32],
-    or0: &[f32], og0: &[f32], ob0: &[f32],
-    or1: &[f32], og1: &[f32], ob1: &[f32],
-    or2: &[f32], og2: &[f32], ob2: &[f32],
-    or3: &[f32], og3: &[f32], ob3: &[f32],
-    cb_f: &mut [f32], cr_f: &mut [f32],
+    y0: &[f32],
+    y1: &[f32],
+    y2: &[f32],
+    y3: &[f32],
+    or0: &[f32],
+    og0: &[f32],
+    ob0: &[f32],
+    or1: &[f32],
+    og1: &[f32],
+    ob1: &[f32],
+    or2: &[f32],
+    og2: &[f32],
+    ob2: &[f32],
+    or3: &[f32],
+    og3: &[f32],
+    ob3: &[f32],
+    cb_f: &mut [f32],
+    cr_f: &mut [f32],
     inv: &InverseCoeffs,
     max_iterations: u32,
 ) {
@@ -511,7 +675,9 @@ fn sharp_iterate_simd(
                     let yv = f32x8::from_slice(token, &$y[base..]);
                     let y_adj = y_coeff_v * (yv - y_off_v);
                     let rec_r = (y_adj + cr_to_r_v * cr_c).max(zero_v).min(max_v);
-                    let rec_g = (y_adj + cr_to_g_v * cr_c + cb_to_g_v * cb_c).max(zero_v).min(max_v);
+                    let rec_g = (y_adj + cr_to_g_v * cr_c + cb_to_g_v * cb_c)
+                        .max(zero_v)
+                        .min(max_v);
                     let rec_b = (y_adj + cb_to_b_v * cb_c).max(zero_v).min(max_v);
                     let or_v = f32x8::from_slice(token, &$or[base..]);
                     let og_v = f32x8::from_slice(token, &$og[base..]);

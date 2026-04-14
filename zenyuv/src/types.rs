@@ -108,18 +108,25 @@ const fn const_round(v: f32) -> i32 {
 /// Precomputed coefficient tables for all 6 (Matrix, Range) combinations.
 /// Avoids runtime computation entirely.
 pub(crate) const BT601_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt601, Range::Full);
-pub(crate) const BT601_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt601, Range::Limited);
+pub(crate) const BT601_LIMITED: ForwardCoeffs =
+    ForwardCoeffs::compute(Matrix::Bt601, Range::Limited);
 pub(crate) const BT709_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt709, Range::Full);
-pub(crate) const BT709_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt709, Range::Limited);
+pub(crate) const BT709_LIMITED: ForwardCoeffs =
+    ForwardCoeffs::compute(Matrix::Bt709, Range::Limited);
 pub(crate) const BT2020_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt2020, Range::Full);
-pub(crate) const BT2020_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt2020, Range::Limited);
+pub(crate) const BT2020_LIMITED: ForwardCoeffs =
+    ForwardCoeffs::compute(Matrix::Bt2020, Range::Limited);
 
 pub(crate) const INV_BT601_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt601, Range::Full);
-pub(crate) const INV_BT601_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt601, Range::Limited);
+pub(crate) const INV_BT601_LIMITED: InverseCoeffs =
+    InverseCoeffs::compute(Matrix::Bt601, Range::Limited);
 pub(crate) const INV_BT709_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt709, Range::Full);
-pub(crate) const INV_BT709_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt709, Range::Limited);
-pub(crate) const INV_BT2020_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt2020, Range::Full);
-pub(crate) const INV_BT2020_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt2020, Range::Limited);
+pub(crate) const INV_BT709_LIMITED: InverseCoeffs =
+    InverseCoeffs::compute(Matrix::Bt709, Range::Limited);
+pub(crate) const INV_BT2020_FULL: InverseCoeffs =
+    InverseCoeffs::compute(Matrix::Bt2020, Range::Full);
+pub(crate) const INV_BT2020_LIMITED: InverseCoeffs =
+    InverseCoeffs::compute(Matrix::Bt2020, Range::Limited);
 
 impl ForwardCoeffs {
     /// Look up precomputed coefficients. Zero runtime cost.
@@ -341,7 +348,7 @@ mod tests {
         // yuv crate: (coefficient_f32 * (1 << 15) as f32).round() as i32
         assert_eq!(c.yr, 9798);
         assert_eq!(c.yg, 19235);
-        assert_eq!(c.yb, 3736);  // 0.114 * 32768 = 3735.55 -> round = 3736
+        assert_eq!(c.yb, 3736); // 0.114 * 32768 = 3735.55 -> round = 3736
         assert_eq!(c.cb_r, -5529);
         assert_eq!(c.cb_g, -10855);
         assert_eq!(c.cb_b, 16384);

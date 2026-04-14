@@ -3,8 +3,8 @@
 //! RGB->YCbCr via 15-bit fixed-point matrix using pmaddwd. 32 pixels per iter
 //! for 4:4:4, 2x32 fused Y+chroma for 4:2:0.
 
-use archmage::prelude::*;
 use crate::types::{ForwardCoeffs, pack_i16_pair};
+use archmage::prelude::*;
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// 4:4:4 AVX2 encode kernel. Returns number of pixels processed (multiple of 32).
@@ -43,18 +43,8 @@ pub(crate) fn rgb_to_yuv444_avx2(
         let (cr_lo, cr_hi) = matrix_row_avx2(token, r, g, b, cr_rg, cr_b0, uv_bias);
 
         store_u8x32_avx2(token, &mut y_out[blk * 32..blk * 32 + 32], y_lo, y_hi);
-        store_u8x32_avx2(
-            token,
-            &mut cb_out[blk * 32..blk * 32 + 32],
-            cb_lo,
-            cb_hi,
-        );
-        store_u8x32_avx2(
-            token,
-            &mut cr_out[blk * 32..blk * 32 + 32],
-            cr_lo,
-            cr_hi,
-        );
+        store_u8x32_avx2(token, &mut cb_out[blk * 32..blk * 32 + 32], cb_lo, cb_hi);
+        store_u8x32_avx2(token, &mut cr_out[blk * 32..blk * 32 + 32], cr_lo, cr_hi);
     }
     blocks * 32
 }
@@ -103,16 +93,14 @@ pub(crate) fn rgb_to_yuv420_avx2(
             let src_top = &rgb[top_off + px * 3..top_off + px * 3 + 96];
             let src_bot = &rgb[bot_off + px * 3..bot_off + px * 3 + 96];
 
-            let t0 =
-                safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[0..32]).unwrap());
+            let t0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[0..32]).unwrap());
             let t1 =
                 safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[32..64]).unwrap());
             let t2 =
                 safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[64..96]).unwrap());
             let (r_top, g_top, b_top) = deinterleave_rgb_avx2(token, t0, t1, t2);
 
-            let b0 =
-                safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[0..32]).unwrap());
+            let b0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[0..32]).unwrap());
             let b1 =
                 safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[32..64]).unwrap());
             let b2 =
@@ -120,16 +108,14 @@ pub(crate) fn rgb_to_yuv420_avx2(
             let (r_bot, g_bot, b_bot) = deinterleave_rgb_avx2(token, b0, b1, b2);
 
             // Y for both rows.
-            let (yt_lo, yt_hi) =
-                matrix_row_avx2(token, r_top, g_top, b_top, y_rg, y_b0, y_bias_v);
+            let (yt_lo, yt_hi) = matrix_row_avx2(token, r_top, g_top, b_top, y_rg, y_b0, y_bias_v);
             store_u8x32_avx2(
                 token,
                 &mut y_out[y_top_off + px..y_top_off + px + 32],
                 yt_lo,
                 yt_hi,
             );
-            let (yb_lo, yb_hi) =
-                matrix_row_avx2(token, r_bot, g_bot, b_bot, y_rg, y_b0, y_bias_v);
+            let (yb_lo, yb_hi) = matrix_row_avx2(token, r_bot, g_bot, b_bot, y_rg, y_b0, y_bias_v);
             store_u8x32_avx2(
                 token,
                 &mut y_out[y_bot_off + px..y_bot_off + px + 32],
@@ -212,7 +198,17 @@ pub(crate) fn rgb_to_yuv420_avx2(
     }
 
     // Scalar tail: remaining columns, odd last row, etc.
-    rgb_to_yuv420_scalar_tail(rgb, y_out, cb_out, cr_out, width, height, cw, col_blocks * 32, coeffs);
+    rgb_to_yuv420_scalar_tail(
+        rgb,
+        y_out,
+        cb_out,
+        cr_out,
+        width,
+        height,
+        cw,
+        col_blocks * 32,
+        coeffs,
+    );
 }
 
 /// Scalar fallback for columns/rows not covered by the 32-column SIMD blocks.
@@ -236,8 +232,9 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r = rgb[p] as f32;
             let g = rgb[p + 1] as f32;
             let b = rgb[p + 2] as f32;
-            y_out[row * width + col] =
-                crate::clamp_round(coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f);
+            y_out[row * width + col] = crate::clamp_round(
+                coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
+            );
         }
     }
 
@@ -255,9 +252,8 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let i01 = row * row_stride + col1 * 3;
             let i10 = row1 * row_stride + col * 3;
             let i11 = row1 * row_stride + col1 * 3;
-            let r =
-                (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
-                    * 0.25;
+            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
+                * 0.25;
             let g = (rgb[i00 + 1] as u32
                 + rgb[i01 + 1] as u32
                 + rgb[i10 + 1] as u32
@@ -290,8 +286,9 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let r = rgb[p] as f32;
             let g = rgb[p + 1] as f32;
             let b = rgb[p + 2] as f32;
-            y_out[last_row * width + col] =
-                crate::clamp_round(coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f);
+            y_out[last_row * width + col] = crate::clamp_round(
+                coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
+            );
         }
         // Cb/Cr for the last odd chroma row (SIMD columns).
         let cy = height / 2;
@@ -300,9 +297,8 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let col1 = (col + 1).min(width - 1);
             let i00 = last_row * row_stride + col * 3;
             let i01 = last_row * row_stride + col1 * 3;
-            let r =
-                (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i00] as u32 + rgb[i01] as u32) as f32
-                    * 0.25;
+            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i00] as u32 + rgb[i01] as u32) as f32
+                * 0.25;
             let g = (rgb[i00 + 1] as u32
                 + rgb[i01 + 1] as u32
                 + rgb[i00 + 1] as u32

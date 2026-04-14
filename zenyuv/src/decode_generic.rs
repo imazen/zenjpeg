@@ -2,8 +2,8 @@
 //!
 //! YCbCr->RGB inverse matrix for 4:4:4, 4:2:0, 4:2:2, and 4:0:0 (grayscale).
 
-use archmage::prelude::*;
 use crate::types::InverseCoeffs;
+use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 
@@ -77,7 +77,8 @@ pub(crate) fn yuv444_to_rgb_generic(
         let y_scaled = y_val * coeffs.y_coeff;
         let p = i * 3;
         rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-        rgb[p + 1] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
+        rgb[p + 1] =
+            crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
         rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
     }
 }
@@ -247,7 +248,11 @@ pub(crate) fn yuv400_to_rgb_generic(
             ya[i] = y_plane[base + i] as f32;
         }
         let y_v = f32x8::from_array(token, ya);
-        let gray = ((y_v + y_off) * y_coeff).to_i32_round().max(zero).min(max255).to_array();
+        let gray = ((y_v + y_off) * y_coeff)
+            .to_i32_round()
+            .max(zero)
+            .min(max255)
+            .to_array();
 
         for i in 0..8 {
             let p = (base + i) * 3;

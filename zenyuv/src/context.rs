@@ -57,7 +57,6 @@ impl YuvContext {
         }
     }
 
-
     // ── Box-average (non-sharp) ─────────────────────────────────────────
 
     /// Box-average 4:2:0 encode. u8 output.
@@ -105,8 +104,14 @@ impl YuvContext {
         let matrix = self.matrix;
         let temps = self.ensure_f32_temps(n, c_size);
         crate::encode::rgb_to_yuv420_with(
-            rgb, &mut temps.y[..n], &mut temps.cb[..c_size], &mut temps.cr[..c_size],
-            width, height, range, matrix,
+            rgb,
+            &mut temps.y[..n],
+            &mut temps.cb[..c_size],
+            &mut temps.cr[..c_size],
+            width,
+            height,
+            range,
+            matrix,
         );
         u8_to_f32(&temps.y[..n], &mut y[..n]);
         u8_to_f32(&temps.cb[..c_size], &mut cb[..c_size]);
@@ -131,8 +136,14 @@ impl YuvContext {
         let range = self.range;
         let matrix = self.matrix;
         crate::sharp::rgb_to_yuv420_sharp_with_workspace(
-            rgb, y, cb, cr, width, height,
-            range, matrix,
+            rgb,
+            y,
+            cb,
+            cr,
+            width,
+            height,
+            range,
+            matrix,
             config,
             self.sharp_ws.as_mut().unwrap(),
         );
@@ -155,35 +166,72 @@ impl YuvContext {
         let range = self.range;
         let matrix = self.matrix;
         crate::sharp::rgb_to_yuv420_sharp_f32(
-            rgb, y, cb, cr, width, height,
-            range, matrix,
+            rgb,
+            y,
+            cb,
+            cr,
+            width,
+            height,
+            range,
+            matrix,
             config,
             self.sharp_ws.as_mut().unwrap(),
         );
     }
 
-
     /// Decode YUV 4:4:4 to RGB u8.
     #[allow(dead_code)]
-    pub(crate) fn decode_444_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    pub(crate) fn decode_444_to_rgb(
+        &self,
+        y: &[u8],
+        cb: &[u8],
+        cr: &[u8],
+        rgb: &mut [u8],
+        w: usize,
+        h: usize,
+    ) {
         crate::decode::yuv444_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:0 to RGB u8 (nearest-neighbor chroma upsampling).
     #[allow(dead_code)]
-    pub(crate) fn decode_420_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    pub(crate) fn decode_420_to_rgb(
+        &self,
+        y: &[u8],
+        cb: &[u8],
+        cr: &[u8],
+        rgb: &mut [u8],
+        w: usize,
+        h: usize,
+    ) {
         crate::decode::yuv420_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:0 to RGB u8 (bilinear chroma upsampling).
     #[allow(dead_code)]
-    pub(crate) fn decode_420_bilinear_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    pub(crate) fn decode_420_bilinear_to_rgb(
+        &self,
+        y: &[u8],
+        cb: &[u8],
+        cr: &[u8],
+        rgb: &mut [u8],
+        w: usize,
+        h: usize,
+    ) {
         crate::decode::yuv420_to_rgb_bilinear_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:2 to RGB u8.
     #[allow(dead_code)]
-    pub(crate) fn decode_422_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    pub(crate) fn decode_422_to_rgb(
+        &self,
+        y: &[u8],
+        cb: &[u8],
+        cr: &[u8],
+        rgb: &mut [u8],
+        w: usize,
+        h: usize,
+    ) {
         crate::decode::yuv422_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 

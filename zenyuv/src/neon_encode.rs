@@ -5,8 +5,8 @@
 
 #![cfg(target_arch = "aarch64")]
 
-use archmage::prelude::*;
 use crate::types::ForwardCoeffs;
+use archmage::prelude::*;
 
 /// 4:4:4 NEON encode kernel. Returns number of pixels processed (multiple of 16).
 #[arcane(import_intrinsics)]
@@ -19,7 +19,6 @@ pub(crate) fn rgb_to_yuv444_neon(
     n: usize,
     coeffs: &ForwardCoeffs,
 ) -> usize {
-
     let yr = vdupq_n_s16(coeffs.yr);
     let yg = vdupq_n_s16(coeffs.yg);
     let yb = vdupq_n_s16(coeffs.yb);
@@ -63,23 +62,23 @@ pub(crate) fn rgb_to_yuv444_neon(
         let cr_hi = compute_channel_neon(token, r_hi, g_hi, b_hi, cr_r, cr_g, cr_b, uv_bias_v);
 
         // Narrow i16 -> u8 (saturating) and combine.
-        let y_u8 = vcombine_u8(
-            vqmovun_s16(y_lo),
-            vqmovun_s16(y_hi),
-        );
-        let cb_u8 = vcombine_u8(
-            vqmovun_s16(cb_lo),
-            vqmovun_s16(cb_hi),
-        );
-        let cr_u8 = vcombine_u8(
-            vqmovun_s16(cr_lo),
-            vqmovun_s16(cr_hi),
-        );
+        let y_u8 = vcombine_u8(vqmovun_s16(y_lo), vqmovun_s16(y_hi));
+        let cb_u8 = vcombine_u8(vqmovun_s16(cb_lo), vqmovun_s16(cb_hi));
+        let cr_u8 = vcombine_u8(vqmovun_s16(cr_lo), vqmovun_s16(cr_hi));
 
         // Store.
-        vst1q_u8(<&mut [u8; 16]>::try_from(&mut y_out[base..base+16]).unwrap(), y_u8);
-        vst1q_u8(<&mut [u8; 16]>::try_from(&mut cb_out[base..base+16]).unwrap(), cb_u8);
-        vst1q_u8(<&mut [u8; 16]>::try_from(&mut cr_out[base..base+16]).unwrap(), cr_u8);
+        vst1q_u8(
+            <&mut [u8; 16]>::try_from(&mut y_out[base..base + 16]).unwrap(),
+            y_u8,
+        );
+        vst1q_u8(
+            <&mut [u8; 16]>::try_from(&mut cb_out[base..base + 16]).unwrap(),
+            cb_u8,
+        );
+        vst1q_u8(
+            <&mut [u8; 16]>::try_from(&mut cr_out[base..base + 16]).unwrap(),
+            cr_u8,
+        );
     }
     blocks * 16
 }

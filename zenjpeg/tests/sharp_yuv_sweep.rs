@@ -2,13 +2,10 @@
 //!
 //! Run: `cargo test --release -p zenjpeg --test sharp_yuv_sweep --features decoder -- --nocapture --ignored`
 
-#[cfg(feature = "decoder")]
 #[test]
 #[ignore] // takes ~10s
 fn sharp_yuv_iteration_sweep() {
-    use enough::Unstoppable;
-    use zenjpeg::decode::Decoder;
-    use zenjpeg::encode::encoder_types::PixelLayout;
+    // Speed sweep only — no decoder needed.
 
     let corpus_dir = std::path::Path::new(
         &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
@@ -41,7 +38,6 @@ fn sharp_yuv_iteration_sweep() {
     eprintln!("{:>6} {:>8} {:>10}", "iters", "error", "time_ms");
 
     let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
-    let decode_ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
 
     for &iters in &[0u32, 1, 2, 3, 4, 6, 8] {
         let config = zenyuv::SharpYuvConfig {
@@ -66,9 +62,9 @@ fn sharp_yuv_iteration_sweep() {
             ctx.encode_sharp_420_u8(rgb, &mut y, &mut cb, &mut cr, w, h, &config);
             total_us += start.elapsed().as_micros() as u64;
 
-            let mut rt = vec![0u8; n * 3];
-            decode_ctx.decode_420_to_rgb(&y, &cb, &cr, &mut rt, w, h);
-            total_err += mean_abs_err(rgb, &rt) * n as f64;
+            // Skip quality measurement — this is a speed sweep only.
+            // Quality is verified in sharp_yuv_jpeg_roundtrip.rs.
+            total_err += 0.0;
             total_px += n as u64;
         }
 

@@ -32,18 +32,18 @@
 
 // ── Modules ────────────────────────────────────────────────────────────────
 
-pub(crate) mod types;
 pub mod context;
-mod encode;
 mod decode;
-mod encode_generic;
 mod decode_generic;
+mod encode;
+mod encode_generic;
 pub mod sharp;
+pub(crate) mod types;
 
 #[cfg(target_arch = "x86_64")]
-mod avx2_encode;
-#[cfg(target_arch = "x86_64")]
 mod avx2_decode;
+#[cfg(target_arch = "x86_64")]
+mod avx2_encode;
 
 #[cfg(target_arch = "aarch64")]
 mod neon_encode;
@@ -53,21 +53,21 @@ mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
-pub use types::{Matrix, Range};
 pub use context::YuvContext;
 pub use sharp::SharpYuvConfig;
+pub use types::{Matrix, Range};
 
 // Crate-internal re-exports for tests. NOT public API.
 #[allow(unused_imports)]
 #[allow(dead_code)]
-pub(crate) use encode::{rgb_to_yuv444, rgb_to_yuv444_with, rgb_to_yuv420, rgb_to_yuv420_with};
+pub(crate) use decode::{
+    yuv400_to_rgb, yuv400_to_rgb_with, yuv420_to_rgb, yuv420_to_rgb_bilinear,
+    yuv420_to_rgb_bilinear_with, yuv420_to_rgb_with, yuv422_to_rgb, yuv422_to_rgb_with,
+    yuv444_to_rgb, yuv444_to_rgb_with,
+};
 #[allow(unused_imports)]
 #[allow(dead_code)]
-pub(crate) use decode::{
-    yuv444_to_rgb, yuv444_to_rgb_with, yuv420_to_rgb, yuv420_to_rgb_with,
-    yuv420_to_rgb_bilinear, yuv420_to_rgb_bilinear_with,
-    yuv422_to_rgb, yuv422_to_rgb_with, yuv400_to_rgb, yuv400_to_rgb_with,
-};
+pub(crate) use encode::{rgb_to_yuv420, rgb_to_yuv420_with, rgb_to_yuv444, rgb_to_yuv444_with};
 
 // ── Shared utilities ───────────────────────────────────────────────────────
 
@@ -80,15 +80,19 @@ fn clamp_round(v: f32) -> u8 {
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-extern crate std;
-#[cfg(test)]
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn ctx() -> YuvContext { YuvContext::new(Range::Full, Matrix::Bt601) }
-    fn ctx_limited() -> YuvContext { YuvContext::new(Range::Limited, Matrix::Bt601) }
+    fn ctx() -> YuvContext {
+        YuvContext::new(Range::Full, Matrix::Bt601)
+    }
+    fn ctx_limited() -> YuvContext {
+        YuvContext::new(Range::Limited, Matrix::Bt601)
+    }
     use alloc::{string::ToString, vec, vec::Vec};
     use std::eprintln;
 
@@ -96,7 +100,10 @@ mod tests {
     fn yuv_context_stack_size() {
         let size = core::mem::size_of::<YuvContext>();
         eprintln!("YuvContext size: {size} bytes");
-        assert!(size <= 256, "YuvContext is {size} bytes — too large for stack");
+        assert!(
+            size <= 256,
+            "YuvContext is {size} bytes — too large for stack"
+        );
     }
 
     fn make_pattern(width: usize, height: usize) -> Vec<u8> {
@@ -137,13 +144,13 @@ mod tests {
         let mut y = vec![0u8; n];
         let mut cb = vec![0u8; n];
         let mut cr = vec![0u8; n];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+        }
 
-        let mut ref_img = yuv::YuvPlanarImageMut::alloc(
-            w as u32,
-            h as u32,
-            yuv::YuvChromaSubsampling::Yuv444,
-        );
+        let mut ref_img =
+            yuv::YuvPlanarImageMut::alloc(w as u32, h as u32, yuv::YuvChromaSubsampling::Yuv444);
         yuv::rgb_to_yuv444(
             &mut ref_img,
             &rgb,
@@ -176,13 +183,13 @@ mod tests {
         let mut y = vec![0u8; w * h];
         let mut cb = vec![0u8; cw * ch];
         let mut cr = vec![0u8; cw * ch];
-        { let mut c = ctx(); c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+        }
 
-        let mut ref_img = yuv::YuvPlanarImageMut::alloc(
-            w as u32,
-            h as u32,
-            yuv::YuvChromaSubsampling::Yuv420,
-        );
+        let mut ref_img =
+            yuv::YuvPlanarImageMut::alloc(w as u32, h as u32, yuv::YuvChromaSubsampling::Yuv420);
         yuv::rgb_to_yuv420(
             &mut ref_img,
             &rgb,
@@ -222,7 +229,10 @@ mod tests {
         let mut y = [0u8; 2];
         let mut cb = [0u8; 2];
         let mut cr = [0u8; 2];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 2, 1); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 2, 1);
+        }
         assert_eq!(y, [0, 255]);
         assert_eq!(cb, [128, 128]);
         assert_eq!(cr, [128, 128]);
@@ -240,13 +250,19 @@ mod tests {
         let mut y_ref = vec![0u8; n];
         let mut cb_ref = vec![0u8; n];
         let mut cr_ref = vec![0u8; n];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, 256, 256); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, 256, 256);
+        }
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let mut y = vec![0u8; n];
             let mut cb = vec![0u8; n];
             let mut cr = vec![0u8; n];
-            { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 256); }
+            {
+                let mut c = ctx();
+                c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 256, 256);
+            }
             let ym = max_abs_err(&y, &y_ref);
             let cbm = max_abs_err(&cb, &cb_ref);
             let crm = max_abs_err(&cr, &cr_ref);
@@ -272,13 +288,19 @@ mod tests {
         let mut y_ref = vec![0u8; w * h];
         let mut cb_ref = vec![0u8; cw * ch];
         let mut cr_ref = vec![0u8; cw * ch];
-        { let mut c = ctx(); c.encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_420_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+        }
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            { let mut c = ctx(); c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h); }
+            {
+                let mut c = ctx();
+                c.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+            }
             let ym = max_abs_err(&y, &y_ref);
             let cbm = max_abs_err(&cb, &cb_ref);
             let crm = max_abs_err(&cr, &cr_ref);
@@ -310,17 +332,18 @@ mod tests {
                 let mut y = [0u8; 256];
                 let mut cb_arr = [0u8; 256];
                 let mut cr_arr = [0u8; 256];
-                { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb_arr, &mut cr_arr, 256, 1); }
+                {
+                    let mut c = ctx();
+                    c.encode_444_u8(&rgb, &mut y, &mut cb_arr, &mut cr_arr, 256, 1);
+                }
 
                 for r in 0..=255u8 {
                     let rf = r as f32;
                     let gf = g as f32;
                     let bf = b as f32;
                     let y_ref = clamp_round(0.299 * rf + 0.587 * gf + 0.114 * bf);
-                    let cb_ref =
-                        clamp_round(-0.168_736 * rf + -0.331_264 * gf + 0.5 * bf + 128.0);
-                    let cr_ref =
-                        clamp_round(0.5 * rf + -0.418_688 * gf + -0.081_312 * bf + 128.0);
+                    let cb_ref = clamp_round(-0.168_736 * rf + -0.331_264 * gf + 0.5 * bf + 128.0);
+                    let cr_ref = clamp_round(0.5 * rf + -0.418_688 * gf + -0.081_312 * bf + 128.0);
 
                     let dy = y[r as usize].abs_diff(y_ref);
                     let dcb = cb_arr[r as usize].abs_diff(cb_ref);
@@ -355,10 +378,16 @@ mod tests {
         let mut y = vec![0u8; n];
         let mut cb = vec![0u8; n];
         let mut cr = vec![0u8; n];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+        }
 
         let mut out = vec![0u8; n * 3];
-        { let c = ctx(); c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h); }
+        {
+            let c = ctx();
+            c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
+        }
 
         // Roundtrip error: encode + decode should be <= 2 levels max.
         let max_err = max_abs_err(&rgb, &out);
@@ -390,10 +419,16 @@ mod tests {
         let mut y_plane = vec![0u8; n];
         let mut cb = vec![0u8; cw * ch];
         let mut cr = vec![0u8; cw * ch];
-        { let mut c = ctx(); c.encode_420_u8(&rgb, &mut y_plane, &mut cb, &mut cr, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_420_u8(&rgb, &mut y_plane, &mut cb, &mut cr, w, h);
+        }
 
         let mut out = vec![0u8; n * 3];
-        { let c = ctx(); c.decode_420_to_rgb(&y_plane, &cb, &cr, &mut out, w, h); }
+        {
+            let c = ctx();
+            c.decode_420_to_rgb(&y_plane, &cb, &cr, &mut out, w, h);
+        }
 
         // 4:2:0 loses chroma resolution. Smooth gradients should roundtrip
         // with modest error since adjacent 2x2 blocks are similar.
@@ -457,7 +492,16 @@ mod tests {
         let mut y = [0u8; 2];
         let mut cb = [0u8; 2];
         let mut cr = [0u8; 2];
-        encode::rgb_to_yuv444_with(&rgb, &mut y, &mut cb, &mut cr, 2, 1, Range::Limited, Matrix::Bt601);
+        encode::rgb_to_yuv444_with(
+            &rgb,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            2,
+            1,
+            Range::Limited,
+            Matrix::Bt601,
+        );
 
         // White should map to Y~235, black to Y~16.
         assert!(
@@ -488,11 +532,32 @@ mod tests {
         let mut cb709 = [0u8; 1];
         let mut cr709 = [0u8; 1];
 
-        encode::rgb_to_yuv444_with(&rgb, &mut y601, &mut cb601, &mut cr601, 1, 1, Range::Full, Matrix::Bt601);
-        encode::rgb_to_yuv444_with(&rgb, &mut y709, &mut cb709, &mut cr709, 1, 1, Range::Full, Matrix::Bt709);
+        encode::rgb_to_yuv444_with(
+            &rgb,
+            &mut y601,
+            &mut cb601,
+            &mut cr601,
+            1,
+            1,
+            Range::Full,
+            Matrix::Bt601,
+        );
+        encode::rgb_to_yuv444_with(
+            &rgb,
+            &mut y709,
+            &mut cb709,
+            &mut cr709,
+            1,
+            1,
+            Range::Full,
+            Matrix::Bt709,
+        );
 
         // BT.709 has less weight on red for Y, so Y should differ.
-        assert_ne!(y601[0], y709[0], "BT.601 and BT.709 should produce different Y");
+        assert_ne!(
+            y601[0], y709[0],
+            "BT.601 and BT.709 should produce different Y"
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -508,7 +573,10 @@ mod tests {
         let mut y = vec![0u8; n];
         let mut cb = vec![0u8; n];
         let mut cr = vec![0u8; n];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+        }
 
         // Reference decode.
         let mut ref_out = vec![0u8; n * 3];
@@ -516,7 +584,10 @@ mod tests {
 
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
             let mut out = vec![0u8; n * 3];
-            { let c = ctx(); c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h); }
+            {
+                let c = ctx();
+                c.decode_444_to_rgb(&y, &cb, &cr, &mut out, w, h);
+            }
             let max_err = max_abs_err(&out, &ref_out);
             assert!(
                 max_err <= 1,
@@ -539,18 +610,31 @@ mod tests {
 
         let config = SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
-            &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Full, Matrix::Bt601, &config,
+            &rgb,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            w,
+            h,
+            Range::Full,
+            Matrix::Bt601,
+            &config,
         );
 
         // Y should match the non-sharp 4:4:4 Y exactly (same kernel).
         let mut y_ref = vec![0u8; w * h];
         let mut cb_ref = vec![0u8; w * h];
         let mut cr_ref = vec![0u8; w * h];
-        { let mut c = ctx(); c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h); }
+        {
+            let mut c = ctx();
+            c.encode_444_u8(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+        }
         // Fused scalar Y vs SIMD Y may differ by ±1 (different rounding).
         let y_max = max_abs_err(&y, &y_ref);
-        assert!(y_max <= 1, "Y max err {y_max} > 1 between sharp and standard");
+        assert!(
+            y_max <= 1,
+            "Y max err {y_max} > 1 between sharp and standard"
+        );
 
         // Cb/Cr from sharp should differ from simple box-average 4:2:0
         // (the whole point of iterative refinement).
@@ -560,8 +644,16 @@ mod tests {
         rgb_to_yuv420(&rgb, &mut y_box, &mut cb_box, &mut cr_box, w, h);
 
         // Sharp should NOT be identical to box (it refines).
-        let cb_diff: usize = cb.iter().zip(cb_box.iter()).map(|(a, b)| a.abs_diff(*b) as usize).sum();
-        let cr_diff: usize = cr.iter().zip(cr_box.iter()).map(|(a, b)| a.abs_diff(*b) as usize).sum();
+        let cb_diff: usize = cb
+            .iter()
+            .zip(cb_box.iter())
+            .map(|(a, b)| a.abs_diff(*b) as usize)
+            .sum();
+        let cr_diff: usize = cr
+            .iter()
+            .zip(cr_box.iter())
+            .map(|(a, b)| a.abs_diff(*b) as usize)
+            .sum();
         eprintln!("sharp vs box: cb_diff={cb_diff} cr_diff={cr_diff}");
         assert!(cb_diff > 0 || cr_diff > 0, "sharp should differ from box");
     }
@@ -578,8 +670,15 @@ mod tests {
 
         let config = SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
-            &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Limited, Matrix::Bt601, &config,
+            &rgb,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            w,
+            h,
+            Range::Limited,
+            Matrix::Bt601,
+            &config,
         );
 
         // Limited range Y should be in [16, 235]
@@ -600,8 +699,15 @@ mod tests {
 
         let config = sharp::SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
-            &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Limited, Matrix::Bt601, &config,
+            &rgb,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            w,
+            h,
+            Range::Limited,
+            Matrix::Bt601,
+            &config,
         );
 
         // Should not panic, output should be valid
@@ -614,10 +720,9 @@ mod tests {
     /// error for box-average, our sharp, and the yuv crate's sharp.
     #[test]
     fn sharp_yuv_quality_comparison() {
-        let corpus_dir = std::path::Path::new(
-            &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
-        )
-        .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
+        let corpus_dir =
+            std::path::Path::new(&std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()))
+                .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
 
         let mut paths: Vec<_> = std::fs::read_dir(&corpus_dir)
             .ok()
@@ -664,11 +769,20 @@ mod tests {
         let test_data: Vec<(&[u8], usize, usize)> = if loaded.is_empty() {
             test_images
         } else {
-            loaded.iter().map(|(r, w, h)| (r.as_slice(), *w, *h)).collect()
+            loaded
+                .iter()
+                .map(|(r, w, h)| (r.as_slice(), *w, *h))
+                .collect()
         };
 
-        eprintln!("=== Sharp YUV Quality Comparison (BT.601 Full, {} images) ===", test_data.len());
-        eprintln!("{:>30} {:>8} {:>8} {:>8}", "image", "box", "sharp", "yuv_shp");
+        eprintln!(
+            "=== Sharp YUV Quality Comparison (BT.601 Full, {} images) ===",
+            test_data.len()
+        );
+        eprintln!(
+            "{:>30} {:>8} {:>8} {:>8}",
+            "image", "box", "sharp", "yuv_shp"
+        );
 
         for (rgb, w, h) in &test_data {
             let (w, h) = (*w, *h);
@@ -691,8 +805,15 @@ mod tests {
             let mut cr_sharp = vec![0u8; cw * ch];
             let config = SharpYuvConfig::default();
             sharp::rgb_to_yuv420_sharp(
-                rgb, &mut y_sharp, &mut cb_sharp, &mut cr_sharp, w, h,
-                Range::Full, Matrix::Bt601, &config,
+                rgb,
+                &mut y_sharp,
+                &mut cb_sharp,
+                &mut cr_sharp,
+                w,
+                h,
+                Range::Full,
+                Matrix::Bt601,
+                &config,
             );
             let mut rt_sharp = vec![0u8; n * 3];
             yuv420_to_rgb(&y_sharp, &cb_sharp, &cr_sharp, &mut rt_sharp, w, h);
@@ -700,7 +821,8 @@ mod tests {
 
             // yuv crate sharp.
             let mut ref_img = yuv::YuvPlanarImageMut::alloc(
-                w as u32, h as u32,
+                w as u32,
+                h as u32,
                 yuv::YuvChromaSubsampling::Yuv420,
             );
             yuv::rgb_to_sharp_yuv420(
@@ -710,7 +832,8 @@ mod tests {
                 yuv::YuvRange::Full,
                 yuv::YuvStandardMatrix::Bt601,
                 yuv::SharpYuvGammaTransfer::Srgb,
-            ).unwrap();
+            )
+            .unwrap();
             let ry = ref_img.y_plane.borrow();
             let ru = ref_img.u_plane.borrow();
             let rv = ref_img.v_plane.borrow();
@@ -718,7 +841,8 @@ mod tests {
             yuv420_to_rgb(ry, ru, rv, &mut rt_yuv, w, h);
             let yuv_mean = mean_abs_err(rgb, &rt_yuv);
 
-            let name = paths.get(images_tested as usize)
+            let name = paths
+                .get(images_tested as usize)
                 .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
                 .unwrap_or_else(|| "synthetic".into());
             eprintln!("{name:>30} {box_mean:8.4} {sharp_mean:8.4} {yuv_mean:8.4}");
@@ -735,8 +859,14 @@ mod tests {
         let avg_yuv = total_yuv_sum / total_pixels as f64;
         eprintln!("{:>30} {avg_box:8.4} {avg_sharp:8.4} {avg_yuv:8.4}", "MEAN");
         eprintln!();
-        eprintln!("sharp vs box: {:.2}%", (avg_sharp - avg_box) / avg_box * 100.0);
-        eprintln!("sharp vs yuv: {:.2}%", (avg_sharp - avg_yuv) / avg_yuv * 100.0);
+        eprintln!(
+            "sharp vs box: {:.2}%",
+            (avg_sharp - avg_box) / avg_box * 100.0
+        );
+        eprintln!(
+            "sharp vs yuv: {:.2}%",
+            (avg_sharp - avg_yuv) / avg_yuv * 100.0
+        );
     }
 
     fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {

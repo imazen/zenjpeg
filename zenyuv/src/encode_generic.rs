@@ -2,8 +2,8 @@
 //!
 //! These run on all platforms: NEON, WASM SIMD128, AVX2 (fallback), and scalar.
 
-use archmage::prelude::*;
 use crate::types::ForwardCoeffs;
+use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 
@@ -76,9 +76,15 @@ pub(crate) fn rgb_to_yuv444_generic(
         let r = rgb[p] as f32;
         let g = rgb[p + 1] as f32;
         let b = rgb[p + 2] as f32;
-        y[i] = crate::clamp_round(coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f);
-        cb[i] = crate::clamp_round(coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f);
-        cr[i] = crate::clamp_round(coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f);
+        y[i] = crate::clamp_round(
+            coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
+        );
+        cb[i] = crate::clamp_round(
+            coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f,
+        );
+        cr[i] = crate::clamp_round(
+            coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f,
+        );
     }
 }
 
@@ -136,7 +142,9 @@ pub(crate) fn rgb_to_yuv420_generic(
         let r = rgb[p] as f32;
         let g = rgb[p + 1] as f32;
         let b = rgb[p + 2] as f32;
-        y[i] = crate::clamp_round(coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f);
+        y[i] = crate::clamp_round(
+            coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
+        );
     }
 
     // Chroma: iterate 2x2 blocks.
@@ -153,9 +161,8 @@ pub(crate) fn rgb_to_yuv420_generic(
             let i01 = (row * width + col1) * 3;
             let i10 = (row1 * width + col) * 3;
             let i11 = (row1 * width + col1) * 3;
-            let r =
-                (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
-                    * 0.25;
+            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
+                * 0.25;
             let g = (rgb[i00 + 1] as u32
                 + rgb[i01 + 1] as u32
                 + rgb[i10 + 1] as u32
