@@ -187,12 +187,16 @@ fn sharp_iterate_rows(
 }
 
 /// Extract one chroma row of 2×2 block data into SoA arrays + box-average
-/// initial Cb/Cr. The `#[autoversion]` gives LLVM a chance to vectorize the
-/// u8→f32 conversions and FMA chains.
-#[archmage::autoversion]
+/// initial Cb/Cr.
+///
+/// The bulk path processes the inner blocks where `x+1 < width` (no edge
+/// clamping), using contiguous row slices cast to `&[u8; N]` so LLVM can
+/// prove no aliasing and vectorize the u8→f32 + FMA chain.
+///
+/// The last block (if width is odd) handles edge replication separately.
 fn extract_soa_row(
     rgb: &[u8],
-    y: &[u8],
+    y_plane: &[u8],
     row_top: usize,
     row_bot: usize,
     width: usize,
@@ -205,38 +209,120 @@ fn extract_soa_row(
     cb_f: &mut [f32], cr_f: &mut [f32],
     fwd: &ForwardCoeffs,
 ) {
-    for cx_idx in 0..cw {
-        let x0 = cx_idx * 2;
-        let x1 = (x0 + 1).min(width - 1);
+    // Pre-slice the two Y rows and two RGB rows as contiguous spans.
+    // This eliminates per-pixel index arithmetic and lets LLVM see
+    // contiguous memory access patterns.
+    let y_top = &y_plane[row_top * width..row_top * width + width];
+    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
+    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
+    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
 
-        y0s[cx_idx] = y[row_top * width + x0] as f32;
-        y1s[cx_idx] = y[row_top * width + x1] as f32;
-        y2s[cx_idx] = y[row_bot * width + x0] as f32;
-        y3s[cx_idx] = y[row_bot * width + x1] as f32;
+    // Bulk: all blocks where x+1 < width (no edge clamping needed).
+    // For width=1024, bulk_cw=512 (all blocks). For width=1023, bulk_cw=511.
+    let bulk_cw = width / 2;
 
-        let i00 = (row_top * width + x0) * 3;
-        let i10 = (row_top * width + x1) * 3;
-        let i01 = (row_bot * width + x0) * 3;
-        let i11 = (row_bot * width + x1) * 3;
+    extract_soa_bulk(
+        rgb_top, rgb_bot, y_top, y_bot, bulk_cw,
+        y0s, y1s, y2s, y3s,
+        or0, og0, ob0, or1, og1, ob1, or2, og2, ob2, or3, og3, ob3,
+        cb_f, cr_f, fwd,
+    );
 
-        or0[cx_idx] = rgb[i00] as f32;
-        og0[cx_idx] = rgb[i00 + 1] as f32;
-        ob0[cx_idx] = rgb[i00 + 2] as f32;
-        or1[cx_idx] = rgb[i10] as f32;
-        og1[cx_idx] = rgb[i10 + 1] as f32;
-        ob1[cx_idx] = rgb[i10 + 2] as f32;
-        or2[cx_idx] = rgb[i01] as f32;
-        og2[cx_idx] = rgb[i01 + 1] as f32;
-        ob2[cx_idx] = rgb[i01 + 2] as f32;
-        or3[cx_idx] = rgb[i11] as f32;
-        og3[cx_idx] = rgb[i11 + 1] as f32;
-        ob3[cx_idx] = rgb[i11 + 2] as f32;
+    // Edge: last block if width is odd (x1 = x0, replicates last column).
+    if cw > bulk_cw {
+        let cx = bulk_cw;
+        let x0 = cx * 2;
+        // x1 clamped to width-1 = x0 for odd width
+        y0s[cx] = y_top[x0] as f32;
+        y1s[cx] = y_top[x0] as f32; // replicate
+        y2s[cx] = y_bot[x0] as f32;
+        y3s[cx] = y_bot[x0] as f32;
+        let ri = x0 * 3;
+        or0[cx] = rgb_top[ri] as f32;
+        og0[cx] = rgb_top[ri + 1] as f32;
+        ob0[cx] = rgb_top[ri + 2] as f32;
+        or1[cx] = or0[cx]; // replicate
+        og1[cx] = og0[cx];
+        ob1[cx] = ob0[cx];
+        or2[cx] = rgb_bot[ri] as f32;
+        og2[cx] = rgb_bot[ri + 1] as f32;
+        ob2[cx] = rgb_bot[ri + 2] as f32;
+        or3[cx] = or2[cx];
+        og3[cx] = og2[cx];
+        ob3[cx] = ob2[cx];
+        let r_avg = (or0[cx] + or1[cx] + or2[cx] + or3[cx]) * 0.25;
+        let g_avg = (og0[cx] + og1[cx] + og2[cx] + og3[cx]) * 0.25;
+        let b_avg = (ob0[cx] + ob1[cx] + ob2[cx] + ob3[cx]) * 0.25;
+        cb_f[cx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+        cr_f[cx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+    }
+}
 
-        let r_avg = (or0[cx_idx] + or1[cx_idx] + or2[cx_idx] + or3[cx_idx]) * 0.25;
-        let g_avg = (og0[cx_idx] + og1[cx_idx] + og2[cx_idx] + og3[cx_idx]) * 0.25;
-        let b_avg = (ob0[cx_idx] + ob1[cx_idx] + ob2[cx_idx] + ob3[cx_idx]) * 0.25;
-        cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
-        cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+/// Bulk inner loop: contiguous row slices, no edge checks.
+/// `#[autoversion]` generates AVX2/SSE/NEON variants. LLVM can vectorize
+/// the u8→f32 widening and the box-average FMA because:
+/// - Input slices are pre-bounded (no per-pixel bounds checks)
+/// - Each block reads at stride 6 in RGB / stride 2 in Y (regular pattern)
+/// - Output slices are written sequentially (no aliasing between them)
+#[archmage::autoversion]
+fn extract_soa_bulk(
+    rgb_top: &[u8], rgb_bot: &[u8],
+    y_top: &[u8], y_bot: &[u8],
+    bulk_cw: usize,
+    y0s: &mut [f32], y1s: &mut [f32], y2s: &mut [f32], y3s: &mut [f32],
+    or0: &mut [f32], og0: &mut [f32], ob0: &mut [f32],
+    or1: &mut [f32], og1: &mut [f32], ob1: &mut [f32],
+    or2: &mut [f32], og2: &mut [f32], ob2: &mut [f32],
+    or3: &mut [f32], og3: &mut [f32], ob3: &mut [f32],
+    cb_f: &mut [f32], cr_f: &mut [f32],
+    fwd: &ForwardCoeffs,
+) {
+    // Coefficients as locals so LLVM can hoist them to registers.
+    let cb_r = fwd.cb_r_f;
+    let cb_g = fwd.cb_g_f;
+    let cb_b = fwd.cb_b_f;
+    let cr_r = fwd.cr_r_f;
+    let cr_g = fwd.cr_g_f;
+    let cr_b = fwd.cr_b_f;
+    let uv_bias = fwd.uv_bias_f;
+
+    for cx in 0..bulk_cw {
+        // Pixel coordinates. x0 = 2*cx, x1 = 2*cx+1. Both in bounds
+        // because bulk_cw = width/2, so x1 = 2*cx+1 < width.
+        let x0 = cx * 2;
+
+        // Y: stride-2 in the pre-sliced row.
+        y0s[cx] = y_top[x0] as f32;
+        y1s[cx] = y_top[x0 + 1] as f32;
+        y2s[cx] = y_bot[x0] as f32;
+        y3s[cx] = y_bot[x0 + 1] as f32;
+
+        // RGB: stride-6 in the pre-sliced row (3 bytes/pixel, 2 pixels/block).
+        let ri = x0 * 3;
+        let r0 = rgb_top[ri] as f32;
+        let g0 = rgb_top[ri + 1] as f32;
+        let b0 = rgb_top[ri + 2] as f32;
+        let r1 = rgb_top[ri + 3] as f32;
+        let g1 = rgb_top[ri + 4] as f32;
+        let b1 = rgb_top[ri + 5] as f32;
+        let r2 = rgb_bot[ri] as f32;
+        let g2 = rgb_bot[ri + 1] as f32;
+        let b2 = rgb_bot[ri + 2] as f32;
+        let r3 = rgb_bot[ri + 3] as f32;
+        let g3 = rgb_bot[ri + 4] as f32;
+        let b3 = rgb_bot[ri + 5] as f32;
+
+        or0[cx] = r0; og0[cx] = g0; ob0[cx] = b0;
+        or1[cx] = r1; og1[cx] = g1; ob1[cx] = b1;
+        or2[cx] = r2; og2[cx] = g2; ob2[cx] = b2;
+        or3[cx] = r3; og3[cx] = g3; ob3[cx] = b3;
+
+        // Box-average initial Cb/Cr.
+        let r_avg = (r0 + r1 + r2 + r3) * 0.25;
+        let g_avg = (g0 + g1 + g2 + g3) * 0.25;
+        let b_avg = (b0 + b1 + b2 + b3) * 0.25;
+        cb_f[cx] = cb_r * r_avg + cb_g * g_avg + cb_b * b_avg + uv_bias;
+        cr_f[cx] = cr_r * r_avg + cr_g * g_avg + cr_b * b_avg + uv_bias;
     }
 }
 
