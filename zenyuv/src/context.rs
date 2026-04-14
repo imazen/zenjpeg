@@ -162,30 +162,34 @@ impl YuvContext {
         );
     }
 
-    // ── Decode ───────────────────────────────────────────────────────────
 
     /// Decode YUV 4:4:4 to RGB u8.
-    pub fn decode_444_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    #[allow(dead_code)]
+    pub(crate) fn decode_444_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
         crate::decode::yuv444_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:0 to RGB u8 (nearest-neighbor chroma upsampling).
-    pub fn decode_420_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    #[allow(dead_code)]
+    pub(crate) fn decode_420_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
         crate::decode::yuv420_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:0 to RGB u8 (bilinear chroma upsampling).
-    pub fn decode_420_bilinear_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    #[allow(dead_code)]
+    pub(crate) fn decode_420_bilinear_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
         crate::decode::yuv420_to_rgb_bilinear_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:2:2 to RGB u8.
-    pub fn decode_422_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    #[allow(dead_code)]
+    pub(crate) fn decode_422_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
         crate::decode::yuv422_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
     }
 
     /// Decode YUV 4:0:0 (grayscale) to RGB u8.
-    pub fn decode_400_to_rgb(&self, y: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+    #[allow(dead_code)]
+    pub(crate) fn decode_400_to_rgb(&self, y: &[u8], rgb: &mut [u8], w: usize, h: usize) {
         crate::decode::yuv400_to_rgb_with(y, rgb, w, h, self.range, self.matrix);
     }
 

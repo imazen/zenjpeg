@@ -19,16 +19,12 @@
 //!
 //! let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
 //!
-//! // Encode: RGB -> YCbCr 4:4:4
+//! // Encode: RGB -> YCbCr 4:2:0
 //! let rgb = vec![128u8; 64 * 64 * 3];
 //! let mut y = vec![0u8; 64 * 64];
-//! let mut cb = vec![0u8; 64 * 64];
-//! let mut cr = vec![0u8; 64 * 64];
-//! ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 64, 64);
-//!
-//! // Decode: YCbCr 4:4:4 -> RGB
-//! let mut out = vec![0u8; 64 * 64 * 3];
-//! ctx.decode_444_to_rgb(&y, &cb, &cr, &mut out, 64, 64);
+//! let mut cb = vec![0u8; 32 * 32];
+//! let mut cr = vec![0u8; 32 * 32];
+//! ctx.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 64, 64);
 //! ```
 
 #![no_std]

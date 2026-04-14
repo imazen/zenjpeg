@@ -15,13 +15,9 @@ let mut y  = vec![0u8; 640 * 480];
 let mut cb = vec![0u8; 320 * 240];
 let mut cr = vec![0u8; 320 * 240];
 ctx.encode_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480);
-
-// Decode: YCbCr 4:2:0 -> RGB
-let mut out = vec![0u8; 640 * 480 * 3];
-ctx.decode_420_to_rgb(&y, &cb, &cr, &mut out, 640, 480);
 ```
 
-`YuvContext` is reusable across frames. Internal buffers are lazy-allocated on first use -- plain u8 box-average encode/decode allocates nothing.
+`YuvContext` is reusable across frames. Internal buffers are lazy-allocated on first use -- plain u8 box-average encode allocates nothing.
 
 ## Performance
 
@@ -81,16 +77,6 @@ ctx.encode_sharp_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480, &config);
 | Limited range | yes | yes | yes |
 | u8 output | yes | yes | yes |
 | f32 output | yes | yes | yes |
-
-### Decode (YCbCr to RGB)
-
-| | 4:4:4 | 4:2:0 | 4:2:0 bilinear | 4:2:2 | 4:0:0 |
-|---|---|---|---|---|---|
-| BT.601 | yes | yes | yes | yes | yes |
-| BT.709 | yes | yes | yes | yes | yes |
-| BT.2020 | yes | yes | yes | yes | yes |
-| Full range | yes | yes | yes | yes | yes |
-| Limited range | yes | yes | yes | yes | yes |
 
 ## Platform Support
 
