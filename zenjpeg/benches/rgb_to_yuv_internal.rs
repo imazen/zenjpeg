@@ -6,7 +6,7 @@
 
 use zenbench::prelude::*;
 
-use zenjpeg::color::rgb_to_yuv::{rgb_to_yuv420, rgb_to_yuv444};
+use zenyuv::{rgb_to_yuv420, rgb_to_yuv444};
 
 use yuv::{
     BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "zenjpeg",
     "zenjpeg-bench-utils",
+    "zenyuv",
     "zjpeg",
     "internal/jpegli-internals-sys",
 ]
@@ -45,6 +46,7 @@ rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
 yuv = { version = "0.8", features = ["professional_mode"] }
+zenyuv = { path = "zenyuv" }
 
 # Testing
 approx = "0.5"

@@ -3130,6 +3130,7 @@ dependencies = [
  "zenresize",
  "zensim",
  "zensim-regress",
+ "zenyuv",
  "zune-core",
  "zune-jpeg",
 ]
@@ -3220,6 +3221,16 @@ dependencies = [
  "seahash",
  "thiserror",
  "zensim",
+]
+
+[[package]]
+name = "zenyuv"
+version = "0.1.0"
+dependencies = [
+ "archmage 0.9.17",
+ "magetypes",
+ "safe_unaligned_simd",
+ "yuv",
 ]
 
 [[package]]
