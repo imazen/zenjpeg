@@ -1,7 +1,7 @@
 //! Test XYB mode edge handling with partial MCU dimensions
 
 use enough::Unstoppable;
-use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
+use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, srgb_u8_to_linear};
 use zenjpeg::color::icc::TargetColorSpace;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
@@ -44,7 +44,7 @@ fn bytes_to_linear(data: &[u8], width: usize, height: usize) -> LinearRgbImage {
 fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     let orig = bytes_to_linear(original, width, height);
     let dec = bytes_to_linear(decoded, width, height);
-    compute_frame_ssimulacra2(orig, dec).unwrap_or(0.0)
+    compute_ssimulacra2(orig, dec).unwrap_or(0.0)
 }
 
 fn main() {

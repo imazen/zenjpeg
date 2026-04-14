@@ -10,7 +10,7 @@
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
-use fast_ssim2::{LinearRgbImage, compute_frame_ssimulacra2, srgb_u8_to_linear};
+use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, srgb_u8_to_linear};
 use zenjpeg::encoder::{
     ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
     Quality,
@@ -123,7 +123,7 @@ fn compute_ssim2(original: &ImageData, decoded: &[u8]) -> f64 {
     let orig_linear = bytes_to_linear_rgb(&original.pixels, original.width, original.height);
     let dec_linear = bytes_to_linear_rgb(decoded, original.width, original.height);
 
-    compute_frame_ssimulacra2(orig_linear, dec_linear).expect("SSIMULACRA2 computation failed")
+    compute_ssimulacra2(orig_linear, dec_linear).expect("SSIMULACRA2 computation failed")
 }
 
 fn main() {

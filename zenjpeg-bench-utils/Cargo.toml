@@ -25,11 +25,11 @@ png = { workspace = true }
 zune-jpeg = { workspace = true }
 
 # Color management
-moxcms = { workspace = true , path = "../../../moxcms" }
+moxcms = { workspace = true }
 
 # Quality metrics
 dssim-core = { workspace = true }
-fast-ssim2 = { workspace = true , path = "../../fast-ssim2/fast-ssim2" }
+fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 
 # For test image discovery and encoding (decoder required for comparison utilities)
