@@ -93,6 +93,9 @@ mozjpeg-sys = { version = "2.2", default-features = false, features = ["nasm_sim
 kamadak-exif = "0.6"
 img-parts = "0.4"
 
+# Half-precision floating point
+half = { version = "2.7.1", default-features = false }
+
 # Our ultrahdr crates
 ultrahdr-rs = "0.3.5"
 ultrahdr-core = { version = "0.4.0", default-features = false }

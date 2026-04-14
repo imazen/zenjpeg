@@ -391,57 +391,19 @@ fn half_to_f32_safe(bytes: Option<&[u8]>) -> f32 {
         return 0.0;
     };
     let bits = u16::from_le_bytes([b0, b1]);
-    // Manual half-float conversion (avoiding dependency on half crate)
-    let sign = ((bits >> 15) & 1) as u32;
-    let exp = ((bits >> 10) & 0x1F) as u32;
-    let mant = (bits & 0x3FF) as u32;
-
-    if exp == 0 {
-        // Denormalized or zero
-        if mant == 0 {
-            f32::from_bits(sign << 31)
-        } else {
-            // Denormalized
-            let e = (mant as f32).log2().floor() as i32;
-            let m = ((mant as f32) / (1 << (e + 1)) as f32 - 0.5) * 2.0;
-            let result = (1.0 + m) * 2.0f32.powi(-14 + e);
-            if sign == 1 { -result } else { result }
-        }
-    } else if exp == 31 {
-        // Inf or NaN
-        if mant == 0 {
-            if sign == 1 {
-                f32::NEG_INFINITY
-            } else {
-                f32::INFINITY
-            }
-        } else {
-            f32::NAN
-        }
-    } else {
-        // Normalized
-        let exp32 = exp + 127 - 15;
-        let mant32 = mant << 13;
-        f32::from_bits((sign << 31) | (exp32 << 23) | mant32)
-    }
+    half::f16::from_bits(bits).to_f32()
 }
 
 /// sRGB OETF (linear to gamma)
+#[inline]
 fn srgb_oetf(linear: f32) -> f32 {
-    if linear <= 0.0031308 {
-        linear * 12.92
-    } else {
-        1.055 * linear.powf(1.0 / 2.4) - 0.055
-    }
+    linear_srgb::tf::linear_to_srgb(linear)
 }
 
 /// sRGB EOTF (gamma to linear)
+#[inline]
 fn srgb_eotf(gamma: f32) -> f32 {
-    if gamma <= 0.04045 {
-        gamma / 12.92
-    } else {
-        ((gamma + 0.055) / 1.055).powf(2.4)
-    }
+    linear_srgb::tf::srgb_to_linear(gamma)
 }
 
 /// Convert ultrahdr_core::Error to jpegli Error.
