@@ -95,11 +95,47 @@ pub(crate) const fn pack_i16_pair(a: i16, b: i16) -> i32 {
     ((a as u16 as u32) | ((b as u16 as u32) << 16)) as i32
 }
 
+/// const-compatible f32 round-to-nearest (ties away from zero).
+/// Equivalent to `f32::round()` but works in `const fn` on MSRV 1.85.
+const fn const_round(v: f32) -> i32 {
+    if v >= 0.0 {
+        (v + 0.5) as i32
+    } else {
+        (v - 0.5) as i32
+    }
+}
+
+/// Precomputed coefficient tables for all 6 (Matrix, Range) combinations.
+/// Avoids runtime computation entirely.
+pub(crate) const BT601_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt601, Range::Full);
+pub(crate) const BT601_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt601, Range::Limited);
+pub(crate) const BT709_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt709, Range::Full);
+pub(crate) const BT709_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt709, Range::Limited);
+pub(crate) const BT2020_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt2020, Range::Full);
+pub(crate) const BT2020_LIMITED: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt2020, Range::Limited);
+
+pub(crate) const INV_BT601_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt601, Range::Full);
+pub(crate) const INV_BT601_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt601, Range::Limited);
+pub(crate) const INV_BT709_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt709, Range::Full);
+pub(crate) const INV_BT709_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt709, Range::Limited);
+pub(crate) const INV_BT2020_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt2020, Range::Full);
+pub(crate) const INV_BT2020_LIMITED: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt2020, Range::Limited);
+
 impl ForwardCoeffs {
-    /// Compute forward coefficients for the given matrix and range.
-    ///
-    /// Integer coefficients use f32 `.round()` to match the yuv crate's computation.
-    pub fn new(matrix: Matrix, range: Range) -> Self {
+    /// Look up precomputed coefficients. Zero runtime cost.
+    pub const fn new(matrix: Matrix, range: Range) -> Self {
+        match (matrix, range) {
+            (Matrix::Bt601, Range::Full) => BT601_FULL,
+            (Matrix::Bt601, Range::Limited) => BT601_LIMITED,
+            (Matrix::Bt709, Range::Full) => BT709_FULL,
+            (Matrix::Bt709, Range::Limited) => BT709_LIMITED,
+            (Matrix::Bt2020, Range::Full) => BT2020_FULL,
+            (Matrix::Bt2020, Range::Limited) => BT2020_LIMITED,
+        }
+    }
+
+    /// Compute coefficients at compile time.
+    const fn compute(matrix: Matrix, range: Range) -> Self {
         let (kr_f64, kb_f64) = matrix.kr_kb();
         // Use f32 for coefficient computation to match yuv crate behavior.
         let kr = kr_f64 as f32;
@@ -125,15 +161,15 @@ impl ForwardCoeffs {
                 let round_420 = (1i32 << PREC) - 1;
 
                 Self {
-                    yr: (yr_f * scale).round() as i16,
-                    yg: (yg_f * scale).round() as i16,
-                    yb: (yb_f * scale).round() as i16,
-                    cb_r: (cb_r_f * scale).round() as i16,
-                    cb_g: (cb_g_f * scale).round() as i16,
-                    cb_b: (cb_b_f * scale).round() as i16,
-                    cr_r: (cr_r_f * scale).round() as i16,
-                    cr_g: (cr_g_f * scale).round() as i16,
-                    cr_b: (cr_b_f * scale).round() as i16,
+                    yr: const_round(yr_f * scale) as i16,
+                    yg: const_round(yg_f * scale) as i16,
+                    yb: const_round(yb_f * scale) as i16,
+                    cb_r: const_round(cb_r_f * scale) as i16,
+                    cb_g: const_round(cb_g_f * scale) as i16,
+                    cb_b: const_round(cb_b_f * scale) as i16,
+                    cr_r: const_round(cr_r_f * scale) as i16,
+                    cr_g: const_round(cr_g_f * scale) as i16,
+                    cr_b: const_round(cr_b_f * scale) as i16,
                     y_bias: round,
                     uv_bias: (128i32 << PREC) + round,
                     uv_bias_420: (128i32 << (PREC + 1)) + round_420,
@@ -172,15 +208,15 @@ impl ForwardCoeffs {
                 let round_420 = (1i32 << PREC) - 1;
 
                 Self {
-                    yr: (yr_f * scale).round() as i16,
-                    yg: (yg_f * scale).round() as i16,
-                    yb: (yb_f * scale).round() as i16,
-                    cb_r: (cb_r_f * scale).round() as i16,
-                    cb_g: (cb_g_f * scale).round() as i16,
-                    cb_b: (cb_b_f * scale).round() as i16,
-                    cr_r: (cr_r_f * scale).round() as i16,
-                    cr_g: (cr_g_f * scale).round() as i16,
-                    cr_b: (cr_b_f * scale).round() as i16,
+                    yr: const_round(yr_f * scale) as i16,
+                    yg: const_round(yg_f * scale) as i16,
+                    yb: const_round(yb_f * scale) as i16,
+                    cb_r: const_round(cb_r_f * scale) as i16,
+                    cb_g: const_round(cb_g_f * scale) as i16,
+                    cb_b: const_round(cb_b_f * scale) as i16,
+                    cr_r: const_round(cr_r_f * scale) as i16,
+                    cr_g: const_round(cr_g_f * scale) as i16,
+                    cr_b: const_round(cr_b_f * scale) as i16,
                     y_bias: (16i32 << PREC) + round,
                     uv_bias: (128i32 << PREC) + round,
                     uv_bias_420: (128i32 << (PREC + 1)) + round_420,
@@ -202,8 +238,20 @@ impl ForwardCoeffs {
 }
 
 impl InverseCoeffs {
-    /// Compute inverse coefficients for the given matrix and range.
-    pub fn new(matrix: Matrix, range: Range) -> Self {
+    /// Look up precomputed inverse coefficients. Zero runtime cost.
+    pub const fn new(matrix: Matrix, range: Range) -> Self {
+        match (matrix, range) {
+            (Matrix::Bt601, Range::Full) => INV_BT601_FULL,
+            (Matrix::Bt601, Range::Limited) => INV_BT601_LIMITED,
+            (Matrix::Bt709, Range::Full) => INV_BT709_FULL,
+            (Matrix::Bt709, Range::Limited) => INV_BT709_LIMITED,
+            (Matrix::Bt2020, Range::Full) => INV_BT2020_FULL,
+            (Matrix::Bt2020, Range::Limited) => INV_BT2020_LIMITED,
+        }
+    }
+
+    /// Compute inverse coefficients at compile time.
+    const fn compute(matrix: Matrix, range: Range) -> Self {
         let (kr, kb) = matrix.kr_kb();
         let kg = 1.0 - kr - kb;
 
@@ -273,7 +321,7 @@ impl InverseCoeffs {
 
 impl Matrix {
     /// Return (Kr, Kb) for this matrix standard as f64 for precision.
-    fn kr_kb(self) -> (f64, f64) {
+    const fn kr_kb(self) -> (f64, f64) {
         match self {
             Self::Bt601 => (0.299, 0.114),
             Self::Bt709 => (0.2126, 0.0722),
