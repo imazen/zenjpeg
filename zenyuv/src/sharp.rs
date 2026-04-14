@@ -13,6 +13,9 @@ extern crate alloc;
 use crate::gamma::GammaLuts;
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
+#[cfg(target_arch = "x86_64")]
+use safe_unaligned_simd::x86_64 as safe_simd;
+
 /// Configuration for Sharp YUV chroma optimization.
 pub struct SharpYuvConfig {
     /// Maximum refinement iterations per 2×2 block (default: 4).
