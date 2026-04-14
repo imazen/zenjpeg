@@ -20,6 +20,7 @@ libm = "0.2"
 
 [dev-dependencies]
 yuv = { workspace = true }
+png = { workspace = true }
 
 [features]
 default = ["std"]

@@ -3231,6 +3231,7 @@ dependencies = [
  "libm",
  "linear-srgb",
  "magetypes",
+ "png",
  "safe_unaligned_simd",
  "yuv",
 ]

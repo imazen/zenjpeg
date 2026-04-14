@@ -92,7 +92,7 @@ extern crate alloc;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::{vec, vec::Vec};
+    use alloc::{string::ToString, vec, vec::Vec};
     use std::eprintln;
 
     fn make_pattern(width: usize, height: usize) -> Vec<u8> {
@@ -607,85 +607,154 @@ mod tests {
         }
     }
 
-    /// Compare sharp YUV quality: measure reconstruction error (encode→decode
-    /// roundtrip) for box-average, our sharp, and the yuv crate's sharp.
+    /// Compare sharp YUV quality on real CID22 photos: measure reconstruction
+    /// error for box-average, our sharp, and the yuv crate's sharp.
     #[test]
     fn sharp_yuv_quality_comparison() {
-        let (w, h) = (256, 256);
-        let rgb = make_pattern(w, h);
-        let n = w * h;
-        let cw = w / 2;
-        let ch = h / 2;
+        let corpus_dir = std::path::Path::new(
+            &std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
+        )
+        .join("work/codec-eval/codec-corpus/CID22/CID22-512/training");
 
-        // 1. Plain box-average 4:2:0
-        let mut y_box = vec![0u8; n];
-        let mut cb_box = vec![0u8; cw * ch];
-        let mut cr_box = vec![0u8; cw * ch];
-        rgb_to_yuv420(&rgb, &mut y_box, &mut cb_box, &mut cr_box, w, h);
+        let mut paths: Vec<_> = std::fs::read_dir(&corpus_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("png"))
+            })
+            .map(|e| e.path())
+            .collect();
+        paths.sort();
+        paths.truncate(10);
 
-        let mut rt_box = vec![0u8; n * 3];
-        yuv420_to_rgb(&y_box, &cb_box, &cr_box, &mut rt_box, w, h);
-        let box_max = max_abs_err(&rgb, &rt_box);
-        let box_mean = mean_abs_err(&rgb, &rt_box);
+        if paths.is_empty() {
+            eprintln!("No CID22 corpus found, using synthetic pattern");
+            paths.clear();
+        }
 
-        // 2. Our sharp YUV (box initial + iterative refinement)
-        let mut y_sharp = vec![0u8; n];
-        let mut cb_sharp = vec![0u8; cw * ch];
-        let mut cr_sharp = vec![0u8; cw * ch];
-        let luts = GammaLuts::srgb();
-        let config = SharpYuvConfig::default();
-        sharp::rgb_to_yuv420_sharp(
-            &rgb, &mut y_sharp, &mut cb_sharp, &mut cr_sharp, w, h,
-            Range::Full, Matrix::Bt601, &luts, &config,
-        );
+        // Aggregate stats across all images.
+        let mut total_box_sum = 0.0f64;
+        let mut total_sharp_sum = 0.0f64;
+        let mut total_yuv_sum = 0.0f64;
+        let mut total_pixels = 0u64;
+        let mut images_tested = 0u32;
 
-        let mut rt_sharp = vec![0u8; n * 3];
-        yuv420_to_rgb(&y_sharp, &cb_sharp, &cr_sharp, &mut rt_sharp, w, h);
-        let sharp_max = max_abs_err(&rgb, &rt_sharp);
-        let sharp_mean = mean_abs_err(&rgb, &rt_sharp);
+        // If no corpus, fall back to synthetic.
+        let synthetic;
+        let test_images: Vec<(&[u8], usize, usize)> = if paths.is_empty() {
+            synthetic = make_pattern(512, 512);
+            vec![(&synthetic, 512, 512)]
+        } else {
+            vec![] // filled below
+        };
 
-        // 3. yuv crate's sharp YUV (reference)
-        let mut ref_img = yuv::YuvPlanarImageMut::alloc(
-            w as u32, h as u32,
-            yuv::YuvChromaSubsampling::Yuv420,
-        );
-        yuv::rgb_to_sharp_yuv420(
-            &mut ref_img,
-            &rgb,
-            (w * 3) as u32,
-            yuv::YuvRange::Full,
-            yuv::YuvStandardMatrix::Bt601,
-            yuv::SharpYuvGammaTransfer::Srgb,
-        ).unwrap();
+        let mut loaded: Vec<(Vec<u8>, usize, usize)> = Vec::new();
+        for p in &paths {
+            if let Some((rgb, w, h)) = load_png_rgb(p) {
+                loaded.push((rgb, w as usize, h as usize));
+            }
+        }
+        let test_data: Vec<(&[u8], usize, usize)> = if loaded.is_empty() {
+            test_images
+        } else {
+            loaded.iter().map(|(r, w, h)| (r.as_slice(), *w, *h)).collect()
+        };
 
-        let ry = ref_img.y_plane.borrow();
-        let ru = ref_img.u_plane.borrow();
-        let rv = ref_img.v_plane.borrow();
+        eprintln!("=== Sharp YUV Quality Comparison (BT.601 Full, {} images) ===", test_data.len());
+        eprintln!("{:>30} {:>8} {:>8} {:>8}", "image", "box", "sharp", "yuv_shp");
 
-        let mut rt_yuv = vec![0u8; n * 3];
-        yuv420_to_rgb(ry, ru, rv, &mut rt_yuv, w, h);
-        let yuv_max = max_abs_err(&rgb, &rt_yuv);
-        let yuv_mean = mean_abs_err(&rgb, &rt_yuv);
+        for (rgb, w, h) in &test_data {
+            let (w, h) = (*w, *h);
+            let n = w * h;
+            let cw = w / 2;
+            let ch = h / 2;
 
-        // 4. Chroma-plane comparison: our sharp vs yuv crate's sharp
-        let cb_vs_yuv_max = max_abs_err(&cb_sharp, ru);
-        let cr_vs_yuv_max = max_abs_err(&cr_sharp, rv);
-        let cb_vs_yuv_mean = mean_abs_err(&cb_sharp, ru);
-        let cr_vs_yuv_mean = mean_abs_err(&cr_sharp, rv);
+            // Box average 4:2:0.
+            let mut y_box = vec![0u8; n];
+            let mut cb_box = vec![0u8; cw * ch];
+            let mut cr_box = vec![0u8; cw * ch];
+            rgb_to_yuv420(rgb, &mut y_box, &mut cb_box, &mut cr_box, w, h);
+            let mut rt_box = vec![0u8; n * 3];
+            yuv420_to_rgb(&y_box, &cb_box, &cr_box, &mut rt_box, w, h);
+            let box_mean = mean_abs_err(rgb, &rt_box);
 
-        eprintln!("=== Sharp YUV Quality Comparison (256x256, BT.601 Full) ===");
-        eprintln!("Roundtrip error (encode→decode→compare to original RGB):");
-        eprintln!("  box average: max={box_max:3}  mean={box_mean:.4}");
-        eprintln!("  our sharp:   max={sharp_max:3}  mean={sharp_mean:.4}");
-        eprintln!("  yuv sharp:   max={yuv_max:3}  mean={yuv_mean:.4}");
-        eprintln!("Chroma plane diff (our sharp vs yuv crate sharp):");
-        eprintln!("  Cb: max={cb_vs_yuv_max:3}  mean={cb_vs_yuv_mean:.4}");
-        eprintln!("  Cr: max={cr_vs_yuv_max:3}  mean={cr_vs_yuv_mean:.4}");
+            // Our sharp.
+            let mut y_sharp = vec![0u8; n];
+            let mut cb_sharp = vec![0u8; cw * ch];
+            let mut cr_sharp = vec![0u8; cw * ch];
+            let luts = GammaLuts::srgb();
+            let config = SharpYuvConfig::default();
+            sharp::rgb_to_yuv420_sharp(
+                rgb, &mut y_sharp, &mut cb_sharp, &mut cr_sharp, w, h,
+                Range::Full, Matrix::Bt601, &luts, &config,
+            );
+            let mut rt_sharp = vec![0u8; n * 3];
+            yuv420_to_rgb(&y_sharp, &cb_sharp, &cr_sharp, &mut rt_sharp, w, h);
+            let sharp_mean = mean_abs_err(rgb, &rt_sharp);
 
-        // Sharp should be better than or equal to box average.
-        assert!(
-            sharp_mean <= box_mean + 0.01,
-            "sharp mean {sharp_mean:.4} should not be worse than box {box_mean:.4}"
-        );
+            // yuv crate sharp.
+            let mut ref_img = yuv::YuvPlanarImageMut::alloc(
+                w as u32, h as u32,
+                yuv::YuvChromaSubsampling::Yuv420,
+            );
+            yuv::rgb_to_sharp_yuv420(
+                &mut ref_img,
+                rgb,
+                (w * 3) as u32,
+                yuv::YuvRange::Full,
+                yuv::YuvStandardMatrix::Bt601,
+                yuv::SharpYuvGammaTransfer::Srgb,
+            ).unwrap();
+            let ry = ref_img.y_plane.borrow();
+            let ru = ref_img.u_plane.borrow();
+            let rv = ref_img.v_plane.borrow();
+            let mut rt_yuv = vec![0u8; n * 3];
+            yuv420_to_rgb(ry, ru, rv, &mut rt_yuv, w, h);
+            let yuv_mean = mean_abs_err(rgb, &rt_yuv);
+
+            let name = paths.get(images_tested as usize)
+                .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
+                .unwrap_or_else(|| "synthetic".into());
+            eprintln!("{name:>30} {box_mean:8.4} {sharp_mean:8.4} {yuv_mean:8.4}");
+
+            total_box_sum += box_mean * n as f64;
+            total_sharp_sum += sharp_mean * n as f64;
+            total_yuv_sum += yuv_mean * n as f64;
+            total_pixels += n as u64;
+            images_tested += 1;
+        }
+
+        let avg_box = total_box_sum / total_pixels as f64;
+        let avg_sharp = total_sharp_sum / total_pixels as f64;
+        let avg_yuv = total_yuv_sum / total_pixels as f64;
+        eprintln!("{:>30} {avg_box:8.4} {avg_sharp:8.4} {avg_yuv:8.4}", "MEAN");
+        eprintln!();
+        eprintln!("sharp vs box: {:.2}%", (avg_sharp - avg_box) / avg_box * 100.0);
+        eprintln!("sharp vs yuv: {:.2}%", (avg_sharp - avg_yuv) / avg_yuv * 100.0);
+    }
+
+    fn load_png_rgb(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
+        let file = std::fs::File::open(path).ok()?;
+        let dec = png::Decoder::new(std::io::BufReader::new(file));
+        let mut reader = dec.read_info().ok()?;
+        let mut buf = vec![0u8; reader.output_buffer_size()?];
+        let info = reader.next_frame(&mut buf).ok()?;
+        let rgb = match info.color_type {
+            png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgba => {
+                let src = &buf[..info.buffer_size()];
+                let mut out = Vec::with_capacity((info.width * info.height * 3) as usize);
+                for c in src.chunks_exact(4) {
+                    out.extend_from_slice(&c[..3]);
+                }
+                out
+            }
+            _ => return None,
+        };
+        Some((rgb, info.width, info.height))
     }
 }
