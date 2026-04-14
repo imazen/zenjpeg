@@ -3228,6 +3228,8 @@ name = "zenyuv"
 version = "0.1.0"
 dependencies = [
  "archmage 0.9.17",
+ "libm",
+ "linear-srgb",
  "magetypes",
  "safe_unaligned_simd",
  "yuv",

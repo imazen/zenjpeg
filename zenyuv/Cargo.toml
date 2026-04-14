@@ -15,6 +15,8 @@ readme = "README.md"
 archmage = { workspace = true }
 magetypes = { workspace = true }
 safe_unaligned_simd = { workspace = true }
+linear-srgb = { workspace = true }
+libm = "0.2"
 
 [dev-dependencies]
 yuv = { workspace = true }

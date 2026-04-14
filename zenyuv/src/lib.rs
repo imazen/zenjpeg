@@ -33,10 +33,12 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub mod types;
+pub mod gamma;
 mod encode;
 mod decode;
 mod encode_generic;
 mod decode_generic;
+pub mod sharp;
 
 #[cfg(target_arch = "x86_64")]
 mod avx2_encode;
@@ -58,6 +60,10 @@ pub use encode::{
     rgb_to_yuv444, rgb_to_yuv444_with,
     rgb_to_yuv420, rgb_to_yuv420_with,
 };
+
+// Sharp YUV (iterative perceptual chroma optimization)
+pub use sharp::{rgb_to_yuv420_sharp, SharpYuvConfig};
+pub use gamma::GammaLuts;
 
 // Decode (YCbCr -> RGB)
 pub use decode::{
@@ -515,5 +521,89 @@ mod tests {
         });
         std::eprintln!("yuv444 decode dispatch parity: {report}");
         assert!(report.permutations_run >= 2);
+    }
+
+    #[test]
+    fn sharp_yuv_420_basic() {
+        let (w, h) = (64, 64);
+        let rgb = make_pattern(w, h);
+        let cw = w / 2;
+        let ch = h / 2;
+        let mut y = vec![0u8; w * h];
+        let mut cb = vec![0u8; cw * ch];
+        let mut cr = vec![0u8; cw * ch];
+
+        let luts = GammaLuts::srgb();
+        let config = SharpYuvConfig::default();
+        sharp::rgb_to_yuv420_sharp(
+            &rgb, &mut y, &mut cb, &mut cr, w, h,
+            Range::Full, Matrix::Bt601, &luts, &config,
+        );
+
+        // Y should match the non-sharp 4:4:4 Y exactly (same kernel).
+        let mut y_ref = vec![0u8; w * h];
+        let mut cb_ref = vec![0u8; w * h];
+        let mut cr_ref = vec![0u8; w * h];
+        rgb_to_yuv444(&rgb, &mut y_ref, &mut cb_ref, &mut cr_ref, w, h);
+        assert_eq!(y, y_ref, "Y mismatch between sharp and standard");
+
+        // Cb/Cr from sharp should differ from simple box-average 4:2:0
+        // (the whole point of iterative refinement).
+        let mut cb_box = vec![0u8; cw * ch];
+        let mut cr_box = vec![0u8; cw * ch];
+        let mut y_box = vec![0u8; w * h];
+        rgb_to_yuv420(&rgb, &mut y_box, &mut cb_box, &mut cr_box, w, h);
+
+        // Sharp should NOT be identical to box (it refines).
+        let cb_diff: usize = cb.iter().zip(cb_box.iter()).map(|(a, b)| a.abs_diff(*b) as usize).sum();
+        let cr_diff: usize = cr.iter().zip(cr_box.iter()).map(|(a, b)| a.abs_diff(*b) as usize).sum();
+        eprintln!("sharp vs box: cb_diff={cb_diff} cr_diff={cr_diff}");
+        assert!(cb_diff > 0 || cr_diff > 0, "sharp should differ from box");
+    }
+
+    #[test]
+    fn sharp_yuv_420_limited_range() {
+        let (w, h) = (32, 32);
+        let rgb = make_pattern(w, h);
+        let cw = w / 2;
+        let ch = h / 2;
+        let mut y = vec![0u8; w * h];
+        let mut cb = vec![0u8; cw * ch];
+        let mut cr = vec![0u8; cw * ch];
+
+        let luts = GammaLuts::srgb();
+        let config = SharpYuvConfig::default();
+        sharp::rgb_to_yuv420_sharp(
+            &rgb, &mut y, &mut cb, &mut cr, w, h,
+            Range::Limited, Matrix::Bt601, &luts, &config,
+        );
+
+        // Limited range Y should be in [16, 235]
+        for &yv in y.iter() {
+            assert!(yv >= 16 && yv <= 235, "Y={yv} outside limited range");
+        }
+    }
+
+    #[test]
+    fn sharp_yuv_420_libwebp_gamma() {
+        let (w, h) = (32, 32);
+        let rgb = make_pattern(w, h);
+        let cw = w / 2;
+        let ch = h / 2;
+        let mut y = vec![0u8; w * h];
+        let mut cb = vec![0u8; cw * ch];
+        let mut cr = vec![0u8; cw * ch];
+
+        let luts = GammaLuts::libwebp();
+        let config = SharpYuvConfig { srgb_delinearize: false, ..Default::default() };
+        sharp::rgb_to_yuv420_sharp(
+            &rgb, &mut y, &mut cb, &mut cr, w, h,
+            Range::Limited, Matrix::Bt601, &luts, &config,
+        );
+
+        // Should not panic, output should be valid
+        for &yv in y.iter() {
+            assert!(yv >= 16 && yv <= 235, "Y={yv} outside limited range");
+        }
     }
 }

@@ -3,6 +3,8 @@
 //! Each function dispatches to the best available SIMD kernel at runtime:
 //! AVX2 > NEON > WASM SIMD128 > generic (magetypes f32x8).
 
+extern crate alloc;
+
 use archmage::prelude::*;
 use crate::types::{ForwardCoeffs, Matrix, Range};
 
@@ -97,6 +99,46 @@ pub fn rgb_to_yuv420_with(
     }
 
     incant!(crate::encode_generic::rgb_to_yuv420_generic(rgb, y, cb, cr, width, height, &coeffs));
+}
+
+/// Compute Y plane only (no Cb/Cr) at full resolution. Used by Sharp YUV
+/// which computes chroma separately via iterative optimization.
+pub(crate) fn rgb_to_yuv444_y_only(
+    rgb: &[u8],
+    y: &mut [u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+) {
+    let n = width * height;
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+
+    let coeffs = ForwardCoeffs::new(matrix, range);
+
+    // Use the full 4:4:4 encode path but discard Cb/Cr.
+    // TODO: write a Y-only AVX2 kernel to avoid computing Cb/Cr.
+    let mut cb_discard = alloc::vec![0u8; n];
+    let mut cr_discard = alloc::vec![0u8; n];
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        let done =
+            crate::avx2_encode::rgb_to_yuv444_avx2(token, rgb, y, &mut cb_discard, &mut cr_discard, n, &coeffs);
+        if done < n {
+            rgb_to_yuv444_scalar_tail(rgb, y, &mut cb_discard, &mut cr_discard, done, n, &coeffs);
+        }
+        return;
+    }
+    incant!(crate::encode_generic::rgb_to_yuv444_generic(
+        rgb,
+        y,
+        &mut cb_discard,
+        &mut cr_discard,
+        n,
+        &coeffs
+    ));
 }
 
 /// Scalar tail for 4:4:4 encode (pixels not covered by SIMD blocks).
