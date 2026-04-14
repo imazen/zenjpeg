@@ -32,7 +32,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 
 /// SHA-256 hash of normalized values_archmage.csv (LF line endings, no trailing whitespace).
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "f2aa555e7fe8f4329b9dd195c98c8bca75818f8c247da5e39f45c70b32440e60";
+const VALUES_FILE_HASH: &str = "3ccf778f81faa75c3b8b5feca2134c5c00974940b4d30983705881d6972cec99";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
