@@ -131,7 +131,10 @@ jobs:
       - name: Run codec coverage tests
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report -p zenjpeg --test codec_coverage --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils"
+          # codec_coverage is now a module inside the `bundled` test binary
+          # (see bundle PR #69). Filter by the `codec_coverage::` prefix so
+          # only that module's 62 tests run.
+          cargo llvm-cov --no-report -p zenjpeg --test bundled --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils" -- codec_coverage::
           cargo llvm-cov report --json --output-path codec-coverage.json
 
       - name: Check encode/decode coverage
