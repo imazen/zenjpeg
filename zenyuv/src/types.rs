@@ -14,9 +14,9 @@ pub enum Matrix {
 /// Signal range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Range {
-    /// Full range: Y [0,255], Cb/Cr [0,255] centered at 128.
+    /// Full range: Y `[0,255]`, Cb/Cr `[0,255]` centered at 128.
     Full,
-    /// Limited (studio) range: Y [16,235], Cb/Cr [16,240].
+    /// Limited (studio) range: Y `[16,235]`, Cb/Cr `[16,240]`.
     Limited,
 }
 
