@@ -38,9 +38,12 @@ pub struct ForwardCoeffs {
     pub uv_bias: i32,
     /// bias_uv * (1<<(PREC+1)) + round (for 4:2:0 fused kernel)
     pub uv_bias_420: i32,
-    /// Floating-point versions for generic kernels.
+    /// Floating-point versions for Sharp YUV iterative optimization.
+    #[allow(dead_code)]
     pub yr_f: f32,
+    #[allow(dead_code)]
     pub yg_f: f32,
+    #[allow(dead_code)]
     pub yb_f: f32,
     pub cb_r_f: f32,
     pub cb_g_f: f32,
@@ -48,6 +51,7 @@ pub struct ForwardCoeffs {
     pub cr_r_f: f32,
     pub cr_g_f: f32,
     pub cr_b_f: f32,
+    #[allow(dead_code)]
     pub y_bias_f: f32,
     pub uv_bias_f: f32,
 }

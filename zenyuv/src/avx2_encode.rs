@@ -212,6 +212,7 @@ pub(crate) fn rgb_to_yuv420_avx2(
 }
 
 /// Scalar fallback for columns/rows not covered by the 32-column SIMD blocks.
+/// Uses the same 15-bit fixed-point integer math as the AVX2 kernels.
 pub(crate) fn rgb_to_yuv420_scalar_tail(
     rgb: &[u8],
     y_out: &mut [u8],
@@ -223,18 +224,22 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
     simd_cols: usize,
     coeffs: &ForwardCoeffs,
 ) {
+    use crate::types::PREC;
     let row_stride = width * 3;
 
     // Y for columns simd_cols..width (all rows).
     for row in 0..height {
         for col in simd_cols..width {
             let p = row * row_stride + col * 3;
-            let r = rgb[p] as f32;
-            let g = rgb[p + 1] as f32;
-            let b = rgb[p + 2] as f32;
-            y_out[row * width + col] = crate::clamp_round(
-                coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
-            );
+            let r = rgb[p] as i32;
+            let g = rgb[p + 1] as i32;
+            let b = rgb[p + 2] as i32;
+            y_out[row * width + col] = ((r * coeffs.yr as i32
+                + g * coeffs.yg as i32
+                + b * coeffs.yb as i32
+                + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
         }
     }
 
@@ -252,24 +257,33 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let i01 = row * row_stride + col1 * 3;
             let i10 = row1 * row_stride + col * 3;
             let i11 = row1 * row_stride + col1 * 3;
-            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
-                * 0.25;
-            let g = (rgb[i00 + 1] as u32
-                + rgb[i01 + 1] as u32
-                + rgb[i10 + 1] as u32
-                + rgb[i11 + 1] as u32) as f32
-                * 0.25;
-            let b = (rgb[i00 + 2] as u32
-                + rgb[i01 + 2] as u32
-                + rgb[i10 + 2] as u32
-                + rgb[i11 + 2] as u32) as f32
-                * 0.25;
-            cb_out[cy * cw + cx] = crate::clamp_round(
-                coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f,
-            );
-            cr_out[cy * cw + cx] = crate::clamp_round(
-                coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f,
-            );
+            // Sum 4 pixels, round-to-nearest (matches avg_epu8 behavior).
+            let r_avg =
+                (rgb[i00] as i32 + rgb[i01] as i32 + rgb[i10] as i32 + rgb[i11] as i32 + 2) / 4;
+            let g_avg = (rgb[i00 + 1] as i32
+                + rgb[i01 + 1] as i32
+                + rgb[i10 + 1] as i32
+                + rgb[i11 + 1] as i32
+                + 2)
+                / 4;
+            let b_avg = (rgb[i00 + 2] as i32
+                + rgb[i01 + 2] as i32
+                + rgb[i10 + 2] as i32
+                + rgb[i11 + 2] as i32
+                + 2)
+                / 4;
+            cb_out[cy * cw + cx] = ((r_avg * coeffs.cb_r as i32
+                + g_avg * coeffs.cb_g as i32
+                + b_avg * coeffs.cb_b as i32
+                + coeffs.uv_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+            cr_out[cy * cw + cx] = ((r_avg * coeffs.cr_r as i32
+                + g_avg * coeffs.cr_g as i32
+                + b_avg * coeffs.cr_b as i32
+                + coeffs.uv_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
             cx += 1;
             col += 2;
         }
@@ -283,12 +297,15 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
         let last_row = height - 1;
         for col in 0..simd_cols.min(width) {
             let p = last_row * row_stride + col * 3;
-            let r = rgb[p] as f32;
-            let g = rgb[p + 1] as f32;
-            let b = rgb[p + 2] as f32;
-            y_out[last_row * width + col] = crate::clamp_round(
-                coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
-            );
+            let r = rgb[p] as i32;
+            let g = rgb[p + 1] as i32;
+            let b = rgb[p + 2] as i32;
+            y_out[last_row * width + col] = ((r * coeffs.yr as i32
+                + g * coeffs.yg as i32
+                + b * coeffs.yb as i32
+                + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
         }
         // Cb/Cr for the last odd chroma row (SIMD columns).
         let cy = height / 2;
@@ -297,24 +314,33 @@ pub(crate) fn rgb_to_yuv420_scalar_tail(
             let col1 = (col + 1).min(width - 1);
             let i00 = last_row * row_stride + col * 3;
             let i01 = last_row * row_stride + col1 * 3;
-            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i00] as u32 + rgb[i01] as u32) as f32
-                * 0.25;
-            let g = (rgb[i00 + 1] as u32
-                + rgb[i01 + 1] as u32
-                + rgb[i00 + 1] as u32
-                + rgb[i01 + 1] as u32) as f32
-                * 0.25;
-            let b = (rgb[i00 + 2] as u32
-                + rgb[i01 + 2] as u32
-                + rgb[i00 + 2] as u32
-                + rgb[i01 + 2] as u32) as f32
-                * 0.25;
-            cb_out[cy * cw + cx] = crate::clamp_round(
-                coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f,
-            );
-            cr_out[cy * cw + cx] = crate::clamp_round(
-                coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f,
-            );
+            // Odd last row: duplicate the row for averaging (no bottom row).
+            let r_avg =
+                (rgb[i00] as i32 + rgb[i01] as i32 + rgb[i00] as i32 + rgb[i01] as i32 + 2) / 4;
+            let g_avg = (rgb[i00 + 1] as i32
+                + rgb[i01 + 1] as i32
+                + rgb[i00 + 1] as i32
+                + rgb[i01 + 1] as i32
+                + 2)
+                / 4;
+            let b_avg = (rgb[i00 + 2] as i32
+                + rgb[i01 + 2] as i32
+                + rgb[i00 + 2] as i32
+                + rgb[i01 + 2] as i32
+                + 2)
+                / 4;
+            cb_out[cy * cw + cx] = ((r_avg * coeffs.cb_r as i32
+                + g_avg * coeffs.cb_g as i32
+                + b_avg * coeffs.cb_b as i32
+                + coeffs.uv_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+            cr_out[cy * cw + cx] = ((r_avg * coeffs.cr_r as i32
+                + g_avg * coeffs.cr_g as i32
+                + b_avg * coeffs.cr_b as i32
+                + coeffs.uv_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
         }
     }
 }

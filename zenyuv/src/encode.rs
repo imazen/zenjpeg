@@ -162,6 +162,8 @@ pub(crate) fn rgb_to_yuv444_y_only(
 }
 
 /// Scalar tail for 4:4:4 encode (pixels not covered by SIMD blocks).
+/// Uses the same 15-bit fixed-point integer math as the SIMD kernels
+/// so all dispatch tiers produce identical output.
 #[inline]
 pub(crate) fn rgb_to_yuv444_scalar_tail(
     rgb: &[u8],
@@ -172,19 +174,27 @@ pub(crate) fn rgb_to_yuv444_scalar_tail(
     end: usize,
     coeffs: &ForwardCoeffs,
 ) {
+    use crate::types::PREC;
     for i in start..end {
         let p = i * 3;
-        let r = rgb[p] as f32;
-        let g = rgb[p + 1] as f32;
-        let b = rgb[p + 2] as f32;
-        y[i] = crate::clamp_round(
-            coeffs.yr_f * r + coeffs.yg_f * g + coeffs.yb_f * b + coeffs.y_bias_f,
-        );
-        cb[i] = crate::clamp_round(
-            coeffs.cb_r_f * r + coeffs.cb_g_f * g + coeffs.cb_b_f * b + coeffs.uv_bias_f,
-        );
-        cr[i] = crate::clamp_round(
-            coeffs.cr_r_f * r + coeffs.cr_g_f * g + coeffs.cr_b_f * b + coeffs.uv_bias_f,
-        );
+        let r = rgb[p] as i32;
+        let g = rgb[p + 1] as i32;
+        let b = rgb[p + 2] as i32;
+        y[i] =
+            ((r * coeffs.yr as i32 + g * coeffs.yg as i32 + b * coeffs.yb as i32 + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+        cb[i] = ((r * coeffs.cb_r as i32
+            + g * coeffs.cb_g as i32
+            + b * coeffs.cb_b as i32
+            + coeffs.uv_bias)
+            >> PREC)
+            .clamp(0, 255) as u8;
+        cr[i] = ((r * coeffs.cr_r as i32
+            + g * coeffs.cr_g as i32
+            + b * coeffs.cr_b as i32
+            + coeffs.uv_bias)
+            >> PREC)
+            .clamp(0, 255) as u8;
     }
 }
