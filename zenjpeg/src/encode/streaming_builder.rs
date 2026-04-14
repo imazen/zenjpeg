@@ -104,21 +104,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets the quality using butteraugli distance.
-    ///
-    /// Butteraugli distance is a perceptual quality metric where:
-    /// - 0.0 = lossless (not achievable with JPEG)
-    /// - 0.5 = very high quality
-    /// - 1.0 = high quality (default)
-    /// - 2.0 = medium quality
-    /// - 3.0+ = low quality
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn distance(mut self, distance: f32) -> Self {
-        self.quality = Quality::ApproxButteraugli(distance);
-        self
-    }
-
     /// Enables or disables progressive JPEG encoding.
     ///
     /// Progressive JPEGs display a low-quality version first, then progressively
@@ -155,14 +140,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets the JPEG encoding mode.
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn mode(mut self, mode: JpegMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
     /// Sets the Huffman table strategy.
     #[must_use]
     pub(crate) fn huffman(mut self, strategy: HuffmanStrategy) -> Self {
@@ -170,43 +147,10 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Enables or disables optimized Huffman tables.
-    ///
-    /// Convenience wrapper: `true` → `HuffmanStrategy::Optimize`,
-    /// `false` → `HuffmanStrategy::Fixed`.
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
-        self.huffman = if enable {
-            HuffmanStrategy::Optimize
-        } else {
-            HuffmanStrategy::Fixed
-        };
-        self
-    }
-
     /// Sets chroma downsampling method for subsampled modes.
     #[must_use]
     pub(crate) fn chroma_downsampling(mut self, method: DownsamplingMethod) -> Self {
         self.chroma_downsampling = method;
-        self
-    }
-
-    /// Enables Sharp YUV chroma downsampling for better edge quality.
-    ///
-    /// Sharp YUV uses iterative optimization to preserve edges during chroma
-    /// subsampling (4:2:0, 4:2:2). This produces noticeably better quality
-    /// on images with sharp color transitions at the cost of slower encoding.
-    ///
-    /// Has no effect for 4:4:4 subsampling (no downsampling needed).
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.chroma_downsampling = if enable {
-            DownsamplingMethod::GammaAwareIterative
-        } else {
-            DownsamplingMethod::Box
-        };
         self
     }
 
@@ -239,24 +183,6 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
         self.encoding_tables = Some(tables);
-        self
-    }
-
-    /// Sets custom Huffman tables for streaming-through encoding.
-    ///
-    /// When provided, blocks are entropy-encoded immediately on each strip flush
-    /// using these tables, instead of buffering all blocks for a two-pass optimized
-    /// table generation. This enables true single-pass encoding with bounded memory.
-    ///
-    /// Custom tables can come from [`crate::huffman::trained`] (pre-trained on image
-    /// corpora) or from a previous encoding pass via [`crate::huffman::optimize::FrequencyCounter`].
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn custom_huffman_tables(
-        mut self,
-        tables: crate::huffman::optimize::HuffmanTableSet,
-    ) -> Self {
-        self.huffman = HuffmanStrategy::Custom(Box::new(tables));
         self
     }
 
@@ -333,31 +259,6 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Enables progressive scan optimization (legacy API).
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn optimize_scans(mut self, enable: bool) -> Self {
-        self.scan_strategy = if enable {
-            ScanStrategy::Search
-        } else {
-            ScanStrategy::Default
-        };
-        self
-    }
-
-    /// Enables hybrid quantization (jpegli AQ + mozjpeg trellis).
-    #[cfg(feature = "trellis")]
-    #[must_use]
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
-        self.hybrid_config = if enable {
-            super::trellis::HybridConfig::default()
-        } else {
-            super::trellis::HybridConfig::disabled()
-        };
-        self
-    }
-
     /// Sets custom hybrid quantization configuration.
     #[cfg(feature = "trellis")]
     #[must_use]
@@ -398,60 +299,6 @@ impl StreamingEncoderBuilder {
         StreamingEncoder::from_builder(self)
     }
 
-    /// Encodes a complete image buffer in one call.
-    ///
-    /// This is the simplest way to encode an image. For streaming scenarios
-    /// where you want to push rows incrementally, use `.start()` instead.
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
-        let width = self.width as usize;
-        let height = self.height as usize;
-        let bpp = self.pixel_format.bytes_per_pixel();
-        let expected_size = width * height * bpp;
-
-        if data.len() != expected_size {
-            return Err(crate::error::Error::invalid_buffer_size(
-                expected_size,
-                data.len(),
-            ));
-        }
-
-        let mut encoder = self.start()?;
-        let row_size = width * bpp;
-
-        for y in 0..height {
-            let start = y * row_size;
-            encoder.push_row(&data[start..start + row_size])?;
-        }
-
-        encoder.finish()
-    }
-
-    /// Encodes a complete image buffer with cancellation support.
-    #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
-    pub(crate) fn encode_with_stop(self, data: &[u8], stop: impl enough::Stop) -> Result<Vec<u8>> {
-        let width = self.width as usize;
-        let height = self.height as usize;
-        let bpp = self.pixel_format.bytes_per_pixel();
-        let expected_size = width * height * bpp;
-
-        if data.len() != expected_size {
-            return Err(crate::error::Error::invalid_buffer_size(
-                expected_size,
-                data.len(),
-            ));
-        }
-
-        let mut encoder = self.start()?;
-        let row_size = width * bpp;
-
-        for y in 0..height {
-            let start = y * row_size;
-            encoder.push_row_with_stop(&data[start..start + row_size], &stop)?;
-        }
-
-        encoder.finish_with_stop(stop)
-    }
 
     /// Estimates the peak memory usage for this configuration.
     ///
