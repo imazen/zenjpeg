@@ -50,11 +50,13 @@ mod avx2_encode;
 #[cfg(target_arch = "x86_64")]
 mod avx2_decode;
 
-#[cfg(target_arch = "aarch64")]
-mod neon_encode;
+// TODO: fix archmage NEON #[arcane] target_feature issue
+// #[cfg(target_arch = "aarch64")]
+// mod neon_encode;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm_encode;
+// TODO: fix archmage WASM #[arcane] support
+// #[cfg(target_arch = "wasm32")]
+// mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
