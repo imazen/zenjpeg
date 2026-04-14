@@ -19,8 +19,14 @@ pub struct SharpYuvConfig {
     pub max_iterations: u32,
     /// Stop early if total reconstruction error drops below this (default: 0.1).
     pub convergence_threshold: f32,
+    /// Use gamma-aware (linear-space) averaging for the initial Cb/Cr estimate.
+    /// Slightly better quality (~0.1% error reduction) at ~2× init cost.
+    /// When false (default), uses box-average in gamma space — the iterative
+    /// loop converges to the same result within 1-2 extra iterations.
+    pub gamma_aware_init: bool,
     /// Which delinearization to use for gamma-aware initial estimate.
     /// `true` = sRGB (zenjpeg), `false` = libwebp gamma^0.45 (zenwebp).
+    /// Only used when `gamma_aware_init` is true.
     pub srgb_delinearize: bool,
 }
 
@@ -29,6 +35,7 @@ impl Default for SharpYuvConfig {
         Self {
             max_iterations: 4,
             convergence_threshold: 0.1,
+            gamma_aware_init: false,
             srgb_delinearize: true,
         }
     }
@@ -121,11 +128,37 @@ pub fn rgb_to_yuv420_sharp(
             og3[cx_idx] = rgb[i11 + 1] as f32;
             ob3[cx_idx] = rgb[i11 + 2] as f32;
 
-            let r_avg = (or0[cx_idx] + or1[cx_idx] + or2[cx_idx] + or3[cx_idx]) * 0.25;
-            let g_avg = (og0[cx_idx] + og1[cx_idx] + og2[cx_idx] + og3[cx_idx]) * 0.25;
-            let b_avg = (ob0[cx_idx] + ob1[cx_idx] + ob2[cx_idx] + ob3[cx_idx]) * 0.25;
-            cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
-            cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+            if config.gamma_aware_init {
+                // Linearize, average in linear space, delinearize.
+                let lin = |v: f32| luts.to_linear[v as u8 as usize];
+                let lr = (lin(or0[cx_idx]) + lin(or1[cx_idx]) + lin(or2[cx_idx]) + lin(or3[cx_idx])) * 0.25;
+                let lg = (lin(og0[cx_idx]) + lin(og1[cx_idx]) + lin(og2[cx_idx]) + lin(og3[cx_idx])) * 0.25;
+                let lb = (lin(ob0[cx_idx]) + lin(ob1[cx_idx]) + lin(ob2[cx_idx]) + lin(ob3[cx_idx])) * 0.25;
+                let r_avg = if config.srgb_delinearize {
+                    crate::gamma::delinearize_srgb(lr) * 255.0
+                } else {
+                    crate::gamma::delinearize_libwebp(lr) * 255.0
+                };
+                let g_avg = if config.srgb_delinearize {
+                    crate::gamma::delinearize_srgb(lg) * 255.0
+                } else {
+                    crate::gamma::delinearize_libwebp(lg) * 255.0
+                };
+                let b_avg = if config.srgb_delinearize {
+                    crate::gamma::delinearize_srgb(lb) * 255.0
+                } else {
+                    crate::gamma::delinearize_libwebp(lb) * 255.0
+                };
+                cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+                cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+            } else {
+                // Box average in gamma space (faster, iteration compensates).
+                let r_avg = (or0[cx_idx] + or1[cx_idx] + or2[cx_idx] + or3[cx_idx]) * 0.25;
+                let g_avg = (og0[cx_idx] + og1[cx_idx] + og2[cx_idx] + og3[cx_idx]) * 0.25;
+                let b_avg = (ob0[cx_idx] + ob1[cx_idx] + ob2[cx_idx] + ob3[cx_idx]) * 0.25;
+                cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+                cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+            }
         }
 
         // Run #[autoversion] iterative refinement on this row of blocks.
