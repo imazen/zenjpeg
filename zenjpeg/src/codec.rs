@@ -1223,15 +1223,10 @@ fn push_decoder_native<'a>(
 
     let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
 
-    // ScanlineReader borrows data with lifetime 'a.
-    let data_ref: &'a [u8] = match data {
-        Cow::Borrowed(slice) => slice,
-        Cow::Owned(_) => {
-            return Err(Error::unsupported_feature(
-                "push_decoder requires borrowed data (use Cow::Borrowed)",
-            ));
-        }
-    };
+    // ScanlineReader is created and dropped within this function, so the
+    // slice only needs scope-local lifetime — both Cow::Borrowed and
+    // Cow::Owned work since `data` is owned by the function body.
+    let data_ref: &[u8] = &data;
     job.check_input_size(data_ref)?;
 
     // Build decode config with limits, crop, orientation, policy

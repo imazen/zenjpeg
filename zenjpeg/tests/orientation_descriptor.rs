@@ -438,3 +438,43 @@ fn push_decoder_preserve_no_orientation() {
     assert_eq!(out_info.width, 4);
     assert_eq!(out_info.height, 2);
 }
+
+/// Regression test: `push_decoder` must accept `Cow::Owned` and produce
+/// identical output to `Cow::Borrowed`. The slice only needs scope-local
+/// lifetime within `push_decoder_native`, so both Cow variants are valid.
+#[test]
+fn push_decoder_accepts_cow_owned() {
+    let jpeg = encode_4x2(Orientation::Normal, ChromaSubsampling::None);
+    let config = JpegDecoderConfig::new();
+
+    // Decode with Cow::Borrowed
+    let mut borrowed_sink = CollectSink::new();
+    let borrowed_info = config
+        .clone()
+        .job()
+        .push_decoder(Cow::Borrowed(&jpeg), &mut borrowed_sink, &[])
+        .expect("push_decoder with Cow::Borrowed failed");
+
+    // Decode with Cow::Owned (clone the bytes into a fresh Vec)
+    let mut owned_sink = CollectSink::new();
+    let owned_info = config
+        .clone()
+        .job()
+        .push_decoder(Cow::Owned(jpeg.clone()), &mut owned_sink, &[])
+        .expect("push_decoder with Cow::Owned must succeed");
+
+    // Output dimensions and orientation should match
+    assert_eq!(owned_info.width, borrowed_info.width);
+    assert_eq!(owned_info.height, borrowed_info.height);
+    assert_eq!(
+        owned_info.orientation_applied,
+        borrowed_info.orientation_applied
+    );
+
+    // Decoded pixels must be byte-identical
+    assert_eq!(
+        owned_sink.data, borrowed_sink.data,
+        "Cow::Owned and Cow::Borrowed must produce identical pixel output"
+    );
+    assert_eq!(owned_sink.stride, borrowed_sink.stride);
+}
