@@ -96,6 +96,13 @@ mod tests {
     use alloc::{string::ToString, vec, vec::Vec};
     use std::eprintln;
 
+    #[test]
+    fn yuv_context_stack_size() {
+        let size = core::mem::size_of::<YuvContext>();
+        eprintln!("YuvContext size: {size} bytes");
+        assert!(size <= 256, "YuvContext is {size} bytes — too large for stack");
+    }
+
     fn make_pattern(width: usize, height: usize) -> Vec<u8> {
         let mut rgb = vec![0u8; width * height * 3];
         for y in 0..height {

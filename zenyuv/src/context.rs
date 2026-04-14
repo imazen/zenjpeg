@@ -30,10 +30,10 @@ pub struct YuvContext {
     matrix: Matrix,
     /// Gamma LUTs — heap-allocated lazily on first sharp call (1KB).
     luts: Option<alloc::boxed::Box<GammaLuts>>,
-    /// Temp u8 planes — only allocated for f32 output paths.
-    f32_temps: Option<F32Temps>,
-    /// Sharp workspace — only allocated on first sharp call.
-    sharp_ws: Option<SharpYuvWorkspace>,
+    /// Temp u8 planes — heap-allocated lazily for f32 output paths.
+    f32_temps: Option<alloc::boxed::Box<F32Temps>>,
+    /// Sharp workspace — heap-allocated lazily on first sharp call (432+ bytes).
+    sharp_ws: Option<alloc::boxed::Box<SharpYuvWorkspace>>,
 }
 
 /// Temp u8 planes for f32 output paths (encode u8 → convert to f32).
@@ -217,7 +217,7 @@ impl YuvContext {
     /// Lazy-allocate sharp workspace on first use.
     fn ensure_sharp_ws(&mut self, cw: usize) {
         if self.sharp_ws.is_none() || self.sharp_ws.as_ref().unwrap().chroma_width() < cw {
-            self.sharp_ws = Some(SharpYuvWorkspace::new(cw));
+            self.sharp_ws = Some(alloc::boxed::Box::new(SharpYuvWorkspace::new(cw)));
         }
     }
 
@@ -227,13 +227,13 @@ impl YuvContext {
             || self.f32_temps.as_ref().unwrap().max_pixels < max_pixels
             || self.f32_temps.as_ref().unwrap().max_c_size < max_c_size
         {
-            self.f32_temps = Some(F32Temps {
+            self.f32_temps = Some(alloc::boxed::Box::new(F32Temps {
                 y: alloc::vec![0u8; max_pixels],
                 cb: alloc::vec![0u8; max_c_size],
                 cr: alloc::vec![0u8; max_c_size],
                 max_pixels,
                 max_c_size,
-            });
+            }));
         }
         self.f32_temps.as_mut().unwrap()
     }
