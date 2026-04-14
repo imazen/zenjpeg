@@ -34,6 +34,7 @@
 
 pub mod types;
 pub mod gamma;
+pub mod context;
 mod encode;
 mod decode;
 mod encode_generic;
@@ -54,6 +55,7 @@ mod wasm_encode;
 // ── Public re-exports ──────────────────────────────────────────────────────
 
 pub use types::{Matrix, Range, ForwardCoeffs, InverseCoeffs};
+pub use context::YuvContext;
 
 // Encode (RGB -> YCbCr)
 pub use encode::{

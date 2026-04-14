@@ -44,6 +44,38 @@ impl Default for SharpYuvConfig {
     }
 }
 
+/// Like `rgb_to_yuv420_sharp` but takes a pre-allocated workspace. Use via
+/// `YuvContext::encode_sharp_420_*` for automatic workspace management.
+pub fn rgb_to_yuv420_sharp_with_workspace(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+    luts: &GammaLuts,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let n = width * height;
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+    assert!(cb.len() >= cw * ch);
+    assert!(cr.len() >= cw * ch);
+    assert!(ws.chroma_width() >= cw);
+
+    crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
+
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+
+    sharp_iterate_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
+}
+
 /// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
 ///
 /// Y is computed at full resolution via the fast SIMD path. Cb/Cr are computed
@@ -108,6 +140,11 @@ pub struct SharpYuvWorkspace {
 }
 
 impl SharpYuvWorkspace {
+    /// Returns the chroma width this workspace is sized for.
+    pub fn chroma_width(&self) -> usize {
+        self.y0s.len()
+    }
+
     /// Allocate workspace for chroma width `cw`.
     pub fn new(cw: usize) -> Self {
         Self {
