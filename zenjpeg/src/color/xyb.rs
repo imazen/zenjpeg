@@ -83,15 +83,15 @@ static SRGB_TO_LINEAR_LUT: [f32; 256] = [
 #[inline]
 #[must_use]
 pub fn srgb_to_linear(v: f32) -> f32 {
-    linear_srgb::tf::srgb_to_linear(v)
+    linear_srgb::default::srgb_to_linear(v)
 }
 
-/// Fast sRGB gamma decoding — delegates to `linear_srgb::tf::srgb_to_linear`
+/// Fast sRGB gamma decoding — delegates to `linear_srgb::default::srgb_to_linear`
 /// (rational polynomial, already fast without powf).
 #[inline]
 #[must_use]
 pub fn srgb_to_linear_fast(v: f32) -> f32 {
-    linear_srgb::tf::srgb_to_linear(v)
+    linear_srgb::default::srgb_to_linear(v)
 }
 
 /// Applies sRGB gamma encoding (linear RGB → sRGB).
@@ -99,15 +99,15 @@ pub fn srgb_to_linear_fast(v: f32) -> f32 {
 #[inline]
 #[must_use]
 pub fn linear_to_srgb(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_srgb(v)
+    linear_srgb::default::linear_to_srgb(v)
 }
 
-/// Fast sRGB gamma encoding — delegates to `linear_srgb::tf::linear_to_srgb`
+/// Fast sRGB gamma encoding — delegates to `linear_srgb::default::linear_to_srgb`
 /// (rational polynomial, already fast without powf).
 #[inline]
 #[must_use]
 pub fn linear_to_srgb_fast(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_srgb(v)
+    linear_srgb::default::linear_to_srgb(v)
 }
 
 /// Converts sRGB u8 to linear f32 using LUT (exact, fastest).

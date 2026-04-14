@@ -3032,7 +3032,7 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 /// are inherently [0, 255], so clamping is correct for decode output.
 #[inline]
 fn srgb_to_linear_f32(s: f32) -> f32 {
-    linear_srgb::tf::srgb_to_linear(s)
+    linear_srgb::default::srgb_to_linear(s)
 }
 
 // =============================================================================

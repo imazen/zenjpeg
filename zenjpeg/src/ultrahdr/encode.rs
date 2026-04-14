@@ -397,13 +397,13 @@ fn half_to_f32_safe(bytes: Option<&[u8]>) -> f32 {
 /// sRGB OETF (linear to gamma)
 #[inline]
 fn srgb_oetf(linear: f32) -> f32 {
-    linear_srgb::tf::linear_to_srgb(linear)
+    linear_srgb::default::linear_to_srgb(linear)
 }
 
 /// sRGB EOTF (gamma to linear)
 #[inline]
 fn srgb_eotf(gamma: f32) -> f32 {
-    linear_srgb::tf::srgb_to_linear(gamma)
+    linear_srgb::default::srgb_to_linear(gamma)
 }
 
 /// Convert ultrahdr_core::Error to jpegli Error.
