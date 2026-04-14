@@ -61,6 +61,9 @@ mod row_slice;
 #[cfg(feature = "parallel")]
 pub(crate) mod rst_scan;
 mod scanline;
+#[cfg(feature = "__test-utils")]
+pub mod upsample;
+#[cfg(not(feature = "__test-utils"))]
 mod upsample;
 
 #[cfg(feature = "ultrahdr")]

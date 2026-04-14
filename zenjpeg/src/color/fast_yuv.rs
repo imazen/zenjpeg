@@ -366,7 +366,7 @@ mod tests {
         let h = 8;
         let cw = w / 2;
         let ch = h / 2;
-        let mut rgb = alloc::vec![128u8; w * h * 3];
+        let rgb = alloc::vec![128u8; w * h * 3];
         let mut y = alloc::vec![0.0f32; w * h];
         let mut cb = alloc::vec![0.0f32; cw * ch];
         let mut cr = alloc::vec![0.0f32; cw * ch];

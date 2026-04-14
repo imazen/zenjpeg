@@ -40,6 +40,7 @@ mod tests {
         s as f64 / n as f64
     }
 
+    #[allow(dead_code)]
     fn jpeg_roundtrip(rgb: &[u8], w: u32, h: u32, config: &EncoderConfig) -> Vec<u8> {
         let jpeg = config
             .encode_bytes(rgb, w, h, PixelLayout::Rgb8Srgb)
