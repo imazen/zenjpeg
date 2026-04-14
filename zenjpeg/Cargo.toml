@@ -272,6 +272,10 @@ required-features = ["decoder", "parallel"]
 name = "rgb_to_yuv_internal"
 harness = false
 
+[[bench]]
+name = "encode_zenbench"
+harness = false
+
 [lints]
 workspace = true
 
