@@ -10,6 +10,7 @@ keywords = ["yuv", "ycbcr", "simd", "color", "bt601"]
 categories = ["graphics", "multimedia::images", "no-std"]
 repository = "https://github.com/imazen/zenjpeg"
 readme = "README.md"
+exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", ".claude/", "justfile", "copter-report/"]
 
 [dependencies]
 archmage = { workspace = true }
