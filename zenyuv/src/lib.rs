@@ -37,7 +37,6 @@
 // ── Modules ────────────────────────────────────────────────────────────────
 
 pub(crate) mod types;
-pub(crate) mod gamma;
 pub mod context;
 mod encode;
 mod decode;
@@ -50,11 +49,15 @@ mod avx2_encode;
 #[cfg(target_arch = "x86_64")]
 mod avx2_decode;
 
-// TODO: fix archmage NEON #[arcane] target_feature issue
+// Hand-tuned NEON/WASM kernels exist but are not dispatched. archmage's
+// #[arcane] doesn't apply #[target_feature(enable = "neon")] on aarch64
+// where NEON is baseline (filed as archmage issue). The magetypes generic
+// path (#[magetypes(neon, wasm128)]) generates correct SIMD code for both
+// platforms via auto-vectorization — verified via QEMU cross-testing.
+//
+// When archmage fixes this, uncomment and wire into encode.rs dispatch:
 // #[cfg(target_arch = "aarch64")]
 // mod neon_encode;
-
-// TODO: fix archmage WASM #[arcane] support
 // #[cfg(target_arch = "wasm32")]
 // mod wasm_encode;
 
@@ -62,7 +65,6 @@ mod avx2_decode;
 
 pub use types::{Matrix, Range};
 pub use context::YuvContext;
-pub use gamma::GammaLuts;
 pub use sharp::SharpYuvConfig;
 
 // Crate-internal re-exports for tests. NOT public API.
@@ -545,11 +547,10 @@ mod tests {
         let mut cb = vec![0u8; cw * ch];
         let mut cr = vec![0u8; cw * ch];
 
-        let luts = GammaLuts::srgb();
         let config = SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
             &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Full, Matrix::Bt601, &luts, &config,
+            Range::Full, Matrix::Bt601, &config,
         );
 
         // Y should match the non-sharp 4:4:4 Y exactly (same kernel).
@@ -585,11 +586,10 @@ mod tests {
         let mut cb = vec![0u8; cw * ch];
         let mut cr = vec![0u8; cw * ch];
 
-        let luts = GammaLuts::srgb();
         let config = SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
             &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Limited, Matrix::Bt601, &luts, &config,
+            Range::Limited, Matrix::Bt601, &config,
         );
 
         // Limited range Y should be in [16, 235]
@@ -599,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn sharp_yuv_420_libwebp_gamma() {
+    fn sharp_yuv_420_limited_range_2() {
         let (w, h) = (32, 32);
         let rgb = make_pattern(w, h);
         let cw = w / 2;
@@ -608,11 +608,10 @@ mod tests {
         let mut cb = vec![0u8; cw * ch];
         let mut cr = vec![0u8; cw * ch];
 
-        let luts = GammaLuts::libwebp();
-        let config = SharpYuvConfig { srgb_delinearize: false, ..Default::default() };
+        let config = sharp::SharpYuvConfig::default();
         sharp::rgb_to_yuv420_sharp(
             &rgb, &mut y, &mut cb, &mut cr, w, h,
-            Range::Limited, Matrix::Bt601, &luts, &config,
+            Range::Limited, Matrix::Bt601, &config,
         );
 
         // Should not panic, output should be valid
@@ -700,11 +699,10 @@ mod tests {
             let mut y_sharp = vec![0u8; n];
             let mut cb_sharp = vec![0u8; cw * ch];
             let mut cr_sharp = vec![0u8; cw * ch];
-            let luts = GammaLuts::srgb();
             let config = SharpYuvConfig::default();
             sharp::rgb_to_yuv420_sharp(
                 rgb, &mut y_sharp, &mut cb_sharp, &mut cr_sharp, w, h,
-                Range::Full, Matrix::Bt601, &luts, &config,
+                Range::Full, Matrix::Bt601, &config,
             );
             let mut rt_sharp = vec![0u8; n * 3];
             yuv420_to_rgb(&y_sharp, &cb_sharp, &cr_sharp, &mut rt_sharp, w, h);

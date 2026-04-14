@@ -182,26 +182,3 @@ pub fn yuv400_to_rgb_with(
     incant!(crate::decode_generic::yuv400_to_rgb_generic(y, rgb, n, &coeffs));
 }
 
-/// Scalar tail for 4:4:4 decode (used when AVX2 processes partial blocks).
-#[allow(dead_code)]
-#[inline]
-fn yuv444_to_rgb_scalar_tail(
-    y_plane: &[u8],
-    cb_plane: &[u8],
-    cr_plane: &[u8],
-    rgb: &mut [u8],
-    start: usize,
-    end: usize,
-    coeffs: &InverseCoeffs,
-) {
-    for i in start..end {
-        let y_val = y_plane[i] as f32 + coeffs.y_offset;
-        let cb_val = cb_plane[i] as f32 + coeffs.uv_offset;
-        let cr_val = cr_plane[i] as f32 + coeffs.uv_offset;
-        let y_scaled = y_val * coeffs.y_coeff;
-        let p = i * 3;
-        rgb[p] = crate::clamp_round(y_scaled + cr_val * coeffs.cr_to_r);
-        rgb[p + 1] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_g + cr_val * coeffs.cr_to_g);
-        rgb[p + 2] = crate::clamp_round(y_scaled + cb_val * coeffs.cb_to_b);
-    }
-}

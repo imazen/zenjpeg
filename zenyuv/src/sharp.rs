@@ -10,25 +10,18 @@
 
 extern crate alloc;
 
-use crate::gamma::GammaLuts;
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
 
 /// Configuration for Sharp YUV chroma optimization.
 pub struct SharpYuvConfig {
-    /// Maximum refinement iterations per 2×2 block (default: 4).
+    /// Maximum Newton-step iterations per 2×2 block (default: 2).
+    /// Uses the L2-optimal step with the correct inverse-matrix Jacobian.
+    /// 2 iterations gives better quality than 4 iterations of the
+    /// traditional forward-matrix gradient approach.
     pub max_iterations: u32,
     /// Stop early if total reconstruction error drops below this (default: 0.1).
     pub convergence_threshold: f32,
-    /// Use gamma-aware (linear-space) averaging for the initial Cb/Cr estimate.
-    /// Slightly better quality (~0.1% error reduction) at ~2× init cost.
-    /// When false (default), uses box-average in gamma space — the iterative
-    /// loop converges to the same result within 1-2 extra iterations.
-    pub gamma_aware_init: bool,
-    /// Which delinearization to use for gamma-aware initial estimate.
-    /// `true` = sRGB (zenjpeg), `false` = libwebp gamma^0.45 (zenwebp).
-    /// Only used when `gamma_aware_init` is true.
-    pub srgb_delinearize: bool,
 }
 
 impl Default for SharpYuvConfig {
@@ -36,8 +29,6 @@ impl Default for SharpYuvConfig {
         Self {
             max_iterations: 2,
             convergence_threshold: 0.1,
-            gamma_aware_init: false,
-            srgb_delinearize: true,
         }
     }
 }
@@ -53,7 +44,6 @@ pub fn rgb_to_yuv420_sharp_with_workspace(
     height: usize,
     range: Range,
     matrix: Matrix,
-    _luts: &GammaLuts,
     config: &SharpYuvConfig,
     ws: &mut SharpYuvWorkspace,
 ) {
@@ -89,7 +79,6 @@ pub fn rgb_to_yuv420_sharp_f32(
     height: usize,
     range: Range,
     matrix: Matrix,
-    _luts: &GammaLuts,
     config: &SharpYuvConfig,
     ws: &mut SharpYuvWorkspace,
 ) {
@@ -135,7 +124,6 @@ pub fn rgb_to_yuv420_sharp(
     height: usize,
     range: Range,
     matrix: Matrix,
-    _luts: &GammaLuts,
     config: &SharpYuvConfig,
 ) {
     let n = width * height;

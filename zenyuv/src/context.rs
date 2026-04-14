@@ -11,7 +11,6 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use crate::gamma::GammaLuts;
 use crate::sharp::{SharpYuvConfig, SharpYuvWorkspace};
 use crate::types::{Matrix, Range};
 
@@ -26,8 +25,6 @@ use crate::types::{Matrix, Range};
 pub struct YuvContext {
     range: Range,
     matrix: Matrix,
-    /// Gamma LUTs — heap-allocated lazily on first sharp call (1KB).
-    luts: Option<alloc::boxed::Box<GammaLuts>>,
     /// Temp u8 planes — heap-allocated lazily for f32 output paths.
     f32_temps: Option<alloc::boxed::Box<F32Temps>>,
     /// Sharp workspace — heap-allocated lazily on first sharp call (432+ bytes).
@@ -55,23 +52,11 @@ impl YuvContext {
         Self {
             range,
             matrix,
-            luts: None,
             f32_temps: None,
             sharp_ws: None,
         }
     }
 
-    /// Set gamma LUTs. Call `GammaLuts::libwebp()` for VP8, `::srgb()` for JPEG.
-    /// If not set, defaults to sRGB on first sharp call.
-    pub fn set_gamma_luts(&mut self, luts: GammaLuts) {
-        self.luts = Some(alloc::boxed::Box::new(luts));
-    }
-
-    fn ensure_luts(&mut self) {
-        if self.luts.is_none() {
-            self.luts = Some(alloc::boxed::Box::new(GammaLuts::srgb()));
-        }
-    }
 
     // ── Box-average (non-sharp) ─────────────────────────────────────────
 
@@ -142,15 +127,13 @@ impl YuvContext {
         config: &SharpYuvConfig,
     ) {
         let cw = width.div_ceil(2);
-        self.ensure_luts();
         self.ensure_sharp_ws(cw);
         let range = self.range;
         let matrix = self.matrix;
-        let luts = self.luts.as_ref().unwrap();
         crate::sharp::rgb_to_yuv420_sharp_with_workspace(
             rgb, y, cb, cr, width, height,
             range, matrix,
-            luts, config,
+            config,
             self.sharp_ws.as_mut().unwrap(),
         );
     }
@@ -168,15 +151,13 @@ impl YuvContext {
         config: &SharpYuvConfig,
     ) {
         let cw = width.div_ceil(2);
-        self.ensure_luts();
         self.ensure_sharp_ws(cw);
         let range = self.range;
         let matrix = self.matrix;
-        let luts = self.luts.as_ref().unwrap();
         crate::sharp::rgb_to_yuv420_sharp_f32(
             rgb, y, cb, cr, width, height,
             range, matrix,
-            luts, config,
+            config,
             self.sharp_ws.as_mut().unwrap(),
         );
     }

@@ -67,25 +67,21 @@ fn zenyuv_strip_420(
         rgb_strip
     };
 
-    let luts = zenyuv::GammaLuts::srgb();
     let config = if use_iterative {
         zenyuv::SharpYuvConfig::default() // Newton iter=2
     } else {
         zenyuv::SharpYuvConfig {
             max_iterations: 0,
-            gamma_aware_init: true,
             ..Default::default()
         }
     };
 
-    // Native f32: Y computed as f32, Cb/Cr from iteration f32 workspace.
-    // No u8 temp allocs, no u8→f32 conversion.
     let mut ws = zenyuv::sharp::SharpYuvWorkspace::new(cw);
     zenyuv::sharp::rgb_to_yuv420_sharp_f32(
         rgb_input, y_strip, cb_down, cr_down,
         width, strip_height,
         zenyuv::Range::Full, zenyuv::Matrix::Bt601,
-        &luts, &config, &mut ws,
+        &config, &mut ws,
     );
 }
 

@@ -8,7 +8,7 @@
 use crate::types::ForwardCoeffs;
 
 /// 4:4:4 NEON encode kernel. Returns number of pixels processed (multiple of 16).
-#[arcane]
+#[arcane(import_intrinsics)]
 pub(crate) fn rgb_to_yuv444_neon(
     token: archmage::NeonToken,
     rgb: &[u8],
@@ -18,7 +18,6 @@ pub(crate) fn rgb_to_yuv444_neon(
     n: usize,
     coeffs: &ForwardCoeffs,
 ) -> usize {
-    use core::arch::aarch64::*;
 
     let yr = vdupq_n_s16(coeffs.yr);
     let yg = vdupq_n_s16(coeffs.yg);

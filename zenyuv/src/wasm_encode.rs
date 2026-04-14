@@ -8,7 +8,7 @@
 use crate::types::{ForwardCoeffs, pack_i16_pair, PREC};
 
 /// 4:4:4 WASM SIMD128 encode kernel. Returns number of pixels processed.
-#[arcane]
+#[arcane(import_intrinsics)]
 pub(crate) fn rgb_to_yuv444_wasm(
     token: archmage::Wasm128Token,
     rgb: &[u8],
@@ -18,7 +18,6 @@ pub(crate) fn rgb_to_yuv444_wasm(
     n: usize,
     coeffs: &ForwardCoeffs,
 ) -> usize {
-    use core::arch::wasm32::*;
 
     let y_rg = i32x4_splat(pack_i16_pair(coeffs.yr, coeffs.yg));
     let y_b0 = i32x4_splat(pack_i16_pair(coeffs.yb, 0));
