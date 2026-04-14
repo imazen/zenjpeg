@@ -182,7 +182,8 @@ fn assert_decodes_close_to_mozjpeg(data: &[u8], label: &str, threshold: u8) {
 #[test]
 fn mixed1_q5_decodes_correctly() {
     // noise_96x72, Q5, `cjpeg -sample 2x2,2x1,1x2`. Pre-fix max_diff was 10.
-    let data: &[u8] = include_bytes!("../testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
+    let data: &[u8] =
+        include_bytes!("../testdata/permutation_regression/mixed1_q5_noise_96x72.jpg");
     assert_decodes_close_to_mozjpeg(data, "mixed1 Q5 noise_96x72", 7);
 }
 

@@ -31,7 +31,6 @@
 //!     └── .encode() / .encode_from_*()   (direct, no request layer)
 //! ```
 
-
 use crate::test_utils::generate_checkerboard;
 use zenjpeg::encoder::{
     ChromaSubsampling, EncodeRequest, EncoderConfig, Exif, Orientation, PixelLayout, Unstoppable,

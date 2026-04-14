@@ -48,9 +48,8 @@
 //!             └── .read_rows_ycbcr_f32()
 //! ```
 
-
-use enough::Unstoppable;
 use crate::test_utils::generate_checkerboard;
+use enough::Unstoppable;
 use zenjpeg::{
     color::icc::TargetColorSpace,
     decoder::{

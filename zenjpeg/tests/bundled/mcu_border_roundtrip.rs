@@ -17,7 +17,6 @@
 
 use enough::Unstoppable;
 
-
 use crate::test_utils::TestImage;
 use zenjpeg::{
     decoder::Decoder,

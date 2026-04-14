@@ -23,7 +23,6 @@
 //! Note: DQT extraction also exists in examples/jpeg_inspect.rs. Consider
 //! moving to a shared location if more tests need this functionality.
 
-
 use crate::test_utils::generate_gradient_d;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};

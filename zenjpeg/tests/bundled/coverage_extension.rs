@@ -4,7 +4,6 @@
 //! by the main codec_coverage tests.
 use enough::Unstoppable;
 
-
 use crate::test_utils::{generate_gradient_d, generate_noise};
 use zenjpeg::{
     color::icc::TargetColorSpace,

@@ -3,7 +3,6 @@
 //! Tests matching C++ jpegli decode_api_test.cc functionality.
 use enough::Unstoppable;
 
-
 use crate::test_utils::{TestImage, generate_gradient_d, read_test_data_required};
 
 use test_case::test_case;

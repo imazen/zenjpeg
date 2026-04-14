@@ -4,7 +4,6 @@
 //! to verify parity in encoding behavior.
 use enough::Unstoppable;
 
-
 use crate::test_utils::{distance_rms, generate_gradient_d, get_test_data_path, read_test_data};
 
 use zenjpeg::{

@@ -102,6 +102,8 @@ mod decode_callback;
 mod decode_external;
 #[path = "bundled/decode_perf_locked.rs"]
 mod decode_perf_locked;
+#[path = "bundled/decode_xyb_failures.rs"]
+mod decode_xyb_failures;
 #[path = "bundled/decoder_consistency.rs"]
 mod decoder_consistency;
 #[path = "bundled/decoder_defaults_eval.rs"]
@@ -114,8 +116,6 @@ mod decoder_extras;
 mod decoder_leniency_comparison;
 #[path = "bundled/decoder_parity.rs"]
 mod decoder_parity;
-#[path = "bundled/decode_xyb_failures.rs"]
-mod decode_xyb_failures;
 #[path = "bundled/dequant_bias_comparison.rs"]
 mod dequant_bias_comparison;
 #[path = "bundled/deringing_quality.rs"]

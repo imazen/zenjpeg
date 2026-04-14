@@ -10,7 +10,6 @@
 //! - XYB and YCbCr color spaces
 use enough::Unstoppable;
 
-
 use crate::test_utils::{
     TestImage, generate_checkerboard, generate_color_bars, generate_gradient_d,
     generate_gradient_h, generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb,

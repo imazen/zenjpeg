@@ -3,7 +3,6 @@
 //! Tests matching C++ jpegli encode_api_test.cc functionality.
 use enough::Unstoppable;
 
-
 use crate::test_utils::{
     TestImage, distance_rms, generate_checkerboard, generate_color_bars, generate_gradient_d,
     generate_gradient_h, max_pixel_diff, thresholds,
