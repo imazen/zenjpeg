@@ -418,11 +418,29 @@ impl DeblockStrategy for Boundary4Tap {
 /// busy, then assembly from a 7×7 Gaussian deblock, a 3×3 low-pass dering, or
 /// the original pixels — per the Kriss patent. Chroma is untouched, matching
 /// the patent's luma-only design.
-struct TriageDecode;
+struct TriageDecode {
+    uniform_threshold: u32,
+    /// Cached name string — `triage` (default 64) or `triage_t<N>`.
+    name: String,
+}
+
+impl TriageDecode {
+    fn new(uniform_threshold: u32) -> Self {
+        let name = if uniform_threshold == 64 {
+            "triage".to_string()
+        } else {
+            format!("triage_t{uniform_threshold}")
+        };
+        Self {
+            uniform_threshold,
+            name,
+        }
+    }
+}
 
 impl DeblockStrategy for TriageDecode {
     fn name(&self) -> &str {
-        "triage"
+        &self.name
     }
 
     fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
@@ -434,10 +452,63 @@ impl DeblockStrategy for TriageDecode {
                 &mut luma.data,
                 luma.width,
                 luma.height,
-                zenjpeg::deblock::TriageConfig::default(),
+                zenjpeg::deblock::TriageConfig {
+                    uniform_threshold: self.uniform_threshold,
+                },
             );
         }
 
+        Some(planes_to_rgb(&cp))
+    }
+}
+
+/// Quality-gated triage: only invoke the filter at quality levels where the
+/// cid22 sweep showed it is net-positive. Threshold rises slightly as quality
+/// drops — heavier quantization produces more artefact-heavy blocks that
+/// benefit from more aggressive smoothing. See
+/// `benchmarks/triage/deblock_full_2026-04-13.md` plus the `triage_t*` sweep
+/// for the calibration data.
+///
+/// Gate: luma DC quant >= ~50 (≈ Q15 libjpeg-turbo / mozjpeg, ≈ Q20 cjpegli).
+/// Above that the filter's over-blurring out-weighs the discontinuity
+/// reduction — we fall back to the raw baseline decode.
+struct TriageGated;
+
+impl DeblockStrategy for TriageGated {
+    fn name(&self) -> &str {
+        "triage_gated"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        let probe = detect::probe(jpeg_bytes).ok()?;
+        let dc_quant = probe
+            .dqt_tables
+            .first()
+            .map(|t| t.values[0])
+            .unwrap_or(1);
+
+        // Above this DC_quant the filter under-performs baseline at every
+        // threshold we tested (16…512). Skip to baseline.
+        const GATE_DC_QUANT: u16 = 50;
+        if dc_quant < GATE_DC_QUANT {
+            return decode_jpeg_with_icc(jpeg_bytes).ok();
+        }
+
+        // Quality-adaptive uniform threshold. Values from the cid22 sweep
+        // (`triage_t*` winners per quality band):
+        //   Q ≤ 5   (DC_quant ≥ 120): t128 wins by +0.06 SS2 over t64
+        //   Q 10-15 (DC_quant 50-120): t64 default is near-optimum
+        let uniform_threshold = if dc_quant >= 120 { 128 } else { 64 };
+
+        let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
+        if let Some(luma) = cp.planes.first_mut() {
+            zenjpeg::deblock::filter_plane_triage(
+                &mut luma.data,
+                luma.width,
+                luma.height,
+                zenjpeg::deblock::TriageConfig { uniform_threshold },
+            );
+        }
         Some(planes_to_rgb(&cp))
     }
 }
@@ -1859,7 +1930,8 @@ fn parse_args() -> Args {
             Box::new(BaselineDecode),
             Box::new(DequantBiasDecode),
             Box::new(Boundary4Tap),
-            Box::new(TriageDecode),
+            Box::new(TriageDecode::new(64)),
+            Box::new(TriageGated),
             // Bilateral boundary: sigma_r=15.0 (range kernel, preserves edges >30 intensity diff)
             Box::new(BilateralBoundary::new(15.0)),
             Box::new(CDEFDirection),
