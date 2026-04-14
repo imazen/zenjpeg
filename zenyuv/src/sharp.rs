@@ -8,10 +8,9 @@
 //! `&ForwardCoeffs` / `&InverseCoeffs`. All functions are `#[inline(always)]`
 //! so they can be called from `#[arcane]` SIMD regions in the future.
 
-use archmage::prelude::*;
-use magetypes::simd::generic::f32x4 as GenericF32x4;
+extern crate alloc;
 
-use crate::gamma::{self, GammaLuts};
+use crate::gamma::GammaLuts;
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
 /// Configuration for Sharp YUV chroma optimization.
@@ -66,236 +65,140 @@ pub fn rgb_to_yuv420_sharp(
     // Compute Y at full resolution using the fast SIMD path.
     crate::encode::rgb_to_yuv444_y_only(rgb, y, width, height, range, matrix);
 
-    // Compute Cb/Cr via iterative optimization per 2×2 block.
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
 
+    // Process one chroma row at a time — SoA buffers are `cw` entries (~2KB
+    // for 1024px) and stay in L1 cache.
+    let mut y0 = alloc::vec![0.0f32; cw];
+    let mut y1 = alloc::vec![0.0f32; cw];
+    let mut y2 = alloc::vec![0.0f32; cw];
+    let mut y3 = alloc::vec![0.0f32; cw];
+    let mut or0 = alloc::vec![0.0f32; cw];
+    let mut og0 = alloc::vec![0.0f32; cw];
+    let mut ob0 = alloc::vec![0.0f32; cw];
+    let mut or1 = alloc::vec![0.0f32; cw];
+    let mut og1 = alloc::vec![0.0f32; cw];
+    let mut ob1 = alloc::vec![0.0f32; cw];
+    let mut or2 = alloc::vec![0.0f32; cw];
+    let mut og2 = alloc::vec![0.0f32; cw];
+    let mut ob2 = alloc::vec![0.0f32; cw];
+    let mut or3 = alloc::vec![0.0f32; cw];
+    let mut og3 = alloc::vec![0.0f32; cw];
+    let mut ob3 = alloc::vec![0.0f32; cw];
+    let mut cb_f = alloc::vec![0.0f32; cw];
+    let mut cr_f = alloc::vec![0.0f32; cw];
+
     for cy_idx in 0..ch {
+        let y0r = cy_idx * 2;
+        let y1r = (y0r + 1).min(height - 1);
+
+        // Extract one row of blocks into SoA.
         for cx_idx in 0..cw {
-            let (cb_val, cr_val) = iterative_chroma_2x2(
-                rgb, y, width, height, cx_idx, cy_idx, &fwd, &inv, luts, config,
-            );
-            cb[cy_idx * cw + cx_idx] = clamp_u8(cb_val);
-            cr[cy_idx * cw + cx_idx] = clamp_u8(cr_val);
+            let x0 = cx_idx * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            y0[cx_idx] = y[y0r * width + x0] as f32;
+            y1[cx_idx] = y[y0r * width + x1] as f32;
+            y2[cx_idx] = y[y1r * width + x0] as f32;
+            y3[cx_idx] = y[y1r * width + x1] as f32;
+
+            let i00 = (y0r * width + x0) * 3;
+            let i10 = (y0r * width + x1) * 3;
+            let i01 = (y1r * width + x0) * 3;
+            let i11 = (y1r * width + x1) * 3;
+
+            or0[cx_idx] = rgb[i00] as f32;
+            og0[cx_idx] = rgb[i00 + 1] as f32;
+            ob0[cx_idx] = rgb[i00 + 2] as f32;
+            or1[cx_idx] = rgb[i10] as f32;
+            og1[cx_idx] = rgb[i10 + 1] as f32;
+            ob1[cx_idx] = rgb[i10 + 2] as f32;
+            or2[cx_idx] = rgb[i01] as f32;
+            og2[cx_idx] = rgb[i01 + 1] as f32;
+            ob2[cx_idx] = rgb[i01 + 2] as f32;
+            or3[cx_idx] = rgb[i11] as f32;
+            og3[cx_idx] = rgb[i11 + 1] as f32;
+            ob3[cx_idx] = rgb[i11 + 2] as f32;
+
+            let r_avg = (or0[cx_idx] + or1[cx_idx] + or2[cx_idx] + or3[cx_idx]) * 0.25;
+            let g_avg = (og0[cx_idx] + og1[cx_idx] + og2[cx_idx] + og3[cx_idx]) * 0.25;
+            let b_avg = (ob0[cx_idx] + ob1[cx_idx] + ob2[cx_idx] + ob3[cx_idx]) * 0.25;
+            cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+            cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+        }
+
+        // Run #[autoversion] iterative refinement on this row of blocks.
+        sharp_iterate_all_blocks(
+            &y0[..cw], &y1[..cw], &y2[..cw], &y3[..cw],
+            &or0[..cw], &og0[..cw], &ob0[..cw],
+            &or1[..cw], &og1[..cw], &ob1[..cw],
+            &or2[..cw], &og2[..cw], &ob2[..cw],
+            &or3[..cw], &og3[..cw], &ob3[..cw],
+            &mut cb_f[..cw], &mut cr_f[..cw],
+            &inv, &fwd,
+            config.max_iterations,
+            config.convergence_threshold,
+        );
+
+        // Write back this row.
+        let row_off = cy_idx * cw;
+        for cx_idx in 0..cw {
+            cb[row_off + cx_idx] = clamp_u8(cb_f[cx_idx]);
+            cr[row_off + cx_idx] = clamp_u8(cr_f[cx_idx]);
         }
     }
 }
 
-/// Gamma-aware (non-iterative) chroma for a single 2×2 block.
-///
-/// Linearize 4 RGB pixels via LUT, average in linear space, delinearize,
-/// then apply forward matrix. This is the initial estimate that the iterative
-/// kernel refines.
-#[inline(always)]
-fn gamma_aware_chroma_2x2(
-    rgb: &[u8],
-    width: usize,
-    height: usize,
-    cx: usize,
-    cy: usize,
-    fwd: &ForwardCoeffs,
-    luts: &GammaLuts,
-    srgb_delin: bool,
-) -> (f32, f32) {
-    let x0 = cx * 2;
-    let y0 = cy * 2;
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-
-    let lin = |x: usize, y: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * 3;
-        (
-            gamma::linearize(luts, rgb[i]),
-            gamma::linearize(luts, rgb[i + 1]),
-            gamma::linearize(luts, rgb[i + 2]),
-        )
-    };
-
-    let (lr00, lg00, lb00) = lin(x0, y0);
-    let (lr10, lg10, lb10) = lin(x1, y0);
-    let (lr01, lg01, lb01) = lin(x0, y1);
-    let (lr11, lg11, lb11) = lin(x1, y1);
-
-    let lr = (lr00 + lr10 + lr01 + lr11) * 0.25;
-    let lg = (lg00 + lg10 + lg01 + lg11) * 0.25;
-    let lb = (lb00 + lb10 + lb01 + lb11) * 0.25;
-
-    // Delinearize back to gamma space.
-    let (r, g, b) = if srgb_delin {
-        (
-            gamma::delinearize_srgb(lr) * 255.0,
-            gamma::delinearize_srgb(lg) * 255.0,
-            gamma::delinearize_srgb(lb) * 255.0,
-        )
-    } else {
-        (
-            gamma::delinearize_libwebp(lr) * 255.0,
-            gamma::delinearize_libwebp(lg) * 255.0,
-            gamma::delinearize_libwebp(lb) * 255.0,
-        )
-    };
-
-    // Forward matrix: RGB → (Y, Cb, Cr). We only need Cb/Cr.
-    let cb = fwd.cb_r_f * r + fwd.cb_g_f * g + fwd.cb_b_f * b + fwd.uv_bias_f;
-    let cr = fwd.cr_r_f * r + fwd.cr_g_f * g + fwd.cr_b_f * b + fwd.uv_bias_f;
-    (cb, cr)
-}
-
-/// Iteratively optimize chroma for a 2×2 block to minimize reconstruction error.
-///
-/// 1. Start with gamma-aware averaged chroma (single-pass estimate)
-/// 2. For each iteration: reconstruct RGB from Y + Cb/Cr, compute error,
-///    adjust Cb/Cr to reduce error
-/// 3. Stop on convergence or max iterations
-#[inline(always)]
-fn iterative_chroma_2x2(
-    rgb: &[u8],
-    y_plane: &[u8],
-    width: usize,
-    height: usize,
-    cx: usize,
-    cy: usize,
-    fwd: &ForwardCoeffs,
-    inv: &InverseCoeffs,
-    luts: &GammaLuts,
-    config: &SharpYuvConfig,
-) -> (f32, f32) {
-    let x0 = cx * 2;
-    let y0 = cy * 2;
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-
-    // Read 4 Y values as f32.
-    let y_vals = [
-        y_plane[y0 * width + x0] as f32,
-        y_plane[y0 * width + x1] as f32,
-        y_plane[y1 * width + x0] as f32,
-        y_plane[y1 * width + x1] as f32,
-    ];
-
-    // Read 4 original RGB as f32.
-    let get_rgb = |x: usize, y: usize| -> (f32, f32, f32) {
-        let i = (y * width + x) * 3;
-        (rgb[i] as f32, rgb[i + 1] as f32, rgb[i + 2] as f32)
-    };
-    let orig = [
-        get_rgb(x0, y0),
-        get_rgb(x1, y0),
-        get_rgb(x0, y1),
-        get_rgb(x1, y1),
-    ];
-
-    // Initial estimate: simple box-average of RGB → forward matrix.
-    // Faster than gamma-aware averaging (skips 12 LUT lookups + 3 polynomial
-    // evals per block), and the iterative loop corrects the initial error within
-    // 1-2 iterations regardless.
-    let r_avg = (orig[0].0 + orig[1].0 + orig[2].0 + orig[3].0) * 0.25;
-    let g_avg = (orig[0].1 + orig[1].1 + orig[2].1 + orig[3].1) * 0.25;
-    let b_avg = (orig[0].2 + orig[1].2 + orig[2].2 + orig[3].2) * 0.25;
-    let mut cb = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
-    let mut cr = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
-
-    // Run the iterative loop via SIMD (f32x4 across the 4 pixels in the block).
-    incant!(iterative_refine_4wide(
-        &y_vals,
-        &[orig[0].0, orig[1].0, orig[2].0, orig[3].0],
-        &[orig[0].1, orig[1].1, orig[2].1, orig[3].1],
-        &[orig[0].2, orig[1].2, orig[2].2, orig[3].2],
-        cb, cr, fwd, inv, config
-    ))
-}
-
-/// SIMD iterative refinement: processes all 4 pixels of one 2×2 block in
-/// parallel via f32x4. Each pixel has independent Y but shares Cb/Cr.
-///
-/// Operations per iteration:
-/// - Reconstruct: 4 FMA ops per channel × 3 channels = 12 FMAs (f32x4)
-/// - Error: 3 subs + 3 abs (f32x4)
-/// - Adjustment: 6 FMAs (f32x4), then reduce_add to scalar
-/// - Update: 2 FMAs + 2 clamps (scalar)
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
-fn iterative_refine_4wide(
-    token: Token,
-    y_vals: &[f32; 4],
-    orig_r: &[f32; 4],
-    orig_g: &[f32; 4],
-    orig_b: &[f32; 4],
-    mut cb: f32,
-    mut cr: f32,
-    fwd: &ForwardCoeffs,
-    inv: &InverseCoeffs,
-    config: &SharpYuvConfig,
-) -> (f32, f32) {
-    #[allow(non_camel_case_types)]
-    type f32x4 = GenericF32x4<Token>;
-
-    let y_v = f32x4::from_array(token, *y_vals);
-    let or_v = f32x4::from_array(token, *orig_r);
-    let og_v = f32x4::from_array(token, *orig_g);
-    let ob_v = f32x4::from_array(token, *orig_b);
-
-    // Inverse matrix coefficients broadcast.
-    let y_coeff_v = f32x4::splat(token, inv.y_coeff);
-    let y_off_v = f32x4::splat(token, inv.y_offset);
-    let cr_to_r_v = f32x4::splat(token, inv.cr_to_r);
-    let cr_to_g_v = f32x4::splat(token, inv.cr_to_g);
-    let cb_to_g_v = f32x4::splat(token, inv.cb_to_g);
-    let cb_to_b_v = f32x4::splat(token, inv.cb_to_b);
+/// Flat iterative loop over all blocks. `#[autoversion]` generates AVX2/SSE/NEON
+/// variants; LLVM auto-vectorizes the inner loop across contiguous f32 arrays.
+#[archmage::autoversion]
+fn sharp_iterate_all_blocks(
+    y0: &[f32], y1: &[f32], y2: &[f32], y3: &[f32],
+    or0: &[f32], og0: &[f32], ob0: &[f32],
+    or1: &[f32], og1: &[f32], ob1: &[f32],
+    or2: &[f32], og2: &[f32], ob2: &[f32],
+    or3: &[f32], og3: &[f32], ob3: &[f32],
+    cb_f: &mut [f32], cr_f: &mut [f32],
+    inv: &InverseCoeffs, fwd: &ForwardCoeffs,
+    max_iterations: u32,
+    _convergence_threshold: f32,
+) {
+    let n = cb_f.len();
     let uv_center = inv.uv_offset.abs();
+    let scale = 0.25 * 0.5;
 
-    // Forward matrix adjustment weights broadcast.
-    let adj_cb_r_v = f32x4::splat(token, fwd.cb_r_f);
-    let adj_cb_g_v = f32x4::splat(token, fwd.cb_g_f);
-    let adj_cb_b_v = f32x4::splat(token, fwd.cb_b_f);
-    let adj_cr_r_v = f32x4::splat(token, fwd.cr_r_f);
-    let adj_cr_g_v = f32x4::splat(token, fwd.cr_g_f);
-    let adj_cr_b_v = f32x4::splat(token, fwd.cr_b_f);
+    for _ in 0..max_iterations {
+        for i in 0..n {
+            let cb_c = cb_f[i] - uv_center;
+            let cr_c = cr_f[i] - uv_center;
+            let mut cb_adj = 0.0f32;
+            let mut cr_adj = 0.0f32;
 
-    let zero_v = f32x4::splat(token, 0.0);
-    let max_v = f32x4::splat(token, 255.0);
+            // Unrolled over 4 pixel positions. Each is independent except
+            // they share cb_c/cr_c and accumulate into cb_adj/cr_adj.
+            macro_rules! pixel {
+                ($yv:expr, $or:expr, $og:expr, $ob:expr) => {{
+                    let y_adj = inv.y_coeff * ($yv - inv.y_offset);
+                    let rec_r = (y_adj + inv.cr_to_r * cr_c).clamp(0.0, 255.0);
+                    let rec_g = (y_adj + inv.cr_to_g * cr_c + inv.cb_to_g * cb_c).clamp(0.0, 255.0);
+                    let rec_b = (y_adj + inv.cb_to_b * cb_c).clamp(0.0, 255.0);
+                    let er = $or - rec_r;
+                    let eg = $og - rec_g;
+                    let eb = $ob - rec_b;
+                    cb_adj += fwd.cb_r_f * er + fwd.cb_g_f * eg + fwd.cb_b_f * eb;
+                    cr_adj += fwd.cr_r_f * er + fwd.cr_g_f * eg + fwd.cr_b_f * eb;
+                }};
+            }
+            pixel!(y0[i], or0[i], og0[i], ob0[i]);
+            pixel!(y1[i], or1[i], og1[i], ob1[i]);
+            pixel!(y2[i], or2[i], og2[i], ob2[i]);
+            pixel!(y3[i], or3[i], og3[i], ob3[i]);
 
-    // Pre-compute Y-dependent term: y_coeff * (Y - y_offset). Constant per iter.
-    let y_adj_v = y_coeff_v * (y_v - y_off_v);
-
-    for _ in 0..config.max_iterations {
-        let cb_c = cb - uv_center;
-        let cr_c = cr - uv_center;
-        let cb_c_v = f32x4::splat(token, cb_c);
-        let cr_c_v = f32x4::splat(token, cr_c);
-
-        // Reconstruct RGB: rec = y_adj + coeff * cb_c/cr_c, clamped to [0,255].
-        let rec_r = (y_adj_v + cr_to_r_v * cr_c_v).max(zero_v).min(max_v);
-        let rec_g = (y_adj_v + cr_to_g_v * cr_c_v + cb_to_g_v * cb_c_v)
-            .max(zero_v)
-            .min(max_v);
-        let rec_b = (y_adj_v + cb_to_b_v * cb_c_v).max(zero_v).min(max_v);
-
-        // Error per pixel (f32x4).
-        let err_r = or_v - rec_r;
-        let err_g = og_v - rec_g;
-        let err_b = ob_v - rec_b;
-
-        // Convergence: sum of absolute errors across all 4 pixels.
-        let abs_err = err_r.abs() + err_g.abs() + err_b.abs();
-        let total_error = abs_err.reduce_add();
-        if total_error < config.convergence_threshold {
-            break;
+            cb_f[i] = (cb_f[i] + cb_adj * scale).clamp(0.0, 255.0);
+            cr_f[i] = (cr_f[i] + cr_adj * scale).clamp(0.0, 255.0);
         }
-
-        // Adjustment per pixel (f32x4), then horizontal sum to get total adjustment.
-        let cb_adj_v = adj_cb_r_v * err_r + adj_cb_g_v * err_g + adj_cb_b_v * err_b;
-        let cr_adj_v = adj_cr_r_v * err_r + adj_cr_g_v * err_g + adj_cr_b_v * err_b;
-        let cb_adj = cb_adj_v.reduce_add();
-        let cr_adj = cr_adj_v.reduce_add();
-
-        // Damped update: average 4 pixels × 0.5 damping.
-        let scale = 0.25 * 0.5;
-        cb = (cb + cb_adj * scale).clamp(0.0, 255.0);
-        cr = (cr + cr_adj * scale).clamp(0.0, 255.0);
     }
-
-    (cb, cr)
 }
 
 #[inline(always)]
