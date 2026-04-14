@@ -39,7 +39,8 @@ pub fn gamma_aware_strip_420(
     );
 }
 
-/// Delegate to zenyuv for 4:2:0 chroma. Handles RGBA stripping and u8→f32.
+/// Delegate to zenyuv for 4:2:0 chroma. Uses the native f32 output path —
+/// no u8 intermediate, no u8→f32 conversion pass.
 fn zenyuv_strip_420(
     rgb_strip: &[u8],
     y_strip: &mut [f32],
@@ -51,9 +52,7 @@ fn zenyuv_strip_420(
     use_iterative: bool,
 ) {
     let num_pixels = width * strip_height;
-    let c_width = (width + 1) / 2;
-    let c_height = (strip_height + 1) / 2;
-    let c_size = c_width * c_height;
+    let cw = (width + 1) / 2;
 
     // Strip alpha if RGBA.
     let rgb_only: alloc::vec::Vec<u8>;
@@ -68,41 +67,26 @@ fn zenyuv_strip_420(
         rgb_strip
     };
 
-    let mut y_u8 = alloc::vec![0u8; num_pixels];
-    let mut cb_u8 = alloc::vec![0u8; c_size];
-    let mut cr_u8 = alloc::vec![0u8; c_size];
-
-    if use_iterative {
-        let luts = zenyuv::GammaLuts::srgb();
-        let config = zenyuv::SharpYuvConfig::default(); // Newton iter=2
-        zenyuv::sharp::rgb_to_yuv420_sharp(
-            rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8,
-            width, strip_height,
-            zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
-        );
+    let luts = zenyuv::GammaLuts::srgb();
+    let config = if use_iterative {
+        zenyuv::SharpYuvConfig::default() // Newton iter=2
     } else {
-        // GammaAware (non-iterative): use zenyuv sharp with iter=0 + gamma init.
-        let luts = zenyuv::GammaLuts::srgb();
-        let config = zenyuv::SharpYuvConfig {
+        zenyuv::SharpYuvConfig {
             max_iterations: 0,
             gamma_aware_init: true,
             ..Default::default()
-        };
-        zenyuv::sharp::rgb_to_yuv420_sharp(
-            rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8,
-            width, strip_height,
-            zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
-        );
-    }
+        }
+    };
 
-    // Convert u8 → f32.
-    for i in 0..num_pixels {
-        y_strip[i] = y_u8[i] as f32;
-    }
-    for i in 0..c_size {
-        cb_down[i] = cb_u8[i] as f32;
-        cr_down[i] = cr_u8[i] as f32;
-    }
+    // Native f32: Y computed as f32, Cb/Cr from iteration f32 workspace.
+    // No u8 temp allocs, no u8→f32 conversion.
+    let mut ws = zenyuv::sharp::SharpYuvWorkspace::new(cw);
+    zenyuv::sharp::rgb_to_yuv420_sharp_f32(
+        rgb_input, y_strip, cb_down, cr_down,
+        width, strip_height,
+        zenyuv::Range::Full, zenyuv::Matrix::Bt601,
+        &luts, &config, &mut ws,
+    );
 }
 
 // ── 4:2:2 / 4:4:0 strip paths (scalar, not yet in zenyuv) ──────────────────

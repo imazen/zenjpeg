@@ -76,16 +76,17 @@ pub fn rgb_to_yuv420_sharp_with_workspace(
     sharp_iterate_rows_u8(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
 }
 
-/// f32 output: Y + Cb/Cr all as f32. No u8 intermediate, no throwaway allocs.
+/// f32 output: Y via fast SIMD (u8→f32 widen), Cb/Cr directly from iteration f32.
 ///
-/// Y is computed from RGB as f32 (scalar, per row during SoA extraction).
-/// Cb/Cr come from the iteration loop which already works in f32.
-/// Zero narrowing-then-widening — the f32 values flow straight to output.
+/// Y still goes through the SIMD u8 kernel (AVX2 pmaddwd) because that's faster
+/// than scalar f32 per-pixel. The u8 Y is widened to f32 for the caller's output
+/// AND used by the iteration SoA. Cb/Cr skip u8 entirely — written from the
+/// iteration workspace as f32.
 pub fn rgb_to_yuv420_sharp_f32(
     rgb: &[u8],
-    y: &mut [f32],
-    cb: &mut [f32],
-    cr: &mut [f32],
+    y_f32: &mut [f32],
+    cb_f32: &mut [f32],
+    cr_f32: &mut [f32],
     width: usize,
     height: usize,
     range: Range,
@@ -98,15 +99,25 @@ pub fn rgb_to_yuv420_sharp_f32(
     let cw = width.div_ceil(2);
     let ch = height.div_ceil(2);
     assert!(rgb.len() >= n * 3);
-    assert!(y.len() >= n);
-    assert!(cb.len() >= cw * ch);
-    assert!(cr.len() >= cw * ch);
+    assert!(y_f32.len() >= n);
+    assert!(cb_f32.len() >= cw * ch);
+    assert!(cr_f32.len() >= cw * ch);
     assert!(ws.chroma_width() >= cw);
+
+    // Y via fast SIMD → u8 temp, then widen to f32 for caller.
+    // This is faster than scalar f32 Y despite the u8→f32 step, because
+    // the AVX2 pmaddwd kernel processes 32 pixels/iter vs 1 pixel/iter scalar.
+    let mut y_u8 = alloc::vec![0u8; n];
+    crate::encode::rgb_to_yuv444_y_only(rgb, &mut y_u8, width, height, range, matrix);
+    for i in 0..n {
+        y_f32[i] = y_u8[i] as f32;
+    }
 
     let fwd = ForwardCoeffs::new(matrix, range);
     let inv = InverseCoeffs::new(matrix, range);
 
-    sharp_iterate_rows_f32(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws);
+    // Cb/Cr: iteration produces f32 directly. SoA reads Y from u8 (via workspace).
+    sharp_iterate_rows_f32_hybrid(rgb, &y_u8, cb_f32, cr_f32, width, height, cw, ch, &fwd, &inv, config, ws);
 }
 
 /// Convert packed RGB to Y/Cb/Cr 4:2:0 with Sharp YUV chroma optimization.
@@ -239,6 +250,44 @@ fn sharp_iterate_rows_u8(
             cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
             cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
+    }
+}
+
+/// Hybrid f32: Y from u8 SIMD kernel (via SoA), Cb/Cr written as f32 directly.
+fn sharp_iterate_rows_f32_hybrid(
+    rgb: &[u8],
+    y_u8: &[u8],
+    cb_f32: &mut [f32],
+    cr_f32: &mut [f32],
+    width: usize, height: usize, cw: usize, ch: usize,
+    fwd: &ForwardCoeffs, inv: &InverseCoeffs,
+    config: &SharpYuvConfig, ws: &mut SharpYuvWorkspace,
+) {
+    for cy_idx in 0..ch {
+        let row_top = cy_idx * 2;
+        let row_bot = (row_top + 1).min(height - 1);
+        extract_soa_row(
+            rgb, y_u8, row_top, row_bot, width, cw,
+            &mut ws.y0s, &mut ws.y1s, &mut ws.y2s, &mut ws.y3s,
+            &mut ws.or0, &mut ws.og0, &mut ws.ob0,
+            &mut ws.or1, &mut ws.og1, &mut ws.ob1,
+            &mut ws.or2, &mut ws.og2, &mut ws.ob2,
+            &mut ws.or3, &mut ws.og3, &mut ws.ob3,
+            &mut ws.cb_f, &mut ws.cr_f, fwd,
+        );
+        sharp_iterate_all_blocks(
+            &ws.y0s[..cw], &ws.y1s[..cw], &ws.y2s[..cw], &ws.y3s[..cw],
+            &ws.or0[..cw], &ws.og0[..cw], &ws.ob0[..cw],
+            &ws.or1[..cw], &ws.og1[..cw], &ws.ob1[..cw],
+            &ws.or2[..cw], &ws.og2[..cw], &ws.ob2[..cw],
+            &ws.or3[..cw], &ws.og3[..cw], &ws.ob3[..cw],
+            &mut ws.cb_f[..cw], &mut ws.cr_f[..cw],
+            inv, fwd, config.max_iterations, config.convergence_threshold,
+        );
+        // Write Cb/Cr as f32 directly — no u8 narrowing.
+        let row_off = cy_idx * cw;
+        cb_f32[row_off..row_off + cw].copy_from_slice(&ws.cb_f[..cw]);
+        cr_f32[row_off..row_off + cw].copy_from_slice(&ws.cr_f[..cw]);
     }
 }
 
