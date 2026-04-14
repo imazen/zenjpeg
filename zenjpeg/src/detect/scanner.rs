@@ -132,7 +132,19 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
                 }
                 let len = read_u16(data, pos) as usize;
                 pos += len;
-                // Skip entropy data until next marker
+                // For baseline/sequential JPEGs there is only one scan, so
+                // skipping through the entropy data to find a nonexistent
+                // second SOS just wastes time. The detect module only uses
+                // sos_count >= 4 as a progressive-encoder fingerprint, so
+                // baseline's sos_count is never read — we can stop here.
+                let is_progressive = matches!(
+                    result.sof.as_ref().map(|s| s.marker),
+                    Some(MARKER_SOF2) | Some(0xCA) // SOF2 progressive, 0xCA arithmetic progressive
+                );
+                if !is_progressive {
+                    break;
+                }
+                // Progressive: continue scanning for more SOS markers.
                 pos = skip_entropy_data(data, pos);
             }
 
