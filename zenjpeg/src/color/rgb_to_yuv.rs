@@ -539,8 +539,14 @@ fn store_u8x32_avx2(
 }
 
 // ── AVX2 4:2:0 ──────────────────────────────────────────────────────────────
+//
+// Fused kernel: processes 2 rows × 32 pixels per iter.
+// Y: full-res via matrix_row (64 output bytes per iter).
+// Cb/Cr: full-res 4:4:4 via matrix_row on both rows, then box-average the
+// 32 u8 results from each row into 16 output u8 values via maddubs + add + shr.
 
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 fn rgb_to_yuv420_avx2(
     token: archmage::X64V3Token,
     rgb: &[u8],
@@ -551,32 +557,141 @@ fn rgb_to_yuv420_avx2(
     height: usize,
     cw: usize,
 ) {
-    // Y at full resolution, via the 4:4:4 SIMD kernel.
-    let n = width * height;
-    let done = rgb_to_yuv444_y_only_avx2(token, rgb, y_out, n);
-    if done < n {
-        for i in done..n {
-            let p = i * 3;
-            let r = rgb[p] as f32;
-            let g = rgb[p + 1] as f32;
-            let b = rgb[p + 2] as f32;
-            y_out[i] = clamp_round(YR * r + YG * g + YB * b);
+    use core::arch::x86_64::*;
+
+    let y_rg = _mm256_set1_epi32(pack_i16_pair(I16_YR, I16_YG));
+    let y_b0 = _mm256_set1_epi32(pack_i16_pair(I16_YB, 0));
+    let cb_rg = _mm256_set1_epi32(pack_i16_pair(I16_CB_R, I16_CB_G));
+    let cb_b0 = _mm256_set1_epi32(pack_i16_pair(I16_CB_B, 0));
+    let cr_rg = _mm256_set1_epi32(pack_i16_pair(I16_CR_R, I16_CR_G));
+    let cr_b0 = _mm256_set1_epi32(pack_i16_pair(I16_CR_B, 0));
+
+    let round_y = (1i32 << (PREC - 1)) - 1;
+    let y_bias_v = _mm256_set1_epi32(round_y);
+    let uv_bias_v = _mm256_set1_epi32((128i32 << PREC) + round_y);
+    let all_ones = _mm256_set1_epi8(1);
+    let rounding_2 = _mm256_set1_epi16(2);
+
+    let row_stride = width * 3;
+    let col_blocks = width / 32;
+
+    // Process pairs of rows.
+    let row_pairs = height / 2;
+    for ry in 0..row_pairs {
+        let top = ry * 2;
+        let bot = top + 1;
+        let top_off = top * row_stride;
+        let bot_off = bot * row_stride;
+        let y_top_off = top * width;
+        let y_bot_off = bot * width;
+        let cb_row_off = ry * cw;
+
+        for cx in 0..col_blocks {
+            let px = cx * 32;
+            let src_top = &rgb[top_off + px * 3..top_off + px * 3 + 96];
+            let src_bot = &rgb[bot_off + px * 3..bot_off + px * 3 + 96];
+
+            // Deinterleave both rows.
+            let t0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[0..32]).unwrap());
+            let t1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[32..64]).unwrap());
+            let t2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_top[64..96]).unwrap());
+            let (r_top, g_top, b_top) = deinterleave_rgb_avx2(token, t0, t1, t2);
+
+            let b0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[0..32]).unwrap());
+            let b1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[32..64]).unwrap());
+            let b2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src_bot[64..96]).unwrap());
+            let (r_bot, g_bot, b_bot) = deinterleave_rgb_avx2(token, b0, b1, b2);
+
+            // Y for both rows.
+            let (yt_lo, yt_hi) = matrix_row_avx2(token, r_top, g_top, b_top, y_rg, y_b0, y_bias_v);
+            store_u8x32_avx2(token, &mut y_out[y_top_off + px..y_top_off + px + 32], yt_lo, yt_hi);
+
+            let (yb_lo, yb_hi) = matrix_row_avx2(token, r_bot, g_bot, b_bot, y_rg, y_b0, y_bias_v);
+            store_u8x32_avx2(token, &mut y_out[y_bot_off + px..y_bot_off + px + 32], yb_lo, yb_hi);
+
+            // Cb/Cr: compute full-res u8 for both rows, then 2×2 box average.
+            let (cbt_lo, cbt_hi) = matrix_row_avx2(token, r_top, g_top, b_top, cb_rg, cb_b0, uv_bias_v);
+            let cb_top_u8 = _mm256_packus_epi16(cbt_lo, cbt_hi);
+            let (cbb_lo, cbb_hi) = matrix_row_avx2(token, r_bot, g_bot, b_bot, cb_rg, cb_b0, uv_bias_v);
+            let cb_bot_u8 = _mm256_packus_epi16(cbb_lo, cbb_hi);
+
+            // Horizontal pair sums as u16 (maddubs treats first arg as u8, second as i8).
+            let cb_top_hsum = _mm256_maddubs_epi16(cb_top_u8, all_ones);
+            let cb_bot_hsum = _mm256_maddubs_epi16(cb_bot_u8, all_ones);
+            let cb_sum4 = _mm256_add_epi16(cb_top_hsum, cb_bot_hsum);
+            let cb_avg = _mm256_srli_epi16::<2>(_mm256_add_epi16(cb_sum4, rounding_2));
+
+            // Pack 16 u16 → 16 u8 via packus + permute + extract lower 128.
+            let cb_packed = _mm256_packus_epi16(cb_avg, _mm256_setzero_si256());
+            let cb_packed = _mm256_permute4x64_epi64::<0b11_01_10_00>(cb_packed);
+            safe_simd::_mm_storeu_si128(
+                <&mut [u8; 16]>::try_from(&mut cb_out[cb_row_off + cx * 16..cb_row_off + cx * 16 + 16]).unwrap(),
+                _mm256_castsi256_si128(cb_packed),
+            );
+
+            // Same for Cr.
+            let (crt_lo, crt_hi) = matrix_row_avx2(token, r_top, g_top, b_top, cr_rg, cr_b0, uv_bias_v);
+            let cr_top_u8 = _mm256_packus_epi16(crt_lo, crt_hi);
+            let (crb_lo, crb_hi) = matrix_row_avx2(token, r_bot, g_bot, b_bot, cr_rg, cr_b0, uv_bias_v);
+            let cr_bot_u8 = _mm256_packus_epi16(crb_lo, crb_hi);
+
+            let cr_top_hsum = _mm256_maddubs_epi16(cr_top_u8, all_ones);
+            let cr_bot_hsum = _mm256_maddubs_epi16(cr_bot_u8, all_ones);
+            let cr_sum4 = _mm256_add_epi16(cr_top_hsum, cr_bot_hsum);
+            let cr_avg = _mm256_srli_epi16::<2>(_mm256_add_epi16(cr_sum4, rounding_2));
+
+            let cr_packed = _mm256_packus_epi16(cr_avg, _mm256_setzero_si256());
+            let cr_packed = _mm256_permute4x64_epi64::<0b11_01_10_00>(cr_packed);
+            safe_simd::_mm_storeu_si128(
+                <&mut [u8; 16]>::try_from(&mut cr_out[cb_row_off + cx * 16..cb_row_off + cx * 16 + 16]).unwrap(),
+                _mm256_castsi256_si128(cr_packed),
+            );
         }
     }
 
-    // Cb/Cr at half resolution: average 2×2 RGB cells, then matrix.
+    // Scalar tail: remaining columns, odd last row, etc.
+    rgb_to_yuv420_scalar_tail(rgb, y_out, cb_out, cr_out, width, height, cw, col_blocks * 32);
+}
+
+/// Scalar fallback for columns/rows not covered by the 32-column SIMD blocks.
+#[cfg(target_arch = "x86_64")]
+fn rgb_to_yuv420_scalar_tail(
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    width: usize,
+    height: usize,
+    cw: usize,
+    simd_cols: usize,
+) {
+    let row_stride = width * 3;
+
+    // Y for columns simd_cols..width (all rows).
+    for row in 0..height {
+        for col in simd_cols..width {
+            let p = row * row_stride + col * 3;
+            let r = rgb[p] as f32;
+            let g = rgb[p + 1] as f32;
+            let b = rgb[p + 2] as f32;
+            y_out[row * width + col] = clamp_round(YR * r + YG * g + YB * b);
+        }
+    }
+
+    // Cb/Cr for all chroma columns that weren't fully handled by SIMD.
+    let simd_cx = simd_cols / 2;
     let mut cy = 0usize;
     let mut row = 0usize;
     while row < height {
         let row1 = (row + 1).min(height - 1);
-        let mut cx = 0usize;
-        let mut col = 0usize;
+        let mut cx = simd_cx;
+        let mut col = simd_cols;
         while col < width {
             let col1 = (col + 1).min(width - 1);
-            let i00 = (row * width + col) * 3;
-            let i01 = (row * width + col1) * 3;
-            let i10 = (row1 * width + col) * 3;
-            let i11 = (row1 * width + col1) * 3;
+            let i00 = row * row_stride + col * 3;
+            let i01 = row * row_stride + col1 * 3;
+            let i10 = row1 * row_stride + col * 3;
+            let i11 = row1 * row_stride + col1 * 3;
             let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
                 * 0.25;
             let g = (rgb[i00 + 1] as u32
@@ -597,36 +712,41 @@ fn rgb_to_yuv420_avx2(
         cy += 1;
         row += 2;
     }
-}
 
-/// Y-only AVX2 kernel. Reuses the 4:4:4 infrastructure but skips Cb/Cr entirely
-/// — for 4:2:0 the chroma comes from averaged RGB, not averaged Y plane.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn rgb_to_yuv444_y_only_avx2(
-    token: archmage::X64V3Token,
-    rgb: &[u8],
-    y_out: &mut [u8],
-    n: usize,
-) -> usize {
-    use core::arch::x86_64::*;
-
-    let y_rg = _mm256_set1_epi32(pack_i16_pair(I16_YR, I16_YG));
-    let y_b0 = _mm256_set1_epi32(pack_i16_pair(I16_YB, 0));
-    let round_y = (1i32 << (PREC - 1)) - 1;
-    let y_bias = _mm256_set1_epi32(round_y);
-
-    let blocks = n / 32;
-    for blk in 0..blocks {
-        let src = &rgb[blk * 96..blk * 96 + 96];
-        let row0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[0..32]).unwrap());
-        let row1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[32..64]).unwrap());
-        let row2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[64..96]).unwrap());
-        let (r, g, b) = deinterleave_rgb_avx2(token, row0, row1, row2);
-        let (y_lo, y_hi) = matrix_row_avx2(token, r, g, b, y_rg, y_b0, y_bias);
-        store_u8x32_avx2(token, &mut y_out[blk * 32..blk * 32 + 32], y_lo, y_hi);
+    // Odd last row: Y was handled above if simd_cols < width, but for the
+    // SIMD-covered Y columns on the last odd row, we still need them.
+    if height % 2 == 1 {
+        let last_row = height - 1;
+        for col in 0..simd_cols.min(width) {
+            let p = last_row * row_stride + col * 3;
+            let r = rgb[p] as f32;
+            let g = rgb[p + 1] as f32;
+            let b = rgb[p + 2] as f32;
+            y_out[last_row * width + col] = clamp_round(YR * r + YG * g + YB * b);
+        }
+        // Cb/Cr for the last odd chroma row (SIMD columns).
+        let cy = height / 2;
+        for cx in 0..simd_cx {
+            let col = cx * 2;
+            let col1 = (col + 1).min(width - 1);
+            let i00 = last_row * row_stride + col * 3;
+            let i01 = last_row * row_stride + col1 * 3;
+            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i00] as u32 + rgb[i01] as u32) as f32
+                * 0.25;
+            let g = (rgb[i00 + 1] as u32
+                + rgb[i01 + 1] as u32
+                + rgb[i00 + 1] as u32
+                + rgb[i01 + 1] as u32) as f32
+                * 0.25;
+            let b = (rgb[i00 + 2] as u32
+                + rgb[i01 + 2] as u32
+                + rgb[i00 + 2] as u32
+                + rgb[i01 + 2] as u32) as f32
+                * 0.25;
+            cb_out[cy * cw + cx] = clamp_round(CB_R * r + CB_G * g + CB_B * b + CHROMA_BIAS);
+            cr_out[cy * cw + cx] = clamp_round(CR_R * r + CR_G * g + CR_B * b + CHROMA_BIAS);
+        }
     }
-    blocks * 32
 }
 
 // ── existing magetypes-generic fallbacks follow ─────────────────────────────
