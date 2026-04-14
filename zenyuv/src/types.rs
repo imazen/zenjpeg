@@ -79,11 +79,11 @@ pub struct InverseCoeffs {
 }
 
 /// Fixed-point precision used for integer kernels.
-pub const PREC: i32 = 15;
+pub(crate) const PREC: i32 = 15;
 
 /// Pack a pair of i16 coefficients into a 32-bit value so pmaddwd reads them
 /// as `(low, high)` and computes `a*x + b*y` per i32 lane.
-pub const fn pack_i16_pair(a: i16, b: i16) -> i32 {
+pub(crate) const fn pack_i16_pair(a: i16, b: i16) -> i32 {
     ((a as u16 as u32) | ((b as u16 as u32) << 16)) as i32
 }
 

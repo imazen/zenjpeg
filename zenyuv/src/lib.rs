@@ -32,8 +32,8 @@
 
 // ── Modules ────────────────────────────────────────────────────────────────
 
-pub mod types;
-pub mod gamma;
+pub(crate) mod types;
+pub(crate) mod gamma;
 pub mod context;
 mod encode;
 mod decode;
@@ -54,7 +54,7 @@ mod wasm_encode;
 
 // ── Public re-exports ──────────────────────────────────────────────────────
 
-pub use types::{Matrix, Range, ForwardCoeffs, InverseCoeffs};
+pub use types::{Matrix, Range};
 pub use context::YuvContext;
 
 // Encode (RGB -> YCbCr)

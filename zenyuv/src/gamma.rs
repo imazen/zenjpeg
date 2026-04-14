@@ -39,20 +39,20 @@ impl GammaLuts {
 
 /// Linearize a u8 value using the provided LUT.
 #[inline(always)]
-pub fn linearize(luts: &GammaLuts, v: u8) -> f32 {
+pub(crate) fn linearize(luts: &GammaLuts, v: u8) -> f32 {
     luts.to_linear[v as usize]
 }
 
 /// Delinearize a linear f32 [0,1] value to sRGB u8 [0,255].
 /// Uses `linear-srgb`'s optimized scalar path (rational polynomial).
 #[inline(always)]
-pub fn delinearize_srgb(v: f32) -> f32 {
+pub(crate) fn delinearize_srgb(v: f32) -> f32 {
     linear_srgb::default::linear_to_srgb(v)
 }
 
 /// Delinearize with libwebp's gamma^0.45 curve.
 #[inline(always)]
-pub fn delinearize_libwebp(v: f32) -> f32 {
+pub(crate) fn delinearize_libwebp(v: f32) -> f32 {
     powf_nostd(v, 0.45)
 }
 
