@@ -22,6 +22,9 @@ use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 
+#[cfg(target_arch = "x86_64")]
+use safe_unaligned_simd::x86_64 as safe_simd;
+
 // BT.601 full-range forward matrix.
 const YR: f32 = 0.299;
 const YG: f32 = 0.587;
@@ -33,6 +36,25 @@ const CR_R: f32 = 0.5;
 const CR_G: f32 = -0.418_688;
 const CR_B: f32 = -0.081_312;
 const CHROMA_BIAS: f32 = 128.0;
+
+// 15-bit fixed-point integer coefficients for the AVX2/AVX-512 paths. These
+// match the yuv crate's Professional mode (`PRECISION = 15`).
+const PREC: i32 = 15;
+const I16_YR: i16 = 9798;
+const I16_YG: i16 = 19235;
+const I16_YB: i16 = 3735;
+const I16_CB_R: i16 = -5528;
+const I16_CB_G: i16 = -10855;
+const I16_CB_B: i16 = 16384;
+const I16_CR_R: i16 = 16384;
+const I16_CR_G: i16 = -13720;
+const I16_CR_B: i16 = -2665;
+
+/// Pack a pair of i16 coefficients into a 32-bit value so pmaddwd reads them
+/// as `(low, high)` and computes `a*x + b*y` per i32 lane.
+const fn pack_i16_pair(a: i16, b: i16) -> i32 {
+    ((a as u16 as u32) | ((b as u16 as u32) << 16)) as i32
+}
 
 /// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes at full resolution.
 ///
@@ -51,7 +73,36 @@ pub fn rgb_to_yuv444(
     assert!(y.len() >= n);
     assert!(cb.len() >= n);
     assert!(cr.len() >= n);
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        let done = rgb_to_yuv444_avx2(token, rgb, y, cb, cr, n);
+        if done < n {
+            rgb_to_yuv444_scalar_tail(rgb, y, cb, cr, done, n);
+        }
+        return;
+    }
     incant!(rgb_to_yuv444_impl(rgb, y, cb, cr, n));
+}
+
+#[inline]
+fn rgb_to_yuv444_scalar_tail(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    start: usize,
+    end: usize,
+) {
+    for i in start..end {
+        let p = i * 3;
+        let r = rgb[p] as f32;
+        let g = rgb[p + 1] as f32;
+        let b = rgb[p + 2] as f32;
+        y[i] = clamp_round(YR * r + YG * g + YB * b);
+        cb[i] = clamp_round(CB_R * r + CB_G * g + CB_B * b + CHROMA_BIAS);
+        cr[i] = clamp_round(CR_R * r + CR_G * g + CR_B * b + CHROMA_BIAS);
+    }
 }
 
 /// Convert packed 24-bit RGB to three u8 Y/Cb/Cr planes with 4:2:0 subsampling.
@@ -77,6 +128,12 @@ pub fn rgb_to_yuv420(
     assert!(y.len() >= n);
     assert!(cb.len() >= cw * ch);
     assert!(cr.len() >= cw * ch);
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        rgb_to_yuv420_avx2(token, rgb, y, cb, cr, width, height, cw);
+        return;
+    }
     incant!(rgb_to_yuv420_impl(rgb, y, cb, cr, width, height));
 }
 
@@ -255,6 +312,324 @@ fn clamp_round(v: f32) -> u8 {
     let r = v.round() as i32;
     r.clamp(0, 255) as u8
 }
+
+// ── AVX2 kernels ────────────────────────────────────────────────────────────
+//
+// RGB→YCbCr via 15-bit fixed-point matrix using pmaddwd. 32 pixels per iter.
+// Deinterleave is a permute2x128 + 3×blendv + 3×pshufb pattern; the "output
+// channel 0" (first byte offset) maps to R for RGB input.
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn rgb_to_yuv444_avx2(
+    token: archmage::X64V3Token,
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    n: usize,
+) -> usize {
+    use core::arch::x86_64::*;
+
+    let y_rg = _mm256_set1_epi32(pack_i16_pair(I16_YR, I16_YG));
+    let y_b0 = _mm256_set1_epi32(pack_i16_pair(I16_YB, 0));
+    let cb_rg = _mm256_set1_epi32(pack_i16_pair(I16_CB_R, I16_CB_G));
+    let cb_b0 = _mm256_set1_epi32(pack_i16_pair(I16_CB_B, 0));
+    let cr_rg = _mm256_set1_epi32(pack_i16_pair(I16_CR_R, I16_CR_G));
+    let cr_b0 = _mm256_set1_epi32(pack_i16_pair(I16_CR_B, 0));
+
+    let round_y = (1i32 << (PREC - 1)) - 1;
+    let y_bias = _mm256_set1_epi32(round_y);
+    let uv_bias = _mm256_set1_epi32((128i32 << PREC) + round_y);
+
+    let blocks = n / 32;
+    for blk in 0..blocks {
+        let src = &rgb[blk * 96..blk * 96 + 96];
+        let row0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[0..32]).unwrap());
+        let row1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[32..64]).unwrap());
+        let row2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[64..96]).unwrap());
+        let (r, g, b) = deinterleave_rgb_avx2(token, row0, row1, row2);
+
+        let (y_lo, y_hi) = matrix_row_avx2(token, r, g, b, y_rg, y_b0, y_bias);
+        let (cb_lo, cb_hi) = matrix_row_avx2(token, r, g, b, cb_rg, cb_b0, uv_bias);
+        let (cr_lo, cr_hi) = matrix_row_avx2(token, r, g, b, cr_rg, cr_b0, uv_bias);
+
+        store_u8x32_avx2(token, &mut y_out[blk * 32..blk * 32 + 32], y_lo, y_hi);
+        store_u8x32_avx2(token, &mut cb_out[blk * 32..blk * 32 + 32], cb_lo, cb_hi);
+        store_u8x32_avx2(token, &mut cr_out[blk * 32..blk * 32 + 32], cr_lo, cr_hi);
+    }
+    blocks * 32
+}
+
+/// Deinterleave 96 bytes of packed RGB into three 32-byte plane vectors.
+/// The "first channel" of the input (byte 0) ends up as the first return value,
+/// i.e. R for RGB input. Pattern adapted from the zune-jpeg / yuv crate idiom.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn deinterleave_rgb_avx2(
+    _token: archmage::X64V3Token,
+    row0: core::arch::x86_64::__m256i,
+    row1: core::arch::x86_64::__m256i,
+    row2: core::arch::x86_64::__m256i,
+) -> (
+    core::arch::x86_64::__m256i,
+    core::arch::x86_64::__m256i,
+    core::arch::x86_64::__m256i,
+) {
+    use core::arch::x86_64::*;
+    let s02_low = _mm256_permute2x128_si256::<0x20>(row0, row2);
+    let s02_high = _mm256_permute2x128_si256::<0x31>(row0, row2);
+    #[rustfmt::skip]
+    let m0 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+    );
+    #[rustfmt::skip]
+    let m1 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+    );
+    // "b0/g0/r0" are yuv-crate internal names — for RGB input, they end up as
+    // R/G/B planes in that order (see load_deinterleave_rgb_for_yuv caller).
+    let c0 = _mm256_blendv_epi8(_mm256_blendv_epi8(s02_low, s02_high, m0), row1, m1);
+    let c1 = _mm256_blendv_epi8(_mm256_blendv_epi8(s02_high, s02_low, m1), row1, m0);
+    let c2 = _mm256_blendv_epi8(_mm256_blendv_epi8(row1, s02_low, m0), s02_high, m1);
+
+    #[rustfmt::skip]
+    let sh_c0 = _mm256_setr_epi8(
+        0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4, 7, 10, 13,
+        0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4, 7, 10, 13,
+    );
+    #[rustfmt::skip]
+    let sh_c1 = _mm256_setr_epi8(
+        1, 4, 7, 10, 13, 0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14,
+        1, 4, 7, 10, 13, 0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14,
+    );
+    #[rustfmt::skip]
+    let sh_c2 = _mm256_setr_epi8(
+        2, 5, 8, 11, 14, 1, 4, 7, 10, 13, 0, 3, 6, 9, 12, 15,
+        2, 5, 8, 11, 14, 1, 4, 7, 10, 13, 0, 3, 6, 9, 12, 15,
+    );
+    (
+        _mm256_shuffle_epi8(c0, sh_c0),
+        _mm256_shuffle_epi8(c1, sh_c1),
+        _mm256_shuffle_epi8(c2, sh_c2),
+    )
+}
+
+/// For 32 u8-packed R/G/B inputs, compute one output channel (Y or Cb or Cr)
+/// via the 15-bit fixed-point matrix, returning two i32x8 halves that still
+/// need to be packed to u8.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn matrix_row_avx2(
+    token: archmage::X64V3Token,
+    r: core::arch::x86_64::__m256i,
+    g: core::arch::x86_64::__m256i,
+    b: core::arch::x86_64::__m256i,
+    rg_coef: core::arch::x86_64::__m256i,
+    b_coef: core::arch::x86_64::__m256i,
+    bias: core::arch::x86_64::__m256i,
+) -> (core::arch::x86_64::__m256i, core::arch::x86_64::__m256i) {
+    use core::arch::x86_64::*;
+    let zero = _mm256_setzero_si256();
+
+    // Widen to i16: unpacklo/unpackhi split 32 u8 → 16 u16 each half.
+    let r_l = _mm256_unpacklo_epi8(r, zero);
+    let r_h = _mm256_unpackhi_epi8(r, zero);
+    let g_l = _mm256_unpacklo_epi8(g, zero);
+    let g_h = _mm256_unpackhi_epi8(g, zero);
+    let b_l = _mm256_unpacklo_epi8(b, zero);
+    let b_h = _mm256_unpackhi_epi8(b, zero);
+
+    // Interleave RG pairs across lanes via permute2x128 so pmaddwd output lanes
+    // correspond to contiguous pixels.
+    let (rg_a, rg_b) = interleave_epi16_avx2(token, r_l, g_l);
+    let (rg_c, rg_d) = interleave_epi16_avx2(token, r_h, g_h);
+    let (b_a, b_b) = interleave_epi16_avx2(token, b_l, zero);
+    let (b_c, b_d) = interleave_epi16_avx2(token, b_h, zero);
+
+    let lo = _mm256_add_epi32(
+        _mm256_add_epi32(
+            _mm256_madd_epi16(rg_a, rg_coef),
+            _mm256_madd_epi16(b_a, b_coef),
+        ),
+        bias,
+    );
+    let mid1 = _mm256_add_epi32(
+        _mm256_add_epi32(
+            _mm256_madd_epi16(rg_b, rg_coef),
+            _mm256_madd_epi16(b_b, b_coef),
+        ),
+        bias,
+    );
+    let mid2 = _mm256_add_epi32(
+        _mm256_add_epi32(
+            _mm256_madd_epi16(rg_c, rg_coef),
+            _mm256_madd_epi16(b_c, b_coef),
+        ),
+        bias,
+    );
+    let hi = _mm256_add_epi32(
+        _mm256_add_epi32(
+            _mm256_madd_epi16(rg_d, rg_coef),
+            _mm256_madd_epi16(b_d, b_coef),
+        ),
+        bias,
+    );
+
+    // Shift right by 15 (arithmetic so negative intermediates are preserved;
+    // final packus saturates to [0, 65535] → [0, 255]).
+    let lo_s = _mm256_srai_epi32::<15>(lo);
+    let m1_s = _mm256_srai_epi32::<15>(mid1);
+    let m2_s = _mm256_srai_epi32::<15>(mid2);
+    let hi_s = _mm256_srai_epi32::<15>(hi);
+
+    // Pack pairs of i32x8 → u16x16 (saturating). packus_epi32 does within-lane
+    // packing, so fix with permute4x64 afterwards.
+    let u16_lo = pack_u16_avx2(token, lo_s, m1_s);
+    let u16_hi = pack_u16_avx2(token, m2_s, hi_s);
+    (u16_lo, u16_hi)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn interleave_epi16_avx2(
+    _token: archmage::X64V3Token,
+    a: core::arch::x86_64::__m256i,
+    b: core::arch::x86_64::__m256i,
+) -> (core::arch::x86_64::__m256i, core::arch::x86_64::__m256i) {
+    use core::arch::x86_64::*;
+    let l = _mm256_unpacklo_epi16(a, b);
+    let h = _mm256_unpackhi_epi16(a, b);
+    (
+        _mm256_permute2x128_si256::<0x20>(l, h),
+        _mm256_permute2x128_si256::<0x31>(l, h),
+    )
+}
+
+/// Pack two i32x8 → u16x16 (saturating) with lane-order fixup.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn pack_u16_avx2(
+    _token: archmage::X64V3Token,
+    a: core::arch::x86_64::__m256i,
+    b: core::arch::x86_64::__m256i,
+) -> core::arch::x86_64::__m256i {
+    use core::arch::x86_64::*;
+    let p = _mm256_packus_epi32(a, b);
+    _mm256_permute4x64_epi64::<0b11_01_10_00>(p)
+}
+
+/// Pack two u16x16 → u8x32 (saturating) and store. No lane-fixup is needed
+/// here: the two `pack_u16_avx2` inputs already carry `[p0..p7 | p16..p23]`
+/// and `[p8..p15 | p24..p31]`, so the within-lane `packus_epi16` yields
+/// `[p0..p15 | p16..p31]` linearly.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn store_u8x32_avx2(
+    _token: archmage::X64V3Token,
+    dst: &mut [u8],
+    a: core::arch::x86_64::__m256i,
+    b: core::arch::x86_64::__m256i,
+) {
+    use core::arch::x86_64::*;
+    let p = _mm256_packus_epi16(a, b);
+    safe_simd::_mm256_storeu_si256(<&mut [u8; 32]>::try_from(&mut dst[..32]).unwrap(), p);
+}
+
+// ── AVX2 4:2:0 ──────────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+fn rgb_to_yuv420_avx2(
+    token: archmage::X64V3Token,
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    width: usize,
+    height: usize,
+    cw: usize,
+) {
+    // Y at full resolution, via the 4:4:4 SIMD kernel.
+    let n = width * height;
+    let done = rgb_to_yuv444_y_only_avx2(token, rgb, y_out, n);
+    if done < n {
+        for i in done..n {
+            let p = i * 3;
+            let r = rgb[p] as f32;
+            let g = rgb[p + 1] as f32;
+            let b = rgb[p + 2] as f32;
+            y_out[i] = clamp_round(YR * r + YG * g + YB * b);
+        }
+    }
+
+    // Cb/Cr at half resolution: average 2×2 RGB cells, then matrix.
+    let mut cy = 0usize;
+    let mut row = 0usize;
+    while row < height {
+        let row1 = (row + 1).min(height - 1);
+        let mut cx = 0usize;
+        let mut col = 0usize;
+        while col < width {
+            let col1 = (col + 1).min(width - 1);
+            let i00 = (row * width + col) * 3;
+            let i01 = (row * width + col1) * 3;
+            let i10 = (row1 * width + col) * 3;
+            let i11 = (row1 * width + col1) * 3;
+            let r = (rgb[i00] as u32 + rgb[i01] as u32 + rgb[i10] as u32 + rgb[i11] as u32) as f32
+                * 0.25;
+            let g = (rgb[i00 + 1] as u32
+                + rgb[i01 + 1] as u32
+                + rgb[i10 + 1] as u32
+                + rgb[i11 + 1] as u32) as f32
+                * 0.25;
+            let b = (rgb[i00 + 2] as u32
+                + rgb[i01 + 2] as u32
+                + rgb[i10 + 2] as u32
+                + rgb[i11 + 2] as u32) as f32
+                * 0.25;
+            cb_out[cy * cw + cx] = clamp_round(CB_R * r + CB_G * g + CB_B * b + CHROMA_BIAS);
+            cr_out[cy * cw + cx] = clamp_round(CR_R * r + CR_G * g + CR_B * b + CHROMA_BIAS);
+            cx += 1;
+            col += 2;
+        }
+        cy += 1;
+        row += 2;
+    }
+}
+
+/// Y-only AVX2 kernel. Reuses the 4:4:4 infrastructure but skips Cb/Cr entirely
+/// — for 4:2:0 the chroma comes from averaged RGB, not averaged Y plane.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn rgb_to_yuv444_y_only_avx2(
+    token: archmage::X64V3Token,
+    rgb: &[u8],
+    y_out: &mut [u8],
+    n: usize,
+) -> usize {
+    use core::arch::x86_64::*;
+
+    let y_rg = _mm256_set1_epi32(pack_i16_pair(I16_YR, I16_YG));
+    let y_b0 = _mm256_set1_epi32(pack_i16_pair(I16_YB, 0));
+    let round_y = (1i32 << (PREC - 1)) - 1;
+    let y_bias = _mm256_set1_epi32(round_y);
+
+    let blocks = n / 32;
+    for blk in 0..blocks {
+        let src = &rgb[blk * 96..blk * 96 + 96];
+        let row0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[0..32]).unwrap());
+        let row1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[32..64]).unwrap());
+        let row2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[64..96]).unwrap());
+        let (r, g, b) = deinterleave_rgb_avx2(token, row0, row1, row2);
+        let (y_lo, y_hi) = matrix_row_avx2(token, r, g, b, y_rg, y_b0, y_bias);
+        store_u8x32_avx2(token, &mut y_out[blk * 32..blk * 32 + 32], y_lo, y_hi);
+    }
+    blocks * 32
+}
+
+// ── existing magetypes-generic fallbacks follow ─────────────────────────────
 
 #[cfg(test)]
 mod tests {
