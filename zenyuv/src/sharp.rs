@@ -199,17 +199,26 @@ fn sharp_iterate_all_blocks(
 ) {
     let n = cb_f.len();
     let uv_center = inv.uv_offset.abs();
-    let scale = 0.25 * 0.5;
+
+    // L2-optimal Newton step denominators (constant across iterations).
+    // For Cb: only G and B channels are affected (∂R/∂Cb = 0).
+    //   ∂²L/∂Cb² = 2 * Σ(cb_to_g² + cb_to_b²) = 2*4*(cb_to_g² + cb_to_b²)
+    // Newton step: δCb = -∂L/∂Cb / ∂²L/∂Cb²
+    //            = Σ(err_g*cb_to_g + err_b*cb_to_b) / (4*(cb_to_g²+cb_to_b²))
+    let cb_denom = 4.0 * (inv.cb_to_g * inv.cb_to_g + inv.cb_to_b * inv.cb_to_b);
+    // For Cr: R and G are affected (∂B/∂Cr = 0).
+    let cr_denom = 4.0 * (inv.cr_to_r * inv.cr_to_r + inv.cr_to_g * inv.cr_to_g);
 
     for _ in 0..max_iterations {
         for i in 0..n {
             let cb_c = cb_f[i] - uv_center;
             let cr_c = cr_f[i] - uv_center;
-            let mut cb_adj = 0.0f32;
-            let mut cr_adj = 0.0f32;
 
-            // Unrolled over 4 pixel positions. Each is independent except
-            // they share cb_c/cr_c and accumulate into cb_adj/cr_adj.
+            // Accumulate L2 gradient numerator using the INVERSE matrix
+            // partial derivatives (correct Jacobian for the reconstruction).
+            let mut cb_num = 0.0f32; // Σ(err_g * cb_to_g + err_b * cb_to_b)
+            let mut cr_num = 0.0f32; // Σ(err_r * cr_to_r + err_g * cr_to_g)
+
             macro_rules! pixel {
                 ($yv:expr, $or:expr, $og:expr, $ob:expr) => {{
                     let y_adj = inv.y_coeff * ($yv - inv.y_offset);
@@ -219,8 +228,8 @@ fn sharp_iterate_all_blocks(
                     let er = $or - rec_r;
                     let eg = $og - rec_g;
                     let eb = $ob - rec_b;
-                    cb_adj += fwd.cb_r_f * er + fwd.cb_g_f * eg + fwd.cb_b_f * eb;
-                    cr_adj += fwd.cr_r_f * er + fwd.cr_g_f * eg + fwd.cr_b_f * eb;
+                    cb_num += eg * inv.cb_to_g + eb * inv.cb_to_b;
+                    cr_num += er * inv.cr_to_r + eg * inv.cr_to_g;
                 }};
             }
             pixel!(y0[i], or0[i], og0[i], ob0[i]);
@@ -228,8 +237,9 @@ fn sharp_iterate_all_blocks(
             pixel!(y2[i], or2[i], og2[i], ob2[i]);
             pixel!(y3[i], or3[i], og3[i], ob3[i]);
 
-            cb_f[i] = (cb_f[i] + cb_adj * scale).clamp(0.0, 255.0);
-            cr_f[i] = (cr_f[i] + cr_adj * scale).clamp(0.0, 255.0);
+            // Newton step — exact for unclamped L2. Clamp handles out-of-gamut.
+            cb_f[i] = (cb_f[i] + cb_num / cb_denom).clamp(0.0, 255.0);
+            cr_f[i] = (cr_f[i] + cr_num / cr_denom).clamp(0.0, 255.0);
         }
     }
 }
