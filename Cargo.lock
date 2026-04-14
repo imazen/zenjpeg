@@ -3052,6 +3052,7 @@ dependencies = [
  "enough",
  "fast-ssim2 0.8.0",
  "getrandom 0.3.4",
+ "half",
  "image",
  "img-parts",
  "imgref",

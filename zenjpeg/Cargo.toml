@@ -73,6 +73,8 @@ safe_unaligned_simd = { workspace = true }
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # Container/MPF types shared with UltraHDR (unconditional — no new transitive deps)
 ultrahdr-core = { workspace = true }
+# Half-precision float (f16) — used for UltraHDR HDR pixel decoding
+half = { workspace = true, optional = true }
 # Layout pipeline: geometry computation + image resampling
 zenlayout = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true, features = ["layout"] }
@@ -173,7 +175,7 @@ __test-utils = []
 __wasm-simd = []
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
-ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer"]
+ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer", "dep:half"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode

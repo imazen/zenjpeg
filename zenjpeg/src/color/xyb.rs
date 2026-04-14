@@ -78,123 +78,36 @@ static SRGB_TO_LINEAR_LUT: [f32; 256] = [
 // GAMMA CONVERSION (sRGB ↔ Linear RGB)
 // ============================================================================
 
-/// Fast 2^x approximation using IEEE 754 bit manipulation.
-#[inline]
-fn fastpow2(p: f32) -> f32 {
-    let offset: f32 = if p < 0.0 { 1.0 } else { 0.0 };
-    let clipp: f32 = if p < -126.0 { -126.0 } else { p };
-    let w: i32 = clipp as i32;
-    let z: f32 = clipp - w as f32 + offset;
-    let bits = ((1_i32 << 23) as f32
-        * (clipp + 121.274_055 + 27.728_024 / (4.842_525_5 - z) - 1.490_129_1 * z))
-        as u32;
-    f32::from_bits(bits)
-}
-
-/// Fast log2(x) approximation using IEEE 754 bit manipulation.
-#[inline]
-fn fastlog2(x: f32) -> f32 {
-    let bits = x.to_bits();
-    let mx_bits = (bits & 0x007f_ffff) | 0x3f00_0000;
-    let mx = f32::from_bits(mx_bits);
-    let mut y = bits as f32;
-    y *= 1.192_092_9e-7;
-    y - 124.225_52 - 1.498_030_3 * mx - 1.725_88 / (0.352_088_72 + mx)
-}
-
-/// Fast x^p approximation (~5-10x faster than powf, ~0.1% error).
-#[inline]
-fn fastpow(x: f32, p: f32) -> f32 {
-    fastpow2(p * fastlog2(x))
-}
-
 /// Applies sRGB gamma decoding (sRGB → linear RGB).
-/// Uses exact formula with powf.
+/// Uses rational polynomial approximation (no powf).
 #[inline]
 #[must_use]
 pub fn srgb_to_linear(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
+    linear_srgb::default::srgb_to_linear(v)
 }
 
-/// Fast sRGB gamma decoding using fastpow (~5-10x faster, ~0.1% error).
+/// Fast sRGB gamma decoding — delegates to `linear_srgb::default::srgb_to_linear`
+/// (rational polynomial, already fast without powf).
 #[inline]
 #[must_use]
 pub fn srgb_to_linear_fast(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        fastpow((v + 0.055) / 1.055, 2.4)
-    }
-}
-
-/// sRGB to linear using C++ jpegli's rational polynomial approximation.
-///
-/// Matches `TF_SRGB::DisplayFromEncoded` in libjxl's transfer_functions-inl.h.
-#[allow(dead_code)] // Reference implementation for validation against C++ jpegli
-#[inline]
-#[must_use]
-fn srgb_to_linear_poly(x: f32) -> f32 {
-    const THRESH: f32 = 0.04045;
-    const LOW_DIV_INV: f32 = 1.0 / 12.92;
-
-    const P: [f32; 5] = [
-        2.200248328e-04,
-        1.043637593e-02,
-        1.624820318e-01,
-        7.961564959e-01,
-        8.210152774e-01,
-    ];
-    const Q: [f32; 5] = [
-        2.631846970e-01,
-        1.076976492e+00,
-        4.987528350e-01,
-        -5.512498495e-02,
-        6.521209011e-03,
-    ];
-
-    let x = x.abs();
-
-    if x <= THRESH {
-        x * LOW_DIV_INV
-    } else {
-        let p_val = P[4]
-            .mul_add(x, P[3])
-            .mul_add(x, P[2])
-            .mul_add(x, P[1])
-            .mul_add(x, P[0]);
-        let q_val = Q[4]
-            .mul_add(x, Q[3])
-            .mul_add(x, Q[2])
-            .mul_add(x, Q[1])
-            .mul_add(x, Q[0]);
-        p_val / q_val
-    }
+    linear_srgb::default::srgb_to_linear(v)
 }
 
 /// Applies sRGB gamma encoding (linear RGB → sRGB).
+/// Uses rational polynomial approximation (no powf).
 #[inline]
 #[must_use]
 pub fn linear_to_srgb(v: f32) -> f32 {
-    if v <= 0.003_130_8 {
-        v * 12.92
-    } else {
-        1.055 * v.powf(1.0 / 2.4) - 0.055
-    }
+    linear_srgb::default::linear_to_srgb(v)
 }
 
-/// Fast sRGB gamma encoding using fastpow.
+/// Fast sRGB gamma encoding — delegates to `linear_srgb::default::linear_to_srgb`
+/// (rational polynomial, already fast without powf).
 #[inline]
 #[must_use]
 pub fn linear_to_srgb_fast(v: f32) -> f32 {
-    if v <= 0.003_130_8 {
-        v * 12.92
-    } else {
-        1.055 * fastpow(v, 1.0 / 2.4) - 0.055
-    }
+    linear_srgb::default::linear_to_srgb(v)
 }
 
 /// Converts sRGB u8 to linear f32 using LUT (exact, fastest).
@@ -218,7 +131,7 @@ pub fn linear_to_srgb_u8(v: f32) -> u8 {
     (linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
-/// Fast linear to sRGB u8 using fastpow.
+/// Fast linear to sRGB u8.
 #[inline]
 #[must_use]
 pub fn linear_to_srgb_u8_fast(v: f32) -> u8 {

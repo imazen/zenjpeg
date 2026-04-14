@@ -3020,23 +3020,19 @@ impl<'a> ScanlineReader<'a> {
     }
 }
 
-/// Convert sRGB u8 to linear f32.
+/// Convert sRGB u8 to linear f32 via 256-entry LUT.
 #[inline]
 fn srgb_to_linear(srgb: u8) -> f32 {
-    srgb_to_linear_f32(srgb as f32 / 255.0)
+    linear_srgb::default::srgb_u8_to_linear(srgb)
 }
 
-/// Convert sRGB f32 (0.0-1.0) to linear f32, preserving full precision.
+/// Convert sRGB f32 (0.0-1.0) to linear f32.
 ///
-/// Values outside [0, 1] are handled gracefully (negative → negative linear,
-/// >1 → >1 linear) to avoid destroying out-of-range data from IDCT.
+/// Out-of-range values from IDCT are clamped to [0, 1] — JPEG pixel values
+/// are inherently [0, 255], so clamping is correct for decode output.
 #[inline]
 fn srgb_to_linear_f32(s: f32) -> f32 {
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
+    linear_srgb::default::srgb_to_linear(s)
 }
 
 // =============================================================================

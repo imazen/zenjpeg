@@ -278,20 +278,15 @@ fn make_moxcms_target(target: TargetColorSpace) -> moxcms::ColorProfile {
 /// Input values should be in [0.0, 1.0] nominal range (may exceed for unclamped data).
 #[inline]
 pub fn srgb_to_linear(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
+    linear_srgb::default::srgb_to_linear(v)
 }
 
 /// Convert an entire f32 RGB pixel buffer from sRGB gamma to linear light.
 ///
 /// Operates in-place for efficiency. Each channel is independently linearized.
+/// Uses SIMD-accelerated batch conversion when available.
 pub fn srgb_to_linear_inplace(pixels: &mut [f32]) {
-    for v in pixels.iter_mut() {
-        *v = srgb_to_linear(*v);
-    }
+    linear_srgb::default::srgb_to_linear_slice(pixels);
 }
 
 #[cfg(test)]
