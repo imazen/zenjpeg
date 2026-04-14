@@ -150,43 +150,16 @@ fn sharp_iterate_rows(
         let row_bot = (row_top + 1).min(height - 1);
 
         // Extract 2×2 block data into SoA + compute initial Cb/Cr estimate.
-        // Y is already computed; RGB is re-read from input (should still be in cache).
-        for cx_idx in 0..cw {
-            let x0 = cx_idx * 2;
-            let x1 = (x0 + 1).min(width - 1);
-
-            // Read Y values from just-computed Y plane.
-            ws.y0s[cx_idx] = y[row_top * width + x0] as f32;
-            ws.y1s[cx_idx] = y[row_top * width + x1] as f32;
-            ws.y2s[cx_idx] = y[row_bot * width + x0] as f32;
-            ws.y3s[cx_idx] = y[row_bot * width + x1] as f32;
-
-            // Read RGB from input (already in cache from Y computation).
-            let i00 = (row_top * width + x0) * 3;
-            let i10 = (row_top * width + x1) * 3;
-            let i01 = (row_bot * width + x0) * 3;
-            let i11 = (row_bot * width + x1) * 3;
-
-            ws.or0[cx_idx] = rgb[i00] as f32;
-            ws.og0[cx_idx] = rgb[i00 + 1] as f32;
-            ws.ob0[cx_idx] = rgb[i00 + 2] as f32;
-            ws.or1[cx_idx] = rgb[i10] as f32;
-            ws.og1[cx_idx] = rgb[i10 + 1] as f32;
-            ws.ob1[cx_idx] = rgb[i10 + 2] as f32;
-            ws.or2[cx_idx] = rgb[i01] as f32;
-            ws.og2[cx_idx] = rgb[i01 + 1] as f32;
-            ws.ob2[cx_idx] = rgb[i01 + 2] as f32;
-            ws.or3[cx_idx] = rgb[i11] as f32;
-            ws.og3[cx_idx] = rgb[i11 + 1] as f32;
-            ws.ob3[cx_idx] = rgb[i11 + 2] as f32;
-
-            // Box-average initial Cb/Cr estimate.
-            let r_avg = (ws.or0[cx_idx] + ws.or1[cx_idx] + ws.or2[cx_idx] + ws.or3[cx_idx]) * 0.25;
-            let g_avg = (ws.og0[cx_idx] + ws.og1[cx_idx] + ws.og2[cx_idx] + ws.og3[cx_idx]) * 0.25;
-            let b_avg = (ws.ob0[cx_idx] + ws.ob1[cx_idx] + ws.ob2[cx_idx] + ws.ob3[cx_idx]) * 0.25;
-            ws.cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
-            ws.cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
-        }
+        extract_soa_row(
+            rgb, y, row_top, row_bot, width, cw,
+            &mut ws.y0s, &mut ws.y1s, &mut ws.y2s, &mut ws.y3s,
+            &mut ws.or0, &mut ws.og0, &mut ws.ob0,
+            &mut ws.or1, &mut ws.og1, &mut ws.ob1,
+            &mut ws.or2, &mut ws.og2, &mut ws.ob2,
+            &mut ws.or3, &mut ws.og3, &mut ws.ob3,
+            &mut ws.cb_f, &mut ws.cr_f,
+            fwd,
+        );
 
         // Run #[autoversion] iterative refinement on this row of blocks.
         sharp_iterate_all_blocks(
@@ -207,6 +180,60 @@ fn sharp_iterate_rows(
             cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
             cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
+    }
+}
+
+/// Extract one chroma row of 2×2 block data into SoA arrays + box-average
+/// initial Cb/Cr. The `#[autoversion]` gives LLVM a chance to vectorize the
+/// u8→f32 conversions and FMA chains.
+#[archmage::autoversion]
+fn extract_soa_row(
+    rgb: &[u8],
+    y: &[u8],
+    row_top: usize,
+    row_bot: usize,
+    width: usize,
+    cw: usize,
+    y0s: &mut [f32], y1s: &mut [f32], y2s: &mut [f32], y3s: &mut [f32],
+    or0: &mut [f32], og0: &mut [f32], ob0: &mut [f32],
+    or1: &mut [f32], og1: &mut [f32], ob1: &mut [f32],
+    or2: &mut [f32], og2: &mut [f32], ob2: &mut [f32],
+    or3: &mut [f32], og3: &mut [f32], ob3: &mut [f32],
+    cb_f: &mut [f32], cr_f: &mut [f32],
+    fwd: &ForwardCoeffs,
+) {
+    for cx_idx in 0..cw {
+        let x0 = cx_idx * 2;
+        let x1 = (x0 + 1).min(width - 1);
+
+        y0s[cx_idx] = y[row_top * width + x0] as f32;
+        y1s[cx_idx] = y[row_top * width + x1] as f32;
+        y2s[cx_idx] = y[row_bot * width + x0] as f32;
+        y3s[cx_idx] = y[row_bot * width + x1] as f32;
+
+        let i00 = (row_top * width + x0) * 3;
+        let i10 = (row_top * width + x1) * 3;
+        let i01 = (row_bot * width + x0) * 3;
+        let i11 = (row_bot * width + x1) * 3;
+
+        or0[cx_idx] = rgb[i00] as f32;
+        og0[cx_idx] = rgb[i00 + 1] as f32;
+        ob0[cx_idx] = rgb[i00 + 2] as f32;
+        or1[cx_idx] = rgb[i10] as f32;
+        og1[cx_idx] = rgb[i10 + 1] as f32;
+        ob1[cx_idx] = rgb[i10 + 2] as f32;
+        or2[cx_idx] = rgb[i01] as f32;
+        og2[cx_idx] = rgb[i01 + 1] as f32;
+        ob2[cx_idx] = rgb[i01 + 2] as f32;
+        or3[cx_idx] = rgb[i11] as f32;
+        og3[cx_idx] = rgb[i11 + 1] as f32;
+        ob3[cx_idx] = rgb[i11 + 2] as f32;
+
+        let r_avg = (or0[cx_idx] + or1[cx_idx] + or2[cx_idx] + or3[cx_idx]) * 0.25;
+        let g_avg = (og0[cx_idx] + og1[cx_idx] + og2[cx_idx] + og3[cx_idx]) * 0.25;
+        let b_avg = (ob0[cx_idx] + ob1[cx_idx] + ob2[cx_idx] + ob3[cx_idx]) * 0.25;
+        cb_f[cx_idx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
+        cr_f[cx_idx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
     }
 }
 
