@@ -411,6 +411,38 @@ impl DeblockStrategy for Boundary4Tap {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy: Triage (US 7,079,703 B2 three-category pixel-domain filter)
+// ---------------------------------------------------------------------------
+
+/// Per-block classification of the luma plane into uniform / transitional /
+/// busy, then assembly from a 7×7 Gaussian deblock, a 3×3 low-pass dering, or
+/// the original pixels — per the Kriss patent. Chroma is untouched, matching
+/// the patent's luma-only design.
+struct TriageDecode;
+
+impl DeblockStrategy for TriageDecode {
+    fn name(&self) -> &str {
+        "triage"
+    }
+
+    fn decode(&self, jpeg_bytes: &[u8]) -> Option<RgbImage> {
+        let mut cp = decode_to_coeff_planes(jpeg_bytes)?;
+
+        // Patent is luma-only: filter plane 0, leave chroma untouched.
+        if let Some(luma) = cp.planes.first_mut() {
+            zenjpeg::deblock::filter_plane_triage(
+                &mut luma.data,
+                luma.width,
+                luma.height,
+                zenjpeg::deblock::TriageConfig::default(),
+            );
+        }
+
+        Some(planes_to_rgb(&cp))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Strategy: Bilateral boundary filter (edge-preserving boundary_4tap)
 // ---------------------------------------------------------------------------
 
@@ -1827,6 +1859,7 @@ fn parse_args() -> Args {
             Box::new(BaselineDecode),
             Box::new(DequantBiasDecode),
             Box::new(Boundary4Tap),
+            Box::new(TriageDecode),
             // Bilateral boundary: sigma_r=15.0 (range kernel, preserves edges >30 intensity diff)
             Box::new(BilateralBoundary::new(15.0)),
             Box::new(CDEFDirection),
