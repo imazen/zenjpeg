@@ -1,8 +1,9 @@
-//! Three-category pixel-domain deblocking from US 7,079,703 B2 (FIG. 2).
+//! "Triage" deblocking: three-category pixel-domain filter from US 7,079,703 B2.
 //!
 //! Classifies each 8×8 luma block into one of three categories by inspecting
-//! the 3×3 neighborhood of per-block variances, then assembles the output from
-//! three candidate images:
+//! the 3×3 neighborhood of per-block variances — triaging blocks into
+//! "needs a lot of smoothing", "needs a little", or "leave it alone" — and
+//! then assembles the output from three candidate images:
 //!
 //! | Class        | Source                                  |
 //! |--------------|-----------------------------------------|
@@ -67,15 +68,16 @@ const DEBLOCK_KERNEL: [i32; 49] = [
 ];
 const DEBLOCK_NORM: f32 = 6436.0;
 
-/// Configuration for US7079703 three-category deblocking.
+/// Configuration for the triage deblocking strategy.
 #[derive(Debug, Clone, Copy)]
-pub struct Patent703Config {
-    /// Variance threshold (`thresh1`) that separates uniform regions from
-    /// everything else. Patent default: 64 (for 8-bit pixel values).
+pub struct TriageConfig {
+    /// Variance threshold (`thresh1` in the patent) that separates uniform
+    /// regions from everything else. Patent default: 64 (for 8-bit pixel
+    /// values).
     pub uniform_threshold: u32,
 }
 
-impl Default for Patent703Config {
+impl Default for TriageConfig {
     fn default() -> Self {
         Self {
             uniform_threshold: 64,
@@ -95,7 +97,7 @@ pub enum BlockClass {
     Busy,
 }
 
-/// Apply the US7079703 three-category deblocking strategy to a single f32
+/// Apply the triage deblocking strategy (US 7,079,703 B2) to a single f32
 /// luminance plane in place.
 ///
 /// The plane is `width * height` contiguous f32 values in row-major order,
@@ -111,11 +113,11 @@ pub enum BlockClass {
 ///
 /// # Panics
 /// Panics if `plane.len() < width * height`.
-pub fn filter_plane_us7079703(
+pub fn filter_plane_triage(
     plane: &mut [f32],
     width: usize,
     height: usize,
-    config: Patent703Config,
+    config: TriageConfig,
 ) {
     assert!(plane.len() >= width * height, "plane buffer too small");
 
@@ -165,7 +167,7 @@ pub fn classify_plane(
     plane: &[f32],
     width: usize,
     height: usize,
-    config: Patent703Config,
+    config: TriageConfig,
 ) -> Vec<BlockClass> {
     let nbx = width / BLOCK;
     let nby = height / BLOCK;
@@ -410,7 +412,7 @@ mod tests {
     fn too_small_is_noop() {
         // Fewer than 3×3 blocks → nothing to classify.
         let mut p = mk_plane(16, 16, 128.0);
-        filter_plane_us7079703(&mut p, 16, 16, Patent703Config::default());
+        filter_plane_triage(&mut p, 16, 16, TriageConfig::default());
         assert!(p.iter().all(|&v| (v - 128.0).abs() < 1e-4));
     }
 
@@ -419,7 +421,7 @@ mod tests {
         // Flat 64×64: every block is labelled Uniform and the 7×7 Gaussian
         // over a constant plane reproduces the constant (modulo clamp).
         let mut p = mk_plane(64, 64, 128.0);
-        filter_plane_us7079703(&mut p, 64, 64, Patent703Config::default());
+        filter_plane_triage(&mut p, 64, 64, TriageConfig::default());
         for &v in &p {
             assert!((v - 128.0).abs() < 0.5, "got {v}");
         }
@@ -428,7 +430,7 @@ mod tests {
     #[test]
     fn uniform_classification_for_flat_plane() {
         let p = mk_plane(64, 64, 50.0);
-        let cls = classify_plane(&p, 64, 64, Patent703Config::default());
+        let cls = classify_plane(&p, 64, 64, TriageConfig::default());
         // 8×8 = 64 blocks, outer ring (6×6 outer perimeter = 28 blocks) is
         // Busy by construction, inner 6×6 = 36 should be Uniform.
         let n_uniform = cls.iter().filter(|c| **c == BlockClass::Uniform).count();
@@ -451,7 +453,7 @@ mod tests {
             }
         }
         let orig = p.clone();
-        filter_plane_us7079703(&mut p, w, h, Patent703Config::default());
+        filter_plane_triage(&mut p, w, h, TriageConfig::default());
         // Near the seam at col 31/32 on interior rows, at least one side
         // moves toward the other.
         let y = 32;
@@ -477,7 +479,7 @@ mod tests {
             }
         }
         let orig = p.clone();
-        filter_plane_us7079703(&mut p, w, h, Patent703Config::default());
+        filter_plane_triage(&mut p, w, h, TriageConfig::default());
         assert_eq!(p, orig, "busy blocks must be left unchanged");
     }
 
@@ -492,7 +494,7 @@ mod tests {
 
     #[test]
     fn classify_plane_matches_filter_scope() {
-        // classify_plane and filter_plane_us7079703 must agree on which
+        // classify_plane and filter_plane_triage must agree on which
         // blocks are labelled what.
         let w = 64;
         let h = 64;
@@ -509,7 +511,7 @@ mod tests {
                 };
             }
         }
-        let cls = classify_plane(&p, w, h, Patent703Config::default());
+        let cls = classify_plane(&p, w, h, TriageConfig::default());
         assert_eq!(cls.len(), 64);
         // Outer ring is Busy.
         for j in 0..8 {

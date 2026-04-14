@@ -10,9 +10,9 @@
 //!   boundary discontinuities and distributes corrections across low frequencies.
 //!   Best at low quality (Q5–Q30).
 //!
-//! - **US7079703** ([`patent_703`]): Three-category pixel-domain filter that
-//!   classifies each 8×8 luma block as uniform, transitional, or busy via the
-//!   3×3 neighbourhood variance map, then selects between a 7×7 Gaussian
+//! - **Triage** ([`triage`]): Three-category pixel-domain filter (US 7,079,703 B2)
+//!   that classifies each 8×8 luma block as uniform, transitional, or busy via
+//!   the 3×3 neighbourhood variance map, then selects between a 7×7 Gaussian
 //!   deblock kernel, a 3×3 dering kernel, or the original pixels accordingly.
 //!
 //! Use [`detect::content`](crate::detect::content) to choose the right strategy
@@ -20,10 +20,10 @@
 
 pub mod boundary;
 pub mod knusperli;
-pub mod patent_703;
+pub mod triage;
 
 pub use boundary::{
     BoundaryStrength, filter_interleaved_u8_boundary_4tap, filter_plane_boundary_4tap,
 };
 pub use knusperli::process_component;
-pub use patent_703::{BlockClass, Patent703Config, classify_plane, filter_plane_us7079703};
+pub use triage::{BlockClass, TriageConfig, classify_plane, filter_plane_triage};
