@@ -43,7 +43,7 @@ fn bench_encode(suite: &mut Suite) {
         });
     });
 
-    // Isolated sharp YUV benchmark: just the color conversion, no DCT/entropy.
+    // Isolated sharp YUV benchmark.
     let rgb_1k: &'static [u8] = Box::leak(noise_patches(1024, 1024).into_boxed_slice());
 
     suite.group("sharp_yuv_isolated/1024", |g| {
@@ -52,52 +52,38 @@ fn bench_encode(suite: &mut Suite) {
         let ch = h / 2;
 
         g.bench("plain 4:2:0", move |b| {
+            let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            b.iter(|| zenyuv::rgb_to_yuv420(rgb_1k, &mut y, &mut cb, &mut cr, w, h))
+            b.iter(|| ctx.encode_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h))
         });
 
         g.bench("sharp iter=4 (default)", move |b| {
+            let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let luts = zenyuv::GammaLuts::srgb();
-            let config = zenyuv::SharpYuvConfig::default();
-            b.iter(|| {
-                zenyuv::rgb_to_yuv420_sharp(
-                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
-                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
-                )
-            })
+            let config = zenyuv::SharpYuvConfig { max_iterations: 4, ..Default::default() };
+            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
 
         g.bench("sharp iter=1", move |b| {
+            let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let luts = zenyuv::GammaLuts::srgb();
             let config = zenyuv::SharpYuvConfig { max_iterations: 1, ..Default::default() };
-            b.iter(|| {
-                zenyuv::rgb_to_yuv420_sharp(
-                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
-                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
-                )
-            })
+            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
 
         g.bench("sharp iter=0 (gamma-aware only)", move |b| {
+            let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
             let mut y = vec![0u8; w * h];
             let mut cb = vec![0u8; cw * ch];
             let mut cr = vec![0u8; cw * ch];
-            let luts = zenyuv::GammaLuts::srgb();
             let config = zenyuv::SharpYuvConfig { max_iterations: 0, ..Default::default() };
-            b.iter(|| {
-                zenyuv::rgb_to_yuv420_sharp(
-                    rgb_1k, &mut y, &mut cb, &mut cr, w, h,
-                    zenyuv::Range::Full, zenyuv::Matrix::Bt601, &luts, &config,
-                )
-            })
+            b.iter(|| ctx.encode_sharp_420_u8(rgb_1k, &mut y, &mut cb, &mut cr, w, h, &config))
         });
     });
 }

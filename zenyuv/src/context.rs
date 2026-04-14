@@ -28,8 +28,8 @@ pub struct YuvContext {
     pub(crate) inv: InverseCoeffs,
     range: Range,
     matrix: Matrix,
-    /// Gamma LUTs (1KB, always present — cheap).
-    luts: GammaLuts,
+    /// Gamma LUTs — heap-allocated lazily on first sharp call (1KB).
+    luts: Option<alloc::boxed::Box<GammaLuts>>,
     /// Temp u8 planes — only allocated for f32 output paths.
     f32_temps: Option<F32Temps>,
     /// Sharp workspace — only allocated on first sharp call.
@@ -59,15 +59,22 @@ impl YuvContext {
             inv: InverseCoeffs::new(matrix, range),
             range,
             matrix,
-            luts: GammaLuts::srgb(),
+            luts: None,
             f32_temps: None,
             sharp_ws: None,
         }
     }
 
-    /// Set gamma LUTs (default is sRGB). Call `GammaLuts::libwebp()` for VP8.
+    /// Set gamma LUTs. Call `GammaLuts::libwebp()` for VP8, `::srgb()` for JPEG.
+    /// If not set, defaults to sRGB on first sharp call.
     pub fn set_gamma_luts(&mut self, luts: GammaLuts) {
-        self.luts = luts;
+        self.luts = Some(alloc::boxed::Box::new(luts));
+    }
+
+    fn ensure_luts(&mut self) {
+        if self.luts.is_none() {
+            self.luts = Some(alloc::boxed::Box::new(GammaLuts::srgb()));
+        }
     }
 
     // ── Box-average (non-sharp) ─────────────────────────────────────────
@@ -139,11 +146,15 @@ impl YuvContext {
         config: &SharpYuvConfig,
     ) {
         let cw = width.div_ceil(2);
+        self.ensure_luts();
         self.ensure_sharp_ws(cw);
+        let range = self.range;
+        let matrix = self.matrix;
+        let luts = self.luts.as_ref().unwrap();
         crate::sharp::rgb_to_yuv420_sharp_with_workspace(
             rgb, y, cb, cr, width, height,
-            self.range, self.matrix,
-            &self.luts, config,
+            range, matrix,
+            luts, config,
             self.sharp_ws.as_mut().unwrap(),
         );
     }
@@ -161,16 +172,47 @@ impl YuvContext {
         config: &SharpYuvConfig,
     ) {
         let cw = width.div_ceil(2);
+        self.ensure_luts();
         self.ensure_sharp_ws(cw);
         let range = self.range;
         let matrix = self.matrix;
+        let luts = self.luts.as_ref().unwrap();
         crate::sharp::rgb_to_yuv420_sharp_f32(
             rgb, y, cb, cr, width, height,
             range, matrix,
-            &self.luts, config,
+            luts, config,
             self.sharp_ws.as_mut().unwrap(),
         );
     }
+
+    // ── Decode ───────────────────────────────────────────────────────────
+
+    /// Decode YUV 4:4:4 to RGB u8.
+    pub fn decode_444_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+        crate::decode::yuv444_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
+    }
+
+    /// Decode YUV 4:2:0 to RGB u8 (nearest-neighbor chroma upsampling).
+    pub fn decode_420_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+        crate::decode::yuv420_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
+    }
+
+    /// Decode YUV 4:2:0 to RGB u8 (bilinear chroma upsampling).
+    pub fn decode_420_bilinear_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+        crate::decode::yuv420_to_rgb_bilinear_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
+    }
+
+    /// Decode YUV 4:2:2 to RGB u8.
+    pub fn decode_422_to_rgb(&self, y: &[u8], cb: &[u8], cr: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+        crate::decode::yuv422_to_rgb_with(y, cb, cr, rgb, w, h, self.range, self.matrix);
+    }
+
+    /// Decode YUV 4:0:0 (grayscale) to RGB u8.
+    pub fn decode_400_to_rgb(&self, y: &[u8], rgb: &mut [u8], w: usize, h: usize) {
+        crate::decode::yuv400_to_rgb_with(y, rgb, w, h, self.range, self.matrix);
+    }
+
+    // ── Internal ────────────────────────────────────────────────────────
 
     /// Lazy-allocate sharp workspace on first use.
     fn ensure_sharp_ws(&mut self, cw: usize) {

@@ -1,3 +1,2 @@
-//! Re-export of [`zenyuv`] RGB→YCbCr conversion.
-
-pub use zenyuv::{rgb_to_yuv420, rgb_to_yuv444};
+//! Re-export of zenyuv types for backwards compatibility.
+//! The actual conversion now goes through `zenyuv::YuvContext` methods.

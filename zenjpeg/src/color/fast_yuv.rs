@@ -49,7 +49,8 @@ pub fn rgb_to_ycbcr_strided_fast(
     let mut cb_u8 = alloc::vec![0u8; num_pixels];
     let mut cr_u8 = alloc::vec![0u8; num_pixels];
 
-    zenyuv::rgb_to_yuv444(rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8, width, height);
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(rgb_input, &mut y_u8, &mut cb_u8, &mut cr_u8, width, height);
 
     u8_to_f32_strided(&y_u8, y_plane, width, height, y_stride);
     u8_to_f32_contiguous(&cb_u8, cb_plane, num_pixels);
@@ -91,7 +92,8 @@ pub fn rgb_to_ycbcr_strided_reuse(
         rgb_data
     };
 
-    zenyuv::rgb_to_yuv444(
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(
         rgb_input,
         &mut yuv_temp_y[..num_pixels],
         &mut yuv_temp_cb[..num_pixels],
@@ -219,7 +221,8 @@ pub fn rgb_to_ycbcr_420_reuse(
         rgb_data
     };
 
-    zenyuv::rgb_to_yuv420(
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_420_u8(
         rgb_input,
         &mut yuv_temp_y[..num_pixels],
         &mut yuv_temp_cb[..c_size],
