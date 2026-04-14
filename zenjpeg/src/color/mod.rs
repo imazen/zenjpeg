@@ -7,6 +7,7 @@
 //! - CMYK support
 
 pub mod icc;
+pub mod rgb_to_yuv;
 pub mod xyb;
 pub mod ycbcr;
 

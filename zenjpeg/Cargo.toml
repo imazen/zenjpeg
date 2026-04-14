@@ -266,6 +266,10 @@ name = "wide_migration"
 harness = false
 required-features = ["decoder", "parallel"]
 
+[[bench]]
+name = "rgb_to_yuv_internal"
+harness = false
+
 [lints]
 workspace = true
 
