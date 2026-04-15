@@ -1188,13 +1188,68 @@ impl<'a> JpegParser<'a> {
         let width = self.width as usize;
         let height = self.height as usize;
 
-        // If streaming decode was used, return its result directly (zero-copy for Rgb,
-        // reformat for Bgr/Rgba/Bgra/Bgrx)
+        // If streaming decode was used, return its result directly.
+        // The buffer may be 3bpp RGB or 4bpp BGRA/RGBA depending on the hint.
         if is_rgb_family_u8(format)
             && !is_xyb
-            && let Some(rgb) = self.streaming_rgb.take()
+            && let Some(buf) = self.streaming_rgb.take()
         {
-            return reformat_rgb_output(rgb, format, width, height);
+            let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
+            if streaming_fmt == format
+                || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
+                || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
+            {
+                // Exact match — return as-is
+                return Ok(buf);
+            }
+            let streaming_4bpp = matches!(
+                streaming_fmt,
+                PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
+            );
+            if !streaming_4bpp {
+                // 3bpp RGB — use existing reformat
+                return reformat_rgb_output(buf, format, width, height);
+            }
+            // 4bpp streaming → different target: allocate + reformat
+            let npixels = width * height;
+            match format {
+                PixelFormat::Rgb | PixelFormat::Bgr => {
+                    let swap_needed =
+                        (matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx)
+                            && format == PixelFormat::Rgb)
+                            || (streaming_fmt == PixelFormat::Rgba && format == PixelFormat::Bgr);
+                    let mut out = vec![0u8; npixels * 3];
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        let d = i * 3;
+                        if swap_needed {
+                            out[d] = buf[s + 2];
+                            out[d + 1] = buf[s + 1];
+                            out[d + 2] = buf[s];
+                        } else {
+                            out[d] = buf[s];
+                            out[d + 1] = buf[s + 1];
+                            out[d + 2] = buf[s + 2];
+                        }
+                    }
+                    return Ok(out);
+                }
+                PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+                    // 4bpp → different 4bpp: swap R and B
+                    let mut out = vec![0u8; npixels * 4];
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        out[s] = buf[s + 2];
+                        out[s + 1] = buf[s + 1];
+                        out[s + 2] = buf[s];
+                        out[s + 3] = buf[s + 3];
+                    }
+                    return Ok(out);
+                }
+                _ => {
+                    // Unsupported — fall through to generic path
+                }
+            }
         }
 
         // If fused parallel decode was used, return its result
@@ -1520,13 +1575,92 @@ impl<'a> JpegParser<'a> {
         let width = self.width as usize;
         let height = self.height as usize;
 
-        // Streaming-decode result already in `streaming_rgb` (3 bpp): reformat
-        // straight into `dst`. Avoids touching the (empty) coefficient store
-        // that the fast i16 path would otherwise read from.
-        if is_rgb_family_u8(format) && !is_xyb {
-            if let Some(rgb) = self.streaming_rgb.take() {
-                return reformat_rgb_into(&rgb, format, width, height, dst);
+        // Streaming-decode result: may be 3bpp RGB or 4bpp BGRA/RGBA depending
+        // on `streaming_output_format`. If the streaming data already matches the
+        // requested format, memcpy directly (zero-cost). Otherwise reformat.
+        if is_rgb_family_u8(format)
+            && !is_xyb
+            && let Some(buf) = self.streaming_rgb.take()
+        {
+            let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
+            let streaming_4bpp = matches!(
+                streaming_fmt,
+                PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
+            );
+
+            if streaming_fmt == format
+                || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
+                || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
+            {
+                // Exact match (or Bgra↔Bgrx which are byte-identical) — direct copy
+                let bytes = buf.len().min(dst.len());
+                dst[..bytes].copy_from_slice(&buf[..bytes]);
+                return Ok(bytes);
             }
+
+            if streaming_4bpp {
+                // Streaming produced 4bpp but caller wants a different format.
+                // Reformat the 4bpp buffer to the target format.
+                let npixels = width * height;
+                if format == PixelFormat::Rgb {
+                    let swap = matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx);
+                    let bytes = npixels * 3;
+                    if dst.len() < bytes {
+                        return Err(crate::error::Error::internal("dst too small"));
+                    }
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        let d = i * 3;
+                        if swap {
+                            dst[d] = buf[s + 2];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s];
+                        } else {
+                            dst[d] = buf[s];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s + 2];
+                        }
+                    }
+                    return Ok(bytes);
+                }
+                if format == PixelFormat::Bgr {
+                    let swap = matches!(streaming_fmt, PixelFormat::Rgba);
+                    let bytes = npixels * 3;
+                    if dst.len() < bytes {
+                        return Err(crate::error::Error::internal("dst too small"));
+                    }
+                    for i in 0..npixels {
+                        let s = i * 4;
+                        let d = i * 3;
+                        if swap {
+                            dst[d] = buf[s + 2];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s];
+                        } else {
+                            dst[d] = buf[s];
+                            dst[d + 1] = buf[s + 1];
+                            dst[d + 2] = buf[s + 2];
+                        }
+                    }
+                    return Ok(bytes);
+                }
+                // 4bpp → different 4bpp: swap R and B channels
+                let bytes = npixels * 4;
+                if dst.len() < bytes {
+                    return Err(crate::error::Error::internal("dst too small"));
+                }
+                for i in 0..npixels {
+                    let s = i * 4;
+                    dst[s] = buf[s + 2];
+                    dst[s + 1] = buf[s + 1];
+                    dst[s + 2] = buf[s];
+                    dst[s + 3] = buf[s + 3];
+                }
+                return Ok(bytes);
+            }
+
+            // Streaming produced 3bpp RGB — use existing reformat
+            return reformat_rgb_into(&buf, format, width, height, dst);
         }
 
         // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode

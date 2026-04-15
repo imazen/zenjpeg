@@ -760,8 +760,69 @@ fn bench_decode_sink(suite: &mut Suite) {
     });
 }
 
+fn bench_decode_into(suite: &mut Suite) {
+    let images = get_images();
+    if images.is_empty() {
+        return;
+    }
+    let total_baseline_bytes: usize = images.iter().map(|i| i.baseline_q85.len()).sum();
+
+    suite.group("decode_into_baseline_4:2:0_Q85", |g| {
+        g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
+
+        g.bench("decode_into RGB", |b| {
+            let dec = Decoder::new();
+            let mut buf = vec![0u8; 512 * 512 * 3];
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode_into(
+                        &img.baseline_q85,
+                        zenjpeg::decode::PixelFormat::Rgb,
+                        &mut buf,
+                        Unstoppable,
+                    )
+                    .unwrap();
+                }
+            })
+        });
+
+        g.bench("decode_into BGRA", |b| {
+            let dec = Decoder::new();
+            let mut buf = vec![0u8; 512 * 512 * 4];
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode_into(
+                        &img.baseline_q85,
+                        zenjpeg::decode::PixelFormat::Bgra,
+                        &mut buf,
+                        Unstoppable,
+                    )
+                    .unwrap();
+                }
+            })
+        });
+
+        g.bench("decode_into RGBA", |b| {
+            let dec = Decoder::new();
+            let mut buf = vec![0u8; 512 * 512 * 4];
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode_into(
+                        &img.baseline_q85,
+                        zenjpeg::decode::PixelFormat::Rgba,
+                        &mut buf,
+                        Unstoppable,
+                    )
+                    .unwrap();
+                }
+            })
+        });
+    });
+}
+
 fn bench_all(suite: &mut Suite) {
     bench_decode(suite);
+    bench_decode_into(suite);
     bench_decode_sink(suite);
     bench_decode_matrix(suite);
 }

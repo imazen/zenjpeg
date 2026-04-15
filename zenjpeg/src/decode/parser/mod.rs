@@ -147,8 +147,12 @@ pub(super) struct JpegParser<'a> {
     // Used by AC refinement to skip zero positions via trailing_zeros().
     pub(super) nonzero_bitmaps: Vec<Vec<u64>>,
 
-    // Streaming decode result (used for baseline 4:4:4 JPEGs)
+    // Streaming decode result (RGB 3bpp or BGRA/RGBA 4bpp depending on hint).
     pub(super) streaming_rgb: Option<Vec<u8>>,
+    /// When set before `decode()`, the streaming path produces this format
+    /// directly instead of always producing RGB 3bpp. Supported: Bgra, Bgrx,
+    /// Rgba (4bpp with alpha=255). `None` or `Some(Rgb)` → 3bpp RGB (default).
+    pub(super) streaming_output_format: Option<crate::types::PixelFormat>,
     /// Decode mode: Auto tries streaming/fused paths first, Coefficient forces
     /// coefficient storage (needed for f32 output, dequant bias, transforms, etc.).
     pub(super) decode_mode: DecodeMode,
@@ -253,6 +257,7 @@ impl<'a> JpegParser<'a> {
             coeff_counts: Vec::new(),
             nonzero_bitmaps: Vec::new(),
             streaming_rgb: None,
+            streaming_output_format: None,
             decode_mode: DecodeMode::Auto,
             #[cfg(feature = "parallel")]
             fused_result: None,

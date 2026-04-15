@@ -2269,6 +2269,9 @@ impl DecodeConfig {
             {
                 parser.parallel_strategy = self.parallel_strategy;
             }
+            // Hint the streaming decoder to produce BGRA/RGBA directly,
+            // eliminating the post-decode full-buffer swizzle pass.
+            parser.streaming_output_format = Some(format);
             parser.decode(&stop)?;
             return parser.to_pixels_into(
                 format,
@@ -3032,6 +3035,85 @@ mod tests {
             found_fractional,
             "f32 output should have fractional precision"
         );
+    }
+
+    /// Verify that the fused BGRA streaming path produces bit-exact output
+    /// compared to the RGB decode + swizzle path, for all subsampling modes.
+    #[test]
+    fn test_fused_bgra_vs_rgb_swizzle_parity() {
+        let width = 64u32;
+        let height = 64u32;
+        // Generate a simple gradient test image
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                input[idx] = (x * 4) as u8;
+                input[idx + 1] = (y * 4) as u8;
+                input[idx + 2] = ((x + y) * 2) as u8;
+            }
+        }
+
+        for &sub in &[
+            ChromaSubsampling::None,
+            ChromaSubsampling::Quarter,
+            ChromaSubsampling::HalfHorizontal,
+        ] {
+            let config = EncoderConfig::ycbcr(85.0, sub).progressive(false);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .expect("create encoder");
+            enc.push_packed(&input, Unstoppable).expect("push pixels");
+            let jpeg = enc.finish().expect("encode");
+
+            // Decode to RGB then manually convert to BGRA (reference path)
+            let result_rgb = Decoder::new()
+                .output_format(PixelFormat::Rgb)
+                .decode(&jpeg, Unstoppable)
+                .expect("decode RGB");
+            let rgb_pixels = result_rgb.pixels_u8().expect("u8 pixels");
+            let npixels = (width * height) as usize;
+            let mut reference_bgra = vec![0u8; npixels * 4];
+            for i in 0..npixels {
+                reference_bgra[i * 4] = rgb_pixels[i * 3 + 2]; // B
+                reference_bgra[i * 4 + 1] = rgb_pixels[i * 3 + 1]; // G
+                reference_bgra[i * 4 + 2] = rgb_pixels[i * 3]; // R
+                reference_bgra[i * 4 + 3] = 255; // A
+            }
+
+            // Decode directly to BGRA via decode_into (fused path)
+            let mut fused_bgra = vec![0u8; npixels * 4];
+            let bytes = Decoder::new()
+                .decode_into(&jpeg, PixelFormat::Bgra, &mut fused_bgra, Unstoppable)
+                .expect("decode_into BGRA");
+            assert_eq!(bytes, npixels * 4, "expected {npixels}*4 bytes for {sub:?}");
+
+            // Compare bit-exact
+            assert_eq!(
+                reference_bgra, fused_bgra,
+                "BGRA mismatch for subsampling {sub:?}"
+            );
+
+            // Also test RGBA
+            let mut reference_rgba = vec![0u8; npixels * 4];
+            for i in 0..npixels {
+                reference_rgba[i * 4] = rgb_pixels[i * 3]; // R
+                reference_rgba[i * 4 + 1] = rgb_pixels[i * 3 + 1]; // G
+                reference_rgba[i * 4 + 2] = rgb_pixels[i * 3 + 2]; // B
+                reference_rgba[i * 4 + 3] = 255; // A
+            }
+
+            let mut fused_rgba = vec![0u8; npixels * 4];
+            let bytes = Decoder::new()
+                .decode_into(&jpeg, PixelFormat::Rgba, &mut fused_rgba, Unstoppable)
+                .expect("decode_into RGBA");
+            assert_eq!(bytes, npixels * 4, "expected {npixels}*4 bytes for {sub:?}");
+
+            assert_eq!(
+                reference_rgba, fused_rgba,
+                "RGBA mismatch for subsampling {sub:?}"
+            );
+        }
     }
 }
 

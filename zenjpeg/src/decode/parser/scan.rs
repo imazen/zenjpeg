@@ -18,7 +18,8 @@ use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
 use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
-use crate::color::ycbcr_planes_i16_to_rgb_u8;
+use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
+use crate::types::PixelFormat;
 
 /// Scan parsing and baseline decoding methods for JpegParser.
 impl<'a> JpegParser<'a> {
@@ -682,10 +683,16 @@ impl<'a> JpegParser<'a> {
         let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cb strip buffer")?;
         let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cr strip buffer")?;
 
-        // Allocate output RGB buffer
-        // Note: All pixels are written by color conversion before return
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted.
+        let (out_bpp, out_4bpp, swap_rb) = match self.streaming_output_format {
+            Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4usize, true, true),
+            Some(PixelFormat::Rgba) => (4, true, false),
+            _ => (3, false, false),
+        };
+
+        // Allocate output buffer (3bpp RGB or 4bpp BGRA/RGBA)
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "output buffer")?;
 
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
@@ -786,7 +793,7 @@ impl<'a> JpegParser<'a> {
                 mcu_count += 1;
             }
 
-            // Color convert this MCU row directly to RGB output
+            // Color convert this MCU row directly to output buffer
             let y_start = mcu_y * 8;
             let rows_this_mcu = 8.min(height.saturating_sub(y_start));
             let cols_this_mcu = width.min(strip_width);
@@ -794,10 +801,24 @@ impl<'a> JpegParser<'a> {
 
             for row in 0..rows_this_mcu {
                 let strip_offset = row * strip_width;
-                let rgb_offset = (y_start + row) * width * 3;
+                let rgb_offset = (y_start + row) * width * out_bpp;
 
-                if is_rgb {
-                    // RGB JPEG: interleave planes without YCbCr→RGB matrix
+                if is_rgb && out_4bpp {
+                    for px in 0..cols_this_mcu {
+                        let i = strip_offset + px;
+                        let o = rgb_offset + px * 4;
+                        if swap_rb {
+                            rgb[o] = cr_strip[i].clamp(0, 255) as u8;
+                            rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                            rgb[o + 2] = y_strip[i].clamp(0, 255) as u8;
+                        } else {
+                            rgb[o] = y_strip[i].clamp(0, 255) as u8;
+                            rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
+                            rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
+                        }
+                        rgb[o + 3] = 255;
+                    }
+                } else if is_rgb {
                     for px in 0..cols_this_mcu {
                         let i = strip_offset + px;
                         let o = rgb_offset + px * 3;
@@ -805,6 +826,14 @@ impl<'a> JpegParser<'a> {
                         rgb[o + 1] = cb_strip[i].clamp(0, 255) as u8;
                         rgb[o + 2] = cr_strip[i].clamp(0, 255) as u8;
                     }
+                } else if out_4bpp {
+                    ycbcr_planes_i16_to_xrgba_u8(
+                        &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                        &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 4],
+                        swap_rb,
+                    );
                 } else {
                     ycbcr_planes_i16_to_rgb_u8(
                         &y_strip[strip_offset..strip_offset + cols_this_mcu],
@@ -1056,9 +1085,20 @@ impl<'a> JpegParser<'a> {
             Vec::new()
         };
 
+        // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted,
+        // otherwise 3bpp RGB (grayscale always 1bpp).
+        let (out_bpp, out_4bpp, swap_rb) = if is_grayscale {
+            (1, false, false)
+        } else {
+            match self.streaming_output_format {
+                Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4, true, true),
+                Some(PixelFormat::Rgba) => (4, true, false),
+                _ => (3, false, false),
+            }
+        };
+
         // Output buffer
-        let bpp = if is_grayscale { 1 } else { 3 };
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, bpp))?;
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "output buffer")?;
 
         let mut mcu_count = 0u32;
@@ -1229,9 +1269,11 @@ impl<'a> JpegParser<'a> {
             Ok(())
         }
 
-        /// Output one MCU row to RGB buffer using upsampled chroma.
+        /// Output one MCU row to the output buffer using upsampled chroma.
         /// `chroma_row_skip` is the number of upsampled rows to skip at the start
         /// of the chroma buffer (to skip context row output in fancy mode).
+        /// When `out_4bpp` is true, writes BGRA/RGBA (4 bytes/pixel) with alpha=255;
+        /// `swap_rb` controls B,G,R,A vs R,G,B,A order.
         #[inline(always)]
         fn output_mcu_row(
             mcu_y: usize,
@@ -1245,20 +1287,48 @@ impl<'a> JpegParser<'a> {
             width: usize,
             height: usize,
             is_rgb: bool,
+            out_4bpp: bool,
+            swap_rb: bool,
         ) {
+            let bpp = if out_4bpp { 4 } else { 3 };
             let y_start = mcu_y * y_strip_height;
             let rows = y_strip_height.min(height.saturating_sub(y_start));
             let cols = width.min(y_strip_width);
             for row in 0..rows {
                 let y_off = row * y_strip_width;
                 let up_off = (chroma_row_skip + row) * y_strip_width;
-                let rgb_off = (y_start + row) * width * 3;
+                let rgb_off = (y_start + row) * width * bpp;
                 if is_rgb {
-                    for px in 0..cols {
-                        rgb[rgb_off + px * 3] = y_strip[y_off + px].clamp(0, 255) as u8;
-                        rgb[rgb_off + px * 3 + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                        rgb[rgb_off + px * 3 + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
+                    // RGB JPEG: interleave planes without YCbCr→RGB matrix
+                    if out_4bpp {
+                        for px in 0..cols {
+                            let o = rgb_off + px * 4;
+                            if swap_rb {
+                                rgb[o] = cr_up[up_off + px].clamp(0, 255) as u8;
+                                rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
+                                rgb[o + 2] = y_strip[y_off + px].clamp(0, 255) as u8;
+                            } else {
+                                rgb[o] = y_strip[y_off + px].clamp(0, 255) as u8;
+                                rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
+                                rgb[o + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
+                            }
+                            rgb[o + 3] = 255;
+                        }
+                    } else {
+                        for px in 0..cols {
+                            rgb[rgb_off + px * 3] = y_strip[y_off + px].clamp(0, 255) as u8;
+                            rgb[rgb_off + px * 3 + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
+                            rgb[rgb_off + px * 3 + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
+                        }
                     }
+                } else if out_4bpp {
+                    ycbcr_planes_i16_to_xrgba_u8(
+                        &y_strip[y_off..y_off + cols],
+                        &cb_up[up_off..up_off + cols],
+                        &cr_up[up_off..up_off + cols],
+                        &mut rgb[rgb_off..rgb_off + cols * 4],
+                        swap_rb,
+                    );
                 } else {
                     ycbcr_planes_i16_to_rgb_u8(
                         &y_strip[y_off..y_off + cols],
@@ -1386,6 +1456,8 @@ impl<'a> JpegParser<'a> {
                         width,
                         height,
                         is_rgb,
+                        out_4bpp,
+                        swap_rb,
                     );
 
                     // Set B's above-context = A's last data row
@@ -1459,6 +1531,8 @@ impl<'a> JpegParser<'a> {
                     width,
                     height,
                     is_rgb,
+                    out_4bpp,
+                    swap_rb,
                 );
             }
         } else {
@@ -1516,14 +1590,56 @@ impl<'a> JpegParser<'a> {
                         let c_row = (row / 2).min(c_rows.saturating_sub(1));
                         let y_off = row * y_strip_width;
                         let c_off = c_row * c_strip_width;
-                        let rgb_off = (y_start + row) * width * 3;
-                        if is_rgb {
+                        let rgb_off = (y_start + row) * width * out_bpp;
+                        if is_rgb && out_4bpp {
+                            for px in 0..cols {
+                                let cx = px / 2;
+                                let o = rgb_off + px * 4;
+                                if swap_rb {
+                                    rgb[o] = cr_a[c_off + cx].clamp(0, 255) as u8;
+                                    rgb[o + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
+                                    rgb[o + 2] = y_strip_a[y_off + px].clamp(0, 255) as u8;
+                                } else {
+                                    rgb[o] = y_strip_a[y_off + px].clamp(0, 255) as u8;
+                                    rgb[o + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
+                                    rgb[o + 2] = cr_a[c_off + cx].clamp(0, 255) as u8;
+                                }
+                                rgb[o + 3] = 255;
+                            }
+                        } else if is_rgb {
                             for px in 0..cols {
                                 let cx = px / 2;
                                 rgb[rgb_off + px * 3] = y_strip_a[y_off + px].clamp(0, 255) as u8;
                                 rgb[rgb_off + px * 3 + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
                                 rgb[rgb_off + px * 3 + 2] = cr_a[c_off + cx].clamp(0, 255) as u8;
                             }
+                        } else if out_4bpp {
+                            // No fused h2v2 box→4bpp SIMD kernel yet.
+                            // Expand chroma inline (box upsample: duplicate each
+                            // sample to 2 pixels) then call the SIMD xrgba function.
+                            // This is a cold path (NearestNeighbor + 4bpp).
+                            let chroma_w = (cols + 1) / 2;
+                            let needed = cols;
+                            // Reuse cb_up/cr_up scratch buffers (already allocated
+                            // with at least y_strip_width per row)
+                            for px in 0..chroma_w {
+                                let val_cb = cb_a[c_off + px];
+                                let val_cr = cr_a[c_off + px];
+                                let x0 = px * 2;
+                                cb_up[x0] = val_cb;
+                                cr_up[x0] = val_cr;
+                                if x0 + 1 < needed {
+                                    cb_up[x0 + 1] = val_cb;
+                                    cr_up[x0 + 1] = val_cr;
+                                }
+                            }
+                            ycbcr_planes_i16_to_xrgba_u8(
+                                &y_strip_a[y_off..y_off + cols],
+                                &cb_up[..cols],
+                                &cr_up[..cols],
+                                &mut rgb[rgb_off..rgb_off + cols * 4],
+                                swap_rb,
+                            );
                         } else {
                             fused_h2v2_box_ycbcr_to_rgb_u8(
                                 &y_strip_a[y_off..y_off + cols],
@@ -1565,6 +1681,8 @@ impl<'a> JpegParser<'a> {
                         width,
                         height,
                         is_rgb,
+                        out_4bpp,
+                        swap_rb,
                     );
                 }
             }
