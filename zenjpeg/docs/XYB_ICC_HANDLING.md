@@ -300,15 +300,22 @@ XYB decoding. Migrate to Option 2 if/when zenpixels-convert grows a
 
 Brute-force sweep over a 16×16×16 sRGB grid, encoded at the highest
 zenjpeg setting and decoded back. Numbers from
-`examples/xyb_color_loss.rs` on this branch:
+`examples/xyb_color_loss.rs` after Option 1 shipped:
 
-| Encode | Distinct outputs | RMSE | MAE R/G/B | max ΔE | within ΔE≤1 | within ΔE≤4 |
-|--------|------------------|------|-----------|--------|-------------|-------------|
-| YCbCr 4:4:4 Q100 progressive | 4096 / 4096 (100%) | 0.99 | 0.36/0.19/0.44 | 1 | 100.0% | 100.0% |
-| XYB Full Q100 progressive (default decode after fix) | 4086 / 4096 (99.8%) | 4.50 | 1.98/0.52/1.90 | 21 | 34.6% | 80.4% |
+| Encode | RMSE | MAE R/G/B | max ΔE | within ΔE≤1 | within ΔE≤4 |
+|--------|------|-----------|--------|-------------|-------------|
+| YCbCr 4:4:4 Q100 progressive | 0.99 | 0.36/0.19/0.44 | 1 | 100.0% | 100.0% |
+| XYB Full Q100 progressive (SIMD kernel, default decode) | 0.27 | 0.03/0.00/0.03 | 2 | 99.7% | 100.0% |
+| XYB Full Q100 + `correct_color(Srgb)` | 0.27 | 0.03/0.00/0.03 | 2 | 99.7% | 100.0% |
 
-Worst XYB sRGB samples concentrate in the dark-red corner (R≤8). The
-encoder's RGB→XYB pipeline (`srgb_to_scaled_xyb`) loses precision in
-the toe of the cube root + scale, and the inverse can't recover it.
-Bias is uniformly negative-R / negative-B (decoded values come out
-slightly darker than source for R and B) at -1.22 / -1.16 mean.
+Notes:
+
+- The SIMD inverse kernel reconstructs sRGB substantially more
+  accurately than the prior moxcms-via-ICC path, which routed through
+  the lossy 720-byte v2 XYB ICC profile (max ΔE was previously 21 on
+  the same sweep).
+- `correct_color(Srgb)` is byte-identical to default decode, as
+  expected — the ICC apply is skipped for XYB sources.
+- Max ΔE of 2 at Q100 is within IDCT rounding tolerance; the encoder
+  itself is XYB-lossy at extreme dark primaries even at Q100, but the
+  decoder no longer adds its own noticeable ΔE on top.
