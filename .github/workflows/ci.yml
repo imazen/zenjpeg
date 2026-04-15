@@ -127,18 +127,7 @@ jobs:
           key: cross-i686
 
       - name: Test (i686)
-        # Skip codec-corpus-dependent tests: the cross container has no network
-        # access to fetch test corpus datasets, which would otherwise cause
-        # spurious NetworkUnavailable panics unrelated to 32-bit correctness.
-        # All other tests run normally — i686 is about pointer-width correctness,
-        # not corpus conformance (which is covered on x86_64/aarch64 runners).
-        run: |
-          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
-            --skip codec_corpus_conformance \
-            --skip conformance_corpus \
-            --skip crash_sweep \
-            --skip crop_corpus \
-            --skip cpp_reference_parity
+        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
         env:
           CODEC_CORPUS_CACHE: /tmp/codec-corpus
 
