@@ -1807,14 +1807,14 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     }
                 }
             } else if is_raw_cmyk {
-                // Raw CMYK output: 4 bytes per pixel in inverted CMYK order.
-                // Package as RGBA8 layout (the only 4-channel u8 format in
-                // zenpixels). The caller distinguishes this from true RGBA via
-                // source_color.channel_count == 4 and has_alpha == false.
+                // Raw CMYK output: 4 bytes per pixel in inverted CMYK order
+                // (mozjpeg convention). The descriptor carries ColorModel::Cmyk
+                // so downstream consumers route through a CMS with the ICC
+                // profile rather than interpreting bytes as RGB.
                 let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                 info.has_alpha = false;
                 info.source_color.channel_count = Some(4);
-                let desc = PixelDescriptor::from_pixel_format(zenpixels::PixelFormat::Rgba8);
+                let desc = zenpixels::PixelDescriptor::CMYK8;
                 PixelBuffer::from_vec(pixels_u8, w, h, desc)
                     .map_err(|_| Error::internal("pixel buffer creation failed"))?
             } else {
