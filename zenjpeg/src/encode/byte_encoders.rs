@@ -101,15 +101,12 @@ impl BytesEncoder {
             super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
         };
 
-        // Progressive mode: restart markers provide no benefit (progressive
-        // decode requires multi-pass coefficient storage — parallel decode via
-        // restart segments is impossible) but cost ~10% in overhead from RST
-        // marker pairs + byte-alignment padding + DC prediction resets.
-        let restart_interval = if config.scan_mode.is_progressive() {
-            0
-        } else {
-            super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
-        };
+        let restart_interval = super::config::resolve_restart_rows(
+            config.restart_mcu_rows,
+            width,
+            height,
+            subsampling,
+        );
 
         let mut builder = SE::new(width, height)
             .quality(config.quality)
@@ -966,15 +963,12 @@ impl YCbCrPlanarEncoder {
             _ => crate::types::Subsampling::S444,
         };
 
-        // Progressive mode: restart markers provide no benefit (progressive
-        // decode requires multi-pass coefficient storage — parallel decode via
-        // restart segments is impossible) but cost ~10% in overhead from RST
-        // marker pairs + byte-alignment padding + DC prediction resets.
-        let restart_interval = if config.scan_mode.is_progressive() {
-            0
-        } else {
-            super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
-        };
+        let restart_interval = super::config::resolve_restart_rows(
+            config.restart_mcu_rows,
+            width,
+            height,
+            subsampling,
+        );
 
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing

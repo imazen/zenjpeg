@@ -27,14 +27,14 @@ use super::super::idct_int::{
 };
 use super::super::upsample::{upsample_libjpeg_f32, upsample_nearest_f32};
 use crate::color::{
-    cmyk_planes_to_cmyk_u8, cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8,
-    gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
+    cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32,
+    gray_f32_to_rgb_u8,
     ycbcr::{
         fused_h2v2_box_ycbcr_to_rgb_u8, rgb_u8_swap_rb_inplace, rgb_u8_to_bgra_u8,
         rgb_u8_to_rgba_u8,
     },
     ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
-    ycck_planes_to_cmyk_u8, ycck_planes_to_rgb_u8,
+    ycck_planes_to_rgb_u8,
 };
 use crate::decode::extras::AdobeColorTransform;
 use crate::error::{Error, Result};
@@ -1302,36 +1302,6 @@ impl<'a> JpegParser<'a> {
                     }
                 }
                 reformat_rgb_output(rgb, f, width, height)
-            }
-            (4, PixelFormat::Cmyk) => {
-                // Raw CMYK output: interleave 4 planes as C,M,Y,K bytes
-                let cmyk_size =
-                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
-                let mut cmyk_out = vec![0u8; cmyk_size];
-
-                match self.adobe_transform {
-                    Some(AdobeColorTransform::Ycck) => {
-                        // YCCK: convert YCbCr→CMY, interleave with K
-                        ycck_planes_to_cmyk_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut cmyk_out,
-                        );
-                    }
-                    _ => {
-                        // CMYK (Adobe inverted format): level-shift and interleave
-                        cmyk_planes_to_cmyk_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut cmyk_out,
-                        );
-                    }
-                }
-                Ok(cmyk_out)
             }
             _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
