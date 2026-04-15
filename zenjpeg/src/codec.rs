@@ -850,17 +850,42 @@ pub struct JpegDecoderConfig {
     inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
-    /// When true, CMYK/YCCK JPEGs produce raw 4-channel CMYK output instead
-    /// of auto-converting to RGB. The output uses RGBA8 pixel layout
-    /// (since zenpixels has no native CMYK format) with
-    /// `ImageInfo.source_color.channel_count == Some(4)` and
-    /// `ImageInfo.has_alpha == false` to distinguish from true RGBA.
+    /// How to handle CMYK/YCCK 4-component JPEGs. See [`CmykHandling`].
+    cmyk_handling: CmykHandling,
+}
+
+/// How to handle CMYK/YCCK 4-component JPEGs on decode.
+///
+/// JPEGs with 4 components store ink values (CMYK) rather than light values
+/// (RGB). Recovering accurate RGB requires a color management transform
+/// driven by an ICC profile — usually embedded in the JPEG, sometimes
+/// implied by Adobe `APP14` marker conventions. This enum picks the path.
+///
+/// Non-exhaustive so future named-profile variants (e.g. SWOP v2, FOGRA39)
+/// can be added without a breaking change.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CmykHandling {
+    /// Emit raw 4-channel CMYK bytes via [`zenpixels::PixelDescriptor::CMYK8`].
     ///
-    /// The byte order is inverted CMYK (Adobe/libjpeg convention):
-    /// 0 = full ink, 255 = no ink.
+    /// Byte order is inverted CMYK (Adobe/libjpeg convention: 0 = full ink,
+    /// 255 = no ink). The embedded ICC profile is preserved on
+    /// `ImageInfo.source_color.icc_profile` so the caller can route the
+    /// bytes through a CMS (moxcms, lcms2, etc.) for a color-accurate
+    /// CMYK→RGB transform. This is the only faithful option for print
+    /// workflows or any decoder that wants to honor the source profile.
     ///
-    /// Default: `false` (auto-convert to RGB).
-    cmyk_output_raw: bool,
+    /// Default. Has no effect on non-CMYK input (grayscale, YCbCr).
+    #[default]
+    Passthrough,
+    /// Convert CMYK→RGB using the naive `R = (1-C)(1-K)` formula, ignoring
+    /// any embedded ICC profile.
+    ///
+    /// Cheap and self-contained but wrong: typical print-profile output
+    /// lands 30–50 ΔE off true sRGB. Use only when you control the source
+    /// pipeline and know the JPEGs are uncalibrated, or when a CMS is not
+    /// available and approximate RGB is better than no RGB.
+    BadRgb,
 }
 
 impl JpegDecoderConfig {
@@ -871,7 +896,7 @@ impl JpegDecoderConfig {
             #[cfg(feature = "decoder")]
             inner: crate::decode::DecodeConfig::new(),
             limits: ResourceLimits::none(),
-            cmyk_output_raw: false,
+            cmyk_handling: CmykHandling::Passthrough,
         }
     }
 
@@ -915,31 +940,19 @@ impl JpegDecoderConfig {
         self
     }
 
-    /// Output raw CMYK bytes instead of auto-converting to RGB.
-    ///
-    /// When enabled, CMYK and YCCK JPEGs produce 4-channel output in
-    /// inverted CMYK format (0 = full ink, 255 = no ink) — the same byte
-    /// order that libjpeg/mozjpeg use. The ICC profile is passed through
-    /// in `ImageInfo.source_color.icc_profile` for the caller to apply
-    /// its own CMS transform.
-    ///
-    /// Since zenpixels has no native CMYK pixel format, the output uses
-    /// `RGBA8` layout with `ImageInfo.has_alpha == false` and
-    /// `ImageInfo.source_color.channel_count == Some(4)`.
+    /// Select how to handle CMYK/YCCK 4-component JPEGs. See [`CmykHandling`].
     ///
     /// Has no effect on non-CMYK input (grayscale, YCbCr).
-    ///
-    /// Default: `false`.
     #[must_use]
-    pub fn cmyk_output_raw(mut self, raw: bool) -> Self {
-        self.cmyk_output_raw = raw;
+    pub fn cmyk_handling(mut self, handling: CmykHandling) -> Self {
+        self.cmyk_handling = handling;
         self
     }
 
-    /// Returns whether raw CMYK output is enabled.
+    /// Returns the configured [`CmykHandling`] strategy.
     #[must_use]
-    pub fn is_cmyk_output_raw(&self) -> bool {
-        self.cmyk_output_raw
+    pub fn is_cmyk_handling(&self) -> CmykHandling {
+        self.cmyk_handling
     }
 
     /// Convenience: probe image header with this config.
@@ -1283,9 +1296,10 @@ fn push_decoder_native<'a>(
 
     // Raw CMYK output for 4-component JPEGs: the streaming ScanlineReader has
     // no raw-CMYK output path, so fall back to the buffered Decode::decode()
-    // path which honors `cmyk_output_raw` via PixelFormat::Cmyk, then hand the
-    // full frame to the sink in one strip.
-    if job.config.cmyk_output_raw && header.num_components == 4 {
+    // path (which honors CmykHandling::Passthrough via PixelFormat::Cmyk)
+    // and hand the full frame to the sink in one strip.
+    if matches!(job.config.cmyk_handling, CmykHandling::Passthrough) && header.num_components == 4
+    {
         return push_decoder_via_full_decode(job, data, sink);
     }
 
@@ -1442,9 +1456,9 @@ fn push_decoder_native<'a>(
 ///
 /// The streaming `ScanlineReader` does not support raw-CMYK output — only
 /// pre-converted RGB/BGRA/grayscale. So we run a buffered decode (which
-/// honors `cmyk_output_raw`) and then forward the whole frame to the sink
-/// as a single strip. This gives up the streaming memory advantage but is
-/// the only way to emit raw CMYK today.
+/// honors `CmykHandling::Passthrough`) and then forward the whole frame to
+/// the sink as a single strip. This gives up the streaming memory advantage
+/// but is the only way to emit raw CMYK today.
 #[cfg(feature = "decoder")]
 fn push_decoder_via_full_decode<'a>(
     job: JpegDecodeJob,
@@ -1456,9 +1470,9 @@ fn push_decoder_via_full_decode<'a>(
     let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
 
     // Build a decoder from the same config and hand it the data. This path
-    // runs the full CMYK-aware decode (including Decode::decode below, which
-    // overrides output_format to PixelFormat::Cmyk when cmyk_output_raw is
-    // set and the JPEG is 4-component).
+    // runs the full CMYK-aware decode (Decode::decode below overrides
+    // output_format to PixelFormat::Cmyk when cmyk_handling is Passthrough
+    // and the JPEG is 4-component).
     let decoder = job
         .decoder(data, &[])
         .map_err(|_| Error::internal("push-decoder fallback: decoder creation failed"))?;
@@ -1685,11 +1699,11 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
             }
 
-            // When raw CMYK output is requested, probe the header to check
-            // if this is actually a CMYK/YCCK JPEG (4 components). If so,
-            // override the output format to PixelFormat::Cmyk so the decoder
-            // produces raw CMYK bytes instead of auto-converting to RGB.
-            let is_raw_cmyk = if self.config.cmyk_output_raw {
+            // Passthrough CMYK handling: probe the header to check if this
+            // is actually a CMYK/YCCK JPEG (4 components). If so, override
+            // the output format to PixelFormat::Cmyk so the decoder produces
+            // raw CMYK bytes instead of auto-converting to RGB.
+            let is_raw_cmyk = if matches!(self.config.cmyk_handling, CmykHandling::Passthrough) {
                 let header = cfg.read_info(&data)?;
                 if header.num_components == 4 {
                     cfg = cfg.output_format(PixelFormat::Cmyk);
@@ -2934,7 +2948,7 @@ mod cmyk_tests {
     use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
     use zencodec::encode::EncoderConfig as _;
 
-    // ── CMYK raw output tests ──────────────────────────────────────────────
+    // ── CMYK handling tests ────────────────────────────────────────────────
 
     /// Load the CMYK flower test image if available.
     fn load_cmyk_test_image() -> Option<Vec<u8>> {
@@ -2942,7 +2956,7 @@ mod cmyk_tests {
     }
 
     #[test]
-    fn cmyk_raw_output_produces_4_channels() {
+    fn cmyk_passthrough_produces_4_channels() {
         let data = match load_cmyk_test_image() {
             Some(d) => d,
             None => {
@@ -2951,8 +2965,8 @@ mod cmyk_tests {
             }
         };
 
-        let dec = JpegDecoderConfig::new().cmyk_output_raw(true);
-        let output = dec
+        // Default handling is Passthrough.
+        let output = JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()
@@ -2962,7 +2976,7 @@ mod cmyk_tests {
         let info = output.info();
         let pixels = output.pixels();
 
-        // Verify 4 channels via RGBA8 layout
+        // Verify 4 channels via CMYK8 descriptor
         assert_eq!(pixels.descriptor().bytes_per_pixel(), 4);
 
         // source_color.channel_count should be 4 (CMYK)
@@ -2987,7 +3001,7 @@ mod cmyk_tests {
     }
 
     #[test]
-    fn cmyk_raw_vs_default_produces_different_but_reasonable_output() {
+    fn cmyk_badrgb_vs_passthrough_produces_different_but_reasonable_output() {
         let data = match load_cmyk_test_image() {
             Some(d) => d,
             None => {
@@ -2996,18 +3010,17 @@ mod cmyk_tests {
             }
         };
 
-        // Decode with default (auto RGB conversion)
-        let dec_rgb = JpegDecoderConfig::new();
-        let output_rgb = dec_rgb
+        // Naive CMYK→RGB conversion (no ICC)
+        let output_rgb = JpegDecoderConfig::new()
+            .cmyk_handling(CmykHandling::BadRgb)
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()
             .decode()
             .unwrap();
 
-        // Decode with raw CMYK
-        let dec_cmyk = JpegDecoderConfig::new().cmyk_output_raw(true);
-        let output_cmyk = dec_cmyk
+        // Passthrough (default): raw CMYK bytes + preserved ICC
+        let output_cmyk = JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()
@@ -3021,7 +3034,7 @@ mod cmyk_tests {
         assert_eq!(rgb_info.width, cmyk_info.width);
         assert_eq!(rgb_info.height, cmyk_info.height);
 
-        // RGB output is 3-channel (RGB8), CMYK output is 4-channel (RGBA8 layout)
+        // BadRgb output is 3-channel RGB8, Passthrough is 4-channel CMYK8
         assert_eq!(output_rgb.pixels().descriptor().bytes_per_pixel(), 3);
         assert_eq!(output_cmyk.pixels().descriptor().bytes_per_pixel(), 4);
 
@@ -3080,7 +3093,7 @@ mod cmyk_tests {
     }
 
     #[test]
-    fn cmyk_raw_has_no_effect_on_rgb_jpeg() {
+    fn cmyk_handling_has_no_effect_on_rgb_jpeg() {
         // Create a simple RGB JPEG
         let enc = JpegEncoderConfig::new().with_calibrated_quality(80.0);
         let pixels: Vec<Rgb<u8>> = vec![
@@ -3095,47 +3108,44 @@ mod cmyk_tests {
         let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
         let jpeg_data = encoded.into_vec();
 
-        // Decode with default
-        let dec_default = JpegDecoderConfig::new();
-        let out_default = dec_default
+        // Both CMYK handling modes should produce identical output for a
+        // 3-component RGB JPEG — the CMYK branch requires num_components == 4.
+        let out_passthrough = JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(&jpeg_data), &[])
             .unwrap()
             .decode()
             .unwrap();
 
-        // Decode with cmyk_output_raw=true (should have no effect on RGB JPEG)
-        let dec_raw = JpegDecoderConfig::new().cmyk_output_raw(true);
-        let out_raw = dec_raw
+        let out_badrgb = JpegDecoderConfig::new()
+            .cmyk_handling(CmykHandling::BadRgb)
             .job()
             .decoder(Cow::Borrowed(&jpeg_data), &[])
             .unwrap()
             .decode()
             .unwrap();
 
-        // Both should produce the same output
         assert_eq!(
-            out_default.pixels().descriptor().bytes_per_pixel(),
-            out_raw.pixels().descriptor().bytes_per_pixel()
+            out_passthrough.pixels().descriptor().bytes_per_pixel(),
+            out_badrgb.pixels().descriptor().bytes_per_pixel()
         );
-        assert_eq!(out_default.info().width, out_raw.info().width);
-        assert_eq!(out_default.info().height, out_raw.info().height);
+        assert_eq!(out_passthrough.info().width, out_badrgb.info().width);
+        assert_eq!(out_passthrough.info().height, out_badrgb.info().height);
 
-        // Pixel data should be identical
-        let px_default = out_default.pixels();
-        let px_raw = out_raw.pixels();
-        assert_eq!(px_default.rows(), px_raw.rows());
-        for row in 0..px_default.rows() {
+        let px_a = out_passthrough.pixels();
+        let px_b = out_badrgb.pixels();
+        assert_eq!(px_a.rows(), px_b.rows());
+        for row in 0..px_a.rows() {
             assert_eq!(
-                px_default.row(row),
-                px_raw.row(row),
-                "Row {row} differs between default and cmyk_raw for an RGB JPEG"
+                px_a.row(row),
+                px_b.row(row),
+                "Row {row} differs between Passthrough and BadRgb for an RGB JPEG"
             );
         }
     }
 
     #[test]
-    fn cmyk_raw_pixel_values_are_nonzero() {
+    fn cmyk_passthrough_pixel_values_are_nonzero() {
         let data = match load_cmyk_test_image() {
             Some(d) => d,
             None => {
@@ -3144,8 +3154,7 @@ mod cmyk_tests {
             }
         };
 
-        let dec = JpegDecoderConfig::new().cmyk_output_raw(true);
-        let output = dec
+        let output = JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()
@@ -3169,12 +3178,12 @@ mod cmyk_tests {
     }
 
     #[test]
-    fn cmyk_raw_default_unchanged() {
-        // Verify that JpegDecoderConfig::new() defaults to cmyk_output_raw = false
+    fn cmyk_handling_default_is_passthrough() {
         let dec = JpegDecoderConfig::new();
-        assert!(
-            !dec.is_cmyk_output_raw(),
-            "Default should not have raw CMYK output"
+        assert_eq!(
+            dec.is_cmyk_handling(),
+            CmykHandling::Passthrough,
+            "Default CmykHandling should be Passthrough"
         );
     }
 
@@ -3186,7 +3195,7 @@ mod cmyk_tests {
     }
 
     #[test]
-    fn cmyk_raw_non_ycck_roundtrip() {
+    fn cmyk_passthrough_non_ycck_roundtrip() {
         let data = match load_pure_cmyk_test_image() {
             Some(d) => d,
             None => {
@@ -3195,18 +3204,17 @@ mod cmyk_tests {
             }
         };
 
-        // Decode with default (auto RGB conversion)
-        let dec_rgb = JpegDecoderConfig::new();
-        let output_rgb = dec_rgb
+        // Naive CMYK→RGB (BadRgb)
+        let output_rgb = JpegDecoderConfig::new()
+            .cmyk_handling(CmykHandling::BadRgb)
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()
             .decode()
             .unwrap();
 
-        // Decode with raw CMYK
-        let dec_cmyk = JpegDecoderConfig::new().cmyk_output_raw(true);
-        let output_cmyk = dec_cmyk
+        // Passthrough (default): raw CMYK bytes
+        let output_cmyk = JpegDecoderConfig::new()
             .job()
             .decoder(Cow::Borrowed(&data), &[])
             .unwrap()

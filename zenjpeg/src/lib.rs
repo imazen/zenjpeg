@@ -333,6 +333,7 @@ pub mod profile;
 mod codec;
 #[cfg(feature = "zencodec")]
 pub use codec::{
+    CmykHandling,
     JpegDecodeJob,
     JpegDecoder,
     JpegDecoderConfig,
