@@ -93,9 +93,39 @@ fn bench_encode(suite: &mut Suite) {
     // and measure the impact of XYB-specific perf work (streaming-through
     // gating, color conversion, parallel encoding).
     suite.group("encode_q85_1k_xyb", |g| {
+        use zenjpeg::encode::encoder_types::HuffmanStrategy;
+
         g.bench("ycbcr 4:2:0 progressive (baseline)", move |b| {
             b.iter(|| {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        // Same as YCbCr 4:2:0 baseline but with Fixed huffman → triggers
+        // streaming-through path. Quantifies the streaming-through speedup
+        // ceiling for the YCbCr path so we can predict XYB potential.
+        g.bench(
+            "ycbcr 4:2:0 baseline +Fixed (streaming-through)",
+            move |b| {
+                b.iter(|| {
+                    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                        .progressive(false)
+                        .huffman(HuffmanStrategy::Fixed);
+                    config
+                        .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            },
+        );
+
+        g.bench("ycbcr 4:2:0 baseline +Optimize (buffered)", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+                    .progressive(false)
+                    .huffman(HuffmanStrategy::Optimize);
                 config
                     .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
                     .unwrap()
