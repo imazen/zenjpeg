@@ -533,12 +533,14 @@ dependencies = [
 
 [[package]]
 name = "codec-corpus"
-version = "1.0.3"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bca18d8c762ea5837d394966f3fe3194bf84fae968d8639058c3d845d212d9f"
+checksum = "37821f76b23825d00364b26f2df079f23e3fb3703fad2de344e8cbb8741fa38d"
 dependencies = [
  "dirs",
  "fd-lock",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
