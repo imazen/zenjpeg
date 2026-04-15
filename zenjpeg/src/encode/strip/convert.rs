@@ -760,20 +760,29 @@ impl StripProcessor {
         // For XYB mode, we handle the components differently:
         // - X is in y_strip (full res, already padded)
         // - Y is in cb_strip (full res, needs to stay there for DCT)
-        // - B needs 2x2 downsampling (cr_strip → cr_down)
+        // - B handling depends on xyb_subsampling:
+        //   - BQuarter: 2x2 downsample cr_strip → cr_down (default, R:2×2 G:2×2 B:1×1)
+        //   - Full: copy cr_strip → cr_down at full resolution (all R:1×1 G:1×1 B:1×1)
         //
-        // Note: The DCT step will need to handle XYB's component structure specially
-        // since Y (cb_strip) is full resolution unlike standard chroma.
-
-        // Downsample B channel (cr_strip → cr_down) using 2x2 box filter
+        // Note: The DCT step uses layout.b_blocks_*, layout.b_strip_height,
+        // layout.padded_b_width — all sized correctly by LayoutParams.
         let b_width = self.layout.b_width;
         let b_height = self.layout.b_strip_height_for(strip_height);
-        crate::encode_simd::downsample_2x2_simd_inplace(
-            &self.cr_strip[..strip_height * width],
-            width,
-            strip_height,
-            &mut self.cr_down[..b_width * b_height],
-        );
+
+        if self.layout.xyb_subsampling == super::super::encoder_types::XybSubsampling::Full {
+            // Full mode: B is at luma resolution. Copy cr_strip → cr_down row-by-row
+            // (cr_strip stride = width, cr_down stride = b_width = width).
+            self.cr_down[..strip_height * b_width]
+                .copy_from_slice(&self.cr_strip[..strip_height * b_width]);
+        } else {
+            // BQuarter mode: 2x2 box filter downsample.
+            crate::encode_simd::downsample_2x2_simd_inplace(
+                &self.cr_strip[..strip_height * width],
+                width,
+                strip_height,
+                &mut self.cr_down[..b_width * b_height],
+            );
+        }
 
         // Rearrange and pad cr_down (B channel) using XYB-specific function
         self.pad_b_down_strip(b_height, b_width);

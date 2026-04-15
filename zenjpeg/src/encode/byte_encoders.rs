@@ -136,11 +136,8 @@ impl BytesEncoder {
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
-        if matches!(
-            config.color_mode,
-            super::encoder_types::ColorMode::Xyb { .. }
-        ) {
-            builder = builder.use_xyb(true);
+        if let super::encoder_types::ColorMode::Xyb { subsampling } = config.color_mode {
+            builder = builder.use_xyb(true).xyb_subsampling(subsampling);
         }
 
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)

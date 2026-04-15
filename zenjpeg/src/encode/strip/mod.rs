@@ -497,6 +497,7 @@ impl StripProcessor {
             DownsamplingMethod::Box,
             0,
             false,
+            crate::encode::encoder_types::XybSubsampling::BQuarter,
             quant,
             true, // aq_enabled
         )
@@ -506,6 +507,7 @@ impl StripProcessor {
     ///
     /// All geometry is computed once by `LayoutParams` — no duplicate calculations.
     /// `quant` provides all quantization tables and zero-bias parameters.
+    /// `xyb_subsampling` controls the B-channel layout when `use_xyb` is true.
     pub fn with_xyb(
         width: usize,
         height: usize,
@@ -514,6 +516,7 @@ impl StripProcessor {
         chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
         use_xyb: bool,
+        xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
@@ -525,6 +528,7 @@ impl StripProcessor {
             chroma_downsampling,
             _restart_interval,
             use_xyb,
+            xyb_subsampling,
             quant,
             aq_enabled,
             false,
@@ -542,6 +546,7 @@ impl StripProcessor {
         chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
         use_xyb: bool,
+        xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
         quant: QuantContext,
         aq_enabled: bool,
     ) -> Result<Self> {
@@ -553,6 +558,7 @@ impl StripProcessor {
             chroma_downsampling,
             _restart_interval,
             use_xyb,
+            xyb_subsampling,
             quant,
             aq_enabled,
             true,
@@ -567,11 +573,13 @@ impl StripProcessor {
         chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
         use_xyb: bool,
+        xyb_subsampling: crate::encode::encoder_types::XybSubsampling,
         quant: QuantContext,
         aq_enabled: bool,
         streaming_through: bool,
     ) -> Result<Self> {
-        let layout = LayoutParams::new(width, height, subsampling, use_xyb);
+        let layout =
+            LayoutParams::new_xyb(width, height, subsampling, use_xyb, xyb_subsampling);
 
         let strip_height = layout.strip_height;
         let padded_width = layout.padded_width;

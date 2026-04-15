@@ -119,42 +119,76 @@ size headroom in B is so small it's unlikely to clear measurement noise.
    measure with butteraugli alongside SSIM2 — SSIMULACRA2 may be over-weighting
    chroma here for graphics.
 
-## Second bug found: `XybSubsampling::Full` is silently ignored
+## Second bug found and fixed: `XybSubsampling::Full` was silently ignored
 
-A follow-up sweep added a `zen_xyb444` baseline (`EncoderConfig::xyb(q,
-XybSubsampling::Full)`) plus a parallel B-coarseness sweep at full-B
-resolution. **Every (image, Q, factor) row produced byte-identical and
-ssim2-identical output to its `BQuarter` sibling.** CSV:
-`benchmarks/rd_explore_xyb444_2026-04-15.csv` (720 rows).
+The first follow-up sweep (`rd_explore_xyb444_2026-04-15.csv`, 720 rows)
+showed every `zen_xyb444*` row producing byte-identical output to its
+`BQuarter` sibling. Root cause: the encoder discarded the `XybSubsampling`
+enum on the way to the bitstream:
 
-That's not user error — the encoder discards the `XybSubsampling` enum
-on the way to the bitstream:
+- `serialize.rs::write_frame_header_xyb_ex` hard-coded SOF sampling factors
+  `0x22, 0x22, 0x11` (BQuarter)
+- `layout.rs` hard-set `v_samp = 2` whenever `use_xyb`, ignoring any
+  chroma-subsampling input
+- `EncoderConfig::xyb(q, XybSubsampling::Full)` built a config that *claimed*
+  full B but produced a BQuarter bitstream with no warning, no error.
 
-- `zenjpeg/src/encode/serialize.rs:332-344` — `write_frame_header_xyb_ex` writes
-  the SOF entries for R/G/B with hard-coded sampling factors `0x22, 0x22, 0x11`.
-  No branch on `subsampling`. The CLAUDE.md TODO list calls this out as
-  "low priority, always correct for XYB" — but it is *not* "always correct"
-  when the public API exposes `XybSubsampling::Full` as a buildable variant.
-- `zenjpeg/src/encode/layout.rs:164-171` — `LayoutParams` hard-sets `v_samp = 2`
-  whenever `use_xyb`, ignoring the chroma-subsampling input. The XYB enum
-  never reaches this layer either.
+Fixed in the same commit as this sweep. The fix threads `XybSubsampling`
+through `StreamingEncoderBuilder` → `ComputedConfig` → `LayoutParams` →
+`StripProcessor` and branches the SOF emitter, the layout `v_samp / b_*`
+fields, and the B-channel handling in `convert_strip_to_xyb` (skip the
+2×2 box filter, copy at full resolution instead).
 
-So `EncoderConfig::xyb(q, XybSubsampling::Full)` builds a config that
-*claims* full B but produces a BQuarter bitstream. There is no warning,
-no error, no debug assertion. The 4:4:4 XYB rows in this CSV exist
-purely as evidence of the bug — they have no independent RD signal.
+After the fix, `zen_xyb444` differs from `zen_xyb` and from the corresponding
+BQuarter rows. Fresh data: `benchmarks/rd_explore_xyb444_2026-04-15b.csv`.
 
-**Recommended next steps (not done in this commit):**
-- Either implement real `XybSubsampling::Full` (R/G/B all `0x11`,
-  layout `v_samp=1`, no B downsampler) — straightforward but needs a
-  full encode/decode roundtrip path test
-- Or remove `XybSubsampling::Full` from the public API and make
-  `BQuarter` the only variant
-- Update the CLAUDE.md TODO line and the "## Planned Features / Remaining
-  Hardening" entry to flag this as a behavioural divergence from the docs,
-  not just a cosmetic hardcode.
+## XYB 4:4:4 RD result (with the fix in place)
 
-The B-coarseness conclusion above is unaffected: at 4:2:0 (which is what
-both code paths actually emit), no factor in {1.25 … 3.0} produced an RD
-win. Whether 4:4:4 XYB *would* have produced a win cannot be answered
-until the layout bug is fixed.
+XYB at full B resolution is a major quality lift on every image class,
+at a roughly proportional size cost:
+
+### Frymire (screenshot) — XYB 4:4:4 vs XYB 4:2:0
+
+| Q  | xyb444 bytes | xyb444 ssim2 | Δsize_vs_BQ | Δssim_vs_BQ |
+|----|--------------|--------------|-------------|--------------|
+| 50 |   293919 | 53.31 | +7.7% | **+9.89** |
+| 70 |   381409 | 63.70 | +7.8% | **+10.72** |
+| 85 |   521607 | 74.04 | +8.5% | **+12.16** |
+| 95 |   820337 | 84.64 | +11.0% | **+14.93** |
+
+That's 10–15 SSIM2 points for ~8% more bytes — the largest single-knob
+quality lift surfaced anywhere in this exploration. Screenshots have
+hard chroma edges that the 2×2 B downsample shreds.
+
+### Photos (6 CID22-512)
+
+| Q  | xyb444 bytes | xyb444 ssim2 | Δsize_vs_BQ | Δssim_vs_BQ |
+|----|--------------|--------------|-------------|--------------|
+| 50 | 25355 | 65.85 | +5.1% | +3.48 |
+| 85 | 48764 | 80.77 | +5.1% | +3.05 |
+| 95 | 87048 | 87.81 | +6.4% | +2.21 |
+
+### Graphics (3 gb82-sc)
+
+| Q  | xyb444 bytes | xyb444 ssim2 | Δsize_vs_BQ | Δssim_vs_BQ |
+|----|--------------|--------------|-------------|--------------|
+| 50 | 75348 | 74.21 | +7.5% | +4.19 |
+| 85 | 115948 | 86.08 | +5.8% | +3.26 |
+| 95 | 161470 | 90.04 | +5.8% | +2.73 |
+
+### B-coarsening on top of XYB 4:4:4
+
+Same conclusion as on 4:2:0: not a win. Coarsening B at 4:4:4 saves ~3-5%
+bytes for ~2-7 SSIM2 loss across the {1.5, 2.0} range. The headline
+quality lift comes from the 4:4:4 layout, not from coarsening B.
+
+## Conclusion (updated)
+
+1. **Don't ship a B-coarsening knob.** Confirmed on both 4:2:0 and 4:4:4
+   XYB layouts: no factor in {1.25 … 3.0} is Pareto-better than the default.
+2. **`XybSubsampling::Full` now actually works** and is a genuine RD lever
+   for content with chroma-rich detail (screenshots especially). 4:2:0 XYB
+   remains a sane default; users who want top-end quality on graphics or
+   screenshots should pass `XybSubsampling::Full`.
+3. **Decoder trap deprecated.** `decode_jpeg_to_rgb` is `#[deprecated]` in
+   `zenjpeg-bench-utils` pointing at `decode_jpeg_with_icc`.

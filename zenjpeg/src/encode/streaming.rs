@@ -270,6 +270,7 @@ impl StreamingEncoder {
                 builder.chroma_downsampling,
                 builder.restart_interval,
                 builder.use_xyb,
+                builder.xyb_subsampling,
                 quant_ctx,
                 builder.aq_enabled,
             )?
@@ -282,6 +283,7 @@ impl StreamingEncoder {
                 builder.chroma_downsampling,
                 builder.restart_interval,
                 builder.use_xyb,
+                builder.xyb_subsampling,
                 quant_ctx,
                 builder.aq_enabled,
             )?
@@ -318,6 +320,7 @@ impl StreamingEncoder {
             chroma_downsampling: builder.chroma_downsampling,
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
+            xyb_subsampling: builder.xyb_subsampling,
             #[cfg(feature = "parallel")]
             parallel: builder.parallel,
             #[cfg(feature = "trellis")]

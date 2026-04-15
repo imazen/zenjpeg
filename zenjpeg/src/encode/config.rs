@@ -54,6 +54,8 @@ pub struct ComputedConfig {
     pub subsampling: Subsampling,
     /// Use XYB color space (uses legacy encoder path)
     pub use_xyb: bool,
+    /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
+    pub xyb_subsampling: super::encoder_types::XybSubsampling,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
     /// Enable parallel encoding (requires `parallel` feature)
@@ -270,6 +272,7 @@ impl Default for ComputedConfig {
             // Use 4:4:4 - this is what the encoder actually supports currently
             subsampling: Subsampling::S444,
             use_xyb: false,
+            xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             restart_interval: 0,
             #[cfg(feature = "parallel")]
             parallel: false,

@@ -4,6 +4,7 @@
 //! This eliminates the class of bugs where `v_samp`, `padded_width`, or block
 //! dimensions are computed independently in multiple locations and get out of sync.
 
+use super::encoder_types::XybSubsampling;
 use crate::types::Subsampling;
 
 /// Immutable image layout computed once from (subsampling, use_xyb, width, height).
@@ -15,6 +16,12 @@ pub(crate) struct LayoutParams {
     pub height: usize,
     pub subsampling: Subsampling,
     pub use_xyb: bool,
+    /// XYB-only: layout for the B (blue-yellow) component.
+    /// - `BQuarter` (default): R:2×2, G:2×2, B:1×1 — B at quarter resolution.
+    /// - `Full`: R:1×1, G:1×1, B:1×1 — all components at full resolution.
+    /// Ignored when `use_xyb` is false; defaults to `BQuarter` so the field
+    /// has a stable value on the YCbCr path.
+    pub xyb_subsampling: XybSubsampling,
 
     // === Luma geometry ===
     pub mcu_size: usize,
@@ -86,13 +93,33 @@ impl LayoutParams {
     /// This consolidates ALL geometry that was previously computed independently
     /// in `StripProcessor::with_xyb()`, `StreamingAQ::new()`, `init_aq()`,
     /// and `estimate_memory_*` functions.
+    ///
+    /// Convenience for the common (XYB-BQuarter) case. Use [`new_xyb`] to
+    /// opt into a specific [`XybSubsampling`] variant (e.g. `Full`).
+    #[allow(dead_code)] // production code uses `new_xyb`; kept for tests + estimators
     pub fn new(width: usize, height: usize, subsampling: Subsampling, use_xyb: bool) -> Self {
+        Self::new_xyb(width, height, subsampling, use_xyb, XybSubsampling::BQuarter)
+    }
+
+    /// Creates layout parameters with an explicit XYB sub-sampling variant.
+    ///
+    /// `xyb_subsampling` is consulted only when `use_xyb` is true; otherwise
+    /// the YCbCr `subsampling` enum drives all geometry.
+    pub fn new_xyb(
+        width: usize,
+        height: usize,
+        subsampling: Subsampling,
+        use_xyb: bool,
+        xyb_subsampling: XybSubsampling,
+    ) -> Self {
+        let xyb_full = use_xyb && xyb_subsampling == XybSubsampling::Full;
         // Strip height is 16 for:
         // - 4:2:0 and 4:4:0 (2 MCU rows of chroma)
-        // - XYB mode (B component is always 2x2 downsampled)
-        let strip_height = match (subsampling, use_xyb) {
-            (Subsampling::S420 | Subsampling::S440, _) => 16,
-            (_, true) => 16, // XYB always needs 16-row strips for B component
+        // - XYB BQuarter mode (B is 2x2 downsampled, needs 16 rows for one B-row)
+        // XYB Full uses 8 since all components share 8x8 blocks.
+        let strip_height = match (subsampling, use_xyb, xyb_full) {
+            (Subsampling::S420 | Subsampling::S440, _, _) => 16,
+            (_, true, false) => 16, // XYB BQuarter: 16-row strips for B
             _ => 8,
         };
 
@@ -113,16 +140,25 @@ impl LayoutParams {
         // Chroma planes are padded to multiples of 8 (block size)
         let padded_c_width = (c_width + 7) / 8 * 8;
 
-        // B channel width for XYB mode (always 2x2 downsampled)
-        let b_width = (width + 1) / 2;
-        let padded_b_width = if use_xyb {
-            (b_width + 7) / 8 * 8
+        // B channel width for XYB mode.
+        // - BQuarter (default): B is 2x2 downsampled => half-width
+        // - Full: B matches X/Y resolution => full width
+        let (b_width, padded_b_width) = if use_xyb && !xyb_full {
+            let bw = (width + 1) / 2;
+            (bw, (bw + 7) / 8 * 8)
+        } else if use_xyb && xyb_full {
+            (width, padded_width)
         } else {
-            padded_c_width // Not XYB, use same as chroma
+            ((width + 1) / 2, padded_c_width)
         };
 
-        // B-channel strip height (always 2x2 downsampled, used by XYB)
-        let b_strip_height = (strip_height + 1) / 2;
+        // B-channel strip height.
+        // BQuarter: 2x2 downsampled (half strip). Full: same as luma strip.
+        let b_strip_height = if use_xyb && xyb_full {
+            strip_height
+        } else {
+            (strip_height + 1) / 2
+        };
 
         // Block counts (luma)
         let blocks_w = (width + 7) / 8;
@@ -152,17 +188,21 @@ impl LayoutParams {
 
         let padded_c_blocks_w = padded_c_width / 8;
 
-        // B channel block dimensions for XYB mode (always 2x2 downsampled)
-        let (b_blocks_w, b_blocks_h) = if use_xyb {
+        // B channel block dimensions for XYB mode.
+        // - BQuarter: B is 2x2 downsampled => quarter the block count of luma
+        // - Full: B matches luma block count
+        let (b_blocks_w, b_blocks_h) = if use_xyb && !xyb_full {
             ((width + 15) / 16, (height + 15) / 16)
+        } else if use_xyb && xyb_full {
+            (y_blocks_w, y_blocks_h)
         } else {
             (c_blocks_w, c_blocks_h)
         };
 
-        // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2
-        // regardless of the chroma subsampling enum.
+        // In XYB BQuarter, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2.
+        // In XYB Full, all components are R:1×1, G:1×1, B:1×1 so max_v_samp_factor=1.
         let v_samp = if use_xyb {
-            2
+            if xyb_full { 1 } else { 2 }
         } else {
             match subsampling {
                 Subsampling::S420 | Subsampling::S440 => 2,
@@ -193,6 +233,7 @@ impl LayoutParams {
             height,
             subsampling,
             use_xyb,
+            xyb_subsampling,
             mcu_size,
             padded_width,
             strip_height,
@@ -238,10 +279,14 @@ impl LayoutParams {
 
     /// B-channel strip height for a given actual strip height.
     ///
-    /// B channel is always 2x2 downsampled in XYB mode.
-    /// For full-height strips, this equals `self.b_strip_height`.
+    /// In BQuarter (default), B is 2×2 downsampled so this returns half-height.
+    /// In Full mode, B matches luma so this returns the actual height.
     pub fn b_strip_height_for(&self, actual_strip_height: usize) -> usize {
-        (actual_strip_height + 1) / 2
+        if self.use_xyb && self.xyb_subsampling == XybSubsampling::Full {
+            actual_strip_height
+        } else {
+            (actual_strip_height + 1) / 2
+        }
     }
 }
 
@@ -350,6 +395,50 @@ mod tests {
         assert_eq!(lp.b_width, 960);
         assert_eq!(lp.b_blocks_w, 120);
         assert_eq!(lp.b_blocks_h, 68);
+    }
+
+    #[test]
+    fn test_xyb_full() {
+        // XYB Full: R:1×1, G:1×1, B:1×1, no B downsampling.
+        let lp = LayoutParams::new_xyb(1920, 1080, Subsampling::S444, true, XybSubsampling::Full);
+        assert_eq!(lp.use_xyb, true);
+        assert_eq!(lp.xyb_subsampling, XybSubsampling::Full);
+        assert_eq!(lp.strip_height, 8); // luma 8x8 blocks, no v_samp=2 needed
+        assert_eq!(lp.v_samp, 1);
+        // B matches X/Y resolution
+        assert_eq!(lp.b_width, 1920);
+        assert_eq!(lp.padded_b_width, 1920);
+        assert_eq!(lp.b_strip_height, 8);
+        assert_eq!(lp.b_blocks_w, lp.y_blocks_w); // 240
+        assert_eq!(lp.b_blocks_h, lp.y_blocks_h); // 135
+        // pending capacity reflects v_samp=1 for XYB Full
+        assert_eq!(lp.pending_y_capacity, 240); // padded_blocks_w * 1
+        // b_strip_height_for should return actual_strip in Full mode
+        assert_eq!(lp.b_strip_height_for(8), 8);
+        assert_eq!(lp.b_strip_height_for(5), 5);
+    }
+
+    #[test]
+    fn test_xyb_full_vs_bquarter_dimensions_differ() {
+        let bq = LayoutParams::new_xyb(
+            1920,
+            1080,
+            Subsampling::S444,
+            true,
+            XybSubsampling::BQuarter,
+        );
+        let full =
+            LayoutParams::new_xyb(1920, 1080, Subsampling::S444, true, XybSubsampling::Full);
+        // BQuarter: B half the resolution
+        assert_eq!(bq.b_width, 960);
+        assert_eq!(bq.b_blocks_w, 120);
+        assert_eq!(bq.v_samp, 2);
+        assert_eq!(bq.strip_height, 16);
+        // Full: B at luma resolution, simpler MCU
+        assert_eq!(full.b_width, 1920);
+        assert_eq!(full.b_blocks_w, 240);
+        assert_eq!(full.v_samp, 1);
+        assert_eq!(full.strip_height, 8);
     }
 
     #[test]

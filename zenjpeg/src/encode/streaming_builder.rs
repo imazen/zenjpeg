@@ -32,6 +32,8 @@ pub(crate) struct StreamingEncoderBuilder {
     /// `None` means use perceptual defaults based on color mode and quality.
     pub(crate) encoding_tables: Option<Box<EncodingTables>>,
     pub(crate) use_xyb: bool,
+    /// XYB B-channel layout (BQuarter or Full). Ignored when `use_xyb` is false.
+    pub(crate) xyb_subsampling: super::encoder_types::XybSubsampling,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
@@ -76,6 +78,7 @@ impl StreamingEncoderBuilder {
             restart_interval: 0,
             encoding_tables: None,
             use_xyb: false,
+            xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             deringing: true,
             aq_enabled: true,
             allow_16bit_quant_tables: false,
@@ -194,6 +197,16 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn use_xyb(mut self, enable: bool) -> Self {
         self.use_xyb = enable;
+        self
+    }
+
+    /// Sets the XYB B-channel subsampling layout. Ignored unless `use_xyb` is set.
+    #[must_use]
+    pub(crate) fn xyb_subsampling(
+        mut self,
+        sub: super::encoder_types::XybSubsampling,
+    ) -> Self {
+        self.xyb_subsampling = sub;
         self
     }
 
@@ -347,11 +360,12 @@ impl StreamingEncoderBuilder {
     /// to correctly handle XYB mode (strip_height=16, v_samp=2).
     #[must_use]
     pub(crate) fn estimate_memory_usage(&self) -> usize {
-        let lp = LayoutParams::new(
+        let lp = LayoutParams::new_xyb(
             self.width as usize,
             self.height as usize,
             self.subsampling,
             self.use_xyb,
+            self.xyb_subsampling,
         );
 
         let y_block_count = lp.total_y_blocks;
@@ -414,11 +428,12 @@ impl StreamingEncoderBuilder {
     /// to correctly handle XYB mode.
     #[must_use]
     pub(crate) fn estimate_memory_ceiling(&self) -> usize {
-        let lp = LayoutParams::new(
+        let lp = LayoutParams::new_xyb(
             self.width as usize,
             self.height as usize,
             self.subsampling,
             self.use_xyb,
+            self.xyb_subsampling,
         );
 
         // Use padded dimensions for ceiling (worst case)

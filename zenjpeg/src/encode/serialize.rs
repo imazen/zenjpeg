@@ -329,18 +329,23 @@ impl ComputedConfig {
         output.push(header_width as u8);
         output.push(3); // Number of components
 
-        // XYB sampling: R:2×2, G:2×2, B:1×1
-        // This means R and G are full resolution, B is 1/4 resolution
+        // XYB sampling layout depends on `xyb_subsampling`:
+        // - BQuarter (default): R:2×2, G:2×2, B:1×1 (B at quarter resolution)
+        // - Full: R:1×1, G:1×1, B:1×1 (all at full resolution)
+        let rg_samp = match self.xyb_subsampling {
+            super::encoder_types::XybSubsampling::Full => 0x11,
+            super::encoder_types::XybSubsampling::BQuarter => 0x22,
+        };
         output.push(b'R'); // Component ID = 'R' (82)
-        output.push(0x22); // 2x2 sampling
+        output.push(rg_samp);
         output.push(0); // Quant table 0
 
         output.push(b'G'); // Component ID = 'G' (71)
-        output.push(0x22); // 2x2 sampling
+        output.push(rg_samp);
         output.push(1); // Quant table 1
 
         output.push(b'B'); // Component ID = 'B' (66)
-        output.push(0x11); // 1x1 sampling (subsampled)
+        output.push(0x11); // B is always 1x1 (full when rg_samp=0x11, "subsampled relative" when 0x22)
         output.push(2); // Quant table 2
 
         Ok(())
