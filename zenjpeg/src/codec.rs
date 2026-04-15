@@ -3116,4 +3116,96 @@ mod cmyk_tests {
             "Default should not have raw CMYK output"
         );
     }
+
+    /// Load the non-YCCK CMYK test image (Adobe transform=0).
+    fn load_pure_cmyk_test_image() -> Option<Vec<u8>> {
+        let path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/cymk.jpg");
+        std::fs::read(&path).ok()
+    }
+
+    #[test]
+    fn cmyk_raw_non_ycck_roundtrip() {
+        let data = match load_pure_cmyk_test_image() {
+            Some(d) => d,
+            None => {
+                eprintln!("SKIP: cymk.jpg test image not found");
+                return;
+            }
+        };
+
+        // Decode with default (auto RGB conversion)
+        let dec_rgb = JpegDecoderConfig::new();
+        let output_rgb = dec_rgb
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Decode with raw CMYK
+        let dec_cmyk = JpegDecoderConfig::new().cmyk_output_raw(true);
+        let output_cmyk = dec_cmyk
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        let cmyk_info = output_cmyk.info();
+        assert_eq!(cmyk_info.source_color.channel_count, Some(4));
+        assert!(!cmyk_info.has_alpha);
+        assert_eq!(output_cmyk.pixels().descriptor().bytes_per_pixel(), 4);
+
+        // Same dimensions
+        assert_eq!(output_rgb.info().width, cmyk_info.width);
+        assert_eq!(output_rgb.info().height, cmyk_info.height);
+
+        let w = cmyk_info.width as usize;
+        let h = cmyk_info.height as usize;
+        let cmyk_pixels = output_cmyk.pixels();
+        let cmyk_bytes: Vec<u8> = {
+            let mut all = Vec::with_capacity(w * h * 4);
+            for row in 0..cmyk_pixels.rows() {
+                all.extend_from_slice(cmyk_pixels.row(row));
+            }
+            all
+        };
+        let rgb_pixels = output_rgb.pixels();
+        let rgb_bytes: Vec<u8> = {
+            let mut all = Vec::with_capacity(w * h * 3);
+            for row in 0..rgb_pixels.rows() {
+                all.extend_from_slice(rgb_pixels.row(row));
+            }
+            all
+        };
+
+        // Manual CMYK→RGB using Adobe inverted formula
+        let mut max_diff: u32 = 0;
+        for i in 0..(w * h) {
+            let c = cmyk_bytes[i * 4] as u32;
+            let m = cmyk_bytes[i * 4 + 1] as u32;
+            let y = cmyk_bytes[i * 4 + 2] as u32;
+            let k = cmyk_bytes[i * 4 + 3] as u32;
+
+            let r_manual = ((c * k + 127) / 255) as u8;
+            let g_manual = ((m * k + 127) / 255) as u8;
+            let b_manual = ((y * k + 127) / 255) as u8;
+
+            let r_auto = rgb_bytes[i * 3];
+            let g_auto = rgb_bytes[i * 3 + 1];
+            let b_auto = rgb_bytes[i * 3 + 2];
+
+            let dr = (r_manual as i32 - r_auto as i32).unsigned_abs();
+            let dg = (g_manual as i32 - g_auto as i32).unsigned_abs();
+            let db = (b_manual as i32 - b_auto as i32).unsigned_abs();
+
+            max_diff = max_diff.max(dr).max(dg).max(db);
+        }
+
+        assert!(
+            max_diff <= 2,
+            "Pure CMYK: manual vs auto CMYK→RGB max pixel diff = {max_diff}, expected <=2"
+        );
+    }
 }
