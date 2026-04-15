@@ -30,7 +30,10 @@ use super::DeblockMode;
 use super::config::ResolvedCrop;
 use super::pipeline::StripProcessor;
 use super::pool::PoolGuard;
-use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycbcr_to_rgb_f32};
+use crate::color::{
+    rgb_u8_to_xrgba_u8, ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8, ycbcr_to_rgb,
+    ycbcr_to_rgb_f32,
+};
 use crate::deblock::BoundaryStrength;
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result, ScanRead};
@@ -933,6 +936,14 @@ impl<'a> ScanlineReader<'a> {
             return ws.mcu_pixel_height;
         }
         self.strip.mcu_height
+    }
+
+    /// Returns `true` when the reader has a fully-materialized RGB buffer
+    /// backing it (progressive JPEGs, coefficient-deblock fallbacks, exotic
+    /// chroma sampling). Callers can use this to skip per-MCU-strip loops and
+    /// request the whole image in a single `read_rows_*` call.
+    pub fn is_buffered(&self) -> bool {
+        self.buffered_rgb.is_some()
     }
 
     /// Returns the number of chroma rows per MCU row at native resolution.
@@ -2218,22 +2229,14 @@ impl<'a> ScanlineReader<'a> {
                         out_row[x * 4 + 2] = v;
                         out_row[x * 4 + 3] = 255;
                     }
-                } else if swap_rb {
-                    let src_offset = image_row * src_row_bytes + crop_x * 3;
-                    for x in 0..out_width {
-                        out_row[x * 4] = buffer[src_offset + x * 3 + 2]; // B
-                        out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1]; // G
-                        out_row[x * 4 + 2] = buffer[src_offset + x * 3]; // R
-                        out_row[x * 4 + 3] = 255;
-                    }
                 } else {
+                    // Fused SIMD RGB8 → (R/B/G)BA with A=255.
                     let src_offset = image_row * src_row_bytes + crop_x * 3;
-                    for x in 0..out_width {
-                        out_row[x * 4] = buffer[src_offset + x * 3];
-                        out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
-                        out_row[x * 4 + 2] = buffer[src_offset + x * 3 + 2];
-                        out_row[x * 4 + 3] = 255;
-                    }
+                    rgb_u8_to_xrgba_u8(
+                        &buffer[src_offset..src_offset + out_width * 3],
+                        &mut out_row[..out_width * 4],
+                        swap_rb,
+                    );
                 }
 
                 rows_written += 1;
@@ -2266,32 +2269,33 @@ impl<'a> ScanlineReader<'a> {
                 }
             } else {
                 let (y_row, cb_row, cr_row) = self.strip.row_planes(self.row_in_mcu, strip_cols);
-
-                for x in 0..out_width {
-                    let sx = crop_x + x;
-                    let (r, g, b) = if self.is_rgb {
-                        (
-                            y_row[sx].clamp(0, 255) as u8,
-                            cb_row[sx].clamp(0, 255) as u8,
-                            cr_row[sx].clamp(0, 255) as u8,
-                        )
-                    } else {
-                        ycbcr_to_rgb(
-                            y_row[sx].clamp(0, 255) as u8,
-                            cb_row[sx].clamp(0, 255) as u8,
-                            cr_row[sx].clamp(0, 255) as u8,
-                        )
-                    };
-                    if swap_rb {
-                        out_row[x * 4] = b;
-                        out_row[x * 4 + 1] = g;
-                        out_row[x * 4 + 2] = r;
-                    } else {
-                        out_row[x * 4] = r;
-                        out_row[x * 4 + 1] = g;
-                        out_row[x * 4 + 2] = b;
+                if self.is_rgb {
+                    // Source is untransformed RGB planes — straight copy + alpha.
+                    for x in 0..out_width {
+                        let sx = crop_x + x;
+                        let r = y_row[sx].clamp(0, 255) as u8;
+                        let g = cb_row[sx].clamp(0, 255) as u8;
+                        let b = cr_row[sx].clamp(0, 255) as u8;
+                        if swap_rb {
+                            out_row[x * 4] = b;
+                            out_row[x * 4 + 1] = g;
+                            out_row[x * 4 + 2] = r;
+                        } else {
+                            out_row[x * 4] = r;
+                            out_row[x * 4 + 1] = g;
+                            out_row[x * 4 + 2] = b;
+                        }
+                        out_row[x * 4 + 3] = 255;
                     }
-                    out_row[x * 4 + 3] = 255;
+                } else {
+                    // Fused SIMD YCbCr→4bpp with alpha=255.
+                    ycbcr_planes_i16_to_xrgba_u8(
+                        &y_row[crop_x..crop_x + out_width],
+                        &cb_row[crop_x..crop_x + out_width],
+                        &cr_row[crop_x..crop_x + out_width],
+                        &mut out_row[..out_width * 4],
+                        swap_rb,
+                    );
                 }
             }
 

@@ -2210,6 +2210,102 @@ impl DecodeConfig {
     /// )?;
     /// println!("{}x{}, hash={}", info.dimensions.width, info.dimensions.height, hash);
     /// ```
+    /// Decode the JPEG and write the pixel data directly into a caller-owned
+    /// buffer, returning the number of bytes written.
+    ///
+    /// Skips the output [`Vec`] allocation that [`decode()`](Self::decode)
+    /// performs. Suitable when the caller already owns the output backing
+    /// store (e.g. a sink in a streaming pipeline). Supports the same u8
+    /// RGB-family / Gray output formats as the streaming fast paths; other
+    /// formats route through [`decode()`](Self::decode) + memcpy.
+    ///
+    /// `dst` must be at least `width * height * bytes_per_pixel(format)`.
+    pub fn decode_into(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: impl Stop,
+    ) -> Result<usize> {
+        // Eligible direct path: standard RGB-family u8 / gray u8, no transform,
+        // no crop, no Knusperli, default output target.
+        let direct_eligible = matches!(
+            format,
+            PixelFormat::Rgb
+                | PixelFormat::Bgr
+                | PixelFormat::Rgba
+                | PixelFormat::Bgra
+                | PixelFormat::Bgrx
+                | PixelFormat::Gray
+        ) && self.compute_effective_transform_from_data(data)
+            == crate::lossless::LosslessTransform::None
+            && !matches!(self.deblock_mode, DeblockMode::Knusperli | DeblockMode::Auto)
+            && self.output_target == OutputTarget::Srgb8;
+
+        if direct_eligible {
+            let mut parser = parser::JpegParser::with_strictness(
+                data,
+                self.max_pixels,
+                None,
+                self.strictness,
+            )?;
+            parser.read_header()?;
+            let is_xyb = parser.info().is_xyb;
+
+            // For grayscale source, only PixelFormat::Gray is meaningful.
+            if parser.num_components == 1 && format != PixelFormat::Gray {
+                // Fall through to allocating decode (caller asked for RGB from a gray JPEG).
+                return self.decode_into_via_decode(data, format, dst, stop);
+            }
+            // For color source, PixelFormat::Gray would need RGB→Gray reduction,
+            // not handled by the direct path.
+            if parser.num_components > 1 && format == PixelFormat::Gray {
+                return self.decode_into_via_decode(data, format, dst, stop);
+            }
+
+            parser.chroma_upsampling = self.chroma_upsampling;
+            parser.idct_method = self.effective_idct_method();
+            parser.num_threads = self.num_threads;
+            #[cfg(feature = "parallel")]
+            {
+                parser.parallel_strategy = self.parallel_strategy;
+            }
+            parser.decode(&stop)?;
+            return parser.to_pixels_into(
+                format,
+                is_xyb,
+                self.chroma_upsampling,
+                self.output_target,
+                &Unstoppable,
+                dst,
+            );
+        }
+
+        self.decode_into_via_decode(data, format, dst, stop)
+    }
+
+    fn decode_into_via_decode(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: impl Stop,
+    ) -> Result<usize> {
+        // Fallback: full decode then memcpy. Allocates an intermediate Vec but
+        // exists so callers can rely on `decode_into()` always working.
+        let mut cfg = self.clone();
+        cfg.output_format = Some(format);
+        let result = cfg.decode(data, stop)?;
+        let pixels = result.into_pixels_u8().ok_or_else(|| {
+            Error::internal("decode_into requires u8 output (use decode for f32)")
+        })?;
+        if dst.len() < pixels.len() {
+            return Err(Error::internal("destination buffer too small"));
+        }
+        dst[..pixels.len()].copy_from_slice(&pixels);
+        Ok(pixels.len())
+    }
+
     pub fn decode_rows<F>(
         &self,
         data: &[u8],

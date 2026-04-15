@@ -741,15 +741,7 @@ pub fn rgb_u8_swap_rb_inplace(data: &mut [u8]) {
 /// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
 #[cfg(feature = "decoder")]
 pub fn rgb_u8_to_rgba_u8(src: &[u8], dst: &mut [u8]) {
-    debug_assert_eq!(src.len() % 3, 0);
-    let npixels = src.len() / 3;
-    debug_assert!(dst.len() >= npixels * 4);
-    for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = 255;
-    }
+    rgb_u8_to_xrgba_u8(src, dst, false);
 }
 
 /// Converts packed RGB u8 to packed BGRA u8 (alpha = 255, R/B swapped).
@@ -757,14 +749,22 @@ pub fn rgb_u8_to_rgba_u8(src: &[u8], dst: &mut [u8]) {
 /// `src.len()` must be a multiple of 3 and `dst.len() >= src.len() / 3 * 4`.
 #[cfg(feature = "decoder")]
 pub fn rgb_u8_to_bgra_u8(src: &[u8], dst: &mut [u8]) {
+    rgb_u8_to_xrgba_u8(src, dst, true);
+}
+
+/// Shared RGB→RGBA/BGRA implementation with optional R/B swap.
+///
+/// Delegates to `garb`'s SIMD kernels (AVX2 8 pixels/iter, NEON, WASM128, scalar).
+#[cfg(feature = "decoder")]
+pub fn rgb_u8_to_xrgba_u8(src: &[u8], dst: &mut [u8], swap_rb: bool) {
     debug_assert_eq!(src.len() % 3, 0);
     let npixels = src.len() / 3;
     debug_assert!(dst.len() >= npixels * 4);
-    for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
-        d[0] = s[2]; // B
-        d[1] = s[1]; // G
-        d[2] = s[0]; // R
-        d[3] = 255;
+
+    if swap_rb {
+        garb::bytes::rgb_to_bgra(src, &mut dst[..npixels * 4]).expect("pre-validated sizes");
+    } else {
+        garb::bytes::rgb_to_rgba(src, &mut dst[..npixels * 4]).expect("pre-validated sizes");
     }
 }
 
@@ -1624,6 +1624,220 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         rgb[idx] = r.clamp(0, 255) as u8;
         rgb[idx + 1] = g.clamp(0, 255) as u8;
         rgb[idx + 2] = b.clamp(0, 255) as u8;
+    }
+}
+
+/// Batch convert i16 YCbCr planes to interleaved RGBA/BGRA u8 with A=255.
+///
+/// Dispatches to AVX2 where available, scalar fallback otherwise.
+/// `swap_rb=false` writes R,G,B,255; `swap_rb=true` writes B,G,R,255.
+pub fn ycbcr_planes_i16_to_xrgba_u8(
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgba: &mut [u8],
+    swap_rb: bool,
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgba.len(), y_plane.len() * 4);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(token) = archmage::X64V3Token::summon() {
+            ycbcr_planes_i16_to_xrgba_u8_avx2(token, y_plane, cb_plane, cr_plane, rgba, swap_rb);
+            return;
+        }
+    }
+
+    let len = y_plane.len();
+    for i in 0..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
+        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255)
+            as u8;
+        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
+
+        let idx = i * 4;
+        if swap_rb {
+            rgba[idx] = b;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = r;
+        } else {
+            rgba[idx] = r;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = b;
+        }
+        rgba[idx + 3] = 255;
+    }
+}
+
+/// AVX2 batch conversion of YCbCr planes to interleaved 4bpp (RGBA or BGRA).
+///
+/// Processes 16 pixels at a time. The YCbCr→RGB compute reuses the same lane
+/// layout as [`ycbcr_planes_i16_to_rgb_u8_avx2`]; the final packing uses 128-bit
+/// unpacks instead of the 3-byte shuffle sequence, which is cheaper for 4bpp.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn ycbcr_planes_i16_to_xrgba_u8_avx2(
+    _token: archmage::X64V3Token,
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgba: &mut [u8],
+    swap_rb: bool,
+) {
+    use core::arch::x86_64::*;
+
+    let len = y_plane.len();
+
+    let bias = _mm256_set1_epi16(128);
+    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
+    let rounding = _mm256_set1_epi32(YUV_ROUND);
+    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
+    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
+    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
+    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let zero = _mm256_setzero_si256();
+    let alpha_sse = _mm_set1_epi8(-1_i8); // 0xFF
+
+    // Process 16 pixels per iteration → 64 output bytes.
+    let y_chunks = y_plane.chunks_exact(16);
+    let remainder_len = y_chunks.remainder().len();
+    for ((y_chunk, cb_chunk), (cr_chunk, out_chunk)) in y_chunks
+        .zip(cb_plane.chunks_exact(16))
+        .zip(cr_plane.chunks_exact(16).zip(rgba.chunks_exact_mut(64)))
+    {
+        let y_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(y_chunk).unwrap());
+        let cb_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cb_chunk).unwrap());
+        let cr_vec = safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(cr_chunk).unwrap());
+
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+        // Widen Y to i32 (zero-extend; Y is non-negative after level shift).
+        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+
+        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+        // Sign-extend Cb/Cr to i32.
+        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
+        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+        let cb_lo = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+        let cb_hi = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+        let cr_lo = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+        let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+        let r_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, cr_to_r)),
+            14,
+        );
+        let r_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, cr_to_r)),
+            14,
+        );
+        let g_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_lo,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_lo, cr_to_g),
+                    _mm256_mullo_epi32(cb_lo, cb_to_g),
+                ),
+            ),
+            14,
+        );
+        let g_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_hi,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_hi, cr_to_g),
+                    _mm256_mullo_epi32(cb_hi, cb_to_g),
+                ),
+            ),
+            14,
+        );
+        let b_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, cb_to_b)),
+            14,
+        );
+        let b_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, cb_to_b)),
+            14,
+        );
+
+        // Pack i32 → i16 (signed saturating). Per-lane packs give us:
+        //   r_16 lane0 = [R0..R3 (from r_lo lo), R4..R7 (from r_hi lo)]  → [R0..R7]
+        //   r_16 lane1 = [R8..R11 (from r_lo hi), R12..R15 (from r_hi hi)] → [R8..R15]
+        // So r_16 is in natural order after packs_epi32.
+        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+        // Pack i16 → u8 (unsigned saturating). packus per-lane:
+        //   lane0 of packus(x, zero) → [x.lane0 → 8 u8, 0..0]
+        //   lane1 of packus(x, zero) → [x.lane1 → 8 u8, 0..0]
+        // Then permute4x64 with [0, 2, 1, 3] puts the useful bytes in
+        // the low 128 bits as [byte0..byte15] in natural order.
+        let r_u8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
+        let g_u8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
+        let b_u8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
+
+        // Now low 128 of r_u8 = [R0..R15]. Interleave via 128-bit unpacks.
+        let r = _mm256_castsi256_si128(r_u8);
+        let g = _mm256_castsi256_si128(g_u8);
+        let b = _mm256_castsi256_si128(b_u8);
+
+        // Choose first (R or B) and third (B or R) channels based on swap.
+        let (first, third) = if swap_rb { (b, r) } else { (r, b) };
+
+        // Interleave [first, G, third, 255] per pixel.
+        let rg_lo = _mm_unpacklo_epi8(first, g); // F0 G0 F1 G1 ... F7 G7 (16 bytes)
+        let rg_hi = _mm_unpackhi_epi8(first, g); // F8..F15
+        let ba_lo = _mm_unpacklo_epi8(third, alpha_sse); // T0 A T1 A ... T7 A
+        let ba_hi = _mm_unpackhi_epi8(third, alpha_sse); // T8 A ... T15 A
+
+        let rgba0 = _mm_unpacklo_epi16(rg_lo, ba_lo); // 4 pixels (pixels 0-3)
+        let rgba1 = _mm_unpackhi_epi16(rg_lo, ba_lo); // pixels 4-7
+        let rgba2 = _mm_unpacklo_epi16(rg_hi, ba_hi); // pixels 8-11
+        let rgba3 = _mm_unpackhi_epi16(rg_hi, ba_hi); // pixels 12-15
+
+        let (p0, p1) = out_chunk.split_at_mut(32);
+        let (p0a, p0b) = p0.split_at_mut(16);
+        let (p1a, p1b) = p1.split_at_mut(16);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(p0a).unwrap(), rgba0);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(p0b).unwrap(), rgba1);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(p1a).unwrap(), rgba2);
+        safe_simd::_mm_storeu_si128(<&mut [u8; 16]>::try_from(p1b).unwrap(), rgba3);
+    }
+
+    // Scalar remainder.
+    let remainder_start = len - remainder_len;
+    for i in remainder_start..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
+        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255)
+            as u8;
+        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
+        let idx = i * 4;
+        if swap_rb {
+            rgba[idx] = b;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = r;
+        } else {
+            rgba[idx] = r;
+            rgba[idx + 1] = g;
+            rgba[idx + 2] = b;
+        }
+        rgba[idx + 3] = 255;
     }
 }
 

@@ -53,6 +53,7 @@ imgref = { workspace = true }
 enough = { workspace = true }
 zencodec = { workspace = true }
 zenpixels = { workspace = true }
+garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
 linear-srgb = { workspace = true }

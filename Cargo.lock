@@ -998,6 +998,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "garb"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61ee8d8f5e43a45183480ea077c4e046e43ab9604928c87d6ad2080e666dc519"
+dependencies = [
+ "archmage 0.9.19",
+ "bytemuck",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3091,6 +3101,7 @@ dependencies = [
  "dssim-core",
  "enough",
  "fast-ssim2 0.8.0",
+ "garb",
  "getrandom 0.3.4",
  "half",
  "image",

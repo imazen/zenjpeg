@@ -36,6 +36,8 @@ use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{ChromaSubsampling, PixelLayout, Quality};
 use crate::encode::exif::Exif;
 use crate::error::Error;
+#[cfg(feature = "decoder")]
+use crate::types::PixelFormat;
 
 // ── Backwards compat aliases ─────────────────────────────────────────────────
 
@@ -1302,13 +1304,35 @@ fn push_decoder_native<'a>(
         return push_decoder_via_full_decode(job, data, sink);
     }
 
+    // ── Direct fast path ──────────────────────────────────────────────────
+    //
+    // When the request is a vanilla full-image decode to an u8 RGB-family or
+    // grayscale buffer, bypass `ScanlineReader` and write straight into the
+    // sink via `parser.to_pixels_into(...)`. This skips:
+    //   - ScanlineReader's `buffered_rgb` Vec allocation (~width*height*3 B)
+    //   - The bulk memcpy from buffered_rgb into the sink (~3-4 ms at 4K)
+    //   - The duplicate header parse inside `cfg.scanline_reader()`
+    let descriptor =
+        decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
+    if let Some(direct_format) = direct_path_pixel_format(descriptor, header.num_components)
+        && job.crop_hint.is_none()
+        && cfg.compute_effective_transform_from_data(data_ref)
+            == crate::lossless::LosslessTransform::None
+        && !matches!(
+            cfg.deblock_mode,
+            crate::decode::DeblockMode::Knusperli | crate::decode::DeblockMode::Auto
+        )
+        && cfg.output_target == crate::decode::OutputTarget::Srgb8
+    {
+        return push_decoder_direct(job, data, sink, descriptor, direct_format);
+    }
+
     // Create the streaming scanline reader
     let mut reader = cfg.scanline_reader(data_ref)?;
 
     let width = reader.width() as usize;
     let height = reader.height() as usize;
-    let mut descriptor =
-        decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
+    let mut descriptor = descriptor;
     let mcu_height = reader.luma_rows_per_mcu();
 
     let ch_type = descriptor.channel_type();
@@ -1321,21 +1345,21 @@ fn push_decoder_native<'a>(
     }
 
     let bpp = descriptor.bytes_per_pixel();
-    let row_bytes = width * bpp;
+    let _row_bytes = width * bpp;
 
     // Tell the sink what's coming
     sink.begin(width as u32, height as u32, descriptor)
         .map_err(wrap)?;
 
-    // Allocate a temp buffer for one MCU-row strip.
-    // Use aligned_vec for ≥4-byte alignment so f32 casts are safe.
-    let strip_bytes = row_bytes * mcu_height;
-    let mut strip_buf = aligned_vec::AVec::<u8, aligned_vec::ConstAlign<4>>::new(4);
-    strip_buf
-        .try_reserve(strip_bytes)
-        .map_err(|_| Error::allocation_failed(strip_bytes, "push_decoder strip buffer"))?;
-    strip_buf.resize(strip_bytes, 0);
-
+    // Strip size: for buffered-mode readers the entire image is already
+    // decoded; ask the sink for one big buffer so we make O(1) callbacks
+    // instead of O(height/mcu_height). For streaming readers we must stick
+    // to one MCU row per call (that's the unit the reader produces).
+    let strip_rows = if reader.is_buffered() {
+        height
+    } else {
+        mcu_height
+    };
     let mut y = 0u32;
 
     while !reader.is_finished() {
@@ -1345,33 +1369,35 @@ fn push_decoder_native<'a>(
             stop.check()?;
         }
 
-        // Decode the next batch of rows into our strip buffer
         let remaining = height - y as usize;
-        let batch_max = remaining.min(mcu_height);
+        let batch_max = remaining.min(strip_rows);
+        if batch_max == 0 {
+            break;
+        }
+
+        // Fast path: borrow the sink's buffer and have the reader write
+        // directly into it, skipping the strip_buf staging copy.
+        //
+        // Safety of row count: read_rows_* only returns fewer than requested
+        // rows at EOF, which batch_max already accounts for. In the non-EOF
+        // path count always equals batch_max.
+        let mut dst = sink
+            .provide_next_buffer(y, batch_max as u32, width as u32, descriptor)
+            .map_err(wrap)?;
+        let dst_stride = dst.stride();
+        let dst_bytes = dst.as_strided_bytes_mut();
 
         let count = match (ch_type, ch_layout) {
             (ChannelType::U8, ChannelLayout::Gray) => {
-                let out = ImgRefMut::new(
-                    &mut strip_buf[..row_bytes * batch_max],
-                    row_bytes,
-                    batch_max,
-                );
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_max);
                 reader.read_rows_gray8(out)?
             }
             (ChannelType::U8, ChannelLayout::Rgb) => {
-                let out = ImgRefMut::new(
-                    &mut strip_buf[..row_bytes * batch_max],
-                    row_bytes,
-                    batch_max,
-                );
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_max);
                 reader.read_rows_rgb8(out)?
             }
             (ChannelType::U8, ChannelLayout::Rgba) => {
-                let out = ImgRefMut::new(
-                    &mut strip_buf[..row_bytes * batch_max],
-                    row_bytes,
-                    batch_max,
-                );
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_max);
                 if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
                     reader.read_rows_rgbx8(out)?
                 } else {
@@ -1379,11 +1405,7 @@ fn push_decoder_native<'a>(
                 }
             }
             (ChannelType::U8, ChannelLayout::Bgra) => {
-                let out = ImgRefMut::new(
-                    &mut strip_buf[..row_bytes * batch_max],
-                    row_bytes,
-                    batch_max,
-                );
+                let out = ImgRefMut::new(dst_bytes, dst_stride, batch_max);
                 if descriptor.alpha() == Some(zenpixels::AlphaMode::Undefined) {
                     reader.read_rows_bgrx8(out)?
                 } else {
@@ -1391,17 +1413,17 @@ fn push_decoder_native<'a>(
                 }
             }
             (ChannelType::F32, ChannelLayout::Gray) => {
-                let float_slice: &mut [f32] =
-                    bytemuck::cast_slice_mut(&mut strip_buf[..row_bytes * batch_max]);
-                let f_out = ImgRefMut::new(float_slice, width, batch_max);
+                let float_slice: &mut [f32] = bytemuck::cast_slice_mut(dst_bytes);
+                let float_stride = dst_stride / 4;
+                let f_out = ImgRefMut::new(float_slice, float_stride, batch_max);
                 reader.read_rows_gray_f32(f_out)?
             }
             (ChannelType::F32, ChannelLayout::Rgb | ChannelLayout::Rgba) => {
                 // read_rows_rgba_f32 always writes 4 f32 channels; descriptor
-                // was already upgraded to RGBAF32 above, so row_bytes matches.
-                let float_slice: &mut [f32] =
-                    bytemuck::cast_slice_mut(&mut strip_buf[..row_bytes * batch_max]);
-                let f_out = ImgRefMut::new(float_slice, width * 4, batch_max);
+                // was already upgraded to RGBAF32 above.
+                let float_slice: &mut [f32] = bytemuck::cast_slice_mut(dst_bytes);
+                let float_stride = dst_stride / 4;
+                let f_out = ImgRefMut::new(float_slice, float_stride, batch_max);
                 reader.read_rows_rgba_f32(f_out)?
             }
             _ => {
@@ -1411,22 +1433,15 @@ fn push_decoder_native<'a>(
             }
         };
 
+        drop(dst);
+
         if count == 0 {
             break;
         }
-
-        // Get a buffer from the sink for these rows
-        let mut dst = sink
-            .provide_next_buffer(y, count as u32, width as u32, descriptor)
-            .map_err(wrap)?;
-
-        // Copy decoded rows into the sink's buffer
-        for row in 0..count as u32 {
-            let src_start = row as usize * row_bytes;
-            let src_row = &strip_buf[src_start..src_start + row_bytes];
-            dst.row_mut(row).copy_from_slice(src_row);
-        }
-        drop(dst);
+        debug_assert_eq!(
+            count, batch_max,
+            "reader short-read: batch_max should match count outside EOF"
+        );
 
         y += count as u32;
     }
@@ -1448,6 +1463,80 @@ fn push_decoder_native<'a>(
         out = out.with_crop_applied([x, y, cw, ch]);
     }
 
+    Ok(out)
+}
+
+/// Returns `Some(PixelFormat)` if the descriptor + component count are eligible
+/// for the direct decode-into-sink fast path; `None` otherwise.
+#[cfg(feature = "decoder")]
+fn direct_path_pixel_format(
+    descriptor: PixelDescriptor,
+    num_components: u8,
+) -> Option<PixelFormat> {
+    use zenpixels::{ChannelLayout, ChannelType};
+    let ch = descriptor.channel_type();
+    let layout = descriptor.layout();
+    let is_gray_src = num_components == 1;
+    match (ch, layout) {
+        (ChannelType::U8, ChannelLayout::Gray) if is_gray_src => Some(PixelFormat::Gray),
+        (ChannelType::U8, ChannelLayout::Rgb) if !is_gray_src => Some(PixelFormat::Rgb),
+        (ChannelType::U8, ChannelLayout::Rgba) if !is_gray_src => Some(PixelFormat::Rgba),
+        (ChannelType::U8, ChannelLayout::Bgra) if !is_gray_src => {
+            // Bgrx and Bgra share the same conversion (alpha=255).
+            Some(PixelFormat::Bgra)
+        }
+        _ => None,
+    }
+}
+
+/// Direct fast path: read header for dims, decode straight into the sink via
+/// `DecodeConfig::decode_into` (skips ScanlineReader's buffered_rgb intermediate).
+#[cfg(feature = "decoder")]
+fn push_decoder_direct<'a>(
+    job: JpegDecodeJob,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
+    descriptor: PixelDescriptor,
+    format: PixelFormat,
+) -> Result<OutputInfo, Error> {
+    use enough::Unstoppable;
+
+    let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
+
+    let cfg = build_decode_config(
+        &job.config.inner,
+        &job.limits,
+        job.crop_hint,
+        job.orientation,
+        job.policy.as_ref(),
+    );
+
+    let data_ref: &[u8] = &data;
+    let header = job.config.inner.read_info(data_ref)?;
+    let w = header.dimensions.width;
+    let h = header.dimensions.height;
+
+    sink.begin(w, h, descriptor).map_err(wrap)?;
+    let mut dst = sink.provide_next_buffer(0, h, w, descriptor).map_err(wrap)?;
+    let dst_bytes = dst.as_strided_bytes_mut();
+
+    if let Some(ref stop) = job.stop {
+        cfg.decode_into(data_ref, format, dst_bytes, stop.clone())?;
+    } else {
+        cfg.decode_into(data_ref, format, dst_bytes, Unstoppable)?;
+    }
+    drop(dst);
+
+    sink.finish().map_err(wrap)?;
+
+    let mut out = OutputInfo::full_decode(w, h, descriptor);
+    if will_auto_orient(job.orientation)
+        && let Some(ref exif) = header.exif
+        && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
+    {
+        let orient = zencodec::Orientation::from_exif(orient_val).unwrap_or_default();
+        out = out.with_orientation_applied(orient);
+    }
     Ok(out)
 }
 

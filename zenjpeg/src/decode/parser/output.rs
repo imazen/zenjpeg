@@ -49,6 +49,28 @@ use enough::Stop;
 use super::{CompInfo, JpegParser};
 use output_helpers::{idct_chroma_into_ext, idct_comp_mcu_row};
 
+/// Output spec for the fast i16 paths' caller-provided destination buffer.
+#[allow(dead_code)] // variants chosen at the call site
+enum FastDst<'a> {
+    Rgb(&'a mut [u8]),
+    Rgba(&'a mut [u8]),
+    Bgra(&'a mut [u8]),
+}
+
+impl<'a> FastDst<'a> {
+    fn bpp(&self) -> usize {
+        match self {
+            FastDst::Rgb(_) => 3,
+            FastDst::Rgba(_) | FastDst::Bgra(_) => 4,
+        }
+    }
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            FastDst::Rgb(b) | FastDst::Rgba(b) | FastDst::Bgra(b) => b,
+        }
+    }
+}
+
 /// Returns true for formats that decode via the RGB u8 fast paths
 /// (i16 IDCT → direct u8 output), then optionally reformat.
 fn is_rgb_family_u8(format: PixelFormat) -> bool {
@@ -94,6 +116,59 @@ fn reformat_rgb_output(
         }
         _ => Err(Error::unsupported_feature("unsupported color conversion")),
     }
+}
+
+/// Reformats an RGB u8 source buffer into the target `PixelFormat` written
+/// directly into a caller-owned destination slice. Avoids the extra allocation
+/// that [`reformat_rgb_output`] does for 4-bpp targets.
+fn reformat_rgb_into(
+    rgb: &[u8],
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+    dst: &mut [u8],
+) -> Result<usize> {
+    let npixels = width.checked_mul(height).ok_or_else(|| Error::internal("size overflow"))?;
+    let written = match format {
+        PixelFormat::Rgb => {
+            let bytes = npixels.checked_mul(3).ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < bytes {
+                return Err(Error::internal("destination/source too small for RGB"));
+            }
+            dst[..bytes].copy_from_slice(&rgb[..bytes]);
+            bytes
+        }
+        PixelFormat::Bgr => {
+            let bytes = npixels.checked_mul(3).ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < bytes {
+                return Err(Error::internal("destination/source too small for BGR"));
+            }
+            dst[..bytes].copy_from_slice(&rgb[..bytes]);
+            rgb_u8_swap_rb_inplace(&mut dst[..bytes]);
+            bytes
+        }
+        PixelFormat::Rgba => {
+            let bytes = npixels.checked_mul(4).ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < npixels * 3 {
+                return Err(Error::internal("destination/source too small for RGBA"));
+            }
+            // Garb dispatches to AVX2/NEON/WASM128/scalar.
+            garb::bytes::rgb_to_rgba(&rgb[..npixels * 3], &mut dst[..bytes])
+                .map_err(|_| Error::internal("garb size validation failed"))?;
+            bytes
+        }
+        PixelFormat::Bgra | PixelFormat::Bgrx => {
+            let bytes = npixels.checked_mul(4).ok_or_else(|| Error::internal("size overflow"))?;
+            if dst.len() < bytes || rgb.len() < npixels * 3 {
+                return Err(Error::internal("destination/source too small for BGRA"));
+            }
+            garb::bytes::rgb_to_bgra(&rgb[..npixels * 3], &mut dst[..bytes])
+                .map_err(|_| Error::internal("garb size validation failed"))?;
+            bytes
+        }
+        _ => return Err(Error::unsupported_feature("unsupported color conversion")),
+    };
+    Ok(written)
 }
 
 /// Pixel output conversion methods for JpegParser.
@@ -327,6 +402,21 @@ impl<'a> JpegParser<'a> {
         &self,
         chroma_upsampling: super::super::ChromaUpsampling,
     ) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut dst: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, FastDst::Rgb(&mut dst))?;
+        Ok(dst)
+    }
+
+    /// Same as [`to_pixels_fast_i16_subsampled`] but writes into a caller-owned
+    /// buffer (RGB, RGBA, or BGRA layout). Eliminates the intermediate Vec.
+    fn to_pixels_fast_i16_subsampled_into(
+        &self,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        mut dst: FastDst<'_>,
+    ) -> Result<()> {
         use super::super::ChromaUpsampling;
         use crate::decode::upsample::{
             upsample_h1v2_i16_libjpeg, upsample_h1v2_i16_nearest, upsample_h2v1_i16_libjpeg,
@@ -456,8 +546,28 @@ impl<'a> JpegParser<'a> {
         };
 
         let mut y_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+        // Sample the variant tag and bpp once; later we re-borrow dst mutably
+        // each MCU row iteration.
+        #[derive(Copy, Clone, PartialEq, Eq)]
+        enum DstKind {
+            Rgb,
+            Rgba,
+            Bgra,
+        }
+        let dst_kind = match dst {
+            FastDst::Rgb(_) => DstKind::Rgb,
+            FastDst::Rgba(_) => DstKind::Rgba,
+            FastDst::Bgra(_) => DstKind::Bgra,
+        };
+        let bpp = dst.bpp();
+        let row_bytes = width * bpp;
+        // Validate dst sizing once.
+        let needed = row_bytes
+            .checked_mul(height)
+            .ok_or_else(|| Error::internal("dst size overflow"))?;
+        if dst.as_bytes_mut().len() < needed {
+            return Err(Error::internal("dst too small for fast i16 subsampled"));
+        }
 
         // Total valid chroma rows for the whole image
         let chroma_height_total = (height + v_ratio - 1) / v_ratio;
@@ -607,26 +717,50 @@ impl<'a> JpegParser<'a> {
             let y_start = imcu_row * mcu_height;
 
             if !needs_full_upsample {
-                // NearestNeighbor 4:2:0: fused box-filter path
-                // Read chroma from ext_a data region (rows 1..c_strip_height+1)
+                // NearestNeighbor 4:2:0: fused box-filter path. Only the 3-byte
+                // RGB output is supported by the fused kernel — for 4-byte
+                // targets, fall back via the upsample-then-convert path below.
                 let c_rows_this_mcu = c_strip_height
                     .min((height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio);
                 let c_cols = (y_cols_this_image + 1) / 2;
 
+                let dst_bytes = dst.as_bytes_mut();
                 for row in 0..y_rows_this_mcu {
                     let y_offset = row * y_strip_width;
                     let c_row = (row / 2).min(c_rows_this_mcu.saturating_sub(1));
-                    // +1 to skip the above-context row in the extended buffer
                     let c_offset = (1 + c_row) * c_strip_width;
-                    let rgb_offset = (y_start + row) * width * 3;
+                    let dst_offset = (y_start + row) * row_bytes;
 
-                    fused_h2v2_box_ycbcr_to_rgb_u8(
-                        &y_strip[y_offset..y_offset + y_cols_this_image],
-                        &ext_cb_a[c_offset..c_offset + c_cols],
-                        &ext_cr_a[c_offset..c_offset + c_cols],
-                        &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                        y_cols_this_image,
-                    );
+                    match dst_kind {
+                        DstKind::Rgb => {
+                            fused_h2v2_box_ycbcr_to_rgb_u8(
+                                &y_strip[y_offset..y_offset + y_cols_this_image],
+                                &ext_cb_a[c_offset..c_offset + c_cols],
+                                &ext_cr_a[c_offset..c_offset + c_cols],
+                                &mut dst_bytes[dst_offset..dst_offset + y_cols_this_image * 3],
+                                y_cols_this_image,
+                            );
+                        }
+                        DstKind::Rgba | DstKind::Bgra => {
+                            let swap_rb = dst_kind == DstKind::Bgra;
+                            let mut cb_row = [0i16; 8192];
+                            let mut cr_row = [0i16; 8192];
+                            let n = y_cols_this_image;
+                            assert!(n <= cb_row.len(), "row too wide for box-filter 4bpp tail");
+                            for px in 0..n {
+                                let c_idx = c_offset + (px / 2);
+                                cb_row[px] = ext_cb_a[c_idx];
+                                cr_row[px] = ext_cr_a[c_idx];
+                            }
+                            crate::color::ycbcr_planes_i16_to_xrgba_u8(
+                                &y_strip[y_offset..y_offset + n],
+                                &cb_row[..n],
+                                &cr_row[..n],
+                                &mut dst_bytes[dst_offset..dst_offset + n * 4],
+                                swap_rb,
+                            );
+                        }
+                    }
                 }
             } else {
                 // Upsample extended strip → upsampled output buffer
@@ -649,19 +783,34 @@ impl<'a> JpegParser<'a> {
                     upsample_out_height,
                 );
 
-                // Use upsampled rows starting at offset v_ratio (skip context rows)
+                let dst_bytes = dst.as_bytes_mut();
                 for row in 0..y_rows_this_mcu {
                     let strip_offset = row * y_strip_width;
-                    let up_row = v_ratio + row; // skip the v_ratio context output rows
+                    let up_row = v_ratio + row;
                     let chroma_offset = up_row * y_strip_width;
-                    let rgb_offset = (y_start + row) * width * 3;
+                    let dst_offset = (y_start + row) * row_bytes;
+                    let n = y_cols_this_image;
 
-                    ycbcr_planes_i16_to_rgb_u8(
-                        &y_strip[strip_offset..strip_offset + y_cols_this_image],
-                        &cb_up[chroma_offset..chroma_offset + y_cols_this_image],
-                        &cr_up[chroma_offset..chroma_offset + y_cols_this_image],
-                        &mut rgb[rgb_offset..rgb_offset + y_cols_this_image * 3],
-                    );
+                    match dst_kind {
+                        DstKind::Rgb => {
+                            ycbcr_planes_i16_to_rgb_u8(
+                                &y_strip[strip_offset..strip_offset + n],
+                                &cb_up[chroma_offset..chroma_offset + n],
+                                &cr_up[chroma_offset..chroma_offset + n],
+                                &mut dst_bytes[dst_offset..dst_offset + n * 3],
+                            );
+                        }
+                        DstKind::Rgba | DstKind::Bgra => {
+                            let swap_rb = dst_kind == DstKind::Bgra;
+                            crate::color::ycbcr_planes_i16_to_xrgba_u8(
+                                &y_strip[strip_offset..strip_offset + n],
+                                &cb_up[chroma_offset..chroma_offset + n],
+                                &cr_up[chroma_offset..chroma_offset + n],
+                                &mut dst_bytes[dst_offset..dst_offset + n * 4],
+                                swap_rb,
+                            );
+                        }
+                    }
                 }
             }
 
@@ -710,7 +859,7 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        Ok(rgb)
+        Ok(())
     }
 
     // =========================================================================
@@ -1341,6 +1490,57 @@ impl<'a> JpegParser<'a> {
     /// Values are normalized to range 0.0-1.0.
     ///
     /// The `stop` parameter allows cancellation of long-running operations.
+    /// Convert decoded coefficients to pixels, writing directly into a
+    /// caller-provided buffer.
+    ///
+    /// Tries the fast i16 subsampled path with the destination as the direct
+    /// write target (no intermediate RGB allocation). For shapes/options not
+    /// supported by the fast path, falls back to `to_pixels(Rgb)` + reformat.
+    ///
+    /// Returns the number of bytes written.
+    pub(in crate::decode) fn to_pixels_into(
+        &mut self,
+        format: PixelFormat,
+        is_xyb: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+        output_target: super::super::OutputTarget,
+        stop: &impl Stop,
+        dst: &mut [u8],
+    ) -> Result<usize> {
+        let dequant_bias = output_target.uses_dequant_bias();
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode
+        // straight into `dst` without an intermediate RGB Vec.
+        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
+            if let Some(fast_dst) = match format {
+                PixelFormat::Rgb => Some(FastDst::Rgb(dst)),
+                PixelFormat::Rgba => Some(FastDst::Rgba(dst)),
+                PixelFormat::Bgra | PixelFormat::Bgrx => Some(FastDst::Bgra(dst)),
+                _ => None,
+            } {
+                let bytes = match fast_dst {
+                    FastDst::Rgb(_) => width * height * 3,
+                    FastDst::Rgba(_) | FastDst::Bgra(_) => width * height * 4,
+                };
+                self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, fast_dst)?;
+                return Ok(bytes);
+            }
+        }
+
+        // Generic fallback: existing dispatch returns Vec<u8>, then reformat
+        // (which uses garb for the 4-bpp swizzle).
+        let pixels = self.to_pixels(
+            PixelFormat::Rgb,
+            is_xyb,
+            chroma_upsampling,
+            output_target,
+            stop,
+        )?;
+        reformat_rgb_into(&pixels, format, width, height, dst)
+    }
+
     pub(in crate::decode) fn to_pixels_f32(
         &self,
         format: PixelFormat,
