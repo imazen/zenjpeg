@@ -61,10 +61,10 @@ pub use crate::error::{Error, Result};
 
 // === Main decoder types ===
 pub use crate::decode::{
-    ChromaUpsampling, CropRegion, DecodeConfig, DecodeInfo, DecodePool, DecodeRequest,
+    ChromaUpsampling, CropRegion, DeblockMode, DecodeConfig, DecodeInfo, DecodePool, DecodeRequest,
     DecodeResult, DecodeWarning, DecodedCoefficients, DecodedImage, DecodedImageF32, DecodedYCbCr,
-    Decoder, DeblockMode, GainMapHandling, GainMapResult, IdctMethod, JpegInfo, OutputTarget,
-    RowSlice, RowSliceF32, ScanlineInfo, ScanlineReader, Strictness,
+    Decoder, GainMapHandling, GainMapResult, IdctMethod, JpegInfo, OutputTarget, RowSlice,
+    RowSliceF32, ScanlineInfo, ScanlineReader, Strictness,
 };
 
 // === Metadata preservation types ===

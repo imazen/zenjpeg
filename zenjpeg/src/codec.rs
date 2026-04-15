@@ -1298,8 +1298,7 @@ fn push_decoder_native<'a>(
     // no raw-CMYK output path, so fall back to the buffered Decode::decode()
     // path (which honors CmykHandling::Passthrough via PixelFormat::Cmyk)
     // and hand the full frame to the sink in one strip.
-    if matches!(job.config.cmyk_handling, CmykHandling::Passthrough) && header.num_components == 4
-    {
+    if matches!(job.config.cmyk_handling, CmykHandling::Passthrough) && header.num_components == 4 {
         return push_decoder_via_full_decode(job, data, sink);
     }
 
@@ -1486,7 +1485,9 @@ fn push_decoder_via_full_decode<'a>(
     sink.begin(w, h, descriptor).map_err(wrap)?;
 
     // Hand the sink a single strip containing the whole frame.
-    let mut dst = sink.provide_next_buffer(0, h, w, descriptor).map_err(wrap)?;
+    let mut dst = sink
+        .provide_next_buffer(0, h, w, descriptor)
+        .map_err(wrap)?;
     for row in 0..h {
         dst.row_mut(row).copy_from_slice(pixels.row(row));
     }
@@ -2943,10 +2944,9 @@ mod streaming_test {
 mod cmyk_tests {
     use super::*;
     use alloc::borrow::Cow;
-    use imgref::{Img, ImgExt};
+    use imgref::Img;
     use rgb::Rgb;
     use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
-    use zencodec::encode::EncoderConfig as _;
 
     // ── CMYK handling tests ────────────────────────────────────────────────
 

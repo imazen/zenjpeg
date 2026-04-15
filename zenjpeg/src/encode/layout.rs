@@ -17,8 +17,10 @@ pub(crate) struct LayoutParams {
     pub subsampling: Subsampling,
     pub use_xyb: bool,
     /// XYB-only: layout for the B (blue-yellow) component.
+    ///
     /// - `BQuarter` (default): R:2×2, G:2×2, B:1×1 — B at quarter resolution.
     /// - `Full`: R:1×1, G:1×1, B:1×1 — all components at full resolution.
+    ///
     /// Ignored when `use_xyb` is false; defaults to `BQuarter` so the field
     /// has a stable value on the YCbCr path.
     pub xyb_subsampling: XybSubsampling,
@@ -98,7 +100,13 @@ impl LayoutParams {
     /// opt into a specific [`XybSubsampling`] variant (e.g. `Full`).
     #[allow(dead_code)] // production code uses `new_xyb`; kept for tests + estimators
     pub fn new(width: usize, height: usize, subsampling: Subsampling, use_xyb: bool) -> Self {
-        Self::new_xyb(width, height, subsampling, use_xyb, XybSubsampling::BQuarter)
+        Self::new_xyb(
+            width,
+            height,
+            subsampling,
+            use_xyb,
+            XybSubsampling::BQuarter,
+        )
     }
 
     /// Creates layout parameters with an explicit XYB sub-sampling variant.
@@ -401,7 +409,7 @@ mod tests {
     fn test_xyb_full() {
         // XYB Full: R:1×1, G:1×1, B:1×1, no B downsampling.
         let lp = LayoutParams::new_xyb(1920, 1080, Subsampling::S444, true, XybSubsampling::Full);
-        assert_eq!(lp.use_xyb, true);
+        assert!(lp.use_xyb);
         assert_eq!(lp.xyb_subsampling, XybSubsampling::Full);
         assert_eq!(lp.strip_height, 8); // luma 8x8 blocks, no v_samp=2 needed
         assert_eq!(lp.v_samp, 1);
@@ -427,8 +435,7 @@ mod tests {
             true,
             XybSubsampling::BQuarter,
         );
-        let full =
-            LayoutParams::new_xyb(1920, 1080, Subsampling::S444, true, XybSubsampling::Full);
+        let full = LayoutParams::new_xyb(1920, 1080, Subsampling::S444, true, XybSubsampling::Full);
         // BQuarter: B half the resolution
         assert_eq!(bq.b_width, 960);
         assert_eq!(bq.b_blocks_w, 120);

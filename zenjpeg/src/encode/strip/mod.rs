@@ -578,8 +578,7 @@ impl StripProcessor {
         aq_enabled: bool,
         streaming_through: bool,
     ) -> Result<Self> {
-        let layout =
-            LayoutParams::new_xyb(width, height, subsampling, use_xyb, xyb_subsampling);
+        let layout = LayoutParams::new_xyb(width, height, subsampling, use_xyb, xyb_subsampling);
 
         let strip_height = layout.strip_height;
         let padded_width = layout.padded_width;

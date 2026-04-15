@@ -202,10 +202,7 @@ impl StreamingEncoderBuilder {
 
     /// Sets the XYB B-channel subsampling layout. Ignored unless `use_xyb` is set.
     #[must_use]
-    pub(crate) fn xyb_subsampling(
-        mut self,
-        sub: super::encoder_types::XybSubsampling,
-    ) -> Self {
+    pub(crate) fn xyb_subsampling(mut self, sub: super::encoder_types::XybSubsampling) -> Self {
         self.xyb_subsampling = sub;
         self
     }

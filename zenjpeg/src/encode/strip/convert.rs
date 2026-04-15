@@ -770,10 +770,12 @@ impl StripProcessor {
         let b_height = self.layout.b_strip_height_for(strip_height);
 
         if self.layout.xyb_subsampling == super::super::encoder_types::XybSubsampling::Full {
-            // Full mode: B is at luma resolution. Copy cr_strip → cr_down row-by-row
-            // (cr_strip stride = width, cr_down stride = b_width = width).
-            self.cr_down[..strip_height * b_width]
-                .copy_from_slice(&self.cr_strip[..strip_height * b_width]);
+            // Full mode: B is at luma resolution. cr_strip and cr_down are
+            // allocated with identical capacity (padded_width * strip_height ==
+            // padded_b_width * b_strip_height in Full), so a swap moves the
+            // freshly-converted B data into cr_down without copying.
+            // cr_strip becomes scratch — convert overwrites it on the next call.
+            core::mem::swap(&mut self.cr_strip, &mut self.cr_down);
         } else {
             // BQuarter mode: 2x2 box filter downsample.
             crate::encode_simd::downsample_2x2_simd_inplace(
