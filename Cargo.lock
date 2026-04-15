@@ -3099,6 +3099,7 @@ dependencies = [
  "kamadak-exif",
  "linear-srgb",
  "magetypes",
+ "memchr",
  "moxcms 0.8.1",
  "mozjpeg-rs",
  "mozjpeg-sys",

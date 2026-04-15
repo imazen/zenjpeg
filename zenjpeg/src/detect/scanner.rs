@@ -132,7 +132,19 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
                 }
                 let len = read_u16(data, pos) as usize;
                 pos += len;
-                // Skip entropy data until next marker
+                // For baseline/sequential JPEGs there is only one scan, so
+                // skipping through the entropy data to find a nonexistent
+                // second SOS just wastes time. The detect module only uses
+                // sos_count >= 4 as a progressive-encoder fingerprint, so
+                // baseline's sos_count is never read — we can stop here.
+                let is_progressive = matches!(
+                    result.sof.as_ref().map(|s| s.marker),
+                    Some(MARKER_SOF2) | Some(0xCA) // SOF2 progressive, 0xCA arithmetic progressive
+                );
+                if !is_progressive {
+                    break;
+                }
+                // Progressive: continue scanning for more SOS markers.
                 pos = skip_entropy_data(data, pos);
             }
 
@@ -179,17 +191,22 @@ pub(crate) fn scan_headers(data: &[u8]) -> Result<ScanResult, ScanError> {
 }
 
 /// Find the next 0xFF marker byte, skipping any padding 0xFF bytes.
+///
+/// Uses `memchr` for SIMD byte search over the bulk of the data, so this
+/// is O(N) in calls but ~15 GB/s on AVX2 rather than scalar-byte speed.
 fn find_marker(data: &[u8], mut pos: usize) -> Option<usize> {
     while pos < data.len() {
-        if data[pos] == 0xFF {
-            // Skip padding 0xFF bytes
-            while pos + 1 < data.len() && data[pos + 1] == 0xFF {
-                pos += 1;
-            }
-            if pos + 1 < data.len() && data[pos + 1] != 0x00 {
-                return Some(pos);
-            }
+        // SIMD-search for the next 0xFF.
+        let p = memchr::memchr(0xFF, &data[pos..])?;
+        pos += p;
+        // Skip padding 0xFF bytes (0xFF 0xFF 0xFF ... 0xNN — all but last is padding).
+        while pos + 1 < data.len() && data[pos + 1] == 0xFF {
+            pos += 1;
         }
+        if pos + 1 < data.len() && data[pos + 1] != 0x00 {
+            return Some(pos);
+        }
+        // 0xFF 0x00 is a byte-stuffed data byte, not a marker — advance past it.
         pos += 1;
     }
     None
@@ -456,27 +473,33 @@ fn parse_app14(data: &[u8], pos: usize, result: &mut ScanResult) -> Result<usize
 
 /// Skip entropy-coded data after an SOS marker.
 /// Looks for the next 0xFF byte that's not followed by 0x00 or a restart marker.
+///
+/// Uses `memchr` to skip through byte-stuffed / restart-marker regions at
+/// SIMD speed. Progressive JPEGs can have 10+ scans each hundreds of KB
+/// wide, so scalar byte-by-byte scanning is a measurable bottleneck.
 fn skip_entropy_data(data: &[u8], mut pos: usize) -> usize {
     while pos < data.len() {
-        if data[pos] == 0xFF {
-            if pos + 1 >= data.len() {
-                return pos;
-            }
-            let next = data[pos + 1];
-            if next == 0x00 {
-                // Byte-stuffed 0xFF in data stream — skip both bytes
-                pos += 2;
-                continue;
-            }
-            if (0xD0..=0xD7).contains(&next) {
-                // Restart marker — skip and continue entropy data
-                pos += 2;
-                continue;
-            }
-            // Found a real marker — back up so find_marker can see it
+        // SIMD-search for the next 0xFF in the entropy stream.
+        let Some(p) = memchr::memchr(0xFF, &data[pos..]) else {
+            return data.len();
+        };
+        pos += p;
+        if pos + 1 >= data.len() {
             return pos;
         }
-        pos += 1;
+        let next = data[pos + 1];
+        if next == 0x00 {
+            // Byte-stuffed 0xFF in data stream — skip both bytes, continue scanning.
+            pos += 2;
+            continue;
+        }
+        if (0xD0..=0xD7).contains(&next) {
+            // Restart marker — skip and continue entropy data.
+            pos += 2;
+            continue;
+        }
+        // Found a real marker — back up so find_marker can see it.
+        return pos;
     }
     pos
 }
