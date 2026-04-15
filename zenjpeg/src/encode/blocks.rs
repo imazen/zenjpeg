@@ -790,6 +790,115 @@ impl ComputedConfig {
         Ok((dc_table, ac_table, frequencies))
     }
 
+    /// Like [`Self::build_optimized_tables_xyb_raster`] but for XYB Full
+    /// (R:1×1, G:1×1, B:1×1). One block per component per MCU; B is at the
+    /// same resolution as X and Y. Mirror of the raster (BQuarter) version.
+    pub(crate) fn build_optimized_tables_xyb_full(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<(
+        crate::huffman::optimize::OptimizedTable,
+        crate::huffman::optimize::OptimizedTable,
+        Box<HuffmanSymbolFrequencies>,
+    )> {
+        let mut dc_freq = FrequencyCounter::new();
+        let mut ac_freq = FrequencyCounter::new();
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let blocks_w = (width + 7) / 8;
+        let blocks_h = (height + 7) / 8;
+
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        let mut prev_dc = [0i16; 3];
+
+        for by in 0..blocks_h {
+            for bx in 0..blocks_w {
+                let idx = by * blocks_w + bx;
+                let comps: [&[[i16; DCT_BLOCK_SIZE]]; 3] = [x_blocks, y_blocks, b_blocks];
+                for (comp_idx, blocks) in comps.iter().enumerate() {
+                    let block = blocks.get(idx).unwrap_or(&ZERO_BLOCK);
+                    Self::collect_block_frequencies(
+                        block,
+                        prev_dc[comp_idx],
+                        &mut dc_freq,
+                        &mut ac_freq,
+                    );
+                    prev_dc[comp_idx] = block[0];
+                }
+            }
+        }
+
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_table = dc_freq.generate_table_with_method(huffman_method)?;
+        let ac_table = ac_freq.generate_table_with_method(huffman_method)?;
+
+        let frequencies = Box::new(HuffmanSymbolFrequencies {
+            dc_luma: dc_freq,
+            ac_luma: ac_freq,
+            dc_chroma: FrequencyCounter::new(),
+            ac_chroma: FrequencyCounter::new(),
+        });
+
+        Ok((dc_table, ac_table, frequencies))
+    }
+
+    /// Encodes XYB Full raster-ordered blocks using optimized Huffman tables.
+    /// All three components are at the same resolution — 1 block per component per MCU.
+    pub(crate) fn encode_with_tables_xyb_full(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        dc_table: &crate::huffman::optimize::OptimizedTable,
+        ac_table: &crate::huffman::optimize::OptimizedTable,
+    ) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let blocks_w = (width + 7) / 8;
+        let blocks_h = (height + 7) / 8;
+
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
+
+        // Single shared (dc, ac) table at slot 0 (matches XYB DHT layout).
+        encoder.set_dc_table(0, &dc_table.table);
+        encoder.set_ac_table(0, &ac_table.table);
+
+        if self.restart_interval > 0 {
+            encoder.set_restart_interval(self.restart_interval);
+        }
+
+        let total_mcus = blocks_w * blocks_h;
+        let mut mcu_idx = 0;
+
+        for by in 0..blocks_h {
+            for bx in 0..blocks_w {
+                let idx = by * blocks_w + bx;
+                let x_block = x_blocks.get(idx).unwrap_or(&ZERO_BLOCK);
+                let y_block = y_blocks.get(idx).unwrap_or(&ZERO_BLOCK);
+                let b_block = b_blocks.get(idx).unwrap_or(&ZERO_BLOCK);
+
+                // Per-component DC predictors at slots 0/1/2; shared Huffman tables at slot 0.
+                encoder.encode_block(x_block, 0, 0, 0);
+                encoder.encode_block(y_block, 1, 0, 0);
+                encoder.encode_block(b_block, 2, 0, 0);
+
+                mcu_idx += 1;
+                if mcu_idx < total_mcus {
+                    encoder.check_restart();
+                }
+            }
+        }
+
+        Ok(encoder.finish())
+    }
+
     /// Encodes XYB raster-ordered blocks using optimized Huffman tables.
     pub(crate) fn encode_with_tables_xyb_raster(
         &self,

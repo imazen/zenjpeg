@@ -159,3 +159,74 @@ fn xyb_full_roundtrip() {
         );
     }
 }
+
+/// Strict pixel-correctness regression for XYB Full BASELINE (non-progressive).
+///
+/// Background: the original `XybSubsampling::Full` implementation only fixed
+/// the SOF header (1×1/1×1/1×1) and the layout dimensions. The encoder still
+/// emitted the bitstream with BQuarter MCU geometry (4 X + 4 Y + 1 B per MCU),
+/// so the decoder — correctly following the SOF — read every block as the
+/// wrong component. On a 4-quadrant test image the colors came out completely
+/// wrong (TL red → green, BL blue → green, etc.). The progressive XYB path
+/// happened to be correct because progressive scans are non-interleaved
+/// (1 component per scan), which sidesteps the MCU-layout question entirely.
+///
+/// This test exercises the baseline XYB Full path with a 4-quadrant test
+/// image and asserts each quadrant decodes to roughly the right color.
+#[test]
+fn xyb_full_baseline_pixel_correctness() {
+    let w = 128u32;
+    let h = 128u32;
+    // 4 quadrants of distinct colors — any MCU misalignment scrambles them.
+    let rgb: Vec<u8> = (0..h)
+        .flat_map(|y| {
+            (0..w).flat_map(move |x| {
+                let top = y < h / 2;
+                let left = x < w / 2;
+                match (top, left) {
+                    (true, true) => [220u8, 40, 40],    // TL red
+                    (true, false) => [40u8, 220, 40],   // TR green
+                    (false, true) => [40u8, 40, 220],   // BL blue
+                    (false, false) => [220u8, 220, 40], // BR yellow
+                }
+            })
+        })
+        .collect();
+
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::Full).progressive(false);
+    let jpeg = cfg
+        .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+        .expect("encode");
+
+    let decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("decode");
+    let pixels = decoded.pixels_u8().unwrap();
+    let probe = |x: u32, y: u32| -> (i32, i32, i32) {
+        let i = (y as usize * w as usize + x as usize) * 3;
+        (pixels[i] as i32, pixels[i + 1] as i32, pixels[i + 2] as i32)
+    };
+
+    // Probe at quadrant centers and check the dominant channel.
+    // Note: XYB encoding produces noticeable lossy color casts on saturated
+    // primaries even with correct layout (e.g. BQuarter at Q85 sees BR yellow
+    // decode to ~(90, 216, 38)). The test focuses on *layout correctness*: the
+    // dominant channels should match the source. The original broken Full path
+    // produced (12, 131, 16) for TL red — green dominant — which this catches.
+    let tl = probe(w / 4, h / 4);
+    let tr = probe(3 * w / 4, h / 4);
+    let bl = probe(w / 4, 3 * h / 4);
+    let br = probe(3 * w / 4, 3 * h / 4);
+
+    // TL red: R is the dominant channel
+    assert!(tl.0 > tl.1 && tl.0 > tl.2, "TL not red-dominant: {tl:?}");
+    // TR green: G is the dominant channel
+    assert!(tr.1 > tr.0 && tr.1 > tr.2, "TR not green-dominant: {tr:?}");
+    // BL blue: B is the dominant channel
+    assert!(bl.2 > bl.0 && bl.2 > bl.1, "BL not blue-dominant: {bl:?}");
+    // BR yellow: R+G both above B (G alone may be > R due to XYB chroma cast)
+    assert!(
+        br.1 > br.2 && br.0 > br.2,
+        "BR not yellow-ish (RG > B): {br:?}"
+    );
+}

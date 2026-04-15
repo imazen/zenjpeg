@@ -1287,8 +1287,19 @@ impl StreamingEncoder {
             || cr_quant.precision > 0;
         config.write_frame_header_xyb_ex(output, is_extended)?;
 
+        // Branch on XYB B-channel layout. Full uses 1+1+1 blocks per MCU
+        // (matches its R:1×1 G:1×1 B:1×1 SOF); BQuarter uses 4+4+1.
+        let xyb_full = config.xyb_subsampling == crate::encode::encoder_types::XybSubsampling::Full;
+
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
-            let (dc_table, ac_table, frequencies) = if collect_frequencies {
+            let (dc_table, ac_table, frequencies) = if xyb_full {
+                let (dc, ac, f) = config.build_optimized_tables_xyb_full(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?;
+                (dc, ac, if collect_frequencies { Some(f) } else { None })
+            } else if collect_frequencies {
                 let (dc, ac, f) = config.build_optimized_tables_xyb_raster_with_counts(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
@@ -1311,13 +1322,23 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_raster(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                &dc_table,
-                &ac_table,
-            )?;
+            let scan_data = if xyb_full {
+                config.encode_with_tables_xyb_full(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &dc_table,
+                    &ac_table,
+                )?
+            } else {
+                config.encode_with_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &dc_table,
+                    &ac_table,
+                )?
+            };
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
             // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
@@ -1328,13 +1349,23 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_raster(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                &tables.dc_luma,
-                &tables.ac_luma,
-            )?;
+            let scan_data = if xyb_full {
+                config.encode_with_tables_xyb_full(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &tables.dc_luma,
+                    &tables.ac_luma,
+                )?
+            } else {
+                config.encode_with_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &tables.dc_luma,
+                    &tables.ac_luma,
+                )?
+            };
             Ok((scan_data, None))
         } else {
             // Fixed: use general-purpose trained tables for XYB
@@ -1350,13 +1381,23 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_raster(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                &tables.dc_luma,
-                &tables.ac_luma,
-            )?;
+            let scan_data = if xyb_full {
+                config.encode_with_tables_xyb_full(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &tables.dc_luma,
+                    &tables.ac_luma,
+                )?
+            } else {
+                config.encode_with_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &tables.dc_luma,
+                    &tables.ac_luma,
+                )?
+            };
             Ok((scan_data, None))
         }
     }
