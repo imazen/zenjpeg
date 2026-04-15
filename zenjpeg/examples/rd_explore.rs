@@ -140,6 +140,31 @@ fn zen_xyb_bcoarse(rgb: &[u8], w: u32, h: u32, q: u8, b_factor: f32) -> Vec<u8> 
     e.finish().unwrap()
 }
 
+/// XYB encode at 4:4:4 (no B subsampling). Baseline for the 4:4:4 sweep.
+fn zen_xyb444(rgb: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
+    let cfg = EncoderConfig::xyb(q, XybSubsampling::Full)
+        .progressive(true)
+        .deringing(true)
+        .sharp_yuv(true);
+    let mut e = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    e.push_packed(rgb, Unstoppable).unwrap();
+    e.finish().unwrap()
+}
+
+/// XYB 4:4:4 with B-channel base-quant scaled by `b_factor`.
+fn zen_xyb444_bcoarse(rgb: &[u8], w: u32, h: u32, q: u8, b_factor: f32) -> Vec<u8> {
+    let mut tables = EncodingTables::default_xyb();
+    tables.quant.scale_component(2, b_factor);
+    let cfg = EncoderConfig::xyb(q, XybSubsampling::Full)
+        .progressive(true)
+        .deringing(true)
+        .sharp_yuv(true)
+        .tables(Box::new(tables));
+    let mut e = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    e.push_packed(rgb, Unstoppable).unwrap();
+    e.finish().unwrap()
+}
+
 /// Decode using zenjpeg with ICC color correction so XYB JPEGs decode correctly.
 ///
 /// `decode_jpeg_to_rgb` (zune-jpeg) ignored the embedded XYB ICC profile, which
@@ -306,11 +331,40 @@ fn main() {
                 .unwrap();
             }
 
-            // XYB B-channel coarseness sweep
+            // XYB 4:2:0 B-channel coarseness sweep
             for &factor in &[1.25_f32, 1.5, 1.75, 2.0, 2.5, 3.0] {
                 let label = format!("zen_xyb_b{:.2}", factor);
                 let t = Instant::now();
                 let j = zen_xyb_bcoarse(&rgb, w, h, q, factor);
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                let s = ssim2(&orig, &j, w as usize, h as usize);
+                writeln!(
+                    writer,
+                    "{cat},{name},{w},{h},{q},{label},{b},{s:.4},{m:.2}",
+                    b = j.len(),
+                    m = ms
+                )
+                .unwrap();
+            }
+
+            // XYB 4:4:4 baseline + B sweep
+            {
+                let t = Instant::now();
+                let j = zen_xyb444(&rgb, w, h, q);
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                let s = ssim2(&orig, &j, w as usize, h as usize);
+                writeln!(
+                    writer,
+                    "{cat},{name},{w},{h},{q},zen_xyb444,{b},{s:.4},{m:.2}",
+                    b = j.len(),
+                    m = ms
+                )
+                .unwrap();
+            }
+            for &factor in &[1.25_f32, 1.5, 1.75, 2.0, 2.5, 3.0] {
+                let label = format!("zen_xyb444_b{:.2}", factor);
+                let t = Instant::now();
+                let j = zen_xyb444_bcoarse(&rgb, w, h, q, factor);
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
                 let s = ssim2(&orig, &j, w as usize, h as usize);
                 writeln!(

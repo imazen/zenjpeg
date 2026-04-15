@@ -1298,6 +1298,12 @@ pub fn decode_jpeg(data: &[u8]) -> Result<(Vec<u8>, usize, usize), JpegDecodeErr
 ///
 /// Note: This does NOT apply ICC color profiles. For XYB JPEGs, use
 /// [`decode_jpeg_with_icc`] instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Silently produces garbage for XYB JPEGs (ignores ICC). \
+            Use `decode_jpeg_with_icc` for any code that may see XYB input, \
+            or `decode_jpeg` if you genuinely want raw zune-jpeg output."
+)]
 pub fn decode_jpeg_to_rgb(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
     let (pixels, width, height) = decode_jpeg(data)?;
     Ok(bytes_to_rgb(&pixels, width, height))

@@ -112,9 +112,49 @@ size headroom in B is so small it's unlikely to clear measurement noise.
    Pareto-win on any image class.
 2. **The harness fix matters independently.** Future RD work that touches XYB
    must decode through `decode_jpeg_with_icc` (or any decoder that honours the
-   embedded ICC), not `decode_jpeg_to_rgb`. Worth considering renaming/deprecating
-   `decode_jpeg_to_rgb` in `zenjpeg-bench-utils` to make the trap less obvious.
+   embedded ICC), not `decode_jpeg_to_rgb`. `decode_jpeg_to_rgb` is now
+   `#[deprecated]` in `zenjpeg-bench-utils` (commit follows this writeup).
 3. **Open follow-up:** if there's interest in B-side wins, target high-frequency
    B AC bins specifically (per-coefficient quant scaling via `scale_coeff`) and
    measure with butteraugli alongside SSIM2 — SSIMULACRA2 may be over-weighting
    chroma here for graphics.
+
+## Second bug found: `XybSubsampling::Full` is silently ignored
+
+A follow-up sweep added a `zen_xyb444` baseline (`EncoderConfig::xyb(q,
+XybSubsampling::Full)`) plus a parallel B-coarseness sweep at full-B
+resolution. **Every (image, Q, factor) row produced byte-identical and
+ssim2-identical output to its `BQuarter` sibling.** CSV:
+`benchmarks/rd_explore_xyb444_2026-04-15.csv` (720 rows).
+
+That's not user error — the encoder discards the `XybSubsampling` enum
+on the way to the bitstream:
+
+- `zenjpeg/src/encode/serialize.rs:332-344` — `write_frame_header_xyb_ex` writes
+  the SOF entries for R/G/B with hard-coded sampling factors `0x22, 0x22, 0x11`.
+  No branch on `subsampling`. The CLAUDE.md TODO list calls this out as
+  "low priority, always correct for XYB" — but it is *not* "always correct"
+  when the public API exposes `XybSubsampling::Full` as a buildable variant.
+- `zenjpeg/src/encode/layout.rs:164-171` — `LayoutParams` hard-sets `v_samp = 2`
+  whenever `use_xyb`, ignoring the chroma-subsampling input. The XYB enum
+  never reaches this layer either.
+
+So `EncoderConfig::xyb(q, XybSubsampling::Full)` builds a config that
+*claims* full B but produces a BQuarter bitstream. There is no warning,
+no error, no debug assertion. The 4:4:4 XYB rows in this CSV exist
+purely as evidence of the bug — they have no independent RD signal.
+
+**Recommended next steps (not done in this commit):**
+- Either implement real `XybSubsampling::Full` (R/G/B all `0x11`,
+  layout `v_samp=1`, no B downsampler) — straightforward but needs a
+  full encode/decode roundtrip path test
+- Or remove `XybSubsampling::Full` from the public API and make
+  `BQuarter` the only variant
+- Update the CLAUDE.md TODO line and the "## Planned Features / Remaining
+  Hardening" entry to flag this as a behavioural divergence from the docs,
+  not just a cosmetic hardcode.
+
+The B-coarseness conclusion above is unaffected: at 4:2:0 (which is what
+both code paths actually emit), no factor in {1.25 … 3.0} produced an RD
+win. Whether 4:4:4 XYB *would* have produced a win cannot be answered
+until the layout bug is fixed.
