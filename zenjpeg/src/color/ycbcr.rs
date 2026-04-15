@@ -1658,8 +1658,8 @@ pub fn ycbcr_planes_i16_to_xrgba_u8(
 
         let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
         let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255)
-            as u8;
+        let g =
+            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
         let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
 
         let idx = i * 4;
@@ -1824,8 +1824,8 @@ fn ycbcr_planes_i16_to_xrgba_u8_avx2(
         let cr_val = i32::from(cr_plane[i]) - 128;
         let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
         let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255)
-            as u8;
+        let g =
+            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
         let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
         let idx = i * 4;
         if swap_rb {

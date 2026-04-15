@@ -128,10 +128,14 @@ fn reformat_rgb_into(
     height: usize,
     dst: &mut [u8],
 ) -> Result<usize> {
-    let npixels = width.checked_mul(height).ok_or_else(|| Error::internal("size overflow"))?;
+    let npixels = width
+        .checked_mul(height)
+        .ok_or_else(|| Error::internal("size overflow"))?;
     let written = match format {
         PixelFormat::Rgb => {
-            let bytes = npixels.checked_mul(3).ok_or_else(|| Error::internal("size overflow"))?;
+            let bytes = npixels
+                .checked_mul(3)
+                .ok_or_else(|| Error::internal("size overflow"))?;
             if dst.len() < bytes || rgb.len() < bytes {
                 return Err(Error::internal("destination/source too small for RGB"));
             }
@@ -139,7 +143,9 @@ fn reformat_rgb_into(
             bytes
         }
         PixelFormat::Bgr => {
-            let bytes = npixels.checked_mul(3).ok_or_else(|| Error::internal("size overflow"))?;
+            let bytes = npixels
+                .checked_mul(3)
+                .ok_or_else(|| Error::internal("size overflow"))?;
             if dst.len() < bytes || rgb.len() < bytes {
                 return Err(Error::internal("destination/source too small for BGR"));
             }
@@ -148,7 +154,9 @@ fn reformat_rgb_into(
             bytes
         }
         PixelFormat::Rgba => {
-            let bytes = npixels.checked_mul(4).ok_or_else(|| Error::internal("size overflow"))?;
+            let bytes = npixels
+                .checked_mul(4)
+                .ok_or_else(|| Error::internal("size overflow"))?;
             if dst.len() < bytes || rgb.len() < npixels * 3 {
                 return Err(Error::internal("destination/source too small for RGBA"));
             }
@@ -158,7 +166,9 @@ fn reformat_rgb_into(
             bytes
         }
         PixelFormat::Bgra | PixelFormat::Bgrx => {
-            let bytes = npixels.checked_mul(4).ok_or_else(|| Error::internal("size overflow"))?;
+            let bytes = npixels
+                .checked_mul(4)
+                .ok_or_else(|| Error::internal("size overflow"))?;
             if dst.len() < bytes || rgb.len() < npixels * 3 {
                 return Err(Error::internal("destination/source too small for BGRA"));
             }

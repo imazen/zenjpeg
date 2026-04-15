@@ -2239,16 +2239,15 @@ impl DecodeConfig {
                 | PixelFormat::Gray
         ) && self.compute_effective_transform_from_data(data)
             == crate::lossless::LosslessTransform::None
-            && !matches!(self.deblock_mode, DeblockMode::Knusperli | DeblockMode::Auto)
+            && !matches!(
+                self.deblock_mode,
+                DeblockMode::Knusperli | DeblockMode::Auto
+            )
             && self.output_target == OutputTarget::Srgb8;
 
         if direct_eligible {
-            let mut parser = parser::JpegParser::with_strictness(
-                data,
-                self.max_pixels,
-                None,
-                self.strictness,
-            )?;
+            let mut parser =
+                parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
             parser.read_header()?;
             let is_xyb = parser.info().is_xyb;
 

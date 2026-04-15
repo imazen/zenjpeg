@@ -1312,8 +1312,7 @@ fn push_decoder_native<'a>(
     //   - ScanlineReader's `buffered_rgb` Vec allocation (~width*height*3 B)
     //   - The bulk memcpy from buffered_rgb into the sink (~3-4 ms at 4K)
     //   - The duplicate header parse inside `cfg.scanline_reader()`
-    let descriptor =
-        decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
+    let descriptor = decode_descriptor(preferred, &header, job.config.inner.correct_color.as_ref());
     if let Some(direct_format) = direct_path_pixel_format(descriptor, header.num_components)
         && job.crop_hint.is_none()
         && cfg.compute_effective_transform_from_data(data_ref)
@@ -1517,7 +1516,9 @@ fn push_decoder_direct<'a>(
     let h = header.dimensions.height;
 
     sink.begin(w, h, descriptor).map_err(wrap)?;
-    let mut dst = sink.provide_next_buffer(0, h, w, descriptor).map_err(wrap)?;
+    let mut dst = sink
+        .provide_next_buffer(0, h, w, descriptor)
+        .map_err(wrap)?;
     let dst_bytes = dst.as_strided_bytes_mut();
 
     if let Some(ref stop) = job.stop {
