@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### QUEUED BREAKING CHANGES
+<!-- Breaking changes that will ship together in the next minor release.
+     Until the next minor ships, keep adding here rather than releasing piecemeal. -->
+
+- `JpegDecoderConfig::cmyk_output_raw(bool)` removed; replaced by
+  `cmyk_handling(CmykHandling)` with a non-exhaustive enum (`Passthrough`,
+  `BadRgb`). `Passthrough` is the new default — CMYK/YCCK JPEGs emit raw
+  4-channel CMYK bytes plus the embedded ICC profile, where previously the
+  default was naive (1-C)(1-K) CMYK→RGB conversion (ebb0e24f).
+- Raw CMYK output uses `zenpixels::PixelDescriptor::CMYK8` (ColorModel::Cmyk)
+  rather than aliasing as RGBA8 layout. Callers inspecting the descriptor
+  now see a true CMYK pixel format (d7d56ac4).
+
+### Added
+
+- `EncoderConfig::force_restart_markers(bool)` opt-in to emit RST markers in
+  progressive mode. Default off — progressive suppresses RST markers because
+  they provide no benefit and cost ~10% in overhead (066a9206).
+- `decoder::IdctMethod` and `decoder::DeblockMode` are now public re-exports
+  so callers can actually use `DecodeConfig::idct_method()` and `.deblock()`
+  (67c96ea1).
+- `codec-corpus` upgraded to 1.1.0, now builds on wasm32 (bfce6e9d).
+
+### Changed
+
+- Progressive mode no longer emits restart markers by default. Screenshots
+  and graphics-heavy content are ~10% smaller progressive; parallel decode
+  is unaffected because progressive was never parallelizable. Use
+  `force_restart_markers(true)` if you need RST markers for decoder-side
+  interop (de63e3cf via ad4d8086).
+- AC refinement tokenization uses SIMD masks across v3/neon/wasm128/scalar
+  via magetypes, 13–36% faster progressive encode (ef70a81c).
+- JPEG marker detection uses SIMD `memchr` for the 0xFF scan, and baseline
+  JPEGs skip the entropy-section rescan (79851700, be0c14eb).
+- `zenpixels` workspace dep bumped 0.2.2 → 0.2.8 (required for CMYK8).
+
+### Fixed
+
+- `push_decoder_native` silently returned BGRA for 4-component JPEGs even
+  when `cmyk_handling == Passthrough`, because the streaming ScanlineReader
+  has no raw-CMYK path. Now falls back to the buffered decoder for that
+  case and emits CMYK8 as expected (6befc230).
+- Commit `b05a3584` silently deleted 543 lines across PR #81 (CMYK raw
+  output) and PR #83 (progressive no-restart) while claiming to fix only a
+  test path. Both features are restored; main history rewritten to remove
+  the ghost-revert, preserving the intended test path fix as a separate
+  one-line commit (8b06a354).
+- Progressive encode path in `progressive.rs` SIMD refinement tokenization
+  (2cf3109c).
+- CI: i686 cross-compile corpus skip, macOS `quality_matrix` temp-file race,
+  rustfmt, and clippy `IccMatchTolerance` deprecated-allow (f483d115).
+
 ## [0.8.0] - 2026-04-01
 
 ### Breaking Changes
