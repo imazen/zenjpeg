@@ -25,10 +25,11 @@ pub use ycbcr::{rgb_to_ycbcr_f32, ycbcr_to_rgb_f32};
 #[cfg(feature = "decoder")]
 #[allow(unused_imports)]
 pub use ycbcr::{
-    cmyk_adobe_to_rgb, cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32, gray_f32_to_gray_u8,
-    gray_f32_to_rgb_f32, gray_f32_to_rgb_u8, rgb_u8_swap_rb_inplace, rgb_u8_to_bgra_u8,
-    rgb_u8_to_bgrx_u8, rgb_u8_to_rgba_u8, ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
-    ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycck_planes_to_rgb_u8, ycck_to_rgb,
+    cmyk_adobe_to_rgb, cmyk_planes_to_cmyk_u8, cmyk_planes_to_rgb_u8, gray_f32_to_gray_f32,
+    gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8, rgb_u8_swap_rb_inplace,
+    rgb_u8_to_bgra_u8, rgb_u8_to_bgrx_u8, rgb_u8_to_rgba_u8, ycbcr_planes_f32_to_rgb_f32,
+    ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb, ycck_planes_to_cmyk_u8,
+    ycck_planes_to_rgb_u8, ycck_to_rgb,
 };
 
 // Re-export commonly used items from xyb
