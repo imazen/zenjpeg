@@ -20,74 +20,53 @@ use super::tokens::{RefToken, ScanTokenInfo, Token};
 /// the bits they care about. For AC refinement, `al = ah - 1` so
 /// `newly_nonzero = any_nz & !was_nz`.
 ///
-/// AVX2 path: processes 8 coefficients per iteration via `i16x8`.
-/// Scalar fallback: per-element comparison.
+/// Dispatches to v3/neon/wasm128/scalar via magetypes + `incant!`.
 #[inline]
 fn build_refine_masks(coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
     // Caller validates ah/al: JPEG limits them to 13. Our thresholds are
     // `1 << ah` and `1 << al`; both must fit in i16 (max 32767), so ah <= 14.
     debug_assert!(ah <= 14 && al <= 14);
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return mage_build_refine_masks(token, coeffs, ah, al);
-        }
-    }
-    scalar_build_refine_masks(coeffs, ah, al)
+    refine_mask_dispatch::build(coeffs, ah, al)
 }
 
-/// AVX2-accelerated refinement mask builder (processes 8 coefficients per iteration).
-///
-/// Uses i16x8 (128-bit) lanes to avoid the lane-crossing issues that affect
-/// i16x16's `bitmask()`, matching the pattern in `encode::blocks::build_nonzero_mask`.
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-fn mage_build_refine_masks(
-    _token: archmage::X64V3Token,
-    coeffs: &[i16; 64],
-    ah: u8,
-    al: u8,
-) -> (u64, u64) {
-    use magetypes::simd::i16x8 as mi16x8;
-    let token = _token;
+/// Nested module isolates the magetypes macro's `Token` generic parameter
+/// from this file's `super::tokens::Token` import, which is an unrelated enum.
+mod refine_mask_dispatch {
+    use archmage::prelude::*;
+    use magetypes::simd::generic::i16x8 as GenericI16x8;
 
-    // Thresholds: any_nz <=> abs >= (1<<al), was_nz <=> abs >= (1<<ah).
-    // i16 can hold up to 32767, and ah <= 13 so (1<<ah) <= 8192 fits.
-    let thresh_al = mi16x8::splat(token, 1i16 << al);
-    let thresh_ah = mi16x8::splat(token, 1i16 << ah);
-
-    let mut any_nz_mask: u64 = 0;
-    let mut was_nz_mask: u64 = 0;
-
-    for chunk in 0..8 {
-        let start = chunk * 8;
-        let v = mi16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
-        let absv = v.abs();
-        let any_nz = absv.simd_ge(thresh_al);
-        let was_nz = absv.simd_ge(thresh_ah);
-        any_nz_mask |= (any_nz.bitmask() as u64) << start;
-        was_nz_mask |= (was_nz.bitmask() as u64) << start;
+    #[inline]
+    pub(super) fn build(coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
+        incant!(mage_build_refine_masks(coeffs, ah, al))
     }
 
-    (any_nz_mask, was_nz_mask)
-}
+    /// 8 coefficients per iteration via `i16x8`. Uses 128-bit lanes (not `i16x16`)
+    /// because `i16x16::bitmask()` has lane-crossing issues with `_mm256_packs_epi16`.
+    /// Same rationale as `encode::blocks::build_nonzero_mask`.
+    #[magetypes(v3, neon, wasm128, scalar)]
+    #[inline(always)]
+    fn mage_build_refine_masks(token: Token, coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
+        #[allow(non_camel_case_types)]
+        type i16x8 = GenericI16x8<Token>;
 
-/// Scalar fallback for `build_refine_masks`.
-#[inline]
-fn scalar_build_refine_masks(coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
-    let mut any_nz_mask: u64 = 0;
-    let mut was_nz_mask: u64 = 0;
-    for (i, &c) in coeffs.iter().enumerate() {
-        let abs_c = c.unsigned_abs();
-        if (abs_c >> al) != 0 {
-            any_nz_mask |= 1u64 << i;
+        let thresh_al = i16x8::splat(token, 1i16 << al);
+        let thresh_ah = i16x8::splat(token, 1i16 << ah);
+
+        let mut any_nz_mask: u64 = 0;
+        let mut was_nz_mask: u64 = 0;
+
+        for chunk in 0..8 {
+            let start = chunk * 8;
+            let v = i16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
+            let absv = v.abs();
+            let any_nz = absv.simd_ge(thresh_al);
+            let was_nz = absv.simd_ge(thresh_ah);
+            any_nz_mask |= (any_nz.bitmask() as u64) << start;
+            was_nz_mask |= (was_nz.bitmask() as u64) << start;
         }
-        if (abs_c >> ah) != 0 {
-            was_nz_mask |= 1u64 << i;
-        }
+
+        (any_nz_mask, was_nz_mask)
     }
-    (any_nz_mask, was_nz_mask)
 }
 
 /// Buffer for all tokens across all progressive scans.
@@ -950,8 +929,7 @@ impl ProgressiveTokenBuffer {
                 // but only if a newly-nonzero coefficient follows later in
                 // this block. Otherwise the ZRL would be followed by EOB,
                 // which djpegli rejects (in_zero_run check).
-                let may_emit_zrl =
-                    last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
+                let may_emit_zrl = last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
                 while run >= 16 && may_emit_zrl {
                     let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
                     self.push_ref(ref_token);
