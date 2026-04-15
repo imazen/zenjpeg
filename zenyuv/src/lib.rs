@@ -90,6 +90,7 @@ mod tests {
     fn ctx() -> YuvContext {
         YuvContext::new(Range::Full, Matrix::Bt601)
     }
+    #[allow(dead_code)]
     fn ctx_limited() -> YuvContext {
         YuvContext::new(Range::Limited, Matrix::Bt601)
     }
@@ -112,7 +113,7 @@ mod tests {
             for x in 0..width {
                 let i = (y * width + x) * 3;
                 rgb[i] = ((x * 7 + y * 3) & 0xff) as u8;
-                rgb[i + 1] = ((x * 3 ^ y * 11) & 0xff) as u8;
+                rgb[i + 1] = (((x * 3) ^ (y * 11)) & 0xff) as u8;
                 rgb[i + 2] = (((x + y) * 5) & 0xff) as u8;
             }
         }
@@ -902,7 +903,7 @@ mod tests {
 
         // Limited range Y should be in [16, 235]
         for &yv in y.iter() {
-            assert!(yv >= 16 && yv <= 235, "Y={yv} outside limited range");
+            assert!((16..=235).contains(&yv), "Y={yv} outside limited range");
         }
     }
 
@@ -931,7 +932,7 @@ mod tests {
 
         // Should not panic, output should be valid
         for &yv in y.iter() {
-            assert!(yv >= 16 && yv <= 235, "Y={yv} outside limited range");
+            assert!((16..=235).contains(&yv), "Y={yv} outside limited range");
         }
     }
 

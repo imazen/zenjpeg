@@ -340,7 +340,6 @@ impl StreamingEncoderBuilder {
         encoder.finish()
     }
 
-
     /// Estimates the peak memory usage for this configuration.
     ///
     /// Returns the estimated peak memory in bytes based on image dimensions,
