@@ -22,9 +22,10 @@ fn noise_patches(w: usize, h: usize) -> Vec<u8> {
 
 fn bench_encode(suite: &mut Suite) {
     use zenjpeg::encode::EncoderConfig;
-    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout};
+    use zenjpeg::encode::encoder_types::{ChromaSubsampling, PixelLayout, XybSubsampling};
 
     let rgb_4k: &'static [u8] = Box::leak(noise_patches(3840, 2160).into_boxed_slice());
+    let rgb_1k_xyb: &'static [u8] = Box::leak(noise_patches(1024, 1024).into_boxed_slice());
 
     suite.group("encode_q85_4k", |g| {
         g.bench("4:2:0 progressive", move |b| {
@@ -41,6 +42,56 @@ fn bench_encode(suite: &mut Suite) {
                 let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).sharp_yuv(true);
                 config
                     .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+    });
+
+    // XYB encode benchmarks at 1024×1024 — used to track XYB-vs-YCbCr gap
+    // and measure the impact of XYB-specific perf work (streaming-through
+    // gating, color conversion, parallel encoding).
+    suite.group("encode_q85_1k_xyb", |g| {
+        g.bench("ycbcr 4:2:0 progressive (baseline)", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        g.bench("xyb BQuarter progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::BQuarter);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        g.bench("xyb Full progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::Full);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        g.bench("xyb BQuarter baseline (non-progressive)", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::BQuarter).progressive(false);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        g.bench("xyb Full baseline (non-progressive)", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::Full).progressive(false);
+                config
+                    .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
                     .unwrap()
             })
         });
