@@ -32,6 +32,17 @@ pub struct EncoderConfig {
     /// Restart markers enable parallel decoding and error recovery with
     /// negligible compression overhead when row-aligned (+0.04% at 4 rows).
     pub(crate) restart_mcu_rows: u16,
+    /// Force restart marker emission in progressive mode.
+    ///
+    /// Progressive mode normally suppresses restart markers entirely — they
+    /// provide no benefit (progressive decode is inherently multi-pass, so
+    /// per-segment parallel decode is impossible) but cost ~10% in overhead
+    /// from RST pairs + byte-alignment padding + DC prediction resets.
+    ///
+    /// Set this to `true` only when you specifically need RST markers in a
+    /// progressive stream — e.g. test scaffolding that exercises decoder
+    /// resync paths, or interop with decoders that expect them.
+    pub(crate) force_restart_markers: bool,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -199,6 +210,7 @@ impl EncoderConfig {
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
             restart_mcu_rows: 4,
+            force_restart_markers: false,
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
@@ -598,6 +610,22 @@ impl EncoderConfig {
     #[must_use]
     pub fn restart_mcu_rows(mut self, rows: u16) -> Self {
         self.restart_mcu_rows = rows;
+        self
+    }
+
+    /// Force restart marker emission in progressive mode.
+    ///
+    /// Progressive mode suppresses restart markers by default: they cost ~10%
+    /// in overhead (RST pairs + byte-alignment padding + DC prediction resets)
+    /// with no benefit, since progressive decode is inherently multi-pass and
+    /// restart segments can't be decoded in parallel. Set this to `true` only
+    /// when you specifically need RST markers in a progressive stream (e.g.
+    /// decoder resync test fixtures, or decoder-side interop requirements).
+    ///
+    /// Has no effect in baseline mode, which always honors `restart_mcu_rows`.
+    #[must_use]
+    pub fn force_restart_markers(mut self, force: bool) -> Self {
+        self.force_restart_markers = force;
         self
     }
 

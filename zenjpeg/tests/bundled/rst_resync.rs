@@ -8,8 +8,14 @@ use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-/// Encode a 128x128 4:2:0 JPEG with restart markers every MCU row.
-/// 128x128 at 4:2:0 = 8x8 MCUs, DRI=8 means 8 restart segments.
+/// Encode a 128x128 4:2:0 progressive JPEG with forced restart markers.
+///
+/// Uses `force_restart_markers(true)` because progressive mode normally
+/// suppresses RST markers (PR #83: no benefit, ~10% overhead). The forced
+/// path gives dense per-scan markers (~3 per scan × 5 scans ≈ 15 total),
+/// producing small-enough segments that the decoder's 4096-byte resync
+/// scan window can bridge a zeroed marker to the next one — which is
+/// what these resync tests exercise.
 fn make_large_dri_jpeg() -> Vec<u8> {
     let (w, h) = (128u32, 128u32);
     let mut pixels = vec![0u8; (w * h * 3) as usize];
@@ -21,7 +27,9 @@ fn make_large_dri_jpeg() -> Vec<u8> {
             pixels[idx + 2] = ((x * 13 + y * 5 + 64) % 256) as u8;
         }
     }
-    let config = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter).restart_mcu_rows(1);
+    let config = EncoderConfig::ycbcr(80, ChromaSubsampling::Quarter)
+        .restart_mcu_rows(1)
+        .force_restart_markers(true);
     let mut enc = config
         .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
         .unwrap();

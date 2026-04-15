@@ -105,7 +105,10 @@ impl BytesEncoder {
         // decode requires multi-pass coefficient storage — parallel decode via
         // restart segments is impossible) but cost ~10% in overhead from RST
         // marker pairs + byte-alignment padding + DC prediction resets.
-        let restart_interval = if config.scan_mode.is_progressive() {
+        // `force_restart_markers(true)` overrides this for test scaffolding /
+        // decoder-side interop.
+        let restart_interval = if config.scan_mode.is_progressive() && !config.force_restart_markers
+        {
             0
         } else {
             super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
@@ -970,7 +973,10 @@ impl YCbCrPlanarEncoder {
         // decode requires multi-pass coefficient storage — parallel decode via
         // restart segments is impossible) but cost ~10% in overhead from RST
         // marker pairs + byte-alignment padding + DC prediction resets.
-        let restart_interval = if config.scan_mode.is_progressive() {
+        // `force_restart_markers(true)` overrides this for test scaffolding /
+        // decoder-side interop.
+        let restart_interval = if config.scan_mode.is_progressive() && !config.force_restart_markers
+        {
             0
         } else {
             super::config::resolve_restart_rows(config.restart_mcu_rows, width, height, subsampling)
