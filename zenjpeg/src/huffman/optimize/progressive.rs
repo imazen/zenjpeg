@@ -10,6 +10,86 @@ use super::cluster::cluster_histograms;
 use super::frequency::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 use super::tokens::{RefToken, ScanTokenInfo, Token};
 
+/// Builds two 64-bit coefficient masks for progressive AC refinement tokenization.
+///
+/// Returns `(any_nz_mask, was_nz_mask)` where bit k corresponds to coefficient k:
+/// - `any_nz_mask` bit k = 1 iff `abs(coeffs[k]) >> al != 0` (visible at current precision)
+/// - `was_nz_mask` bit k = 1 iff `abs(coeffs[k]) >> ah != 0` (previously coded)
+///
+/// The returned masks are NOT restricted to the [ss, se] range — callers mask
+/// the bits they care about. For AC refinement, `al = ah - 1` so
+/// `newly_nonzero = any_nz & !was_nz`.
+///
+/// AVX2 path: processes 8 coefficients per iteration via `i16x8`.
+/// Scalar fallback: per-element comparison.
+#[inline]
+fn build_refine_masks(coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
+    // Caller validates ah/al: JPEG limits them to 13. Our thresholds are
+    // `1 << ah` and `1 << al`; both must fit in i16 (max 32767), so ah <= 14.
+    debug_assert!(ah <= 14 && al <= 14);
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return mage_build_refine_masks(token, coeffs, ah, al);
+        }
+    }
+    scalar_build_refine_masks(coeffs, ah, al)
+}
+
+/// AVX2-accelerated refinement mask builder (processes 8 coefficients per iteration).
+///
+/// Uses i16x8 (128-bit) lanes to avoid the lane-crossing issues that affect
+/// i16x16's `bitmask()`, matching the pattern in `encode::blocks::build_nonzero_mask`.
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn mage_build_refine_masks(
+    _token: archmage::X64V3Token,
+    coeffs: &[i16; 64],
+    ah: u8,
+    al: u8,
+) -> (u64, u64) {
+    use magetypes::simd::i16x8 as mi16x8;
+    let token = _token;
+
+    // Thresholds: any_nz <=> abs >= (1<<al), was_nz <=> abs >= (1<<ah).
+    // i16 can hold up to 32767, and ah <= 13 so (1<<ah) <= 8192 fits.
+    let thresh_al = mi16x8::splat(token, 1i16 << al);
+    let thresh_ah = mi16x8::splat(token, 1i16 << ah);
+
+    let mut any_nz_mask: u64 = 0;
+    let mut was_nz_mask: u64 = 0;
+
+    for chunk in 0..8 {
+        let start = chunk * 8;
+        let v = mi16x8::load(token, coeffs[start..start + 8].try_into().unwrap());
+        let absv = v.abs();
+        let any_nz = absv.simd_ge(thresh_al);
+        let was_nz = absv.simd_ge(thresh_ah);
+        any_nz_mask |= (any_nz.bitmask() as u64) << start;
+        was_nz_mask |= (was_nz.bitmask() as u64) << start;
+    }
+
+    (any_nz_mask, was_nz_mask)
+}
+
+/// Scalar fallback for `build_refine_masks`.
+#[inline]
+fn scalar_build_refine_masks(coeffs: &[i16; 64], ah: u8, al: u8) -> (u64, u64) {
+    let mut any_nz_mask: u64 = 0;
+    let mut was_nz_mask: u64 = 0;
+    for (i, &c) in coeffs.iter().enumerate() {
+        let abs_c = c.unsigned_abs();
+        if (abs_c >> al) != 0 {
+            any_nz_mask |= 1u64 << i;
+        }
+        if (abs_c >> ah) != 0 {
+            was_nz_mask |= 1u64 << i;
+        }
+    }
+    (any_nz_mask, was_nz_mask)
+}
+
 /// Buffer for all tokens across all progressive scans.
 ///
 /// This implements the C++ jpegli two-pass approach:
@@ -771,6 +851,24 @@ impl ProgressiveTokenBuffer {
         let ss_idx = ss as usize;
         let se_idx = se as usize;
 
+        // Range mask covers bits [ss_idx, se_idx] inclusive.
+        // Used to restrict the SIMD-built masks to the spectral selection range.
+        let range_mask: u64 = {
+            let lo = ss_idx as u32;
+            let hi = se_idx as u32;
+            // Set bits lo..=hi. hi < 64 always, lo <= hi.
+            let hi_bit = 1u64 << hi;
+            // All bits <= hi: (hi_bit << 1) - 1. But hi < 63 always (AC is 1..=63).
+            // hi == 63: (hi_bit << 1) overflows. Use mask via arithmetic.
+            let upper_inclusive: u64 = if hi == 63 {
+                u64::MAX
+            } else {
+                (hi_bit << 1).wrapping_sub(1)
+            };
+            let lower_exclusive: u64 = (1u64 << lo) - 1;
+            upper_inclusive & !lower_exclusive
+        };
+
         for (block_idx, block) in blocks.iter().enumerate() {
             // Restart boundary: flush pending EOB run + refbits, mark position.
             if ri > 0 && block_idx > 0 && block_idx % ri == 0 {
@@ -781,29 +879,23 @@ impl ProgressiveTokenBuffer {
                 }
                 self.mark_restart();
             }
-            // Extract the coefficient slice once per block.
-            // Since we validated ss <= se <= 63 above, this is guaranteed in-bounds.
-            // The compiler can now eliminate bounds checks in the inner loop.
-            let coeffs = &block[ss_idx..=se_idx];
 
-            // Find if there are any newly-nonzero or previously-nonzero coefficients
-            let mut has_content = false;
-            for &coef in coeffs {
-                let abs_coef = coef.unsigned_abs();
-                // Was previously nonzero (bits at ah position or higher)
-                let was_nonzero = (abs_coef >> ah) != 0;
-                // Is newly nonzero (bit at al position, but not at ah)
-                let newly_nonzero = !was_nonzero && ((abs_coef >> al) & 1) != 0;
-                if was_nonzero || newly_nonzero {
-                    has_content = true;
-                    break;
-                }
-            }
+            // SIMD pre-pass: build two 64-bit masks over the whole block, then
+            // restrict to the [ss, se] range. This replaces two scalar loops
+            // (has_content search and rposition) with a single SIMD scan.
+            let (any_nz_full, was_nz_full) = build_refine_masks(block, ah, al);
+            let any_nz = any_nz_full & range_mask;
+            let was_nz = was_nz_full & range_mask;
+            // Newly nonzero coefficients: any_nz set but not was_nz.
+            // (any_nz is a superset of was_nz by construction — al < ah means
+            // abs>>al != 0 implies abs>>ah != 0 only when the coefficient is
+            // large enough, so was_nz ⊆ any_nz.)
+            let newly_nz = any_nz & !was_nz;
 
-            if !has_content {
-                // All zeros - add to EOB run
-                // DON'T flush pending refbits here - they accumulate with the EOB run
-                // just like C++ does. Only flush when we hit limits.
+            if any_nz == 0 {
+                // All zeros in range — add to EOB run.
+                // DON'T flush pending refbits here — they accumulate with the
+                // EOB run just like C++ does. Only flush when we hit limits.
                 eob_run += 1;
 
                 // Flush if we hit the maximum EOB run OR refbits limit
@@ -822,55 +914,44 @@ impl ProgressiveTokenBuffer {
                 eob_run = 0;
             }
 
-            // Pre-compute last position with a newly-nonzero coefficient.
+            // Last position with a newly-nonzero coefficient (within range).
             // ZRL must only be emitted BEFORE this position — after it, any
             // ZRL would be followed by EOB, which djpegli rejects (in_zero_run
             // is only cleared by a newly-nonzero symbol, not by EOB).
-            // The C++ jpegli encoder handles this by speculatively writing ZRL
-            // tokens and rewinding them if EOB follows (next_eob_token mechanism).
-            // We use a simpler approach: don't emit ZRL past the last newly-nonzero.
-            let last_newly_nonzero_pos = coeffs.iter().rposition(|&c| {
-                let abs_coef = c.unsigned_abs();
-                let absval = abs_coef >> al;
-                absval == 1
-            });
+            let last_newly_nonzero_pos: Option<usize> = if newly_nz != 0 {
+                Some(63 - newly_nz.leading_zeros() as usize)
+            } else {
+                None
+            };
 
-            // Process coefficients - match C++ order exactly:
-            // 1. If completely zero, increment run
-            // 2. Emit ZRL if run > 15 (BEFORE adding current position's refbit)
-            //    BUT only if a newly-nonzero follows later in this block
-            // 3. If previously nonzero (absval > 1), add refbit
-            // 4. If newly nonzero (absval == 1), emit token
+            // Iterate only over nonzero positions via trailing_zeros(). For
+            // each visited position we know it's either previously-nonzero
+            // (was_nz bit set) or newly-nonzero (newly_nz bit set). The
+            // implicit `run` between positions is their index gap minus one.
+            //
+            // Note: `pos` walks across all visited nonzero positions. The
+            // positions outside [ss_idx, se_idx] have been masked out already.
             let mut run = 0u8;
+            let mut prev_pos: i32 = ss_idx as i32 - 1;
             block_refbits.clear(); // Reuse allocation from previous iteration
+            let mut remaining = any_nz;
 
-            for (pos, &coef) in coeffs.iter().enumerate() {
-                let abs_coef = coef.unsigned_abs();
+            while remaining != 0 {
+                let pos = remaining.trailing_zeros() as usize;
+                remaining &= remaining - 1; // clear lowest set bit
 
-                // Step 1: Check if coefficient is completely zero
-                if abs_coef == 0 {
-                    run += 1;
-                    continue;
-                }
+                // Accumulate zero-run from previous visited nonzero (or scan
+                // start) up to this position.
+                let gap = (pos as i32 - prev_pos - 1) as u8;
+                run = run.wrapping_add(gap);
+                prev_pos = pos as i32;
 
-                // Shift to current precision level (like C++: absval >>= Al)
-                let absval = abs_coef >> al;
-
-                // Step 2: Check if zero at current precision (not visible yet)
-                if absval == 0 {
-                    run += 1;
-                    continue;
-                }
-
-                // We have a nonzero coefficient at current precision.
-                // FIRST check for ZRL, THEN add refbit or emit newly-nonzero.
-
-                // Step 3: Emit ZRL tokens BEFORE processing current coefficient,
-                // but ONLY if a newly-nonzero coefficient follows later in this
-                // block. Otherwise the ZRL would be followed by EOB, which is
-                // invalid per djpegli's decoder (in_zero_run check). When we
-                // suppress ZRL, the run and refbits accumulate until EOB.
-                let may_emit_zrl = last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
+                // Emit ZRL tokens BEFORE processing the current coefficient,
+                // but only if a newly-nonzero coefficient follows later in
+                // this block. Otherwise the ZRL would be followed by EOB,
+                // which djpegli rejects (in_zero_run check).
+                let may_emit_zrl =
+                    last_newly_nonzero_pos.is_some_and(|last_pos| pos <= last_pos);
                 while run >= 16 && may_emit_zrl {
                     let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
                     self.push_ref(ref_token);
@@ -881,17 +962,17 @@ impl ProgressiveTokenBuffer {
                     run -= 16;
                 }
 
-                // Step 4: Check if previously nonzero (magnitude > 1)
-                if absval > 1 {
-                    // Previously nonzero: add refinement bit, continue
-                    // Note: block_refbits capacity was pre-allocated, no grow_one
-                    let refbit = (abs_coef >> al) & 1;
+                // Classify this nonzero: previously-coded vs newly-nonzero.
+                let bit_mask = 1u64 << pos;
+                if (was_nz & bit_mask) != 0 {
+                    // Previously nonzero — collect refinement bit.
+                    let refbit = (block[pos].unsigned_abs() >> al) & 1;
                     block_refbits.push(refbit as u8);
                     continue;
                 }
 
-                // Step 5: absval == 1, newly nonzero
-                // Emit newly nonzero coefficient with accumulated refbits
+                // Newly nonzero (absval == 1 at current precision).
+                let coef = block[pos];
                 let symbol = if coef < 0 {
                     (run << 4) | 1 // 0x?1 for negative
                 } else {
@@ -904,6 +985,12 @@ impl ProgressiveTokenBuffer {
                 }
                 block_refbits.clear();
                 run = 0;
+            }
+
+            // Trailing zero run between last visited nonzero and se_idx.
+            if prev_pos < se_idx as i32 {
+                let trailing = (se_idx as i32 - prev_pos) as u8;
+                run = run.wrapping_add(trailing);
             }
 
             // If we have trailing refbits or trailing zeros, this block ends with EOB.
