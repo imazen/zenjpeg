@@ -1511,6 +1511,15 @@ impl<'a> JpegParser<'a> {
         let width = self.width as usize;
         let height = self.height as usize;
 
+        // Streaming-decode result already in `streaming_rgb` (3 bpp): reformat
+        // straight into `dst`. Avoids touching the (empty) coefficient store
+        // that the fast i16 path would otherwise read from.
+        if is_rgb_family_u8(format) && !is_xyb {
+            if let Some(rgb) = self.streaming_rgb.take() {
+                return reformat_rgb_into(&rgb, format, width, height, dst);
+            }
+        }
+
         // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode
         // straight into `dst` without an intermediate RGB Vec.
         if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
