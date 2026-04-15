@@ -2,6 +2,49 @@
 
 Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
+## BANNED: worktrees in this repo (CRITICAL)
+
+**Do NOT create `git worktree` directories in this repo.** Claude Code
+sessions have repeatedly desynced worktrees from `origin/main` across
+force-pushes and history rewrites, stranding WIP and stale `main` refs
+across multiple sibling directories. If you need to work on a different
+branch, either:
+
+1. Commit your current work and `git checkout <branch>` in the existing
+   working tree, or
+2. Use `jj` (jujutsu) which auto-snapshots on every command and has
+   first-class support for multiple concurrent changes on one working
+   copy — no worktrees needed. See the "jj alternative" note below.
+
+**If you find yourself typing `git worktree add` — stop.** Commit,
+checkout, and work in place. The one exception is when a human
+explicitly names a worktree path for a specific reason.
+
+**Cleanup of existing worktrees requires rescue first:** copy every
+modified and untracked file to `/tmp/_rescued-worktrees/<timestamp>-<name>/`
+preserving relative paths BEFORE running `git worktree remove` — even
+if `git worktree remove` is supposed to refuse dirty trees. Belt and
+suspenders.
+
+### jj alternative (preferred going forward)
+
+`jj` (https://jj-vcs.github.io/jj/) is a git-compatible VCS that
+eliminates most of the footguns Claude has hit in this session:
+
+- **Auto-snapshot on every command** — working tree always committed;
+  nothing lost to `stash` confusion or forgotten `git add`.
+- **`jj undo`** — undo any op, including force-push recovery locally.
+- **Change IDs stable across rebases** — my history rewrite wouldn't
+  have created ghost SHAs that left sibling worktrees holding bags.
+- **First-class conflict markers in commits** — rebase that would
+  fail in git succeeds with conflicts marked, fixable incrementally.
+- **No staging area** — the class of bugs where Claude staged an
+  unintended file (the `internal/jpegli-cpp` symlink typechange)
+  don't exist.
+
+Setup: `cargo install jujutsu`, then `jj git init --colocate` in this
+repo. All existing git tooling (GitHub, PRs, CI) keeps working.
+
 ## API Stability Rules (CRITICAL)
 
 **DO NOT change the public API without explicit approval:**
