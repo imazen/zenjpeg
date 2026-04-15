@@ -45,6 +45,48 @@ fn bench_encode(suite: &mut Suite) {
                     .unwrap()
             })
         });
+
+        g.bench("xyb Full progressive", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::Full);
+                config
+                    .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        g.bench("xyb Full baseline", move |b| {
+            b.iter(|| {
+                let config = EncoderConfig::xyb(85.0, XybSubsampling::Full).progressive(false);
+                config
+                    .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                    .unwrap()
+            })
+        });
+
+        #[cfg(feature = "parallel")]
+        {
+            use zenjpeg::encode::encoder_types::ParallelEncoding;
+            g.bench("xyb Full progressive +parallel", move |b| {
+                b.iter(|| {
+                    let config = EncoderConfig::xyb(85.0, XybSubsampling::Full)
+                        .parallel(ParallelEncoding::Auto);
+                    config
+                        .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            });
+            g.bench("xyb Full baseline +parallel", move |b| {
+                b.iter(|| {
+                    let config = EncoderConfig::xyb(85.0, XybSubsampling::Full)
+                        .progressive(false)
+                        .parallel(ParallelEncoding::Auto);
+                    config
+                        .encode_bytes(rgb_4k, 3840, 2160, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            });
+        }
     });
 
     // XYB encode benchmarks at 1024×1024 — used to track XYB-vs-YCbCr gap
@@ -95,6 +137,40 @@ fn bench_encode(suite: &mut Suite) {
                     .unwrap()
             })
         });
+
+        // Parallel feature for XYB: currently a no-op. The per-strip DCT
+        // block count (~16384/strip at 1024² down to ~480/strip at 4K-h with
+        // strip_height=8) sits below `parallel.rs::PARALLEL_THRESHOLD = 4096`
+        // for XYB Full, so `parallel_dct_y_blocks` always takes the
+        // sequential branch. The XYB entropy path doesn't go through the
+        // parallel-aware `blocks.rs::encode_blocks` either; it runs
+        // `encode_sequential_xyb` regardless. Real parallel for XYB would
+        // need either lower per-strip thresholds or fan-out across the X/Y/B
+        // components. These benches still emit numbers so future work can
+        // verify when that changes.
+        #[cfg(feature = "parallel")]
+        {
+            use zenjpeg::encode::encoder_types::ParallelEncoding;
+            g.bench("xyb Full progressive +parallel", move |b| {
+                b.iter(|| {
+                    let config = EncoderConfig::xyb(85.0, XybSubsampling::Full)
+                        .parallel(ParallelEncoding::Auto);
+                    config
+                        .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            });
+            g.bench("xyb Full baseline +parallel", move |b| {
+                b.iter(|| {
+                    let config = EncoderConfig::xyb(85.0, XybSubsampling::Full)
+                        .progressive(false)
+                        .parallel(ParallelEncoding::Auto);
+                    config
+                        .encode_bytes(rgb_1k_xyb, 1024, 1024, PixelLayout::Rgb8Srgb)
+                        .unwrap()
+                })
+            });
+        }
     });
 
     // Isolated sharp YUV benchmark.
