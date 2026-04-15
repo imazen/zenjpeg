@@ -850,6 +850,17 @@ pub struct JpegDecoderConfig {
     inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
+    /// When true, CMYK/YCCK JPEGs produce raw 4-channel CMYK output instead
+    /// of auto-converting to RGB. The output uses RGBA8 pixel layout
+    /// (since zenpixels has no native CMYK format) with
+    /// `ImageInfo.source_color.channel_count == Some(4)` and
+    /// `ImageInfo.has_alpha == false` to distinguish from true RGBA.
+    ///
+    /// The byte order is inverted CMYK (Adobe/libjpeg convention):
+    /// 0 = full ink, 255 = no ink.
+    ///
+    /// Default: `false` (auto-convert to RGB).
+    cmyk_output_raw: bool,
 }
 
 impl JpegDecoderConfig {
@@ -860,6 +871,7 @@ impl JpegDecoderConfig {
             #[cfg(feature = "decoder")]
             inner: crate::decode::DecodeConfig::new(),
             limits: ResourceLimits::none(),
+            cmyk_output_raw: false,
         }
     }
 
@@ -901,6 +913,33 @@ impl JpegDecoderConfig {
     pub fn deblock(mut self, mode: crate::decode::DeblockMode) -> Self {
         self.inner = self.inner.deblock(mode);
         self
+    }
+
+    /// Output raw CMYK bytes instead of auto-converting to RGB.
+    ///
+    /// When enabled, CMYK and YCCK JPEGs produce 4-channel output in
+    /// inverted CMYK format (0 = full ink, 255 = no ink) — the same byte
+    /// order that libjpeg/mozjpeg use. The ICC profile is passed through
+    /// in `ImageInfo.source_color.icc_profile` for the caller to apply
+    /// its own CMS transform.
+    ///
+    /// Since zenpixels has no native CMYK pixel format, the output uses
+    /// `RGBA8` layout with `ImageInfo.has_alpha == false` and
+    /// `ImageInfo.source_color.channel_count == Some(4)`.
+    ///
+    /// Has no effect on non-CMYK input (grayscale, YCbCr).
+    ///
+    /// Default: `false`.
+    #[must_use]
+    pub fn cmyk_output_raw(mut self, raw: bool) -> Self {
+        self.cmyk_output_raw = raw;
+        self
+    }
+
+    /// Returns whether raw CMYK output is enabled.
+    #[must_use]
+    pub fn is_cmyk_output_raw(&self) -> bool {
+        self.cmyk_output_raw
     }
 
     /// Convenience: probe image header with this config.
@@ -1586,6 +1625,22 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
             }
 
+            // When raw CMYK output is requested, probe the header to check
+            // if this is actually a CMYK/YCCK JPEG (4 components). If so,
+            // override the output format to PixelFormat::Cmyk so the decoder
+            // produces raw CMYK bytes instead of auto-converting to RGB.
+            let is_raw_cmyk = if self.config.cmyk_output_raw {
+                let header = cfg.read_info(&data)?;
+                if header.num_components == 4 {
+                    cfg = cfg.output_format(PixelFormat::Cmyk);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
             let stop: &dyn enough::Stop = match &self.stop {
                 Some(s) => s,
                 None => &enough::Unstoppable,
@@ -1691,6 +1746,17 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                         }
                     }
                 }
+            } else if is_raw_cmyk {
+                // Raw CMYK output: 4 bytes per pixel in inverted CMYK order.
+                // Package as RGBA8 layout (the only 4-channel u8 format in
+                // zenpixels). The caller distinguishes this from true RGBA via
+                // source_color.channel_count == 4 and has_alpha == false.
+                let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
+                info.has_alpha = false;
+                info.source_color.channel_count = Some(4);
+                let desc = PixelDescriptor::from_pixel_format(zenpixels::PixelFormat::Rgba8);
+                PixelBuffer::from_vec(pixels_u8, w, h, desc)
+                    .map_err(|_| Error::internal("pixel buffer creation failed"))?
             } else {
                 let pixels_u8 = result.into_pixels_u8().unwrap_or_default();
                 let pf = match format {

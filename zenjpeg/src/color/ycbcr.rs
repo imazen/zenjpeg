@@ -937,6 +937,76 @@ pub fn ycck_planes_to_rgb_u8(
     }
 }
 
+/// Batch convert CMYK planes (Adobe format) to interleaved raw CMYK.
+///
+/// Each plane contains values in Adobe inverted format (0 = full ink).
+/// Output is interleaved CMYK bytes (4 bytes per pixel), preserving
+/// the inverted byte values as-is for downstream ICC-based conversion.
+pub fn cmyk_planes_to_cmyk_u8(
+    c_plane: &[f32],
+    m_plane: &[f32],
+    y_plane: &[f32],
+    k_plane: &[f32],
+    cmyk: &mut [u8],
+) {
+    debug_assert_eq!(c_plane.len(), m_plane.len());
+    debug_assert_eq!(c_plane.len(), y_plane.len());
+    debug_assert_eq!(c_plane.len(), k_plane.len());
+    debug_assert_eq!(cmyk.len(), c_plane.len() * 4);
+
+    for i in 0..c_plane.len() {
+        // Level shift and clamp to 0-255 range
+        let c = (c_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let m = (m_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let y = (y_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let k = (k_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+
+        cmyk[i * 4] = c;
+        cmyk[i * 4 + 1] = m;
+        cmyk[i * 4 + 2] = y;
+        cmyk[i * 4 + 3] = k;
+    }
+}
+
+/// Batch convert YCCK planes to interleaved raw CMYK.
+///
+/// Takes Y, Cb, Cr, K planes (f32, centered at 0) and outputs raw CMYK bytes.
+/// YCbCr channels are converted to CMY via standard YCbCr→RGB, producing
+/// CMY values. K is level-shifted and passed through. Output is interleaved
+/// CMYK bytes (4 bytes per pixel) in the same inverted format as
+/// [`cmyk_planes_to_cmyk_u8`].
+pub fn ycck_planes_to_cmyk_u8(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    k_plane: &[f32],
+    cmyk: &mut [u8],
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(y_plane.len(), k_plane.len());
+    debug_assert_eq!(cmyk.len(), y_plane.len() * 4);
+
+    for i in 0..y_plane.len() {
+        // Level shift and clamp
+        let y = (y_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let cb = (cb_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let cr = (cr_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+        let k = (k_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
+
+        // YCbCr→RGB converts the encoded channels back to "RGB-like" values.
+        // In YCCK, these represent the inverted CMY channels: 0 = full ink,
+        // 255 = no ink — matching the Adobe/libjpeg convention directly.
+        // This is the same as what libjpeg outputs for JCS_CMYK from YCCK input.
+        let (c, m, yy) = ycbcr_to_rgb(y, cb, cr);
+
+        cmyk[i * 4] = c;
+        cmyk[i * 4 + 1] = m;
+        cmyk[i * 4 + 2] = yy;
+        cmyk[i * 4 + 3] = k; // K is already in inverted format
+    }
+}
+
 /// Extracts a single channel from a pixel buffer.
 ///
 /// # Errors
