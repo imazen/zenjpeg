@@ -59,6 +59,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: i686 cross-compile corpus skip, macOS `quality_matrix` temp-file race,
   rustfmt, and clippy `IccMatchTolerance` deprecated-allow (f483d115).
 
+## [0.8.4] - 2026-04-10
+
+### Fixed
+
+- Fall back to the zenjpeg decoder when zune-jpeg fails in `quality_matrix`
+  tests (d8ec089b).
+
+## [0.8.3] - 2026-04-10
+
+### Added
+
+- **Fused parallel encoder**: `EncoderConfig::encode_bytes_parallel(data, width, height)`
+  — single-pass symbol-stream architecture (per-segment quantize →
+  frequency merge → cheap Huffman remap). 4.43× speedup on 4K Q85 4:2:0
+  (36.4 ms → 8.2 ms) with −0.52% file size from integrated R-D
+  optimization. Requires `parallel` feature, RGB8 input, baseline mode
+  (08eb5593, 2d846724).
+- Fuzz infrastructure: curated seeds moved to `fuzz/seeds/`, bulk corpus
+  gitignored, cargo-fuzz targets in `fuzz/` (292e6fc8, 7f043aa4, ad627baf).
+
+### Changed
+
+- Bumped `zencodec` to 0.1.13 (2374af54).
+- Fuzz differential harness upgraded `zune-jpeg` 0.4 → 0.5, restored
+  progressive coverage (04379c0d).
+
+### Fixed
+
+- Bounds-check progressive scanline buffer access (fixes #26, 8868898d).
+- Normalize zune output to RGB in `fuzz_differential` (fixes #27, 268d5a22).
+- Skip progressive JPEGs in `fuzz_differential` to avoid zune-jpeg panic
+  (13ad7d3a).
+- Remove unimplemented dead-code SIMD functions (1ea24883).
+- Clippy warnings across all-features build, `issue27` test, heaptrack
+  example, and check-cfg (c05935f1, 76870d2e).
+- Mark `compare_scanline_vs_streaming_standard_444` as ignored pending
+  investigation (f34d7e8e).
+
+## [0.8.2] - 2026-04-01
+
+### Fixed
+
+- Use `calloc` for fused parallel RGB output allocation — single zeroed
+  allocation instead of `Vec::with_capacity` + fill loop (200233e3).
+
+## [0.8.1] - 2026-04-01
+
+### Added
+
+- **UltraHDR ISO 21496-1 primary APP2 marker**: encoder now emits the
+  version-only APP2 segment in the primary JPEG when ISO format is
+  enabled, matching Adobe Photoshop and libultrahdr 0.4.0 canonical
+  output (4771b622).
+
+### Fixed
+
+- **UltraHDR / gain map security hardening** (4771b622):
+  - Cap MPF entry count against actual data size (prevents OOM on
+    crafted input with inflated `mp_entry_count`, max 256 images).
+  - Guard `compute_gainmap_target` against zero primary dimensions.
+  - Fix stride overflow in `tonemap_hdr_to_sdr` (`u32` wrap before
+    `usize` cast).
+  - Fix index overflow in `get_linear_rgb_safe` (saturating arithmetic).
+  - Fix SOI/EOI scanning in `find_secondary_jpeg` and
+    `find_secondary_jpeg_range` to correctly skip SOS entropy data
+    (prevents false EOI matches).
+- Pin `moxcms` to 0.8.1; crates.io rejects wildcard versions
+  (pre-release commit on v0.8.1 tag).
+
 ## [0.8.0] - 2026-04-01
 
 ### Breaking Changes
