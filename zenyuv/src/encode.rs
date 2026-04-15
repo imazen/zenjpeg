@@ -129,6 +129,66 @@ pub fn rgb_to_yuv420_with(
     ));
 }
 
+/// Compute only the Y plane for a 4:2:0 encode. Skips chroma computation
+/// entirely — useful when the caller will replace chroma with a custom
+/// downsampling (e.g., gamma-corrected averaging).
+///
+/// Called via [`crate::YuvContext::encode_420_y_only_u8`] — the public surface.
+pub(crate) fn rgb_to_yuv420_y_only_with(
+    rgb: &[u8],
+    y: &mut [u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+) {
+    let n = width * height;
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+
+    let coeffs = ForwardCoeffs::new(matrix, range);
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        crate::avx2_encode::rgb_to_yuv420_y_only_avx2(token, rgb, y, width, height, &coeffs);
+        return;
+    }
+
+    // Fallback: pure scalar Y. Covers NEON, WASM SIMD, and scalar targets.
+    // (AVX2 Y-only kernel above already handles its scalar tail internally.)
+    rgb_to_y_scalar_tail(rgb, y, width, height, 0, &coeffs);
+}
+
+/// Y-only scalar tail: writes Y values for columns `[simd_cols..width)` across
+/// all rows. Used by both the AVX2 Y-only kernel's tail and the non-x86_64
+/// fallback (with simd_cols = 0).
+#[inline]
+pub(crate) fn rgb_to_y_scalar_tail(
+    rgb: &[u8],
+    y_out: &mut [u8],
+    width: usize,
+    height: usize,
+    simd_cols: usize,
+    coeffs: &ForwardCoeffs,
+) {
+    use crate::types::PREC;
+    let row_stride = width * 3;
+    for row in 0..height {
+        for col in simd_cols..width {
+            let p = row * row_stride + col * 3;
+            let r = rgb[p] as i32;
+            let g = rgb[p + 1] as i32;
+            let b = rgb[p + 2] as i32;
+            y_out[row * width + col] = ((r * coeffs.yr as i32
+                + g * coeffs.yg as i32
+                + b * coeffs.yb as i32
+                + coeffs.y_bias)
+                >> PREC)
+                .clamp(0, 255) as u8;
+        }
+    }
+}
+
 /// Compute Y plane only (no Cb/Cr) at full resolution. Used by Sharp YUV
 /// which computes chroma separately via iterative optimization.
 pub(crate) fn rgb_to_yuv444_y_only(
