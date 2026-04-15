@@ -1902,23 +1902,39 @@ impl DecodeConfig {
             // At this point pixels are always RGB (CMYK/YCCK already converted).
             // The ICC profile may describe any source color space (sRGB, Adobe RGB,
             // CMYK working space) — moxcms handles the transform to the target.
+            //
+            // Special case: XYB JPEGs. The output stage emits raw scaled-XYB
+            // bytes (no inverse XYB transform applied — see output.rs). The
+            // embedded ICC profile is the ONLY way to get visible sRGB. So
+            // default-apply it to sRGB when the user didn't set correct_color.
             #[cfg(feature = "moxcms")]
-            if let Some(target) = self.correct_color
-                && let Some(ref icc_profile) = parser.icc_profile
             {
-                match apply_icc_transform_f32(
-                    &pixels,
-                    visible_w as usize,
-                    visible_h as usize,
-                    icc_profile,
-                    target,
-                ) {
-                    Ok(transformed) => pixels = transformed,
-                    Err(_e) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Warning: ICC f32 transform failed, using original colors: {_e:?}"
-                        );
+                let effective_target = self.correct_color.or_else(|| {
+                    parser.icc_profile.as_ref().and_then(|icc| {
+                        if crate::color::icc::is_xyb_profile(icc) {
+                            Some(TargetColorSpace::Srgb)
+                        } else {
+                            None
+                        }
+                    })
+                });
+                if let Some(target) = effective_target
+                    && let Some(ref icc_profile) = parser.icc_profile
+                {
+                    match apply_icc_transform_f32(
+                        &pixels,
+                        visible_w as usize,
+                        visible_h as usize,
+                        icc_profile,
+                        target,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC f32 transform failed, using original colors: {_e:?}"
+                            );
+                        }
                     }
                 }
             }
@@ -2085,23 +2101,36 @@ impl DecodeConfig {
 
             // Apply ICC profile if enabled and present.
             // Pixels are always RGB here (CMYK/YCCK converted earlier in output.rs).
+            // Special case: XYB JPEGs default-apply the embedded ICC even
+            // without an explicit correct_color call — see u8 path notes.
             #[cfg(feature = "moxcms")]
-            if let Some(target) = self.correct_color
-                && let Some(ref icc_profile) = parser.icc_profile
             {
-                match apply_icc_transform(
-                    &pixels,
-                    visible_w as usize,
-                    visible_h as usize,
-                    icc_profile,
-                    target,
-                ) {
-                    Ok(transformed) => pixels = transformed,
-                    Err(_e) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "Warning: ICC profile transform failed, using original colors: {_e:?}"
-                        );
+                let effective_target = self.correct_color.or_else(|| {
+                    parser.icc_profile.as_ref().and_then(|icc| {
+                        if crate::color::icc::is_xyb_profile(icc) {
+                            Some(TargetColorSpace::Srgb)
+                        } else {
+                            None
+                        }
+                    })
+                });
+                if let Some(target) = effective_target
+                    && let Some(ref icc_profile) = parser.icc_profile
+                {
+                    match apply_icc_transform(
+                        &pixels,
+                        visible_w as usize,
+                        visible_h as usize,
+                        icc_profile,
+                        target,
+                    ) {
+                        Ok(transformed) => pixels = transformed,
+                        Err(_e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "Warning: ICC profile transform failed, using original colors: {_e:?}"
+                            );
+                        }
                     }
                 }
             }
