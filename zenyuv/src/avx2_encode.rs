@@ -211,6 +211,53 @@ pub(crate) fn rgb_to_yuv420_avx2(
     );
 }
 
+/// Y-only AVX2 kernel: computes the Y plane for a 4:2:0 input. Skips all
+/// chroma computation — useful when the caller will replace chroma with a
+/// gamma-corrected (or other custom) downsampling. Same arithmetic as the
+/// Y part of `rgb_to_yuv420_avx2`; the chroma code is simply elided.
+#[arcane]
+pub(crate) fn rgb_to_yuv420_y_only_avx2(
+    token: archmage::X64V3Token,
+    rgb: &[u8],
+    y_out: &mut [u8],
+    width: usize,
+    height: usize,
+    coeffs: &ForwardCoeffs,
+) {
+    use core::arch::x86_64::*;
+
+    let y_rg = _mm256_set1_epi32(pack_i16_pair(coeffs.yr, coeffs.yg));
+    let y_b0 = _mm256_set1_epi32(pack_i16_pair(coeffs.yb, 0));
+    let y_bias_v = _mm256_set1_epi32(coeffs.y_bias);
+
+    let row_stride = width * 3;
+    let col_blocks = width / 32;
+
+    for row in 0..height {
+        let row_off = row * row_stride;
+        let y_row_off = row * width;
+        for cx in 0..col_blocks {
+            let px = cx * 32;
+            let src = &rgb[row_off + px * 3..row_off + px * 3 + 96];
+            let t0 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[0..32]).unwrap());
+            let t1 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[32..64]).unwrap());
+            let t2 = safe_simd::_mm256_loadu_si256(<&[u8; 32]>::try_from(&src[64..96]).unwrap());
+            let (r_v, g_v, b_v) = deinterleave_rgb_avx2(token, t0, t1, t2);
+            let (y_lo, y_hi) = matrix_row_avx2(token, r_v, g_v, b_v, y_rg, y_b0, y_bias_v);
+            store_u8x32_avx2(
+                token,
+                &mut y_out[y_row_off + px..y_row_off + px + 32],
+                y_lo,
+                y_hi,
+            );
+        }
+    }
+
+    // Scalar tail: Y only. Covers the [col_blocks * 32..width) columns that
+    // the AVX2 kernel skipped.
+    crate::encode::rgb_to_y_scalar_tail(rgb, y_out, width, height, col_blocks * 32, coeffs);
+}
+
 // ── AVX2 helper functions ──────────────────────────────────────────────────
 
 /// Deinterleave 96 bytes of packed RGB into three 32-byte plane vectors.

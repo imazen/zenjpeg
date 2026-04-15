@@ -72,6 +72,19 @@ impl YuvContext {
         crate::encode::rgb_to_yuv420_with(rgb, y, cb, cr, width, height, self.range, self.matrix);
     }
 
+    /// Y-only 4:2:0 encode. u8 output. Useful when the caller provides custom
+    /// chroma downsampling (e.g., gamma-corrected averaging) and wants to
+    /// avoid the cost of computing and writing chroma that will be overwritten.
+    pub fn encode_420_y_only_u8(
+        &mut self,
+        rgb: &[u8],
+        y: &mut [u8],
+        width: usize,
+        height: usize,
+    ) {
+        crate::encode::rgb_to_yuv420_y_only_with(rgb, y, width, height, self.range, self.matrix);
+    }
+
     /// Box-average 4:4:4 encode. u8 output.
     pub fn encode_444_u8(
         &mut self,

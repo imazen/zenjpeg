@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "zenyuv"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archmage 0.9.19",
  "libm",

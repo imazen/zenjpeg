@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1 - 2026-04-15
+
+### Added
+- `YuvContext::encode_420_y_only_u8` — Y-only 4:2:0 encode that skips chroma
+  compute entirely. For callers that will replace chroma with a custom
+  downsampling (e.g., gamma-corrected averaging) and want to avoid the cost
+  of zenyuv's chroma compute+write being overwritten.
+- AVX2 kernel `rgb_to_yuv420_y_only_avx2` reuses the existing Y `matrix_row_avx2`
+  helper; no chroma compute in the hot loop.
+
+Measured ~22% speedup on 3840×2160 gamma-corrected RGB→YUV420 when paired
+with a custom chroma overwrite (downstream in zenwebp).
+
 ## 0.1.0 - 2026-04-14
 
 Initial release.
