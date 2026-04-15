@@ -61,10 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.4] - 2026-04-10
 
-### Fixed
-
-- Fall back to the zenjpeg decoder when zune-jpeg fails in `quality_matrix`
-  tests (d8ec089b).
+No user-visible changes. Test-harness-only re-release: `quality_matrix`
+integration test now falls back to the zenjpeg decoder when `zune-jpeg`
+(used as a cross-check reference) fails to decode some cjpegli 4:4:0
+output on macOS ARM (d8ec089b).
 
 ## [0.8.3] - 2026-04-10
 
