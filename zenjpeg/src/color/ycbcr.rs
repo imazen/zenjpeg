@@ -994,15 +994,15 @@ pub fn ycck_planes_to_cmyk_u8(
         let cr = (cr_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
         let k = (k_plane[i] + 128.0).round().clamp(0.0, 255.0) as u8;
 
-        // YCbCr→RGB converts the encoded channels back to "RGB-like" values.
-        // In YCCK, these represent the inverted CMY channels: 0 = full ink,
-        // 255 = no ink — matching the Adobe/libjpeg convention directly.
-        // This is the same as what libjpeg outputs for JCS_CMYK from YCCK input.
+        // YCbCr→RGB converts the encoded channels back to "RGB-like" values
+        // in direct format: 0 = no ink, 255 = full ink.
+        // Adobe/libjpeg CMYK convention is inverted: 0 = full ink, 255 = no ink.
+        // Invert each CMY channel to match. K is already inverted in YCCK.
         let (c, m, yy) = ycbcr_to_rgb(y, cb, cr);
 
-        cmyk[i * 4] = c;
-        cmyk[i * 4 + 1] = m;
-        cmyk[i * 4 + 2] = yy;
+        cmyk[i * 4] = 255 - c;
+        cmyk[i * 4 + 1] = 255 - m;
+        cmyk[i * 4 + 2] = 255 - yy;
         cmyk[i * 4 + 3] = k; // K is already in inverted format
     }
 }

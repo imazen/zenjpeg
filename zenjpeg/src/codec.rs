@@ -2863,3 +2863,257 @@ mod streaming_test {
         let _enc = job.dyn_encoder().unwrap();
     }
 }
+
+#[cfg(test)]
+mod cmyk_tests {
+    use super::*;
+    use alloc::borrow::Cow;
+    use imgref::{Img, ImgExt};
+    use rgb::Rgb;
+    use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
+    use zencodec::encode::EncoderConfig as _;
+
+    // ── CMYK raw output tests ──────────────────────────────────────────────
+
+    /// Load the CMYK flower test image if available.
+    fn load_cmyk_test_image() -> Option<Vec<u8>> {
+        crate::test_utils::read_test_data("jxl/flower/flower_small.cmyk.jpg")
+    }
+
+    #[test]
+    fn cmyk_raw_output_produces_4_channels() {
+        let data = match load_cmyk_test_image() {
+            Some(d) => d,
+            None => {
+                eprintln!("SKIP: CMYK test image not found");
+                return;
+            }
+        };
+
+        let dec = JpegDecoderConfig::new().cmyk_output_raw(true);
+        let output = dec
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        let info = output.info();
+        let pixels = output.pixels();
+
+        // Verify 4 channels via RGBA8 layout
+        assert_eq!(pixels.descriptor().bytes_per_pixel(), 4);
+
+        // source_color.channel_count should be 4 (CMYK)
+        assert_eq!(info.source_color.channel_count, Some(4));
+
+        // has_alpha should be false (this is CMYK, not RGBA)
+        assert!(!info.has_alpha, "has_alpha should be false for raw CMYK");
+
+        // ICC profile is preserved if present in the source.
+        // Note: the flower_small.cmyk.jpg test image has no ICC profile,
+        // so we only verify that the field is accessible (not that it's Some).
+        let _icc = &info.source_color.icc_profile;
+
+        // Verify dimensions are reasonable
+        assert!(info.width > 0);
+        assert!(info.height > 0);
+
+        // Verify pixel data has correct size: w * h * 4
+        let expected_bytes = info.width as usize * info.height as usize * 4;
+        let actual_bytes = pixels.width() as usize * pixels.rows() as usize * 4;
+        assert_eq!(actual_bytes, expected_bytes);
+    }
+
+    #[test]
+    fn cmyk_raw_vs_default_produces_different_but_reasonable_output() {
+        let data = match load_cmyk_test_image() {
+            Some(d) => d,
+            None => {
+                eprintln!("SKIP: CMYK test image not found");
+                return;
+            }
+        };
+
+        // Decode with default (auto RGB conversion)
+        let dec_rgb = JpegDecoderConfig::new();
+        let output_rgb = dec_rgb
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Decode with raw CMYK
+        let dec_cmyk = JpegDecoderConfig::new().cmyk_output_raw(true);
+        let output_cmyk = dec_cmyk
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        let rgb_info = output_rgb.info();
+        let cmyk_info = output_cmyk.info();
+
+        // Same dimensions
+        assert_eq!(rgb_info.width, cmyk_info.width);
+        assert_eq!(rgb_info.height, cmyk_info.height);
+
+        // RGB output is 3-channel (RGB8), CMYK output is 4-channel (RGBA8 layout)
+        assert_eq!(output_rgb.pixels().descriptor().bytes_per_pixel(), 3);
+        assert_eq!(output_cmyk.pixels().descriptor().bytes_per_pixel(), 4);
+
+        // Manual CMYK→RGB conversion on raw CMYK data should produce something
+        // close to the auto-converted RGB (within the known maxDelta of ~39)
+        let w = cmyk_info.width as usize;
+        let h = cmyk_info.height as usize;
+        let cmyk_pixels = output_cmyk.pixels();
+        let cmyk_bytes: Vec<u8> = {
+            let mut all = Vec::with_capacity(w * h * 4);
+            for row in 0..cmyk_pixels.rows() {
+                all.extend_from_slice(cmyk_pixels.row(row));
+            }
+            all
+        };
+        let rgb_pixels = output_rgb.pixels();
+        let rgb_bytes: Vec<u8> = {
+            let mut all = Vec::with_capacity(w * h * 3);
+            for row in 0..rgb_pixels.rows() {
+                all.extend_from_slice(rgb_pixels.row(row));
+            }
+            all
+        };
+
+        // Apply simple CMYK→RGB using the same formula as cmyk_adobe_to_rgb
+        let mut max_diff: u32 = 0;
+        for i in 0..(w * h) {
+            let c = cmyk_bytes[i * 4] as u32;
+            let m = cmyk_bytes[i * 4 + 1] as u32;
+            let y = cmyk_bytes[i * 4 + 2] as u32;
+            let k = cmyk_bytes[i * 4 + 3] as u32;
+
+            // Adobe inverted CMYK→RGB: R = C * K / 255
+            let r_manual = ((c * k + 127) / 255) as u8;
+            let g_manual = ((m * k + 127) / 255) as u8;
+            let b_manual = ((y * k + 127) / 255) as u8;
+
+            let r_auto = rgb_bytes[i * 3];
+            let g_auto = rgb_bytes[i * 3 + 1];
+            let b_auto = rgb_bytes[i * 3 + 2];
+
+            let dr = (r_manual as i32 - r_auto as i32).unsigned_abs();
+            let dg = (g_manual as i32 - g_auto as i32).unsigned_abs();
+            let db = (b_manual as i32 - b_auto as i32).unsigned_abs();
+
+            max_diff = max_diff.max(dr).max(dg).max(db);
+        }
+
+        // The manual conversion should match within a small tolerance.
+        // The auto path and manual path use the same formula, so max_diff
+        // should be <=1 (rounding differences from f32→u8 vs integer math).
+        assert!(
+            max_diff <= 2,
+            "Manual CMYK→RGB vs auto CMYK→RGB max pixel diff = {max_diff}, expected <=2"
+        );
+    }
+
+    #[test]
+    fn cmyk_raw_has_no_effect_on_rgb_jpeg() {
+        // Create a simple RGB JPEG
+        let enc = JpegEncoderConfig::new().with_calibrated_quality(80.0);
+        let pixels: Vec<Rgb<u8>> = vec![
+            Rgb {
+                r: 200,
+                g: 100,
+                b: 50,
+            };
+            64
+        ];
+        let img = Img::new(pixels, 8, 8);
+        let encoded = enc.encode(PixelSlice::from(img.as_ref()).into()).unwrap();
+        let jpeg_data = encoded.into_vec();
+
+        // Decode with default
+        let dec_default = JpegDecoderConfig::new();
+        let out_default = dec_default
+            .job()
+            .decoder(Cow::Borrowed(&jpeg_data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Decode with cmyk_output_raw=true (should have no effect on RGB JPEG)
+        let dec_raw = JpegDecoderConfig::new().cmyk_output_raw(true);
+        let out_raw = dec_raw
+            .job()
+            .decoder(Cow::Borrowed(&jpeg_data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Both should produce the same output
+        assert_eq!(
+            out_default.pixels().descriptor().bytes_per_pixel(),
+            out_raw.pixels().descriptor().bytes_per_pixel()
+        );
+        assert_eq!(out_default.info().width, out_raw.info().width);
+        assert_eq!(out_default.info().height, out_raw.info().height);
+
+        // Pixel data should be identical
+        let px_default = out_default.pixels();
+        let px_raw = out_raw.pixels();
+        assert_eq!(px_default.rows(), px_raw.rows());
+        for row in 0..px_default.rows() {
+            assert_eq!(
+                px_default.row(row),
+                px_raw.row(row),
+                "Row {row} differs between default and cmyk_raw for an RGB JPEG"
+            );
+        }
+    }
+
+    #[test]
+    fn cmyk_raw_pixel_values_are_nonzero() {
+        let data = match load_cmyk_test_image() {
+            Some(d) => d,
+            None => {
+                eprintln!("SKIP: CMYK test image not found");
+                return;
+            }
+        };
+
+        let dec = JpegDecoderConfig::new().cmyk_output_raw(true);
+        let output = dec
+            .job()
+            .decoder(Cow::Borrowed(&data), &[])
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Sample some pixels to verify they contain reasonable CMYK data
+        // (not all zeros, not all 255)
+        let pixels = output.pixels();
+        let first_row = pixels.row(0);
+        let has_nonzero = first_row.iter().any(|&b| b != 0);
+        let has_non_ff = first_row.iter().any(|&b| b != 255);
+        assert!(
+            has_nonzero,
+            "Raw CMYK output should contain non-zero values"
+        );
+        assert!(
+            has_non_ff,
+            "Raw CMYK output should contain values other than 255"
+        );
+    }
+
+    #[test]
+    fn cmyk_raw_default_unchanged() {
+        // Verify that JpegDecoderConfig::new() defaults to cmyk_output_raw = false
+        let dec = JpegDecoderConfig::new();
+        assert!(
+            !dec.is_cmyk_output_raw(),
+            "Default should not have raw CMYK output"
+        );
+    }
+}
