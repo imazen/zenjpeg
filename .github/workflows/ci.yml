@@ -127,7 +127,15 @@ jobs:
           key: cross-i686
 
       - name: Test (i686)
-        run: cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests
+        # Skip two tests that require sparse-cloning the full image-rs/image
+        # repo. codec-corpus bundles its own test corpora (so zune/fuzz tests
+        # work) but image-rs/tests/images is fetched from the separate
+        # image-rs/image repo, which the cross container's constrained network
+        # times out on. Unrelated to 32-bit correctness.
+        run: |
+          cross test -p zenjpeg --target i686-unknown-linux-gnu --lib --tests -- \
+            --skip codec_corpus_conformance::test_image_rs_general \
+            --skip codec_corpus_conformance::test_image_rs_progressive
         env:
           CODEC_CORPUS_CACHE: /tmp/codec-corpus
 

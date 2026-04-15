@@ -393,12 +393,22 @@ fn encode_cpp_cli(
 ) -> Option<Vec<u8>> {
     use std::io::Write;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    // Write RGB to temp file as PPM
-    let ppm_path = "/tmp/quality_matrix_input.ppm";
-    let jpg_path = "/tmp/quality_matrix_output.jpg";
+    // Unique per-call paths to avoid races when cargo runs multiple test
+    // threads concurrently (the shared-path version silently corrupted files
+    // on macos, producing zero-byte "missing SOI marker" decode failures).
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let tid = std::thread::current().id();
+    let key = format!("{}_{:?}_{}", std::process::id(), tid, seq)
+        .replace(|c: char| !c.is_alphanumeric(), "_");
+    let ppm_path_buf = std::env::temp_dir().join(format!("quality_matrix_in_{key}.ppm"));
+    let jpg_path_buf = std::env::temp_dir().join(format!("quality_matrix_out_{key}.jpg"));
+    let ppm_path = ppm_path_buf.to_string_lossy().into_owned();
+    let jpg_path = jpg_path_buf.to_string_lossy().into_owned();
 
-    let mut ppm = std::fs::File::create(ppm_path).ok()?;
+    let mut ppm = std::fs::File::create(&ppm_path).ok()?;
     writeln!(ppm, "P6").ok()?;
     writeln!(ppm, "{} {}", width, height).ok()?;
     writeln!(ppm, "255").ok()?;
@@ -423,8 +433,8 @@ fn encode_cpp_cli(
     };
 
     let mut args = vec![
-        ppm_path.to_string(),
-        jpg_path.to_string(),
+        ppm_path.clone(),
+        jpg_path.clone(),
         "-q".to_string(),
         quality.to_string(),
         "--chroma_subsampling".to_string(),
@@ -447,10 +457,15 @@ fn encode_cpp_cli(
         .ok()?;
 
     if !status.success() {
+        let _ = std::fs::remove_file(&ppm_path);
+        let _ = std::fs::remove_file(&jpg_path);
         return None;
     }
 
-    std::fs::read(jpg_path).ok()
+    let result = std::fs::read(&jpg_path).ok();
+    let _ = std::fs::remove_file(&ppm_path);
+    let _ = std::fs::remove_file(&jpg_path);
+    result
 }
 
 /// Encode via C++ jpegli - currently uses CLI for all modes.
