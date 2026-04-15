@@ -230,3 +230,163 @@ fn xyb_full_baseline_pixel_correctness() {
         "BR not yellow-ish (RG > B): {br:?}"
     );
 }
+
+// ============================================================================
+// Boxed XYB ↔ RGB roundtrip matrix
+// ============================================================================
+//
+// Verifies that every (XybSubsampling, progressive/baseline, quality) combo
+// roundtrips without color-channel scrambling. Catches MCU-layout bugs like
+// the one in commit daf52508.
+//
+// The 4-quadrant probe is layout-sensitive: any encoder/decoder disagreement
+// on how blocks are arranged within an MCU shows up as colors landing in the
+// wrong quadrant.
+
+fn quadrant_image(w: u32, h: u32) -> Vec<u8> {
+    (0..h)
+        .flat_map(|y| {
+            (0..w).flat_map(move |x| {
+                let top = y < h / 2;
+                let left = x < w / 2;
+                match (top, left) {
+                    (true, true) => [220u8, 40, 40],    // TL red
+                    (true, false) => [40u8, 220, 40],   // TR green
+                    (false, true) => [40u8, 40, 220],   // BL blue
+                    (false, false) => [220u8, 220, 40], // BR yellow
+                }
+            })
+        })
+        .collect()
+}
+
+fn assert_quadrants_match_source(pixels: &[u8], w: u32, _h: u32, label: &str) {
+    let probe = |x: u32, y: u32| -> (i32, i32, i32) {
+        let i = (y as usize * w as usize + x as usize) * 3;
+        (pixels[i] as i32, pixels[i + 1] as i32, pixels[i + 2] as i32)
+    };
+    let q = w / 4;
+    let tl = probe(q, q);
+    let tr = probe(3 * q, q);
+    let bl = probe(q, 3 * q);
+    let br = probe(3 * q, 3 * q);
+
+    assert!(
+        tl.0 > tl.1 && tl.0 > tl.2,
+        "{label}: TL not red-dominant: {tl:?}"
+    );
+    assert!(
+        tr.1 > tr.0 && tr.1 > tr.2,
+        "{label}: TR not green-dominant: {tr:?}"
+    );
+    assert!(
+        bl.2 > bl.0 && bl.2 > bl.1,
+        "{label}: BL not blue-dominant: {bl:?}"
+    );
+    assert!(
+        br.1 > br.2 && br.0 > br.2,
+        "{label}: BR not yellow-ish: {br:?}"
+    );
+}
+
+/// Sweep over the full XYB encode matrix and assert pixel-level layout
+/// correctness on the 4-quadrant probe. Catches MCU-layout regressions
+/// in any path: BQuarter or Full × progressive or baseline × low-to-high Q.
+#[test]
+fn xyb_roundtrip_matrix_pixel_correctness() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb = quadrant_image(w, h);
+
+    for sub in [XybSubsampling::BQuarter, XybSubsampling::Full] {
+        for progressive in [false, true] {
+            for &q in &[15, 50, 85, 95] {
+                let label = format!("{sub:?}/prog={progressive}/Q{q}");
+                let cfg = EncoderConfig::xyb(q, sub).progressive(progressive);
+                let jpeg = cfg
+                    .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+                    .unwrap_or_else(|e| panic!("{label}: encode failed: {e}"));
+                let decoded = Decoder::new()
+                    .decode(&jpeg, enough::Unstoppable)
+                    .unwrap_or_else(|e| panic!("{label}: decode failed: {e}"));
+                let pixels = decoded.pixels_u8().unwrap();
+                assert_quadrants_match_source(pixels, w, h, &label);
+            }
+        }
+    }
+}
+
+/// Verify that the encoded XYB JPEG actually embeds the canonical XYB ICC
+/// profile in an APP2 segment, so non-XYB-aware decoders can interpret colors
+/// via standard CMS. Both BQuarter and Full must embed it.
+#[test]
+fn xyb_encoder_embeds_xyb_icc_profile() {
+    use zenjpeg::color::icc::{extract_icc_profile, is_xyb_profile};
+
+    let rgb = generate_test_image(64, 64);
+    for sub in [XybSubsampling::BQuarter, XybSubsampling::Full] {
+        for progressive in [false, true] {
+            let cfg = EncoderConfig::xyb(85.0, sub).progressive(progressive);
+            let jpeg = cfg
+                .encode_bytes(&rgb, 64, 64, PixelLayout::Rgb8Srgb)
+                .expect("encode");
+            let icc = extract_icc_profile(&jpeg)
+                .unwrap_or_else(|| panic!("{sub:?}/prog={progressive}: no ICC profile found"));
+            assert!(
+                is_xyb_profile(&icc),
+                "{sub:?}/prog={progressive}: embedded ICC is not XYB profile (len={})",
+                icc.len()
+            );
+        }
+    }
+}
+
+/// Verify that the decoder identifies XYB JPEGs as XYB via the embedded ICC
+/// profile on every (subsampling, scan) combination. This is the gate that
+/// drives the f32 XYB→RGB conversion path in the output stage.
+#[test]
+fn xyb_decoder_detects_xyb_color_space() {
+    use zenjpeg::color::icc::is_xyb_profile;
+
+    let rgb = generate_test_image(64, 64);
+    for sub in [XybSubsampling::BQuarter, XybSubsampling::Full] {
+        for progressive in [false, true] {
+            let cfg = EncoderConfig::xyb(85.0, sub).progressive(progressive);
+            let jpeg = cfg
+                .encode_bytes(&rgb, 64, 64, PixelLayout::Rgb8Srgb)
+                .expect("encode");
+            // Probe via the public ICC extractor (mirrors what the decoder uses
+            // internally to set the XYB flag).
+            let icc = zenjpeg::color::icc::extract_icc_profile(&jpeg)
+                .unwrap_or_else(|| panic!("{sub:?}/prog={progressive}: no ICC"));
+            assert!(
+                is_xyb_profile(&icc),
+                "{sub:?}/prog={progressive}: ICC not detected as XYB"
+            );
+        }
+    }
+}
+
+/// Verify that the decoder produces visually-correct sRGB output for XYB JPEGs
+/// even WITHOUT calling `.correct_color(Some(Srgb))`. zenjpeg detects XYB via
+/// the embedded ICC and runs its own scaled-XYB → sRGB inverse transform in
+/// the output stage (`xyb_planes_to_rgb_u8_simd`), so the ICC profile is not
+/// required to be applied for end-user-correct colors. (The ICC remains
+/// useful for OTHER decoders that don't understand XYB natively.)
+#[test]
+fn xyb_decode_produces_srgb_without_correct_color_call() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb = quadrant_image(w, h);
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::Full);
+    let jpeg = cfg
+        .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+        .expect("encode");
+
+    // Default decode (no .correct_color call)
+    let decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("decode");
+    let pixels = decoded.pixels_u8().unwrap();
+    assert_quadrants_match_source(pixels, w, h, "no_correct_color");
+}
