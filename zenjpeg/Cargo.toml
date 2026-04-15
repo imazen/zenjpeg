@@ -255,7 +255,7 @@ required-features = ["decoder"]
 [[bench]]
 name = "decode_zenbench"
 harness = false
-required-features = ["decoder"]
+required-features = ["decoder", "zencodec"]
 
 [[bench]]
 name = "huffman_decode"

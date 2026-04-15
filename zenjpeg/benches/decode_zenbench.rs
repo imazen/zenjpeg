@@ -647,8 +647,122 @@ fn bench_decode_matrix(suite: &mut Suite) {
     }
 }
 
+// ── zencodec sink path: BGRA8 / RGBA8 sRGB regression coverage ─────────────
+//
+// These benches exercise the `JpegDecoderConfig::job().push_decoder(...)`
+// path with caller-provided `DecodeRowSink` buffers, which the rest of this
+// file does not cover. They guard the sink-path optimizations (garb-backed
+// 4bpp swizzle, direct decode-into-sink) from regression.
+
+use std::borrow::Cow;
+use zencodec::decode::{DecodeJob, DecodeRowSink, DecoderConfig as _, SinkError};
+use zenjpeg::JpegDecoderConfig;
+use zenpixels::{PixelDescriptor, PixelSliceMut};
+
+/// Reusable sink: one heap buffer, resized on first call, returned each strip.
+struct ReuseSink {
+    buf: Vec<u8>,
+}
+
+impl ReuseSink {
+    fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+}
+
+impl DecodeRowSink for ReuseSink {
+    fn provide_next_buffer(
+        &mut self,
+        _y: u32,
+        height: u32,
+        width: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        let bpp = descriptor.bytes_per_pixel();
+        let stride = width as usize * bpp;
+        let needed = height as usize * stride;
+        if self.buf.len() < needed {
+            self.buf.resize(needed, 0);
+        }
+        Ok(
+            PixelSliceMut::new(&mut self.buf[..needed], width, height, stride, descriptor)
+                .expect("buffer sized correctly"),
+        )
+    }
+}
+
+fn bench_decode_sink(suite: &mut Suite) {
+    let images = get_images();
+    if images.is_empty() {
+        return;
+    }
+    let total_baseline_bytes: usize = images.iter().map(|i| i.baseline_q85.len()).sum();
+
+    suite.group("sink_baseline_4:2:0_Q85", |g| {
+        g.throughput(Throughput::Bytes(total_baseline_bytes as u64));
+
+        // Reference: C decoder
+        g.bench("libjpeg-turbo/mozjpeg (reference)", |b| {
+            b.iter(|| {
+                for img in get_images() {
+                    decode_libjpeg_turbo(&img.baseline_q85);
+                }
+            })
+        });
+
+        // zenjpeg native (no sink) — owned Vec output
+        g.bench("zenjpeg native (Vec out)", |b| {
+            let dec = Decoder::new();
+            b.iter(|| {
+                for img in get_images() {
+                    dec.decode(&img.baseline_q85, Unstoppable).unwrap();
+                }
+            })
+        });
+
+        // zencodec sink, native pref (codec picks RGB8_SRGB)
+        g.bench("zencodec sink, native pref", |b| {
+            let mut sink = ReuseSink::new();
+            b.iter(|| {
+                for img in get_images() {
+                    let job = JpegDecoderConfig::new().job();
+                    job.push_decoder(Cow::Borrowed(&img.baseline_q85), &mut sink, &[])
+                        .unwrap();
+                }
+            })
+        });
+
+        // zencodec sink, BGRA8 sRGB pref
+        g.bench("zencodec sink, BGRA8 sRGB", |b| {
+            let mut sink = ReuseSink::new();
+            let prefs = [PixelDescriptor::BGRA8_SRGB];
+            b.iter(|| {
+                for img in get_images() {
+                    let job = JpegDecoderConfig::new().job();
+                    job.push_decoder(Cow::Borrowed(&img.baseline_q85), &mut sink, &prefs)
+                        .unwrap();
+                }
+            })
+        });
+
+        // zencodec sink, RGBA8 sRGB pref
+        g.bench("zencodec sink, RGBA8 sRGB", |b| {
+            let mut sink = ReuseSink::new();
+            let prefs = [PixelDescriptor::RGBA8_SRGB];
+            b.iter(|| {
+                for img in get_images() {
+                    let job = JpegDecoderConfig::new().job();
+                    job.push_decoder(Cow::Borrowed(&img.baseline_q85), &mut sink, &prefs)
+                        .unwrap();
+                }
+            })
+        });
+    });
+}
+
 fn bench_all(suite: &mut Suite) {
     bench_decode(suite);
+    bench_decode_sink(suite);
     bench_decode_matrix(suite);
 }
 
