@@ -1281,6 +1281,14 @@ fn push_decoder_native<'a>(
     let header = job.config.inner.read_info(data_ref)?;
     job.check_progressive_policy(header.mode)?;
 
+    // Raw CMYK output for 4-component JPEGs: the streaming ScanlineReader has
+    // no raw-CMYK output path, so fall back to the buffered Decode::decode()
+    // path which honors `cmyk_output_raw` via PixelFormat::Cmyk, then hand the
+    // full frame to the sink in one strip.
+    if job.config.cmyk_output_raw && header.num_components == 4 {
+        return push_decoder_via_full_decode(job, data, sink);
+    }
+
     // Create the streaming scanline reader
     let mut reader = cfg.scanline_reader(data_ref)?;
 
@@ -1427,6 +1435,54 @@ fn push_decoder_native<'a>(
         out = out.with_crop_applied([x, y, cw, ch]);
     }
 
+    Ok(out)
+}
+
+/// Fallback push_decoder path for raw CMYK output (4-component JPEGs).
+///
+/// The streaming `ScanlineReader` does not support raw-CMYK output — only
+/// pre-converted RGB/BGRA/grayscale. So we run a buffered decode (which
+/// honors `cmyk_output_raw`) and then forward the whole frame to the sink
+/// as a single strip. This gives up the streaming memory advantage but is
+/// the only way to emit raw CMYK today.
+#[cfg(feature = "decoder")]
+fn push_decoder_via_full_decode<'a>(
+    job: JpegDecodeJob,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
+) -> Result<OutputInfo, Error> {
+    use zencodec::decode::{Decode as _, DecodeJob as _};
+
+    let wrap = |e: zencodec::decode::SinkError| Error::io_error(e.to_string());
+
+    // Build a decoder from the same config and hand it the data. This path
+    // runs the full CMYK-aware decode (including Decode::decode below, which
+    // overrides output_format to PixelFormat::Cmyk when cmyk_output_raw is
+    // set and the JPEG is 4-component).
+    let decoder = job
+        .decoder(data, &[])
+        .map_err(|_| Error::internal("push-decoder fallback: decoder creation failed"))?;
+    let output = decoder.decode()?;
+    let info = output.info().clone();
+    let pixels = output.pixels();
+    let descriptor = pixels.descriptor();
+    let w = pixels.width();
+    let h = pixels.rows();
+
+    sink.begin(w, h, descriptor).map_err(wrap)?;
+
+    // Hand the sink a single strip containing the whole frame.
+    let mut dst = sink.provide_next_buffer(0, h, w, descriptor).map_err(wrap)?;
+    for row in 0..h {
+        dst.row_mut(row).copy_from_slice(pixels.row(row));
+    }
+    drop(dst);
+    sink.finish().map_err(wrap)?;
+
+    let mut out = OutputInfo::full_decode(w, h, descriptor);
+    if info.orientation != zencodec::Orientation::Identity {
+        out = out.with_orientation_applied(info.orientation);
+    }
     Ok(out)
 }
 
