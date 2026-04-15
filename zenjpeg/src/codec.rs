@@ -1530,6 +1530,10 @@ pub struct JpegDecoder<'a> {
 impl zencodec::decode::Decode for JpegDecoder<'_> {
     type Error = Error;
 
+    // IccMatchTolerance was deprecated in zencodec 0.1.16 as a placebo parameter.
+    // Callers must still pass a variant to descriptor_for_decoded_pixels; zencodec
+    // itself uses `#[allow(deprecated)]` internally for the same reason.
+    #[allow(deprecated)]
     fn decode(self) -> Result<DecodeOutput, Error> {
         #[cfg(feature = "decoder")]
         {
@@ -1939,6 +1943,7 @@ fn source_color_from_header(info: &crate::decode::JpegInfo) -> zencodec::decode:
 /// Uses the shared zencodec utility to map source color metadata to a
 /// descriptor that accurately reflects the pixel data's color space.
 #[cfg(feature = "decoder")]
+#[allow(deprecated)] // IccMatchTolerance placebo param — see note on impl Decode::decode
 fn decode_descriptor(
     preferred: &[PixelDescriptor],
     header: &crate::decode::JpegInfo,
