@@ -370,9 +370,9 @@ fn xyb_decoder_detects_xyb_color_space() {
 /// Verify that the decoder produces visually-correct sRGB output for XYB JPEGs
 /// even WITHOUT calling `.correct_color(Some(Srgb))`. zenjpeg detects XYB via
 /// the embedded ICC and runs its own scaled-XYB → sRGB inverse transform in
-/// the output stage (`xyb_planes_to_rgb_u8_simd`), so the ICC profile is not
-/// required to be applied for end-user-correct colors. (The ICC remains
-/// useful for OTHER decoders that don't understand XYB natively.)
+/// the output stage (`xyb_planes_to_srgb_u8_simd`), so no CMS is required for
+/// end-user-correct colors. (The ICC remains useful for OTHER decoders that
+/// don't understand XYB natively.)
 #[test]
 fn xyb_decode_produces_srgb_without_correct_color_call() {
     let w = 128u32;
@@ -389,4 +389,81 @@ fn xyb_decode_produces_srgb_without_correct_color_call() {
         .expect("decode");
     let pixels = decoded.pixels_u8().unwrap();
     assert_quadrants_match_source(pixels, w, h, "no_correct_color");
+}
+
+/// Hard test for Option 1 (no-moxcms XYB). This test makes no reference to
+/// any moxcms API and verifies the 4-quadrant correctness through the
+/// default decode path. When built with `--no-default-features --features
+/// "trellis decoder"` (i.e. no `moxcms`), it proves the in-decoder inverse
+/// XYB → sRGB transform carries the entire load.
+///
+/// Exercises the full encode/decode matrix to catch any subsampling- or
+/// scan-specific regressions in the SIMD kernel.
+#[test]
+fn xyb_decode_correct_without_moxcms() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb = quadrant_image(w, h);
+    for sub in [XybSubsampling::BQuarter, XybSubsampling::Full] {
+        for progressive in [false, true] {
+            for &q in &[50.0_f32, 85.0, 95.0] {
+                let label = format!("{sub:?}/prog={progressive}/Q{q}");
+                let cfg = EncoderConfig::xyb(q, sub).progressive(progressive);
+                let jpeg = cfg
+                    .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+                    .unwrap_or_else(|e| panic!("{label}: encode failed: {e}"));
+                let decoded = Decoder::new()
+                    .decode(&jpeg, enough::Unstoppable)
+                    .unwrap_or_else(|e| panic!("{label}: decode failed: {e}"));
+                let pixels = decoded.pixels_u8().unwrap();
+                assert_quadrants_match_source(pixels, w, h, &label);
+            }
+        }
+    }
+}
+
+/// Invariant: for XYB sources, explicit `correct_color(Some(Srgb))` must
+/// produce byte-for-byte the same pixels as default decode.
+///
+/// Motivation: before the built-in SIMD inverse transform (Option 1),
+/// default decode returned scaled-XYB raw bytes, which only looked sRGB
+/// after the XYB ICC was applied via moxcms. With the SIMD kernel doing
+/// the inverse in-decoder, the ICC apply for XYB is now a no-op. This
+/// test guards against regressions where the two paths might diverge
+/// (e.g. someone re-enables the ICC apply for XYB and it double-transforms).
+///
+/// Runs identically under both `--features moxcms` and without — `correct_color`
+/// is a no-op for XYB in either build.
+#[test]
+#[cfg(feature = "moxcms")]
+fn xyb_decode_byte_equal_with_and_without_correct_color() {
+    use zenjpeg::color::icc::TargetColorSpace;
+    let w = 128u32;
+    let h = 128u32;
+    let rgb = quadrant_image(w, h);
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::Full);
+    let jpeg = cfg
+        .encode_bytes(&rgb, w, h, PixelLayout::Rgb8Srgb)
+        .expect("encode");
+
+    let default_decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("default decode");
+    let default_pixels = default_decoded.pixels_u8().unwrap();
+
+    let corrected_decoded = Decoder::new()
+        .correct_color(Some(TargetColorSpace::Srgb))
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("correct_color decode");
+    let corrected_pixels = corrected_decoded.pixels_u8().unwrap();
+
+    assert_eq!(
+        default_pixels.len(),
+        corrected_pixels.len(),
+        "buffer lengths differ"
+    );
+    assert_eq!(
+        default_pixels, corrected_pixels,
+        "default and correct_color(Srgb) diverge for XYB — ICC double-transform regression?"
+    );
 }

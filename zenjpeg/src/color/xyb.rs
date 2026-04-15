@@ -998,222 +998,6 @@ pub fn srgb_to_xyb_batch(input: &[[u8; 3]], output: &mut [[f32; 3]]) {
 // SIMD XYB DECODE HELPERS
 // ============================================================================
 
-/// SIMD level shift from centered IDCT output to [0, 255] interleaved bytes.
-///
-/// This is NOT an XYB→RGB transform — it just applies the standard JPEG
-/// level shift (+128) and clamps to u8. Used when the caller wants the
-/// raw scaled-XYB bytes for ICC-based downstream processing (e.g. feeding
-/// moxcms with a non-sRGB target profile).
-///
-/// For actual XYB → sRGB output use [`xyb_planes_to_srgb_u8_simd`].
-#[inline]
-pub fn xyb_planes_level_shift_to_u8(
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [u8],
-) {
-    debug_assert_eq!(plane0.len(), plane1.len());
-    debug_assert_eq!(plane0.len(), plane2.len());
-    debug_assert_eq!(rgb.len(), plane0.len() * 3);
-
-    incant!(xyb_planes_to_rgb_u8_impl(plane0, plane1, plane2, rgb));
-}
-
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
-fn xyb_planes_to_rgb_u8_impl(
-    token: Token,
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [u8],
-) {
-    #[allow(non_camel_case_types)]
-    type f32x8 = GenericF32x8<Token>;
-
-    let num_pixels = plane0.len();
-    let offset = f32x8::splat(token, 128.0);
-    let zero = f32x8::splat(token, 0.0);
-    let max_val = f32x8::splat(token, 255.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-
-        let p0 = f32x8::from_array(
-            token,
-            [
-                plane0[base],
-                plane0[base + 1],
-                plane0[base + 2],
-                plane0[base + 3],
-                plane0[base + 4],
-                plane0[base + 5],
-                plane0[base + 6],
-                plane0[base + 7],
-            ],
-        );
-        let p1 = f32x8::from_array(
-            token,
-            [
-                plane1[base],
-                plane1[base + 1],
-                plane1[base + 2],
-                plane1[base + 3],
-                plane1[base + 4],
-                plane1[base + 5],
-                plane1[base + 6],
-                plane1[base + 7],
-            ],
-        );
-        let p2 = f32x8::from_array(
-            token,
-            [
-                plane2[base],
-                plane2[base + 1],
-                plane2[base + 2],
-                plane2[base + 3],
-                plane2[base + 4],
-                plane2[base + 5],
-                plane2[base + 6],
-                plane2[base + 7],
-            ],
-        );
-
-        let r = (p0 + offset).max(zero).min(max_val);
-        let g = (p1 + offset).max(zero).min(max_val);
-        let b = (p2 + offset).max(zero).min(max_val);
-
-        let r_arr = r.to_array();
-        let g_arr = g.to_array();
-        let b_arr = b.to_array();
-
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            rgb[idx] = r_arr[j] as u8;
-            rgb[idx + 1] = g_arr[j] as u8;
-            rgb[idx + 2] = b_arr[j] as u8;
-        }
-    }
-
-    // Scalar remainder
-    for i in (chunks * 8)..num_pixels {
-        let idx = i * 3;
-        rgb[idx] = (plane0[i] + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[idx + 1] = (plane1[i] + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[idx + 2] = (plane2[i] + 128.0).clamp(0.0, 255.0) as u8;
-    }
-}
-
-/// SIMD level shift from centered IDCT output to [0, 1] interleaved floats.
-///
-/// This is NOT an XYB→RGB transform — it just applies `(v + 128) / 255` and
-/// clamps to [0, 1]. Used when the caller wants the raw scaled-XYB values
-/// for ICC-based downstream processing.
-///
-/// For actual XYB → linear sRGB output use [`xyb_planes_to_srgb_f32_simd`].
-#[inline]
-pub fn xyb_planes_level_shift_to_f32(
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [f32],
-) {
-    debug_assert_eq!(plane0.len(), plane1.len());
-    debug_assert_eq!(plane0.len(), plane2.len());
-    debug_assert_eq!(rgb.len(), plane0.len() * 3);
-
-    incant!(xyb_planes_to_rgb_f32_impl(plane0, plane1, plane2, rgb));
-}
-
-#[magetypes(v3, neon, wasm128, scalar)]
-#[inline(always)]
-fn xyb_planes_to_rgb_f32_impl(
-    token: Token,
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [f32],
-) {
-    #[allow(non_camel_case_types)]
-    type f32x8 = GenericF32x8<Token>;
-
-    let num_pixels = plane0.len();
-    let offset = f32x8::splat(token, 128.0);
-    let scale = f32x8::splat(token, 1.0 / 255.0);
-    let zero = f32x8::splat(token, 0.0);
-    let one = f32x8::splat(token, 1.0);
-
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
-
-        let p0 = f32x8::from_array(
-            token,
-            [
-                plane0[base],
-                plane0[base + 1],
-                plane0[base + 2],
-                plane0[base + 3],
-                plane0[base + 4],
-                plane0[base + 5],
-                plane0[base + 6],
-                plane0[base + 7],
-            ],
-        );
-        let p1 = f32x8::from_array(
-            token,
-            [
-                plane1[base],
-                plane1[base + 1],
-                plane1[base + 2],
-                plane1[base + 3],
-                plane1[base + 4],
-                plane1[base + 5],
-                plane1[base + 6],
-                plane1[base + 7],
-            ],
-        );
-        let p2 = f32x8::from_array(
-            token,
-            [
-                plane2[base],
-                plane2[base + 1],
-                plane2[base + 2],
-                plane2[base + 3],
-                plane2[base + 4],
-                plane2[base + 5],
-                plane2[base + 6],
-                plane2[base + 7],
-            ],
-        );
-
-        let r = ((p0 + offset) * scale).max(zero).min(one);
-        let g = ((p1 + offset) * scale).max(zero).min(one);
-        let b = ((p2 + offset) * scale).max(zero).min(one);
-
-        let r_arr = r.to_array();
-        let g_arr = g.to_array();
-        let b_arr = b.to_array();
-
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            rgb[idx] = r_arr[j];
-            rgb[idx + 1] = g_arr[j];
-            rgb[idx + 2] = b_arr[j];
-        }
-    }
-
-    // Scalar remainder
-    for i in (chunks * 8)..num_pixels {
-        let idx = i * 3;
-        rgb[idx] = ((plane0[i] + 128.0) / 255.0).clamp(0.0, 1.0);
-        rgb[idx + 1] = ((plane1[i] + 128.0) / 255.0).clamp(0.0, 1.0);
-        rgb[idx + 2] = ((plane2[i] + 128.0) / 255.0).clamp(0.0, 1.0);
-    }
-}
-
 // ============================================================================
 // XYB → sRGB INVERSE TRANSFORM (Option 1 from docs/XYB_ICC_HANDLING.md)
 // ============================================================================
@@ -1236,14 +1020,7 @@ fn xyb_planes_to_rgb_f32_impl(
 /// Inverse opsin absorbance matrix (3x3 row-major), from
 /// `xyb_to_linear_rgb`. Inverse of `XYB_OPSIN_ABSORBANCE_MATRIX`.
 const XYB_OPSIN_INVERSE_MATRIX: [f32; 9] = [
-    11.031_567,
-    -9.866_944,
-    -0.164_623,
-    -3.254_147,
-    4.418_770,
-    -0.164_623,
-    -3.658_851,
-    2.712_923,
+    11.031_567, -9.866_944, -0.164_623, -3.254_147, 4.418_770, -0.164_623, -3.658_851, 2.712_923,
     1.945_928,
 ];
 
@@ -1355,12 +1132,7 @@ fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert
 /// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on
 /// wasm32, or scalar fallback.
 #[inline]
-pub fn xyb_planes_to_srgb_u8_simd(
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [u8],
-) {
+pub fn xyb_planes_to_srgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32], rgb: &mut [u8]) {
     debug_assert_eq!(plane0.len(), plane1.len());
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
@@ -2204,6 +1976,111 @@ mod tests {
                 exact_back,
                 fast_back
             );
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // SIMD XYB → sRGB kernel parity vs scalar (library-level, no moxcms dep)
+    // ------------------------------------------------------------------------
+
+    /// The SIMD inverse XYB → sRGB kernel must match the scalar reference
+    /// within 1 ULP of u8 rounding across a wide input sweep. This test
+    /// runs on `cargo test --lib` under any feature configuration — in
+    /// particular, it verifies correctness without `moxcms`.
+    #[test]
+    fn simd_xyb_to_srgb_u8_matches_scalar() {
+        // Build 3 planes of 64 scaled-XYB sample values spanning the range
+        // encoders produce (nominally [-128, +127], tolerates overshoot).
+        let mut p0 = Vec::with_capacity(64);
+        let mut p1 = Vec::with_capacity(64);
+        let mut p2 = Vec::with_capacity(64);
+        for i in 0..64 {
+            let t = i as f32 / 63.0;
+            // Samples in [-128, +127], with a stride across the range.
+            p0.push(-128.0 + t * 255.0);
+            p1.push(-128.0 + (1.0 - t) * 255.0);
+            p2.push(-128.0 + ((t - 0.3).abs() * 400.0 - 128.0).clamp(-128.0, 127.0));
+        }
+
+        // Reference: scalar
+        let mut expected = vec![0u8; 64 * 3];
+        for i in 0..64 {
+            let sx = (p0[i] + 128.0) / 255.0;
+            let sy = (p1[i] + 128.0) / 255.0;
+            let sb = (p2[i] + 128.0) / 255.0;
+            let (r, g, b) = scaled_xyb_to_srgb(sx, sy, sb);
+            expected[i * 3] = r;
+            expected[i * 3 + 1] = g;
+            expected[i * 3 + 2] = b;
+        }
+
+        // SIMD
+        let mut actual = vec![0u8; 64 * 3];
+        xyb_planes_to_srgb_u8_simd(&p0, &p1, &p2, &mut actual);
+
+        let mut max_diff: i32 = 0;
+        for (a, b) in actual.iter().zip(expected.iter()) {
+            let d = (*a as i32 - *b as i32).abs();
+            if d > max_diff {
+                max_diff = d;
+            }
+        }
+        assert!(
+            max_diff <= 1,
+            "SIMD vs scalar max diff {max_diff} exceeds 1 (IDCT-rounding tolerance)"
+        );
+    }
+
+    /// Encoder round-trip invariant: encoding a known sRGB color and
+    /// running the SIMD inverse transform on the scaled-XYB planes must
+    /// recover roughly the same color. This guards against sign / scale /
+    /// matrix errors in the kernel (not CMS drift).
+    #[test]
+    fn simd_xyb_to_srgb_u8_roundtrip_primaries() {
+        let primaries = [
+            (0u8, 0u8, 0u8),
+            (255, 255, 255),
+            (128, 128, 128),
+            (220, 40, 40),
+            (40, 220, 40),
+            (40, 40, 220),
+            (220, 220, 40),
+        ];
+        for (r, g, b) in primaries {
+            let (sx, sy, sb) = srgb_to_scaled_xyb(r, g, b);
+            // Simulate "the IDCT has given back scaled_xyb - 0.5 level shift"
+            // form: plane_val = sx * 255 - 128.
+            let p0 = [sx * 255.0 - 128.0; 8];
+            let p1 = [sy * 255.0 - 128.0; 8];
+            let p2 = [sb * 255.0 - 128.0; 8];
+            let mut rgb = [0u8; 24];
+            xyb_planes_to_srgb_u8_simd(&p0, &p1, &p2, &mut rgb);
+            // XYB is lossy at primaries (documented caveat). Require the
+            // dominant channel relationship to hold, not exact value.
+            let src_max = r.max(g).max(b);
+            let src_min = r.min(g).min(b);
+            let contrast = src_max as i32 - src_min as i32;
+            if contrast > 60 {
+                let (dr, dg, db) = (rgb[0], rgb[1], rgb[2]);
+                if r == src_max {
+                    assert!(
+                        dr >= dg && dr >= db,
+                        "R-dominant src ({r},{g},{b}) roundtrips to ({dr},{dg},{db})"
+                    );
+                }
+                if g == src_max {
+                    assert!(
+                        dg >= dr && dg >= db,
+                        "G-dominant src ({r},{g},{b}) roundtrips to ({dr},{dg},{db})"
+                    );
+                }
+                if b == src_max {
+                    assert!(
+                        db >= dr && db >= dg,
+                        "B-dominant src ({r},{g},{b}) roundtrips to ({dr},{dg},{db})"
+                    );
+                }
+            }
         }
     }
 }

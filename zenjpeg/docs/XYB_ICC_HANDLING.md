@@ -22,7 +22,12 @@ A naive decoder that ignores ICC sees garbage colors (because it
 interprets scaled XYB as RGB). A color-managed decoder sees correct
 sRGB. zenjpeg's decoder takes a third path — it recognizes the XYB ICC,
 skips the standard JPEG color-conversion, and runs its own
-SIMD-optimized inverse-XYB → sRGB transform.
+SIMD-optimized inverse-XYB → sRGB transform
+([`xyb_planes_to_srgb_u8_simd`] / [`xyb_planes_to_srgb_f32_simd`] in
+`color/xyb.rs`). This SIMD kernel handles the full inverse pipeline
+(unscale → cube → inverse opsin → sRGB OETF) with no external CMS
+dependency, so XYB JPEGs decode to correct sRGB pixels **without
+requiring the `moxcms` feature**.
 
 ## The encoder side
 
@@ -110,78 +115,75 @@ This XYB flag drives several decode-pipeline decisions:
   output (`scan.rs:534-545`)
 - `can_use_fast_i16_path` returns `false` for XYB so the i16 fast IDCT
   is skipped in favor of the f32 IDCT (`output.rs:133`)
-- The output stage runs `xyb_planes_to_rgb_u8_simd` instead of the
-  YCbCr→RGB conversion (`output.rs:1241`)
+- The output stage runs `xyb_planes_to_srgb_u8_simd` (the full inverse
+  XYB transform) instead of the YCbCr→RGB conversion (`output.rs`)
 
 ### The scaled-XYB → sRGB inverse transform
 
-The output stage emits **raw scaled-XYB bytes**, not sRGB. The function
-called for XYB output (`output.rs:1241`) is misleadingly named:
+The output stage emits visibly-correct sRGB directly — no CMS required.
+The decoder recognizes XYB via `is_xyb_profile(icc)` and routes through
+the built-in SIMD inverse in `color/xyb.rs`:
 
 ```rust
-// decode/parser/output.rs (paraphrased)
+// decode/parser/output.rs
 if is_xyb {
-    // Output raw level-shifted values, NO XYB→RGB conversion.
-    // The XYB values are stored in JPEG sample positions but are NOT RGB.
-    // The ICC profile transforms these directly to sRGB.
-    crate::color::xyb::xyb_planes_to_rgb_u8_simd(
-        &planes_f32[0],  // X plane
-        &planes_f32[1],  // Y plane
-        &planes_f32[2],  // B plane
+    // Run the full inverse XYB → sRGB transform in-decoder.
+    crate::color::xyb::xyb_planes_to_srgb_u8_simd(
+        &planes_f32[0],  // scaled-X plane (pre-level-shift)
+        &planes_f32[1],  // scaled-Y plane
+        &planes_f32[2],  // scaled-B plane
         &mut rgb,
     );
 }
 ```
 
-Despite its name, `xyb_planes_to_rgb_u8_simd` only does `+128` level
-shift and clamp to u8 — no inverse opsin matrix, no cube unwinding,
-no sRGB OETF. The scalar `scaled_xyb_to_srgb` function (`color/xyb.rs:344`)
-*does* the full inverse transform but **is not called from the decoder**.
+The kernel pipeline, per 8 lanes:
 
-This means the embedded XYB ICC profile is the **only** path to visible
-sRGB. The decoder defaults to applying it when the source is XYB:
+1. `+128` then `/255` — undo level shift, recover scaled XYB
+2. Unscale via `SCALED_XYB_OFFSET` / `SCALED_XYB_SCALE` (with `b += y`)
+3. Inverse cube (`v*v*v` is sign-preserving) and subtract bias
+4. Multiply by `XYB_OPSIN_INVERSE_MATRIX` (3×3 FMA)
+5. Clamp to `[0, 1]` and apply sRGB OETF (scalar per lane;
+   `linear_to_srgb` is a rational polynomial, no `powf`)
 
-```rust
-// decode/mod.rs (post-fix, both u8 and f32 output paths)
-let effective_target = self.correct_color.or_else(|| {
-    parser.icc_profile.as_ref().and_then(|icc| {
-        if crate::color::icc::is_xyb_profile(icc) {
-            Some(TargetColorSpace::Srgb)  // default-apply for XYB
-        } else {
-            None  // non-XYB: only apply if user opted in
-        }
-    })
-});
-if let Some(target) = effective_target { /* run moxcms ICC transform */ }
-```
+Dispatched via `#[magetypes(v3, neon, wasm128, scalar)]` — AVX2+FMA on
+x86_64, NEON on aarch64, SIMD128 on WASM, scalar elsewhere.
+
+Because the output is sRGB, `correct_color(Some(target))` on an XYB
+source is skipped (applying the embedded XYB ICC here would double-
+transform — the ICC describes scaled-XYB → sRGB, but pixels are
+already sRGB). For non-sRGB targets on XYB sources, the correct
+pipeline is sRGB → target as a separate step (future work — see TODO).
 
 So for XYB:
-- **Default decode** (`Decoder::new().decode(...)`): correct sRGB output
-  (because we default-apply the XYB ICC when moxcms is enabled).
-- **`correct_color(Some(Srgb))`**: same as default — explicit confirmation.
-- **`correct_color(Some(DisplayP3))`**: applies the XYB ICC with target
-  P3, giving correctly P3-converted output.
+- **Default decode** (`Decoder::new().decode(...)`): correct sRGB.
+- **`correct_color(Some(Srgb))`**: no-op; result is byte-identical to
+  default decode (verified by `xyb_decode_byte_equal_with_and_without_correct_color`).
+- **`correct_color(Some(DisplayP3))`** / **`Rec2020`**: currently
+  produces sRGB (not P3/Rec.2020). TODO: wire an sRGB → target step
+  for this case.
 
 For non-XYB JPEGs with an embedded ICC (e.g. Display P3 photos),
 `correct_color(Some(Srgb))` retains its normal opt-in behavior.
 
 ### Without the `moxcms` feature
 
-If the `moxcms` feature is disabled, **XYB JPEGs decode to garbage colors**
-because the inverse XYB transform isn't built into the decoder — only the
-ICC profile carries the inverse transform, and there's no CMS to apply it.
+XYB JPEGs decode to correct sRGB with or without `moxcms` — the in-decoder
+SIMD kernel carries the entire inverse transform. Verified on every
+(BQuarter|Full) × (progressive|baseline) × (Q50|85|95) combination by
+the `xyb_decode_correct_without_moxcms` test.
 
-Future work could embed a SIMD scaled-XYB → sRGB inverse directly in
-`color/xyb.rs` so XYB works without `moxcms`. See
-"Architectural follow-up: built-in XYB profile in zenpixels-convert"
-below.
+For decoding to non-sRGB target color spaces (Display P3, Rec.2020) on
+XYB sources, the sRGB → target step is not yet implemented. Enable
+`moxcms` for ICC-based workflows on non-XYB sources or use the
+pre-SIMD-kernel behavior (revert c5f2... on a dev branch).
 
 ### Comparison with other decoders
 
 | Decoder | Behavior on XYB JPEG |
 |---------|---------------------|
-| **zenjpeg (default)** | Detects XYB ICC, runs inverse-XYB → sRGB internally, returns correct sRGB pixels |
-| **zenjpeg + correct_color(Srgb)** | Same as default — `correct_color` is a no-op when the source is already XYB-sRGB transformed |
+| **zenjpeg (default)** | Detects XYB ICC, runs inverse-XYB → sRGB internally via SIMD, returns correct sRGB pixels. Works in all feature configurations, including `--no-default-features`. |
+| **zenjpeg + correct_color(Srgb)** | Byte-identical to default — `correct_color(Srgb)` is a no-op when the source is XYB (pixels are already sRGB after the SIMD kernel). |
 | **cjpegli reference (libjxl)** | Same as zenjpeg — detects XYB and runs its own inverse transform |
 | **mozjpeg / libjpeg-turbo (no CMS)** | Reads scaled-XYB as raw RGB → wrong colors (looks washed/blue-shifted) |
 | **mozjpeg + ICC-aware host** | Host applies the embedded XYB ICC profile → correct sRGB |
@@ -214,45 +216,36 @@ relationships, not absolute color values.
 | `xyb_encoder_embeds_xyb_icc_profile` | Every XYB encode has the canonical XYB ICC in its APP2 segments |
 | `xyb_decoder_detects_xyb_color_space` | `is_xyb_profile` correctly flags every encoded XYB JPEG |
 | `xyb_decode_produces_srgb_without_correct_color_call` | Default decode (no `correct_color`) produces correct sRGB — the inverse XYB transform runs internally |
+| `xyb_decode_correct_without_moxcms` | 4-quadrant correctness across every (subsampling, scan, quality) combo through the default decode path. With `--no-default-features --features "trellis decoder"` this verifies the SIMD kernel carries the full load. |
+| `xyb_decode_byte_equal_with_and_without_correct_color` | `correct_color(Some(Srgb))` is byte-identical to default decode on an XYB source — guards against ICC double-transform regressions. |
 | `xyb_sequential_uses_sof1` | Baseline XYB writes SOF1, never SOF0 (XYB DC categories can exceed baseline limit) |
 | `xyb_allows_baseline_quant` | `force_baseline()` and `allow_16bit_quant_tables()` are accepted on XYB and don't break SOF1 emission |
+| `simd_xyb_to_srgb_u8_matches_scalar` (lib test) | SIMD kernel matches scalar reference within 1 ULP across a 64-sample sweep. Runs on `cargo test --lib` under any feature config. |
+| `simd_xyb_to_srgb_u8_roundtrip_primaries` (lib test) | Dominant-channel round-trip for R/G/B/yellow primaries. |
 
 ## Architectural follow-up: built-in XYB profile in zenpixels-convert
 
-Today, XYB JPEGs require the `moxcms` feature to decode visibly because
-the inverse XYB transform lives only in the embedded ICC. Two cleaner
-options are open:
+### Option 1: XYB-specific SIMD kernel in zenjpeg (SHIPPED)
 
-### Option 1: hard-code XYB recognition in zenpixels-convert
+Implemented as `xyb_planes_to_srgb_u8_simd` / `xyb_planes_to_srgb_f32_simd`
+in `color/xyb.rs`. Pipeline: unscale → cube → inverse opsin matrix →
+sRGB OETF. Dispatched via `#[magetypes(v3, neon, wasm128, scalar)]` for
+x86_64 AVX2+FMA, aarch64 NEON, wasm32 SIMD128, and a scalar fallback.
+Lives alongside the encode-side `srgb_to_scaled_xyb_planes_simd` family
+(same file, symmetric API shape).
 
-`zenpixels-convert/src/fast_gamut.rs` already has a `stamp_trc_kernels!`
-macro that emits SIMD `linearize → 3x3 matrix → encode` pipelines per
-(src TRC, dst TRC) pair, dispatched through magetypes / `#[arcane]`.
+Coverage:
+- Every subsampling × scan × quality combination round-trips correctly
+  in both `--features moxcms` and `--no-default-features --features
+  "trellis decoder"` builds (see `tests/bundled/xyb_roundtrip.rs`).
+- Library-level kernel vs scalar parity tests in `color::xyb::tests`
+  that run on `cargo test --lib` regardless of feature flags.
 
-XYB *almost* fits this model:
-
-| Stage | Maps to |
-|-------|---------|
-| 1. unscale bytes | per-channel "linearize" (with cross-channel B+=Y bias) |
-| 2. cube (inverse cube root) | per-channel |
-| 3. inverse opsin matrix | 3x3 mat |
-| 4. linear → sRGB OETF | per-channel "encode" |
-
-The cross-channel `b += y` bias in stage 1 doesn't fit the existing
-1D-TRC slot, but it can be folded into a 5-stage variant of the
-macro: `unscale → bias → cube → matrix → OETF`. Or the bias can be
-absorbed into a synthetic 3x3 `[[1,0,0],[0,1,0],[0,1,1]]` between
-stages 1 and 2 — at the cost of being unable to use the existing
-`fused_8px_*` kernel layout directly.
-
-Cleanest implementation: add a dedicated `xyb_to_rgb_x8_v3`
-`#[arcane]` function in `color/xyb.rs` that hand-codes the full
-fused pipeline using `magetypes::simd::f32x8`. Lives in zenjpeg
-since the encoder side already has `srgb_to_scaled_xyb_planes_simd`
-in the same file. Output stage in `decode/parser/output.rs:1241`
-calls this instead of the misleadingly-named level-shift function,
-and the moxcms ICC-apply path becomes the fallback for users
-wanting non-sRGB targets.
+Remaining:
+- `correct_color(Some(DisplayP3))` / `Rec2020` on XYB sources produces
+  sRGB instead of the requested target. The post-kernel step needs
+  either a moxcms sRGB-source transform or a native sRGB → target kernel
+  in zenpixels-convert. Tracked alongside option 2 below.
 
 ### Option 2: register the XYB ICC as a built-in profile in zenpixels-convert
 
@@ -287,13 +280,12 @@ XYB decoding. Migrate to Option 2 if/when zenpixels-convert grows a
 
 ## Open issues / known limitations
 
-- **`xyb_planes_to_rgb_u8_simd` is misleadingly named** — it's just a
-  level-shift, not an XYB→RGB transform. Should be renamed to
-  `xyb_planes_level_shift_to_u8` in a follow-up to make the call site
-  in `decode/parser/output.rs` self-explanatory.
-- **No `moxcms`-free XYB path.** Without `moxcms`, XYB JPEGs decode to
-  garbage. Fix: see Option 1 above (built-in SIMD inverse in
-  `color/xyb.rs`).
+- **`correct_color(Some(non_srgb))` on XYB sources** currently produces
+  sRGB instead of the requested target color space. The SIMD kernel
+  already converts XYB to sRGB, so the missing piece is an sRGB → target
+  step. For now the XYB ICC apply is skipped entirely to avoid double-
+  transform; this behaviour is verified by
+  `xyb_decode_byte_equal_with_and_without_correct_color`.
 - **XYB color loss at saturated primaries**: empirically (see
   `examples/xyb_color_loss.rs`) the worst-case round-trip ΔE is ~21
   even at Q100 XYB Full. Compare to YCbCr 4:4:4 Q100 which achieves
