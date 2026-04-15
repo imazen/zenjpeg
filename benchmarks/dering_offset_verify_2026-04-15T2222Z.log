@@ -1,0 +1,114 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/home/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+warning: use of deprecated function `zenjpeg_bench_utils::decode_jpeg_to_rgb`: Silently produces garbage for XYB JPEGs (ignores ICC). Use `decode_jpeg_with_icc` for any code that may see XYB input, or `decode_jpeg` if you genuinely want raw zune-jpeg output.
+  --> zenjpeg/examples/dering_offset_verify.rs:61:36
+   |
+61 |     let dec = zenjpeg_bench_utils::decode_jpeg_to_rgb(dist_bytes).unwrap();
+   |                                    ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: `zenjpeg` (example "dering_offset_verify") generated 1 warning
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.10s
+     Running `target/release/examples/dering_offset_verify`
+== frymire ==
+frymire    frymire                        Q=10 | cpp= 113992 zen= 116406 (+2.12%) | ssim cpp= 1.48 zen= 5.27 off= 1.21 | Δvcpp=+3.788 Δvoff=+4.059
+frymire    frymire                        Q=30 | cpp= 216397 zen= 219337 (+1.36%) | ssim cpp=28.83 zen=30.61 off=28.62 | Δvcpp=+1.777 Δvoff=+1.993
+frymire    frymire                        Q=50 | cpp= 269545 zen= 271385 (+0.68%) | ssim cpp=36.66 zen=37.30 off=36.36 | Δvcpp=+0.637 Δvoff=+0.936
+frymire    frymire                        Q=70 | cpp= 362135 zen= 362423 (+0.08%) | ssim cpp=44.95 zen=45.03 off=44.87 | Δvcpp=+0.080 Δvoff=+0.157
+frymire    frymire                        Q=85 | cpp= 494382 zen= 494007 (-0.08%) | ssim cpp=50.48 zen=50.48 off=50.52 | Δvcpp=-0.005 Δvoff=-0.040
+frymire    frymire                        Q=95 | cpp= 743259 zen= 742525 (-0.10%) | ssim cpp=53.43 zen=53.31 off=53.35 | Δvcpp=-0.117 Δvoff=-0.041
+
+== graphics ==
+graphic    codec_wiki                     Q=10 | cpp=  62234 zen=  62862 (+1.01%) | ssim cpp=59.85 zen=60.10 off=60.00 | Δvcpp=+0.252 Δvoff=+0.102
+graphic    codec_wiki                     Q=30 | cpp=  89521 zen=  89550 (+0.03%) | ssim cpp=70.69 zen=71.21 off=71.17 | Δvcpp=+0.526 Δvoff=+0.043
+graphic    codec_wiki                     Q=50 | cpp= 104293 zen= 103715 (-0.55%) | ssim cpp=73.48 zen=73.77 off=73.72 | Δvcpp=+0.290 Δvoff=+0.042
+graphic    codec_wiki                     Q=70 | cpp= 127942 zen= 127994 (+0.04%) | ssim cpp=77.48 zen=77.68 off=77.68 | Δvcpp=+0.207 Δvoff=+0.009
+graphic    codec_wiki                     Q=85 | cpp= 161867 zen= 161661 (-0.13%) | ssim cpp=80.88 zen=80.86 off=80.86 | Δvcpp=-0.019 Δvoff=-0.002
+graphic    codec_wiki                     Q=95 | cpp= 225447 zen= 225437 (-0.00%) | ssim cpp=82.82 zen=82.77 off=82.77 | Δvcpp=-0.054 Δvoff=-0.002
+graphic    gmessages                      Q=10 | cpp=  63054 zen=  63034 (-0.03%) | ssim cpp=60.29 zen=60.30 off=60.30 | Δvcpp=+0.014 Δvoff=+0.000
+graphic    gmessages                      Q=30 | cpp=  90096 zen=  89892 (-0.23%) | ssim cpp=71.42 zen=71.81 off=71.81 | Δvcpp=+0.394 Δvoff=+0.000
+graphic    gmessages                      Q=50 | cpp= 104295 zen= 103951 (-0.33%) | ssim cpp=75.77 zen=75.62 off=75.62 | Δvcpp=-0.143 Δvoff=+0.000
+graphic    gmessages                      Q=70 | cpp= 130371 zen= 129826 (-0.42%) | ssim cpp=82.21 zen=82.00 off=82.00 | Δvcpp=-0.205 Δvoff=+0.000
+graphic    gmessages                      Q=85 | cpp= 166187 zen= 165925 (-0.16%) | ssim cpp=86.84 zen=86.98 off=86.98 | Δvcpp=+0.142 Δvoff=+0.000
+graphic    gmessages                      Q=95 | cpp= 235195 zen= 234860 (-0.14%) | ssim cpp=91.96 zen=92.07 off=92.07 | Δvcpp=+0.107 Δvoff=+0.000
+graphic    graph                          Q=10 | cpp=   7967 zen=   8220 (+3.18%) | ssim cpp= 5.07 zen= 5.84 off= 5.69 | Δvcpp=+0.769 Δvoff=+0.152
+graphic    graph                          Q=30 | cpp=  14041 zen=  14347 (+2.18%) | ssim cpp=54.59 zen=54.54 off=54.69 | Δvcpp=-0.053 Δvoff=-0.153
+graphic    graph                          Q=50 | cpp=  16678 zen=  16896 (+1.31%) | ssim cpp=64.22 zen=63.91 off=63.66 | Δvcpp=-0.316 Δvoff=+0.251
+graphic    graph                          Q=70 | cpp=  20726 zen=  20901 (+0.84%) | ssim cpp=71.40 zen=71.01 off=70.89 | Δvcpp=-0.389 Δvoff=+0.123
+graphic    graph                          Q=85 | cpp=  26864 zen=  26978 (+0.42%) | ssim cpp=77.94 zen=77.33 off=77.25 | Δvcpp=-0.615 Δvoff=+0.081
+graphic    graph                          Q=95 | cpp=  38662 zen=  38743 (+0.21%) | ssim cpp=82.24 zen=82.71 off=82.70 | Δvcpp=+0.469 Δvoff=+0.016
+graphic    gui                            Q=10 | cpp=  20221 zen=  20341 (+0.59%) | ssim cpp=64.01 zen=64.03 off=63.95 | Δvcpp=+0.025 Δvoff=+0.083
+graphic    gui                            Q=30 | cpp=  27072 zen=  27176 (+0.38%) | ssim cpp=76.88 zen=76.88 off=76.90 | Δvcpp=-0.009 Δvoff=-0.023
+graphic    gui                            Q=50 | cpp=  31295 zen=  31237 (-0.19%) | ssim cpp=77.53 zen=78.54 off=78.47 | Δvcpp=+1.013 Δvoff=+0.075
+graphic    gui                            Q=70 | cpp=  36841 zen=  36883 (+0.11%) | ssim cpp=86.12 zen=86.09 off=86.10 | Δvcpp=-0.027 Δvoff=-0.011
+graphic    gui                            Q=85 | cpp=  46845 zen=  46968 (+0.26%) | ssim cpp=90.68 zen=90.61 off=90.64 | Δvcpp=-0.069 Δvoff=-0.021
+graphic    gui                            Q=95 | cpp=  67829 zen=  67849 (+0.03%) | ssim cpp=94.55 zen=94.51 off=94.52 | Δvcpp=-0.038 Δvoff=-0.013
+graphic    imac_dark                      Q=10 | cpp= 191953 zen= 192056 (+0.05%) | ssim cpp=35.77 zen=35.03 off=35.02 | Δvcpp=-0.738 Δvoff=+0.015
+graphic    imac_dark                      Q=30 | cpp= 306695 zen= 306440 (-0.08%) | ssim cpp=59.22 zen=55.14 off=55.12 | Δvcpp=-4.078 Δvoff=+0.019
+graphic    imac_dark                      Q=50 | cpp= 368167 zen= 367879 (-0.08%) | ssim cpp=63.75 zen=64.35 off=64.33 | Δvcpp=+0.590 Δvoff=+0.013
+graphic    imac_dark                      Q=70 | cpp= 478192 zen= 477546 (-0.14%) | ssim cpp=70.98 zen=71.39 off=71.38 | Δvcpp=+0.410 Δvoff=+0.016
+graphic    imac_dark                      Q=85 | cpp= 632991 zen= 633001 (+0.00%) | ssim cpp=78.49 zen=78.85 off=78.85 | Δvcpp=+0.357 Δvoff=-0.000
+graphic    imac_dark                      Q=95 | cpp= 919193 zen= 922734 (+0.39%) | ssim cpp=85.13 zen=85.69 off=85.68 | Δvcpp=+0.560 Δvoff=+0.005
+
+== photos ==
+photo      1001682                        Q=10 | cpp=   9860 zen=   9884 (+0.24%) | ssim cpp=21.08 zen=21.16 off=21.15 | Δvcpp=+0.078 Δvoff=+0.006
+photo      1001682                        Q=30 | cpp=  19215 zen=  19205 (-0.05%) | ssim cpp=53.70 zen=53.62 off=53.62 | Δvcpp=-0.079 Δvoff=+0.001
+photo      1001682                        Q=50 | cpp=  24273 zen=  24268 (-0.02%) | ssim cpp=61.06 zen=60.86 off=60.86 | Δvcpp=-0.200 Δvoff=-0.002
+photo      1001682                        Q=70 | cpp=  34832 zen=  34801 (-0.09%) | ssim cpp=70.50 zen=70.58 off=70.57 | Δvcpp=+0.073 Δvoff=+0.001
+photo      1001682                        Q=85 | cpp=  52521 zen=  52463 (-0.11%) | ssim cpp=79.25 zen=79.19 off=79.19 | Δvcpp=-0.060 Δvoff=+0.000
+photo      1001682                        Q=95 | cpp=  96937 zen=  96979 (+0.04%) | ssim cpp=87.67 zen=87.67 off=87.67 | Δvcpp=-0.000 Δvoff=+0.000
+photo      1028637                        Q=10 | cpp=   8976 zen=   9025 (+0.55%) | ssim cpp=20.99 zen=20.89 off=20.89 | Δvcpp=-0.098 Δvoff=-0.006
+photo      1028637                        Q=30 | cpp=  15935 zen=  15946 (+0.07%) | ssim cpp=49.03 zen=48.62 off=48.62 | Δvcpp=-0.417 Δvoff=+0.001
+photo      1028637                        Q=50 | cpp=  19784 zen=  19761 (-0.12%) | ssim cpp=55.98 zen=55.54 off=55.54 | Δvcpp=-0.432 Δvoff=+0.000
+photo      1028637                        Q=70 | cpp=  27551 zen=  27466 (-0.31%) | ssim cpp=66.81 zen=66.65 off=66.65 | Δvcpp=-0.160 Δvoff=-0.004
+photo      1028637                        Q=85 | cpp=  40545 zen=  40446 (-0.24%) | ssim cpp=75.47 zen=75.37 off=75.37 | Δvcpp=-0.101 Δvoff=-0.005
+photo      1028637                        Q=95 | cpp=  70900 zen=  70767 (-0.19%) | ssim cpp=83.52 zen=83.45 off=83.45 | Δvcpp=-0.072 Δvoff=-0.007
+photo      1029604                        Q=10 | cpp=  13010 zen=  12983 (-0.21%) | ssim cpp=40.77 zen=40.72 off=40.72 | Δvcpp=-0.052 Δvoff=+0.000
+photo      1029604                        Q=30 | cpp=  22549 zen=  22449 (-0.44%) | ssim cpp=62.08 zen=61.84 off=61.84 | Δvcpp=-0.247 Δvoff=+0.000
+photo      1029604                        Q=50 | cpp=  27255 zen=  27122 (-0.49%) | ssim cpp=66.99 zen=66.90 off=66.90 | Δvcpp=-0.098 Δvoff=+0.000
+photo      1029604                        Q=70 | cpp=  37556 zen=  37451 (-0.28%) | ssim cpp=73.97 zen=73.95 off=73.95 | Δvcpp=-0.016 Δvoff=+0.000
+photo      1029604                        Q=85 | cpp=  56802 zen=  56649 (-0.27%) | ssim cpp=81.14 zen=81.18 off=81.18 | Δvcpp=+0.035 Δvoff=+0.000
+photo      1029604                        Q=95 | cpp= 109765 zen= 109783 (+0.02%) | ssim cpp=89.77 zen=89.62 off=89.62 | Δvcpp=-0.155 Δvoff=+0.000
+photo      106399                         Q=10 | cpp=  10408 zen=  10405 (-0.03%) | ssim cpp=30.07 zen=30.10 off=30.10 | Δvcpp=+0.025 Δvoff=+0.000
+photo      106399                         Q=30 | cpp=  18480 zen=  18422 (-0.31%) | ssim cpp=57.08 zen=57.03 off=57.03 | Δvcpp=-0.049 Δvoff=+0.004
+photo      106399                         Q=50 | cpp=  22539 zen=  22450 (-0.39%) | ssim cpp=63.43 zen=63.30 off=63.30 | Δvcpp=-0.131 Δvoff=-0.001
+photo      106399                         Q=70 | cpp=  30044 zen=  29928 (-0.39%) | ssim cpp=71.16 zen=71.06 off=71.06 | Δvcpp=-0.101 Δvoff=+0.002
+photo      106399                         Q=85 | cpp=  42564 zen=  42549 (-0.04%) | ssim cpp=78.55 zen=78.39 off=78.39 | Δvcpp=-0.156 Δvoff=-0.003
+photo      106399                         Q=95 | cpp=  75530 zen=  75619 (+0.12%) | ssim cpp=86.32 zen=86.35 off=86.35 | Δvcpp=+0.029 Δvoff=-0.004
+photo      1080721                        Q=10 | cpp=   9308 zen=   9332 (+0.26%) | ssim cpp=38.07 zen=37.93 off=37.90 | Δvcpp=-0.142 Δvoff=+0.026
+photo      1080721                        Q=30 | cpp=  15963 zen=  15934 (-0.18%) | ssim cpp=65.27 zen=65.36 off=65.37 | Δvcpp=+0.092 Δvoff=-0.010
+photo      1080721                        Q=50 | cpp=  19137 zen=  19120 (-0.09%) | ssim cpp=71.25 zen=71.22 off=71.21 | Δvcpp=-0.037 Δvoff=+0.009
+photo      1080721                        Q=70 | cpp=  25286 zen=  25260 (-0.10%) | ssim cpp=77.36 zen=77.36 off=77.29 | Δvcpp=+0.004 Δvoff=+0.065
+photo      1080721                        Q=85 | cpp=  36025 zen=  36014 (-0.03%) | ssim cpp=82.80 zen=82.85 off=82.88 | Δvcpp=+0.055 Δvoff=-0.027
+photo      1080721                        Q=95 | cpp=  64268 zen=  64522 (+0.40%) | ssim cpp=88.57 zen=88.54 off=88.52 | Δvcpp=-0.027 Δvoff=+0.024
+photo      1082342                        Q=10 | cpp=  14306 zen=  14305 (-0.01%) | ssim cpp=39.29 zen=38.98 off=38.96 | Δvcpp=-0.310 Δvoff=+0.020
+photo      1082342                        Q=30 | cpp=  24837 zen=  24784 (-0.21%) | ssim cpp=61.10 zen=60.83 off=60.78 | Δvcpp=-0.269 Δvoff=+0.048
+photo      1082342                        Q=50 | cpp=  29593 zen=  29536 (-0.19%) | ssim cpp=66.55 zen=66.57 off=66.53 | Δvcpp=+0.024 Δvoff=+0.034
+photo      1082342                        Q=70 | cpp=  38745 zen=  38703 (-0.11%) | ssim cpp=72.55 zen=72.41 off=72.41 | Δvcpp=-0.142 Δvoff=+0.004
+photo      1082342                        Q=85 | cpp=  54820 zen=  54759 (-0.11%) | ssim cpp=78.43 zen=78.39 off=78.38 | Δvcpp=-0.040 Δvoff=+0.009
+photo      1082342                        Q=95 | cpp=  96126 zen=  96149 (+0.02%) | ssim cpp=83.70 zen=83.67 off=83.67 | Δvcpp=-0.032 Δvoff=-0.006
+photo      1089930                        Q=10 | cpp=   9825 zen=   9831 (+0.06%) | ssim cpp=42.58 zen=42.56 off=42.56 | Δvcpp=-0.016 Δvoff=-0.003
+photo      1089930                        Q=30 | cpp=  16396 zen=  16397 (+0.01%) | ssim cpp=64.49 zen=64.31 off=64.33 | Δvcpp=-0.174 Δvoff=-0.013
+photo      1089930                        Q=50 | cpp=  19346 zen=  19337 (-0.05%) | ssim cpp=69.42 zen=69.20 off=69.20 | Δvcpp=-0.218 Δvoff=+0.002
+photo      1089930                        Q=70 | cpp=  25216 zen=  25162 (-0.21%) | ssim cpp=75.49 zen=75.50 off=75.48 | Δvcpp=+0.009 Δvoff=+0.015
+photo      1089930                        Q=85 | cpp=  36289 zen=  36222 (-0.18%) | ssim cpp=81.50 zen=81.15 off=81.13 | Δvcpp=-0.345 Δvoff=+0.017
+photo      1089930                        Q=95 | cpp=  69458 zen=  69689 (+0.33%) | ssim cpp=88.13 zen=88.06 off=88.05 | Δvcpp=-0.070 Δvoff=+0.004
+photo      110472                         Q=10 | cpp=  10354 zen=  10396 (+0.41%) | ssim cpp=33.47 zen=33.32 off=33.32 | Δvcpp=-0.144 Δvoff=+0.000
+photo      110472                         Q=30 | cpp=  17886 zen=  17890 (+0.02%) | ssim cpp=59.07 zen=58.83 off=58.82 | Δvcpp=-0.245 Δvoff=+0.003
+photo      110472                         Q=50 | cpp=  21207 zen=  21228 (+0.10%) | ssim cpp=65.37 zen=65.19 off=65.20 | Δvcpp=-0.176 Δvoff=-0.005
+photo      110472                         Q=70 | cpp=  27737 zen=  27811 (+0.27%) | ssim cpp=72.23 zen=72.08 off=72.09 | Δvcpp=-0.146 Δvoff=-0.001
+photo      110472                         Q=85 | cpp=  39628 zen=  39620 (-0.02%) | ssim cpp=78.80 zen=78.62 off=78.63 | Δvcpp=-0.176 Δvoff=-0.000
+photo      110472                         Q=95 | cpp=  73083 zen=  73380 (+0.41%) | ssim cpp=83.41 zen=83.31 off=83.31 | Δvcpp=-0.100 Δvoff=-0.000
+photo      1129482                        Q=10 | cpp=   5196 zen=   5311 (+2.21%) | ssim cpp=61.25 zen=62.18 off=61.22 | Δvcpp=+0.933 Δvoff=+0.960
+photo      1129482                        Q=30 | cpp=   8079 zen=   8139 (+0.74%) | ssim cpp=71.44 zen=73.59 off=71.48 | Δvcpp=+2.146 Δvoff=+2.111
+photo      1129482                        Q=50 | cpp=   9477 zen=   9504 (+0.28%) | ssim cpp=75.32 zen=77.41 off=75.45 | Δvcpp=+2.086 Δvoff=+1.961
+photo      1129482                        Q=70 | cpp=  12033 zen=  12003 (-0.25%) | ssim cpp=80.67 zen=81.63 off=80.59 | Δvcpp=+0.961 Δvoff=+1.043
+photo      1129482                        Q=85 | cpp=  16136 zen=  16037 (-0.61%) | ssim cpp=85.51 zen=85.93 off=85.30 | Δvcpp=+0.417 Δvoff=+0.621
+photo      1129482                        Q=95 | cpp=  25595 zen=  25502 (-0.36%) | ssim cpp=90.01 zen=90.16 off=89.92 | Δvcpp=+0.150 Δvoff=+0.234
+photo      1130683                        Q=10 | cpp=  16334 zen=  16311 (-0.14%) | ssim cpp=32.99 zen=33.01 off=33.01 | Δvcpp=+0.029 Δvoff=-0.001
+photo      1130683                        Q=30 | cpp=  29917 zen=  29836 (-0.27%) | ssim cpp=55.97 zen=55.88 off=55.89 | Δvcpp=-0.081 Δvoff=-0.004
+photo      1130683                        Q=50 | cpp=  36988 zen=  36885 (-0.28%) | ssim cpp=62.19 zen=62.00 off=62.00 | Δvcpp=-0.195 Δvoff=-0.008
+photo      1130683                        Q=70 | cpp=  50625 zen=  50490 (-0.27%) | ssim cpp=70.06 zen=69.93 off=69.93 | Δvcpp=-0.130 Δvoff=+0.004
+photo      1130683                        Q=85 | cpp=  72743 zen=  72583 (-0.22%) | ssim cpp=77.16 zen=77.06 off=77.06 | Δvcpp=-0.096 Δvoff=+0.007
+photo      1130683                        Q=95 | cpp= 125874 zen= 125878 (+0.00%) | ssim cpp=84.38 zen=84.29 off=84.28 | Δvcpp=-0.089 Δvoff=+0.002

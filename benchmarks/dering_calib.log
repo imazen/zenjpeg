@@ -1,0 +1,142 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/home/lilith/work/zen/zenjpeg-q10-baseline/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+   Compiling zenjpeg v0.8.4 (/home/lilith/work/zen/zenjpeg-q10-baseline/zenjpeg)
+    Finished `release` profile [optimized + debuginfo] target(s) in 2.11s
+     Running `target/release/examples/dering_offset_calibrate`
+Calibrating per-Q distance offsets to match cjpegli size...
+
+frymire  Q=10: offset = 0.390
+frymire  Q=30: offset = 0.136
+frymire  Q=50: offset = 0.075
+frymire  Q=70: offset = 0.007
+frymire  Q=85: offset = 0.000
+frymire  Q=95: offset = 0.000
+graphic codec_wiki           Q=10: offset = 0.321
+graphic codec_wiki           Q=30: offset = 0.015
+graphic codec_wiki           Q=50: offset = 0.000
+graphic codec_wiki           Q=70: offset = 0.007
+graphic codec_wiki           Q=85: offset = 0.000
+graphic codec_wiki           Q=95: offset = 0.000
+graphic gmessages            Q=10: offset = 0.000
+graphic gmessages            Q=30: offset = 0.000
+graphic gmessages            Q=50: offset = 0.000
+graphic gmessages            Q=70: offset = 0.000
+graphic gmessages            Q=85: offset = 0.000
+graphic gmessages            Q=95: offset = 0.000
+graphic graph                Q=10: offset = 0.886
+graphic graph                Q=30: offset = 0.261
+graphic graph                Q=50: offset = 0.151
+graphic graph                Q=70: offset = 0.058
+graphic graph                Q=85: offset = 0.017
+graphic graph                Q=95: offset = 0.003
+graphic gui                  Q=10: offset = 0.056
+graphic gui                  Q=30: offset = 0.099
+graphic gui                  Q=50: offset = 0.000
+graphic gui                  Q=70: offset = 0.021
+graphic gui                  Q=85: offset = 0.013
+graphic gui                  Q=95: offset = 0.003
+graphic imac_dark            Q=10: offset = 0.040
+graphic imac_dark            Q=30: offset = 0.000
+graphic imac_dark            Q=50: offset = 0.000
+graphic imac_dark            Q=70: offset = 0.000
+graphic imac_dark            Q=85: offset = 0.003
+graphic imac_dark            Q=95: offset = 0.007
+graphic imac_g3              Q=10: offset = 0.960
+graphic imac_g3              Q=30: offset = 0.325
+graphic imac_g3              Q=50: offset = 0.157
+graphic imac_g3              Q=70: offset = 0.050
+graphic imac_g3              Q=85: offset = 0.009
+graphic imac_g3              Q=95: offset = 0.003
+graphic imessage             Q=10: offset = 1.261
+graphic imessage             Q=30: offset = 0.438
+graphic imessage             Q=50: offset = 0.245
+graphic imessage             Q=70: offset = 0.075
+graphic imessage             Q=85: offset = 0.019
+graphic imessage             Q=95: offset = 0.013
+graphic terminal             Q=10: offset = 1.003
+graphic terminal             Q=30: offset = 0.298
+graphic terminal             Q=50: offset = 0.210
+graphic terminal             Q=70: offset = 0.050
+graphic terminal             Q=85: offset = 0.019
+graphic terminal             Q=95: offset = 0.013
+graphic windows              Q=10: offset = 1.267
+graphic windows              Q=30: offset = 0.370
+graphic windows              Q=50: offset = 0.204
+graphic windows              Q=70: offset = 0.058
+graphic windows              Q=85: offset = 0.013
+graphic windows              Q=95: offset = 0.003
+graphic windows95            Q=10: offset = 1.024
+graphic windows95            Q=30: offset = 0.438
+graphic windows95            Q=50: offset = 0.280
+graphic windows95            Q=70: offset = 0.103
+graphic windows95            Q=85: offset = 0.032
+graphic windows95            Q=95: offset = 0.000
+photo   1001682              Q=10: offset = 0.056
+photo   1001682              Q=30: offset = 0.000
+photo   1001682              Q=50: offset = 0.000
+photo   1001682              Q=70: offset = 0.000
+photo   1001682              Q=85: offset = 0.000
+photo   1001682              Q=95: offset = 0.003
+photo   1028637              Q=10: offset = 0.126
+photo   1028637              Q=30: offset = 0.015
+photo   1028637              Q=50: offset = 0.000
+photo   1028637              Q=70: offset = 0.000
+photo   1028637              Q=85: offset = 0.000
+photo   1028637              Q=95: offset = 0.000
+photo   1029604              Q=10: offset = 0.000
+photo   1029604              Q=30: offset = 0.000
+photo   1029604              Q=50: offset = 0.000
+photo   1029604              Q=70: offset = 0.000
+photo   1029604              Q=85: offset = 0.000
+photo   1029604              Q=95: offset = 0.003
+photo   106399               Q=10: offset = 0.000
+photo   106399               Q=30: offset = 0.000
+photo   106399               Q=50: offset = 0.000
+photo   106399               Q=70: offset = 0.000
+photo   106399               Q=85: offset = 0.000
+photo   106399               Q=95: offset = 0.003
+photo   1080721              Q=10: offset = 0.077
+photo   1080721              Q=30: offset = 0.000
+photo   1080721              Q=50: offset = 0.000
+photo   1080721              Q=70: offset = 0.000
+photo   1080721              Q=85: offset = 0.000
+photo   1080721              Q=95: offset = 0.003
+photo   1082342              Q=10: offset = 0.000
+photo   1082342              Q=30: offset = 0.000
+photo   1082342              Q=50: offset = 0.000
+photo   1082342              Q=70: offset = 0.000
+photo   1082342              Q=85: offset = 0.000
+photo   1082342              Q=95: offset = 0.003
+photo   1089930              Q=10: offset = 0.038
+photo   1089930              Q=30: offset = 0.019
+photo   1089930              Q=50: offset = 0.000
+photo   1089930              Q=70: offset = 0.000
+photo   1089930              Q=85: offset = 0.000
+photo   1089930              Q=95: offset = 0.003
+photo   110472               Q=10: offset = 0.077
+photo   110472               Q=30: offset = 0.019
+photo   110472               Q=50: offset = 0.032
+photo   110472               Q=70: offset = 0.030
+photo   110472               Q=85: offset = 0.000
+photo   110472               Q=95: offset = 0.005
+photo   1129482              Q=10: offset = 0.718
+photo   1129482              Q=30: offset = 0.099
+photo   1129482              Q=50: offset = 0.036
+photo   1129482              Q=70: offset = 0.000
+photo   1129482              Q=85: offset = 0.000
+photo   1129482              Q=95: offset = 0.000
+photo   1130683              Q=10: offset = 0.000
+photo   1130683              Q=30: offset = 0.000
+photo   1130683              Q=50: offset = 0.000
+photo   1130683              Q=70: offset = 0.000
+photo   1130683              Q=85: offset = 0.000
+photo   1130683              Q=95: offset = 0.003
+
+=== Per-Q offset summary ===
+Q        frymire     g_mean   g_median      g_p75     p_mean   p_median      p_p75
+10         0.390      0.682      0.960      1.024      0.109      0.056      0.077
+30         0.136      0.224      0.298      0.370      0.015      0.000      0.019
+50         0.075      0.125      0.157      0.210      0.007      0.000      0.000
+70         0.007      0.042      0.050      0.058      0.003      0.000      0.000
+85         0.000      0.012      0.013      0.019      0.000      0.000      0.000
+95         0.000      0.004      0.003      0.007      0.003      0.003      0.003

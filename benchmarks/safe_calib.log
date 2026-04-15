@@ -1,0 +1,140 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/home/lilith/work/zen/zenjpeg-q10-baseline/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+   Compiling zenjpeg v0.8.4 (/home/lilith/work/zen/zenjpeg-q10-baseline/zenjpeg)
+    Finished `release` profile [optimized + debuginfo] target(s) in 2.25s
+     Running `target/release/examples/dering_offset_safe_calibrate`
+category   name                 Q max_safe_offset ssim_on ssim_off
+frymire    frymire              10  0.500   3.003   1.207
+frymire    frymire              30  0.300  28.750  28.617
+frymire    frymire              50  0.150  36.482  36.364
+frymire    frymire              70  0.020  44.918  44.871
+frymire    frymire              85  0.000  50.476  50.516
+frymire    frymire              95  0.000  53.309  53.350
+graphic    codec_wiki           10  0.000  60.003  60.003
+graphic    codec_wiki           30  0.000  71.171  71.171
+graphic    codec_wiki           50  0.000  73.811  73.725
+graphic    codec_wiki           70  0.020  77.682  77.675
+graphic    codec_wiki           85  0.000  80.863  80.864
+graphic    codec_wiki           95  0.000  82.768  82.770
+graphic    gmessages            10  0.100  61.068  60.303
+graphic    gmessages            30  0.500  71.919  71.812
+graphic    gmessages            50  0.400  76.473  75.625
+graphic    gmessages            70  0.020  81.953  82.001
+graphic    gmessages            85  0.000  86.984  86.984
+graphic    gmessages            95  0.000  92.069  92.069
+graphic    graph                10  0.400  17.155   5.689
+graphic    graph                30  0.500  57.825  54.693
+graphic    graph                50  0.020  63.643  63.657
+graphic    graph                70  0.020  70.901  70.886
+graphic    graph                85  0.020  77.254  77.247
+graphic    graph                95  0.020  82.707  82.695
+graphic    gui                  10  0.000  63.948  63.948
+graphic    gui                  30  0.400  78.413  76.899
+graphic    gui                  50  0.000  78.430  78.467
+graphic    gui                  70  0.020  86.110  86.105
+graphic    gui                  85  0.000  90.615  90.636
+graphic    gui                  95  0.000  94.508  94.522
+graphic    imac_dark            10  0.000  35.016  35.016
+graphic    imac_dark            30  0.500  58.141  55.120
+graphic    imac_dark            50  0.000  64.332  64.332
+graphic    imac_dark            70  0.020  71.337  71.378
+graphic    imac_dark            85  0.000  78.849  78.849
+graphic    imac_dark            95  0.000  85.687  85.682
+graphic    imac_g3              10  0.500  57.934  53.932
+graphic    imac_g3              30  0.500  69.335  65.672
+graphic    imac_g3              50  0.500  72.683  70.501
+graphic    imac_g3              70  0.500  77.602  76.987
+graphic    imac_g3              85  0.200  82.368  82.360
+graphic    imac_g3              95  0.050  86.581  86.540
+graphic    imessage             10  0.000  47.251  47.251
+graphic    imessage             30  0.000  65.601  65.601
+graphic    imessage             50  0.000  69.760  69.760
+graphic    imessage             70  0.150  75.347  75.303
+graphic    imessage             85  0.000  79.890  79.885
+graphic    imessage             95  0.020  83.535  83.538
+graphic    terminal             10  0.000  57.384  57.384
+graphic    terminal             30  0.300  68.803  68.817
+graphic    terminal             50  0.000  72.453  72.414
+graphic    terminal             70  0.050  78.617  78.535
+graphic    terminal             85  0.020  84.751  84.764
+graphic    terminal             95  0.000  90.595  90.587
+graphic    windows              10  0.500  42.960  36.732
+graphic    windows              30  0.500  62.757  53.896
+graphic    windows              50  0.500  66.205  60.412
+graphic    windows              70  0.500  71.381  69.676
+graphic    windows              85  0.500  76.954  76.579
+graphic    windows              95  0.080  82.043  82.073
+graphic    windows95            10  0.400   0.267  -0.804
+graphic    windows95            30  0.400  40.317  39.644
+graphic    windows95            50  0.300  50.544  50.277
+graphic    windows95            70  0.080  62.388  62.232
+graphic    windows95            85  0.000  67.630  67.622
+graphic    windows95            95  0.020  69.069  69.091
+photo      1001682              10  0.000  21.155  21.155
+photo      1001682              30  0.000  53.618  53.618
+photo      1001682              50  0.000  60.859  60.859
+photo      1001682              70  0.000  70.567  70.574
+photo      1001682              85  0.000  79.191  79.191
+photo      1001682              95  0.000  87.672  87.672
+photo      1028637              10  0.000  20.893  20.893
+photo      1028637              30  0.300  48.587  48.616
+photo      1028637              50  0.300  55.620  55.544
+photo      1028637              70  0.000  66.648  66.653
+photo      1028637              85  0.000  75.366  75.372
+photo      1028637              95  0.000  83.446  83.453
+photo      1029604              10  0.000  40.721  40.721
+photo      1029604              30  0.000  61.836  61.836
+photo      1029604              50  0.000  66.896  66.896
+photo      1029604              70  0.020  73.923  73.950
+photo      1029604              85  0.000  81.179  81.179
+photo      1029604              95  0.000  89.620  89.620
+photo      106399               10  0.000  30.099  30.099
+photo      106399               30  0.000  57.027  57.027
+photo      106399               50  0.000  63.299  63.299
+photo      106399               70  0.020  71.021  71.060
+photo      106399               85  0.000  78.390  78.393
+photo      106399               95  0.000  86.350  86.354
+photo      1080721              10  0.000  37.903  37.903
+photo      1080721              30  0.000  65.368  65.368
+photo      1080721              50  0.000  71.210  71.210
+photo      1080721              70  0.050  77.256  77.295
+photo      1080721              85  0.000  82.852  82.879
+photo      1080721              95  0.000  88.545  88.521
+photo      1082342              10  0.000  38.964  38.964
+photo      1082342              30  0.000  60.784  60.784
+photo      1082342              50  0.000  66.535  66.535
+photo      1082342              70  0.050  72.418  72.408
+photo      1082342              85  0.000  78.393  78.384
+photo      1082342              95  0.000  83.669  83.674
+photo      1089930              10  0.000  42.564  42.564
+photo      1089930              30  0.000  64.328  64.328
+photo      1089930              50  0.000  69.161  69.195
+photo      1089930              70  0.020  75.500  75.485
+photo      1089930              85  0.000  81.150  81.133
+photo      1089930              95  0.000  88.056  88.051
+photo      110472               10  0.000  33.323  33.323
+photo      110472               30  0.000  58.824  58.824
+photo      110472               50  0.000  65.197  65.197
+photo      110472               70  0.020  72.051  72.085
+photo      110472               85  0.000  78.625  78.625
+photo      110472               95  0.000  83.311  83.311
+photo      1129482              10  0.500  62.356  61.219
+photo      1129482              30  0.500  72.208  71.478
+photo      1129482              50  0.500  75.700  75.450
+photo      1129482              70  0.300  80.868  80.591
+photo      1129482              85  0.150  85.406  85.305
+photo      1129482              95  0.020  89.883  89.921
+photo      1130683              10  0.000  33.015  33.015
+photo      1130683              30  0.000  55.889  55.889
+photo      1130683              50  0.000  62.003  62.003
+photo      1130683              70  0.000  69.935  69.930
+photo      1130683              85  0.000  77.065  77.058
+photo      1130683              95  0.000  84.286  84.284
+
+=== MIN safe offset per Q (constrain to no image regressing) ===
+Q=10: min=0.000 p25=0.000 p50=0.000  worst=["graphic/codec_wiki", "graphic/gui", "graphic/imac_dark", "graphic/imessage", "graphic/terminal", "photo/1001682", "photo/1028637", "photo/1029604", "photo/106399", "photo/1080721", "photo/1082342", "photo/1089930", "photo/110472", "photo/1130683"]
+Q=30: min=0.000 p25=0.000 p50=0.300  worst=["graphic/codec_wiki", "graphic/imessage", "photo/1001682", "photo/1029604", "photo/106399", "photo/1080721", "photo/1082342", "photo/1089930", "photo/110472", "photo/1130683"]
+Q=50: min=0.000 p25=0.000 p50=0.000  worst=["graphic/codec_wiki", "graphic/gui", "graphic/imac_dark", "graphic/imessage", "graphic/terminal", "photo/1001682", "photo/1029604", "photo/106399", "photo/1080721", "photo/1082342", "photo/1089930", "photo/110472", "photo/1130683"]
+Q=70: min=0.000 p25=0.020 p50=0.020  worst=["photo/1001682", "photo/1028637", "photo/1130683"]
+Q=85: min=0.000 p25=0.000 p50=0.000  worst=["frymire/frymire", "graphic/codec_wiki", "graphic/gmessages", "graphic/gui", "graphic/imac_dark", "graphic/imessage", "graphic/windows95", "photo/1001682", "photo/1028637", "photo/1029604", "photo/106399", "photo/1080721", "photo/1082342", "photo/1089930", "photo/110472", "photo/1130683"]
+Q=95: min=0.000 p25=0.000 p50=0.000  worst=["frymire/frymire", "graphic/codec_wiki", "graphic/gmessages", "graphic/gui", "graphic/imac_dark", "graphic/terminal", "photo/1001682", "photo/1028637", "photo/1029604", "photo/106399", "photo/1080721", "photo/1082342", "photo/1089930", "photo/110472", "photo/1130683"]
