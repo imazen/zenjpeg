@@ -74,3 +74,4 @@ Cargo.toml.original.txt
 *.rs.local
 *.profdata
 fuzz-*.log
+.workongoing

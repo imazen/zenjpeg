@@ -26,6 +26,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use zenjpeg::encode::trellis::HybridConfig;
+use zenjpeg::encode::tuning::EncodingTables;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 const Q_LEVELS: &[u8] = &[50, 70, 85, 95];
@@ -121,8 +122,30 @@ fn zen_xyb(rgb: &[u8], w: u32, h: u32, q: u8) -> Vec<u8> {
     e.finish().unwrap()
 }
 
+/// XYB encode with B-channel base-quant scaled by `b_factor`.
+///
+/// `b_factor > 1.0` coarsens the B (blue-yellow) quant table relative to the
+/// X and Y components. The Jpegli quality scaling still applies on top of this
+/// base table, so larger `b_factor` reduces surviving B AC magnitudes.
+fn zen_xyb_bcoarse(rgb: &[u8], w: u32, h: u32, q: u8, b_factor: f32) -> Vec<u8> {
+    let mut tables = EncodingTables::default_xyb();
+    tables.quant.scale_component(2, b_factor); // component 2 = B in XYB
+    let cfg = EncoderConfig::xyb(q, XybSubsampling::BQuarter)
+        .progressive(true)
+        .deringing(true)
+        .sharp_yuv(true)
+        .tables(Box::new(tables));
+    let mut e = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+    e.push_packed(rgb, Unstoppable).unwrap();
+    e.finish().unwrap()
+}
+
+/// Decode using zenjpeg with ICC color correction so XYB JPEGs decode correctly.
+///
+/// `decode_jpeg_to_rgb` (zune-jpeg) ignored the embedded XYB ICC profile, which
+/// caused all `zen_xyb*` rows to score ~-60 SSIM2.
 fn ssim2(orig: &ImgVec<RGB8>, jpg: &[u8], w: usize, h: usize) -> f64 {
-    let dec = match zenjpeg_bench_utils::decode_jpeg_to_rgb(jpg) {
+    let dec = match zenjpeg_bench_utils::decode_jpeg_with_icc(jpg) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("decode failed: {e:?}");
@@ -262,7 +285,7 @@ fn main() {
             )
             .unwrap();
 
-            // five zen variants
+            // base zen variants
             let variants: [(&str, fn(&[u8], u32, u32, u8) -> Vec<u8>); 4] = [
                 ("zen_default", zen_default),
                 ("zen_auto", zen_auto),
@@ -272,6 +295,22 @@ fn main() {
             for (label, f) in variants {
                 let t = Instant::now();
                 let j = f(&rgb, w, h, q);
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                let s = ssim2(&orig, &j, w as usize, h as usize);
+                writeln!(
+                    writer,
+                    "{cat},{name},{w},{h},{q},{label},{b},{s:.4},{m:.2}",
+                    b = j.len(),
+                    m = ms
+                )
+                .unwrap();
+            }
+
+            // XYB B-channel coarseness sweep
+            for &factor in &[1.25_f32, 1.5, 1.75, 2.0, 2.5, 3.0] {
+                let label = format!("zen_xyb_b{:.2}", factor);
+                let t = Instant::now();
+                let j = zen_xyb_bcoarse(&rgb, w, h, q, factor);
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
                 let s = ssim2(&orig, &j, w as usize, h as usize);
                 writeln!(
