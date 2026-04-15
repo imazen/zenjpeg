@@ -174,17 +174,17 @@ jobs:
           key: wasm32-wasip1
 
       - name: Build (scalar)
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features "std,decoder"
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
 
       - name: Build (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features "std,decoder"
+        run: cargo build -p zenjpeg --target wasm32-wasip1 --no-default-features --features decoder
 
       - name: Build wasm_bench example (SIMD128)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features --features "std,decoder"
+        run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features --features decoder
 
   cpp-parity:
     name: C++ Parity (${{ matrix.os }})
