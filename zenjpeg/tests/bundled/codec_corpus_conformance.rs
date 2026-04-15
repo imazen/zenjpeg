@@ -6,7 +6,7 @@
 //! - jpeg-conformance/non-conformant: Edge cases - behavior varies by decoder
 //! - zune/fuzz-corpus/jpeg: 1836 fuzz-generated JPEGs
 //! - zune/test-images/jpeg: Specialized edge case images
-//! - image-rs/test-images/jpg: Additional test images
+//! - image-rs/tests/images/jpg: Additional test images
 //! - mozjpeg/: mozjpeg test images
 use enough::Unstoppable;
 
@@ -284,8 +284,8 @@ fn test_image_rs_progressive() {
     let corpus = corpus();
 
     let test_dir = corpus
-        .get("image-rs/test-images/jpg/progressive")
-        .expect("corpus.get(image-rs/test-images/jpg/progressive)");
+        .get("image-rs/tests/images/jpg/progressive")
+        .expect("corpus.get(image-rs/tests/images/jpg/progressive)");
 
     let decoder = Decoder::new();
     let files = collect_jpeg_files(&test_dir);
@@ -316,8 +316,8 @@ fn test_image_rs_general() {
     let corpus = corpus();
 
     let test_dir = corpus
-        .get("image-rs/test-images/jpg")
-        .expect("corpus.get(image-rs/test-images/jpg)");
+        .get("image-rs/tests/images/jpg")
+        .expect("corpus.get(image-rs/tests/images/jpg)");
 
     let decoder = Decoder::new();
 
