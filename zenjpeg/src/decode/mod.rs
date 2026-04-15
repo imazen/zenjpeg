@@ -1898,27 +1898,26 @@ impl DecodeConfig {
                 pixels = cropped;
             }
 
-            // Apply ICC profile if enabled and present.
-            // At this point pixels are always RGB (CMYK/YCCK already converted).
-            // The ICC profile may describe any source color space (sRGB, Adobe RGB,
-            // CMYK working space) — moxcms handles the transform to the target.
+            // Apply ICC profile if enabled and the caller explicitly asked
+            // for color correction. Pixels at this point are always RGB
+            // (CMYK/YCCK already converted). moxcms handles the transform
+            // to the user's target color space.
             //
-            // Special case: XYB JPEGs. The output stage emits raw scaled-XYB
-            // bytes (no inverse XYB transform applied — see output.rs). The
-            // embedded ICC profile is the ONLY way to get visible sRGB. So
-            // default-apply it to sRGB when the user didn't set correct_color.
+            // XYB JPEGs are a special case: the output stage already ran
+            // the inverse XYB → sRGB transform in SIMD, so pixels are
+            // already visibly-correct sRGB. Applying the embedded XYB ICC
+            // profile here would double-transform (the XYB ICC describes
+            // scaled-XYB → sRGB, but pixels are no longer scaled-XYB).
+            // Skip the ICC apply for XYB in all cases.
             #[cfg(feature = "moxcms")]
             {
-                let effective_target = self.correct_color.or_else(|| {
-                    parser.icc_profile.as_ref().and_then(|icc| {
-                        if crate::color::icc::is_xyb_profile(icc) {
-                            Some(TargetColorSpace::Srgb)
-                        } else {
-                            None
-                        }
-                    })
-                });
-                if let Some(target) = effective_target
+                let is_xyb = parser
+                    .icc_profile
+                    .as_ref()
+                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
+                    .unwrap_or(false);
+                if let Some(target) = self.correct_color
+                    && !is_xyb
                     && let Some(ref icc_profile) = parser.icc_profile
                 {
                     match apply_icc_transform_f32(
@@ -2099,22 +2098,23 @@ impl DecodeConfig {
                 pixels = cropped;
             }
 
-            // Apply ICC profile if enabled and present.
-            // Pixels are always RGB here (CMYK/YCCK converted earlier in output.rs).
-            // Special case: XYB JPEGs default-apply the embedded ICC even
-            // without an explicit correct_color call — see u8 path notes.
+            // Apply ICC profile if enabled and the caller explicitly asked
+            // for color correction. Pixels are always RGB here (CMYK/YCCK
+            // converted earlier in output.rs).
+            //
+            // XYB JPEGs are a special case: the output stage already ran
+            // the inverse XYB → sRGB transform in SIMD, so pixels are
+            // already visibly-correct sRGB. Applying the embedded XYB ICC
+            // profile here would double-transform. Skip for XYB.
             #[cfg(feature = "moxcms")]
             {
-                let effective_target = self.correct_color.or_else(|| {
-                    parser.icc_profile.as_ref().and_then(|icc| {
-                        if crate::color::icc::is_xyb_profile(icc) {
-                            Some(TargetColorSpace::Srgb)
-                        } else {
-                            None
-                        }
-                    })
-                });
-                if let Some(target) = effective_target
+                let is_xyb = parser
+                    .icc_profile
+                    .as_ref()
+                    .map(|icc| crate::color::icc::is_xyb_profile(icc))
+                    .unwrap_or(false);
+                if let Some(target) = self.correct_color
+                    && !is_xyb
                     && let Some(ref icc_profile) = parser.icc_profile
                 {
                     match apply_icc_transform(

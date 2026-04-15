@@ -998,14 +998,21 @@ pub fn srgb_to_xyb_batch(input: &[[u8; 3]], output: &mut [[f32; 3]]) {
 // SIMD XYB DECODE HELPERS
 // ============================================================================
 
-/// SIMD XYB plane level shift to interleaved RGB u8.
+/// SIMD level shift from centered IDCT output to [0, 255] interleaved bytes.
 ///
-/// Converts 3 XYB f32 planes to interleaved RGB u8, applying:
-/// - Level shift (+128)
-/// - Clamp to [0, 255]
-/// - Convert to u8
+/// This is NOT an XYB→RGB transform — it just applies the standard JPEG
+/// level shift (+128) and clamps to u8. Used when the caller wants the
+/// raw scaled-XYB bytes for ICC-based downstream processing (e.g. feeding
+/// moxcms with a non-sRGB target profile).
+///
+/// For actual XYB → sRGB output use [`xyb_planes_to_srgb_u8_simd`].
 #[inline]
-pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32], rgb: &mut [u8]) {
+pub fn xyb_planes_level_shift_to_u8(
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [u8],
+) {
     debug_assert_eq!(plane0.len(), plane1.len());
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
@@ -1099,9 +1106,20 @@ fn xyb_planes_to_rgb_u8_impl(
     }
 }
 
-/// SIMD XYB plane level shift to interleaved RGB f32 (normalized 0-1).
+/// SIMD level shift from centered IDCT output to [0, 1] interleaved floats.
+///
+/// This is NOT an XYB→RGB transform — it just applies `(v + 128) / 255` and
+/// clamps to [0, 1]. Used when the caller wants the raw scaled-XYB values
+/// for ICC-based downstream processing.
+///
+/// For actual XYB → linear sRGB output use [`xyb_planes_to_srgb_f32_simd`].
 #[inline]
-pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32], rgb: &mut [f32]) {
+pub fn xyb_planes_level_shift_to_f32(
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [f32],
+) {
     debug_assert_eq!(plane0.len(), plane1.len());
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
@@ -1193,6 +1211,338 @@ fn xyb_planes_to_rgb_f32_impl(
         rgb[idx] = ((plane0[i] + 128.0) / 255.0).clamp(0.0, 1.0);
         rgb[idx + 1] = ((plane1[i] + 128.0) / 255.0).clamp(0.0, 1.0);
         rgb[idx + 2] = ((plane2[i] + 128.0) / 255.0).clamp(0.0, 1.0);
+    }
+}
+
+// ============================================================================
+// XYB → sRGB INVERSE TRANSFORM (Option 1 from docs/XYB_ICC_HANDLING.md)
+// ============================================================================
+//
+// These kernels implement the full inverse of the encoder's scaled-XYB
+// pipeline, producing visible sRGB pixels without requiring a color
+// management system. The stages are:
+//
+//   1. Undo level shift:   scaled_xyb = (plane + 128) / 255
+//   2. Unscale to XYB:     xyb        = scaled_xyb / scale - offset   (B += Y)
+//   3. Inverse cube:       opsin      = (xyb.channels)^3              (sign-preserving)
+//   4. Inverse opsin:      linear_rgb = INV_OPSIN * (opsin - bias)
+//   5. Linear → sRGB OETF
+//
+// Steps 1-4 are pure arithmetic that fold into f32x8. Step 5 (the OETF)
+// uses the scalar `linear_to_srgb` rational polynomial per lane — it's
+// already branch-light and cheap without a powf call, and matches the
+// encode side's scalar LUT pattern (per-lane gather / scatter).
+
+/// Inverse opsin absorbance matrix (3x3 row-major), from
+/// `xyb_to_linear_rgb`. Inverse of `XYB_OPSIN_ABSORBANCE_MATRIX`.
+const XYB_OPSIN_INVERSE_MATRIX: [f32; 9] = [
+    11.031_567,
+    -9.866_944,
+    -0.164_623,
+    -3.254_147,
+    4.418_770,
+    -0.164_623,
+    -3.658_851,
+    2.712_923,
+    1.945_928,
+];
+
+/// Cube (`v * v * v`) for f32x8 lanes. Because f32 multiplication preserves
+/// sign, `v^3` is already sign-preserving — matches the scalar `mixed_cube`
+/// (which is `v.powi(3)` with redundant sign-case handling).
+#[inline(always)]
+fn mixed_cube_v8<T: magetypes::simd::backends::F32x8Convert>(
+    _token: T,
+    v: GenericF32x8<T>,
+) -> GenericF32x8<T> {
+    v * v * v
+}
+
+/// Interleaves & stores 8 pixels worth of linear RGB to an interleaved
+/// output buffer, applying the sRGB OETF per lane and converting to u8.
+#[inline(always)]
+fn store_linear_rgb_as_srgb_u8_8(
+    r_arr: [f32; 8],
+    g_arr: [f32; 8],
+    b_arr: [f32; 8],
+    rgb: &mut [u8],
+    base_pixel: usize,
+) {
+    for j in 0..8 {
+        let idx = (base_pixel + j) * 3;
+        rgb[idx] = linear_to_srgb_u8(r_arr[j]);
+        rgb[idx + 1] = linear_to_srgb_u8(g_arr[j]);
+        rgb[idx + 2] = linear_to_srgb_u8(b_arr[j]);
+    }
+}
+
+/// Core SIMD kernel: 8 lanes of scaled-XYB planes → linear RGB f32x8.
+///
+/// Inputs are the raw IDCT output values (before the +128 level shift).
+/// Output is linear RGB, unclamped — caller clamps or feeds into OETF.
+#[inline(always)]
+fn scaled_xyb_planes_to_linear_rgb_v8<T: magetypes::simd::backends::F32x8Convert>(
+    token: T,
+    p0: GenericF32x8<T>,
+    p1: GenericF32x8<T>,
+    p2: GenericF32x8<T>,
+) -> (GenericF32x8<T>, GenericF32x8<T>, GenericF32x8<T>) {
+    #[allow(non_camel_case_types)]
+    type f32x8<T> = GenericF32x8<T>;
+
+    // Step 1: (v + 128) / 255  →  scaled_xyb
+    let offset128 = f32x8::<T>::splat(token, 128.0);
+    let inv_255 = f32x8::<T>::splat(token, 1.0 / 255.0);
+    let sx = (p0 + offset128) * inv_255;
+    let sy = (p1 + offset128) * inv_255;
+    let sb = (p2 + offset128) * inv_255;
+
+    // Step 2: unscale_xyb: y = sy/scale_y - off_y;
+    //                      x = sx/scale_x - off_x;
+    //                      b = sb/scale_b - off_b + y
+    let inv_scale_x = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[0]);
+    let inv_scale_y = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[1]);
+    let inv_scale_b = f32x8::<T>::splat(token, 1.0 / SCALED_XYB_SCALE[2]);
+    let off_x = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[0]);
+    let off_y = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[1]);
+    let off_b = f32x8::<T>::splat(token, SCALED_XYB_OFFSET[2]);
+
+    let y = sy * inv_scale_y - off_y;
+    let x = sx * inv_scale_x - off_x;
+    let b = sb * inv_scale_b - off_b + y;
+
+    // Step 3: undo cbrt + neg_bias_cbrt to recover opsin values
+    //   cbrt_r = y + x - neg_bias; cbrt_g = y - x - neg_bias; cbrt_b = b - neg_bias
+    //   opsin_r = mixed_cube(cbrt_r), etc.
+    //   opsin -= bias (per channel)
+    let neg_bias_r = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0]);
+    let neg_bias_g = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1]);
+    let neg_bias_b = f32x8::<T>::splat(token, XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2]);
+    let bias_val = f32x8::<T>::splat(token, XYB_OPSIN_ABSORBANCE_BIAS[0]);
+
+    let cbrt_r = y + x - neg_bias_r;
+    let cbrt_g = y - x - neg_bias_g;
+    let cbrt_b = b - neg_bias_b;
+
+    let opsin_r = mixed_cube_v8(token, cbrt_r) - bias_val;
+    let opsin_g = mixed_cube_v8(token, cbrt_g) - bias_val;
+    let opsin_b = mixed_cube_v8(token, cbrt_b) - bias_val;
+
+    // Step 4: inverse opsin matrix (3x3)
+    let inv = &XYB_OPSIN_INVERSE_MATRIX;
+    let m00 = f32x8::<T>::splat(token, inv[0]);
+    let m01 = f32x8::<T>::splat(token, inv[1]);
+    let m02 = f32x8::<T>::splat(token, inv[2]);
+    let m10 = f32x8::<T>::splat(token, inv[3]);
+    let m11 = f32x8::<T>::splat(token, inv[4]);
+    let m12 = f32x8::<T>::splat(token, inv[5]);
+    let m20 = f32x8::<T>::splat(token, inv[6]);
+    let m21 = f32x8::<T>::splat(token, inv[7]);
+    let m22 = f32x8::<T>::splat(token, inv[8]);
+
+    let r = m00.mul_add(opsin_r, m01.mul_add(opsin_g, m02 * opsin_b));
+    let g = m10.mul_add(opsin_r, m11.mul_add(opsin_g, m12 * opsin_b));
+    let b_out = m20.mul_add(opsin_r, m21.mul_add(opsin_g, m22 * opsin_b));
+
+    (r, g, b_out)
+}
+
+/// SIMD scaled-XYB planes → interleaved sRGB u8.
+///
+/// This is the no-moxcms XYB decoder path: the output of this function is
+/// visually-correct sRGB, so no subsequent ICC transform is required.
+///
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on
+/// wasm32, or scalar fallback.
+#[inline]
+pub fn xyb_planes_to_srgb_u8_simd(
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [u8],
+) {
+    debug_assert_eq!(plane0.len(), plane1.len());
+    debug_assert_eq!(plane0.len(), plane2.len());
+    debug_assert_eq!(rgb.len(), plane0.len() * 3);
+
+    incant!(xyb_planes_to_srgb_u8_impl(plane0, plane1, plane2, rgb));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn xyb_planes_to_srgb_u8_impl(
+    token: Token,
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [u8],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let num_pixels = plane0.len();
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let p0 = f32x8::from_array(
+            token,
+            [
+                plane0[base],
+                plane0[base + 1],
+                plane0[base + 2],
+                plane0[base + 3],
+                plane0[base + 4],
+                plane0[base + 5],
+                plane0[base + 6],
+                plane0[base + 7],
+            ],
+        );
+        let p1 = f32x8::from_array(
+            token,
+            [
+                plane1[base],
+                plane1[base + 1],
+                plane1[base + 2],
+                plane1[base + 3],
+                plane1[base + 4],
+                plane1[base + 5],
+                plane1[base + 6],
+                plane1[base + 7],
+            ],
+        );
+        let p2 = f32x8::from_array(
+            token,
+            [
+                plane2[base],
+                plane2[base + 1],
+                plane2[base + 2],
+                plane2[base + 3],
+                plane2[base + 4],
+                plane2[base + 5],
+                plane2[base + 6],
+                plane2[base + 7],
+            ],
+        );
+
+        let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(token, p0, p1, p2);
+        store_linear_rgb_as_srgb_u8_8(r.to_array(), g.to_array(), b.to_array(), rgb, base);
+    }
+
+    // Scalar remainder — reference path. Matches the SIMD kernel:
+    //   plane_val → +128 → /255 → scaled_xyb → unscale → xyb → sRGB
+    for i in (chunks * 8)..num_pixels {
+        let sx = (plane0[i] + 128.0) / 255.0;
+        let sy = (plane1[i] + 128.0) / 255.0;
+        let sb = (plane2[i] + 128.0) / 255.0;
+        let (r, g, b) = scaled_xyb_to_srgb(sx, sy, sb);
+        let idx = i * 3;
+        rgb[idx] = r;
+        rgb[idx + 1] = g;
+        rgb[idx + 2] = b;
+    }
+}
+
+/// SIMD scaled-XYB planes → interleaved sRGB f32 (normalized 0-1, with
+/// sRGB gamma encoding applied).
+///
+/// Dispatches to AVX2+FMA on x86_64, NEON on aarch64, WASM SIMD128 on
+/// wasm32, or scalar fallback.
+#[inline]
+pub fn xyb_planes_to_srgb_f32_simd(
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [f32],
+) {
+    debug_assert_eq!(plane0.len(), plane1.len());
+    debug_assert_eq!(plane0.len(), plane2.len());
+    debug_assert_eq!(rgb.len(), plane0.len() * 3);
+
+    incant!(xyb_planes_to_srgb_f32_impl(plane0, plane1, plane2, rgb));
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn xyb_planes_to_srgb_f32_impl(
+    token: Token,
+    plane0: &[f32],
+    plane1: &[f32],
+    plane2: &[f32],
+    rgb: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let num_pixels = plane0.len();
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let p0 = f32x8::from_array(
+            token,
+            [
+                plane0[base],
+                plane0[base + 1],
+                plane0[base + 2],
+                plane0[base + 3],
+                plane0[base + 4],
+                plane0[base + 5],
+                plane0[base + 6],
+                plane0[base + 7],
+            ],
+        );
+        let p1 = f32x8::from_array(
+            token,
+            [
+                plane1[base],
+                plane1[base + 1],
+                plane1[base + 2],
+                plane1[base + 3],
+                plane1[base + 4],
+                plane1[base + 5],
+                plane1[base + 6],
+                plane1[base + 7],
+            ],
+        );
+        let p2 = f32x8::from_array(
+            token,
+            [
+                plane2[base],
+                plane2[base + 1],
+                plane2[base + 2],
+                plane2[base + 3],
+                plane2[base + 4],
+                plane2[base + 5],
+                plane2[base + 6],
+                plane2[base + 7],
+            ],
+        );
+
+        let (r, g, b) = scaled_xyb_planes_to_linear_rgb_v8(token, p0, p1, p2);
+        let r_arr = r.to_array();
+        let g_arr = g.to_array();
+        let b_arr = b.to_array();
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = linear_to_srgb(r_arr[j].clamp(0.0, 1.0));
+            rgb[idx + 1] = linear_to_srgb(g_arr[j].clamp(0.0, 1.0));
+            rgb[idx + 2] = linear_to_srgb(b_arr[j].clamp(0.0, 1.0));
+        }
+    }
+
+    // Scalar remainder.
+    for i in (chunks * 8)..num_pixels {
+        let (x, y, b) = unscale_xyb(
+            (plane0[i] + 128.0) / 255.0,
+            (plane1[i] + 128.0) / 255.0,
+            (plane2[i] + 128.0) / 255.0,
+        );
+        let (lr, lg, lb) = xyb_to_linear_rgb(x, y, b);
+        let idx = i * 3;
+        rgb[idx] = linear_to_srgb(lr.clamp(0.0, 1.0));
+        rgb[idx + 1] = linear_to_srgb(lg.clamp(0.0, 1.0));
+        rgb[idx + 2] = linear_to_srgb(lb.clamp(0.0, 1.0));
     }
 }
 
