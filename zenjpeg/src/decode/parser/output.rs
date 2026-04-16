@@ -433,6 +433,15 @@ impl<'a> JpegParser<'a> {
             upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg, upsample_h2v2_i16_nearest,
         };
 
+        // Guard: coefficients must exist. When the streaming path consumed
+        // the entropy data, coefficients are empty and this function cannot
+        // run. Return an error so the caller can fall back to decode().
+        if self.coeffs.is_empty() || self.num_components > 1 && self.coeffs.len() < 3 {
+            return Err(Error::internal(
+                "coefficient data unavailable (streaming decode consumed entropy data)",
+            ));
+        }
+
         // Select IDCT function based on configured method
         let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
             super::super::IdctMethod::Libjpeg => idct_int_tiered_libjpeg,
