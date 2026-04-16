@@ -401,9 +401,26 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
 
+        // Map threading policy to parallel encoding config
         #[cfg(feature = "parallel")]
-        if self.limits.threading.is_parallel() {
-            cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
+        {
+            use zencodec::ThreadingPolicy;
+            match self.limits.threading {
+                ThreadingPolicy::SingleThread => {
+                    // Explicitly do not enable parallel — leave cfg.parallel as None
+                }
+                ThreadingPolicy::LimitOrSingle { max_threads } => {
+                    if max_threads > 1 {
+                        cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
+                    }
+                }
+                ThreadingPolicy::LimitOrAny { .. }
+                | ThreadingPolicy::Balanced
+                | ThreadingPolicy::Unlimited => {
+                    cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
+                }
+                _ => {}
+            }
         }
 
         Ok(JpegEncoder {
@@ -1608,8 +1625,20 @@ fn build_decode_config(
         cfg = cfg.auto_orient(false);
     }
 
-    if !limits.threading.is_parallel() {
-        cfg = cfg.num_threads(1);
+    // Map threading policy
+    match limits.threading {
+        zencodec::ThreadingPolicy::SingleThread => {
+            cfg = cfg.num_threads(1);
+        }
+        zencodec::ThreadingPolicy::LimitOrSingle { max_threads } => {
+            cfg = cfg.num_threads(max_threads as usize);
+        }
+        zencodec::ThreadingPolicy::LimitOrAny {
+            preferred_max_threads,
+        } => {
+            cfg = cfg.num_threads(preferred_max_threads as usize);
+        }
+        _ => {} // Balanced, Unlimited — use default (auto)
     }
 
     // Map decode policy to strictness and metadata preservation
