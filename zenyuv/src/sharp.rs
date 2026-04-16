@@ -162,6 +162,77 @@ pub fn rgb_to_yuv420_sharp(
     );
 }
 
+/// Refine pre-computed Cb/Cr using Sharp YUV iteration.
+///
+/// Unlike `rgb_to_yuv420_sharp`, this does NOT compute initial Cb/Cr from the
+/// forward matrix. Instead, it takes the caller's pre-computed Cb/Cr as the
+/// starting point and runs Newton-step refinement to minimize reconstruction
+/// error in sRGB space.
+///
+/// Use this when the initial chroma was computed with a different averaging
+/// model (e.g., gamma-corrected averaging) but the reconstruction should
+/// still use the standard BT.601/BT.709 inverse matrix.
+///
+/// Y must be at full resolution (`width * height`). Cb/Cr must be at chroma
+/// resolution (`ceil(width/2) * ceil(height/2)`).
+pub fn refine_chroma_420_u8(
+    rgb: &[u8],
+    y: &[u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+) {
+    let n = width * height;
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+    assert!(cb.len() >= cw * ch);
+    assert!(cr.len() >= cw * ch);
+
+    let inv = InverseCoeffs::new(matrix, range);
+    let fwd = ForwardCoeffs::new(matrix, range);
+
+    let mut ws = SharpYuvWorkspace::new(cw);
+    refine_iterate_rows_u8(
+        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, &mut ws,
+    );
+}
+
+/// Like `refine_chroma_420_u8` but takes a pre-allocated workspace.
+pub fn refine_chroma_420_u8_with_workspace(
+    rgb: &[u8],
+    y: &[u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    let n = width * height;
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+    assert!(cb.len() >= cw * ch);
+    assert!(cr.len() >= cw * ch);
+    assert!(ws.chroma_width() >= cw);
+
+    let inv = InverseCoeffs::new(matrix, range);
+    let fwd = ForwardCoeffs::new(matrix, range);
+
+    refine_iterate_rows_u8(
+        rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
+    );
+}
+
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to
 /// avoid per-strip allocation overhead (~36KB per call for 1024px width).
 pub struct SharpYuvWorkspace {
@@ -212,6 +283,88 @@ impl SharpYuvWorkspace {
             ob3: alloc::vec![0.0f32; cw],
             cb_f: alloc::vec![0.0f32; cw],
             cr_f: alloc::vec![0.0f32; cw],
+        }
+    }
+}
+
+/// Refinement iteration: loads initial Cb/Cr from caller's buffers, extracts
+/// SoA data, runs Newton steps, writes refined Cb/Cr back.
+fn refine_iterate_rows_u8(
+    rgb: &[u8],
+    y: &[u8],
+    cb: &mut [u8],
+    cr: &mut [u8],
+    width: usize,
+    height: usize,
+    cw: usize,
+    ch: usize,
+    fwd: &ForwardCoeffs,
+    inv: &InverseCoeffs,
+    config: &SharpYuvConfig,
+    ws: &mut SharpYuvWorkspace,
+) {
+    for cy_idx in 0..ch {
+        let row_top = cy_idx * 2;
+        let row_bot = (row_top + 1).min(height - 1);
+        // Extract SoA data (Y positions + original RGB) without computing
+        // initial Cb/Cr — we use the caller's pre-computed values instead.
+        extract_soa_row_no_chroma(
+            rgb,
+            y,
+            row_top,
+            row_bot,
+            width,
+            cw,
+            &mut ws.y0s,
+            &mut ws.y1s,
+            &mut ws.y2s,
+            &mut ws.y3s,
+            &mut ws.or0,
+            &mut ws.og0,
+            &mut ws.ob0,
+            &mut ws.or1,
+            &mut ws.og1,
+            &mut ws.ob1,
+            &mut ws.or2,
+            &mut ws.og2,
+            &mut ws.ob2,
+            &mut ws.or3,
+            &mut ws.og3,
+            &mut ws.ob3,
+        );
+        // Load caller's pre-computed Cb/Cr as f32 initial values.
+        let row_off = cy_idx * cw;
+        for cx_idx in 0..cw {
+            ws.cb_f[cx_idx] = cb[row_off + cx_idx] as f32;
+            ws.cr_f[cx_idx] = cr[row_off + cx_idx] as f32;
+        }
+        sharp_iterate_all_blocks(
+            &ws.y0s[..cw],
+            &ws.y1s[..cw],
+            &ws.y2s[..cw],
+            &ws.y3s[..cw],
+            &ws.or0[..cw],
+            &ws.og0[..cw],
+            &ws.ob0[..cw],
+            &ws.or1[..cw],
+            &ws.og1[..cw],
+            &ws.ob1[..cw],
+            &ws.or2[..cw],
+            &ws.og2[..cw],
+            &ws.ob2[..cw],
+            &ws.or3[..cw],
+            &ws.og3[..cw],
+            &ws.ob3[..cw],
+            &mut ws.cb_f[..cw],
+            &mut ws.cr_f[..cw],
+            inv,
+            fwd,
+            config.max_iterations,
+            config.convergence_threshold,
+        );
+        for cx_idx in 0..cw {
+            cb[row_off + cx_idx] = clamp_u8(ws.cb_f[cx_idx]);
+            cr[row_off + cx_idx] = clamp_u8(ws.cr_f[cx_idx]);
         }
     }
 }
@@ -448,6 +601,117 @@ fn extract_soa_row(
         let b_avg = (ob0[cx] + ob1[cx] + ob2[cx] + ob3[cx]) * 0.25;
         cb_f[cx] = fwd.cb_r_f * r_avg + fwd.cb_g_f * g_avg + fwd.cb_b_f * b_avg + fwd.uv_bias_f;
         cr_f[cx] = fwd.cr_r_f * r_avg + fwd.cr_g_f * g_avg + fwd.cr_b_f * b_avg + fwd.uv_bias_f;
+    }
+}
+
+/// Extract one chroma row of 2×2 block data into SoA arrays WITHOUT computing
+/// initial Cb/Cr. Used by `refine_chroma_420_u8` where the caller provides
+/// pre-computed chroma values.
+fn extract_soa_row_no_chroma(
+    rgb: &[u8],
+    y_plane: &[u8],
+    row_top: usize,
+    row_bot: usize,
+    width: usize,
+    cw: usize,
+    y0s: &mut [f32],
+    y1s: &mut [f32],
+    y2s: &mut [f32],
+    y3s: &mut [f32],
+    or0: &mut [f32],
+    og0: &mut [f32],
+    ob0: &mut [f32],
+    or1: &mut [f32],
+    og1: &mut [f32],
+    ob1: &mut [f32],
+    or2: &mut [f32],
+    og2: &mut [f32],
+    ob2: &mut [f32],
+    or3: &mut [f32],
+    og3: &mut [f32],
+    ob3: &mut [f32],
+) {
+    let y_top = &y_plane[row_top * width..row_top * width + width];
+    let y_bot = &y_plane[row_bot * width..row_bot * width + width];
+    let rgb_top = &rgb[row_top * width * 3..row_top * width * 3 + width * 3];
+    let rgb_bot = &rgb[row_bot * width * 3..row_bot * width * 3 + width * 3];
+
+    let bulk_cw = width / 2;
+
+    extract_soa_bulk_no_chroma(
+        rgb_top, rgb_bot, y_top, y_bot, bulk_cw, y0s, y1s, y2s, y3s, or0, og0, ob0, or1, og1, ob1,
+        or2, og2, ob2, or3, og3, ob3,
+    );
+
+    // Edge: last block if width is odd.
+    if cw > bulk_cw {
+        let cx = bulk_cw;
+        let x0 = cx * 2;
+        y0s[cx] = y_top[x0] as f32;
+        y1s[cx] = y_top[x0] as f32;
+        y2s[cx] = y_bot[x0] as f32;
+        y3s[cx] = y_bot[x0] as f32;
+        let ri = x0 * 3;
+        or0[cx] = rgb_top[ri] as f32;
+        og0[cx] = rgb_top[ri + 1] as f32;
+        ob0[cx] = rgb_top[ri + 2] as f32;
+        or1[cx] = or0[cx];
+        og1[cx] = og0[cx];
+        ob1[cx] = ob0[cx];
+        or2[cx] = rgb_bot[ri] as f32;
+        og2[cx] = rgb_bot[ri + 1] as f32;
+        ob2[cx] = rgb_bot[ri + 2] as f32;
+        or3[cx] = or2[cx];
+        og3[cx] = og2[cx];
+        ob3[cx] = ob2[cx];
+    }
+}
+
+/// Bulk SoA extraction without chroma computation.
+#[archmage::autoversion]
+fn extract_soa_bulk_no_chroma(
+    rgb_top: &[u8],
+    rgb_bot: &[u8],
+    y_top: &[u8],
+    y_bot: &[u8],
+    bulk_cw: usize,
+    y0s: &mut [f32],
+    y1s: &mut [f32],
+    y2s: &mut [f32],
+    y3s: &mut [f32],
+    or0: &mut [f32],
+    og0: &mut [f32],
+    ob0: &mut [f32],
+    or1: &mut [f32],
+    og1: &mut [f32],
+    ob1: &mut [f32],
+    or2: &mut [f32],
+    og2: &mut [f32],
+    ob2: &mut [f32],
+    or3: &mut [f32],
+    og3: &mut [f32],
+    ob3: &mut [f32],
+) {
+    for cx in 0..bulk_cw {
+        let x0 = cx * 2;
+        y0s[cx] = y_top[x0] as f32;
+        y1s[cx] = y_top[x0 + 1] as f32;
+        y2s[cx] = y_bot[x0] as f32;
+        y3s[cx] = y_bot[x0 + 1] as f32;
+
+        let ri = x0 * 3;
+        or0[cx] = rgb_top[ri] as f32;
+        og0[cx] = rgb_top[ri + 1] as f32;
+        ob0[cx] = rgb_top[ri + 2] as f32;
+        or1[cx] = rgb_top[ri + 3] as f32;
+        og1[cx] = rgb_top[ri + 4] as f32;
+        ob1[cx] = rgb_top[ri + 5] as f32;
+        or2[cx] = rgb_bot[ri] as f32;
+        og2[cx] = rgb_bot[ri + 1] as f32;
+        ob2[cx] = rgb_bot[ri + 2] as f32;
+        or3[cx] = rgb_bot[ri + 3] as f32;
+        og3[cx] = rgb_bot[ri + 4] as f32;
+        ob3[cx] = rgb_bot[ri + 5] as f32;
     }
 }
 
