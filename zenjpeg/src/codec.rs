@@ -1521,19 +1521,65 @@ fn push_decoder_direct<'a>(
     let w = header.dimensions.width;
     let h = header.dimensions.height;
 
-    // Use cfg.decode() (the full safe path that handles all modes —
-    // baseline, progressive, arithmetic, all chroma configs, XYB, etc.)
-    // then copy into the sink. This avoids the edge cases where
-    // cfg.decode_into()'s direct streaming path doesn't match the
-    // actual JPEG mode and panics on missing coefficients.
-    //
-    // The streaming fast path still fires inside decode() when eligible,
-    // and the fused BGRA kernel activates via streaming_output_format.
-    let mut cfg = cfg.output_format(format);
+    // Try decode_into first (zero-copy for baseline streaming-eligible
+    // JPEGs). Falls back to cfg.decode() + row copy for progressive,
+    // arithmetic, XYB, mismatched chroma, or any other edge case.
     let stop_ref: &dyn enough::Stop = match &job.stop {
         Some(s) => s,
         None => &Unstoppable,
     };
+
+    sink.begin(w, h, descriptor).map_err(wrap)?;
+    let mut dst = sink
+        .provide_next_buffer(0, h, w, descriptor)
+        .map_err(wrap)?;
+    let dst_stride = dst.stride();
+    let bpp = format.bytes_per_pixel();
+    let row_bytes = w as usize * bpp;
+
+    // Fast path: decode_into writes directly into a contiguous buffer.
+    // For strided sinks, use a temp buffer then scatter.
+    let decode_into_result = if dst_stride == row_bytes {
+        let dst_bytes = dst.as_strided_bytes_mut();
+        cfg.decode_into(data_ref, format, dst_bytes, stop_ref)
+    } else {
+        let total = row_bytes * h as usize;
+        let mut contiguous = vec![0u8; total];
+        match cfg.decode_into(data_ref, format, &mut contiguous, stop_ref) {
+            Ok(written) => {
+                let dst_bytes = dst.as_strided_bytes_mut();
+                let copy_rows = (written / row_bytes).min(h as usize);
+                for y in 0..copy_rows {
+                    let src_start = y * row_bytes;
+                    let dst_start = y * dst_stride;
+                    dst_bytes[dst_start..dst_start + row_bytes]
+                        .copy_from_slice(&contiguous[src_start..src_start + row_bytes]);
+                }
+                Ok(written)
+            }
+            Err(e) => Err(e),
+        }
+    };
+
+    // If decode_into succeeded, we're done.
+    if decode_into_result.is_ok() {
+        drop(dst);
+        sink.finish().map_err(wrap)?;
+
+        let mut out = OutputInfo::full_decode(w, h, descriptor);
+        if will_auto_orient(job.orientation)
+            && let Some(ref exif) = header.exif
+            && let Some(orient_val) = crate::lossless::parse_exif_orientation(exif)
+        {
+            let orient = zencodec::Orientation::from_exif(orient_val).unwrap_or_default();
+            out = out.with_orientation_applied(orient);
+        }
+        return Ok(out);
+    }
+
+    // Fallback: cfg.decode() handles all modes safely.
+    drop(dst);
+    let mut cfg = cfg.output_format(format);
     let result = cfg.decode(data_ref, stop_ref)?;
     let decoded_w = result.width();
     let decoded_h = result.height();
@@ -1543,12 +1589,11 @@ fn push_decoder_direct<'a>(
         .into_pixels_u8()
         .ok_or_else(|| Error::internal("push_decoder_direct requires u8 output"))?;
 
-    // Use the actual decoded dimensions — they should match header but the
-    // pixel buffer may have a different stride/size than w*h*bpp.
     let out_w = decoded_w.min(w);
     let out_h = decoded_h.min(h);
-    let row_bytes = out_w as usize * decoded_bpp;
+    let fb_row_bytes = out_w as usize * decoded_bpp;
 
+    // Re-acquire the sink buffer (we dropped it before the fallback decode)
     sink.begin(out_w, out_h, descriptor).map_err(wrap)?;
     let mut dst = sink
         .provide_next_buffer(0, out_h, out_w, descriptor)
@@ -1559,9 +1604,9 @@ fn push_decoder_direct<'a>(
     for y in 0..out_h as usize {
         let src_start = y * decoded_stride;
         let dst_start = y * dst_stride;
-        if src_start + row_bytes <= pixels.len() && dst_start + row_bytes <= dst_bytes.len() {
-            dst_bytes[dst_start..dst_start + row_bytes]
-                .copy_from_slice(&pixels[src_start..src_start + row_bytes]);
+        if src_start + fb_row_bytes <= pixels.len() && dst_start + fb_row_bytes <= dst_bytes.len() {
+            dst_bytes[dst_start..dst_start + fb_row_bytes]
+                .copy_from_slice(&pixels[src_start..src_start + fb_row_bytes]);
         }
     }
     drop(dst);
