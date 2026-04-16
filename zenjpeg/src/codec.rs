@@ -1520,7 +1520,7 @@ fn push_decoder_direct<'a>(
         .provide_next_buffer(0, h, w, descriptor)
         .map_err(wrap)?;
     let dst_stride = dst.stride();
-    let bpp = format.num_channels();
+    let bpp = format.bytes_per_pixel();
     let row_bytes = w as usize * bpp;
 
     if dst_stride == row_bytes {
@@ -3402,6 +3402,133 @@ mod cmyk_tests {
         assert!(
             max_diff <= 2,
             "Pure CMYK: manual vs auto CMYK→RGB max pixel diff = {max_diff}, expected <=2"
+        );
+    }
+}
+
+#[cfg(test)]
+mod push_decode_stride_tests {
+    use super::*;
+    use std::borrow::Cow;
+    use zencodec::decode::{DecodeRowSink, DynDecoderConfig, SinkError};
+
+    struct StridedSink {
+        data: Vec<u8>,
+        stride: usize,
+        w: u32,
+        h: u32,
+    }
+
+    impl DecodeRowSink for StridedSink {
+        fn begin(&mut self, w: u32, h: u32, _desc: PixelDescriptor) -> Result<(), SinkError> {
+            self.w = w;
+            self.h = h;
+            self.stride = ((w as usize * 4 + 31) / 32) * 32;
+            self.data = vec![0xCC; self.stride * h as usize];
+            Ok(())
+        }
+        fn provide_next_buffer(
+            &mut self,
+            y: u32,
+            height: u32,
+            width: u32,
+            descriptor: PixelDescriptor,
+        ) -> Result<zenpixels::PixelSliceMut<'_>, SinkError> {
+            let row_start = y as usize * self.stride;
+            let row_bytes = width as usize * 4;
+            let needed = if height > 0 {
+                (height as usize - 1) * self.stride + row_bytes
+            } else {
+                0
+            };
+            let slice = &mut self.data[row_start..row_start + needed];
+            zenpixels::PixelSliceMut::new(slice, width, height, self.stride, descriptor)
+                .map_err(|e| -> SinkError { format!("{e}").into() })
+        }
+    }
+
+    #[test]
+    fn push_decode_bgra_strided_no_sentinel() {
+        let config =
+            crate::encoder::EncoderConfig::ycbcr(85, crate::encode::ChromaSubsampling::Quarter)
+                .progressive(crate::encode::ProgressiveScanMode::Baseline);
+        let pixels: Vec<rgb::RGB8> = (0..64 * 64)
+            .map(|_| rgb::RGB8::new(0x40, 0x80, 0xFF))
+            .collect();
+        let jpeg = config.encode(&pixels, 64, 64).unwrap();
+
+        let preferred = [PixelDescriptor::BGRA8_SRGB];
+        let cfg = JpegDecoderConfig::new();
+        let job = cfg.dyn_job();
+        let mut sink = StridedSink {
+            data: vec![],
+            stride: 0,
+            w: 0,
+            h: 0,
+        };
+        job.push_decode(Cow::Borrowed(&jpeg), &mut sink, &preferred)
+            .unwrap();
+
+        let row_bytes = sink.w as usize * 4;
+        let sentinel_count: usize = (0..sink.h as usize)
+            .map(|y| {
+                let row = &sink.data[y * sink.stride..y * sink.stride + row_bytes];
+                row.iter().filter(|&&b| b == 0xCC).count()
+            })
+            .sum();
+        assert_eq!(
+            sentinel_count, 0,
+            "push_decode left {sentinel_count} unwritten bytes in pixel region"
+        );
+    }
+
+    #[test]
+    fn push_decode_bgra_matches_buffered() {
+        let config =
+            crate::encoder::EncoderConfig::ycbcr(85, crate::encode::ChromaSubsampling::Quarter)
+                .progressive(crate::encode::ProgressiveScanMode::Baseline);
+        let pixels: Vec<rgb::RGB8> = (0..64 * 64)
+            .map(|_| rgb::RGB8::new(0x40, 0x80, 0xFF))
+            .collect();
+        let jpeg = config.encode(&pixels, 64, 64).unwrap();
+
+        // Buffered decode
+        let preferred = [PixelDescriptor::BGRA8_SRGB];
+        let cfg1 = JpegDecoderConfig::new();
+        let job1 = cfg1.dyn_job();
+        let dec = job1.into_decoder(Cow::Borrowed(&jpeg), &preferred).unwrap();
+        let output = dec.decode().unwrap();
+        let ps = output.pixels();
+        let buffered: Vec<u8> = (0..ps.rows()).flat_map(|y| ps.row(y).to_vec()).collect();
+
+        // Push decode into strided buffer
+        let cfg2 = JpegDecoderConfig::new();
+        let job2 = cfg2.dyn_job();
+        let mut sink = StridedSink {
+            data: vec![],
+            stride: 0,
+            w: 0,
+            h: 0,
+        };
+        job2.push_decode(Cow::Borrowed(&jpeg), &mut sink, &preferred)
+            .unwrap();
+
+        let row_bytes = sink.w as usize * 4;
+        let push: Vec<u8> = (0..sink.h as usize)
+            .flat_map(|y| sink.data[y * sink.stride..y * sink.stride + row_bytes].to_vec())
+            .collect();
+
+        assert_eq!(buffered.len(), push.len(), "size mismatch");
+        let diffs: usize = buffered
+            .iter()
+            .zip(push.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            diffs,
+            0,
+            "{diffs}/{} bytes differ between push_decode and buffered",
+            buffered.len()
         );
     }
 }
