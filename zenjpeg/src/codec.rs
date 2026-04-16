@@ -1519,12 +1519,36 @@ fn push_decoder_direct<'a>(
     let mut dst = sink
         .provide_next_buffer(0, h, w, descriptor)
         .map_err(wrap)?;
-    let dst_bytes = dst.as_strided_bytes_mut();
+    let dst_stride = dst.stride();
+    let bpp = format.num_channels();
+    let row_bytes = w as usize * bpp;
 
-    if let Some(ref stop) = job.stop {
-        cfg.decode_into(data_ref, format, dst_bytes, stop.clone())?;
+    if dst_stride == row_bytes {
+        // Contiguous — decode directly into the sink buffer.
+        let dst_bytes = dst.as_strided_bytes_mut();
+        if let Some(ref stop) = job.stop {
+            cfg.decode_into(data_ref, format, dst_bytes, stop.clone())?;
+        } else {
+            cfg.decode_into(data_ref, format, dst_bytes, Unstoppable)?;
+        }
     } else {
-        cfg.decode_into(data_ref, format, dst_bytes, Unstoppable)?;
+        // Strided — decode into a contiguous temp buffer, then scatter rows
+        // into the strided destination. The decode itself still uses the fused
+        // BGRA streaming path; only the final scatter adds one memory pass.
+        let total = row_bytes * h as usize;
+        let mut contiguous = vec![0u8; total];
+        if let Some(ref stop) = job.stop {
+            cfg.decode_into(data_ref, format, &mut contiguous, stop.clone())?;
+        } else {
+            cfg.decode_into(data_ref, format, &mut contiguous, Unstoppable)?;
+        }
+        let dst_bytes = dst.as_strided_bytes_mut();
+        for y in 0..h as usize {
+            let src_start = y * row_bytes;
+            let dst_start = y * dst_stride;
+            dst_bytes[dst_start..dst_start + row_bytes]
+                .copy_from_slice(&contiguous[src_start..src_start + row_bytes]);
+        }
     }
     drop(dst);
 
