@@ -2195,6 +2195,7 @@ impl<'a> ScanlineReader<'a> {
         let out_width = self.width() as usize;
         let crop_x = self.crop.map_or(0, |c| c.x as usize);
         let out_height = self.height() as usize;
+        let out_stride = output.stride();
 
         if output.width() < out_width * 4 {
             return Err(Error::internal("output buffer too narrow for 4bpp"));
@@ -2215,9 +2216,18 @@ impl<'a> ScanlineReader<'a> {
                 ));
             }
 
+            // Access the underlying buffer directly instead of using
+            // output.rows_mut() which requires stride * height bytes.
+            // The caller may provide the tighter (height-1)*stride + row_bytes
+            // bound (e.g., SIMD-aligned bitmaps where the last row's stride
+            // padding extends past the allocation).
+            let out_buf = output.buf_mut();
+            let out_row_bytes = out_width * 4;
+
             while rows_written < max_rows && self.current_row < out_height {
                 let image_row = crop_y + self.current_row;
-                let out_row = output.rows_mut().nth(rows_written).unwrap();
+                let row_off = rows_written * out_stride;
+                let out_row = &mut out_buf[row_off..row_off + out_row_bytes];
 
                 if bpp == 1 {
                     // Grayscale buffer → expand to 4bpp
@@ -2251,12 +2261,15 @@ impl<'a> ScanlineReader<'a> {
         let mut rows_written = 0;
         let is_grayscale = self.num_components == 1;
         let full_width = self.width as usize;
+        let out_buf_stream = output.buf_mut();
+        let out_row_bytes_stream = out_width * 4;
 
         while rows_written < max_rows && self.current_row < out_height {
             self.ensure_row_ready()?;
 
             let strip_cols = full_width.min(self.strip.strip_width);
-            let out_row = output.rows_mut().nth(rows_written).unwrap();
+            let row_off = rows_written * out_stride;
+            let out_row = &mut out_buf_stream[row_off..row_off + out_row_bytes_stream];
 
             if is_grayscale {
                 let y_row = self.strip.y_row(self.row_in_mcu, strip_cols);
