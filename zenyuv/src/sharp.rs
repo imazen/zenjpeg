@@ -13,6 +13,7 @@ extern crate alloc;
 use crate::types::{ForwardCoeffs, InverseCoeffs, Matrix, Range};
 
 /// Configuration for Sharp YUV chroma optimization.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SharpYuvConfig {
     /// Maximum Newton-step iterations per 2×2 block (default: 2).
     /// Uses the L2-optimal step with the correct inverse-matrix Jacobian.
