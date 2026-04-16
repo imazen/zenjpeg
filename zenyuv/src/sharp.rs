@@ -673,7 +673,7 @@ fn sharp_iterate_simd(
             macro_rules! pixel {
                 ($y:expr, $or:expr, $og:expr, $ob:expr) => {{
                     let yv = f32x8::from_slice(token, &$y[base..]);
-                    let y_adj = y_coeff_v * (yv - y_off_v);
+                    let y_adj = y_coeff_v * (yv + y_off_v);
                     let rec_r = (y_adj + cr_to_r_v * cr_c).max(zero_v).min(max_v);
                     let rec_g = (y_adj + cr_to_g_v * cr_c + cb_to_g_v * cb_c)
                         .max(zero_v)
@@ -714,7 +714,7 @@ fn sharp_iterate_simd(
             let mut cr_num = 0.0f32;
             macro_rules! pixel_scalar {
                 ($yv:expr, $or:expr, $og:expr, $ob:expr) => {{
-                    let y_adj = inv.y_coeff * ($yv - inv.y_offset);
+                    let y_adj = inv.y_coeff * ($yv + inv.y_offset);
                     let rec_r = (y_adj + inv.cr_to_r * cr_c).clamp(0.0, 255.0);
                     let rec_g = (y_adj + inv.cr_to_g * cr_c + inv.cb_to_g * cb_c).clamp(0.0, 255.0);
                     let rec_b = (y_adj + inv.cb_to_b * cb_c).clamp(0.0, 255.0);
