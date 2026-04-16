@@ -1793,6 +1793,13 @@ impl DecodeConfig {
                 );
             if needs_coefficients {
                 parser.decode_mode = parser::DecodeMode::Coefficient;
+            } else {
+                // Hint the streaming decoder to produce BGRA/RGBA/etc. directly,
+                // eliminating the post-decode full-buffer swizzle pass. Same hint
+                // that decode_into() sets — without it, the streaming path always
+                // outputs RGB and the caller pays a separate swizzle over the
+                // entire output buffer (measurable at 4096²+).
+                parser.streaming_output_format = Some(output_format);
             }
         }
         parser.chroma_upsampling = self.chroma_upsampling;

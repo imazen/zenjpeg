@@ -1777,6 +1777,19 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 false
             };
 
+            // Hint the internal decoder to produce BGRA/RGBA/etc. directly in
+            // the streaming path, eliminating the post-decode full-buffer swizzle.
+            // Without this, Decoder::decode() always streams RGB and the zencodec
+            // wrapping swizzles the entire output buffer — measurable at 4096²+.
+            if !wants_f32 && !is_raw_cmyk {
+                let header = cfg.read_info(&data)?;
+                let descriptor =
+                    decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
+                if let Some(pf) = direct_path_pixel_format(descriptor, header.num_components) {
+                    cfg = cfg.output_format(pf);
+                }
+            }
+
             let stop: &dyn enough::Stop = match &self.stop {
                 Some(s) => s,
                 None => &enough::Unstoppable,
