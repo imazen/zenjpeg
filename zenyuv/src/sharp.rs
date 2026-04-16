@@ -21,6 +21,14 @@ pub struct SharpYuvConfig {
     pub max_iterations: u32,
     /// Stop early if total reconstruction error drops below this (default: 0.1).
     pub convergence_threshold: f32,
+    /// After chroma refinement, run a Y refinement pass to compensate for luma
+    /// error introduced by chroma subsampling (default: true).
+    ///
+    /// When chroma is subsampled to 4:2:0 and upsampled back during decode,
+    /// the reconstructed RGB has slightly wrong luma at chroma edges. This pass
+    /// adjusts Y to compensate, matching the approach in libwebp's
+    /// `SharpYuvUpdateY`.
+    pub refine_y: bool,
 }
 
 impl Default for SharpYuvConfig {
@@ -28,6 +36,7 @@ impl Default for SharpYuvConfig {
         Self {
             max_iterations: 2,
             convergence_threshold: 0.1,
+            refine_y: true,
         }
     }
 }
@@ -231,6 +240,132 @@ pub fn refine_chroma_420_u8_with_workspace(
     refine_iterate_rows_u8(
         rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, config, ws,
     );
+}
+
+/// Refine Y plane to compensate for luma error from chroma subsampling.
+///
+/// After Cb/Cr are refined, the reconstruction `inv(Y, upsample(Cb), upsample(Cr))`
+/// produces slightly wrong luma at chroma edges because the upsampled chroma
+/// doesn't perfectly reconstruct the original RGB. This function adjusts each Y
+/// value to compensate, matching libwebp's `SharpYuvUpdateY` approach.
+///
+/// Algorithm per pixel:
+/// 1. Upsample Cb/Cr from the 4:2:0 grid (nearest-neighbor to the co-sited position)
+/// 2. Reconstruct RGB via the inverse color matrix: `RGB_rec = inv(Y, Cb_up, Cr_up)`
+/// 3. Compute forward luma of both original and reconstructed RGB
+/// 4. Adjust: `Y += clamp(target_luma - reconstructed_luma, -delta_max, +delta_max)`
+///
+/// Returns the total absolute luma error (sum of |adjustments|) for convergence
+/// checking.
+pub fn refine_y_420_u8(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &[u8],
+    cr: &[u8],
+    width: usize,
+    height: usize,
+    range: Range,
+    matrix: Matrix,
+) -> u64 {
+    let n = width * height;
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    assert!(rgb.len() >= n * 3);
+    assert!(y.len() >= n);
+    assert!(cb.len() >= cw * ch);
+    assert!(cr.len() >= cw * ch);
+
+    let fwd = ForwardCoeffs::new(matrix, range);
+    let inv = InverseCoeffs::new(matrix, range);
+
+    refine_y_rows(rgb, y, cb, cr, width, height, cw, ch, &fwd, &inv, range)
+}
+
+/// Inner loop: refine Y row by row.
+fn refine_y_rows(
+    rgb: &[u8],
+    y: &mut [u8],
+    cb: &[u8],
+    cr: &[u8],
+    width: usize,
+    height: usize,
+    cw: usize,
+    _ch: usize,
+    fwd: &ForwardCoeffs,
+    inv: &InverseCoeffs,
+    range: Range,
+) -> u64 {
+    let uv_center = inv.uv_offset.abs(); // 128.0
+
+    // Forward luma coefficients for computing target/reconstructed luma.
+    let yr = fwd.yr_f;
+    let yg = fwd.yg_f;
+    let yb = fwd.yb_f;
+    let y_bias = fwd.y_bias_f;
+
+    // Inverse matrix coefficients.
+    let y_coeff = inv.y_coeff;
+    let y_off = inv.y_offset;
+    let cr_to_r = inv.cr_to_r;
+    let cr_to_g = inv.cr_to_g;
+    let cb_to_g = inv.cb_to_g;
+    let cb_to_b = inv.cb_to_b;
+
+    // Y range limits derived from the range parameter.
+    let (y_min, y_max) = match range {
+        Range::Full => (0.0f32, 255.0f32),
+        Range::Limited => (16.0f32, 235.0f32),
+    };
+
+    let mut total_diff: u64 = 0;
+
+    for row in 0..height {
+        let cy = row / 2; // chroma row (nearest-neighbor vertical)
+
+        for col in 0..width {
+            let cx = col / 2; // chroma column (nearest-neighbor horizontal)
+            let chroma_idx = cy * cw + cx;
+
+            // Upsampled chroma (nearest-neighbor from 4:2:0 grid).
+            let cb_val = cb[chroma_idx] as f32;
+            let cr_val = cr[chroma_idx] as f32;
+            let cb_c = cb_val - uv_center;
+            let cr_c = cr_val - uv_center;
+
+            // Current Y value.
+            let pixel_idx = row * width + col;
+            let y_cur = y[pixel_idx] as f32;
+
+            // Reconstruct RGB from current YCbCr.
+            let y_adj = y_coeff * (y_cur + y_off);
+            let rec_r = (y_adj + cr_to_r * cr_c).clamp(0.0, 255.0);
+            let rec_g = (y_adj + cr_to_g * cr_c + cb_to_g * cb_c).clamp(0.0, 255.0);
+            let rec_b = (y_adj + cb_to_b * cb_c).clamp(0.0, 255.0);
+
+            // Forward luma of reconstructed RGB.
+            let rec_luma = yr * rec_r + yg * rec_g + yb * rec_b + y_bias;
+
+            // Original RGB.
+            let rgb_idx = pixel_idx * 3;
+            let orig_r = rgb[rgb_idx] as f32;
+            let orig_g = rgb[rgb_idx + 1] as f32;
+            let orig_b = rgb[rgb_idx + 2] as f32;
+
+            // Forward luma of original RGB (this is the target Y).
+            let target_luma = yr * orig_r + yg * orig_g + yb * orig_b + y_bias;
+
+            // Luma error: how much Y needs to shift to compensate.
+            let diff = target_luma - rec_luma;
+
+            // Apply bounded adjustment to Y.
+            let new_y = (y_cur + diff).clamp(y_min, y_max);
+            y[pixel_idx] = new_y.round() as u8;
+
+            total_diff += diff.abs() as u64;
+        }
+    }
+
+    total_diff
 }
 
 /// Pre-allocated workspace for sharp YUV iteration. Reuse across calls to

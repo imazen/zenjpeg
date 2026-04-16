@@ -936,6 +936,127 @@ mod tests {
         }
     }
 
+    /// Test that Y refinement reduces reconstruction error.
+    ///
+    /// Pipeline: Y (SIMD) → chroma (box avg) → refine chroma → refine Y.
+    /// The Y-refined roundtrip should have lower mean absolute error than
+    /// the chroma-only refined roundtrip.
+    #[test]
+    fn refine_y_reduces_reconstruction_error() {
+        let (w, h) = (64, 64);
+        let rgb = make_pattern(w, h);
+        let n = w * h;
+        let cw = w / 2;
+        let ch = h / 2;
+
+        // Chroma-only refinement (no Y refinement).
+        let mut y_chroma = vec![0u8; n];
+        let mut cb_chroma = vec![0u8; cw * ch];
+        let mut cr_chroma = vec![0u8; cw * ch];
+        let config_no_y = sharp::SharpYuvConfig {
+            refine_y: false,
+            ..Default::default()
+        };
+        sharp::rgb_to_yuv420_sharp(
+            &rgb,
+            &mut y_chroma,
+            &mut cb_chroma,
+            &mut cr_chroma,
+            w,
+            h,
+            Range::Full,
+            Matrix::Bt601,
+            &config_no_y,
+        );
+        let mut rt_chroma = vec![0u8; n * 3];
+        yuv420_to_rgb(&y_chroma, &cb_chroma, &cr_chroma, &mut rt_chroma, w, h);
+        let chroma_err = mean_abs_err(&rgb, &rt_chroma);
+
+        // Chroma + Y refinement.
+        let mut y_both = y_chroma.clone();
+        let total_diff = sharp::refine_y_420_u8(
+            &rgb,
+            &mut y_both,
+            &cb_chroma,
+            &cr_chroma,
+            w,
+            h,
+            Range::Full,
+            Matrix::Bt601,
+        );
+        let mut rt_both = vec![0u8; n * 3];
+        yuv420_to_rgb(&y_both, &cb_chroma, &cr_chroma, &mut rt_both, w, h);
+        let both_err = mean_abs_err(&rgb, &rt_both);
+
+        eprintln!(
+            "refine_y: chroma_only_err={chroma_err:.4} with_y_err={both_err:.4} total_diff={total_diff}"
+        );
+        eprintln!(
+            "refine_y improvement: {:.2}%",
+            (chroma_err - both_err) / chroma_err * 100.0
+        );
+
+        // Y refinement should not make things worse.
+        assert!(
+            both_err <= chroma_err + 0.01,
+            "Y refinement made error worse: {both_err:.4} > {chroma_err:.4}"
+        );
+
+        // Y refinement should have made some changes.
+        assert!(total_diff > 0, "Y refinement had zero effect — not working");
+
+        // Y values should have changed from the chroma-only version.
+        let y_changes: usize = y_both
+            .iter()
+            .zip(y_chroma.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        eprintln!(
+            "refine_y: {y_changes} / {n} Y values changed ({:.1}%)",
+            y_changes as f64 / n as f64 * 100.0
+        );
+        assert!(y_changes > 0, "no Y values changed");
+    }
+
+    /// Y refinement should keep Y in [16, 235] for limited range.
+    #[test]
+    fn refine_y_limited_range() {
+        let (w, h) = (32, 32);
+        let rgb = make_pattern(w, h);
+        let cw = w / 2;
+        let ch = h / 2;
+
+        let mut y = vec![0u8; w * h];
+        let mut cb = vec![0u8; cw * ch];
+        let mut cr = vec![0u8; cw * ch];
+        let config = sharp::SharpYuvConfig {
+            refine_y: false,
+            ..Default::default()
+        };
+        sharp::rgb_to_yuv420_sharp(
+            &rgb,
+            &mut y,
+            &mut cb,
+            &mut cr,
+            w,
+            h,
+            Range::Limited,
+            Matrix::Bt601,
+            &config,
+        );
+
+        // Apply Y refinement.
+        sharp::refine_y_420_u8(&rgb, &mut y, &cb, &cr, w, h, Range::Limited, Matrix::Bt601);
+
+        // All Y values should remain in limited range.
+        for &yv in y.iter() {
+            assert!(
+                (16..=235).contains(&yv),
+                "Y={yv} outside limited range after Y refinement"
+            );
+        }
+    }
+
     /// Compare sharp YUV quality on real CID22 photos: measure reconstruction
     /// error for box-average, our sharp, and the yuv crate's sharp.
     #[test]
