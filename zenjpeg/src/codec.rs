@@ -1521,6 +1521,24 @@ fn push_decoder_direct<'a>(
     let w = header.dimensions.width;
     let h = header.dimensions.height;
 
+    // Use cfg.decode() (the full safe path that handles all modes —
+    // baseline, progressive, arithmetic, all chroma configs, XYB, etc.)
+    // then copy into the sink. This avoids the edge cases where
+    // cfg.decode_into()'s direct streaming path doesn't match the
+    // actual JPEG mode and panics on missing coefficients.
+    //
+    // The streaming fast path still fires inside decode() when eligible,
+    // and the fused BGRA kernel activates via streaming_output_format.
+    let mut cfg = cfg.output_format(format);
+    let stop_ref: &dyn enough::Stop = match &job.stop {
+        Some(s) => s,
+        None => &Unstoppable,
+    };
+    let result = cfg.decode(data_ref, stop_ref)?;
+    let pixels = result
+        .into_pixels_u8()
+        .ok_or_else(|| Error::internal("push_decoder_direct requires u8 output"))?;
+
     sink.begin(w, h, descriptor).map_err(wrap)?;
     let mut dst = sink
         .provide_next_buffer(0, h, w, descriptor)
@@ -1528,33 +1546,14 @@ fn push_decoder_direct<'a>(
     let dst_stride = dst.stride();
     let bpp = format.bytes_per_pixel();
     let row_bytes = w as usize * bpp;
+    let dst_bytes = dst.as_strided_bytes_mut();
 
-    if dst_stride == row_bytes {
-        // Contiguous — decode directly into the sink buffer.
-        let dst_bytes = dst.as_strided_bytes_mut();
-        if let Some(ref stop) = job.stop {
-            cfg.decode_into(data_ref, format, dst_bytes, stop.clone())?;
-        } else {
-            cfg.decode_into(data_ref, format, dst_bytes, Unstoppable)?;
-        }
-    } else {
-        // Strided — decode into a contiguous temp buffer, then scatter rows
-        // into the strided destination. The decode itself still uses the fused
-        // BGRA streaming path; only the final scatter adds one memory pass.
-        let total = row_bytes * h as usize;
-        let mut contiguous = vec![0u8; total];
-        if let Some(ref stop) = job.stop {
-            cfg.decode_into(data_ref, format, &mut contiguous, stop.clone())?;
-        } else {
-            cfg.decode_into(data_ref, format, &mut contiguous, Unstoppable)?;
-        }
-        let dst_bytes = dst.as_strided_bytes_mut();
-        for y in 0..h as usize {
-            let src_start = y * row_bytes;
-            let dst_start = y * dst_stride;
-            dst_bytes[dst_start..dst_start + row_bytes]
-                .copy_from_slice(&contiguous[src_start..src_start + row_bytes]);
-        }
+    for y in 0..h as usize {
+        let src_start = y * row_bytes;
+        let dst_start = y * dst_stride;
+        let src_end = (src_start + row_bytes).min(pixels.len());
+        let copy_len = src_end - src_start;
+        dst_bytes[dst_start..dst_start + copy_len].copy_from_slice(&pixels[src_start..src_end]);
     }
     drop(dst);
 
