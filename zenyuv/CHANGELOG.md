@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `refine_chroma_420_u8` (and `_with_workspace` variant): runs the sharp-YUV
+  Newton iteration on pre-seeded Cb/Cr without recomputing Y. Intended for
+  callers that produce the initial chroma with a different averaging model
+  (e.g., gamma-corrected downsampling) and want the L2 refinement on top
+  (c96c7eb).
+- Y refinement pass in the sharp-YUV pipeline, controlled by the new
+  `SharpYuvConfig::refine_y` field (default: `true`). After chroma
+  refinement, adjusts Y to compensate for the luma error introduced by 4:2:0
+  chroma subsampling, matching libwebp's `SharpYuvUpdateY` (bb04b84).
+
+### Changed
+- `SharpYuvConfig` now derives `Clone`, `Copy`, and `PartialEq` so it can be
+  embedded in downstream config structs (e.g., inside `Option<SharpYuvConfig>`
+  in zenwebp's `LossyConfig`) without manual plumbing (8c45031).
+
+### Fixed
+- Correct `y_offset` sign in the sharp YUV iteration. The offset was applied
+  in the wrong direction, leaving a systematic luma bias in refined output
+  (1c9631a).
+
 ## 0.1.1 - 2026-04-15
 
 ### Added

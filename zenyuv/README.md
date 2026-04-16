@@ -55,7 +55,7 @@ Configure via `SharpYuvConfig`:
 use zenyuv::{YuvContext, Range, Matrix, SharpYuvConfig};
 
 let mut ctx = YuvContext::new(Range::Full, Matrix::Bt601);
-let config = SharpYuvConfig::default(); // 2 Newton iterations
+let config = SharpYuvConfig::default(); // 2 Newton iterations, Y refinement on
 
 let rgb = vec![128u8; 640 * 480 * 3];
 let mut y  = vec![0u8; 640 * 480];
@@ -63,6 +63,8 @@ let mut cb = vec![0u8; 320 * 240];
 let mut cr = vec![0u8; 320 * 240];
 ctx.encode_sharp_420_u8(&rgb, &mut y, &mut cb, &mut cr, 640, 480, &config);
 ```
+
+After the chroma iteration, a Y refinement pass (`SharpYuvConfig::refine_y`, on by default) adjusts Y to compensate for the luma error introduced by 4:2:0 chroma subsampling, matching libwebp's `SharpYuvUpdateY`. For callers that produce initial Cb/Cr with a different averaging model (e.g., gamma-corrected downsampling), `sharp::refine_chroma_420_u8` runs the Newton iteration on pre-seeded chroma without recomputing Y.
 
 ## Feature Matrix
 
