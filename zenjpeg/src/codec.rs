@@ -1535,25 +1535,34 @@ fn push_decoder_direct<'a>(
         None => &Unstoppable,
     };
     let result = cfg.decode(data_ref, stop_ref)?;
+    let decoded_w = result.width();
+    let decoded_h = result.height();
+    let decoded_stride = result.stride();
+    let decoded_bpp = result.bytes_per_pixel();
     let pixels = result
         .into_pixels_u8()
         .ok_or_else(|| Error::internal("push_decoder_direct requires u8 output"))?;
 
-    sink.begin(w, h, descriptor).map_err(wrap)?;
+    // Use the actual decoded dimensions — they should match header but the
+    // pixel buffer may have a different stride/size than w*h*bpp.
+    let out_w = decoded_w.min(w);
+    let out_h = decoded_h.min(h);
+    let row_bytes = out_w as usize * decoded_bpp;
+
+    sink.begin(out_w, out_h, descriptor).map_err(wrap)?;
     let mut dst = sink
-        .provide_next_buffer(0, h, w, descriptor)
+        .provide_next_buffer(0, out_h, out_w, descriptor)
         .map_err(wrap)?;
     let dst_stride = dst.stride();
-    let bpp = format.bytes_per_pixel();
-    let row_bytes = w as usize * bpp;
     let dst_bytes = dst.as_strided_bytes_mut();
 
-    for y in 0..h as usize {
-        let src_start = y * row_bytes;
+    for y in 0..out_h as usize {
+        let src_start = y * decoded_stride;
         let dst_start = y * dst_stride;
-        let src_end = (src_start + row_bytes).min(pixels.len());
-        let copy_len = src_end - src_start;
-        dst_bytes[dst_start..dst_start + copy_len].copy_from_slice(&pixels[src_start..src_end]);
+        if src_start + row_bytes <= pixels.len() && dst_start + row_bytes <= dst_bytes.len() {
+            dst_bytes[dst_start..dst_start + row_bytes]
+                .copy_from_slice(&pixels[src_start..src_start + row_bytes]);
+        }
     }
     drop(dst);
 
