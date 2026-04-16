@@ -544,10 +544,15 @@ impl<'a> JpegParser<'a> {
         {
             return false;
         }
-        // Must have 3 components (YCbCr). Grayscale excluded: streaming produces
-        // 1 bpp but output path expects RGB 3 bpp in streaming_rgb.
-        if self.num_components != 3 {
+        // Grayscale (1 component) and YCbCr (3 components) are supported.
+        // Grayscale streaming produces 1bpp gray or 4bpp BGRA depending on
+        // streaming_output_format. Other component counts are unsupported.
+        if self.num_components != 1 && self.num_components != 3 {
             return false;
+        }
+        // Grayscale: always streamable (no chroma subsampling to check)
+        if self.num_components == 1 {
+            return true;
         }
         // Only accept standard sampling factor combinations
         {
@@ -1574,11 +1579,45 @@ impl<'a> JpegParser<'a> {
                     let y_start = mcu_y * y_strip_height;
                     let rows = y_strip_height.min(height.saturating_sub(y_start));
                     let cols = width.min(y_strip_width);
-                    for row in 0..rows {
-                        let strip_off = row * y_strip_width;
-                        let out_off = (y_start + row) * width;
-                        for px in 0..cols {
-                            rgb[out_off + px] = y_strip_a[strip_off + px].clamp(0, 255) as u8;
+                    if out_4bpp {
+                        // Grayscale → BGRA/RGBA: write [v, v, v, 0xFF] per pixel.
+                        // 16-pixel chunks for auto-vectorization, remainder scalar.
+                        for row in 0..rows {
+                            let strip_off = row * y_strip_width;
+                            let out_off = (y_start + row) * width * 4;
+                            let src = &y_strip_a[strip_off..strip_off + cols];
+                            let dst = &mut rgb[out_off..out_off + cols * 4];
+                            let chunks = cols / 16;
+                            for c in 0..chunks {
+                                let si = c * 16;
+                                let di = c * 64;
+                                let s: &[i16; 16] = src[si..si + 16].try_into().unwrap();
+                                let d: &mut [u8; 64] = (&mut dst[di..di + 64]).try_into().unwrap();
+                                for i in 0..16 {
+                                    let v = s[i].clamp(0, 255) as u8;
+                                    d[i * 4] = v;
+                                    d[i * 4 + 1] = v;
+                                    d[i * 4 + 2] = v;
+                                    d[i * 4 + 3] = 255;
+                                }
+                            }
+                            for px in chunks * 16..cols {
+                                let v = src[px].clamp(0, 255) as u8;
+                                let o = px * 4;
+                                dst[o] = v;
+                                dst[o + 1] = v;
+                                dst[o + 2] = v;
+                                dst[o + 3] = 255;
+                            }
+                        }
+                    } else {
+                        // Grayscale → 1bpp gray output
+                        for row in 0..rows {
+                            let strip_off = row * y_strip_width;
+                            let out_off = (y_start + row) * width;
+                            for px in 0..cols {
+                                rgb[out_off + px] = y_strip_a[strip_off + px].clamp(0, 255) as u8;
+                            }
                         }
                     }
                 } else if use_fused_box {

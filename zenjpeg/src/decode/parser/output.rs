@@ -1575,6 +1575,18 @@ impl<'a> JpegParser<'a> {
         let width = self.width as usize;
         let height = self.height as usize;
 
+        // Grayscale streaming: if caller wants Gray and streaming produced 1bpp,
+        // direct copy. If streaming produced BGRA (from grayscale+BGRA hint),
+        // the is_rgb_family_u8 path below handles it.
+        if format == PixelFormat::Gray
+            && self.streaming_output_format.is_none()
+            && let Some(buf) = self.streaming_rgb.take()
+        {
+            let bytes = buf.len().min(dst.len());
+            dst[..bytes].copy_from_slice(&buf[..bytes]);
+            return Ok(bytes);
+        }
+
         // Streaming-decode result: may be 3bpp RGB or 4bpp BGRA/RGBA depending
         // on `streaming_output_format`. If the streaming data already matches the
         // requested format, memcpy directly (zero-cost). Otherwise reformat.
