@@ -579,43 +579,40 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
     Ok(v)
 }
 
-/// Allocate a Vec with zeroed memory using fallible allocation.
+/// Allocate a Vec with zeroed memory using the platform's zeroed-page allocator.
 ///
-/// This function allocates and zero-initializes memory. All callers are expected
-/// to overwrite the contents before reading, so the zeroing is technically
-/// unnecessary but ensures memory safety.
+/// Uses `vec![T::default(); count]` which Rust specializes to `alloc_zeroed`
+/// (calloc) for types where `T::default()` is all-zero bytes (u8, i16, u32, etc.).
+/// On Linux, calloc for large allocations returns zero-mapped pages via mmap,
+/// deferring page faults until first write. This is much faster than the previous
+/// `try_reserve_exact` + `resize` approach which did `malloc` + serial `memset`.
 ///
-/// # Future optimization path
-/// When performance is critical, this could be replaced with `MaybeUninit<T>`-based
-/// allocation that skips zeroing, provided callers guarantee complete initialization
-/// before any reads. Such optimization would require `unsafe` and careful auditing.
+/// All callers are expected to overwrite the contents before reading, so the
+/// zeroing is technically unnecessary but ensures memory safety.
+///
+/// Panics on OOM for the allocation itself; returns Err only for overflow checks.
+/// This is acceptable because callers have already validated dimensions.
 #[inline]
 pub fn try_alloc_maybeuninit<T: Default + Clone>(
     count: usize,
     context: &'static str,
 ) -> Result<Vec<T>> {
-    let byte_size = count
+    count
         .checked_mul(core::mem::size_of::<T>())
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    let mut v = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(byte_size, context))?;
-    v.resize(count, T::default());
-    Ok(v)
+    // vec![T::default(); n] triggers Rust's SpecFromElem specialization:
+    // for types where default() is all-zero bytes, this compiles to
+    // alloc_zeroed (calloc) instead of alloc (malloc) + memset.
+    Ok(vec![T::default(); count])
 }
 
 /// Allocate a zero-initialized `Vec<u8>` using the platform's zeroed-page allocator.
 ///
-/// Unlike [`try_alloc_maybeuninit`] which does `try_reserve_exact` + `resize(n, 0)`
-/// (malloc + serial memset), this uses `vec![0u8; n]` which Rust specializes to
-/// `alloc_zeroed` (calloc). On Linux, calloc for large allocations returns
-/// zero-mapped pages via mmap — page faults are deferred until first write,
-/// allowing parallel writers to distribute the cost across threads.
-///
-/// For a 48MB buffer, this saves ~25ms versus serial memset on WSL2/Linux.
-///
-/// Falls back to [`try_alloc_maybeuninit`] if the fast path panics (OOM).
+/// Uses `vec![0u8; n]` which Rust specializes to `alloc_zeroed` (calloc).
+/// On Linux, calloc for large allocations returns zero-mapped pages via mmap —
+/// page faults are deferred until first write, allowing parallel writers to
+/// distribute the cost across threads.
 #[inline]
 pub fn try_alloc_zeroed_bytes(count: usize, context: &'static str) -> Result<Vec<u8>> {
     if count == 0 {
@@ -635,18 +632,14 @@ pub fn try_alloc_zeroed_bytes(count: usize, context: &'static str) -> Result<Vec
     Ok(vec![0u8; count])
 }
 
-/// Allocate a Vec of DCT blocks (64 i16 values each) with fallible allocation.
+/// Allocate a Vec of DCT blocks (64 i16 values each) using calloc.
 #[inline]
 pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[i16; 64]>> {
-    let byte_size = count
+    count
         .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
         .ok_or_else(|| Error::size_overflow(context))?;
 
-    let mut v = Vec::new();
-    v.try_reserve_exact(count)
-        .map_err(|_| Error::allocation_failed(byte_size, context))?;
-    v.resize(count, [0i16; 64]);
-    Ok(v)
+    Ok(vec![[0i16; 64]; count])
 }
 
 /// Allocate a Vec filled with a specific value using fallible allocation.
