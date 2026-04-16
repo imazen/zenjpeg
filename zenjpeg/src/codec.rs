@@ -1322,6 +1322,12 @@ fn push_decoder_native<'a>(
             crate::decode::DeblockMode::Knusperli | crate::decode::DeblockMode::Auto
         )
         && cfg.output_target == crate::decode::OutputTarget::Srgb8
+        // Progressive/arithmetic need coefficient storage — the direct path
+        // uses streaming decode which only handles baseline sequential.
+        && matches!(
+            header.mode,
+            crate::types::JpegMode::Baseline | crate::types::JpegMode::Extended
+        )
     {
         return push_decoder_direct(job, data, sink, descriptor, direct_format);
     }
