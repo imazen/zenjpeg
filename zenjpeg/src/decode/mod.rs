@@ -366,7 +366,7 @@ impl DecodeConfig {
         self
     }
 
-    /// Sets resource limits from a [`Limits`] struct.
+    /// Sets resource limits from a [`Limits`](crate::types::Limits) struct.
     ///
     /// This applies `max_pixels` and `max_memory` from the `Limits` struct.
     /// `None` values in `Limits` are treated as unlimited (0).

@@ -5,8 +5,8 @@
 //! - **`ac`**: AC coefficient trellis (Viterbi DP) - the core mozjpeg innovation
 //! - **`dc`**: DC coefficient trellis optimization
 //! - **`rate`**: Huffman rate estimation tables
-//! - **`compat`**: mozjpeg-compatible [`TrellisConfig`] and [`TrellisSpeedMode`] types
-//! - **`hybrid`**: Combined jpegli AQ + mozjpeg trellis ([`HybridConfig`], [`HybridQuantContext`])
+//! - **`compat`**: mozjpeg-compatible `TrellisConfig` and `TrellisSpeedMode` types
+//! - **`hybrid`**: Combined jpegli AQ + mozjpeg trellis (`HybridConfig`, `HybridQuantContext`)
 //!
 //! # Deletability
 //!

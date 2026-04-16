@@ -24,7 +24,7 @@ impl RateTable {
     /// Build a rate table from standard JPEG Huffman arrays.
     ///
     /// # Arguments
-    /// * `bits` - Number of codes of each length (16 entries, bits[0] = length 1 count, etc.)
+    /// * `bits` - Number of codes of each length (16 entries, bits\[0\] = length 1 count, etc.)
     /// * `values` - Symbol values in order of increasing code length
     pub fn from_bits_values(bits: &[u8; 16], values: &[u8]) -> Self {
         let mut sizes = [0u8; 256];

@@ -1,7 +1,7 @@
 //! Builder for creating a streaming encoder.
 //!
 //! Split from `streaming.rs` for readability. The builder configures encoding
-//! parameters; the actual encoder lives in [`super::streaming::StreamingEncoder`].
+//! parameters; the actual encoder lives in `super::streaming::StreamingEncoder`.
 
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;

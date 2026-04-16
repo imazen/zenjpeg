@@ -72,7 +72,7 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 ```toml
 # Encode + decode (most common)
 [dependencies]
-zenjpeg = "0.6"
+zenjpeg = "0.8"
 
 # Best compression (trellis + auto_optimize)
 [dependencies]

@@ -897,8 +897,9 @@ pub enum OptimizationPreset {
 /// Effort level for convenience constructors.
 ///
 /// Maps to the corresponding [`OptimizationPreset`] for the chosen color mode.
-/// Use this with [`EncoderConfig::ycbcr_effort()`], [`EncoderConfig::xyb_effort()`],
-/// or [`EncoderConfig::grayscale_effort()`].
+/// Use this with [`EncoderConfig::ycbcr_effort()`](super::encoder_config::EncoderConfig::ycbcr_effort),
+/// [`EncoderConfig::xyb_effort()`](super::encoder_config::EncoderConfig::xyb_effort),
+/// or [`EncoderConfig::grayscale_effort()`](super::encoder_config::EncoderConfig::grayscale_effort).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Effort {
@@ -1213,7 +1214,7 @@ pub enum ScanStrategy {
 ///
 /// For other mozjpeg presets (MSSIM, Klein, etc.), use the `mozjpeg-tables`
 /// feature and supply custom tables via
-/// [`EncoderConfig::quant_tables()`](super::encoder_config::EncoderConfig::quant_tables).
+/// `EncoderConfig::quant_tables()`.
 ///
 /// **Prefer [`QuantTableConfig`]** for new code — it bundles table source,
 /// chroma table count, and custom tables into one type-safe enum that
@@ -1418,7 +1419,7 @@ impl From<bool> for ProgressiveScanMode {
 
 /// Expert configuration overlay for advanced encoding options.
 ///
-/// Use with [`EncoderConfig::expert()`] to customize quantization tables
+/// Use with [`EncoderConfig::expert()`](super::encoder_config::EncoderConfig::expert) to customize quantization tables
 /// and trellis/hybrid rate-distortion optimization.
 ///
 /// # Example

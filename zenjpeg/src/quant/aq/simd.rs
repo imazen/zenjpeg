@@ -296,9 +296,9 @@ fn pre_erosion_row_impl(
 /// Process a full row of pre-erosion using padded input buffers (no boundary conditionals).
 ///
 /// This is the optimized version for streaming AQ where buffers have edge replication.
-/// Buffer layout: [left_edge, data[0..width], right_edge] where:
-/// - left_edge = data[0] (replicated)
-/// - right_edge = data[width-1] (replicated)
+/// Buffer layout: \[left_edge, data\[0..width\], right_edge\] where:
+/// - left_edge = data\[0\] (replicated)
+/// - right_edge = data\[width-1\] (replicated)
 ///
 /// This eliminates all boundary conditionals in the SIMD loop.
 ///

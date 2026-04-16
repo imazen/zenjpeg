@@ -550,19 +550,19 @@ impl core::fmt::Display for DecodeWarning {
 pub enum OutputTarget {
     /// u8 sRGB output with clamped integer IDCT. Fastest path. Default.
     ///
-    /// Values are clamped to [0, 255]. This is the standard decode path
+    /// Values are clamped to \[0, 255\]. This is the standard decode path
     /// matching libjpeg-turbo / zune-jpeg behavior.
     #[default]
     Srgb8,
 
-    /// f32 sRGB output (gamma-encoded, [0,1] nominal) with unclamped integer IDCT.
+    /// f32 sRGB output (gamma-encoded, \[0,1\] nominal) with unclamped integer IDCT.
     ///
-    /// Same speed as `Srgb8` but preserves ringing outside [0, 255] as values
-    /// outside [0.0, 1.0]. Useful for high-quality resampling or compositing
+    /// Same speed as `Srgb8` but preserves ringing outside \[0, 255\] as values
+    /// outside \[0.0, 1.0\]. Useful for high-quality resampling or compositing
     /// where clamping artifacts would be visible.
     SrgbF32,
 
-    /// f32 linear light output ([0,1] nominal) with unclamped integer IDCT.
+    /// f32 linear light output (\[0,1\] nominal) with unclamped integer IDCT.
     ///
     /// Same as `SrgbF32` but applies sRGB→linear transfer function after
     /// color conversion. Use for physically-correct blending, compositing,
@@ -824,9 +824,9 @@ pub(crate) struct ResolvedCrop {
 
 /// JPEG decode configuration.
 ///
-/// This is the main entry point for decoding. Create a `Decoder`, configure
-/// it with builder methods, then call [`decode()`](Decoder::decode) or
-/// [`scanline_reader()`](Decoder::scanline_reader).
+/// This is the main entry point for decoding. Create a `DecodeConfig`, configure
+/// it with builder methods, then call [`decode()`](DecodeConfig::decode) or
+/// [`scanline_reader()`](DecodeConfig::scanline_reader).
 ///
 /// # Example
 ///
@@ -1264,8 +1264,8 @@ impl DecodeResult {
 // DecodeInfo — returned by decode_into_*
 // ============================================================================
 
-/// Metadata returned by [`Decoder::decode_into_u8`] and
-/// [`Decoder::decode_into_f32`].
+/// Metadata returned by `DecodeConfig::decode_into_u8` and
+/// `DecodeConfig::decode_into_f32`.
 ///
 /// Contains everything except pixel data (which was written to the caller's buffer).
 #[derive(Debug, Clone)]

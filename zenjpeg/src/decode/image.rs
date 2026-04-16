@@ -97,8 +97,8 @@ impl DecodedImage {
 
     /// Returns warnings collected during decode.
     ///
-    /// In [`Strictness::Strict`] mode, this is always empty because warnings
-    /// become errors. In [`Strictness::Balanced`] and [`Strictness::Lenient`]
+    /// In [`Strict`](super::config::Strictness::Strict) mode, this is always empty because warnings
+    /// become errors. In [`Balanced`](super::config::Strictness::Balanced) and [`Lenient`](super::config::Strictness::Lenient)
     /// modes, issues like truncation or missing DHT are collected here.
     #[must_use]
     pub fn warnings(&self) -> &[DecodeWarning] {
@@ -220,8 +220,8 @@ impl DecodedImageF32 {
 
     /// Returns warnings collected during decode.
     ///
-    /// In [`Strictness::Strict`] mode, this is always empty because warnings
-    /// become errors. In [`Strictness::Balanced`] and [`Strictness::Lenient`]
+    /// In [`Strict`](super::config::Strictness::Strict) mode, this is always empty because warnings
+    /// become errors. In [`Balanced`](super::config::Strictness::Balanced) and [`Lenient`](super::config::Strictness::Lenient)
     /// modes, issues like truncation or missing DHT are collected here.
     #[must_use]
     pub fn warnings(&self) -> &[DecodeWarning] {

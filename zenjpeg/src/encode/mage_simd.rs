@@ -216,7 +216,7 @@ fn mage_dct1d_8_inner(token: X64V3Token, m: &mut [__m256; 8]) {
 /// # Algorithm
 ///
 /// 1. Load 8 rows into registers
-/// 2. Transpose: reg[i] = column i (position i of all rows)
+/// 2. Transpose: reg\[i\] = column i (position i of all rows)
 /// 3. Row DCT: 8 parallel 8-point DCTs
 /// 4. Transpose: rearrange for column processing
 /// 5. Column DCT: 8 parallel 8-point DCTs
@@ -880,8 +880,8 @@ pub fn mage_box_filter_2x2(
 
 /// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
 ///
-/// Given 16 consecutive f32s: [e0,o0,e1,o1,e2,o2,e3,o3, e4,o4,e5,o5,e6,o6,e7,o7]
-/// Returns evens = [e0,e1,e2,e3,e4,e5,e6,e7], odds = [o0,o1,o2,o3,o4,o5,o6,o7]
+/// Given 16 consecutive f32s: \[e0,o0,e1,o1,e2,o2,e3,o3, e4,o4,e5,o5,e6,o6,e7,o7\]
+/// Returns evens = \[e0,e1,e2,e3,e4,e5,e6,e7\], odds = \[o0,o1,o2,o3,o4,o5,o6,o7\]
 ///
 /// This is ~4x faster than element-by-element construction.
 #[arcane]

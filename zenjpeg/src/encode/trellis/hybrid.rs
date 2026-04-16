@@ -3,7 +3,7 @@
 //! This module combines:
 //! - Configurable hybrid quantization parameters ([`HybridConfig`])
 //! - Core hybrid quantization algorithm ([`hybrid_quantize_block`])
-//! - Encoder integration ([`HybridQuantContext`])
+//! - Encoder integration (`HybridQuantContext`)
 //!
 //! Merged from:
 //! - `hybrid/config.rs` - HybridConfig, SweepConfig, adaptive detection
@@ -717,9 +717,9 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
 /// Hybrid quantization: jpegli AQ + mozjpeg trellis.
 ///
 /// Runs trellis quantization with a pre-configured lambda. The caller
-/// (typically [`HybridQuantContext::quantize_block`]) is responsible for
-/// computing the AQ-adjusted `TrellisConfig` via
-/// [`HybridConfig::to_trellis_config`] before calling this function.
+/// (typically `HybridQuantContext::quantize_block`) is responsible for
+/// computing the AQ-adjusted [`TrellisConfig`] via
+/// [`HybridConfig::to_trellis_config()`] before calling this function.
 ///
 /// # Arguments
 /// * `dct_coeffs` - DCT coefficients in f32 (jpegli format)

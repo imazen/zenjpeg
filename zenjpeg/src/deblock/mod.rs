@@ -2,7 +2,7 @@
 //!
 //! Two complementary strategies:
 //!
-//! - **Boundary 4-tap** ([`boundary`]): Pixel-domain H.264-style [1,3,3,1]/8 filter
+//! - **Boundary 4-tap** ([`boundary`]): Pixel-domain H.264-style \[1,3,3,1\]/8 filter
 //!   at 8×8 block boundaries. Effective across all quality levels.
 //!
 //! - **Knusperli** ([`knusperli`]): DCT-domain boundary correction from the

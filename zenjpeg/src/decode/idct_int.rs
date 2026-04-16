@@ -1536,7 +1536,7 @@ pub fn idct_int_tiered_unclamped(
 
 /// Unclamped libjpeg-compatible tiered IDCT dispatch.
 ///
-/// Uses i64 intermediates (Loeffler algorithm). Output is NOT clamped to [0,255].
+/// Uses i64 intermediates (Loeffler algorithm). Output is NOT clamped to \[0,255\].
 pub fn idct_int_tiered_libjpeg_unclamped(
     coeffs: &mut [i32; 64],
     output: &mut [i16],

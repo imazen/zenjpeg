@@ -365,7 +365,7 @@ impl From<ResourceError> for ErrorKind {
 /// Errors that can occur during JPEG encoding/decoding.
 ///
 /// This is a newtype around `At<ErrorKind>` providing zero-cost stacktraces
-/// via `whereat`. Use [`Error::error()`] to inspect the [`ErrorKind`], or
+/// via `whereat`. Use [`Error::kind()`] to inspect the `ErrorKind`, or
 /// [`Error::into_inner()`] to destructure.
 ///
 /// Traces propagate automatically through `?` when using `ResultAtExt::at()`.

@@ -212,7 +212,7 @@ The decoder API is in prerelease. Enable with `features = ["decoder"]`.
 
 ```toml
 # Encode only (default features)
-zenjpeg = "0.6"
+zenjpeg = "0.8"
 
 # Decode + encode
 zenjpeg = { version = "0.6", features = ["decoder"] }

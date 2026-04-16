@@ -1,14 +1,14 @@
 //! Expert configuration for external optimization.
 //!
-//! [`ExpertConfig`] flattens all quality/size-affecting encoder parameters into a
+//! `ExpertConfig` flattens all quality/size-affecting encoder parameters into a
 //! single struct with no overlapping fields. External optimizers (simulated annealing,
 //! Bayesian search, etc.) can mutate fields directly and call
-//! [`to_encoder_config()`](ExpertConfig::to_encoder_config) to encode.
+//! `to_encoder_config()` to encode.
 //!
 //! # Design
 //!
-//! The encoder has 4 separate config types ([`EncodingTables`], [`TrellisConfig`],
-//! [`HybridConfig`], [`EncoderConfig`]) with overlapping fields and different
+//! The encoder has 4 separate config types (`EncodingTables`, `TrellisConfig`,
+//! `HybridConfig`, [`EncoderConfig`]) with overlapping fields and different
 //! visibility. `ExpertConfig` eliminates this overlap:
 //!
 //! - **One set of trellis parameters** (not duplicated between `TrellisConfig` and
@@ -21,12 +21,12 @@
 //!
 //! When `trellis_enabled == true`, the mode depends on `aq_trellis_coupling`:
 //!
-//! - **`== 0.0` (standalone):** Produces a [`TrellisConfig`]. All `trellis_*` fields
+//! - **`== 0.0` (standalone):** Produces a `TrellisConfig`. All `trellis_*` fields
 //!   are forwarded. This matches C mozjpeg behavior.
-//! - **`> 0.0` (hybrid):** Produces a [`HybridConfig`]. The hybrid path creates
-//!   per-block trellis configs internally via [`HybridConfig::to_trellis_config()`],
+//! - **`> 0.0` (hybrid):** Produces a `HybridConfig`. The hybrid path creates
+//!   per-block trellis configs internally via `HybridConfig::to_trellis_config()`,
 //!   which does **not** forward all fields. See the "Hybrid-Mode Limitations" section
-//!   on [`ExpertConfig`] for which fields are ignored.
+//!   on `ExpertConfig` for which fields are ignored.
 //!
 //! # Parameter Count
 //!
