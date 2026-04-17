@@ -1329,7 +1329,7 @@ fn push_decoder_native<'a>(
             crate::types::JpegMode::Baseline | crate::types::JpegMode::Extended
         )
     {
-        return push_decoder_direct(job, data, sink, descriptor, direct_format);
+        return push_decoder_direct(job, data, sink, descriptor, direct_format, &header);
     }
 
     // Create the streaming scanline reader
@@ -1503,6 +1503,7 @@ fn push_decoder_direct<'a>(
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     descriptor: PixelDescriptor,
     format: PixelFormat,
+    header: &crate::decode::JpegInfo,
 ) -> Result<OutputInfo, Error> {
     use enough::Unstoppable;
 
@@ -1517,7 +1518,7 @@ fn push_decoder_direct<'a>(
     );
 
     let data_ref: &[u8] = &data;
-    let header = job.config.inner.read_info(data_ref)?;
+    // Header already parsed by push_decoder_native — reuse it.
     let w = header.dimensions.width;
     let h = header.dimensions.height;
 
