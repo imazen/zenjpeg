@@ -1,6 +1,6 @@
 [package]
 name = "zenyuv"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Lilith River <lilith@imazen.io>"]
@@ -10,7 +10,7 @@ keywords = ["yuv", "ycbcr", "simd", "color", "bt601"]
 categories = ["graphics", "multimedia::images", "no-std"]
 repository = "https://github.com/imazen/zenjpeg"
 readme = "README.md"
-exclude = ["CLAUDE.md", "CONTEXT-HANDOFF.md", ".claude/", "justfile", "copter-report/"]
+include = ["/src/**", "/README.md", "/CHANGELOG.md", "/LICENSE*"]
 
 [dependencies]
 archmage = { workspace = true }

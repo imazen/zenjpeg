@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-16
+
 ### Added
 - `refine_chroma_420_u8` (and `_with_workspace` variant): runs the sharp-YUV
   Newton iteration on pre-seeded Cb/Cr without recomputing Y. Intended for
