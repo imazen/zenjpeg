@@ -177,8 +177,11 @@ __alloc-instrument = []
 __test-utils = []
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
-# UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
-# Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
+# UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
+# Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
+# NOTE: the `transfer` feature is removed in ultrahdr-core ≥ 0.5 (linear-srgb
+# becomes mandatory). Keep it listed here for compatibility with 0.4.x; drop
+# it the next time this crate is released against a 0.5+ ultrahdr-core.
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer", "dep:half"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
