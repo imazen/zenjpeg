@@ -203,6 +203,40 @@ fn bench_primary_bounds(suite: &mut Suite, label: &str, data: &'static [u8]) {
     });
 }
 
+fn bench_probe_workflow(suite: &mut Suite, label: &str, data: &'static [u8]) {
+    use zenjpeg::container::{Iso21496Format, Wants, parse_iso_app2, parse_mpf, primary_bounds, probe};
+    suite.group(format!("probe_workflow/{label}"), |g| {
+        g.throughput(Throughput::Bytes(data.len() as u64));
+
+        // Sequential walks using new zenjpeg::container APIs as independent calls.
+        g.bench("sequential_unified", move |b| {
+            b.iter(|| {
+                let images = zenjpeg::container::find_jpeg_boundaries(black_box(data));
+                let mpf = parse_mpf(black_box(data)).ok();
+                let iso = parse_iso_app2(black_box(data), Iso21496Format::JpegApp2).ok();
+                let bounds = primary_bounds(black_box(data));
+                black_box((images, mpf, iso, bounds));
+            })
+        });
+
+        // Single walk — capture everything via probe.
+        g.bench("single_probe_all", move |b| {
+            b.iter(|| {
+                let p = probe(black_box(data), Wants::ALL);
+                black_box(p);
+            })
+        });
+
+        // Short-circuit "is this UltraHDR".
+        g.bench("is_ultrahdr", move |b| {
+            b.iter(|| {
+                let r = zenjpeg::container::is_ultrahdr(black_box(data));
+                black_box(r);
+            })
+        });
+    });
+}
+
 fn bench_all(suite: &mut Suite) {
     // Eagerly encode synthetic inputs and leak as 'static so closures can
     // capture by shared reference across zenbench's interleaved runner.
@@ -223,6 +257,12 @@ fn bench_all(suite: &mut Suite) {
     bench_primary_bounds(suite, "synth_1024", medium);
     if let Some(p) = pixel_opt {
         bench_primary_bounds(suite, "pixel_ultrahdr", p);
+    }
+
+    bench_probe_workflow(suite, "synth_256", small);
+    bench_probe_workflow(suite, "synth_1024", medium);
+    if let Some(p) = pixel_opt {
+        bench_probe_workflow(suite, "pixel_ultrahdr", p);
     }
 }
 

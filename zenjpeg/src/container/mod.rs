@@ -23,6 +23,33 @@
 //! `benches/container_scan.rs` and
 //! `benchmarks/container_scan_baseline_2026-04-17.{csv,md}`.
 
+pub mod iso_jpeg;
 pub mod marker;
+pub mod mpf;
+pub mod probe;
+pub mod types;
+pub mod xmp;
 
-pub use marker::{MarkerIter, MarkerKind, MarkerSpan, find_jpeg_boundaries, iter, primary_bounds};
+pub use iso_jpeg::{
+    ISO_21496_1_URN, Iso21496Format, IsoJpegError, JpegIsoMarkers, create_iso_app2_marker,
+    create_jpeg_iso_markers, create_version_only_iso_app2, parse_iso21496, parse_iso_app2,
+    serialize_iso21496,
+};
+pub use marker::{
+    MarkerIter, MarkerKind, MarkerSpan, find_jpeg_boundaries, for_each_jpeg_boundary, iter,
+    primary_bounds,
+};
+pub use probe::{
+    ContainerProbe, GainMapPresence, OverflowFlags, ProbeSof, Wants, is_ultrahdr, probe,
+};
+pub use mpf::{MpfError, create_mpf_header, create_mpf_header_typed, parse_mpf, parse_mpf_segment};
+pub use types::{
+    ContainerItem, ItemSemantic, MpImageType, MpfEntry, generate_container_directory,
+    parse_container_items,
+};
+pub use xmp::{
+    CONTAINER_NAMESPACE, HDRGM_NAMESPACE, ITEM_NAMESPACE, MAX_XMP_LENGTH, XmpError,
+    create_xmp_app1_marker, generate_gainmap_xmp, generate_primary_xmp,
+    generate_primary_xmp_with_items, generate_xmp, generate_xmp_with_items, parse_xmp,
+    parse_xmp_full,
+};

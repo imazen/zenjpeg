@@ -283,6 +283,16 @@ pub fn primary_bounds(data: &[u8]) -> Option<Range<usize>> {
 #[must_use]
 pub fn find_jpeg_boundaries(data: &[u8]) -> Vec<Range<usize>> {
     let mut out = Vec::new();
+    for_each_jpeg_boundary(data, |r| out.push(r));
+    out
+}
+
+/// Zero-allocation variant of [`find_jpeg_boundaries`] — invokes `f`
+/// once per top-level SOI..EOI range, in order.
+///
+/// Useful when the caller has its own inline storage and wants to
+/// avoid the `Vec` allocation [`find_jpeg_boundaries`] makes.
+pub fn for_each_jpeg_boundary(data: &[u8], mut f: impl FnMut(Range<usize>)) {
     let mut pos = 0usize;
     while pos < data.len() {
         // memchr to the next 0xFF byte.
@@ -309,13 +319,12 @@ pub fn find_jpeg_boundaries(data: &[u8]) -> Vec<Range<usize>> {
         }
         match eoi_rel {
             Some(end) => {
-                out.push(soi..soi + end);
+                f(soi..soi + end);
                 pos = soi + end;
             }
             None => break,
         }
     }
-    out
 }
 
 // ───────────────────────────────────────────────────────────────────────

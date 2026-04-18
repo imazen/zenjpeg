@@ -87,3 +87,31 @@ path = "fuzz_targets/fuzz_container_marker.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_container_mpf"
+path = "fuzz_targets/fuzz_container_mpf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_container_iso_jpeg"
+path = "fuzz_targets/fuzz_container_iso_jpeg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_container_xmp"
+path = "fuzz_targets/fuzz_container_xmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_container_probe"
+path = "fuzz_targets/fuzz_container_probe.rs"
+test = false
+doc = false
+bench = false
