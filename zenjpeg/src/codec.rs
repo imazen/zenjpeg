@@ -915,6 +915,7 @@ impl JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
+            cached_header: None,
         }
     }
 
@@ -1022,6 +1023,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
             crop_hint: None,
             orientation: zencodec::OrientationHint::default(),
             policy: None,
+            cached_header: None,
         }
     }
 }
@@ -1039,6 +1041,8 @@ pub struct JpegDecodeJob {
     crop_hint: Option<(u32, u32, u32, u32)>,
     orientation: zencodec::OrientationHint,
     policy: Option<zencodec::decode::DecodePolicy>,
+    /// Cached header info from probe(). Avoids re-parsing in push_decoder_native.
+    cached_header: Option<crate::decode::JpegInfo>,
 }
 
 impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
@@ -1149,13 +1153,20 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
     }
 
     fn push_decoder(
-        self,
+        mut self,
         data: Cow<'a, [u8]>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
         preferred: &[PixelDescriptor],
     ) -> Result<OutputInfo, Self::Error> {
         #[cfg(feature = "decoder")]
         {
+            // Pre-cache the header so push_decoder_native can reuse it
+            // instead of calling read_info() again.
+            if self.cached_header.is_none() {
+                if let Ok(info) = self.config.inner.read_info(&data) {
+                    self.cached_header = Some(info);
+                }
+            }
             push_decoder_native(self, data, sink, preferred)
         }
         #[cfg(not(feature = "decoder"))]
@@ -1267,7 +1278,7 @@ impl JpegDecodeJob {
 /// (typically 8 or 16 rows × width × bytes-per-pixel).
 #[cfg(feature = "decoder")]
 fn push_decoder_native<'a>(
-    job: JpegDecodeJob,
+    mut job: JpegDecodeJob,
     data: Cow<'a, [u8]>,
     sink: &mut dyn zencodec::decode::DecodeRowSink,
     preferred: &[PixelDescriptor],
@@ -1292,8 +1303,12 @@ fn push_decoder_native<'a>(
         job.policy.as_ref(),
     );
 
-    // Probe header for component count (needed for descriptor selection)
-    let header = job.config.inner.read_info(data_ref)?;
+    // Reuse cached header from push_decoder (avoids re-parsing).
+    // Falls back to read_info if cache miss (shouldn't happen in normal flow).
+    let header = match job.cached_header.take() {
+        Some(h) => h,
+        None => job.config.inner.read_info(data_ref)?,
+    };
     job.check_progressive_policy(header.mode)?;
 
     // Raw CMYK output for 4-component JPEGs: the streaming ScanlineReader has
