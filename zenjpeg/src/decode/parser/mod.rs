@@ -341,6 +341,11 @@ impl<'a> JpegParser<'a> {
         Option<ultrahdr_core::GainMapMetadata>,
     )> {
         use super::extras::{MpfDirectory, SegmentType, detect_segment_type, parse_mpf_directory};
+        // Kept on ultrahdr_core::metadata::xmp::parse_xmp because this returns
+        // the old `GainMapMetadata` struct shape that the containing function
+        // still expects. Migrate to `crate::container::xmp::parse_xmp` (which
+        // returns `zencodec::GainMapParams`) once ultrahdr-core 0.5 lands with
+        // the GainMapMetadata-as-alias refactor from ultrahdr#6.
         use ultrahdr_core::metadata::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";

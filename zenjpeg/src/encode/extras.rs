@@ -79,9 +79,9 @@ pub enum SegmentType {
 
 /// MPF image type codes (CIPA DC-007).
 ///
-/// Re-exported from `ultrahdr_core` for cross-crate compatibility.
+/// Re-exported from [`crate::container::types`].
 /// These correspond to the MPF Individual Image Attribute type codes.
-pub use ultrahdr_core::MpImageType as MpfImageType;
+pub use crate::container::types::MpImageType as MpfImageType;
 
 /// Extension methods for [`MpfImageType`] used in zenjpeg.
 ///

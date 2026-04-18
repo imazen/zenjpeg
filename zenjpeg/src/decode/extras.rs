@@ -1162,6 +1162,6 @@ pub(crate) fn should_preserve_mpf_image(
         MpfImageType::Panorama | MpfImageType::MultiAngle => config.mpf_multiframe,
         MpfImageType::Disparity => config.mpf_depth,
         MpfImageType::BaselinePrimary => false, // Primary is the main decode result
-        MpfImageType::Other(_) | _ => config.app_unknown,
+        MpfImageType::Other(_) => config.app_unknown,
     }
 }
