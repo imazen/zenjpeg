@@ -80,3 +80,10 @@ path = "fuzz_targets/fuzz_decode_limits.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_container_marker"
+path = "fuzz_targets/fuzz_container_marker.rs"
+test = false
+doc = false
+bench = false

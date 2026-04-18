@@ -255,6 +255,17 @@ pub mod decoder {
 #[cfg(feature = "ultrahdr")]
 pub mod ultrahdr;
 
+/// Public JPEG container primitives: zero-copy marker iteration, image
+/// boundary detection, and (incrementally, in follow-up commits) MPF
+/// parsing, XMP helpers, and the ISO 21496-1 JPEG APP2 envelope.
+///
+/// This is the single canonical source for "walk a JPEG marker stream";
+/// prior scattered implementations in `ultrahdr-core`, `ultrahdr-rs`,
+/// and this crate's internal `detect::scanner` consolidate on top of it.
+///
+/// See [`container::marker`] for the iterator and helpers.
+pub mod container;
+
 // ============================================================================
 // Internal Implementation Modules
 // ============================================================================

@@ -174,8 +174,12 @@ fn bench_find_boundaries(suite: &mut Suite, label: &str, data: &'static [u8]) {
             })
         });
 
-        // After refactor, the new public implementation goes here:
-        //   g.bench("zenjpeg::container::find_jpeg_boundaries", ...)
+        g.bench("zenjpeg::container::find_jpeg_boundaries", move |b| {
+            b.iter(|| {
+                let r = zenjpeg::container::find_jpeg_boundaries(black_box(data));
+                black_box(r);
+            })
+        });
     });
 }
 
@@ -190,8 +194,12 @@ fn bench_primary_bounds(suite: &mut Suite, label: &str, data: &'static [u8]) {
             })
         });
 
-        // After refactor:
-        //   g.bench("zenjpeg::container::primary_bounds", ...)
+        g.bench("zenjpeg::container::primary_bounds", move |b| {
+            b.iter(|| {
+                let r = zenjpeg::container::primary_bounds(black_box(data));
+                black_box(r);
+            })
+        });
     });
 }
 
