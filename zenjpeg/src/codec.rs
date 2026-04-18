@@ -1861,56 +1861,43 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
             }
 
-            // Check dimension limits and progressive policy before full decode.
-            // Header parse is cheap (marker scan only, no entropy decoding).
-            let needs_header = limits.max_width.is_some()
-                || limits.max_height.is_some()
-                || self
-                    .policy
-                    .as_ref()
-                    .is_some_and(|p| p.allow_progressive.is_some());
-            if needs_header {
-                let header = cfg.read_info(&data)?;
-                if limits.max_width.is_some() || limits.max_height.is_some() {
-                    limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
-                }
-                let is_progressive = matches!(
-                    header.mode,
-                    crate::types::JpegMode::Progressive
-                        | crate::types::JpegMode::ArithmeticProgressive
-                );
-                if let Some(ref policy) = self.policy
-                    && is_progressive
-                    && !policy.resolve_progressive(true)
-                {
-                    return Err(Error::unsupported_feature(
-                        "progressive JPEG rejected by decode policy",
-                    ));
-                }
+            // Single header parse for all pre-decode checks: dimension limits,
+            // progressive policy, CMYK detection, and output format hinting.
+            // Previously three separate read_info() calls.
+            let header = cfg.read_info(&data)?;
+
+            // Dimension limits
+            if limits.max_width.is_some() || limits.max_height.is_some() {
+                limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
             }
 
-            // Passthrough CMYK handling: probe the header to check if this
-            // is actually a CMYK/YCCK JPEG (4 components). If so, override
-            // the output format to PixelFormat::Cmyk so the decoder produces
-            // raw CMYK bytes instead of auto-converting to RGB.
-            let is_raw_cmyk = if matches!(self.config.cmyk_handling, CmykHandling::Passthrough) {
-                let header = cfg.read_info(&data)?;
-                if header.num_components == 4 {
-                    cfg = cfg.output_format(PixelFormat::Cmyk);
-                    true
-                } else {
-                    false
-                }
+            // Progressive policy
+            let is_progressive = matches!(
+                header.mode,
+                crate::types::JpegMode::Progressive | crate::types::JpegMode::ArithmeticProgressive
+            );
+            if let Some(ref policy) = self.policy
+                && is_progressive
+                && !policy.resolve_progressive(true)
+            {
+                return Err(Error::unsupported_feature(
+                    "progressive JPEG rejected by decode policy",
+                ));
+            }
+
+            // Passthrough CMYK handling
+            let is_raw_cmyk = if matches!(self.config.cmyk_handling, CmykHandling::Passthrough)
+                && header.num_components == 4
+            {
+                cfg = cfg.output_format(PixelFormat::Cmyk);
+                true
             } else {
                 false
             };
 
             // Hint the internal decoder to produce BGRA/RGBA/etc. directly in
             // the streaming path, eliminating the post-decode full-buffer swizzle.
-            // Without this, Decoder::decode() always streams RGB and the zencodec
-            // wrapping swizzles the entire output buffer — measurable at 4096²+.
             if !wants_f32 && !is_raw_cmyk {
-                let header = cfg.read_info(&data)?;
                 let descriptor =
                     decode_descriptor(preferred, &header, self.config.inner.correct_color.as_ref());
                 if let Some(pf) = direct_path_pixel_format(descriptor, header.num_components) {
