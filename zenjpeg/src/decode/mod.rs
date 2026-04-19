@@ -2293,6 +2293,58 @@ impl DecodeConfig {
         self.decode_into_via_decode(data, format, dst, stop)
     }
 
+    /// Streaming decode directly into `dst`, skipping eligibility re-checks
+    /// and header re-parsing. The caller (push_decoder_direct) has already
+    /// validated that the JPEG is baseline, non-XYB, non-progressive, no
+    /// crop/transform/deblock, and the format is an RGB-family u8 type.
+    ///
+    /// This is the same code path as `decode_into`'s `direct_eligible` branch,
+    /// but without the redundant `JpegParser::read_header()` — the header
+    /// info (num_components, is_xyb) is passed from the caller's cached probe.
+    ///
+    /// Returns `Ok(bytes_written)` on success, `Err` if the streaming path
+    /// fails internally (e.g., coefficient guard triggers).
+    pub(crate) fn decode_streaming_into(
+        &self,
+        data: &[u8],
+        format: PixelFormat,
+        dst: &mut [u8],
+        stop: impl Stop,
+        num_components: u8,
+        is_xyb: bool,
+    ) -> Result<usize> {
+        // Grayscale source + non-Gray format: can't stream, need full decode
+        if num_components == 1 && format != PixelFormat::Gray {
+            return Err(Error::internal(
+                "grayscale source needs Gray format for streaming",
+            ));
+        }
+        if num_components > 1 && format == PixelFormat::Gray {
+            return Err(Error::internal("color source can't stream to Gray"));
+        }
+
+        let mut parser =
+            parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        parser.read_header()?;
+        parser.chroma_upsampling = self.chroma_upsampling;
+        parser.idct_method = self.effective_idct_method();
+        parser.num_threads = self.num_threads;
+        #[cfg(feature = "parallel")]
+        {
+            parser.parallel_strategy = self.parallel_strategy;
+        }
+        parser.streaming_output_format = Some(format);
+        parser.decode(&stop)?;
+        parser.to_pixels_into(
+            format,
+            is_xyb,
+            self.chroma_upsampling,
+            self.output_target,
+            &Unstoppable,
+            dst,
+        )
+    }
+
     fn decode_into_via_decode(
         &self,
         data: &[u8],

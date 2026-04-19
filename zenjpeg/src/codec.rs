@@ -1537,9 +1537,9 @@ fn push_decoder_direct<'a>(
     let w = header.dimensions.width;
     let h = header.dimensions.height;
 
-    // Try decode_into first (zero-copy for baseline streaming-eligible
-    // JPEGs). Falls back to cfg.decode() + row copy for progressive,
-    // arithmetic, XYB, mismatched chroma, or any other edge case.
+    // Streaming fast path: decode directly into the sink buffer, skipping
+    // decode_into()'s redundant header parse. The caller (push_decoder_native)
+    // already validated baseline mode, no crop/transform/deblock, u8 RGB-family.
     let stop_ref: &dyn enough::Stop = match &job.stop {
         Some(s) => s,
         None => &Unstoppable,
@@ -1553,15 +1553,50 @@ fn push_decoder_direct<'a>(
     let bpp = format.bytes_per_pixel();
     let row_bytes = w as usize * bpp;
 
-    // Fast path: decode_into writes directly into a contiguous buffer.
-    // For strided sinks, use a temp buffer then scatter.
     let decode_into_result = if dst_stride == row_bytes {
         let dst_bytes = dst.as_strided_bytes_mut();
-        cfg.decode_into(data_ref, format, dst_bytes, stop_ref)
+        if let Some(ref stop) = job.stop {
+            cfg.decode_streaming_into(
+                data_ref,
+                format,
+                dst_bytes,
+                stop.clone(),
+                header.num_components,
+                header.is_xyb,
+            )
+        } else {
+            cfg.decode_streaming_into(
+                data_ref,
+                format,
+                dst_bytes,
+                Unstoppable,
+                header.num_components,
+                header.is_xyb,
+            )
+        }
     } else {
         let total = row_bytes * h as usize;
         let mut contiguous = vec![0u8; total];
-        match cfg.decode_into(data_ref, format, &mut contiguous, stop_ref) {
+        let streaming_result = if let Some(ref stop) = job.stop {
+            cfg.decode_streaming_into(
+                data_ref,
+                format,
+                &mut contiguous,
+                stop.clone(),
+                header.num_components,
+                header.is_xyb,
+            )
+        } else {
+            cfg.decode_streaming_into(
+                data_ref,
+                format,
+                &mut contiguous,
+                Unstoppable,
+                header.num_components,
+                header.is_xyb,
+            )
+        };
+        match streaming_result {
             Ok(written) => {
                 let dst_bytes = dst.as_strided_bytes_mut();
                 let copy_rows = (written / row_bytes).min(h as usize);
