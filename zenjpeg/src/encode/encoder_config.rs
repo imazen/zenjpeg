@@ -249,8 +249,14 @@ impl EncoderConfig {
             pre_blur: 0.0,
             #[cfg(feature = "trellis")]
             trellis_boundary_rd: false,
+            // β=0.1 default: empirically validated on cid22+screenshots+
+            // synthetic (2026-04-20) to be within ±0.1% BD-rate on both
+            // SSIM2 and BBS vs plain trellis, while still changing output
+            // enough to be effective on boundary-sensitive content. β=1.0
+            // over-zeros high-frequency coefficients and degrades RD by
+            // ~7% BD-rate SSIM2.
             #[cfg(feature = "trellis")]
-            trellis_boundary_beta: 1.0,
+            trellis_boundary_beta: 0.1,
             #[cfg(feature = "trellis")]
             trellis_boundary_alpha: 1.0,
         }

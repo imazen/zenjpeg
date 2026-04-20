@@ -1,0 +1,15 @@
+image,class,metric,baseline,candidate,baseline_points,candidate_points,bd_rate_pct,mean_distance,win_rate
+1025469,photo,ssim2,trellis,trellis_boundary_rd,5,5,0.0319,-0.001892,0.2000
+1025469,photo,bbs,trellis,trellis_boundary_rd,5,5,0.0270,-0.003162,0.2000
+1044329,photo,ssim2,trellis,trellis_boundary_rd,5,5,0.1407,-0.022635,0.0000
+1044329,photo,bbs,trellis,trellis_boundary_rd,5,5,-0.0138,0.036664,0.6000
+1189261,photo,ssim2,trellis,trellis_boundary_rd,5,5,0.3138,-0.023176,0.2000
+1189261,photo,bbs,trellis,trellis_boundary_rd,5,5,0.0406,-0.011855,0.4000
+codec_wiki,screenshot,ssim2,trellis,trellis_boundary_rd,5,5,-0.0605,0.008522,1.0000
+codec_wiki,screenshot,bbs,trellis,trellis_boundary_rd,5,5,0.0428,-0.006354,0.0000
+gmessages,screenshot,ssim2,trellis,trellis_boundary_rd,5,5,NA,0.000000,0.0000
+gmessages,screenshot,bbs,trellis,trellis_boundary_rd,5,5,NA,0.000000,0.0000
+synth_checkerboard,synthetic,ssim2,trellis,trellis_boundary_rd,5,5,NA,0.000000,0.0000
+synth_checkerboard,synthetic,bbs,trellis,trellis_boundary_rd,5,5,NA,0.000000,0.0000
+synth_stripes,lineart,ssim2,trellis,trellis_boundary_rd,5,5,-0.0039,-0.026171,0.2000
+synth_stripes,lineart,bbs,trellis,trellis_boundary_rd,5,5,-0.0038,0.000422,0.2000

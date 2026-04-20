@@ -456,6 +456,36 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         "mozjpeg_progressive_444" => Some(mk(ChromaSubsampling::None, |c| {
             c.optimization(OptimizationPreset::MozjpegProgressive)
         })),
+        // Phase 3 of #91: boundary-continuity D term in the trellis RD
+        // search. Pairs the default 4:2:0 trellis with the boundary flag
+        // enabled at β=1.0 / α=1.0.
+        "trellis" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+        })),
+        "trellis_444" => Some(mk(ChromaSubsampling::None, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+        })),
+        "trellis_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+                .trellis_boundary_rd(true)
+        })),
+        "trellis_boundary_rd_b01" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+                .trellis_boundary_rd(true)
+                .trellis_boundary_beta(0.1)
+        })),
+        "trellis_boundary_rd_b001" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+                .trellis_boundary_rd(true)
+                .trellis_boundary_beta(0.01)
+        })),
+        "trellis_boundary_rd_444" => Some(mk(ChromaSubsampling::None, |c| {
+            c.trellis(zenjpeg::encode::trellis::TrellisConfig::default())
+                .trellis_boundary_rd(true)
+        })),
+        "auto_optimize_boundary_rd_trellis" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.auto_optimize(true).trellis_boundary_rd(true)
+        })),
         _ => None,
     }
 }

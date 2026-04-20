@@ -1,0 +1,9 @@
+class,metric,baseline,candidate,n,bd_rate_mean,bd_rate_stdev,mean_distance_mean,win_rate_mean
+lineart,bbs,trellis,trellis_boundary_rd,1,-0.0038,0.0000,0.000422,0.2000
+lineart,ssim2,trellis,trellis_boundary_rd,1,-0.0039,0.0000,-0.026171,0.2000
+photo,bbs,trellis,trellis_boundary_rd,3,0.0180,0.0231,0.007216,0.4000
+photo,ssim2,trellis,trellis_boundary_rd,3,0.1621,0.1161,-0.015901,0.1333
+screenshot,bbs,trellis,trellis_boundary_rd,2,0.0428,0.0000,-0.003177,0.0000
+screenshot,ssim2,trellis,trellis_boundary_rd,2,-0.0605,0.0000,0.004261,0.5000
+synthetic,bbs,trellis,trellis_boundary_rd,1,NaN,NaN,0.000000,0.0000
+synthetic,ssim2,trellis,trellis_boundary_rd,1,NaN,NaN,0.000000,0.0000
