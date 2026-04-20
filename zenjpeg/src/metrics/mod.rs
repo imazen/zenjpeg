@@ -1,9 +1,13 @@
-//! Quality metrics for codec evaluation.
+//! Quality metrics for codec evaluation (internal).
 //!
-//! This module hosts metrics that are specific to codec analysis (e.g. the
-//! block-boundary score used for JPEG blocking studies). General-purpose
-//! perceptual metrics (SSIMULACRA2, Butteraugli, DSSIM) live in separate
-//! crates — this module is for codec-internal or JPEG-specific measures.
+//! This module hosts metrics specific to codec analysis (BBS block-boundary
+//! score, plus an RD-curve / BD-rate harness) used internally for
+//! boundary-RD validation. General-purpose perceptual metrics
+//! (SSIMULACRA2, Butteraugli, DSSIM) live in separate crates.
+//!
+//! Items here are NOT part of the versioned public API. The whole module
+//! is gated behind `pub(crate)` by default; the `test-utils` Cargo feature
+//! reveals it for use by internal tests and example CLIs.
 
 pub mod bbs;
 pub mod rd;
