@@ -48,6 +48,9 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) boundary_rd_shrink: f32,
     /// Max number of boundary-RD refinement retries per triggered block.
     pub(crate) boundary_rd_max_retries: u8,
+    /// Enable above-neighbor (top-edge) boundary-RD (Phase 4 of #91). Off
+    /// by default. A no-op unless `boundary_rd` is also true.
+    pub(crate) boundary_rd_above: bool,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Force SOF1 (extended sequential) regardless of quant table precision.
@@ -97,6 +100,7 @@ impl StreamingEncoderBuilder {
             boundary_rd_threshold: 0.05,
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
+            boundary_rd_above: false,
             allow_16bit_quant_tables: false,
             force_sof1: false,
             separate_chroma_tables: true,
@@ -277,6 +281,13 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
         self.boundary_rd_max_retries = retries;
+        self
+    }
+
+    /// Enable above-neighbor (top-edge) boundary-RD (Phase 4 of #91).
+    #[must_use]
+    pub(crate) fn boundary_rd_above(mut self, enable: bool) -> Self {
+        self.boundary_rd_above = enable;
         self
     }
 

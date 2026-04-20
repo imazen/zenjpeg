@@ -150,6 +150,7 @@ impl BytesEncoder {
         builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
         builder = builder.boundary_rd_shrink(config.boundary_rd_shrink);
         builder = builder.boundary_rd_max_retries(config.boundary_rd_max_retries);
+        builder = builder.boundary_rd_above(config.boundary_rd_above);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
@@ -1020,6 +1021,7 @@ impl YCbCrPlanarEncoder {
         builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
         builder = builder.boundary_rd_shrink(config.boundary_rd_shrink);
         builder = builder.boundary_rd_max_retries(config.boundary_rd_max_retries);
+        builder = builder.boundary_rd_above(config.boundary_rd_above);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(

@@ -471,6 +471,27 @@ pub struct StripProcessor {
     /// Allocated lazily on first use to keep the default path allocation-free.
     boundary_rd_left_edges: Vec<Option<[f32; 8]>>,
 
+    /// Enable above-neighbor (top-edge) boundary-RD (Phase 4 of #91). A no-op
+    /// unless `boundary_rd` is also true. Adds an inter-iMCU dependency: the
+    /// committed bottom-edge row of each luma block is preserved for the
+    /// next row's comparison.
+    boundary_rd_above: bool,
+    /// Per-column cache of the committed bottom-edge row for the block
+    /// directly above the current block (reconstructed, post-quantize).
+    /// Indexed by `bx` in `0..blocks_w`. `None` means no above neighbor yet
+    /// (i.e., we are in the top-most block row of the whole image).
+    ///
+    /// Values are in the DCT input domain ([-128, 127]). Persists across
+    /// iMCUs so the first block row of a new iMCU can consult the last row
+    /// of the previous iMCU.
+    ///
+    /// Allocated lazily on first use to keep the default path allocation-free.
+    boundary_rd_above_rec_edges: Vec<Option<[f32; 8]>>,
+    /// Companion buffer holding the *original* (unquantized IDCT) bottom-edge
+    /// row of the block above — needed for the "orig" side of the symmetric
+    /// D_b term. Same indexing and lifetime rules as `boundary_rd_above_rec_edges`.
+    boundary_rd_above_orig_edges: Vec<Option<[f32; 8]>>,
+
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
@@ -758,6 +779,9 @@ impl StripProcessor {
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
             boundary_rd_left_edges: Vec::new(),
+            boundary_rd_above: false,
+            boundary_rd_above_rec_edges: Vec::new(),
+            boundary_rd_above_orig_edges: Vec::new(),
 
             // Trellis quantization (disabled by default)
             #[cfg(feature = "trellis")]
@@ -874,6 +898,9 @@ impl StripProcessor {
     ///
     /// When `enable` is false (the default), the boundary_rd pass is skipped
     /// entirely and the default encode path is unchanged.
+    ///
+    /// `above` additionally enables the above-neighbor (top-edge) D_b term
+    /// (Phase 4 of #91). A no-op unless `enable` is also true.
     pub fn set_boundary_rd(
         &mut self,
         enable: bool,
@@ -881,12 +908,14 @@ impl StripProcessor {
         threshold: f32,
         shrink: f32,
         max_retries: u8,
+        above: bool,
     ) {
         self.boundary_rd = enable;
         self.boundary_rd_alpha = alpha;
         self.boundary_rd_threshold = threshold;
         self.boundary_rd_shrink = shrink;
         self.boundary_rd_max_retries = max_retries;
+        self.boundary_rd_above = above;
     }
 
     /// Sets trellis quantization configuration.

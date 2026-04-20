@@ -95,6 +95,16 @@ pub struct EncoderConfig {
     /// Maximum number of refinement retries per triggered block.
     /// Only consulted when `boundary_rd` is true.
     pub(crate) boundary_rd_max_retries: u8,
+
+    /// Enable the above-neighbor (top-edge) boundary-continuity penalty
+    /// in addition to the left-neighbor term (Phase 4 of #91).
+    ///
+    /// A no-op unless [`boundary_rd`](Self::boundary_rd) is also true. Adds a
+    /// per-block-column buffer carrying the committed bottom-edge row of each
+    /// block across iMCU boundaries, so the top-edge of the current block can
+    /// be compared against the bottom-edge of the block directly above it.
+    /// Off by default — left-only is the conservative baseline.
+    pub(crate) boundary_rd_above: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -259,6 +269,7 @@ impl EncoderConfig {
             boundary_rd_threshold: 0.05,
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
+            boundary_rd_above: false,
         }
     }
 
@@ -1010,6 +1021,24 @@ impl EncoderConfig {
     #[must_use]
     pub fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
         self.boundary_rd_max_retries = retries;
+        self
+    }
+
+    /// Enable the above-neighbor (top-edge) boundary-continuity penalty in
+    /// addition to the left-neighbor penalty (Phase 4 of #91).
+    ///
+    /// Requires [`boundary_rd`](Self::boundary_rd) to be `true`; a no-op
+    /// otherwise. Off by default — left-only is the conservative baseline.
+    ///
+    /// Adds an inter-strip dependency: the encoder buffers the bottom-edge
+    /// row of each committed luma block from the previous iMCU so the top
+    /// edge of the current block can be compared against it. Memory
+    /// overhead is `blocks_w * (8 floats + 8 floats)` ≈ 64 B × `blocks_w`;
+    /// encode-time overhead on triggered blocks is one extra SSD per
+    /// candidate (negligible next to the existing per-candidate IDCT).
+    #[must_use]
+    pub fn boundary_rd_above(mut self, enable: bool) -> Self {
+        self.boundary_rd_above = enable;
         self
     }
 
