@@ -456,6 +456,12 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         "mozjpeg_progressive_444" => Some(mk(ChromaSubsampling::None, |c| {
             c.optimization(OptimizationPreset::MozjpegProgressive)
         })),
+        // Phase 2 of #91 — boundary-continuity refinement, non-trellis.
+        "boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| c.boundary_rd(true))),
+        "boundary_rd_444" => Some(mk(ChromaSubsampling::None, |c| c.boundary_rd(true))),
+        "auto_optimize_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.auto_optimize(true).boundary_rd(true)
+        })),
         _ => None,
     }
 }

@@ -1551,9 +1551,11 @@ impl StripProcessor {
             }
 
             // Compute reference block (IDCT of unquantized f32 DCT).
+            // The current-block right edge isn't consulted here — it's only
+            // produced once we decide the current block is the committed
+            // state, cached for the NEXT block's left-neighbor lookup.
             let ref_block = br::idct_reference_block(&dct);
             let orig_left = br::left_edge_col(&ref_block);
-            let orig_right = br::right_edge_col(&ref_block);
 
             // Left neighbor's right-edge column (committed).
             let rec_left_right_opt = if bx > 0 {
