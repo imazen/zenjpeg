@@ -22,6 +22,14 @@ pub mod rate;
 pub mod compat;
 pub mod hybrid;
 
+/// Boundary-continuity D term for the trellis path (Phase 3 of issue #91).
+///
+/// Provides a precomputed 8×64 matrix for evaluating the reconstructed
+/// left-edge column of a block as a linear function of its natural-order
+/// dequantized DCT coefficients — allowing per-candidate boundary
+/// distortion evaluation inside the trellis search without a full IDCT.
+pub(crate) mod boundary;
+
 // Re-export main trellis types
 pub use ac::trellis_quantize_block;
 pub use rate::RateTable;
