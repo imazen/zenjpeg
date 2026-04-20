@@ -181,11 +181,18 @@ pub mod encoder;
 /// Provides min/typical/max estimates for peak memory and time.
 pub mod heuristics;
 
-/// Quality metrics (BBS block-boundary-score, etc.).
+/// Internal quality metrics (BBS, RD-curve, BD-rate harness).
 ///
-/// JPEG-specific or codec-analysis metrics. General perceptual metrics
-/// (SSIMULACRA2, DSSIM, Butteraugli) live in dedicated crates.
+/// JPEG-specific or codec-analysis metrics used by internal validation
+/// harnesses. NOT part of the versioned public API: the module is
+/// `pub(crate)` by default and only exposed when the `__test-utils`
+/// Cargo feature is enabled (used by internal integration tests and
+/// example CLIs). Items here may change at any time without a semver bump.
+#[cfg(any(test, feature = "__test-utils"))]
 pub mod metrics;
+
+#[cfg(not(any(test, feature = "__test-utils")))]
+pub(crate) mod metrics;
 
 /// JPEG encoder detection and quality estimation.
 ///
