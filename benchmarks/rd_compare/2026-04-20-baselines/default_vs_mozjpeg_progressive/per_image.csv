@@ -1,0 +1,15 @@
+image,class,metric,baseline,candidate,baseline_points,candidate_points,bd_rate_pct,mean_distance,win_rate
+1025469,photo,ssim2,default,mozjpeg_progressive,5,5,8.5250,-1.502249,0.0000
+1025469,photo,bbs,default,mozjpeg_progressive,5,5,2.5847,-0.122735,0.4000
+1044329,photo,ssim2,default,mozjpeg_progressive,5,5,1.2699,0.042773,0.6000
+1044329,photo,bbs,default,mozjpeg_progressive,5,5,-0.5912,8.317409,0.8000
+1189261,photo,ssim2,default,mozjpeg_progressive,5,5,3.7262,-0.300769,0.2000
+1189261,photo,bbs,default,mozjpeg_progressive,5,5,-1.8676,2.707341,0.6000
+codec_wiki,screenshot,ssim2,default,mozjpeg_progressive,5,5,7.9979,-0.591402,0.0000
+codec_wiki,screenshot,bbs,default,mozjpeg_progressive,5,5,11.4345,-1.374465,0.0000
+gmessages,screenshot,ssim2,default,mozjpeg_progressive,5,5,NA,0.000000,0.0000
+gmessages,screenshot,bbs,default,mozjpeg_progressive,5,5,NA,0.000000,0.0000
+synth_checkerboard,synthetic,ssim2,default,mozjpeg_progressive,5,5,NA,0.000000,0.0000
+synth_checkerboard,synthetic,bbs,default,mozjpeg_progressive,5,5,NA,0.000000,0.0000
+synth_stripes,lineart,ssim2,default,mozjpeg_progressive,5,5,52.8449,-41.616219,0.0000
+synth_stripes,lineart,bbs,default,mozjpeg_progressive,5,5,44.7073,-1064.715578,0.0000
