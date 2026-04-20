@@ -150,8 +150,10 @@ pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPla
 pub use crate::encode::encoder_config::EncoderConfig;
 pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,
-    PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, XybSubsampling, YCbCrPlanes,
+    PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, TinyFileMode, XybSubsampling,
+    YCbCrPlanes,
 };
+pub use crate::encode::encoder_types::should_activate_tiny_file_mode;
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::request::EncodeRequest;
 pub use crate::foundation::alloc::EncodeStats;

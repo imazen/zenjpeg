@@ -1203,6 +1203,65 @@ pub enum ScanStrategy {
     Mozjpeg,
 }
 
+/// Controls tiny-file optimizations for small images.
+///
+/// For small images (thumbnails, icons, placeholders) JPEG header overhead can
+/// exceed the compressed pixel data itself. This mode collapses a few
+/// header-side wins into one switch:
+///
+/// - Shared Huffman tables: emits two DHT tables (one DC, one AC) derived from
+///   combined luma+chroma symbol counts, with `Td=0, Ta=0` for every component
+///   in SOS. Saves roughly 200 bytes versus the four-table default.
+/// - Header marker pruning: already-conservative by default (zenjpeg does not
+///   emit JFIF APP0; Adobe APP14 only for XYB; EXIF only on request). Future
+///   extensions to this mode may prune further.
+///
+/// All optimizations remain spec-legal baseline JPEG and are accepted by
+/// libjpeg-turbo, Chromium/Blink, and Apple's ImageIO.
+///
+/// # Variants
+///
+/// - `Auto` (default): enable tiny-file optimizations when the image size
+///   heuristic (see [`should_activate_tiny_file_mode`]) indicates a likely win.
+/// - `Off`: always use the standard four-table Huffman layout.
+/// - `Force`: always apply tiny-file optimizations regardless of image size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TinyFileMode {
+    /// Apply tiny-file optimizations when the built-in heuristic matches the
+    /// image size. This is the default.
+    #[default]
+    Auto,
+    /// Never apply tiny-file optimizations. Emits standard four-table Huffman
+    /// layout with per-channel DC/AC selectors.
+    Off,
+    /// Always apply tiny-file optimizations regardless of image size.
+    Force,
+}
+
+/// Heuristic for [`TinyFileMode::Auto`]: returns `true` when tiny-file
+/// optimizations are likely to reduce file size for the given image.
+///
+/// Thresholds are calibrated empirically against CID22-train at q=75; see
+/// the `tiny_file_mode` integration tests and the benchmark in
+/// `examples/tiny_file_crossover.rs` for the underlying data.
+#[inline]
+#[must_use]
+pub fn should_activate_tiny_file_mode(width: u32, height: u32, is_ycbcr: bool) -> bool {
+    let pixels = (width as u64) * (height as u64);
+    // Well below the crossover: tiny-file optimizations nearly always win on
+    // grayscale, RGB, and YCbCr. ~65k pixels ≈ 256×256.
+    if pixels < 32 * 32 * 64 {
+        return true;
+    }
+    // Mid-zone: activate when chroma subsampling will make the chroma body
+    // small enough that header overhead still dominates. ~262k pixels ≈ 512×512.
+    if pixels < 256 * 256 * 4 {
+        return is_ycbcr;
+    }
+    false
+}
+
 /// Source of quantization tables for encoding.
 ///
 /// Controls which base quantization tables and scaling formula are used:

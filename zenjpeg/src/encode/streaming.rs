@@ -308,6 +308,24 @@ impl StreamingEncoder {
         // Allocate row buffer for one strip
         let row_buffer = vec![0u8; bytes_per_row * strip_height];
 
+        // Resolve tiny-file mode to a concrete active/inactive flag. For XYB
+        // mode we currently leave the flag off: XYB always uses a shared
+        // single-pair Huffman layout already (see `write_scan_header_xyb` and
+        // `write_huffman_tables_xyb_optimized`), and the XYB stream is not
+        // the intended target of the heuristic.
+        let tiny_file_active = match builder.tiny_file_mode {
+            super::encoder_types::TinyFileMode::Off => false,
+            super::encoder_types::TinyFileMode::Force => !builder.use_xyb,
+            super::encoder_types::TinyFileMode::Auto => {
+                !builder.use_xyb
+                    && super::encoder_types::should_activate_tiny_file_mode(
+                        builder.width,
+                        builder.height,
+                        !builder.pixel_format.is_grayscale(),
+                    )
+            }
+        };
+
         // Create config for final JPEG output
         let config = ComputedConfig {
             width: builder.width,
@@ -336,6 +354,7 @@ impl StreamingEncoder {
             force_sof1: builder.force_sof1,
             separate_chroma_tables: builder.separate_chroma_tables,
             scan_strategy: builder.scan_strategy,
+            tiny_file_active,
         };
 
         #[allow(unused_mut)]

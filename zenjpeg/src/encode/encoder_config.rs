@@ -3,7 +3,8 @@
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
-    ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, XybSubsampling,
+    ProgressiveScanMode, Quality, QuantTableConfig, QuantTableSource, ScanStrategy, TinyFileMode,
+    XybSubsampling,
 };
 #[cfg(feature = "trellis")]
 use super::trellis::TrellisConfig;
@@ -70,6 +71,12 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+    /// Tiny-file optimizations for small images.
+    ///
+    /// See [`TinyFileMode`] for details. Defaults to [`TinyFileMode::Auto`],
+    /// which activates the optimizations (shared Huffman tables etc.) when
+    /// the image pixel count falls below the heuristic's threshold.
+    pub(crate) tiny_file_mode: TinyFileMode,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -223,6 +230,7 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            tiny_file_mode: TinyFileMode::Auto,
         }
     }
 
@@ -944,6 +952,39 @@ impl EncoderConfig {
     pub fn pre_blur(mut self, sigma: f32) -> Self {
         self.pre_blur = sigma;
         self
+    }
+
+    /// Control tiny-file optimizations for small images.
+    ///
+    /// Defaults to [`TinyFileMode::Auto`], which activates the optimizations
+    /// (shared Huffman tables etc.) when the image pixel count falls below
+    /// the heuristic's threshold. See [`TinyFileMode`] for details.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, TinyFileMode};
+    ///
+    /// // Default Auto is usually what you want.
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+    ///
+    /// // Disable entirely (standard JPEG, full markers, 4 Huffman tables).
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .tiny_file_mode(TinyFileMode::Off);
+    ///
+    /// // Force-on even for large images.
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .tiny_file_mode(TinyFileMode::Force);
+    /// ```
+    #[must_use]
+    pub fn tiny_file_mode(mut self, mode: TinyFileMode) -> Self {
+        self.tiny_file_mode = mode;
+        self
+    }
+
+    /// Get the configured tiny-file mode.
+    #[must_use]
+    pub fn get_tiny_file_mode(&self) -> TinyFileMode {
+        self.tiny_file_mode
     }
 
     // === Validation ===

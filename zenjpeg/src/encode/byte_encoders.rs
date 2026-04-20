@@ -150,6 +150,8 @@ impl BytesEncoder {
             super::encoder_types::ColorMode::Xyb { .. }
         ));
 
+        builder = builder.tiny_file_mode(config.tiny_file_mode);
+
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             // ParallelEncoding::Auto means enable parallel encoding
@@ -1012,6 +1014,8 @@ impl YCbCrPlanarEncoder {
             config.color_mode,
             super::encoder_types::ColorMode::Xyb { .. }
         ));
+
+        builder = builder.tiny_file_mode(config.tiny_file_mode);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {

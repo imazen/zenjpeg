@@ -8,6 +8,7 @@ use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
 use super::encoder_types::QuantTableSource;
 use super::encoder_types::ScanStrategy;
+use super::encoder_types::TinyFileMode;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
 use crate::encode::tuning::EncodingTables;
@@ -61,6 +62,8 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
     pub(crate) quant_source: QuantTableSource,
+    /// Tiny-file optimization mode (default: Auto).
+    pub(crate) tiny_file_mode: TinyFileMode,
 }
 
 impl StreamingEncoderBuilder {
@@ -93,6 +96,7 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "trellis")]
             trellis: None,
             quant_source: QuantTableSource::default(),
+            tiny_file_mode: TinyFileMode::default(),
         }
     }
 
@@ -297,6 +301,13 @@ impl StreamingEncoderBuilder {
     #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
     pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
+        self
+    }
+
+    /// Sets the tiny-file mode (default: [`TinyFileMode::Auto`]).
+    #[must_use]
+    pub(crate) fn tiny_file_mode(mut self, mode: TinyFileMode) -> Self {
+        self.tiny_file_mode = mode;
         self
     }
 

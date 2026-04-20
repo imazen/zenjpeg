@@ -6,6 +6,7 @@ use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
 use super::encoder_types::ScanStrategy;
+use super::encoder_types::TinyFileMode;
 use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================
@@ -156,6 +157,12 @@ pub struct ComputedConfig {
     /// `hybrid_config` instead.
     #[cfg(feature = "trellis")]
     pub trellis: Option<super::trellis::TrellisConfig>,
+
+    /// Whether tiny-file optimizations (shared Huffman tables etc.) are
+    /// active for this image. Resolved from [`TinyFileMode`] plus the image
+    /// size heuristic at `ComputedConfig` construction time. Checked by the
+    /// serializer and entropy paths.
+    pub(crate) tiny_file_active: bool,
 }
 
 /// Minimum MCUs per restart segment. Below this, restart overhead
@@ -296,6 +303,7 @@ impl Default for ComputedConfig {
             separate_chroma_tables: true,
             #[cfg(feature = "trellis")]
             trellis: None,
+            tiny_file_active: false,
         }
     }
 }
