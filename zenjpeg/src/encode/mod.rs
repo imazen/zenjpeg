@@ -65,6 +65,14 @@ pub mod wasm_simd;
 /// It smooths hard edges to reduce visible ringing artifacts, especially on white
 /// backgrounds. Enabled by default with no quality penalty for photographic content.
 pub mod deringing;
+
+/// Boundary-continuity refinement (Phase 2 of issue #91, opt-in).
+///
+/// Provides the D_b distortion math and IDCT helpers used by the
+/// non-trellis boundary-RD pass wired into
+/// [`strip::StripProcessor::quantize_prev_pending_imcu`]. Not in the hot
+/// path unless [`encoder_config::EncoderConfig::boundary_rd`] is true.
+pub(crate) mod boundary_rd;
 #[cfg(feature = "parallel")]
 mod fused_parallel_encode;
 #[cfg(feature = "parallel")]
