@@ -144,6 +144,16 @@ impl BytesEncoder {
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
 
+        // Boundary-RD (#91, off by default).
+        let (br_enable, br_alpha, br_thresh, br_shrink, br_retries, br_above) =
+            config.resolve_boundary_rd();
+        builder = builder.boundary_rd(br_enable);
+        builder = builder.boundary_rd_alpha(br_alpha);
+        builder = builder.boundary_rd_threshold(br_thresh);
+        builder = builder.boundary_rd_shrink(br_shrink);
+        builder = builder.boundary_rd_max_retries(br_retries);
+        builder = builder.boundary_rd_above(br_above);
+
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
             config.color_mode,
@@ -1008,6 +1018,16 @@ impl YCbCrPlanarEncoder {
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
+
+        // Boundary-RD (#91, off by default).
+        let (br_enable, br_alpha, br_thresh, br_shrink, br_retries, br_above) =
+            config.resolve_boundary_rd();
+        builder = builder.boundary_rd(br_enable);
+        builder = builder.boundary_rd_alpha(br_alpha);
+        builder = builder.boundary_rd_threshold(br_thresh);
+        builder = builder.boundary_rd_shrink(br_shrink);
+        builder = builder.boundary_rd_max_retries(br_retries);
+        builder = builder.boundary_rd_above(br_above);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
