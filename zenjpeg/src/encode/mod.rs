@@ -135,8 +135,8 @@ pub use blocks::HuffmanSymbolFrequencies;
 pub(crate) use blocks::build_nonzero_mask;
 #[allow(unused_imports)] // Public API re-exports
 pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
-#[allow(unused_imports)] // Public API re-export
-pub use encoder_config::EncoderConfig;
+#[allow(unused_imports)] // Public API re-exports
+pub use encoder_config::{BoundaryRd, BoundaryRdConfig, ContentClass, EncoderConfig};
 #[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ExpertConfig;
