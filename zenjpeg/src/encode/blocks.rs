@@ -11,7 +11,7 @@ use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanEncodeTable;
-use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
+use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 use crate::types::Subsampling;
 #[cfg(target_arch = "x86_64")]
 use archmage::SimdToken;
@@ -40,6 +40,21 @@ impl HuffmanSymbolFrequencies {
         self.ac_luma.add(&other.ac_luma);
         self.dc_chroma.add(&other.dc_chroma);
         self.ac_chroma.add(&other.ac_chroma);
+    }
+
+    /// Returns a pair of (merged DC, merged AC) optimized tables that collapse
+    /// luma and chroma frequencies into a single DC/AC pair. Used by
+    /// [`TinyFileMode`] to emit a two-table DHT that all components in SOS
+    /// reference via `Td=0, Ta=0`.
+    pub(crate) fn generate_shared_tables(&self) -> Result<(OptimizedTable, OptimizedTable)> {
+        use crate::types::HuffmanMethod;
+        let mut merged_dc = self.dc_luma.clone();
+        merged_dc.add(&self.dc_chroma);
+        let mut merged_ac = self.ac_luma.clone();
+        merged_ac.add(&self.ac_chroma);
+        let dc = merged_dc.generate_table_with_method(HuffmanMethod::JpegliCreateTree)?;
+        let ac = merged_ac.generate_table_with_method(HuffmanMethod::JpegliCreateTree)?;
+        Ok((dc, ac))
     }
 
     /// Generates a `HuffmanTableSet` from the aggregated frequencies.
@@ -274,6 +289,50 @@ impl ComputedConfig {
     ) -> Result<(HuffmanTableSet, Box<HuffmanSymbolFrequencies>)> {
         let counts = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
         let tables = counts.generate_tables()?;
+        Ok((tables, Box::new(counts)))
+    }
+
+    /// Build a [`HuffmanTableSet`] whose luma and chroma slots point at the
+    /// **same** merged DC and AC tables. Used when [`TinyFileMode`] is active
+    /// so that the emitted bitstream is identical regardless of which JPEG
+    /// slot (`0` or `1`) the entropy encoder consults — only the DHT and SOS
+    /// markers need to change to reflect the single-pair layout.
+    pub(crate) fn build_shared_tables(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<HuffmanTableSet> {
+        let counts = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
+        let (dc, ac) = counts.generate_shared_tables()?;
+        Ok(HuffmanTableSet {
+            dc_luma: dc.clone(),
+            ac_luma: ac.clone(),
+            dc_chroma: dc,
+            ac_chroma: ac,
+        })
+    }
+
+    /// Like [`Self::build_shared_tables`], but also returns the raw
+    /// per-channel frequencies so callers that need them (e.g. trained-table
+    /// aggregation pipelines) can still get at them.
+    #[allow(dead_code)]
+    pub(crate) fn build_shared_tables_with_counts(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<(HuffmanTableSet, Box<HuffmanSymbolFrequencies>)> {
+        let counts = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
+        let (dc, ac) = counts.generate_shared_tables()?;
+        let tables = HuffmanTableSet {
+            dc_luma: dc.clone(),
+            ac_luma: ac.clone(),
+            dc_chroma: dc,
+            ac_chroma: ac,
+        };
         Ok((tables, Box::new(counts)))
     }
 

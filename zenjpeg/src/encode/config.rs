@@ -6,7 +6,6 @@ use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
 use super::encoder_types::ScanStrategy;
-use super::encoder_types::TinyFileMode;
 use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================

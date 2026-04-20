@@ -308,21 +308,36 @@ impl StreamingEncoder {
         // Allocate row buffer for one strip
         let row_buffer = vec![0u8; bytes_per_row * strip_height];
 
-        // Resolve tiny-file mode to a concrete active/inactive flag. For XYB
-        // mode we currently leave the flag off: XYB always uses a shared
-        // single-pair Huffman layout already (see `write_scan_header_xyb` and
-        // `write_huffman_tables_xyb_optimized`), and the XYB stream is not
-        // the intended target of the heuristic.
-        let tiny_file_active = match builder.tiny_file_mode {
-            super::encoder_types::TinyFileMode::Off => false,
-            super::encoder_types::TinyFileMode::Force => !builder.use_xyb,
-            super::encoder_types::TinyFileMode::Auto => {
-                !builder.use_xyb
-                    && super::encoder_types::should_activate_tiny_file_mode(
+        // Resolve tiny-file mode to a concrete active/inactive flag.
+        //
+        // Caveats applied here:
+        //
+        // - XYB mode already uses a shared single-pair Huffman layout (see
+        //   `write_scan_header_xyb` and `write_huffman_tables_xyb_optimized`)
+        //   and is not the heuristic's intended target, so tiny-file mode is
+        //   a no-op there.
+        // - The shared-table path is currently implemented for the baseline
+        //   (sequential) writer only. Progressive mode has its own per-scan
+        //   AC slot cycling that would need separate work, so we leave it
+        //   off there for now.
+        // - Optimized Huffman tables must be requested; the shared-table
+        //   path builds tables from symbol frequencies.
+        let is_sequential = !matches!(builder.mode, crate::types::JpegMode::Progressive);
+        let optimize_huffman = matches!(builder.huffman, HuffmanStrategy::Optimize);
+        let tiny_file_eligible = !builder.use_xyb && is_sequential && optimize_huffman;
+        let tiny_file_active = if !tiny_file_eligible {
+            false
+        } else {
+            match builder.tiny_file_mode {
+                super::encoder_types::TinyFileMode::Off => false,
+                super::encoder_types::TinyFileMode::Force => true,
+                super::encoder_types::TinyFileMode::Auto => {
+                    super::encoder_types::should_activate_tiny_file_mode(
                         builder.width,
                         builder.height,
                         !builder.pixel_format.is_grayscale(),
                     )
+                }
             }
         };
 
@@ -1451,6 +1466,43 @@ impl StreamingEncoder {
         config.write_frame_header_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            if config.tiny_file_active {
+                // Tiny-file path: merge luma+chroma frequencies, emit a
+                // single DC+AC DHT pair, and write SOS with `Td=0, Ta=0` for
+                // every component. The entropy encoder still indexes tables
+                // by channel (slot 0 for luma, slot 1 for chroma), but both
+                // slots point at the same merged tables — the bitstream is
+                // therefore unchanged relative to a hypothetical "slot 0
+                // everywhere" variant, and the file shrinks by exactly the
+                // two table headers (~210 bytes).
+                let tables = config.build_shared_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+
+                config.write_huffman_tables_shared(
+                    output,
+                    &tables.dc_luma,
+                    &tables.ac_luma,
+                )?;
+
+                if config.restart_interval > 0 {
+                    config.write_restart_interval(output)?;
+                }
+                config.write_scan_header_shared(output)?;
+
+                let scan_data = config.encode_with_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                    Some(&tables),
+                )?;
+                return Ok((scan_data, None));
+            }
+
             let (tables, frequencies) = if collect_frequencies {
                 let (t, f) = config.build_optimized_tables_with_counts(
                     &strip_output.y_blocks,

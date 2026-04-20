@@ -404,6 +404,78 @@ impl ComputedConfig {
         Ok(())
     }
 
+    /// Writes a single DC+AC Huffman table pair (both at slot 0), for use
+    /// when [`TinyFileMode`](crate::encode::encoder_types::TinyFileMode) is
+    /// active. Saves ~210 bytes vs the default four-table layout.
+    ///
+    /// The caller is expected to emit SOS with `Td=0, Ta=0` for every
+    /// component (see [`write_scan_header_shared`](Self::write_scan_header_shared)).
+    pub(crate) fn write_huffman_tables_shared(
+        &self,
+        output: &mut Vec<u8>,
+        dc_table: &OptimizedTable,
+        ac_table: &OptimizedTable,
+    ) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_DHT);
+
+        // 2 (length field) + 2 tables × (1 class/id + 16 bits + values)
+        let total_len =
+            2 + (1 + 16 + dc_table.values.len()) + (1 + 16 + ac_table.values.len());
+        output.push((total_len >> 8) as u8);
+        output.push(total_len as u8);
+
+        // DC table (class 0, id 0)
+        output.push(0x00);
+        output.extend_from_slice(&dc_table.bits);
+        output.extend_from_slice(&dc_table.values);
+
+        // AC table (class 1, id 0)
+        output.push(0x10);
+        output.extend_from_slice(&ac_table.bits);
+        output.extend_from_slice(&ac_table.values);
+
+        Ok(())
+    }
+
+    /// Writes a baseline SOS header where every component points at
+    /// `Td=0, Ta=0` — the shared-table SOS used by
+    /// [`TinyFileMode`](crate::encode::encoder_types::TinyFileMode).
+    pub(crate) fn write_scan_header_shared(&self, output: &mut Vec<u8>) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOS);
+
+        let num_components = if self.pixel_format.is_grayscale() {
+            1u8
+        } else {
+            3u8
+        };
+
+        let length = 6u16 + num_components as u16 * 2;
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(num_components);
+
+        if num_components == 1 {
+            output.push(1); // Component selector
+            output.push(0x00); // DC=0, AC=0
+        } else {
+            output.push(1); // Y
+            output.push(0x00);
+            output.push(2); // Cb
+            output.push(0x00);
+            output.push(3); // Cr
+            output.push(0x00);
+        }
+
+        output.push(0x00); // Ss
+        output.push(0x3F); // Se
+        output.push(0x00); // Ah/Al
+
+        Ok(())
+    }
+
     /// Writes optimized Huffman tables.
     ///
     /// This is used when `optimize_huffman` is enabled to write the
