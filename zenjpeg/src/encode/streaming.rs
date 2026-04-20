@@ -332,10 +332,14 @@ impl StreamingEncoder {
                 super::encoder_types::TinyFileMode::Off => false,
                 super::encoder_types::TinyFileMode::Force => true,
                 super::encoder_types::TinyFileMode::Auto => {
-                    super::encoder_types::should_activate_tiny_file_mode(
+                    // Use the subsampling-aware heuristic so we pick tighter
+                    // thresholds for 4:4:4 (crossover ~64²) versus 4:2:0
+                    // (crossover ~128²).
+                    super::encoder_types::should_activate_tiny_file_mode_for_subsampling(
                         builder.width,
                         builder.height,
                         !builder.pixel_format.is_grayscale(),
+                        builder.subsampling,
                     )
                 }
             }

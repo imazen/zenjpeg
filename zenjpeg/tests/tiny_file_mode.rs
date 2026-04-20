@@ -171,7 +171,8 @@ fn auto_matches_force_below_threshold() {
 
 #[test]
 fn auto_matches_off_above_threshold() {
-    // 768×768 is well above both heuristic zones (~590k pixels vs 262k mid-zone cap).
+    // 768×768 is well above every Auto threshold (128² for subsampled, 64²
+    // for 4:4:4).
     assert!(!should_activate_tiny_file_mode(768, 768, true));
 
     let img = solid_rgb_image(768, 768);
@@ -184,6 +185,61 @@ fn auto_matches_off_above_threshold() {
     assert_eq!(
         jpeg_auto, jpeg_off,
         "Auto must match Off at 768×768 (above both activation zones)"
+    );
+}
+
+#[test]
+fn auto_follows_subsampling_threshold_at_128() {
+    // At exactly 128×128, 4:2:0 Auto should activate (<=128² rule) but 4:4:4
+    // Auto should NOT activate (only <=64² rule).
+    let img = solid_rgb_image(128, 128);
+
+    let c_auto_420 = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Auto);
+    let c_force_420 = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Force);
+    let c_off_420 = baseline_ycbcr(85).tiny_file_mode(TinyFileMode::Off);
+
+    let c_auto_444 = baseline_ycbcr_444(85).tiny_file_mode(TinyFileMode::Auto);
+    let c_off_444 = baseline_ycbcr_444(85).tiny_file_mode(TinyFileMode::Off);
+
+    let j_auto_420 = encode_rgb(128, 128, &img.pixels, &c_auto_420).unwrap();
+    let j_force_420 = encode_rgb(128, 128, &img.pixels, &c_force_420).unwrap();
+    let j_off_420 = encode_rgb(128, 128, &img.pixels, &c_off_420).unwrap();
+    assert_eq!(
+        j_auto_420, j_force_420,
+        "4:2:0 Auto must activate at exactly 128×128 (threshold inclusive)"
+    );
+    assert_ne!(j_auto_420, j_off_420);
+
+    let j_auto_444 = encode_rgb(128, 128, &img.pixels, &c_auto_444).unwrap();
+    let j_off_444 = encode_rgb(128, 128, &img.pixels, &c_off_444).unwrap();
+    assert_eq!(
+        j_auto_444, j_off_444,
+        "4:4:4 Auto must NOT activate at 128×128 (above 64² threshold)"
+    );
+}
+
+#[test]
+fn auto_activates_for_grayscale_at_any_size() {
+    // Grayscale: Force always wins (fixed ~208 B saving), so Auto always
+    // activates regardless of pixel count.
+    let pixels_512 = solid_gray_image(512, 512);
+    let c_auto = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Auto);
+    let c_force = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Force);
+    let c_off = baseline_grayscale(85).tiny_file_mode(TinyFileMode::Off);
+
+    let j_auto = encode_gray(512, 512, &pixels_512, &c_auto).unwrap();
+    let j_force = encode_gray(512, 512, &pixels_512, &c_force).unwrap();
+    let j_off = encode_gray(512, 512, &pixels_512, &c_off).unwrap();
+
+    assert_eq!(
+        j_auto, j_force,
+        "grayscale Auto must activate at 512×512"
+    );
+    assert!(
+        j_auto.len() < j_off.len(),
+        "grayscale shared Huffman should shrink output at 512×512: auto={} off={}",
+        j_auto.len(),
+        j_off.len()
     );
 }
 

@@ -153,7 +153,9 @@ pub use crate::encode::encoder_types::{
     PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, TinyFileMode, XybSubsampling,
     YCbCrPlanes,
 };
-pub use crate::encode::encoder_types::should_activate_tiny_file_mode;
+pub use crate::encode::encoder_types::{
+    should_activate_tiny_file_mode, should_activate_tiny_file_mode_for_subsampling,
+};
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::request::EncodeRequest;
 pub use crate::foundation::alloc::EncodeStats;

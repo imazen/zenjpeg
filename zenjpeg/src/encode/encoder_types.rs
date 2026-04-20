@@ -1222,9 +1222,15 @@ pub enum ScanStrategy {
 /// # Variants
 ///
 /// - `Auto` (default): enable tiny-file optimizations when the image size
-///   heuristic (see [`should_activate_tiny_file_mode`]) indicates a likely win.
+///   heuristic (see [`should_activate_tiny_file_mode_for_subsampling`])
+///   indicates a likely win.
 /// - `Off`: always use the standard four-table Huffman layout.
 /// - `Force`: always apply tiny-file optimizations regardless of image size.
+///
+/// `Auto` currently applies only to baseline-sequential YCbCr/grayscale
+/// output. Progressive mode and XYB paths are unaffected — XYB already
+/// uses a shared-pair Huffman layout, and progressive's per-scan AC slot
+/// cycling would need separate work.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TinyFileMode {
@@ -1242,24 +1248,66 @@ pub enum TinyFileMode {
 /// Heuristic for [`TinyFileMode::Auto`]: returns `true` when tiny-file
 /// optimizations are likely to reduce file size for the given image.
 ///
-/// Thresholds are calibrated empirically against CID22-train at q=75; see
-/// the `tiny_file_mode` integration tests and the benchmark in
+/// Thresholds are calibrated empirically against CID22-train at q=75 and
+/// q=90. See the `tiny_file_mode` integration tests and the benchmark in
 /// `examples/tiny_file_crossover.rs` for the underlying data.
+///
+/// `is_color` distinguishes color (RGB/YCbCr) from grayscale. For the
+/// per-subsampling threshold used by the encoder internally, see
+/// [`should_activate_tiny_file_mode_for_subsampling`].
 #[inline]
 #[must_use]
-pub fn should_activate_tiny_file_mode(width: u32, height: u32, is_ycbcr: bool) -> bool {
+pub fn should_activate_tiny_file_mode(width: u32, height: u32, is_color: bool) -> bool {
+    // Conservative subsampling-agnostic variant. The encoder internally uses
+    // the subsampling-aware variant (see `should_activate_tiny_file_mode_for_subsampling`).
+    // This variant assumes 4:4:4 for color (worst case), which matches the
+    // tightest threshold. Grayscale always benefits.
+    should_activate_tiny_file_mode_for_subsampling(
+        width,
+        height,
+        is_color,
+        crate::types::Subsampling::S444,
+    )
+}
+
+/// Subsampling-aware variant of [`should_activate_tiny_file_mode`].
+///
+/// - **Grayscale**: always activates. The shared-Huffman path drops two
+///   unused chroma table headers (~208 B fixed saving), never costs bits.
+/// - **4:2:0 / 4:4:0 / 4:2:2 color**: activates below ~128×128. Chroma is
+///   subsampled, so the merged DC/AC tables retain most of their luma
+///   efficiency; the header saving beats the coding overhead up to
+///   ~16-30k pixels.
+/// - **4:4:4 color**: activates below ~64×64 only. Chroma planes are
+///   full-resolution here, so merged tables lose efficiency much faster.
+///
+/// Thresholds come from CID22-train measurements at q=75 and q=90 (see
+/// `examples/tiny_file_crossover.rs`). At the crossover points the average
+/// delta is within ±0.5% of the four-table baseline in either direction.
+#[inline]
+#[must_use]
+pub fn should_activate_tiny_file_mode_for_subsampling(
+    width: u32,
+    height: u32,
+    is_color: bool,
+    subsampling: crate::types::Subsampling,
+) -> bool {
     let pixels = (width as u64) * (height as u64);
-    // Well below the crossover: tiny-file optimizations nearly always win on
-    // grayscale, RGB, and YCbCr. ~65k pixels ≈ 256×256.
-    if pixels < 32 * 32 * 64 {
+    if !is_color {
+        // Grayscale: always a win (fixed ~208 B saving).
         return true;
     }
-    // Mid-zone: activate when chroma subsampling will make the chroma body
-    // small enough that header overhead still dominates. ~262k pixels ≈ 512×512.
-    if pixels < 256 * 256 * 4 {
-        return is_ycbcr;
+    use crate::types::Subsampling::*;
+    match subsampling {
+        // 4:4:4: full-resolution chroma. Shared-Huffman starts losing above
+        // 64×64 (+0.16% at exactly 64² per CID22 q=75, -1.5% at 96²). Keep
+        // the threshold at 64×64 inclusive.
+        S444 => pixels <= 64 * 64,
+        // Subsampled chroma (4:2:0 most common, also 4:2:2 and 4:4:0):
+        // shared tables retain efficiency up to ~128×128 (+0.69% at 128² at
+        // q=75, neutral at 192²). Threshold 128×128 inclusive.
+        S420 | S422 | S440 => pixels <= 128 * 128,
     }
-    false
 }
 
 /// Source of quantization tables for encoding.
