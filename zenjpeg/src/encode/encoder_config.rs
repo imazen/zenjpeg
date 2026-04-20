@@ -70,6 +70,30 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+
+    /// Enable boundary-continuity D term in the trellis search
+    /// (Phase 3 of issue #91).
+    ///
+    /// When true **and** trellis quantization is active, the trellis
+    /// rate-distortion cost is augmented with β × D_boundary where
+    /// D_boundary penalizes 8×8 block-seam discontinuities against
+    /// the left neighbor. This is orthogonal to
+    /// `boundary_rd` (Phase 2) — the non-trellis boundary-RD
+    /// refinement — so the two can be combined or toggled
+    /// independently.
+    ///
+    /// Off by default. Requires `trellis` feature and an active
+    /// trellis / hybrid configuration (no-op otherwise).
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_rd: bool,
+    /// Weight (β) applied to D_boundary inside the trellis RD cost.
+    /// Only consulted when `trellis_boundary_rd` is true.
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_beta: f32,
+    /// Seam-jump weight (α) in the D_b formula. Default 1.0.
+    /// Only consulted when `trellis_boundary_rd` is true.
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_alpha: f32,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -223,6 +247,12 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_rd: false,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_beta: 1.0,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_alpha: 1.0,
         }
     }
 
@@ -943,6 +973,62 @@ impl EncoderConfig {
     #[must_use]
     pub fn pre_blur(mut self, sigma: f32) -> Self {
         self.pre_blur = sigma;
+        self
+    }
+
+    /// Enable boundary-continuity D term inside the trellis rate-distortion
+    /// search (Phase 3 of issue #91).
+    ///
+    /// When enabled **and** trellis is active (via
+    /// [`trellis`](Self::trellis), [`expert`](Self::expert), or
+    /// [`auto_optimize`](Self::auto_optimize) / `OptimizationPreset::*`),
+    /// the encoder augments each block's trellis distortion with
+    /// `β · D_boundary`, where `D_boundary` penalizes discontinuity
+    /// between the reconstructed left-edge column of the current block
+    /// and the committed right-edge column of its left neighbor. This
+    /// reduces visible 8×8 block-seam artifacts on grids, line-art, and
+    /// text without requiring a post-decoder deblock filter.
+    ///
+    /// Off by default. **No-op** when trellis is not active — the flag
+    /// is orthogonal to [`boundary_rd`](Self::boundary_rd) (Phase 2)
+    /// which covers the non-trellis path.
+    ///
+    /// Tune β via [`trellis_boundary_beta`](Self::trellis_boundary_beta)
+    /// and α via
+    /// [`trellis_boundary_alpha`](Self::trellis_boundary_alpha).
+    #[cfg(feature = "trellis")]
+    #[must_use]
+    pub fn trellis_boundary_rd(mut self, enable: bool) -> Self {
+        self.trellis_boundary_rd = enable;
+        self
+    }
+
+    /// Set the β weight for the boundary-continuity D term in the trellis
+    /// RD cost.
+    ///
+    /// Default: 1.0. Higher values weight boundary continuity more
+    /// heavily (closer to "match the left neighbor") at the potential
+    /// cost of a small increase in rate and per-pixel distortion. Only
+    /// consulted when [`trellis_boundary_rd`](Self::trellis_boundary_rd)
+    /// is enabled.
+    #[cfg(feature = "trellis")]
+    #[must_use]
+    pub fn trellis_boundary_beta(mut self, beta: f32) -> Self {
+        self.trellis_boundary_beta = beta;
+        self
+    }
+
+    /// Set the seam-jump weight α in the boundary D_b formula.
+    ///
+    /// Default: 1.0. Larger α puts more weight on the seam-gradient term
+    /// (how much the reconstruction preserves the original cross-seam
+    /// gradient) relative to the per-pixel edge distortion. Only
+    /// consulted when [`trellis_boundary_rd`](Self::trellis_boundary_rd)
+    /// is enabled.
+    #[cfg(feature = "trellis")]
+    #[must_use]
+    pub fn trellis_boundary_alpha(mut self, alpha: f32) -> Self {
+        self.trellis_boundary_alpha = alpha;
         self
     }
 

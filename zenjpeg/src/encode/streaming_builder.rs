@@ -61,6 +61,15 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
     /// Only used when `encoding_tables` is `None` (no custom tables).
     pub(crate) quant_source: QuantTableSource,
+    /// Enable trellis boundary-continuity D term (Phase 3 of #91). Off by default.
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_rd: bool,
+    /// β weight for the boundary-continuity D term inside trellis RD cost.
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_beta: f32,
+    /// α (seam-jump weight) for the boundary D_b formula.
+    #[cfg(feature = "trellis")]
+    pub(crate) trellis_boundary_alpha: f32,
 }
 
 impl StreamingEncoderBuilder {
@@ -93,6 +102,12 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "trellis")]
             trellis: None,
             quant_source: QuantTableSource::default(),
+            #[cfg(feature = "trellis")]
+            trellis_boundary_rd: false,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_beta: 1.0,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_alpha: 1.0,
         }
     }
 
