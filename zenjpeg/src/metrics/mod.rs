@@ -7,6 +7,10 @@
 
 pub mod bbs;
 pub mod rd;
+pub mod sweep;
 
 pub use bbs::{BbsResult, bbs_planar_u8, bbs_rgb8};
 pub use rd::{RdComparison, RdCurve, RdPoint, bd_rate, closest_point_distance};
+pub use sweep::{
+    CorpusImage, ImageClass, MetricKind, PointResult, SampleOutput, SweepResult, run_sweep,
+};
