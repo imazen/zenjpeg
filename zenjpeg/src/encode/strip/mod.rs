@@ -1347,7 +1347,6 @@ impl StripProcessor {
     /// fast SIMD quantization.
     fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
         let buffer_idx = self.pending.prev_idx();
-        let quant = &self.quant;
 
         // Check if we have trellis context for R-D optimization
         #[cfg(feature = "trellis")]
@@ -1363,56 +1362,69 @@ impl StripProcessor {
         #[cfg(not(feature = "trellis"))]
         let store_dc_raw = false;
 
-        // Quantize Y blocks (vectors pre-allocated at construction)
-        for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
-            // Use get() with fallback to avoid branch on common path
-            let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+        // Boundary-RD (Phase 2 of #91, opt-in) only fires for the non-trellis
+        // path — the trellis path will get its own D_b augmentation in Phase 3.
+        let boundary_rd_enabled = self.boundary_rd && !use_trellis;
 
-            // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
-            if store_dc_raw {
-                let row0: [f32; 8] = dct.rows[0];
-                let dc_raw = (row0[0] * 64.0).round() as i32;
-                self.y_dc_raw.push(dc_raw);
-            }
+        if boundary_rd_enabled {
+            // Slower path: refinement after each luma block. The default path
+            // (boundary_rd_enabled == false) still hits the fast loop below
+            // with zero overhead.
+            self.quantize_y_with_boundary_rd(buffer_idx, aq_strengths, store_dc_raw);
+        } else {
+            let quant = &self.quant;
+            // Default fast path — unchanged from before boundary-RD was added.
+            for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
+                // Use get() with fallback to avoid branch on common path
+                let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
-            #[cfg(feature = "trellis")]
-            let zigzag = if use_trellis {
-                // Trellis path: convert to array, quantize with R-D, apply zigzag
-                let dct_arr = dct.to_array();
-                let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                    &dct_arr,
-                    &quant.y_quant.values,
-                    aq_strength,
-                    1.0,  // dampen
-                    true, // is_luma
-                );
-                // Apply zigzag reordering
-                let mut result = [0i16; DCT_BLOCK_SIZE];
-                for j in 0..DCT_BLOCK_SIZE {
-                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+                if store_dc_raw {
+                    let row0: [f32; 8] = dct.rows[0];
+                    let dc_raw = (row0[0] * 64.0).round() as i32;
+                    self.y_dc_raw.push(dc_raw);
                 }
-                result
-            } else {
-                // Fast SIMD path: fused quantization + zigzag reorder
-                quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+
+                #[cfg(feature = "trellis")]
+                let zigzag = if use_trellis {
+                    // Trellis path: convert to array, quantize with R-D, apply zigzag
+                    let dct_arr = dct.to_array();
+                    let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                        &dct_arr,
+                        &quant.y_quant.values,
+                        aq_strength,
+                        1.0,  // dampen
+                        true, // is_luma
+                    );
+                    // Apply zigzag reordering
+                    let mut result = [0i16; DCT_BLOCK_SIZE];
+                    for j in 0..DCT_BLOCK_SIZE {
+                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                    }
+                    result
+                } else {
+                    // Fast SIMD path: fused quantization + zigzag reorder
+                    quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                        dct,
+                        &quant.y_zero_bias_simd,
+                        aq_strength,
+                    )
+                };
+                #[cfg(not(feature = "trellis"))]
+                let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                     dct,
                     &quant.y_zero_bias_simd,
                     aq_strength,
-                )
-            };
-            #[cfg(not(feature = "trellis"))]
-            let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
-                dct,
-                &quant.y_zero_bias_simd,
-                aq_strength,
-            );
+                );
 
-            self.y_blocks.push(zigzag);
-            self.all_aq_strengths.push(aq_strength);
+                self.y_blocks.push(zigzag);
+                self.all_aq_strengths.push(aq_strength);
+            }
         }
 
         // Quantize Cb/Cr blocks
         {
+            let quant = &self.quant;
             let y_blocks_w = self.layout.y_blocks_w;
             let y_blocks_h = self.layout.y_blocks_h;
             let c_blocks_w = self.layout.c_blocks_w;
@@ -1473,6 +1485,151 @@ impl StripProcessor {
                 y_blocks_w,
                 y_blocks_h,
             );
+        }
+    }
+
+    /// Non-trellis Y-plane quantize with boundary-continuity refinement
+    /// (Phase 2 of #91, opt-in via
+    /// [`Self::set_boundary_rd`]). This is the slow-path counterpart to
+    /// the inline loop in [`Self::quantize_prev_pending_imcu`]; only
+    /// invoked when `boundary_rd == true` and trellis is NOT in use.
+    ///
+    /// Behavior contract: when `boundary_rd_threshold <= 0.0`, the
+    /// refinement never fires and output matches the default path —
+    /// useful for debugging and A/B comparison.
+    fn quantize_y_with_boundary_rd(
+        &mut self,
+        buffer_idx: usize,
+        aq_strengths: &[f32],
+        store_dc_raw: bool,
+    ) {
+        use super::boundary_rd as br;
+
+        let blocks_w = self.layout.blocks_w;
+        let quant = &self.quant;
+        let alpha = self.boundary_rd_alpha;
+        let threshold = self.boundary_rd_threshold;
+        // Shrink factor on retry; Phase 5 will tune. Kept as a local constant
+        // to avoid adding a public knob we won't use until tuning.
+        const SHRINK_FACTOR: f32 = 0.7;
+        const MAX_RETRIES: u8 = 1;
+
+        // Natural-order quant values. `QuantTable.values` is natural-row-major
+        // despite its outdated docstring — verified by inspecting the DQT
+        // serializer which reads `values[JPEG_NATURAL_ORDER[i]]`.
+        let quant_natural = &quant.y_quant.values;
+
+        // Per-block-row cache of the committed right-edge column for the
+        // last-written block in the current row. Reset at each row boundary.
+        // Size by `blocks_w`; reuse the pre-allocated Vec to stay
+        // allocation-free on subsequent iMCUs.
+        if self.boundary_rd_left_edges.len() < blocks_w {
+            self.boundary_rd_left_edges.resize(blocks_w, None);
+        }
+
+        let pending_len = self.pending.y[buffer_idx].len();
+        for i in 0..pending_len {
+            // Copy the DCT (small: 256 bytes) so we can borrow self mutably
+            // below to push into y_blocks / y_dc_raw without aliasing.
+            let dct = self.pending.y[buffer_idx][i];
+            let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+
+            if store_dc_raw {
+                let dc_raw = (dct.rows[0][0] * 64.0).round() as i32;
+                self.y_dc_raw.push(dc_raw);
+            }
+
+            let bx = i % blocks_w;
+            if bx == 0 {
+                // Start of a new row — there is no left neighbor in this row.
+                // Reset the entire cache lazily by marking the first slot.
+                // (Later slots are either refreshed or never consulted, since
+                // we only read at index `bx - 1`.)
+                for slot in self.boundary_rd_left_edges.iter_mut().take(blocks_w) {
+                    *slot = None;
+                }
+            }
+
+            // Compute reference block (IDCT of unquantized f32 DCT).
+            let ref_block = br::idct_reference_block(&dct);
+            let orig_left = br::left_edge_col(&ref_block);
+            let orig_right = br::right_edge_col(&ref_block);
+
+            // Left neighbor's right-edge column (committed).
+            let rec_left_right_opt = if bx > 0 {
+                self.boundary_rd_left_edges[bx - 1].as_ref().copied()
+            } else {
+                None
+            };
+
+            // Left neighbor's original right-edge column — we need this for
+            // D_b. Since we didn't cache it explicitly, we compute it from
+            // the pending block at i-1 if available in-row.
+            let orig_left_right_opt = if bx > 0 {
+                // Pending buffer still holds unquantized DCT for the left
+                // block; recompute its reference right edge on demand.
+                let prev_dct = self.pending.y[buffer_idx][i - 1];
+                let prev_ref = br::idct_reference_block(&prev_dct);
+                Some(br::right_edge_col(&prev_ref))
+            } else {
+                None
+            };
+
+            // --- Candidate 1: default AQ strength ---
+            let zigzag_default = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                &dct,
+                &quant.y_zero_bias_simd,
+                aq_strength,
+            );
+            let rec_default = br::idct_quantized_block(&zigzag_default, quant_natural);
+            let rec_left_default = br::left_edge_col(&rec_default);
+            let db_default = br::boundary_distortion(
+                &rec_left_default,
+                rec_left_right_opt.as_ref(),
+                &orig_left,
+                orig_left_right_opt.as_ref(),
+                alpha,
+            );
+
+            let ac_energy = br::ac_dct_energy(&dct);
+            let trigger = threshold > 0.0 && db_default > threshold * ac_energy;
+
+            let mut best_zigzag = zigzag_default;
+            let mut best_rec = rec_default;
+            let mut best_db = db_default;
+
+            if trigger {
+                let mut aq = aq_strength;
+                for _ in 0..MAX_RETRIES {
+                    aq *= SHRINK_FACTOR;
+                    let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                        &dct,
+                        &quant.y_zero_bias_simd,
+                        aq,
+                    );
+                    let rec = br::idct_quantized_block(&z, quant_natural);
+                    let rec_left = br::left_edge_col(&rec);
+                    let db = br::boundary_distortion(
+                        &rec_left,
+                        rec_left_right_opt.as_ref(),
+                        &orig_left,
+                        orig_left_right_opt.as_ref(),
+                        alpha,
+                    );
+                    if db < best_db {
+                        best_db = db;
+                        best_zigzag = z;
+                        best_rec = rec;
+                    }
+                }
+            }
+
+            // Cache THIS block's committed right-edge column for the next
+            // block in the row.
+            self.boundary_rd_left_edges[bx] = Some(br::right_edge_col(&best_rec));
+
+            self.y_blocks.push(best_zigzag);
+            self.all_aq_strengths.push(aq_strength);
         }
     }
 
