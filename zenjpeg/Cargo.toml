@@ -299,6 +299,20 @@ required-features = ["__test-utils"]
 name = "low_q_report"
 required-features = ["__test-utils"]
 
+# Boundary-RD examples (#91).
+# All three access the pub(crate) metrics module via the __test-utils gate.
+[[example]]
+name = "bbs_measure"
+required-features = ["__test-utils"]
+
+[[example]]
+name = "rd_compare"
+required-features = ["__test-utils", "trellis", "decoder"]
+
+[[example]]
+name = "boundary_rd_sweep"
+required-features = ["__test-utils", "trellis", "decoder"]
+
 # Examples requiring trellis feature
 [[example]]
 name = "hybrid_auto_detect"
