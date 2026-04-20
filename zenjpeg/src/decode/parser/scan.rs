@@ -550,9 +550,19 @@ impl<'a> JpegParser<'a> {
         if self.num_components != 1 && self.num_components != 3 {
             return false;
         }
-        // Grayscale: always streamable (no chroma subsampling to check)
+        // Grayscale: streamable only when sampling factors are 1x1.
+        //
+        // JPEG allows single-component frames with Hi/Vi > 1 (e.g. h_samp=2,
+        // v_samp=2 on a grayscale file). Per ISO/IEC 10918-1 A.2.3, a
+        // non-interleaved scan (Ns=1) has MCU = 1 data unit regardless of
+        // sampling factors — but our streaming buffer sizing assumes the
+        // component fills a max_h_samp × max_v_samp MCU, which is wrong
+        // when max_h_samp/max_v_samp are clamped to 1 for grayscale. Fall
+        // back to the coefficient-buffering path for these files.
         if self.num_components == 1 {
-            return true;
+            let h = self.components[0].h_samp_factor;
+            let v = self.components[0].v_samp_factor;
+            return h == 1 && v == 1;
         }
         // Only accept standard sampling factor combinations
         {

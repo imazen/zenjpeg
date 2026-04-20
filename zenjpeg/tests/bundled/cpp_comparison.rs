@@ -8,7 +8,7 @@ use crate::test_utils::{distance_rms, generate_gradient_d, get_test_data_path, r
 
 use zenjpeg::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, TinyFileMode},
 };
 
 fn encode_rgb(
@@ -445,7 +445,13 @@ fn count_dht_tables(jpeg: &[u8]) -> (usize, usize) {
 #[test]
 fn test_huffman_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
+    // Disable TinyFileMode so the encoder emits the full four-table DHT
+    // layout regardless of image size. This test verifies the default
+    // four-table layout is well-formed; a separate test (in
+    // tests/tiny_file_mode.rs) covers the shared-Huffman path.
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .tiny_file_mode(TinyFileMode::Off);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     let (dc_count, ac_count) = count_dht_tables(&jpeg);

@@ -118,6 +118,52 @@ fn reformat_rgb_output(
     }
 }
 
+/// Expands a 1bpp grayscale buffer into the requested RGB-family `PixelFormat`.
+///
+/// Used when the streaming decoder produces 1bpp gray (grayscale JPEGs always
+/// ignore `streaming_output_format`) but the caller asked for Rgb/Bgr/Rgba/Bgra/Bgrx.
+/// Replicates the gray sample into all color channels; alpha is 255 for 4-bpp targets.
+fn expand_gray_u8_to_format(
+    gray: &[u8],
+    format: PixelFormat,
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>> {
+    let npixels = checked_size_2d(width, height)?;
+    if gray.len() < npixels {
+        return Err(Error::internal("grayscale buffer too small"));
+    }
+    match format {
+        PixelFormat::Rgb | PixelFormat::Bgr => {
+            // Channel order is irrelevant — all three bytes are the gray sample.
+            let mut out = vec![0u8; npixels * 3];
+            for i in 0..npixels {
+                let g = gray[i];
+                let d = i * 3;
+                out[d] = g;
+                out[d + 1] = g;
+                out[d + 2] = g;
+            }
+            Ok(out)
+        }
+        PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+            let mut out = vec![0u8; npixels * 4];
+            for i in 0..npixels {
+                let g = gray[i];
+                let d = i * 4;
+                out[d] = g;
+                out[d + 1] = g;
+                out[d + 2] = g;
+                out[d + 3] = 255;
+            }
+            Ok(out)
+        }
+        _ => Err(Error::unsupported_feature(
+            "unsupported grayscale → color conversion",
+        )),
+    }
+}
+
 /// Reformats an RGB u8 source buffer into the target `PixelFormat` written
 /// directly into a caller-owned destination slice. Avoids the extra allocation
 /// that [`reformat_rgb_output`] does for 4-bpp targets.
@@ -1203,6 +1249,14 @@ impl<'a> JpegParser<'a> {
             && !is_xyb
             && let Some(buf) = self.streaming_rgb.take()
         {
+            // Grayscale streaming always emits 1bpp gray regardless of
+            // `streaming_output_format` (that hint only applies to 3-component
+            // JPEGs — see scan.rs `(out_bpp, out_4bpp, swap_rb)` selection for
+            // grayscale). Expand 1bpp → the requested RGB-family format here
+            // instead of honoring a hint the streaming path never applied.
+            if self.num_components == 1 {
+                return expand_gray_u8_to_format(&buf, format, width, height);
+            }
             let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
             if streaming_fmt == format
                 || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
@@ -1603,6 +1657,14 @@ impl<'a> JpegParser<'a> {
             && !is_xyb
             && let Some(buf) = self.streaming_rgb.take()
         {
+            // Grayscale streaming always emits 1bpp (see `to_pixels`). Expand
+            // into the requested RGB-family format directly into `dst`.
+            if self.num_components == 1 {
+                let rgb = expand_gray_u8_to_format(&buf, format, width, height)?;
+                let bytes = rgb.len().min(dst.len());
+                dst[..bytes].copy_from_slice(&rgb[..bytes]);
+                return Ok(bytes);
+            }
             let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
             let streaming_4bpp = matches!(
                 streaming_fmt,
