@@ -151,11 +151,11 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.19"
+version = "0.9.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "365fca647ae78782eb112df49d25a3c6891c95f8a118eb942ea52a562e20d3df"
+checksum = "55da54b9d7683500eb40dabd2b5244cd851d2db78a8d8a2f7fbca8b6833d63ee"
 dependencies = [
- "archmage-macros 0.9.19",
+ "archmage-macros 0.9.21",
  "safe_unaligned_simd",
 ]
 
@@ -172,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.19"
+version = "0.9.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f06d01d56dbc8b94d5d78f1dd71fcefaa131e2ab4daf6ffede59e28757dc6ff2"
+checksum = "dafc74330e47d946691ac9b2514a9339ee729bb0efb7151c8077fce87ed65a53"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -371,7 +371,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c28a6704cdf610e0dfe761e2f289a3cac568db9128db12393f9463b4bf4fc76"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "imgref",
  "magetypes",
  "rayon",
@@ -870,7 +870,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0bbcfa44e1cabf11af96ece5e9273f4dc238f2a557668e70f80cfd662fae25b"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "imgref",
  "magetypes",
  "num-traits",
@@ -1003,7 +1003,7 @@ version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61ee8d8f5e43a45183480ea077c4e046e43ab9604928c87d6ad2080e666dc519"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "bytemuck",
 ]
 
@@ -1348,7 +1348,7 @@ version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29091b0ec185f4d3fa802f1b1975a114b3f9b0beea9a71014427a8b6cb54970a"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "bytemuck",
  "magetypes",
  "num-traits",
@@ -1377,11 +1377,11 @@ dependencies = [
 
 [[package]]
 name = "magetypes"
-version = "0.9.19"
+version = "0.9.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b4ad2b56915b91b742a3bdd060ba4435ee92d60d4fc2087c4e6066bd4004434"
+checksum = "852e70c405753a755fcecebed2c12da4c048916ce912ed555f09446f24fc65eb"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
 ]
 
 [[package]]
@@ -2336,7 +2336,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964a038e0f75524ef9bd01ee6bda6d2457a3b6c1ca8df22478b9bb94b3547669"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "bytemuck",
  "enough",
  "half",
@@ -3065,7 +3065,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f495c5d65335f189f977cb2ecb25528d6e4e8b0cc0303e853f3ceb633e71187a"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "magetypes",
  "safe_unaligned_simd",
 ]
@@ -3089,7 +3089,7 @@ dependencies = [
  "aligned-vec",
  "almost-enough",
  "approx",
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "bincode",
  "butteraugli 0.9.0",
  "bytemuck",
@@ -3195,7 +3195,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f673b0b4c93ab1916c4804265e1ad9154de694ce5d3ce9f28a4ed8af4c259a24"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "imgref",
  "libm",
  "linear-srgb",
@@ -3214,7 +3214,7 @@ version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd3fb9cea779ffee22e2045829cb126df4910f4026ca286f555cf42e9c4c295a"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "bytemuck",
  "imgref",
  "linear-srgb",
@@ -3242,7 +3242,7 @@ dependencies = [
 name = "zenyuv"
 version = "0.1.2"
 dependencies = [
- "archmage 0.9.19",
+ "archmage 0.9.21",
  "libm",
  "linear-srgb",
  "magetypes",
