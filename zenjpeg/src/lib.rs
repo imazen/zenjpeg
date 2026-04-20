@@ -181,6 +181,12 @@ pub mod encoder;
 /// Provides min/typical/max estimates for peak memory and time.
 pub mod heuristics;
 
+/// Quality metrics (BBS block-boundary-score, etc.).
+///
+/// JPEG-specific or codec-analysis metrics. General perceptual metrics
+/// (SSIMULACRA2, DSSIM, Butteraugli) live in dedicated crates.
+pub mod metrics;
+
 /// JPEG encoder detection and quality estimation.
 ///
 /// Identifies which encoder produced a JPEG, estimates its quality level,
