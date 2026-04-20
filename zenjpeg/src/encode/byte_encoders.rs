@@ -150,6 +150,9 @@ impl BytesEncoder {
         builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
         builder = builder.boundary_rd_shrink(config.boundary_rd_shrink);
         builder = builder.boundary_rd_max_retries(config.boundary_rd_max_retries);
+        // Phase 5.5 AQ-strength gates (off by default).
+        builder = builder.boundary_rd_aq_gate_max(config.boundary_rd_aq_gate_max);
+        builder = builder.boundary_rd_aq_gate_min(config.boundary_rd_aq_gate_min);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
@@ -1020,6 +1023,9 @@ impl YCbCrPlanarEncoder {
         builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
         builder = builder.boundary_rd_shrink(config.boundary_rd_shrink);
         builder = builder.boundary_rd_max_retries(config.boundary_rd_max_retries);
+        // Phase 5.5 AQ-strength gates (off by default).
+        builder = builder.boundary_rd_aq_gate_max(config.boundary_rd_aq_gate_max);
+        builder = builder.boundary_rd_aq_gate_min(config.boundary_rd_aq_gate_min);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(

@@ -461,6 +461,12 @@ pub struct StripProcessor {
     boundary_rd_shrink: f32,
     /// Maximum retries per triggered block. Default 1.
     boundary_rd_max_retries: u8,
+    /// Phase 5.5 AQ-strength upper gate. Skip refinement if
+    /// `aq_strength > this`. Default 1.0 = off.
+    boundary_rd_aq_gate_max: f32,
+    /// Phase 5.5 AQ-strength lower gate. Skip refinement if
+    /// `aq_strength < this`. Default 0.0 = off.
+    boundary_rd_aq_gate_min: f32,
     /// Per-block-row cache of the committed right-edge column for the left
     /// neighbor. Indexed by `local_by` within an iMCU. `None` means no left
     /// neighbor yet (i.e., we are at the first block of a row).
@@ -757,6 +763,9 @@ impl StripProcessor {
             boundary_rd_threshold: 0.05,
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
+            // Phase 5.5 AQ-strength gates — defaults off.
+            boundary_rd_aq_gate_max: 1.0,
+            boundary_rd_aq_gate_min: 0.0,
             boundary_rd_left_edges: Vec::new(),
 
             // Trellis quantization (disabled by default)
@@ -887,6 +896,18 @@ impl StripProcessor {
         self.boundary_rd_threshold = threshold;
         self.boundary_rd_shrink = shrink;
         self.boundary_rd_max_retries = max_retries;
+    }
+
+    /// Set Phase 5.5 AQ-strength gates on the boundary-RD refinement.
+    ///
+    /// Must be called after [`Self::set_boundary_rd`]. Defaults are
+    /// `aq_gate_max = 1.0` and `aq_gate_min = 0.0` (both off — every block
+    /// is eligible for refinement). Lowering `aq_gate_max` skips refinement
+    /// on textured blocks; raising `aq_gate_min` skips refinement on smooth
+    /// blocks.
+    pub fn set_boundary_rd_aq_gate(&mut self, aq_gate_max: f32, aq_gate_min: f32) {
+        self.boundary_rd_aq_gate_max = aq_gate_max;
+        self.boundary_rd_aq_gate_min = aq_gate_min;
     }
 
     /// Sets trellis quantization configuration.
@@ -1530,6 +1551,11 @@ impl StripProcessor {
         // to the pre-tuning constants.
         let shrink_factor: f32 = self.boundary_rd_shrink;
         let max_retries: u8 = self.boundary_rd_max_retries;
+        // Phase 5.5 per-block AQ-strength gate. Defaults (1.0 / 0.0) never
+        // fire because jpegli AQ is in [0, 1]. Lower `max` skips textured
+        // blocks; higher `min` skips smooth blocks.
+        let aq_gate_max: f32 = self.boundary_rd_aq_gate_max;
+        let aq_gate_min: f32 = self.boundary_rd_aq_gate_min;
 
         // Natural-order quant values. `QuantTable.values` is natural-row-major
         // despite its outdated docstring — verified by inspecting the DQT
@@ -1611,7 +1637,13 @@ impl StripProcessor {
             );
 
             let ac_energy = br::ac_dct_energy(&dct);
-            let trigger = threshold > 0.0 && db_default > threshold * ac_energy;
+            // Phase 5.5 gate: block must satisfy aq_gate_min <= aq_strength
+            // <= aq_gate_max. Defaults (0.0 / 1.0) admit every block (AQ is
+            // clamped to [0, 1] by jpegli), so with gates at defaults this
+            // expression is true for all blocks and trigger is unchanged.
+            let gate_pass = aq_strength >= aq_gate_min && aq_strength <= aq_gate_max;
+            let trigger =
+                gate_pass && threshold > 0.0 && db_default > threshold * ac_energy;
 
             let mut best_zigzag = zigzag_default;
             let mut best_rec = rec_default;

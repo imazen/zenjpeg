@@ -48,6 +48,12 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) boundary_rd_shrink: f32,
     /// Max number of boundary-RD refinement retries per triggered block.
     pub(crate) boundary_rd_max_retries: u8,
+    /// Per-block AQ-strength upper gate for boundary-RD (Phase 5.5 of #91).
+    /// Skip refinement when `aq_strength > this`. Default 1.0 = never skip.
+    pub(crate) boundary_rd_aq_gate_max: f32,
+    /// Per-block AQ-strength lower gate for boundary-RD (Phase 5.5 of #91).
+    /// Skip refinement when `aq_strength < this`. Default 0.0 = never skip.
+    pub(crate) boundary_rd_aq_gate_min: f32,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Force SOF1 (extended sequential) regardless of quant table precision.
@@ -97,6 +103,9 @@ impl StreamingEncoderBuilder {
             boundary_rd_threshold: 0.05,
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
+            // Phase 5.5 AQ-strength gates — off by default.
+            boundary_rd_aq_gate_max: 1.0,
+            boundary_rd_aq_gate_min: 0.0,
             allow_16bit_quant_tables: false,
             force_sof1: false,
             separate_chroma_tables: true,
@@ -277,6 +286,20 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
         self.boundary_rd_max_retries = retries;
+        self
+    }
+
+    /// Set the per-block AQ-strength upper gate (Phase 5.5 of #91).
+    #[must_use]
+    pub(crate) fn boundary_rd_aq_gate_max(mut self, threshold: f32) -> Self {
+        self.boundary_rd_aq_gate_max = threshold;
+        self
+    }
+
+    /// Set the per-block AQ-strength lower gate (Phase 5.5 of #91).
+    #[must_use]
+    pub(crate) fn boundary_rd_aq_gate_min(mut self, threshold: f32) -> Self {
+        self.boundary_rd_aq_gate_min = threshold;
         self
     }
 

@@ -95,6 +95,19 @@ pub struct EncoderConfig {
     /// Maximum number of refinement retries per triggered block.
     /// Only consulted when `boundary_rd` is true.
     pub(crate) boundary_rd_max_retries: u8,
+
+    /// Per-block AQ-strength upper gate for boundary-RD (Phase 5.5 of #91).
+    /// Skip refinement when `aq_strength > this value`. Default 1.0 (off —
+    /// aq_strength is effectively capped at 1.0 by jpegli AQ, so this never
+    /// fires). Lower values progressively skip more textured (highly-masked)
+    /// blocks.
+    pub(crate) boundary_rd_aq_gate_max: f32,
+
+    /// Per-block AQ-strength lower gate for boundary-RD (Phase 5.5 of #91).
+    /// Skip refinement when `aq_strength < this value`. Default 0.0 (off —
+    /// aq_strength is non-negative, so this never fires). Higher values
+    /// progressively skip more smooth (visible/low-masking) blocks.
+    pub(crate) boundary_rd_aq_gate_min: f32,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -259,6 +272,12 @@ impl EncoderConfig {
             boundary_rd_threshold: 0.05,
             boundary_rd_shrink: 0.5,
             boundary_rd_max_retries: 2,
+            // Phase 5.5 (#91) — per-block AQ-strength gate; defaults off.
+            // `max = 1.0` never fires (AQ saturates at 1.0), `min = 0.0`
+            // never fires (AQ is non-negative). Tuning experiment: see
+            // benchmarks/rd_compare/2026-04-20-phase5.5-gate-sweep/.
+            boundary_rd_aq_gate_max: 1.0,
+            boundary_rd_aq_gate_min: 0.0,
         }
     }
 
@@ -1010,6 +1029,37 @@ impl EncoderConfig {
     #[must_use]
     pub fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
         self.boundary_rd_max_retries = retries;
+        self
+    }
+
+    /// Skip boundary-RD refinement on blocks whose AQ strength is above
+    /// `threshold` (Phase 5.5 experiment for #91).
+    ///
+    /// Default 1.0 (off — jpegli AQ saturates at 1.0 so the gate never
+    /// fires). Lower values progressively skip more textured / well-masked
+    /// blocks, letting boundary-RD focus budget on smoother regions where
+    /// block seams are perceptually more visible. Only consulted when
+    /// [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_aq_gate_max(mut self, threshold: f32) -> Self {
+        self.boundary_rd_aq_gate_max = threshold;
+        self
+    }
+
+    /// Skip boundary-RD refinement on blocks whose AQ strength is below
+    /// `threshold` (Phase 5.5 experiment for #91).
+    ///
+    /// Default 0.0 (off — AQ strength is non-negative so the gate never
+    /// fires). Higher values progressively skip more smooth / low-masking
+    /// blocks, letting boundary-RD focus budget on textured regions. This
+    /// is the opposite direction from
+    /// [`boundary_rd_aq_gate_max`](Self::boundary_rd_aq_gate_max); both
+    /// gates can be set — a block must lie in `[min, max]` for refinement
+    /// to fire. Only consulted when
+    /// [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_aq_gate_min(mut self, threshold: f32) -> Self {
+        self.boundary_rd_aq_gate_min = threshold;
         self
     }
 

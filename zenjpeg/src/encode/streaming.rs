@@ -300,6 +300,11 @@ impl StreamingEncoder {
             builder.boundary_rd_shrink,
             builder.boundary_rd_max_retries,
         );
+        // Phase 5.5 AQ-strength gates — defaults (1.0 / 0.0) are no-ops.
+        processor.set_boundary_rd_aq_gate(
+            builder.boundary_rd_aq_gate_max,
+            builder.boundary_rd_aq_gate_min,
+        );
 
         // Enable trellis quantization if configured
         #[cfg(feature = "trellis")]
