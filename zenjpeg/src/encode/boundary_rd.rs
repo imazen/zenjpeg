@@ -109,6 +109,32 @@ pub(crate) fn right_edge_col(block: &[f32; DCT_BLOCK_SIZE]) -> [f32; 8] {
     col
 }
 
+/// Extract the top-edge row (y = 0) of an 8×8 spatial block (Phase 4 of #91).
+///
+/// The top-edge row is the cross-seam pixel set between the current block
+/// and the block directly above it. Used by the optional above-neighbor
+/// boundary-continuity term.
+#[inline]
+#[must_use]
+pub(crate) fn top_edge_row(block: &[f32; DCT_BLOCK_SIZE]) -> [f32; 8] {
+    let mut row = [0.0f32; 8];
+    row.copy_from_slice(&block[0..8]);
+    row
+}
+
+/// Extract the bottom-edge row (y = 7) of an 8×8 spatial block (Phase 4 of #91).
+///
+/// Used to populate the cross-iMCU "above neighbor" buffer after each block
+/// commits: the bottom-edge row of block (bx, by) becomes the "row above"
+/// seen by block (bx, by+1) in a later iMCU.
+#[inline]
+#[must_use]
+pub(crate) fn bottom_edge_row(block: &[f32; DCT_BLOCK_SIZE]) -> [f32; 8] {
+    let mut row = [0.0f32; 8];
+    row.copy_from_slice(&block[56..64]);
+    row
+}
+
 /// Sum of squared differences between two 8-element edge columns.
 #[inline]
 #[must_use]
@@ -338,6 +364,22 @@ mod tests {
         for r in 0..8 {
             assert_eq!(left[r], (r * 10) as f32);
             assert_eq!(right[r], (r * 10 + 7) as f32);
+        }
+    }
+
+    #[test]
+    fn edge_row_extraction_matches_raster() {
+        let mut arr = [0.0f32; DCT_BLOCK_SIZE];
+        for r in 0..8 {
+            for c in 0..8 {
+                arr[r * 8 + c] = (r * 10 + c) as f32;
+            }
+        }
+        let top = top_edge_row(&arr);
+        let bottom = bottom_edge_row(&arr);
+        for c in 0..8 {
+            assert_eq!(top[c], c as f32);
+            assert_eq!(bottom[c], (70 + c) as f32);
         }
     }
 }

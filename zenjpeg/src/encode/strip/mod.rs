@@ -1559,6 +1559,8 @@ impl StripProcessor {
         // to the pre-tuning constants.
         let shrink_factor: f32 = self.boundary_rd_shrink;
         let max_retries: u8 = self.boundary_rd_max_retries;
+        // Phase 4: above-neighbor term (opt-in on top of left-only).
+        let use_above = self.boundary_rd_above;
 
         // Natural-order quant values. `QuantTable.values` is natural-row-major
         // despite its outdated docstring — verified by inspecting the DQT
@@ -1571,6 +1573,18 @@ impl StripProcessor {
         // allocation-free on subsequent iMCUs.
         if self.boundary_rd_left_edges.len() < blocks_w {
             self.boundary_rd_left_edges.resize(blocks_w, None);
+        }
+        // Phase 4: per-column cache of committed bottom-edge rows for the
+        // block directly above. Allocated only when above is on, but the
+        // buffers persist across iMCUs (they're how the first row of iMCU N
+        // sees the last row of iMCU N-1).
+        if use_above {
+            if self.boundary_rd_above_rec_edges.len() < blocks_w {
+                self.boundary_rd_above_rec_edges.resize(blocks_w, None);
+            }
+            if self.boundary_rd_above_orig_edges.len() < blocks_w {
+                self.boundary_rd_above_orig_edges.resize(blocks_w, None);
+            }
         }
 
         let pending_len = self.pending.y[buffer_idx].len();
@@ -1602,6 +1616,13 @@ impl StripProcessor {
             // state, cached for the NEXT block's left-neighbor lookup.
             let ref_block = br::idct_reference_block(&dct);
             let orig_left = br::left_edge_col(&ref_block);
+            // Phase 4: current-block's top-edge ROW (r=0), from the unquantized
+            // reference block. Analogous to orig_left, just transposed.
+            let orig_top: [f32; 8] = if use_above {
+                br::top_edge_row(&ref_block)
+            } else {
+                [0.0f32; 8]
+            };
 
             // Left neighbor's right-edge column (committed).
             let rec_left_right_opt = if bx > 0 {
@@ -1623,6 +1644,19 @@ impl StripProcessor {
                 None
             };
 
+            // Above neighbor's bottom-edge ROW (committed, reconstructed)
+            // and the same block's original bottom-edge row. Both are None
+            // for the very first row of the whole image; thereafter at
+            // least one previous row has populated the cross-iMCU buffer.
+            let (rec_top_above_opt, orig_top_above_opt) = if use_above {
+                (
+                    self.boundary_rd_above_rec_edges[bx].as_ref().copied(),
+                    self.boundary_rd_above_orig_edges[bx].as_ref().copied(),
+                )
+            } else {
+                (None, None)
+            };
+
             // --- Candidate 1: default AQ strength ---
             let zigzag_default = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                 &dct,
@@ -1631,13 +1665,26 @@ impl StripProcessor {
             );
             let rec_default = br::idct_quantized_block(&zigzag_default, quant_natural);
             let rec_left_default = br::left_edge_col(&rec_default);
-            let db_default = br::boundary_distortion(
+            let db_default_left = br::boundary_distortion(
                 &rec_left_default,
                 rec_left_right_opt.as_ref(),
                 &orig_left,
                 orig_left_right_opt.as_ref(),
                 alpha,
             );
+            let db_default_above = if use_above {
+                let rec_top_default = br::top_edge_row(&rec_default);
+                br::boundary_distortion(
+                    &rec_top_default,
+                    rec_top_above_opt.as_ref(),
+                    &orig_top,
+                    orig_top_above_opt.as_ref(),
+                    alpha,
+                )
+            } else {
+                0.0
+            };
+            let db_default = db_default_left + db_default_above;
 
             let ac_energy = br::ac_dct_energy(&dct);
             let trigger = threshold > 0.0 && db_default > threshold * ac_energy;
@@ -1657,13 +1704,26 @@ impl StripProcessor {
                     );
                     let rec = br::idct_quantized_block(&z, quant_natural);
                     let rec_left = br::left_edge_col(&rec);
-                    let db = br::boundary_distortion(
+                    let db_left = br::boundary_distortion(
                         &rec_left,
                         rec_left_right_opt.as_ref(),
                         &orig_left,
                         orig_left_right_opt.as_ref(),
                         alpha,
                     );
+                    let db_above = if use_above {
+                        let rec_top = br::top_edge_row(&rec);
+                        br::boundary_distortion(
+                            &rec_top,
+                            rec_top_above_opt.as_ref(),
+                            &orig_top,
+                            orig_top_above_opt.as_ref(),
+                            alpha,
+                        )
+                    } else {
+                        0.0
+                    };
+                    let db = db_left + db_above;
                     if db < best_db {
                         best_db = db;
                         best_zigzag = z;
@@ -1675,6 +1735,16 @@ impl StripProcessor {
             // Cache THIS block's committed right-edge column for the next
             // block in the row.
             self.boundary_rd_left_edges[bx] = Some(br::right_edge_col(&best_rec));
+            // Phase 4: cache THIS block's committed bottom-edge row for the
+            // block directly below, and the corresponding orig row from the
+            // unquantized reference. Writes persist across iMCUs — when the
+            // next iMCU's first block row starts, `bx = i % blocks_w` maps
+            // to the column of the block above. No reset per row: the
+            // previous row's writes are the current row's "above" reads.
+            if use_above {
+                self.boundary_rd_above_rec_edges[bx] = Some(br::bottom_edge_row(&best_rec));
+                self.boundary_rd_above_orig_edges[bx] = Some(br::bottom_edge_row(&ref_block));
+            }
 
             self.y_blocks.push(best_zigzag);
             self.all_aq_strengths.push(aq_strength);
