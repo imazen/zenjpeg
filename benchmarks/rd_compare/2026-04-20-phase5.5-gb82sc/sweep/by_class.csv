@@ -1,0 +1,5 @@
+class,metric,baseline,candidate,n,bd_rate_mean,bd_rate_stdev,mean_distance_mean,win_rate_mean
+screenshot,bbs,default,boundary_rd,9,-3.7048,1.3978,2.551815,0.8667
+screenshot,ssim2,default,boundary_rd,9,0.3691,0.9766,-0.092352,0.4000
+screenshot,bbs,default,boundary_rd_gate_max_03,9,-0.3548,0.1931,0.204918,0.8222
+screenshot,ssim2,default,boundary_rd_gate_max_03,9,0.2798,0.1831,-0.059631,0.1778
