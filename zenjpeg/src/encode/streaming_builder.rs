@@ -44,6 +44,10 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) boundary_rd_alpha: f32,
     /// D_b trigger threshold as multiplier of per-block AC DCT energy.
     pub(crate) boundary_rd_threshold: f32,
+    /// AQ-strength multiplier applied on each boundary-RD retry.
+    pub(crate) boundary_rd_shrink: f32,
+    /// Max number of boundary-RD refinement retries per triggered block.
+    pub(crate) boundary_rd_max_retries: u8,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Force SOF1 (extended sequential) regardless of quant table precision.
@@ -90,6 +94,8 @@ impl StreamingEncoderBuilder {
             boundary_rd: false,
             boundary_rd_alpha: 1.0,
             boundary_rd_threshold: 0.1,
+            boundary_rd_shrink: 0.7,
+            boundary_rd_max_retries: 1,
             allow_16bit_quant_tables: false,
             force_sof1: false,
             separate_chroma_tables: true,
@@ -256,6 +262,20 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn boundary_rd_threshold(mut self, threshold: f32) -> Self {
         self.boundary_rd_threshold = threshold;
+        self
+    }
+
+    /// Set the AQ-strength multiplier applied on each boundary-RD retry.
+    #[must_use]
+    pub(crate) fn boundary_rd_shrink(mut self, shrink: f32) -> Self {
+        self.boundary_rd_shrink = shrink;
+        self
+    }
+
+    /// Set the max number of boundary-RD refinement retries per triggered block.
+    #[must_use]
+    pub(crate) fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
+        self.boundary_rd_max_retries = retries;
         self
     }
 

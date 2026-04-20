@@ -87,6 +87,14 @@ pub struct EncoderConfig {
     /// D_b trigger threshold, as a multiplier of per-block AC DCT energy.
     /// Only consulted when `boundary_rd` is true.
     pub(crate) boundary_rd_threshold: f32,
+
+    /// AQ-strength multiplier on each refinement retry.
+    /// Only consulted when `boundary_rd` is true. Must be in (0, 1].
+    pub(crate) boundary_rd_shrink: f32,
+
+    /// Maximum number of refinement retries per triggered block.
+    /// Only consulted when `boundary_rd` is true.
+    pub(crate) boundary_rd_max_retries: u8,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -243,6 +251,8 @@ impl EncoderConfig {
             boundary_rd: false,
             boundary_rd_alpha: 1.0,
             boundary_rd_threshold: 0.1,
+            boundary_rd_shrink: 0.7,
+            boundary_rd_max_retries: 1,
         }
     }
 
@@ -969,6 +979,28 @@ impl EncoderConfig {
     #[must_use]
     pub fn boundary_rd_threshold(mut self, threshold: f32) -> Self {
         self.boundary_rd_threshold = threshold;
+        self
+    }
+
+    /// Set the AQ-strength multiplier applied on each boundary-RD retry.
+    ///
+    /// Default: 0.7. Must be in the range (0, 1]. Values closer to 1 give
+    /// smaller per-retry changes (more conservative refinement); lower
+    /// values make each retry more aggressive. Only consulted when
+    /// [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_shrink(mut self, shrink: f32) -> Self {
+        self.boundary_rd_shrink = shrink;
+        self
+    }
+
+    /// Set the maximum number of refinement retries per triggered block.
+    ///
+    /// Default: 1. Each retry costs one additional SIMD quantize + IDCT.
+    /// Only consulted when [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
+        self.boundary_rd_max_retries = retries;
         self
     }
 

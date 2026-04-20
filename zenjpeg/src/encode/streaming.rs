@@ -297,6 +297,8 @@ impl StreamingEncoder {
             builder.boundary_rd,
             builder.boundary_rd_alpha,
             builder.boundary_rd_threshold,
+            builder.boundary_rd_shrink,
+            builder.boundary_rd_max_retries,
         );
 
         // Enable trellis quantization if configured

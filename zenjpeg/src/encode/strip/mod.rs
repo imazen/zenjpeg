@@ -457,6 +457,10 @@ pub struct StripProcessor {
     /// D_b trigger threshold, as a multiplier of per-block AC DCT energy.
     /// Default 0.1.
     boundary_rd_threshold: f32,
+    /// AQ-strength multiplier applied on each boundary-RD retry. Default 0.7.
+    boundary_rd_shrink: f32,
+    /// Maximum retries per triggered block. Default 1.
+    boundary_rd_max_retries: u8,
     /// Per-block-row cache of the committed right-edge column for the left
     /// neighbor. Indexed by `local_by` within an iMCU. `None` means no left
     /// neighbor yet (i.e., we are at the first block of a row).
@@ -750,6 +754,8 @@ impl StripProcessor {
             boundary_rd: false,
             boundary_rd_alpha: 1.0,
             boundary_rd_threshold: 0.1,
+            boundary_rd_shrink: 0.7,
+            boundary_rd_max_retries: 1,
             boundary_rd_left_edges: Vec::new(),
 
             // Trellis quantization (disabled by default)
@@ -867,10 +873,19 @@ impl StripProcessor {
     ///
     /// When `enable` is false (the default), the boundary_rd pass is skipped
     /// entirely and the default encode path is unchanged.
-    pub fn set_boundary_rd(&mut self, enable: bool, alpha: f32, threshold: f32) {
+    pub fn set_boundary_rd(
+        &mut self,
+        enable: bool,
+        alpha: f32,
+        threshold: f32,
+        shrink: f32,
+        max_retries: u8,
+    ) {
         self.boundary_rd = enable;
         self.boundary_rd_alpha = alpha;
         self.boundary_rd_threshold = threshold;
+        self.boundary_rd_shrink = shrink;
+        self.boundary_rd_max_retries = max_retries;
     }
 
     /// Sets trellis quantization configuration.
@@ -1509,10 +1524,11 @@ impl StripProcessor {
         let quant = &self.quant;
         let alpha = self.boundary_rd_alpha;
         let threshold = self.boundary_rd_threshold;
-        // Shrink factor on retry; Phase 5 will tune. Kept as a local constant
-        // to avoid adding a public knob we won't use until tuning.
-        const SHRINK_FACTOR: f32 = 0.7;
-        const MAX_RETRIES: u8 = 1;
+        // Phase 5: both knobs are now configurable via EncoderConfig. Reads
+        // are taken into locals so the tuning loop produces identical codegen
+        // to the pre-tuning constants.
+        let shrink_factor: f32 = self.boundary_rd_shrink;
+        let max_retries: u8 = self.boundary_rd_max_retries;
 
         // Natural-order quant values. `QuantTable.values` is natural-row-major
         // despite its outdated docstring — verified by inspecting the DQT
@@ -1602,8 +1618,8 @@ impl StripProcessor {
 
             if trigger {
                 let mut aq = aq_strength;
-                for _ in 0..MAX_RETRIES {
-                    aq *= SHRINK_FACTOR;
+                for _ in 0..max_retries {
+                    aq *= shrink_factor;
                     let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
