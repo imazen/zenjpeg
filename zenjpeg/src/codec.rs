@@ -409,10 +409,8 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
                 ThreadingPolicy::SingleThread => {
                     // Explicitly do not enable parallel — leave cfg.parallel as None
                 }
-                ThreadingPolicy::LimitOrSingle { max_threads } => {
-                    if max_threads > 1 {
-                        cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
-                    }
+                ThreadingPolicy::LimitOrSingle { max_threads } if max_threads > 1 => {
+                    cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
                 }
                 ThreadingPolicy::LimitOrAny { .. }
                 | ThreadingPolicy::Balanced
@@ -1162,10 +1160,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         {
             // Pre-cache the header so push_decoder_native can reuse it
             // instead of calling read_info() again.
-            if self.cached_header.is_none() {
-                if let Ok(info) = self.config.inner.read_info(&data) {
-                    self.cached_header = Some(info);
-                }
+            if self.cached_header.is_none()
+                && let Ok(info) = self.config.inner.read_info(&data)
+            {
+                self.cached_header = Some(info);
             }
             push_decoder_native(self, data, sink, preferred)
         }
@@ -1630,7 +1628,7 @@ fn push_decoder_direct<'a>(
 
     // Fallback: cfg.decode() handles all modes safely.
     drop(dst);
-    let mut cfg = cfg.output_format(format);
+    let cfg = cfg.output_format(format);
     let result = cfg.decode(data_ref, stop_ref)?;
     let decoded_w = result.width();
     let decoded_h = result.height();

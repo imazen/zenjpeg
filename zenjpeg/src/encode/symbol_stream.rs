@@ -149,7 +149,7 @@ pub(crate) fn block_to_symbols(
     let dc_cat = crate::entropy::category(dc_diff);
     if dc_cat > 0 {
         let extra = crate::entropy::additional_bits_with_cat(dc_diff, dc_cat);
-        stream.push(dc_class, dc_cat, extra as u16, dc_cat);
+        stream.push(dc_class, dc_cat, extra, dc_cat);
     } else {
         stream.push(dc_class, 0, 0, 0);
     }
@@ -166,7 +166,7 @@ pub(crate) fn block_to_symbols(
             }
             let ac_cat = crate::entropy::category(ac);
             let extra = crate::entropy::additional_bits_with_cat(ac, ac_cat);
-            stream.push(ac_class, (run << 4) | ac_cat, extra as u16, ac_cat);
+            stream.push(ac_class, (run << 4) | ac_cat, extra, ac_cat);
             run = 0;
         }
     }

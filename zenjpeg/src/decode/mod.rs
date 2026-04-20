@@ -1487,11 +1487,10 @@ impl DecodeConfig {
 
         // Cap wave_buf at ~6 MB to reduce peak memory vs full-buffer decode.
         const WAVE_BUF_TARGET_BYTES: usize = 6 * 1024 * 1024;
-        let max_wave_by_mem = if seg_rgb_bytes > 0 {
-            (WAVE_BUF_TARGET_BYTES / seg_rgb_bytes).max(1)
-        } else {
-            num_segments
-        };
+        let max_wave_by_mem = WAVE_BUF_TARGET_BYTES
+            .checked_div(seg_rgb_bytes)
+            .map(|n| n.max(1))
+            .unwrap_or(num_segments);
 
         // 2x oversubscription for load balancing, capped by memory budget
         let wave_size = (num_threads * 2)
@@ -2280,7 +2279,7 @@ impl DecodeConfig {
             // eliminating the post-decode full-buffer swizzle pass.
             parser.streaming_output_format = Some(format);
             parser.decode(&stop)?;
-            return parser.to_pixels_into(
+            return parser.write_pixels_into(
                 format,
                 is_xyb,
                 self.chroma_upsampling,
@@ -2304,6 +2303,7 @@ impl DecodeConfig {
     ///
     /// Returns `Ok(bytes_written)` on success, `Err` if the streaming path
     /// fails internally (e.g., coefficient guard triggers).
+    #[cfg(all(feature = "decoder", feature = "zencodec"))]
     pub(crate) fn decode_streaming_into(
         &self,
         data: &[u8],
@@ -2335,7 +2335,7 @@ impl DecodeConfig {
         }
         parser.streaming_output_format = Some(format);
         parser.decode(&stop)?;
-        parser.to_pixels_into(
+        parser.write_pixels_into(
             format,
             is_xyb,
             self.chroma_upsampling,

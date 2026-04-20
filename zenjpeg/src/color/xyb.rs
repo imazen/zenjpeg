@@ -2003,7 +2003,7 @@ mod tests {
         }
 
         // Reference: scalar
-        let mut expected = vec![0u8; 64 * 3];
+        let mut expected = [0u8; 64 * 3];
         for i in 0..64 {
             let sx = (p0[i] + 128.0) / 255.0;
             let sy = (p1[i] + 128.0) / 255.0;

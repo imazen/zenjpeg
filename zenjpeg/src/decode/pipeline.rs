@@ -446,18 +446,17 @@ impl StripProcessor {
         }
 
         // Horizontal padding (all MCU rows if image width not MCU-aligned)
-        if h_ratio > 0 {
-            let downsampled_w = (image_width + h_ratio - 1) / h_ratio;
-            if downsampled_w < strip_w {
-                let rows = self.chroma_strip_height;
-                for row in 0..rows {
-                    let row_off = row * stride;
-                    let last_val_cb = self.cb_strip[row_off + downsampled_w - 1];
-                    let last_val_cr = self.cr_strip[row_off + downsampled_w - 1];
-                    for col in downsampled_w..strip_w {
-                        self.cb_strip[row_off + col] = last_val_cb;
-                        self.cr_strip[row_off + col] = last_val_cr;
-                    }
+        if let Some(downsampled_w) = (image_width + h_ratio.saturating_sub(1)).checked_div(h_ratio)
+            && downsampled_w < strip_w
+        {
+            let rows = self.chroma_strip_height;
+            for row in 0..rows {
+                let row_off = row * stride;
+                let last_val_cb = self.cb_strip[row_off + downsampled_w - 1];
+                let last_val_cr = self.cr_strip[row_off + downsampled_w - 1];
+                for col in downsampled_w..strip_w {
+                    self.cb_strip[row_off + col] = last_val_cb;
+                    self.cr_strip[row_off + col] = last_val_cr;
                 }
             }
         }

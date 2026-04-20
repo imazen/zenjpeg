@@ -411,17 +411,15 @@ impl<'a> JpegParser<'a> {
                         xmp_data = Some(s.to_string());
                     }
                 }
-                0xE2 => {
+                0xE2 if detect_segment_type(marker, seg_data) == SegmentType::Mpf
+                    && mpf_directory.is_none() =>
+                {
                     // APP2 - might be MPF
-                    if detect_segment_type(marker, seg_data) == SegmentType::Mpf
-                        && mpf_directory.is_none()
-                    {
-                        mpf_directory = parse_mpf_directory(seg_data);
-                        // Record the position of the MP header (right after "MPF\0")
-                        // This is needed to calculate absolute offsets
-                        if seg_data.starts_with(MPF_SIG) {
-                            mpf_header_pos = pos + MPF_SIG.len();
-                        }
+                    mpf_directory = parse_mpf_directory(seg_data);
+                    // Record the position of the MP header (right after "MPF\0")
+                    // This is needed to calculate absolute offsets
+                    if seg_data.starts_with(MPF_SIG) {
+                        mpf_header_pos = pos + MPF_SIG.len();
                     }
                 }
                 _ => {}

@@ -1571,7 +1571,7 @@ impl<'a> JpegParser<'a> {
     /// supported by the fast path, falls back to `to_pixels(Rgb)` + reformat.
     ///
     /// Returns the number of bytes written.
-    pub(in crate::decode) fn to_pixels_into(
+    pub(in crate::decode) fn write_pixels_into(
         &mut self,
         format: PixelFormat,
         is_xyb: bool,
@@ -1686,20 +1686,21 @@ impl<'a> JpegParser<'a> {
 
         // Direct-write fast path: subsampled (4:2:0/4:2:2/4:4:0) JPEGs decode
         // straight into `dst` without an intermediate RGB Vec.
-        if !dequant_bias && self.can_use_fast_i16_subsampled(format, is_xyb) {
-            if let Some(fast_dst) = match format {
+        if !dequant_bias
+            && self.can_use_fast_i16_subsampled(format, is_xyb)
+            && let Some(fast_dst) = match format {
                 PixelFormat::Rgb => Some(FastDst::Rgb(dst)),
                 PixelFormat::Rgba => Some(FastDst::Rgba(dst)),
                 PixelFormat::Bgra | PixelFormat::Bgrx => Some(FastDst::Bgra(dst)),
                 _ => None,
-            } {
-                let bytes = match fast_dst {
-                    FastDst::Rgb(_) => width * height * 3,
-                    FastDst::Rgba(_) | FastDst::Bgra(_) => width * height * 4,
-                };
-                self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, fast_dst)?;
-                return Ok(bytes);
             }
+        {
+            let bytes = match fast_dst {
+                FastDst::Rgb(_) => width * height * 3,
+                FastDst::Rgba(_) | FastDst::Bgra(_) => width * height * 4,
+            };
+            self.to_pixels_fast_i16_subsampled_into(chroma_upsampling, fast_dst)?;
+            return Ok(bytes);
         }
 
         // Generic fallback: existing dispatch returns Vec<u8>, then reformat

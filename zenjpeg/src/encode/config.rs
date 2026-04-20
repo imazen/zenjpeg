@@ -222,12 +222,9 @@ pub(crate) fn resolve_restart_rows(
         mcu_rows
     } else {
         let max_markers = (max_overhead - DRI_HEADER_BYTES) / EST_BYTES_PER_MARKER;
-        if max_markers == 0 {
-            mcu_rows
-        } else {
-            let min_ri = (total_mcus + max_markers - 1) / max_markers;
-            // Convert MCU interval back to rows (round up)
-            (min_ri + mcu_cols - 1) / mcu_cols.max(1)
+        match (total_mcus + max_markers.saturating_sub(1)).checked_div(max_markers) {
+            Some(min_ri) => (min_ri + mcu_cols - 1) / mcu_cols.max(1),
+            None => mcu_rows,
         }
     };
 
