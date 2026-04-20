@@ -11,6 +11,160 @@ use super::trellis::TrellisConfig;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
+/// Boundary-continuity refinement mode (see [`EncoderConfig::boundary_rd`]).
+///
+/// Controls the optional post-quantization refinement from issue #91 that
+/// reduces visible 8×8 block-seam artifacts. Off by default. See
+/// [`ContentClass`] and [`EncoderConfig::boundary_rd_hint`] for adaptive
+/// preset selection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoundaryRd {
+    /// Refinement disabled. Default. Output is byte-identical to the
+    /// feature-off build; the module stays entirely out of the hot path.
+    Off,
+    /// Adaptive mode. Resolves parameters from an optional
+    /// [`ContentClass`] hint, or a safe photo-friendly default when no
+    /// hint is set. See [`ContentClass`] for the per-class preset map.
+    Auto,
+    /// Power-user mode — use the exact [`BoundaryRdConfig`] supplied.
+    Manual(BoundaryRdConfig),
+}
+
+impl Default for BoundaryRd {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+/// Content-class hint for [`BoundaryRd::Auto`] preset resolution.
+///
+/// Not inferred by the encoder — the caller classifies the input (for
+/// example using coefficient's image-analysis system) and passes the
+/// answer in via [`EncoderConfig::boundary_rd_hint`].
+///
+/// Values are `#[non_exhaustive]`: more classes may be added without a
+/// major version bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ContentClass {
+    /// Photographic content (natural or detailed). Mild Phase-2 defaults
+    /// chosen to minimise the SSIM2 regression observed on photo corpora.
+    Photo,
+    /// Photographic content with large flat regions (sky, walls). Uses
+    /// the aggressive Phase-5 tuned defaults.
+    PhotoFlat,
+    /// UI/terminal/screenshot content. Aggressive Phase-5 + left+above.
+    Screenshot,
+    /// Rendered illustration or mixed line-art + color. Aggressive
+    /// Phase-5 + left+above.
+    Illustration,
+    /// Line-art, diagrams, or text-dominant images. Aggressive Phase-5
+    /// + left+above — the biggest wins are in this regime.
+    Lineart,
+}
+
+/// Power-user boundary-RD parameters.
+///
+/// Passed via [`BoundaryRd::Manual`] when a caller wants full control;
+/// ordinary use should stick to [`BoundaryRd::Auto`] + a [`ContentClass`]
+/// hint. Defaults mirror the Phase-5 tuned values shipped in Auto for
+/// non-photographic content.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundaryRdConfig {
+    /// Seam-jump weight in the D_b term. Default `1.0`.
+    pub alpha: f32,
+    /// D_b trigger threshold as a multiplier of per-block AC DCT energy.
+    /// Default `0.05` (Phase-5 tuned; Phase-2 guess was `0.1`).
+    pub threshold: f32,
+    /// AQ-strength multiplier applied on each refinement retry. Must be
+    /// in `(0, 1]`. Default `0.5` (Phase-5 tuned; Phase-2 guess was
+    /// `0.7`).
+    pub shrink: f32,
+    /// Maximum number of refinement retries per triggered block.
+    /// Default `2` (Phase-5 tuned; Phase-2 guess was `1`).
+    pub max_retries: u8,
+    /// Enable the above-neighbor (top-edge) D_b term in addition to the
+    /// left-neighbor term. Phase-4 extension; adds an inter-iMCU buffer.
+    /// Default `false`.
+    pub above: bool,
+}
+
+impl Default for BoundaryRdConfig {
+    fn default() -> Self {
+        Self {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: false,
+        }
+    }
+}
+
+impl BoundaryRdConfig {
+    /// Phase-2 "mild" defaults — photo-safe. Minimises SSIM2 regression
+    /// risk on natural-image content.
+    #[must_use]
+    pub(crate) fn photo_mild() -> Self {
+        Self {
+            alpha: 1.0,
+            threshold: 0.1,
+            shrink: 0.7,
+            max_retries: 1,
+            above: false,
+        }
+    }
+
+    /// Phase-5 aggressive defaults, left-only. Tuned on the
+    /// non-photographic corpus (screenshots + line-art + flat photos).
+    #[must_use]
+    pub(crate) fn phase5_left_only() -> Self {
+        Self {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: false,
+        }
+    }
+
+    /// Phase-5 aggressive defaults, left+above. Best overall BBS win on
+    /// the non-photographic corpus.
+    #[must_use]
+    pub(crate) fn phase5_left_above() -> Self {
+        Self {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: true,
+        }
+    }
+}
+
+impl ContentClass {
+    /// Resolve this content class to the preset shipped in
+    /// [`BoundaryRd::Auto`]. See the [`ContentClass`] variant docs for the
+    /// rationale on each class's chosen preset.
+    #[must_use]
+    pub(crate) fn to_preset(self) -> BoundaryRdConfig {
+        match self {
+            // Photos get the conservative Phase-2 mild preset to keep the
+            // SSIM2 picture safe (photos showed +0.15%-+0.40% SSIM2 Pareto
+            // cost under the Phase-5 aggressive defaults; BBS still wins
+            // under the mild preset).
+            ContentClass::Photo => BoundaryRdConfig::photo_mild(),
+            // Photos with large flat regions benefit more, and their
+            // SSIM2 sensitivity is less pronounced.
+            ContentClass::PhotoFlat => BoundaryRdConfig::phase5_left_only(),
+            // Screenshots/illustration/line-art: full Phase-4 left+above.
+            ContentClass::Screenshot
+            | ContentClass::Illustration
+            | ContentClass::Lineart => BoundaryRdConfig::phase5_left_above(),
+        }
+    }
+}
+
 /// JPEG encoder configuration. Dimension-independent, reusable across images.
 #[derive(Clone, Debug)]
 pub struct EncoderConfig {
@@ -77,6 +231,12 @@ pub struct EncoderConfig {
     /// which activates the optimizations (shared Huffman tables etc.) when
     /// the image pixel count falls below the heuristic's threshold.
     pub(crate) tiny_file_mode: TinyFileMode,
+    /// Boundary-continuity refinement mode (issue #91). Default
+    /// [`BoundaryRd::Off`] — no behavior change vs feature-off output.
+    pub(crate) boundary_rd_mode: BoundaryRd,
+    /// Optional content-class hint used when `boundary_rd_mode` is
+    /// [`BoundaryRd::Auto`]. `None` → photo-safe default preset.
+    pub(crate) boundary_rd_hint: Option<ContentClass>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -231,6 +391,8 @@ impl EncoderConfig {
             segments: None,
             pre_blur: 0.0,
             tiny_file_mode: TinyFileMode::Auto,
+            boundary_rd_mode: BoundaryRd::Off,
+            boundary_rd_hint: None,
         }
     }
 
@@ -985,6 +1147,94 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_tiny_file_mode(&self) -> TinyFileMode {
         self.tiny_file_mode
+    }
+
+    // === Boundary-RD (issue #91) ===
+
+    /// Enable or disable boundary-continuity refinement (issue #91).
+    ///
+    /// Boundary-RD is an opt-in post-quantization refinement pass that
+    /// reduces visible 8×8 block-seam discontinuities. It is **off by
+    /// default**, and [`BoundaryRd::Off`] produces byte-identical output
+    /// to a build without the feature wired in.
+    ///
+    /// # Modes
+    ///
+    /// - [`BoundaryRd::Off`] — disabled (default).
+    /// - [`BoundaryRd::Auto`] — adaptive preset resolution: uses the
+    ///   [`ContentClass`] hint set via
+    ///   [`boundary_rd_hint`](Self::boundary_rd_hint) if present, else a
+    ///   mild photo-safe default. See [`ContentClass`] for the preset map.
+    /// - [`BoundaryRd::Manual`] — power-user override; uses the exact
+    ///   [`BoundaryRdConfig`] supplied.
+    ///
+    /// # Honest characterisation
+    ///
+    /// On the corpora measured in issue #91:
+    ///
+    /// - **BBS Pareto win on every class** (−3.7% to −8.6% BD-rate on
+    ///   boundary-score).
+    /// - **SSIM2 Pareto win on line-art / illustration** (−3% to −9%
+    ///   BD-rate depending on image).
+    /// - **SSIM2 neutral on most screenshots** (some within-class
+    ///   bimodality — a few screenshots regress, most win or tie).
+    /// - **SSIM2 mildly worse on photos** (~+0.2% to +0.4% Pareto cost).
+    ///
+    /// `Auto` without a hint uses mild photo-safe defaults specifically
+    /// to minimise the photo-SSIM2 regression risk when the content class
+    /// is unknown.
+    ///
+    /// Encode-time overhead is roughly +15–25% at Q85 depending on
+    /// image, subsampling, and how many blocks trigger refinement.
+    ///
+    /// This setting is a no-op when trellis quantization is active (the
+    /// trellis code path has its own boundary-D-augment, which landed as
+    /// a near-zero result in #91).
+    #[must_use]
+    pub fn boundary_rd(mut self, mode: BoundaryRd) -> Self {
+        self.boundary_rd_mode = mode;
+        self
+    }
+
+    /// Set the content-class hint used by [`BoundaryRd::Auto`] preset
+    /// resolution.
+    ///
+    /// Has no effect unless
+    /// [`boundary_rd(BoundaryRd::Auto)`](Self::boundary_rd) is also set.
+    /// See [`ContentClass`] for the preset map and per-class rationale.
+    #[must_use]
+    pub fn boundary_rd_hint(mut self, class: ContentClass) -> Self {
+        self.boundary_rd_hint = Some(class);
+        self
+    }
+
+    /// Resolve the boundary-RD mode + hint into concrete parameters for
+    /// the low-level streaming builder. Returns `(enabled, alpha,
+    /// threshold, shrink, max_retries, above)`. Off → all-default tuple.
+    #[must_use]
+    pub(crate) fn resolve_boundary_rd(&self) -> (bool, f32, f32, f32, u8, bool) {
+        let cfg = match self.boundary_rd_mode {
+            BoundaryRd::Off => {
+                let d = BoundaryRdConfig::default();
+                return (false, d.alpha, d.threshold, d.shrink, d.max_retries, d.above);
+            }
+            BoundaryRd::Manual(cfg) => cfg,
+            BoundaryRd::Auto => match self.boundary_rd_hint {
+                Some(class) => class.to_preset(),
+                // No hint → photo-safe default, per #91 synthesis
+                // (photos show small SSIM2 Pareto cost under aggressive
+                // settings; default must be safe for unknown content).
+                None => BoundaryRdConfig::photo_mild(),
+            },
+        };
+        (
+            true,
+            cfg.alpha,
+            cfg.threshold,
+            cfg.shrink,
+            cfg.max_retries,
+            cfg.above,
+        )
     }
 
     // === Validation ===
