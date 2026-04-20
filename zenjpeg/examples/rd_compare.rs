@@ -462,6 +462,16 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         "auto_optimize_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true).boundary_rd(true)
         })),
+        // Phase 4 of #91 — left+above boundary-continuity refinement.
+        "boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_above(true)
+        })),
+        "boundary_rd_left_above_444" => Some(mk(ChromaSubsampling::None, |c| {
+            c.boundary_rd(true).boundary_rd_above(true)
+        })),
+        "auto_optimize_boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.auto_optimize(true).boundary_rd(true).boundary_rd_above(true)
+        })),
         _ => None,
     }
 }
