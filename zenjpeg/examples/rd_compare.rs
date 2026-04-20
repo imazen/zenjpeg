@@ -50,7 +50,10 @@ use zenjpeg::metrics::sweep::{
 #[derive(Debug, Clone)]
 struct Args {
     baseline: String,
-    candidate: String,
+    /// One or more candidate configs. The per-image / by-class reports
+    /// are emitted once per candidate (pairwise vs the single baseline).
+    /// Each `--candidate` flag adds one entry here.
+    candidates: Vec<String>,
     corpus_specs: Vec<CorpusSpec>,
     qualities: Vec<u8>,
     metrics: Vec<MetricKind>,
@@ -67,7 +70,9 @@ struct CorpusSpec {
 
 fn parse_args() -> Args {
     let mut baseline = String::from("default");
-    let mut candidate = String::from("auto_optimize");
+    // Collected across all `--candidate <name>` flags. Defaults to a
+    // single `auto_optimize` candidate when none are passed.
+    let mut candidates: Vec<String> = Vec::new();
     let mut corpus_specs: Vec<CorpusSpec> = vec![
         CorpusSpec { kind: "cid22".into(), count: 3 },
         CorpusSpec { kind: "screenshots".into(), count: 2 },
@@ -89,7 +94,7 @@ fn parse_args() -> Args {
             }
             "--candidate" => {
                 i += 1;
-                candidate = argv[i].clone();
+                candidates.push(argv[i].clone());
             }
             "--corpus" => {
                 i += 1;
@@ -124,10 +129,10 @@ fn parse_args() -> Args {
                 run_id = argv[i].clone();
             }
             "--help" | "-h" => {
-                eprintln!("rd_compare — BD-rate / mean-distance comparison of two encoder configs");
+                eprintln!("rd_compare — BD-rate / mean-distance comparison of one baseline vs N candidates");
                 eprintln!();
                 eprintln!("  --baseline <name>      (default: default)");
-                eprintln!("  --candidate <name>     (default: auto_optimize)");
+                eprintln!("  --candidate <name>     (repeatable — one sweep may include multiple)");
                 eprintln!("  --corpus cid22:N,screenshots:N,synthetic:N");
                 eprintln!("  --qualities 50,65,75,85,95");
                 eprintln!("  --metrics ssim2,bbs");
@@ -138,6 +143,9 @@ fn parse_args() -> Args {
                 eprintln!("  default, default_444, progressive, progressive_444");
                 eprintln!("  auto_optimize, auto_optimize_444");
                 eprintln!("  mozjpeg_progressive, mozjpeg_progressive_444");
+                eprintln!("  boundary_rd, boundary_rd_444, auto_optimize_boundary_rd");
+                eprintln!("  boundary_rd_gate_max_{{05,03,02,01}} (Phase 5.5)");
+                eprintln!("  boundary_rd_gate_min_{{005,010}}      (Phase 5.5)");
                 std::process::exit(0);
             }
             other => {
@@ -148,9 +156,13 @@ fn parse_args() -> Args {
         i += 1;
     }
 
+    if candidates.is_empty() {
+        candidates.push(String::from("auto_optimize"));
+    }
+
     Args {
         baseline,
-        candidate,
+        candidates,
         corpus_specs,
         qualities,
         metrics,
@@ -239,6 +251,12 @@ fn collect_cid22(n: usize) -> Vec<CorpusImage> {
 fn collect_screenshots(n: usize) -> Vec<CorpusImage> {
     // gb82-sc screenshots can be huge (2560×1664); center-crop to
     // max 512 per side so the demo fits in budget.
+    //
+    // `windows95.png` is skipped — it uses an unsupported PNG format
+    // (palette/transparency combination that the `image` crate can't
+    // decode reliably). That leaves 9 valid screenshots:
+    //   codec_wiki, gmessages, graph, gui, imac_dark, imac_g3, imessage,
+    //   terminal, windows.
     let root = home().join("work/codec-eval/codec-corpus/gb82-sc");
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&root) else {
@@ -256,6 +274,12 @@ fn collect_screenshots(n: usize) -> Vec<CorpusImage> {
                 .and_then(|s| s.to_str())
                 .map(|e| e.eq_ignore_ascii_case("png"))
                 .unwrap_or(false)
+        })
+        .filter(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .map(|name| name != "windows95.png")
+                .unwrap_or(true)
         })
         .collect();
     paths.sort();
@@ -462,6 +486,28 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         "auto_optimize_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true).boundary_rd(true)
         })),
+        // Phase 5.5 of #91 — per-block AQ-strength gates. The `gate_max_X`
+        // variants skip refinement when aq_strength > X (skipping
+        // textured/well-masked blocks). The `gate_min_X` variants skip
+        // refinement when aq_strength < X (skipping smooth blocks).
+        "boundary_rd_gate_max_05" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_max(0.5)
+        })),
+        "boundary_rd_gate_max_03" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_max(0.3)
+        })),
+        "boundary_rd_gate_max_02" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_max(0.2)
+        })),
+        "boundary_rd_gate_max_01" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_max(0.1)
+        })),
+        "boundary_rd_gate_min_005" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_min(0.05)
+        })),
+        "boundary_rd_gate_min_010" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(true).boundary_rd_aq_gate_min(0.10)
+        })),
         _ => None,
     }
 }
@@ -562,20 +608,21 @@ fn main() {
         eprintln!("no corpus images loaded, aborting");
         std::process::exit(1);
     }
+    // Dedupe configs so a candidate that repeats the baseline name isn't
+    // re-encoded. Sweep harness is keyed on config name.
+    let mut config_names: Vec<String> = vec![args.baseline.clone()];
+    for c in &args.candidates {
+        if !config_names.iter().any(|n| n == c) {
+            config_names.push(c.clone());
+        }
+    }
     eprintln!(
-        "loaded {} images, running {} × {} configs × qualities {:?}, metrics {:?}",
+        "loaded {} images, running {} configs × qualities {:?}, metrics {:?}",
         images.len(),
-        args.qualities.len(),
-        if args.baseline == args.candidate { 1 } else { 2 },
+        config_names.len(),
         args.qualities,
         args.metrics.iter().map(|m| m.slug()).collect::<Vec<_>>()
     );
-
-    let config_names = if args.baseline == args.candidate {
-        vec![args.baseline.clone()]
-    } else {
-        vec![args.baseline.clone(), args.candidate.clone()]
-    };
 
     let metrics = args.metrics.clone();
     let encoder = |img: &CorpusImage, cfg_name: &str, q: u8| -> Option<SampleOutput> {
@@ -675,6 +722,9 @@ struct PerImageComparison {
     image: String,
     class: ImageClass,
     metric: MetricKind,
+    /// Candidate config this comparison is for. Lets one run cover
+    /// multiple candidates vs one baseline.
+    candidate: String,
     baseline_points: usize,
     candidate_points: usize,
     bd_rate: Option<f64>,
@@ -691,21 +741,30 @@ fn write_per_image_report(
     for (label, class) in result.images() {
         for metric in &args.metrics {
             let base = result.rd_curve(label, &args.baseline, metric);
-            let cand = result.rd_curve(label, &args.candidate, metric);
-            if base.is_empty() || cand.is_empty() {
+            if base.is_empty() {
                 continue;
             }
-            let cmp = rd::compare(&base, &cand);
-            comparisons.push(PerImageComparison {
-                image: label.to_owned(),
-                class,
-                metric: metric.clone(),
-                baseline_points: base.len(),
-                candidate_points: cand.len(),
-                bd_rate: cmp.bd_rate,
-                mean_distance: cmp.mean_distance,
-                win_rate: cmp.win_rate,
-            });
+            for candidate in &args.candidates {
+                if candidate == &args.baseline {
+                    continue;
+                }
+                let cand = result.rd_curve(label, candidate, metric);
+                if cand.is_empty() {
+                    continue;
+                }
+                let cmp = rd::compare(&base, &cand);
+                comparisons.push(PerImageComparison {
+                    image: label.to_owned(),
+                    class,
+                    metric: metric.clone(),
+                    candidate: candidate.clone(),
+                    baseline_points: base.len(),
+                    candidate_points: cand.len(),
+                    bd_rate: cmp.bd_rate,
+                    mean_distance: cmp.mean_distance,
+                    win_rate: cmp.win_rate,
+                });
+            }
         }
     }
     let path = run_dir.join("per_image.csv");
@@ -724,7 +783,7 @@ fn write_per_image_report(
             c.class.slug(),
             c.metric.slug(),
             args.baseline,
-            args.candidate,
+            c.candidate,
             c.baseline_points,
             c.candidate_points,
             format_opt(c.bd_rate, 4),
@@ -745,11 +804,16 @@ fn format_opt(v: Option<f64>, prec: usize) -> String {
 }
 
 fn write_class_aggregate(run_dir: &Path, comparisons: &[PerImageComparison], args: &Args) {
-    // Group by (class, metric), summarise.
-    let mut groups: BTreeMap<(String, String), Vec<&PerImageComparison>> = BTreeMap::new();
+    // Group by (candidate, class, metric), summarise.
+    let mut groups: BTreeMap<(String, String, String), Vec<&PerImageComparison>> =
+        BTreeMap::new();
     for c in comparisons {
         groups
-            .entry((c.class.slug().to_owned(), c.metric.slug().to_owned()))
+            .entry((
+                c.candidate.clone(),
+                c.class.slug().to_owned(),
+                c.metric.slug().to_owned(),
+            ))
             .or_default()
             .push(c);
     }
@@ -761,7 +825,7 @@ fn write_class_aggregate(run_dir: &Path, comparisons: &[PerImageComparison], arg
          mean_distance_mean,win_rate_mean"
     )
     .unwrap();
-    for ((class, metric), rows) in &groups {
+    for ((candidate, class, metric), rows) in &groups {
         let bds: Vec<f64> = rows.iter().filter_map(|r| r.bd_rate).collect();
         let dists: Vec<f64> = rows.iter().map(|r| r.mean_distance).collect();
         let wins: Vec<f64> = rows.iter().map(|r| r.win_rate).collect();
@@ -774,7 +838,7 @@ fn write_class_aggregate(run_dir: &Path, comparisons: &[PerImageComparison], arg
             class,
             metric,
             args.baseline,
-            args.candidate,
+            candidate,
             rows.len(),
             format_opt(Some(bd_mean), 4),
             format_opt(Some(bd_sd), 4),
@@ -797,47 +861,58 @@ fn mean_stdev(xs: &[f64]) -> (f64, f64) {
 
 fn print_summary(comparisons: &[PerImageComparison], args: &Args) {
     println!();
-    println!("Summary: {} vs {}", args.baseline, args.candidate);
     println!(
-        "{:<22} {:<10} {:<12} {:>12} {:>14} {:>9}",
-        "image", "class", "metric", "BD-rate %", "mean_distance", "win_rate"
+        "Summary: {} candidates vs {}",
+        args.candidates.len(),
+        args.baseline
+    );
+    println!(
+        "{:<22} {:<10} {:<24} {:<12} {:>12} {:>14} {:>9}",
+        "image", "class", "candidate", "metric", "BD-rate %", "mean_distance", "win_rate"
     );
     for c in comparisons {
         println!(
-            "{:<22} {:<10} {:<12} {:>12} {:>14.4} {:>9.2}",
+            "{:<22} {:<10} {:<24} {:<12} {:>12} {:>14.4} {:>9.2}",
             truncate(&c.image, 22),
             c.class.slug(),
+            truncate(&c.candidate, 24),
             c.metric.slug(),
             format_opt(c.bd_rate, 3),
             c.mean_distance,
             c.win_rate,
         );
     }
-    // Means by metric.
+    // Means by (candidate, metric).
     println!();
     let metrics: Vec<MetricKind> = args.metrics.clone();
-    println!("Per-metric aggregate:");
-    for m in &metrics {
-        let bds: Vec<f64> = comparisons
-            .iter()
-            .filter(|c| &c.metric == m)
-            .filter_map(|c| c.bd_rate)
-            .collect();
-        let (mean, sd) = mean_stdev(&bds);
-        let dists: Vec<f64> = comparisons
-            .iter()
-            .filter(|c| &c.metric == m)
-            .map(|c| c.mean_distance)
-            .collect();
-        let (dist_mean, _) = mean_stdev(&dists);
-        println!(
-            "  {:<12} n={} BD-rate mean={} stdev={} mean_distance={}",
-            m.slug(),
-            bds.len(),
-            format_opt(Some(mean), 3),
-            format_opt(Some(sd), 3),
-            format_opt(Some(dist_mean), 4),
-        );
+    println!("Per-candidate-per-metric aggregate:");
+    for candidate in &args.candidates {
+        if candidate == &args.baseline {
+            continue;
+        }
+        for m in &metrics {
+            let bds: Vec<f64> = comparisons
+                .iter()
+                .filter(|c| &c.metric == m && &c.candidate == candidate)
+                .filter_map(|c| c.bd_rate)
+                .collect();
+            let (mean, sd) = mean_stdev(&bds);
+            let dists: Vec<f64> = comparisons
+                .iter()
+                .filter(|c| &c.metric == m && &c.candidate == candidate)
+                .map(|c| c.mean_distance)
+                .collect();
+            let (dist_mean, _) = mean_stdev(&dists);
+            println!(
+                "  {:<24} {:<12} n={} BD-rate mean={} stdev={} mean_distance={}",
+                truncate(candidate, 24),
+                m.slug(),
+                bds.len(),
+                format_opt(Some(mean), 3),
+                format_opt(Some(sd), 3),
+                format_opt(Some(dist_mean), 4),
+            );
+        }
     }
 }
 
