@@ -401,24 +401,18 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         #[allow(unused_mut)]
         let mut cfg = self.config.effective_config();
 
-        // Map threading policy to parallel encoding config
+        // Map threading policy to parallel encoding config. We use the
+        // `is_parallel()` accessor instead of matching individual variants
+        // so that the code keeps working across zencodec 0.1.x releases
+        // (e.g. the 0.1.19 bump deprecated `SingleThread`/`LimitOrSingle`/
+        // `LimitOrAny`/`Balanced`/`Unlimited` in favor of
+        // `Sequential`/`Parallel`).
         #[cfg(feature = "parallel")]
         {
-            use zencodec::ThreadingPolicy;
-            match self.limits.threading {
-                ThreadingPolicy::SingleThread => {
-                    // Explicitly do not enable parallel — leave cfg.parallel as None
-                }
-                ThreadingPolicy::LimitOrSingle { max_threads } if max_threads > 1 => {
-                    cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
-                }
-                ThreadingPolicy::LimitOrAny { .. }
-                | ThreadingPolicy::Balanced
-                | ThreadingPolicy::Unlimited => {
-                    cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
-                }
-                _ => {}
+            if self.limits.threading.is_parallel() {
+                cfg = cfg.parallel(crate::encode::ParallelEncoding::Auto);
             }
+            // Otherwise (Sequential): leave cfg.parallel as None.
         }
 
         Ok(JpegEncoder {
@@ -1757,21 +1751,15 @@ fn build_decode_config(
         cfg = cfg.auto_orient(false);
     }
 
-    // Map threading policy
-    match limits.threading {
-        zencodec::ThreadingPolicy::SingleThread => {
-            cfg = cfg.num_threads(1);
-        }
-        zencodec::ThreadingPolicy::LimitOrSingle { max_threads } => {
-            cfg = cfg.num_threads(max_threads as usize);
-        }
-        zencodec::ThreadingPolicy::LimitOrAny {
-            preferred_max_threads,
-        } => {
-            cfg = cfg.num_threads(preferred_max_threads as usize);
-        }
-        _ => {} // Balanced, Unlimited — use default (auto)
+    // Map threading policy. The zencodec 0.1.19 bump collapsed the
+    // previous five variants into `Sequential` / `Parallel` (the thread
+    // count knob moved to the caller via `pool.install()`), so we route
+    // through `is_parallel()` instead of matching the deprecated
+    // variants.
+    if !limits.threading.is_parallel() {
+        cfg = cfg.num_threads(1);
     }
+    // Parallel: leave num_threads at its default (auto).
 
     // Map decode policy to strictness and metadata preservation
     if let Some(pol) = policy {
