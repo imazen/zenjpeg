@@ -36,13 +36,7 @@ fn encode(
     enc.finish().expect("finish failed").len()
 }
 
-fn encode_gray(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    mode: TinyFileMode,
-    quality: u8,
-) -> usize {
+fn encode_gray(data: &[u8], width: u32, height: u32, mode: TinyFileMode, quality: u8) -> usize {
     let cfg = EncoderConfig::grayscale(quality)
         .progressive(false)
         .tiny_file_mode(mode);
@@ -68,8 +62,7 @@ fn resize_nearest(
         let src_y = (y as u64 * src_h as u64 / out_h as u64) as u32;
         for x in 0..out_w {
             let src_x = (x as u64 * src_w as u64 / out_w as u64) as u32;
-            let src_idx =
-                ((src_y as usize) * (src_w as usize) + (src_x as usize)) * channels;
+            let src_idx = ((src_y as usize) * (src_w as usize) + (src_x as usize)) * channels;
             let dst_idx = ((y as usize) * (out_w as usize) + (x as usize)) * channels;
             for c in 0..channels {
                 out[dst_idx + c] = src[src_idx + c];
@@ -142,9 +135,7 @@ fn main() {
                         .map(|rd| {
                             rd.flatten()
                                 .map(|e| e.path())
-                                .filter(|p| {
-                                    p.extension().and_then(|s| s.to_str()) == Some("png")
-                                })
+                                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("png"))
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default()
@@ -164,12 +155,7 @@ fn main() {
 
     let sources: Vec<(String, Vec<u8>, u32, u32)> = if paths.is_empty() {
         // One synthetic 1024×1024 reference image, resized.
-        vec![(
-            "synthetic".into(),
-            gradient_rgb(1024, 1024),
-            1024,
-            1024,
-        )]
+        vec![("synthetic".into(), gradient_rgb(1024, 1024), 1024, 1024)]
     } else {
         let t0 = Instant::now();
         let loaded: Vec<_> = paths
@@ -189,7 +175,11 @@ fn main() {
                 })
             })
             .collect();
-        eprintln!("loaded {} source PNGs in {:.2?}", loaded.len(), t0.elapsed());
+        eprintln!(
+            "loaded {} source PNGs in {:.2?}",
+            loaded.len(),
+            t0.elapsed()
+        );
         loaded
     };
 
@@ -235,9 +225,7 @@ fn main() {
             for &(sub_name, _) in &subsamplings {
                 let bucket: Vec<&Measurement> = measurements
                     .iter()
-                    .filter(|m| {
-                        m.width == target && m.quality == q && m.subsampling == sub_name
-                    })
+                    .filter(|m| m.width == target && m.quality == q && m.subsampling == sub_name)
                     .collect();
                 if bucket.is_empty() {
                     continue;
@@ -246,8 +234,7 @@ fn main() {
                 let sum_off: usize = bucket.iter().map(|m| m.off).sum();
                 let sum_force: usize = bucket.iter().map(|m| m.force).sum();
                 let sum_delta: i64 = bucket.iter().map(|m| m.delta()).sum();
-                let avg_pct =
-                    100.0 * sum_delta as f64 / sum_off as f64;
+                let avg_pct = 100.0 * sum_delta as f64 / sum_off as f64;
                 let auto_matches_force = bucket.iter().filter(|m| m.auto == m.force).count();
                 println!(
                     "{:>5} {:>5} {:>5} {:>5} {:>9.1} {:>9.1} {:>+9.1} {:>+8.2}% {:>5}/{:<3}",

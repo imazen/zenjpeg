@@ -1486,11 +1486,7 @@ impl StreamingEncoder {
                     is_color,
                 )?;
 
-                config.write_huffman_tables_shared(
-                    output,
-                    &tables.dc_luma,
-                    &tables.ac_luma,
-                )?;
+                config.write_huffman_tables_shared(output, &tables.dc_luma, &tables.ac_luma)?;
 
                 if config.restart_interval > 0 {
                     config.write_restart_interval(output)?;

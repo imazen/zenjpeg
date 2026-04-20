@@ -231,10 +231,7 @@ fn auto_activates_for_grayscale_at_any_size() {
     let j_force = encode_gray(512, 512, &pixels_512, &c_force).unwrap();
     let j_off = encode_gray(512, 512, &pixels_512, &c_off).unwrap();
 
-    assert_eq!(
-        j_auto, j_force,
-        "grayscale Auto must activate at 512×512"
-    );
+    assert_eq!(j_auto, j_force, "grayscale Auto must activate at 512×512");
     assert!(
         j_auto.len() < j_off.len(),
         "grayscale shared Huffman should shrink output at 512×512: auto={} off={}",
@@ -307,6 +304,12 @@ fn xyb_output_unchanged_by_tiny_file_mode() {
     let b = encode_rgb(64, 64, &img.pixels, &c_force).unwrap();
     let c = encode_rgb(64, 64, &img.pixels, &c_off).unwrap();
 
-    assert_eq!(a, b, "XYB output must be identical across TinyFileMode variants");
-    assert_eq!(a, c, "XYB output must be identical across TinyFileMode variants");
+    assert_eq!(
+        a, b,
+        "XYB output must be identical across TinyFileMode variants"
+    );
+    assert_eq!(
+        a, c,
+        "XYB output must be identical across TinyFileMode variants"
+    );
 }

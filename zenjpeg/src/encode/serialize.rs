@@ -420,8 +420,7 @@ impl ComputedConfig {
         output.push(MARKER_DHT);
 
         // 2 (length field) + 2 tables × (1 class/id + 16 bits + values)
-        let total_len =
-            2 + (1 + 16 + dc_table.values.len()) + (1 + 16 + ac_table.values.len());
+        let total_len = 2 + (1 + 16 + dc_table.values.len()) + (1 + 16 + ac_table.values.len());
         output.push((total_len >> 8) as u8);
         output.push(total_len as u8);
 
