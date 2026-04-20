@@ -6,5 +6,7 @@
 //! crates — this module is for codec-internal or JPEG-specific measures.
 
 pub mod bbs;
+pub mod rd;
 
 pub use bbs::{BbsResult, bbs_planar_u8, bbs_rgb8};
+pub use rd::{RdComparison, RdCurve, RdPoint, bd_rate, closest_point_distance};
