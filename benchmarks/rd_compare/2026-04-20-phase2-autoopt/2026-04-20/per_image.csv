@@ -1,0 +1,15 @@
+image,class,metric,baseline,candidate,baseline_points,candidate_points,bd_rate_pct,mean_distance,win_rate
+1025469,photo,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+1025469,photo,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+1044329,photo,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+1044329,photo,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+codec_wiki,screenshot,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+codec_wiki,screenshot,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+gmessages,screenshot,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,NA,0.000000,0.0000
+gmessages,screenshot,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,NA,0.000000,0.0000
+synth_checkerboard,synthetic,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,NA,0.000000,0.0000
+synth_checkerboard,synthetic,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,NA,0.000000,0.0000
+synth_grid,lineart,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+synth_grid,lineart,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+synth_stripes,lineart,ssim2,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.0000
+synth_stripes,lineart,bbs,auto_optimize,auto_optimize_boundary_rd,4,4,0.0000,0.000000,0.2500
