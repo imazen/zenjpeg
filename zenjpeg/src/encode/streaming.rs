@@ -300,6 +300,15 @@ impl StreamingEncoder {
             } else if builder.hybrid_config.enabled {
                 processor.set_hybrid(builder.hybrid_config);
             }
+            // Phase 3: boundary-continuity D term (only effective when
+            // trellis / hybrid is active).
+            if builder.trellis_boundary_rd {
+                processor.set_trellis_boundary(
+                    true,
+                    builder.trellis_boundary_beta,
+                    builder.trellis_boundary_alpha,
+                );
+            }
         }
 
         let strip_height = processor.strip_height();

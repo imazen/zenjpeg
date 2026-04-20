@@ -165,6 +165,11 @@ impl BytesEncoder {
             } else if config.hybrid_config.enabled {
                 builder = builder.hybrid_config(config.hybrid_config);
             }
+            builder = builder.trellis_boundary(
+                config.trellis_boundary_rd,
+                config.trellis_boundary_beta,
+                config.trellis_boundary_alpha,
+            );
         }
 
         builder.start()

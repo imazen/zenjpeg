@@ -745,6 +745,95 @@ pub fn hybrid_quantize_block(
     quantized
 }
 
+/// Trellis quantization with boundary-continuity RD augmentation
+/// (Phase 3 of issue #91).
+///
+/// Generates multiple trellis candidates by perturbing λ (rate-distortion
+/// tradeoff), then picks the one that minimizes the augmented RD cost
+/// `D_λ(C) + β · D_boundary(C)`. β scales the caller-provided boundary
+/// contribution; α is baked into `BoundaryContext`. When `boundary_ctx`
+/// is `None` or has no left neighbor, the winning candidate is the same
+/// as [`hybrid_quantize_block`] (single trellis pass).
+///
+/// **Cost model:** the augmented cost for a candidate is approximated by
+/// `sum_i (dct_i - dequant_i)^2 · λ_tbl[i] · λ  +  rate_proxy + β · D_b`.
+/// We do not know λ and λ_tbl here at the same scale the trellis used
+/// internally — instead we compare candidates using a **proxy** that
+/// combines sum-squared-error in the pixel domain (via the edge-matrix
+/// reconstruction) with the boundary distortion. This keeps the
+/// comparison well-defined across candidates without re-creating the
+/// trellis's internal accounting.
+///
+/// Scoring uses spatial-domain SSE on the left column only; the
+/// assumption is that the λ-winner from a given run is "good overall"
+/// and the tiebreaker among runs is which one has the best
+/// reconstruction-seam tradeoff.
+pub(crate) fn hybrid_quantize_block_with_boundary(
+    dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+    base_quant: &[u16; DCT_BLOCK_SIZE],
+    ac_table: &RateTable,
+    config: &TrellisConfig,
+    boundary_ctx: Option<&super::boundary::BoundaryContext>,
+    beta: f32,
+) -> [i16; DCT_BLOCK_SIZE] {
+    // Fast path: no boundary context or no left neighbor → single pass.
+    let Some(ctx) = boundary_ctx else {
+        return hybrid_quantize_block(dct_coeffs, base_quant, ac_table, config);
+    };
+    if ctx.left_neighbor_committed_right.is_none() || ctx.orig_left_right.is_none() {
+        return hybrid_quantize_block(dct_coeffs, base_quant, ac_table, config);
+    }
+
+    let dct_i32 = dct_f32_to_i32(dct_coeffs);
+
+    // Candidate configs: default λ, slightly gentler (more coeffs kept), and
+    // slightly harsher (more zeros).
+    let base = *config;
+    let softer = TrellisConfig {
+        lambda_log_scale1: base.lambda_log_scale1 - 1.0,
+        ..base
+    };
+    let harsher = TrellisConfig {
+        lambda_log_scale1: base.lambda_log_scale1 + 1.0,
+        ..base
+    };
+
+    let candidates = [&base, &softer, &harsher];
+    let mut best_natural = [0i16; DCT_BLOCK_SIZE];
+    let mut best_score = f32::INFINITY;
+
+    for cfg in candidates {
+        let mut natural = [0i16; DCT_BLOCK_SIZE];
+        trellis_quantize_block(&dct_i32, &mut natural, base_quant, ac_table, cfg);
+        // Scoring: sum_i (rec_natural_i - src_natural_i)^2 + β · D_boundary
+        //   rec_natural_i = natural[i] as f32 * base_quant[i]
+        //   src_natural_i = dct_coeffs[i] * 8.0  (jpegli f32 DCT convention)
+        let mut sse = 0.0f32;
+        let mut rec_natural = [0.0f32; DCT_BLOCK_SIZE];
+        for i in 0..DCT_BLOCK_SIZE {
+            rec_natural[i] = natural[i] as f32 * base_quant[i] as f32;
+            let src = dct_coeffs[i] * 8.0;
+            let d = rec_natural[i] - src;
+            sse += d * d;
+        }
+        // Reconstruct left edge via the E matrix (no IDCT).
+        let rec_left = super::boundary::reconstruct_left_edge_from_natural(&rec_natural);
+        let d_boundary = super::boundary::boundary_distortion_from_edges(
+            &rec_left,
+            ctx.left_neighbor_committed_right.as_ref(),
+            &ctx.orig_curr_left,
+            ctx.orig_left_right.as_ref(),
+            ctx.alpha,
+        );
+        let score = sse + beta * d_boundary;
+        if score < best_score {
+            best_score = score;
+            best_natural = natural;
+        }
+    }
+    best_natural
+}
+
 /// Hybrid quantization without trellis (for comparison/testing).
 ///
 /// Scales quant table by AQ but uses simple rounding instead of trellis.
@@ -933,6 +1022,43 @@ impl HybridQuantContext {
         };
 
         hybrid_quantize_block(dct_coeffs, quant, ac_table, &trellis_config)
+    }
+
+    /// Quantize with boundary-RD augmentation (Phase 3 of #91).
+    ///
+    /// Same as [`quantize_block`](Self::quantize_block) but additionally
+    /// considers `β · D_boundary` in the candidate selection. When
+    /// `boundary_ctx` is `None` or has no left neighbor, this is
+    /// equivalent to the single-pass path.
+    pub(crate) fn quantize_block_with_boundary(
+        &self,
+        dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+        quant: &[u16; DCT_BLOCK_SIZE],
+        aq_strength: f32,
+        dampen: f32,
+        is_luma: bool,
+        boundary_ctx: Option<&super::boundary::BoundaryContext>,
+        beta: f32,
+    ) -> [i16; DCT_BLOCK_SIZE] {
+        let ac_table = if is_luma {
+            &self.rate_tables.luma_ac
+        } else {
+            &self.rate_tables.chroma_ac
+        };
+        let trellis_config = match &self.mode {
+            TrellisMode::Hybrid(hybrid_config) => {
+                hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma)
+            }
+            TrellisMode::Standalone(trellis_config) => *trellis_config,
+        };
+        hybrid_quantize_block_with_boundary(
+            dct_coeffs,
+            quant,
+            ac_table,
+            &trellis_config,
+            boundary_ctx,
+            beta,
+        )
     }
 
     /// Returns true if DC trellis optimization is enabled.

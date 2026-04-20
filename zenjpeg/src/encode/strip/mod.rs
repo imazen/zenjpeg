@@ -452,6 +452,25 @@ pub struct StripProcessor {
     #[cfg(feature = "trellis")]
     hybrid_ctx: Option<HybridQuantContext>,
 
+    // === Boundary-continuity D term (Phase 3 of #91) ===
+    /// Whether the boundary-continuity D term is enabled inside the
+    /// trellis RD search. Only consulted when `hybrid_ctx.is_some()`.
+    #[cfg(feature = "trellis")]
+    trellis_boundary_rd: bool,
+    /// β weight for D_boundary inside the trellis augmented cost.
+    #[cfg(feature = "trellis")]
+    trellis_boundary_beta: f32,
+    /// α (seam-jump weight) baked into `BoundaryContext` when boundary
+    /// RD is active.
+    #[cfg(feature = "trellis")]
+    trellis_boundary_alpha: f32,
+    /// Per-row committed right-edge cache for Y blocks. Indexed by
+    /// block x-coordinate in the current block row. Reset at the
+    /// start of each block row of Y. `None` when boundary-RD is
+    /// disabled (no allocation on the fast path).
+    #[cfg(feature = "trellis")]
+    y_committed_right_edges: Option<Vec<[f32; 8]>>,
+
     // === Archmage SIMD token (feature-gated) ===
     /// Desktop64 token for zero-dispatch SIMD operations.
     /// Obtained once at construction, reused for all blocks.
@@ -729,6 +748,16 @@ impl StripProcessor {
             #[cfg(feature = "trellis")]
             hybrid_ctx: None,
 
+            // Boundary-continuity D term (disabled by default)
+            #[cfg(feature = "trellis")]
+            trellis_boundary_rd: false,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_beta: 1.0,
+            #[cfg(feature = "trellis")]
+            trellis_boundary_alpha: 1.0,
+            #[cfg(feature = "trellis")]
+            y_committed_right_edges: None,
+
             // Archmage SIMD token (obtained once, reused for all blocks)
             #[cfg(target_arch = "x86_64")]
             simd_token: {
@@ -857,6 +886,25 @@ impl StripProcessor {
     #[cfg(feature = "trellis")]
     pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
+    }
+
+    /// Configures the boundary-continuity D term inside the trellis RD
+    /// search (Phase 3 of issue #91). When `enable` is true, the
+    /// processor allocates a per-row edge cache; when false (default),
+    /// no allocation happens.
+    #[cfg(feature = "trellis")]
+    pub fn set_trellis_boundary(&mut self, enable: bool, beta: f32, alpha: f32) {
+        self.trellis_boundary_rd = enable;
+        self.trellis_boundary_beta = beta;
+        self.trellis_boundary_alpha = alpha;
+        if enable {
+            // Lazily allocate a right-edge cache sized to one block row of
+            // Y. Fresh zeros; will be populated as blocks finalize.
+            let blocks_w = self.layout.y_blocks_w;
+            self.y_committed_right_edges = Some(vec![[0.0f32; 8]; blocks_w]);
+        } else {
+            self.y_committed_right_edges = None;
+        }
     }
 
     /// Returns whether XYB mode is enabled.
@@ -1326,6 +1374,25 @@ impl StripProcessor {
         #[cfg(not(feature = "trellis"))]
         let store_dc_raw = false;
 
+        // Phase 3: boundary-RD is only effective when trellis is active
+        // and a cache has been allocated via `set_trellis_boundary(true, …)`.
+        #[cfg(feature = "trellis")]
+        let use_boundary = use_trellis
+            && self.trellis_boundary_rd
+            && self.y_committed_right_edges.is_some();
+        #[cfg(not(feature = "trellis"))]
+        let use_boundary = false;
+
+        // Global block-row anchor: every iMCU spans one or more block
+        // rows, starting at this global `by`.
+        let y_blocks_w = self.layout.y_blocks_w.max(1);
+        #[allow(unused_variables)]
+        let global_y_by_start = self.y_blocks.len() / y_blocks_w;
+        // Padded width of the y_strip buffer, needed for reading orig
+        // edge columns. This matches LayoutParams::padded_width.
+        #[allow(unused_variables)]
+        let padded_width = self.layout.padded_width;
+
         // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
             // Use get() with fallback to avoid branch on common path
@@ -1342,13 +1409,102 @@ impl StripProcessor {
             let zigzag = if use_trellis {
                 // Trellis path: convert to array, quantize with R-D, apply zigzag
                 let dct_arr = dct.to_array();
-                let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                    &dct_arr,
-                    &quant.y_quant.values,
-                    aq_strength,
-                    1.0,  // dampen
-                    true, // is_luma
-                );
+                // Determine block coordinate within the current iMCU and
+                // whether we have a usable left neighbor for boundary-RD.
+                let bx = i % y_blocks_w;
+                let local_by = i / y_blocks_w;
+                let global_by = global_y_by_start + local_by;
+
+                // Row-boundary book-keeping for the committed-right-edge
+                // cache: at the start of a new global block row, the
+                // previously cached right edges are stale — clear them.
+                if use_boundary && bx == 0 && global_by > 0 {
+                    if let Some(cache) = self.y_committed_right_edges.as_mut() {
+                        for e in cache.iter_mut() {
+                            *e = [0.0f32; 8];
+                        }
+                    }
+                }
+
+                // Build BoundaryContext when usable (bx > 0 and cache populated).
+                let boundary_ctx = if use_boundary && bx > 0 {
+                    // Read original left-edge columns directly from the
+                    // y_strip (level-shift to [-128, 127] to match the
+                    // IDCT-output domain of the E matrix).
+                    let y_start = local_by * 8;
+                    let x_curr_left = bx * 8;
+                    let x_prev_right = bx * 8 - 1;
+                    let y_size = self.y_strip.len();
+                    let last_idx = (y_start + 7) * padded_width + x_curr_left;
+                    if last_idx < y_size {
+                        let mut orig_curr_left = [0.0f32; 8];
+                        let mut orig_left_right = [0.0f32; 8];
+                        for r in 0..8 {
+                            let row_off = (y_start + r) * padded_width;
+                            orig_curr_left[r] =
+                                self.y_strip[row_off + x_curr_left] - 128.0;
+                            orig_left_right[r] =
+                                self.y_strip[row_off + x_prev_right] - 128.0;
+                        }
+                        let committed_right = self
+                            .y_committed_right_edges
+                            .as_ref()
+                            .and_then(|c| c.get(bx - 1).copied());
+                        committed_right.map(|committed| {
+                            crate::encode::trellis::boundary::BoundaryContext {
+                                orig_curr_left,
+                                orig_left_right: Some(orig_left_right),
+                                left_neighbor_committed_right: Some(committed),
+                                alpha: self.trellis_boundary_alpha,
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let natural = if boundary_ctx.is_some() {
+                    self.hybrid_ctx.as_ref().unwrap().quantize_block_with_boundary(
+                        &dct_arr,
+                        &quant.y_quant.values,
+                        aq_strength,
+                        1.0,
+                        true,
+                        boundary_ctx.as_ref(),
+                        self.trellis_boundary_beta,
+                    )
+                } else {
+                    self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                        &dct_arr,
+                        &quant.y_quant.values,
+                        aq_strength,
+                        1.0,
+                        true,
+                    )
+                };
+
+                // Phase 3: cache this block's committed right edge so the
+                // next block in this row can read it. Uses the dequantized
+                // natural-order coefficients and the R matrix (no IDCT).
+                if use_boundary {
+                    let mut rec_natural = [0.0f32; DCT_BLOCK_SIZE];
+                    for n in 0..DCT_BLOCK_SIZE {
+                        rec_natural[n] =
+                            natural[n] as f32 * quant.y_quant.values[n] as f32;
+                    }
+                    let right =
+                        crate::encode::trellis::boundary::reconstruct_right_edge_from_natural(
+                            &rec_natural,
+                        );
+                    if let Some(cache) = self.y_committed_right_edges.as_mut() {
+                        if let Some(slot) = cache.get_mut(bx) {
+                            *slot = right;
+                        }
+                    }
+                }
+
                 // Apply zigzag reordering
                 let mut result = [0i16; DCT_BLOCK_SIZE];
                 for j in 0..DCT_BLOCK_SIZE {

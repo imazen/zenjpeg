@@ -307,6 +307,17 @@ impl StreamingEncoderBuilder {
         self
     }
 
+    /// Enables/disables the boundary-continuity D term inside the trellis
+    /// rate-distortion search (Phase 3 of issue #91).
+    #[cfg(feature = "trellis")]
+    #[must_use]
+    pub(crate) fn trellis_boundary(mut self, enable: bool, beta: f32, alpha: f32) -> Self {
+        self.trellis_boundary_rd = enable;
+        self.trellis_boundary_beta = beta;
+        self.trellis_boundary_alpha = alpha;
+        self
+    }
+
     /// Sets a custom AQ (adaptive quantization) strength map.
     #[must_use]
     #[allow(dead_code)] // Internal API; EncoderConfig has its own wrapper
