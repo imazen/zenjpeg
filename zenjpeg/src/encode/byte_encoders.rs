@@ -144,6 +144,11 @@ impl BytesEncoder {
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
 
+        // Boundary-RD (Phase 2 of #91, off by default).
+        builder = builder.boundary_rd(config.boundary_rd);
+        builder = builder.boundary_rd_alpha(config.boundary_rd_alpha);
+        builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
+
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
             config.color_mode,
@@ -1006,6 +1011,11 @@ impl YCbCrPlanarEncoder {
         // Always pass deringing and AQ settings (StreamingEncoder defaults both to true)
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
+
+        // Boundary-RD (Phase 2 of #91, off by default).
+        builder = builder.boundary_rd(config.boundary_rd);
+        builder = builder.boundary_rd_alpha(config.boundary_rd_alpha);
+        builder = builder.boundary_rd_threshold(config.boundary_rd_threshold);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(

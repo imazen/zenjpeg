@@ -446,6 +446,27 @@ pub struct StripProcessor {
     /// Enable overshoot deringing (on by default)
     deringing: bool,
 
+    // === Boundary-continuity refinement (Phase 2 of #91) ===
+    /// When true, after each luma block is quantized via the non-trellis SIMD
+    /// path, the encoder compares its reconstructed left-edge column against
+    /// the committed right-edge column of its left neighbor and may retry the
+    /// quantize with a shrunken AQ strength. Off by default.
+    boundary_rd: bool,
+    /// α — seam-jump weight in the boundary-continuity D_b term. Default 1.0.
+    boundary_rd_alpha: f32,
+    /// D_b trigger threshold, as a multiplier of per-block AC DCT energy.
+    /// Default 0.1.
+    boundary_rd_threshold: f32,
+    /// Per-block-row cache of the committed right-edge column for the left
+    /// neighbor. Indexed by `local_by` within an iMCU. `None` means no left
+    /// neighbor yet (i.e., we are at the first block of a row).
+    ///
+    /// Values are in the DCT input domain ([-128, 127]), so they can be
+    /// compared directly against IDCT outputs.
+    ///
+    /// Allocated lazily on first use to keep the default path allocation-free.
+    boundary_rd_left_edges: Vec<Option<[f32; 8]>>,
+
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
@@ -725,6 +746,12 @@ impl StripProcessor {
             // Optional preprocessing (deringing on by default)
             deringing: true,
 
+            // Boundary-RD refinement (disabled by default; see issue #91).
+            boundary_rd: false,
+            boundary_rd_alpha: 1.0,
+            boundary_rd_threshold: 0.1,
+            boundary_rd_left_edges: Vec::new(),
+
             // Trellis quantization (disabled by default)
             #[cfg(feature = "trellis")]
             hybrid_ctx: None,
@@ -834,6 +861,16 @@ impl StripProcessor {
     /// This technique was pioneered by @kornel in mozjpeg.
     pub fn set_deringing(&mut self, enable: bool) {
         self.deringing = enable;
+    }
+
+    /// Configure boundary-continuity refinement (Phase 2 of issue #91).
+    ///
+    /// When `enable` is false (the default), the boundary_rd pass is skipped
+    /// entirely and the default encode path is unchanged.
+    pub fn set_boundary_rd(&mut self, enable: bool, alpha: f32, threshold: f32) {
+        self.boundary_rd = enable;
+        self.boundary_rd_alpha = alpha;
+        self.boundary_rd_threshold = threshold;
     }
 
     /// Sets trellis quantization configuration.

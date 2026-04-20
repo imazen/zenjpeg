@@ -70,6 +70,23 @@ pub struct EncoderConfig {
     /// A mild blur (σ=0.4) before JPEG encoding reduces file size ~5% with
     /// negligible perceptual quality loss. Only applies to u8 RGB/RGBA input.
     pub(crate) pre_blur: f32,
+
+    /// Enable boundary-continuity refinement (Phase 2 of #91).
+    ///
+    /// When true, after each luma block is quantized in the non-trellis path,
+    /// the encoder compares the reconstructed left-edge column against the
+    /// committed right-edge column of its left neighbor and may redo the
+    /// quantize with a shrunken AQ strength to reduce visible 8×8 block-seam
+    /// discontinuities. Off by default.
+    pub(crate) boundary_rd: bool,
+
+    /// Seam-jump weight (α) in the boundary-continuity D_b term.
+    /// Only consulted when `boundary_rd` is true.
+    pub(crate) boundary_rd_alpha: f32,
+
+    /// D_b trigger threshold, as a multiplier of per-block AC DCT energy.
+    /// Only consulted when `boundary_rd` is true.
+    pub(crate) boundary_rd_threshold: f32,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -223,6 +240,9 @@ impl EncoderConfig {
             trellis: None,
             segments: None,
             pre_blur: 0.0,
+            boundary_rd: false,
+            boundary_rd_alpha: 1.0,
+            boundary_rd_threshold: 0.1,
         }
     }
 
@@ -904,6 +924,51 @@ impl EncoderConfig {
     #[must_use]
     pub fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
+        self
+    }
+
+    /// Enable boundary-continuity refinement (Phase 2 of issue #91).
+    ///
+    /// When true, the encoder applies a post-quantization refinement pass to
+    /// luma blocks in the non-trellis path. For each block, it compares the
+    /// reconstructed left-edge column against the committed right-edge column
+    /// of its left neighbor and may retry the quantize with a shrunken AQ
+    /// strength to reduce visible 8×8 block-seam discontinuities.
+    ///
+    /// Off by default. Enabling costs ~5–15% encode time and may add a small
+    /// bit-rate increase; in exchange, block-boundary-score (BBS) drops on
+    /// screenshot / line-art / synthetic content where seam artifacts are
+    /// most visible.
+    ///
+    /// This flag is a no-op when trellis quantization is active (the trellis
+    /// path has its own boundary-D-augment — see Phase 3 / issue #91).
+    #[must_use]
+    pub fn boundary_rd(mut self, enable: bool) -> Self {
+        self.boundary_rd = enable;
+        self
+    }
+
+    /// Set the seam-jump weight (α) for the boundary-continuity D_b term.
+    ///
+    /// Default: 1.0. Larger α weights the seam-gradient term more heavily
+    /// relative to per-pixel edge distortion. Only consulted when
+    /// [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_alpha(mut self, alpha: f32) -> Self {
+        self.boundary_rd_alpha = alpha;
+        self
+    }
+
+    /// Set the D_b trigger threshold, expressed as a multiplier of per-block
+    /// AC DCT energy.
+    ///
+    /// Default: 0.1. Refinement fires when D_b > threshold × AC energy.
+    /// Lower values mean more blocks get the refinement pass (higher cost,
+    /// more BBS reduction); higher values mean fewer blocks qualify.
+    /// Only consulted when [`boundary_rd`](Self::boundary_rd) is enabled.
+    #[must_use]
+    pub fn boundary_rd_threshold(mut self, threshold: f32) -> Self {
+        self.boundary_rd_threshold = threshold;
         self
     }
 

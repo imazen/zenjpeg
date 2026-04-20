@@ -38,6 +38,12 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
     pub(crate) aq_enabled: bool,
+    /// Enable boundary-continuity refinement (Phase 2 of #91). Off by default.
+    pub(crate) boundary_rd: bool,
+    /// Seam-jump weight (α) for boundary-continuity D_b term.
+    pub(crate) boundary_rd_alpha: f32,
+    /// D_b trigger threshold as multiplier of per-block AC DCT energy.
+    pub(crate) boundary_rd_threshold: f32,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Force SOF1 (extended sequential) regardless of quant table precision.
@@ -81,6 +87,9 @@ impl StreamingEncoderBuilder {
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             deringing: true,
             aq_enabled: true,
+            boundary_rd: false,
+            boundary_rd_alpha: 1.0,
+            boundary_rd_threshold: 0.1,
             allow_16bit_quant_tables: false,
             force_sof1: false,
             separate_chroma_tables: true,
@@ -226,6 +235,27 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn aq_enabled(mut self, enable: bool) -> Self {
         self.aq_enabled = enable;
+        self
+    }
+
+    /// Enables boundary-continuity refinement (Phase 2 of #91). Off by default.
+    #[must_use]
+    pub(crate) fn boundary_rd(mut self, enable: bool) -> Self {
+        self.boundary_rd = enable;
+        self
+    }
+
+    /// Set the α (seam-jump weight) for boundary-continuity D_b.
+    #[must_use]
+    pub(crate) fn boundary_rd_alpha(mut self, alpha: f32) -> Self {
+        self.boundary_rd_alpha = alpha;
+        self
+    }
+
+    /// Set the D_b trigger threshold (multiplier of per-block AC DCT energy).
+    #[must_use]
+    pub(crate) fn boundary_rd_threshold(mut self, threshold: f32) -> Self {
+        self.boundary_rd_threshold = threshold;
         self
     }
 
