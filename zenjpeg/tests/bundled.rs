@@ -226,6 +226,8 @@ mod strip_edge_cpp_comparison;
 mod subsampling_tests;
 #[path = "bundled/test_prog_xyb_quality.rs"]
 mod test_prog_xyb_quality;
+#[path = "bundled/trellis_boundary_integration.rs"]
+mod trellis_boundary_integration;
 #[path = "bundled/trellis_config_effects.rs"]
 mod trellis_config_effects;
 #[path = "bundled/trellis_mozjpeg_comparison.rs"]
