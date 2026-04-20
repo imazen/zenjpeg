@@ -216,35 +216,36 @@ fn bbs_not_strongly_regressed_on_synthetics() {
 
 #[test]
 fn hash_lock_checkerboard_q80_boundary_rd_on() {
-    // Byte-exact hash-lock for α=1.0, threshold=0.1, shrink=0.7,
-    // retries=1. If this fails after the feature stabilizes, the
-    // refinement math drifted — investigate, don't retrain.
+    // Byte-exact hash-lock with the Phase 5 tuned defaults
+    // (α=1.0, threshold=0.05, shrink=0.5, retries=2). If this fails,
+    // either the refinement math drifted or the defaults changed —
+    // investigate, don't retrain. The 64×64 uniform checkerboard does
+    // not trigger the refinement (its block seams already match the
+    // original), so the output happens to be byte-identical to the
+    // Phase 2 locked output; a future content-aware hash-lock on a
+    // corpus image would catch defaults drift too.
     let (w, h) = (64usize, 64usize);
     let rgb = gen_checkerboard(w, h, 8);
     let bytes = encode_rgb8(&rgb, w as u32, h as u32, 80, true);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     let h64 = hasher.finish();
-    // The exact hash value is expected to drift during Phase 5 tuning;
-    // to keep this test green across non-tuning code changes we assert
-    // on size-equivalence rather than hash equivalence, logging the
-    // hash for humans. This still catches accidental output drift
-    // (size is a very-low-cardinality summary, but a drift usually
-    // shifts bytes by ±1 which changes Huffman-coded size).
     eprintln!("hash_lock: size={} hash64={:016x}", bytes.len(), h64);
-    // Record the current size bracket. The exact size depends on
-    // Huffman optimization and AQ; the bracket is wide enough to
-    // tolerate minor SIMD-rounding drift but tight enough that an
-    // accidental logic change (e.g. boundary-RD running when it
-    // shouldn't, or not running when it should) is caught.
-    // Baseline observed: ~513 bytes for 64×64 checkerboard at Q80.
-    let expected_size_range = 400..=900;
-    assert!(
-        expected_size_range.contains(&bytes.len()),
-        "hash-lock sanity: encoded size {} out of expected bracket {:?}",
+
+    // Exact byte size locked; drift of ±1 will fail this check.
+    assert_eq!(
         bytes.len(),
-        expected_size_range
+        513,
+        "hash-lock: encoded size drift"
     );
+    // Exact hash locked. Refresh both values together if this fails
+    // intentionally (e.g. another round of default tuning).
+    assert_eq!(
+        h64,
+        0xaba706f19b94e26f,
+        "hash-lock: encoded-byte hash drift"
+    );
+
     // Minimum correctness: decode must succeed and output must have
     // the right pixel count.
     let (dec, dw, dh) = decode_rgb8(&bytes);

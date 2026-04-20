@@ -752,10 +752,11 @@ impl StripProcessor {
 
             // Boundary-RD refinement (disabled by default; see issue #91).
             boundary_rd: false,
+            // Phase 5 tuned defaults — see EncoderConfig::default_internal.
             boundary_rd_alpha: 1.0,
-            boundary_rd_threshold: 0.1,
-            boundary_rd_shrink: 0.7,
-            boundary_rd_max_retries: 1,
+            boundary_rd_threshold: 0.05,
+            boundary_rd_shrink: 0.5,
+            boundary_rd_max_retries: 2,
             boundary_rd_left_edges: Vec::new(),
 
             // Trellis quantization (disabled by default)
