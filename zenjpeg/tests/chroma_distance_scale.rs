@@ -39,7 +39,7 @@ fn grayscale_rgb(w: u32, h: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((w * h * 3) as usize);
     for y in 0..h {
         for x in 0..w {
-            let v = ((x + y) as u32 * 255 / (w + h).max(1)) as u8;
+            let v = ((x + y) * 255 / (w + h).max(1)) as u8;
             out.push(v);
             out.push(v);
             out.push(v);

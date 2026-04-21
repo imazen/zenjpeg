@@ -606,7 +606,14 @@ pub fn generate_quant_table_ex(
     allow_16bit: bool,
 ) -> QuantTable {
     let distance = quality.to_distance();
-    generate_quant_table_with_distance(distance, component, color_space, use_xyb, is_420, allow_16bit)
+    generate_quant_table_with_distance(
+        distance,
+        component,
+        color_space,
+        use_xyb,
+        is_420,
+        allow_16bit,
+    )
 }
 
 /// Generates a quantization table from a pre-computed butteraugli distance.
