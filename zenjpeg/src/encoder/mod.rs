@@ -148,7 +148,7 @@ pub use crate::error::{Error, Result};
 pub use crate::encode::Stop;
 pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 pub use crate::encode::encoder_config::{
-    BoundaryRd, BoundaryRdConfig, ContentClass, EncoderConfig,
+    BoundaryRd, BoundaryRdConfig, EncoderConfig, ImageContentType,
 };
 pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,

@@ -458,35 +458,36 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         })),
         // Boundary-continuity RD refinement (#91, non-trellis).
         //
-        // Uses the new public surface: BoundaryRd::Auto + a ContentClass
-        // hint. Screenshot hint unlocks the full Phase-4 (left+above)
-        // preset; no hint uses the photo-safe mild preset.
+        // Uses the new public surface: BoundaryRd::Auto + an
+        // ImageContentType hint. ScreenContent hint unlocks the full
+        // Phase-4 (left+above) preset; no hint uses the photo-safe
+        // mild preset.
         "boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
         "boundary_rd_444" => Some(mk(ChromaSubsampling::None, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
         "auto_optimize_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true)
                 .boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
-        // left+above preset (same as Screenshot hint on Auto).
+        // left+above preset (same as ScreenContent hint on Auto).
         "boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
         "boundary_rd_left_above_444" => Some(mk(ChromaSubsampling::None, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
         "auto_optimize_boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true)
                 .boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ContentClass::Screenshot)
+                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
         })),
         _ => None,
     }

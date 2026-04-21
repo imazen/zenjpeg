@@ -1,6 +1,6 @@
-//! Integration coverage for the public `BoundaryRd` / `ContentClass` API
-//! (issue #91). See also `boundary_rd_hash_lock.rs` for the byte-identity
-//! default-path gate.
+//! Integration coverage for the public `BoundaryRd` / `ImageContentType`
+//! API (issue #91). See also `boundary_rd_hash_lock.rs` for the
+//! byte-identity default-path gate.
 //!
 //! This test lives on the public surface: `EncoderConfig::boundary_rd` and
 //! `EncoderConfig::boundary_rd_hint` are the only additions. Everything
@@ -8,7 +8,7 @@
 
 use enough::Unstoppable;
 use zenjpeg::encoder::{
-    BoundaryRd, BoundaryRdConfig, ChromaSubsampling, ContentClass, EncoderConfig, PixelLayout,
+    BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, ImageContentType, PixelLayout,
 };
 
 /// A small noise+patches image — the CLAUDE.md-approved test generator.
@@ -102,11 +102,11 @@ fn auto_with_each_hint_decodes() {
     let (w, h) = (128usize, 128usize);
     let rgb = gen_noise_patches(w, h, 0xbeef_babe);
     for class in [
-        ContentClass::Photo,
-        ContentClass::PhotoFlat,
-        ContentClass::Screenshot,
-        ContentClass::Illustration,
-        ContentClass::Lineart,
+        ImageContentType::PhotoNatural,
+        ImageContentType::PhotoDetailed,
+        ImageContentType::PhotoFlat,
+        ImageContentType::ScreenContent,
+        ImageContentType::Illustration,
     ] {
         let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter)
             .boundary_rd(BoundaryRd::Auto)
@@ -152,7 +152,7 @@ fn manual_config_decodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Functional behavior: Auto+Screenshot on a checkerboard must produce
+// Functional behavior: Auto+ScreenContent on a checkerboard must produce
 // different bytes from Off. We don't measure BBS directly here — the
 // internal metric is pub(crate) and gated behind __test-utils. The
 // committed CSVs at `benchmarks/rd_compare/` are the quantitative record.
@@ -166,13 +166,13 @@ fn auto_screenshot_differs_from_off_on_checkerboard() {
     let off = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off);
     let on = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter)
         .boundary_rd(BoundaryRd::Auto)
-        .boundary_rd_hint(ContentClass::Screenshot);
+        .boundary_rd_hint(ImageContentType::ScreenContent);
 
     let bytes_off = encode_rgb8(&rgb, w as u32, h as u32, off);
     let bytes_on = encode_rgb8(&rgb, w as u32, h as u32, on);
     assert_ne!(
         bytes_off, bytes_on,
-        "Auto+Screenshot must change output on a checkerboard"
+        "Auto+ScreenContent must change output on a checkerboard"
     );
 
     // And both must still decode.
