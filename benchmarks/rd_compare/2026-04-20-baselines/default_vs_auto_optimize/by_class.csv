@@ -1,9 +1,0 @@
-class,metric,baseline,candidate,n,bd_rate_mean,bd_rate_stdev,mean_distance_mean,win_rate_mean
-lineart,bbs,default,auto_optimize,1,-0.7295,0.0000,-99.114108,0.2000
-lineart,ssim2,default,auto_optimize,1,7.1745,0.0000,-3.741989,0.4000
-photo,bbs,default,auto_optimize,3,-7.5194,0.8253,7.408209,1.0000
-photo,ssim2,default,auto_optimize,3,-3.1957,2.3476,0.630550,0.8667
-screenshot,bbs,default,auto_optimize,2,0.8689,0.0000,-0.144432,0.2000
-screenshot,ssim2,default,auto_optimize,2,-0.2763,0.0000,-0.045741,0.3000
-synthetic,bbs,default,auto_optimize,1,NaN,NaN,0.000000,0.0000
-synthetic,ssim2,default,auto_optimize,1,NaN,NaN,0.000000,0.0000
