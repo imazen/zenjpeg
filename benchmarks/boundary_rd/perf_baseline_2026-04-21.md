@@ -6,7 +6,7 @@ zenjpeg_tuning_corpus_gpt.txt`. Seed 42, SplitMix64, 4 GPT categories
 balanced, images scaled to max-side=768 MCU-aligned, Q=75 4:2:0, 5
 iterations per config per image, median.
 
-The earlier +46.8% number in `simd_overhead_2026-04-20.md` was measured
+The earlier +46.8% number (from a pre-cleanup SIMD-overhead measurement, no longer committed) was measured
 on `cid22:5` (photo content). Photos are the cheap case: refinement
 rarely fires because `D_b` stays below threshold for smooth blocks. The
 lineart/illustration content is the DESIGNED-FOR case, and its overhead
@@ -39,7 +39,7 @@ Image: `/mnt/v/output/corpus-builder/wikimedia-webshapes/Illustration/
 
 ### Top functions by Ir delta (ON minus OFF)
 
-Ir in megacounts. Full exclusive-Ir listings in `callgrind_baseline_*_2026-04-21.txt`.
+Ir in megacounts. (Raw `callgrind_annotate` output not committed; regenerate via the commands below.)
 
 | ΔIr (M) | OFF (M) | ON (M) | Function |
 |---:|---:|---:|---|

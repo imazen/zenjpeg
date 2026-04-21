@@ -2,7 +2,7 @@
 
 Date: 2026-04-21
 Harness: `zenjpeg/examples/boundary_rd_zero_bias_targeted.rs`
-Corpus manifest: `benchmarks/boundary_rd/zero_bias_targeted/corpus_manifest.tsv`
+Corpus: 40 images stratified 10 per GPT category (illustration, screen_ui, screen_chart, screen_document) from `~/work/coefficient/scripts/selector_corpus/lineart/zenjpeg_tuning_corpus_gpt.txt`. The original run-time manifest.tsv was pruned.
 Total encodes: 320 baseline (OFF) + 1920 candidate = **2240 in 55.4 s**
 on the Ryzen 9 7950X.
 
@@ -51,7 +51,7 @@ Q-ranges: low (≤30), mid (31-60), high (>60).
 40 images, 10 per GPT category from the 1,375-image corpus
 at `~/work/coefficient/scripts/selector_corpus/lineart/zenjpeg_tuning_corpus_gpt.txt`.
 Stratified sample with deterministic seed (SHA-256 keyed with
-`"42"`; see `corpus_manifest.tsv` for the exact list, with SHA-256
+`"42"`; see the original commit for the manifest (pruned from the repo), with SHA-256
 per file for reproducibility). All 40 images are PNG or JPEG,
 center-cropped to 512×512 when larger.
 
@@ -138,14 +138,15 @@ other cells are affected.
 
 ## Files
 
-- `corpus_manifest.tsv` — 40 images (class/path/sha256).
-- `grid.csv` — 2240 rows, per (image, config, quality).
-- `per_image_per_cell.csv` — 600 rows, per (image, cell, candidate)
-  with bytes/ssim2/bbs ratios vs C1 and vs OFF, plus
-  per-image-Pareto-win flag.
 - `per_cell_stats.csv` — 60 rows, per (class, q-range, candidate)
   with `pareto_win_fraction`, `mean_ssim2_improvement_abs`,
   `mean_bytes_ratio`, `mean_bbs_ratio`, and the keep/drop decision.
+  This is the headline decision table.
+
+The original run also produced `corpus_manifest.tsv`, `grid.csv`
+(2240 rows per image×config×quality), and `per_image_per_cell.csv`
+(600 rows of per-image ratios). Those intermediate/raw files were
+pruned — the decision summary in `per_cell_stats.csv` is self-contained.
 
 ## Reproduction
 
@@ -166,9 +167,9 @@ cargo build --release -p zenjpeg --features "trellis decoder" \
 ./target/release/examples/boundary_rd_zero_bias_targeted
 ```
 
-Runtime ~1 minute on a Ryzen 9 7950X. The manifest paths in
-`corpus_manifest.tsv` must be accessible; the `sha256` column
-is for file-identity verification.
+Runtime ~1 minute on a Ryzen 9 7950X. The manifest paths must be
+accessible; SHA-256 values in the original manifest gate file-identity
+verification.
 
 ## Action taken
 

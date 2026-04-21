@@ -29,7 +29,7 @@ extra BBS gain. At mid and high Q, the tradeoff is strictly Pareto.
   partitioned into `low={5,15,30}`, `mid={45,60}`, `high={75,85,95}`.
 - Configs: 67 total — 1 baseline (boundary-RD off) and 66 combinations
   across `alpha x threshold x shrink x retries x above`.
-- Total encodes: 18 * 8 * 67 = **9648** rows in `grid.csv`.
+- Total encodes: 18 * 8 * 67 = **9648** rows (raw `grid.csv` pruned; see `per_class_per_q.csv` + `best_per_class_per_q.csv`).
 - Per-cell analysis: BD-rate on BBS (lower = better file/quality tradeoff)
   and SSIM2 (negative = quality gain), aggregated per
   (class_bucket, q_range) in `per_class_per_q.csv`.
