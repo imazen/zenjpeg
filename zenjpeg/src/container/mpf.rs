@@ -426,16 +426,7 @@ pub fn create_mpf_header_typed(
         offset_from_tiff += *length as u32;
     }
 
-    // Wrap in APP2 marker.
-    let mut marker = Vec::with_capacity(4 + MPF_IDENTIFIER.len() + mpf.len());
-    marker.push(0xFF);
-    marker.push(0xE2);
-    let length = 2 + MPF_IDENTIFIER.len() + mpf.len();
-    marker.push(((length >> 8) & 0xFF) as u8);
-    marker.push((length & 0xFF) as u8);
-    marker.extend_from_slice(MPF_IDENTIFIER);
-    marker.extend_from_slice(&mpf);
-    marker
+    super::marker::create_app_segment(2, MPF_IDENTIFIER, &mpf)
 }
 
 /// Build an MPF APP2 segment for primary + a single gain map secondary.

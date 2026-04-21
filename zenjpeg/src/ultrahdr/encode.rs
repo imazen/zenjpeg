@@ -215,10 +215,7 @@ pub fn encode_with_gainmap_format(
         GainMapEncodingFormat::Iso21496 | GainMapEncodingFormat::Both
     );
     if include_iso {
-        // Build APP2 data: URN namespace + version-only payload (min_version=0, writer_version=0)
-        let mut iso_app2_data = b"urn:iso:std:iso:ts:21496:-1\0".to_vec();
-        iso_app2_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-        segments = segments.add_raw(0xE2, iso_app2_data);
+        segments = segments.add_raw(0xE2, zencodec::ISO_21496_1_PRIMARY_APP2_BODY.to_vec());
     }
 
     // Encode base SDR image with the segments

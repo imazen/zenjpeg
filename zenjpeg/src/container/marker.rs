@@ -454,6 +454,58 @@ fn skip_entropy_scan(data: &[u8], start: usize) -> usize {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// APP segment writer
+// ───────────────────────────────────────────────────────────────────────
+
+/// Append a JPEG `APPn` segment (`0xFF 0xE<n>` + `u16 BE` length +
+/// `identifier` + `payload`) to `dst`.
+///
+/// `app_index` must be in `0..=15` (APP0..APP15). `identifier` is the
+/// per-segment namespace tag (e.g., `"http://ns.adobe.com/xap/1.0/\0"`
+/// for XMP, `"MPF\0"` for MPF, [`zencodec::ISO_21496_1_URN`] for ISO
+/// 21496-1). `payload` is everything after the identifier.
+///
+/// The length word counts itself + identifier + payload (JPEG
+/// convention). Total segment size is `4 + identifier.len() + payload.len()`
+/// bytes. No intermediate allocation — writes straight into `dst`.
+///
+/// # Panics
+///
+/// - If `app_index > 15` (not a valid APPn index).
+/// - If `2 + identifier.len() + payload.len() > u16::MAX as usize`
+///   (JPEG segments cap at `u16::MAX` including the length word;
+///   callers must split oversize content into multiple segments).
+pub(crate) fn append_app_segment(
+    dst: &mut Vec<u8>,
+    app_index: u8,
+    identifier: &[u8],
+    payload: &[u8],
+) {
+    assert!(app_index <= 15, "APP index must be 0..=15, got {app_index}");
+    let length_field = 2 + identifier.len() + payload.len();
+    let length_u16: u16 = length_field
+        .try_into()
+        .expect("APP segment exceeds u16::MAX length");
+    dst.reserve(2 + length_field);
+    dst.push(0xFF);
+    dst.push(0xE0 | app_index);
+    dst.extend_from_slice(&length_u16.to_be_bytes());
+    dst.extend_from_slice(identifier);
+    dst.extend_from_slice(payload);
+}
+
+/// Vec-returning variant of [`append_app_segment`].
+///
+/// Equivalent to constructing a fresh `Vec` sized for the segment and
+/// calling [`append_app_segment`] on it.
+#[must_use]
+pub(crate) fn create_app_segment(app_index: u8, identifier: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + identifier.len() + payload.len());
+    append_app_segment(&mut out, app_index, identifier, payload);
+    out
+}
+
+// ───────────────────────────────────────────────────────────────────────
 // Tests
 // ───────────────────────────────────────────────────────────────────────
 
@@ -725,5 +777,78 @@ mod tests {
         let mut it = MarkerIter::new(&data);
         let _soi = it.next().unwrap();
         assert_eq!(it.position(), 2);
+    }
+
+    #[test]
+    fn append_app_segment_layout() {
+        let identifier = b"MPF\0";
+        let payload = b"hello";
+        let mut out = Vec::new();
+        append_app_segment(&mut out, 2, identifier, payload);
+
+        assert_eq!(out[0], 0xFF);
+        assert_eq!(out[1], 0xE2);
+        let length = u16::from_be_bytes([out[2], out[3]]);
+        assert_eq!(length as usize, 2 + identifier.len() + payload.len());
+        assert_eq!(&out[4..4 + identifier.len()], identifier);
+        assert_eq!(&out[4 + identifier.len()..], payload);
+        assert_eq!(out.len(), 4 + identifier.len() + payload.len());
+    }
+
+    #[test]
+    fn append_app_segment_respects_app_index() {
+        for n in 0..=15u8 {
+            let mut out = Vec::new();
+            append_app_segment(&mut out, n, b"id", b"");
+            assert_eq!(out[1], 0xE0 | n, "APP{n} second byte wrong");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "APP index must be 0..=15")]
+    fn append_app_segment_rejects_invalid_app_index() {
+        let mut out = Vec::new();
+        append_app_segment(&mut out, 16, b"id", b"");
+    }
+
+    #[test]
+    #[should_panic(expected = "APP segment exceeds u16::MAX")]
+    fn append_app_segment_rejects_oversize_payload() {
+        let mut out = Vec::new();
+        let big = vec![0u8; u16::MAX as usize];
+        append_app_segment(&mut out, 2, b"id", &big);
+    }
+
+    #[test]
+    fn append_app_segment_preserves_prior_content() {
+        let mut out = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        append_app_segment(&mut out, 1, b"NS\0", b"payload");
+        assert_eq!(&out[..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(out[4], 0xFF);
+        assert_eq!(out[5], 0xE1);
+    }
+
+    #[test]
+    fn create_app_segment_matches_append() {
+        let identifier = b"http://ns.adobe.com/xap/1.0/\0";
+        let payload = b"<x:xmpmeta/>";
+        let created = create_app_segment(1, identifier, payload);
+        let mut appended = Vec::new();
+        append_app_segment(&mut appended, 1, identifier, payload);
+        assert_eq!(created, appended);
+    }
+
+    #[test]
+    fn append_app_segment_iter_roundtrip() {
+        // Emit a full JPEG containing our segment and verify MarkerIter
+        // classifies + slices it correctly.
+        let mut jpeg = vec![0xFF, 0xD8]; // SOI
+        append_app_segment(&mut jpeg, 2, b"MPF\0", b"body-bytes");
+        jpeg.extend_from_slice(&[0xFF, 0xD9]); // EOI
+
+        let spans: Vec<_> = iter(&jpeg).collect();
+        assert_eq!(spans.len(), 3); // SOI, APP2, EOI
+        assert!(matches!(spans[1].kind, MarkerKind::App(2)));
+        assert_eq!(spans[1].payload, b"MPF\0body-bytes");
     }
 }

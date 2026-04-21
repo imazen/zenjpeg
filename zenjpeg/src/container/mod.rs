@@ -19,9 +19,11 @@
 //! - [`probe`]: single-pass probe returning every requested signal in
 //!   one marker walk.
 //!
-//! An internal `iso21496` submodule handles the ISO 21496-1 JPEG APP2
-//! envelope. It is `pub(crate)`; downstream callers consume Ultra HDR
-//! via higher-level zenjpeg APIs rather than these primitives directly.
+//! The ISO 21496-1 JPEG APP2 envelope is not a separate module —
+//! [`zencodec::ISO_21496_1_URN`] and [`zencodec::ISO_21496_1_PRIMARY_APP2_BODY`]
+//! provide the namespace bytes, and [`marker::append_app_segment`] emits the
+//! `FF E2 + length` framing around them. Ultra HDR writers/readers assemble
+//! the envelope directly from those primitives.
 //!
 //! # Performance contract
 //!
@@ -32,7 +34,6 @@
 //! `benches/container_scan.rs` and
 //! `benchmarks/container_scan_2026-04-20.{csv,md}`.
 
-pub(crate) mod iso21496;
 pub mod marker;
 pub mod mpf;
 pub mod probe;
