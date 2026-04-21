@@ -126,7 +126,7 @@ pub(crate) struct BoundaryRdState {
     pub left_rec_edges: Vec<[f32; 8]>,
     /// Companion cache: the *original* (unquantized IDCT) right-edge
     /// column of each committed block in the current row. Avoids the
-    /// redundant `idct_reference_block(&prev_dct)` at each bx>0 block
+    /// redundant `idct_reference_block_fast(&prev_dct)` at each bx>0 block
     /// (it was already computed when processing block bx-1).
     pub left_orig_edges: Vec<[f32; 8]>,
     /// How many blocks in the current row have been emitted so far.

@@ -20,8 +20,8 @@
 //! output and the forward-DCT input produced by
 //! [`super::strip::extract_block_from_strip_wide`] use this convention, so
 //! "original" edge columns can be read directly from either the raw f32
-//! DCT block (via [`idct_reference_block`]) or the IDCT of the quantized
-//! coefficients (via [`idct_quantized_block`]) without additional shift.
+//! DCT block (via [`idct_reference_block_fast`]) or the IDCT of the quantized
+//! coefficients (via [`idct_quantized_block_fast`]) without additional shift.
 //!
 //! # Color space note
 //!
@@ -34,7 +34,7 @@
 use crate::decode::idct::inverse_dct_8x8;
 #[cfg(target_arch = "x86_64")]
 use crate::decode::idct::inverse_dct_8x8_into_with_token;
-use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
 
 use archmage::prelude::*;
@@ -74,20 +74,13 @@ impl BoundaryRdTokens {
 /// convention, while the decoder's [`inverse_dct_8x8`] expects 1/8-scaled
 /// input (the quantize × 8/q → dequant × q path bridges the gap for the
 /// quantized path). We apply the ×8 factor here so the reference block
-/// comes out in the same pixel domain as
-/// [`idct_quantized_block`].
+/// comes out in the same pixel domain as [`idct_quantized_block_fast`].
 ///
 /// Both the ×8 scaling and the IDCT use SIMD dispatch via archmage.
-#[must_use]
-pub(crate) fn idct_reference_block(dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZE] {
-    let natural = incant!(mage_scale_block_x8(dct_f32));
-    inverse_dct_8x8(&natural)
-}
-
-/// Cached-token variant of [`idct_reference_block`]. Also skips the
-/// DC-only fast-path check in `inverse_dct_8x8` — reference blocks are
-/// the IDCT of unquantized DCT coefficients from forward-DCT'd photos
-/// or lineart, which almost never have all-zero AC energy in practice.
+/// Skips the DC-only fast-path check in `inverse_dct_8x8` — reference
+/// blocks are the IDCT of unquantized DCT coefficients from forward-DCT'd
+/// photos or lineart, which almost never have all-zero AC energy in
+/// practice.
 #[inline]
 #[must_use]
 pub(crate) fn idct_reference_block_fast(
@@ -141,28 +134,6 @@ fn mage_scale_block_x8(token: Token, dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZ
 /// in [`crate::types::QuantTable::values`]); the `u16` values are treated
 /// as positive divisors. Output is in the level-shifted `[-128, 127]`
 /// domain.
-#[must_use]
-pub(crate) fn idct_quantized_block(
-    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
-    quant_values_natural: &[u16; DCT_BLOCK_SIZE],
-) -> [f32; DCT_BLOCK_SIZE] {
-    let mut natural = [0.0f32; DCT_BLOCK_SIZE];
-    for n in 0..DCT_BLOCK_SIZE {
-        // `values` is natural-indexed; zigzag output position for natural
-        // index n is JPEG_ZIGZAG_ORDER[n], but equivalently
-        // natural[n] = zigzag[JPEG_ZIGZAG_ORDER[n]]. We walk zigzag
-        // positions and scatter into natural via JPEG_NATURAL_ORDER:
-        // natural[JPEG_NATURAL_ORDER[z]] = zigzag[z] * quant_natural[JPEG_NATURAL_ORDER[z]].
-        // Use the simpler form: iterate natural, pick zigzag slot.
-        let zigzag_idx = crate::foundation::consts::JPEG_ZIGZAG_ORDER[n] as usize;
-        natural[n] = zigzag_coeffs[zigzag_idx] as f32 * quant_values_natural[n] as f32;
-    }
-    // Silence unused-import lint if the natural-order LUT becomes redundant.
-    let _ = JPEG_NATURAL_ORDER;
-    inverse_dct_8x8(&natural)
-}
-
-/// Cached-token variant of [`idct_quantized_block`].
 ///
 /// At quality levels typical for boundary-RD use (Q ≥ 50) the default
 /// quantize virtually never produces a DC-only block — each iteration
@@ -427,7 +398,7 @@ mod tests {
                 dct_block.rows[r][c] = dct[r * 8 + c];
             }
         }
-        let spatial_out = idct_reference_block(&dct_block);
+        let spatial_out = idct_reference_block_fast(BoundaryRdTokens::summon(), &dct_block);
         let mut max_err = 0.0f32;
         for r in 0..8 {
             for c in 0..8 {
