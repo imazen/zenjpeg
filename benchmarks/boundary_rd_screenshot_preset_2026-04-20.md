@@ -1,15 +1,25 @@
-# boundary_rd ScreenContent / Illustration preset vs default — 2026-04-20
+# boundary_rd aggressive left+above preset vs default — 2026-04-20
 
-Headline evidence for the aggressive left+above preset that
-`EncoderConfig::boundary_rd(BoundaryRd::Auto)` resolves to when the
-caller passes `ImageContentType::ScreenContent` or
-`ImageContentType::Illustration` as a hint (PR #102, closes #91).
+Evidence for the aggressive left+above config characterised in this
+run:
 
-The preset under test is `phase5_left_above`:
-`α=1.0, threshold=0.05, shrink=0.5, retries=2, above=true` —
-identical to the photo-flat / Auto-no-hint preset measured in
-`boundary_rd_auto_no_hint_2026-04-20.md` except the above-neighbor
-(top-edge) D_b term is enabled.
+```rust
+BoundaryRd::On(BoundaryRdConfig {
+    alpha: 1.0,
+    threshold: 0.05,
+    shrink: 0.5,
+    max_retries: 2,
+    above: true,
+})
+```
+
+This is the same Phase-5 tuned config as the default
+(`BoundaryRdConfig::default()` measured in
+`boundary_rd_auto_no_hint_2026-04-20.md`) except the above-neighbor
+(top-edge) D_b term is enabled. Callers wanting this setting construct
+it manually. Automatic per-image-class selection of this versus the
+gentler default is deferred to issue #103 (PR #102 ships manual
+config only).
 
 ## Command
 
@@ -42,19 +52,17 @@ Negative BD-rate = candidate wins.
 ## Honest framing
 
 - **BBS Pareto win on every measurable class** (−4.18 % to −8.55 %),
-  the same direction as the no-hint preset but with measurably bigger
-  wins on the classes this preset is targeted at (line-art most of
+  the same direction as the default config but with measurably bigger
+  wins on the classes this config is targeted at (line-art most of
   all).
 - **SSIM2 Pareto win on line-art** (−9.26 %) — the designed-for case.
 - **SSIM2 small Pareto cost on screen content + photo** (+0.27 %
-  each). Within the #91 +0.5 % guardrail, but real. This is why the
-  Auto-no-hint preset is the more conservative `photo_mild()` and the
-  ScreenContent / Illustration hint is what unlocks `phase5_left_above`
-  — the caller is opting in to the SSIM2 tradeoff in exchange for
-  the bigger BBS win.
+  each). Within the #91 +0.5 % guardrail, but real. Callers wanting
+  to avoid even this small SSIM2 cost on unknown content should stick
+  with `BoundaryRdConfig::default()` (the `above=false` variant).
 - **Synthetic content** saturates the BBS metric and produces NA for
-  BD-rate (same shape as the no-hint sweep — pure two-tone content
-  has no cross-block continuity to score).
+  BD-rate (same shape as the default-config sweep — pure two-tone
+  content has no cross-block continuity to score).
 
 ## Files
 

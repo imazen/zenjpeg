@@ -1,14 +1,14 @@
-//! Integration coverage for the public `BoundaryRd` / `ImageContentType`
-//! API (issue #91). See also `boundary_rd_hash_lock.rs` for the
-//! byte-identity default-path gate.
+//! Integration coverage for the public `BoundaryRd` API (issue #91).
+//! See also `boundary_rd_hash_lock.rs` for the byte-identity
+//! default-path gate.
 //!
-//! This test lives on the public surface: `EncoderConfig::boundary_rd` and
-//! `EncoderConfig::boundary_rd_hint` are the only additions. Everything
-//! else in the module remains `pub(crate)`.
+//! This test lives on the public surface: `EncoderConfig::boundary_rd`
+//! is the only addition. Automatic per-image-class preset selection is
+//! deferred to issue #103.
 
 use enough::Unstoppable;
 use zenjpeg::encoder::{
-    BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, ImageContentType, PixelLayout,
+    BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, PixelLayout,
 };
 
 /// A small noise+patches image — the CLAUDE.md-approved test generator.
@@ -94,35 +94,15 @@ fn off_equals_baseline_byte_identical() {
 }
 
 // ---------------------------------------------------------------------------
-// Auto + hints produce decodable JPEGs of the expected dimensions.
+// On(default config) produces decodable JPEGs of the expected dimensions.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn auto_with_each_hint_decodes() {
-    let (w, h) = (128usize, 128usize);
-    let rgb = gen_noise_patches(w, h, 0xbeef_babe);
-    for class in [
-        ImageContentType::PhotoNatural,
-        ImageContentType::PhotoDetailed,
-        ImageContentType::PhotoFlat,
-        ImageContentType::ScreenContent,
-        ImageContentType::Illustration,
-    ] {
-        let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter)
-            .boundary_rd(BoundaryRd::Auto)
-            .boundary_rd_hint(class);
-        let bytes = encode_rgb8(&rgb, w as u32, h as u32, cfg);
-        let (dec, dw, dh) = decode_rgb8(&bytes);
-        assert_eq!((dw, dh), (w as u32, h as u32));
-        assert_eq!(dec.len(), w * h * 3);
-    }
-}
-
-#[test]
-fn auto_no_hint_decodes() {
+fn on_default_config_decodes() {
     let (w, h) = (128usize, 128usize);
     let rgb = gen_noise_patches(w, h, 0xdead_1234);
-    let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Auto);
+    let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter)
+        .boundary_rd(BoundaryRd::On(BoundaryRdConfig::default()));
     let bytes = encode_rgb8(&rgb, w as u32, h as u32, cfg);
     let (dec, dw, dh) = decode_rgb8(&bytes);
     assert_eq!((dw, dh), (w as u32, h as u32));
@@ -130,49 +110,100 @@ fn auto_no_hint_decodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Manual override works.
+// Several manually-tuned configs produce decodable output.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn manual_configs_decode() {
+    let (w, h) = (128usize, 128usize);
+    let rgb = gen_noise_patches(w, h, 0xbeef_babe);
+    // Covers the "photo-mild", "phase5 left-only", and "phase5
+    // left+above" points of interest from the #91 tuning evidence
+    // (see benchmarks/boundary_rd_*_2026-04-20.md).
+    let configs = [
+        BoundaryRdConfig {
+            alpha: 1.0,
+            threshold: 0.1,
+            shrink: 0.7,
+            max_retries: 1,
+            above: false,
+        },
+        BoundaryRdConfig {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: false,
+        },
+        BoundaryRdConfig {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: true,
+        },
+    ];
+    for cfg in configs {
+        let encoder_cfg =
+            EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(cfg));
+        let bytes = encode_rgb8(&rgb, w as u32, h as u32, encoder_cfg);
+        let (dec, dw, dh) = decode_rgb8(&bytes);
+        assert_eq!((dw, dh), (w as u32, h as u32));
+        assert_eq!(dec.len(), w * h * 3);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Manual override with strong alpha + above works.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn manual_config_decodes() {
     let (w, h) = (128usize, 128usize);
     let rgb = gen_noise_patches(w, h, 42);
-    let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(
-        BoundaryRd::Manual(BoundaryRdConfig {
+    let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(
+        BoundaryRdConfig {
             alpha: 2.0,
             threshold: 0.05,
             shrink: 0.5,
             max_retries: 2,
             above: true,
-        }),
-    );
+        },
+    ));
     let bytes = encode_rgb8(&rgb, w as u32, h as u32, cfg);
     let (dec, _, _) = decode_rgb8(&bytes);
     assert_eq!(dec.len(), w * h * 3);
 }
 
 // ---------------------------------------------------------------------------
-// Functional behavior: Auto+ScreenContent on a checkerboard must produce
-// different bytes from Off. We don't measure BBS directly here — the
-// internal metric is pub(crate) and gated behind __test-utils. The
-// committed CSVs at `benchmarks/rd_compare/` are the quantitative record.
+// Functional behavior: enabling boundary-RD with the aggressive
+// left+above preset on a checkerboard must produce different bytes from
+// Off. We don't measure BBS directly here — the internal metric is
+// `pub(crate)` and gated behind `__test-utils`. The committed CSVs at
+// `benchmarks/` are the quantitative record.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn auto_screenshot_differs_from_off_on_checkerboard() {
+fn on_left_above_differs_from_off_on_checkerboard() {
     let (w, h) = (128usize, 128usize);
     let rgb = gen_checkerboard(w, h, 10);
 
     let off = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off);
-    let on = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter)
-        .boundary_rd(BoundaryRd::Auto)
-        .boundary_rd_hint(ImageContentType::ScreenContent);
+    let on = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(
+        BoundaryRdConfig {
+            alpha: 1.0,
+            threshold: 0.05,
+            shrink: 0.5,
+            max_retries: 2,
+            above: true,
+        },
+    ));
 
     let bytes_off = encode_rgb8(&rgb, w as u32, h as u32, off);
     let bytes_on = encode_rgb8(&rgb, w as u32, h as u32, on);
     assert_ne!(
         bytes_off, bytes_on,
-        "Auto+ScreenContent must change output on a checkerboard"
+        "BoundaryRd::On(left+above) must change output on a checkerboard"
     );
 
     // And both must still decode.

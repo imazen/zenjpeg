@@ -7,12 +7,13 @@
 //!    regression in the default-path plumbing breaks this gate
 //!    immediately.
 //!
-//! 2. `BoundaryRd::Auto` (no hint) is deterministic across runs. This
-//!    freezes the photo-safe preset so we know when it changes.
+//! 2. `BoundaryRd::On(BoundaryRdConfig::default())` is deterministic
+//!    across runs. This freezes the documented best-we-know preset so
+//!    we know when it changes.
 
 use enough::Unstoppable;
 use std::hash::{Hash, Hasher};
-use zenjpeg::encoder::{BoundaryRd, ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn gen_checkerboard(w: usize, h: usize, cell: usize) -> Vec<u8> {
     let mut out = vec![0u8; w * h * 3];
@@ -58,17 +59,18 @@ fn off_is_byte_identical_to_untouched_config() {
 }
 
 #[test]
-fn auto_no_hint_is_deterministic() {
+fn on_with_default_config_is_deterministic() {
     let (w, h) = (64usize, 64usize);
     let rgb = gen_checkerboard(w, h, 8);
-    let cfg = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Auto);
+    let cfg = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter)
+        .boundary_rd(BoundaryRd::On(BoundaryRdConfig::default()));
 
     let a = encode(&rgb, w as u32, h as u32, cfg.clone());
     let b = encode(&rgb, w as u32, h as u32, cfg);
     assert_eq!(
         fx_hash(&a),
         fx_hash(&b),
-        "BoundaryRd::Auto must be deterministic across calls"
+        "BoundaryRd::On(default) must be deterministic across calls"
     );
     assert_eq!(a, b);
 }

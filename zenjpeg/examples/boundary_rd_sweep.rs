@@ -405,7 +405,7 @@ fn build_config(knob: Option<ConfigKnob>, quality: u8) -> EncoderConfig {
     let mut c = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter);
     if let Some(k) = knob {
         use zenjpeg::encoder::{BoundaryRd, BoundaryRdConfig};
-        c = c.boundary_rd(BoundaryRd::Manual(BoundaryRdConfig {
+        c = c.boundary_rd(BoundaryRd::On(BoundaryRdConfig {
             alpha: k.alpha,
             threshold: k.threshold,
             shrink: k.shrink,
