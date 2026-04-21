@@ -1621,6 +1621,11 @@ impl StripProcessor {
         // Phase 4: above-neighbor term (opt-in on top of left-only).
         let use_above = state.config.above;
 
+        // Summon SIMD tokens ONCE for this entire iMCU refinement pass.
+        // The kernel functions take this by copy and skip their own
+        // `incant!` atomic loads on subsequent calls.
+        let tokens = br::BoundaryRdTokens::summon();
+
         // Natural-order quant values. `QuantTable.values` is natural-row-major
         // despite its outdated docstring — verified by inspecting the DQT
         // serializer which reads `values[JPEG_NATURAL_ORDER[i]]`.
@@ -1676,7 +1681,7 @@ impl StripProcessor {
             // RIGHT-edge column is written into `left_orig_edges[bx]` at
             // the end of the iteration so the NEXT block in the row
             // (`bx+1`) can read it WITHOUT re-IDCTing the previous block.
-            let ref_block = br::idct_reference_block(&dct);
+            let ref_block = br::idct_reference_block_fast(tokens, &dct);
             let orig_left = br::left_edge_col(&ref_block);
             // Phase 4: current-block's top-edge ROW (r=0), from the unquantized
             // reference block. Analogous to orig_left, just transposed.
@@ -1724,7 +1729,7 @@ impl StripProcessor {
                 &quant.y_zero_bias_simd,
                 aq_strength,
             );
-            let rec_default = br::idct_quantized_block(&zigzag_default, quant_natural);
+            let rec_default = br::idct_quantized_block_fast(tokens, &zigzag_default, quant_natural);
             let rec_left_default = br::left_edge_col(&rec_default);
             let db_default_left = if has_left_neighbor {
                 br::boundary_distortion_raw(
@@ -1767,7 +1772,7 @@ impl StripProcessor {
                         &quant.y_zero_bias_simd,
                         aq,
                     );
-                    let rec = br::idct_quantized_block(&z, quant_natural);
+                    let rec = br::idct_quantized_block_fast(tokens, &z, quant_natural);
                     let rec_left = br::left_edge_col(&rec);
                     let db_left = if has_left_neighbor {
                         br::boundary_distortion_raw(

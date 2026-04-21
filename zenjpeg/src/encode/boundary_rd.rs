@@ -32,11 +32,36 @@
 //! 4:2:0) would need a separate treatment.
 
 use crate::decode::idct::inverse_dct_8x8;
+#[cfg(target_arch = "x86_64")]
+use crate::decode::idct::inverse_dct_8x8_into_with_token;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 use crate::foundation::simd_types::Block8x8f;
 
 use archmage::prelude::*;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
+
+/// Pre-summoned SIMD tokens passed through the boundary-RD hot path so
+/// that per-kernel `incant!` atomic loads aren't repeated. Callers get
+/// this once at the top of `quantize_y_with_boundary_rd_impl` and pass
+/// by copy.
+///
+/// On non-x86_64 builds this is a zero-sized struct — the kernels
+/// dispatch via `incant!` which does the right thing.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct BoundaryRdTokens {
+    #[cfg(target_arch = "x86_64")]
+    pub x64v3: Option<archmage::X64V3Token>,
+}
+
+impl BoundaryRdTokens {
+    #[inline]
+    pub(crate) fn summon() -> Self {
+        Self {
+            #[cfg(target_arch = "x86_64")]
+            x64v3: archmage::X64V3Token::summon(),
+        }
+    }
+}
 
 /// Reconstruct the 8×8 spatial block from an unquantized f32 DCT block.
 ///
@@ -55,6 +80,28 @@ use magetypes::simd::generic::f32x8 as GenericF32x8;
 /// Both the ×8 scaling and the IDCT use SIMD dispatch via archmage.
 #[must_use]
 pub(crate) fn idct_reference_block(dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZE] {
+    let natural = incant!(mage_scale_block_x8(dct_f32));
+    inverse_dct_8x8(&natural)
+}
+
+/// Cached-token variant of [`idct_reference_block`]. Also skips the
+/// DC-only fast-path check in `inverse_dct_8x8` — reference blocks are
+/// the IDCT of unquantized DCT coefficients from forward-DCT'd photos
+/// or lineart, which almost never have all-zero AC energy in practice.
+#[inline]
+#[must_use]
+pub(crate) fn idct_reference_block_fast(
+    tokens: BoundaryRdTokens,
+    dct_f32: &Block8x8f,
+) -> [f32; DCT_BLOCK_SIZE] {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = tokens.x64v3 {
+        let natural = mage_scale_block_x8_v3(t, dct_f32);
+        let mut out = [0.0f32; DCT_BLOCK_SIZE];
+        inverse_dct_8x8_into_with_token(t, &natural, &mut out);
+        return out;
+    }
+    let _ = tokens;
     let natural = incant!(mage_scale_block_x8(dct_f32));
     inverse_dct_8x8(&natural)
 }
@@ -112,6 +159,36 @@ pub(crate) fn idct_quantized_block(
     }
     // Silence unused-import lint if the natural-order LUT becomes redundant.
     let _ = JPEG_NATURAL_ORDER;
+    inverse_dct_8x8(&natural)
+}
+
+/// Cached-token variant of [`idct_quantized_block`].
+///
+/// At quality levels typical for boundary-RD use (Q ≥ 50) the default
+/// quantize virtually never produces a DC-only block — each iteration
+/// of the refinement retry only tightens AQ, making AC zeros even more
+/// likely. The DC-only check in the generic `inverse_dct_8x8` wrapper
+/// is thus pure overhead in this hot path; this helper bypasses it.
+#[inline]
+#[must_use]
+pub(crate) fn idct_quantized_block_fast(
+    tokens: BoundaryRdTokens,
+    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant_values_natural: &[u16; DCT_BLOCK_SIZE],
+) -> [f32; DCT_BLOCK_SIZE] {
+    let mut natural = [0.0f32; DCT_BLOCK_SIZE];
+    for n in 0..DCT_BLOCK_SIZE {
+        let zigzag_idx = crate::foundation::consts::JPEG_ZIGZAG_ORDER[n] as usize;
+        natural[n] = zigzag_coeffs[zigzag_idx] as f32 * quant_values_natural[n] as f32;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if let Some(t) = tokens.x64v3 {
+        let mut out = [0.0f32; DCT_BLOCK_SIZE];
+        inverse_dct_8x8_into_with_token(t, &natural, &mut out);
+        return out;
+    }
+    let _ = tokens;
     inverse_dct_8x8(&natural)
 }
 

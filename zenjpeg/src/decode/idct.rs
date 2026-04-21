@@ -652,6 +652,38 @@ pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     simd::inverse_dct_8x8_simd(input)
 }
 
+/// Like [`inverse_dct_8x8`] but writes into a caller-provided buffer and
+/// skips the DC-only fast-path check.
+///
+/// Intended for hot encoder paths (e.g. boundary-RD refinement) that:
+///   1. always have at least some non-zero AC energy, so the DC-only check
+///      is paid-for-nothing overhead;
+///   2. already have a pre-summoned [`archmage::X64V3Token`] available and
+///      don't want to pay the per-call atomic-load dispatch.
+///
+/// Falls back to the portable `wide`-crate SIMD path on non-x86_64.
+#[inline]
+pub fn inverse_dct_8x8_into(input: &[f32; DCT_BLOCK_SIZE], output: &mut [f32; DCT_BLOCK_SIZE]) {
+    #[cfg(target_arch = "x86_64")]
+    if let Some(token) = archmage::X64V3Token::summon() {
+        archmage_idct::mage_inverse_dct_8x8(token, input, output);
+        return;
+    }
+    *output = simd::inverse_dct_8x8_simd(input);
+}
+
+/// x86_64-specific entry that takes an already-summoned token. Useful
+/// when the caller has hoisted the summon out of a tight loop.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn inverse_dct_8x8_into_with_token(
+    token: archmage::X64V3Token,
+    input: &[f32; DCT_BLOCK_SIZE],
+    output: &mut [f32; DCT_BLOCK_SIZE],
+) {
+    archmage_idct::mage_inverse_dct_8x8(token, input, output);
+}
+
 /// Performs inverse DCT with level shift and clamping to u8.
 ///
 /// # Arguments
