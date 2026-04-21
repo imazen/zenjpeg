@@ -310,10 +310,6 @@ name = "rd_compare"
 required-features = ["trellis", "decoder"]
 
 [[example]]
-name = "boundary_rd_sweep"
-required-features = ["trellis", "decoder"]
-
-[[example]]
 name = "boundary_rd_low_q_sweep"
 required-features = ["trellis", "decoder"]
 
