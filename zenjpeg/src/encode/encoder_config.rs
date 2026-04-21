@@ -352,16 +352,21 @@ impl BoundaryRdConfig {
     }
 
     /// Flat view of the resolved parameters, for internal dispatch into
-    /// the strip processor. Returns
-    /// `(alpha, threshold, shrink, max_retries, above)`.
-    pub(crate) fn resolved_flat(&self) -> (f32, f32, f32, u8, bool) {
-        (
-            self.seam.alpha,
-            self.seam.threshold,
-            self.retry.shrink,
-            self.retry.max_retries,
-            self.neighbors.includes_above(),
-        )
+    /// the strip processor. This is the canonical "public → internal"
+    /// boundary for boundary-RD knobs.
+    pub(crate) fn resolved_flat(&self) -> super::strip::BoundaryRdFlat {
+        super::strip::BoundaryRdFlat {
+            alpha: self.seam.alpha,
+            threshold: self.seam.threshold,
+            shrink_aq: self.retry.shrink,
+            // Task 2 adds a real `zero_bias_shrink` field on RetryPolicy.
+            // Until then this is hard-wired to the identity value (`1.0`),
+            // which leaves Task 3's retry path byte-identical to the
+            // pre-Task-3 behavior.
+            shrink_zb: 1.0,
+            max_retries: self.retry.max_retries,
+            above: self.neighbors.includes_above(),
+        }
     }
 }
 
@@ -1397,25 +1402,19 @@ impl EncoderConfig {
         self
     }
 
-    /// Resolve the boundary-RD mode into concrete parameters for
-    /// the low-level streaming builder. Returns `(enabled, alpha,
-    /// threshold, shrink, max_retries, above)`. Off → all-default tuple.
+    /// Resolve the boundary-RD mode into the flat internal knob struct
+    /// consumed by the strip processor. `None` = feature off (no
+    /// refinement hot-path, byte-identical to feature-disabled output).
+    /// `Some(flat)` = feature on with the supplied resolved knobs.
     ///
     /// This is the resolver at the public-API → internal-flat-state
     /// boundary: the composable public [`BoundaryRdConfig`] is unpacked
-    /// here into the flat tuple that the strip processor consumes.
+    /// here into the flat struct.
     #[must_use]
-    pub(crate) fn resolve_boundary_rd(&self) -> (bool, f32, f32, f32, u8, bool) {
+    pub(crate) fn resolve_boundary_rd(&self) -> Option<super::strip::BoundaryRdFlat> {
         match self.boundary_rd_mode {
-            BoundaryRd::Off => {
-                let (alpha, threshold, shrink, max_retries, above) =
-                    BoundaryRdConfig::default().resolved_flat();
-                (false, alpha, threshold, shrink, max_retries, above)
-            }
-            BoundaryRd::On(cfg) => {
-                let (alpha, threshold, shrink, max_retries, above) = cfg.resolved_flat();
-                (true, alpha, threshold, shrink, max_retries, above)
-            }
+            BoundaryRd::Off => None,
+            BoundaryRd::On(cfg) => Some(cfg.resolved_flat()),
         }
     }
 

@@ -292,15 +292,9 @@ impl StreamingEncoder {
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
 
-        // Set boundary-RD config (off by default; #91).
-        processor.set_boundary_rd(
-            builder.boundary_rd,
-            builder.boundary_rd_alpha,
-            builder.boundary_rd_threshold,
-            builder.boundary_rd_shrink,
-            builder.boundary_rd_max_retries,
-            builder.boundary_rd_above,
-        );
+        // Set boundary-RD config (off by default; #91). `None` keeps the
+        // refinement module out of the hot path entirely.
+        processor.set_boundary_rd(builder.boundary_rd_flat);
 
         // Enable trellis quantization if configured
         #[cfg(feature = "trellis")]

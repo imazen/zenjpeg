@@ -39,19 +39,11 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
     pub(crate) aq_enabled: bool,
-    /// Enable boundary-continuity refinement (#91). Off by default.
-    pub(crate) boundary_rd: bool,
-    /// Seam-jump weight (α) for boundary-continuity D_b term.
-    pub(crate) boundary_rd_alpha: f32,
-    /// D_b trigger threshold as multiplier of per-block AC DCT energy.
-    pub(crate) boundary_rd_threshold: f32,
-    /// AQ-strength multiplier applied on each boundary-RD retry.
-    pub(crate) boundary_rd_shrink: f32,
-    /// Max number of boundary-RD refinement retries per triggered block.
-    pub(crate) boundary_rd_max_retries: u8,
-    /// Enable above-neighbor (top-edge) boundary-RD (#91). A no-op unless
-    /// `boundary_rd` is also true. Off by default.
-    pub(crate) boundary_rd_above: bool,
+    /// Boundary-continuity refinement (#91) config. `None` (the default)
+    /// disables the refinement pass entirely and keeps the hot path
+    /// byte-identical to feature-disabled output. Populated from
+    /// [`crate::encode::encoder_config::EncoderConfig::resolve_boundary_rd`].
+    pub(crate) boundary_rd_flat: Option<super::strip::BoundaryRdFlat>,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
     /// Force SOF1 (extended sequential) regardless of quant table precision.
@@ -97,13 +89,10 @@ impl StreamingEncoderBuilder {
             xyb_subsampling: super::encoder_types::XybSubsampling::BQuarter,
             deringing: true,
             aq_enabled: true,
-            // Phase 5 tuned defaults for boundary-RD (see EncoderConfig).
-            boundary_rd: false,
-            boundary_rd_alpha: 1.0,
-            boundary_rd_threshold: 0.05,
-            boundary_rd_shrink: 0.5,
-            boundary_rd_max_retries: 2,
-            boundary_rd_above: false,
+            // Boundary-RD defaults to `None` (feature off). When the public
+            // config sets `BoundaryRd::On`, the byte_encoders bridge fills
+            // this in via `.with_boundary_rd_flat(Some(...))`.
+            boundary_rd_flat: None,
             allow_16bit_quant_tables: false,
             force_sof1: false,
             separate_chroma_tables: true,
@@ -253,46 +242,17 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Enables boundary-continuity refinement (#91). Off by default.
+    /// Set the resolved boundary-RD knobs (or `None` to disable).
+    ///
+    /// `None` is the hot-path identity: no refinement, byte-identical to
+    /// the feature-disabled encode. `Some(flat)` installs the supplied
+    /// resolved knobs into the strip processor.
     #[must_use]
-    pub(crate) fn boundary_rd(mut self, enable: bool) -> Self {
-        self.boundary_rd = enable;
-        self
-    }
-
-    /// Set the α (seam-jump weight) for boundary-continuity D_b.
-    #[must_use]
-    pub(crate) fn boundary_rd_alpha(mut self, alpha: f32) -> Self {
-        self.boundary_rd_alpha = alpha;
-        self
-    }
-
-    /// Set the D_b trigger threshold (multiplier of per-block AC DCT energy).
-    #[must_use]
-    pub(crate) fn boundary_rd_threshold(mut self, threshold: f32) -> Self {
-        self.boundary_rd_threshold = threshold;
-        self
-    }
-
-    /// Set the AQ-strength multiplier applied on each boundary-RD retry.
-    #[must_use]
-    pub(crate) fn boundary_rd_shrink(mut self, shrink: f32) -> Self {
-        self.boundary_rd_shrink = shrink;
-        self
-    }
-
-    /// Set the max number of boundary-RD refinement retries per triggered block.
-    #[must_use]
-    pub(crate) fn boundary_rd_max_retries(mut self, retries: u8) -> Self {
-        self.boundary_rd_max_retries = retries;
-        self
-    }
-
-    /// Enable above-neighbor (top-edge) boundary-RD (#91). A no-op unless
-    /// `boundary_rd` is also true.
-    #[must_use]
-    pub(crate) fn boundary_rd_above(mut self, enable: bool) -> Self {
-        self.boundary_rd_above = enable;
+    pub(crate) fn boundary_rd_flat(
+        mut self,
+        flat: Option<super::strip::BoundaryRdFlat>,
+    ) -> Self {
+        self.boundary_rd_flat = flat;
         self
     }
 

@@ -80,6 +80,72 @@ pub struct QuantContext {
     pub cr_zero_bias: ZeroBiasParams,
 }
 
+/// Flat, resolved boundary-continuity refinement knobs as consumed by
+/// [`StripProcessor`]. Produced at the public-API → internal-state boundary
+/// from the composable [`crate::encode::encoder_config::BoundaryRdConfig`].
+///
+/// Kept `pub(crate)` — it is a hot-path resolved shape, not a public API.
+/// A value with `shrink_aq == 1.0 && shrink_zb == 1.0` produces no
+/// refinement (both retry knobs are no-ops), which is equivalent to
+/// `BoundaryRd::Off`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BoundaryRdFlat {
+    /// Seam-jump weight (α) in the D_b term.
+    pub alpha: f32,
+    /// D_b trigger threshold, expressed as a multiplier of per-block
+    /// AC DCT energy.
+    pub threshold: f32,
+    /// AQ-strength multiplier applied on each retry. `1.0` disables
+    /// AQ-shrink retries (retries pick the same result).
+    pub shrink_aq: f32,
+    /// Zero-bias scale multiplier applied on each retry. `1.0` is a
+    /// no-op (identity). Smaller values weaken the zero-bias rule during
+    /// the retry quantize, preserving more AC coefficients near the
+    /// bias threshold.
+    pub shrink_zb: f32,
+    /// Maximum retries per triggered block.
+    pub max_retries: u8,
+    /// Whether the above-neighbor (top-edge) term is included in D_b.
+    pub above: bool,
+}
+
+/// Live boundary-RD state owned by a [`StripProcessor`].
+///
+/// `None` in `StripProcessor::boundary_rd` means the feature is off and
+/// the entire refinement module stays out of the hot path. When `Some`,
+/// the Vec buffers are allocated lazily inside the refinement method
+/// (they start empty on first iMCU and get `resize`d to `blocks_w`).
+#[derive(Debug)]
+pub(crate) struct BoundaryRdState {
+    /// Resolved per-block knobs.
+    pub config: BoundaryRdFlat,
+    /// Per-block-row cache of the committed right-edge column for the
+    /// last-written block in the current row. Indexed by `bx` in
+    /// `0..blocks_w`. `None` means no left neighbor yet (row start).
+    /// Values are in the DCT input domain ([-128, 127]).
+    pub left_edges: Vec<Option<[f32; 8]>>,
+    /// Per-column cache of the committed bottom-edge row for the block
+    /// directly above (reconstructed, post-quantize). Persists across
+    /// iMCUs so the first block row of a new iMCU can consult the last
+    /// row of the previous iMCU. Only populated when `config.above`.
+    pub above_rec_edges: Vec<Option<[f32; 8]>>,
+    /// Companion buffer holding the *original* (unquantized IDCT)
+    /// bottom-edge row of the block above — needed for the "orig" side
+    /// of the symmetric D_b term.
+    pub above_orig_edges: Vec<Option<[f32; 8]>>,
+}
+
+impl BoundaryRdState {
+    pub fn new(config: BoundaryRdFlat) -> Self {
+        Self {
+            config,
+            left_edges: Vec::new(),
+            above_rec_edges: Vec::new(),
+            above_orig_edges: Vec::new(),
+        }
+    }
+}
+
 impl QuantContext {
     /// Creates a default quantization context for tests (standard JPEG tables at q75).
     #[cfg(test)]
@@ -447,50 +513,14 @@ pub struct StripProcessor {
     deringing: bool,
 
     // === Boundary-continuity refinement (Phase 2 of #91) ===
-    /// When true, after each luma block is quantized via the non-trellis SIMD
-    /// path, the encoder compares its reconstructed left-edge column against
-    /// the committed right-edge column of its left neighbor and may retry the
-    /// quantize with a shrunken AQ strength. Off by default.
-    boundary_rd: bool,
-    /// α — seam-jump weight in the boundary-continuity D_b term. Default 1.0.
-    boundary_rd_alpha: f32,
-    /// D_b trigger threshold, as a multiplier of per-block AC DCT energy.
-    /// Default 0.1.
-    boundary_rd_threshold: f32,
-    /// AQ-strength multiplier applied on each boundary-RD retry. Default 0.7.
-    boundary_rd_shrink: f32,
-    /// Maximum retries per triggered block. Default 1.
-    boundary_rd_max_retries: u8,
-    /// Per-block-row cache of the committed right-edge column for the left
-    /// neighbor. Indexed by `local_by` within an iMCU. `None` means no left
-    /// neighbor yet (i.e., we are at the first block of a row).
-    ///
-    /// Values are in the DCT input domain ([-128, 127]), so they can be
-    /// compared directly against IDCT outputs.
-    ///
-    /// Allocated lazily on first use to keep the default path allocation-free.
-    boundary_rd_left_edges: Vec<Option<[f32; 8]>>,
-
-    /// Enable above-neighbor (top-edge) boundary-RD (Phase 4 of #91). A no-op
-    /// unless `boundary_rd` is also true. Adds an inter-iMCU dependency: the
-    /// committed bottom-edge row of each luma block is preserved for the
-    /// next row's comparison.
-    boundary_rd_above: bool,
-    /// Per-column cache of the committed bottom-edge row for the block
-    /// directly above the current block (reconstructed, post-quantize).
-    /// Indexed by `bx` in `0..blocks_w`. `None` means no above neighbor yet
-    /// (i.e., we are in the top-most block row of the whole image).
-    ///
-    /// Values are in the DCT input domain ([-128, 127]). Persists across
-    /// iMCUs so the first block row of a new iMCU can consult the last row
-    /// of the previous iMCU.
-    ///
-    /// Allocated lazily on first use to keep the default path allocation-free.
-    boundary_rd_above_rec_edges: Vec<Option<[f32; 8]>>,
-    /// Companion buffer holding the *original* (unquantized IDCT) bottom-edge
-    /// row of the block above — needed for the "orig" side of the symmetric
-    /// D_b term. Same indexing and lifetime rules as `boundary_rd_above_rec_edges`.
-    boundary_rd_above_orig_edges: Vec<Option<[f32; 8]>>,
+    /// `Some` enables the post-quantize refinement loop from #91: after each
+    /// luma block is quantized via the non-trellis SIMD path, the encoder
+    /// compares its reconstructed left (and optionally top) edge against the
+    /// committed edges of its neighbors and may retry the quantize with
+    /// shrunken AQ strength and/or zero-bias. `None` (default) means the
+    /// whole refinement module stays out of the hot path — the default
+    /// `quantize_prev_pending_imcu` loop runs unmodified.
+    boundary_rd: Option<BoundaryRdState>,
 
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
@@ -772,16 +802,8 @@ impl StripProcessor {
             deringing: true,
 
             // Boundary-RD refinement (disabled by default; see issue #91).
-            boundary_rd: false,
-            // Phase 5 tuned defaults — see EncoderConfig::default_internal.
-            boundary_rd_alpha: 1.0,
-            boundary_rd_threshold: 0.05,
-            boundary_rd_shrink: 0.5,
-            boundary_rd_max_retries: 2,
-            boundary_rd_left_edges: Vec::new(),
-            boundary_rd_above: false,
-            boundary_rd_above_rec_edges: Vec::new(),
-            boundary_rd_above_orig_edges: Vec::new(),
+            // `None` is the hot-path identity — zero overhead vs feature-off.
+            boundary_rd: None,
 
             // Trellis quantization (disabled by default)
             #[cfg(feature = "trellis")]
@@ -896,26 +918,11 @@ impl StripProcessor {
 
     /// Configure boundary-continuity refinement (Phase 2 of issue #91).
     ///
-    /// When `enable` is false (the default), the boundary_rd pass is skipped
-    /// entirely and the default encode path is unchanged.
-    ///
-    /// `above` additionally enables the above-neighbor (top-edge) D_b term
-    /// (Phase 4 of #91). A no-op unless `enable` is also true.
-    pub fn set_boundary_rd(
-        &mut self,
-        enable: bool,
-        alpha: f32,
-        threshold: f32,
-        shrink: f32,
-        max_retries: u8,
-        above: bool,
-    ) {
-        self.boundary_rd = enable;
-        self.boundary_rd_alpha = alpha;
-        self.boundary_rd_threshold = threshold;
-        self.boundary_rd_shrink = shrink;
-        self.boundary_rd_max_retries = max_retries;
-        self.boundary_rd_above = above;
+    /// `None` (the default) skips the refinement pass entirely; the default
+    /// encode path is unchanged. `Some(flat)` installs the supplied resolved
+    /// knobs and grows the per-row edge caches lazily on first use.
+    pub(crate) fn set_boundary_rd(&mut self, flat: Option<BoundaryRdFlat>) {
+        self.boundary_rd = flat.map(BoundaryRdState::new);
     }
 
     /// Sets trellis quantization configuration.
@@ -1409,12 +1416,12 @@ impl StripProcessor {
 
         // Boundary-RD (Phase 2 of #91, opt-in) only fires for the non-trellis
         // path — the trellis path will get its own D_b augmentation in Phase 3.
-        let boundary_rd_enabled = self.boundary_rd && !use_trellis;
-
-        if boundary_rd_enabled {
+        // `boundary_rd.is_some()` is the new fast-path check: `None` means the
+        // whole refinement module stays out of the loop.
+        if self.boundary_rd.is_some() && !use_trellis {
             // Slower path: refinement after each luma block. The default path
-            // (boundary_rd_enabled == false) still hits the fast loop below
-            // with zero overhead.
+            // (boundary_rd == None) still hits the fast loop below with zero
+            // overhead.
             self.quantize_y_with_boundary_rd(buffer_idx, aq_strengths, store_dc_raw);
         } else {
             let quant = &self.quant;
@@ -1537,30 +1544,64 @@ impl StripProcessor {
     /// (Phase 2 of #91, opt-in via
     /// [`Self::set_boundary_rd`]). This is the slow-path counterpart to
     /// the inline loop in [`Self::quantize_prev_pending_imcu`]; only
-    /// invoked when `boundary_rd == true` and trellis is NOT in use.
+    /// invoked when `self.boundary_rd.is_some()` and trellis is NOT in
+    /// use.
     ///
-    /// Behavior contract: when `boundary_rd_threshold <= 0.0`, the
-    /// refinement never fires and output matches the default path —
-    /// useful for debugging and A/B comparison.
+    /// Behavior contract: when `config.threshold <= 0.0`, the refinement
+    /// never fires and output matches the default path — useful for
+    /// debugging and A/B comparison.
     fn quantize_y_with_boundary_rd(
         &mut self,
         buffer_idx: usize,
         aq_strengths: &[f32],
         store_dc_raw: bool,
     ) {
+        // Split borrow of `self`: take `&mut boundary_rd` state out, then
+        // borrow the rest of `self` freely. The state is put back via drop
+        // when the local goes out of scope (it's a `&mut Option<...>`, so
+        // we leave it in place and just access through `.as_mut()`).
+        let state = self
+            .boundary_rd
+            .as_mut()
+            .expect("quantize_y_with_boundary_rd invoked with boundary_rd == None");
+        Self::quantize_y_with_boundary_rd_impl(
+            state,
+            &self.pending,
+            &self.quant,
+            self.layout.blocks_w,
+            buffer_idx,
+            aq_strengths,
+            store_dc_raw,
+            &mut self.y_blocks,
+            &mut self.all_aq_strengths,
+            &mut self.y_dc_raw,
+        );
+    }
+
+    /// Actual refinement body, taking disjoint borrows to keep the borrow
+    /// checker happy. All reads of the per-block knobs go through
+    /// `state.config`; all buffer accesses go through `state.*_edges`.
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_y_with_boundary_rd_impl(
+        state: &mut BoundaryRdState,
+        pending: &PendingBuffers,
+        quant: &QuantContext,
+        blocks_w: usize,
+        buffer_idx: usize,
+        aq_strengths: &[f32],
+        store_dc_raw: bool,
+        y_blocks: &mut Vec<[i16; DCT_BLOCK_SIZE]>,
+        all_aq_strengths: &mut Vec<f32>,
+        y_dc_raw: &mut Vec<i32>,
+    ) {
         use super::boundary_rd as br;
 
-        let blocks_w = self.layout.blocks_w;
-        let quant = &self.quant;
-        let alpha = self.boundary_rd_alpha;
-        let threshold = self.boundary_rd_threshold;
-        // Phase 5: both knobs are now configurable via EncoderConfig. Reads
-        // are taken into locals so the tuning loop produces identical codegen
-        // to the pre-tuning constants.
-        let shrink_factor: f32 = self.boundary_rd_shrink;
-        let max_retries: u8 = self.boundary_rd_max_retries;
+        let alpha = state.config.alpha;
+        let threshold = state.config.threshold;
+        let shrink_factor: f32 = state.config.shrink_aq;
+        let max_retries: u8 = state.config.max_retries;
         // Phase 4: above-neighbor term (opt-in on top of left-only).
-        let use_above = self.boundary_rd_above;
+        let use_above = state.config.above;
 
         // Natural-order quant values. `QuantTable.values` is natural-row-major
         // despite its outdated docstring — verified by inspecting the DQT
@@ -1571,32 +1612,32 @@ impl StripProcessor {
         // last-written block in the current row. Reset at each row boundary.
         // Size by `blocks_w`; reuse the pre-allocated Vec to stay
         // allocation-free on subsequent iMCUs.
-        if self.boundary_rd_left_edges.len() < blocks_w {
-            self.boundary_rd_left_edges.resize(blocks_w, None);
+        if state.left_edges.len() < blocks_w {
+            state.left_edges.resize(blocks_w, None);
         }
         // Phase 4: per-column cache of committed bottom-edge rows for the
         // block directly above. Allocated only when above is on, but the
         // buffers persist across iMCUs (they're how the first row of iMCU N
         // sees the last row of iMCU N-1).
         if use_above {
-            if self.boundary_rd_above_rec_edges.len() < blocks_w {
-                self.boundary_rd_above_rec_edges.resize(blocks_w, None);
+            if state.above_rec_edges.len() < blocks_w {
+                state.above_rec_edges.resize(blocks_w, None);
             }
-            if self.boundary_rd_above_orig_edges.len() < blocks_w {
-                self.boundary_rd_above_orig_edges.resize(blocks_w, None);
+            if state.above_orig_edges.len() < blocks_w {
+                state.above_orig_edges.resize(blocks_w, None);
             }
         }
 
-        let pending_len = self.pending.y[buffer_idx].len();
+        let pending_len = pending.y[buffer_idx].len();
         for i in 0..pending_len {
             // Copy the DCT (small: 256 bytes) so we can borrow self mutably
             // below to push into y_blocks / y_dc_raw without aliasing.
-            let dct = self.pending.y[buffer_idx][i];
+            let dct = pending.y[buffer_idx][i];
             let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
             if store_dc_raw {
                 let dc_raw = (dct.rows[0][0] * 64.0).round() as i32;
-                self.y_dc_raw.push(dc_raw);
+                y_dc_raw.push(dc_raw);
             }
 
             let bx = i % blocks_w;
@@ -1605,7 +1646,7 @@ impl StripProcessor {
                 // Reset the entire cache lazily by marking the first slot.
                 // (Later slots are either refreshed or never consulted, since
                 // we only read at index `bx - 1`.)
-                for slot in self.boundary_rd_left_edges.iter_mut().take(blocks_w) {
+                for slot in state.left_edges.iter_mut().take(blocks_w) {
                     *slot = None;
                 }
             }
@@ -1626,7 +1667,7 @@ impl StripProcessor {
 
             // Left neighbor's right-edge column (committed).
             let rec_left_right_opt = if bx > 0 {
-                self.boundary_rd_left_edges[bx - 1].as_ref().copied()
+                state.left_edges[bx - 1].as_ref().copied()
             } else {
                 None
             };
@@ -1637,7 +1678,7 @@ impl StripProcessor {
             let orig_left_right_opt = if bx > 0 {
                 // Pending buffer still holds unquantized DCT for the left
                 // block; recompute its reference right edge on demand.
-                let prev_dct = self.pending.y[buffer_idx][i - 1];
+                let prev_dct = pending.y[buffer_idx][i - 1];
                 let prev_ref = br::idct_reference_block(&prev_dct);
                 Some(br::right_edge_col(&prev_ref))
             } else {
@@ -1650,14 +1691,14 @@ impl StripProcessor {
             // least one previous row has populated the cross-iMCU buffer.
             let (rec_top_above_opt, orig_top_above_opt) = if use_above {
                 (
-                    self.boundary_rd_above_rec_edges[bx].as_ref().copied(),
-                    self.boundary_rd_above_orig_edges[bx].as_ref().copied(),
+                    state.above_rec_edges[bx].as_ref().copied(),
+                    state.above_orig_edges[bx].as_ref().copied(),
                 )
             } else {
                 (None, None)
             };
 
-            // --- Candidate 1: default AQ strength ---
+            // --- Candidate 1: default AQ strength (no zero-bias shrink) ---
             let zigzag_default = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                 &dct,
                 &quant.y_zero_bias_simd,
@@ -1697,6 +1738,10 @@ impl StripProcessor {
                 let mut aq = aq_strength;
                 for _ in 0..max_retries {
                     aq *= shrink_factor;
+                    // `config.shrink_zb` is a field but unused in Task 1;
+                    // Task 3 replaces this call with a scaled-zero-bias
+                    // variant that applies `shrink_zb` alongside `aq`.
+                    let _ = state.config.shrink_zb;
                     let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
@@ -1734,7 +1779,7 @@ impl StripProcessor {
 
             // Cache THIS block's committed right-edge column for the next
             // block in the row.
-            self.boundary_rd_left_edges[bx] = Some(br::right_edge_col(&best_rec));
+            state.left_edges[bx] = Some(br::right_edge_col(&best_rec));
             // Phase 4: cache THIS block's committed bottom-edge row for the
             // block directly below, and the corresponding orig row from the
             // unquantized reference. Writes persist across iMCUs — when the
@@ -1742,12 +1787,12 @@ impl StripProcessor {
             // to the column of the block above. No reset per row: the
             // previous row's writes are the current row's "above" reads.
             if use_above {
-                self.boundary_rd_above_rec_edges[bx] = Some(br::bottom_edge_row(&best_rec));
-                self.boundary_rd_above_orig_edges[bx] = Some(br::bottom_edge_row(&ref_block));
+                state.above_rec_edges[bx] = Some(br::bottom_edge_row(&best_rec));
+                state.above_orig_edges[bx] = Some(br::bottom_edge_row(&ref_block));
             }
 
-            self.y_blocks.push(best_zigzag);
-            self.all_aq_strengths.push(aq_strength);
+            y_blocks.push(best_zigzag);
+            all_aq_strengths.push(aq_strength);
         }
     }
 
