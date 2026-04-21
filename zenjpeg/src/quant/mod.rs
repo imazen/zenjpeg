@@ -606,7 +606,27 @@ pub fn generate_quant_table_ex(
     allow_16bit: bool,
 ) -> QuantTable {
     let distance = quality.to_distance();
+    generate_quant_table_with_distance(distance, component, color_space, use_xyb, is_420, allow_16bit)
+}
 
+/// Generates a quantization table from a pre-computed butteraugli distance.
+///
+/// Bypasses [`Quality::to_distance`], allowing callers to apply
+/// per-component distance scaling (luma vs chroma) before dispatch.
+/// When called with `distance = quality.to_distance()` for every
+/// component the output is bit-identical to `generate_quant_table_ex`.
+///
+/// See [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
+/// for the caller-facing API that drives this.
+#[must_use]
+pub fn generate_quant_table_with_distance(
+    distance: f32,
+    component: usize,
+    color_space: ColorSpace,
+    use_xyb: bool,
+    is_420: bool,
+    allow_16bit: bool,
+) -> QuantTable {
     if use_xyb {
         generate_xyb_quant_table(distance, component, allow_16bit)
     } else {

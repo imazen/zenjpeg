@@ -434,6 +434,15 @@ pub struct EncoderConfig {
     /// byte-identical to a feature-off build.
     #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_mode: BoundaryRd,
+    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
+    /// components only, independent of luma. Default `1.0` preserves the
+    /// existing single-quality behaviour bit-for-bit.
+    ///
+    /// - `> 1.0` — chroma is encoded more aggressively (flat-chroma case).
+    /// - `< 1.0` — chroma is encoded more carefully (sharp-chroma case).
+    ///
+    /// Clamped to `[0.1, 5.0]` by the builder.
+    pub(crate) chroma_distance_scale: f32,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -590,6 +599,7 @@ impl EncoderConfig {
             tiny_file_mode: TinyFileMode::Auto,
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
+            chroma_distance_scale: 1.0,
         }
     }
 
@@ -864,6 +874,41 @@ impl EncoderConfig {
     #[must_use]
     pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
+        self
+    }
+
+    /// Scale the butteraugli distance applied to chroma (Cb, Cr) relative to
+    /// luma. Default `1.0` is bit-identical to the single-quality path.
+    ///
+    /// A typical consumer is an analyzer that has already measured chroma
+    /// sharpness on the image (e.g. [`evalchroma`](https://lib.rs/crates/evalchroma))
+    /// and wants to exploit flat chroma for extra bpp savings, or preserve
+    /// sharp chroma when 4:4:4 alone isn't enough.
+    ///
+    /// - `> 1.0` — chroma encoded more aggressively (flat chroma case).
+    ///   Each step of `+0.25` applies a larger per-coefficient quant value,
+    ///   compounding onto the existing Cb/Cr base-table asymmetry.
+    /// - `< 1.0` — chroma encoded more carefully (sharp chroma case).
+    ///
+    /// Clamped to `[0.1, 5.0]`. Applied identically to Cb and Cr; the
+    /// base-table asymmetry (Cb ≈ 2× Cr in median quant) is preserved.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling, Quality};
+    ///
+    /// // Analyzer decided chroma is flat enough to take a 30% discount.
+    /// let luma_dist   = Quality::ApproxJpegli(85.0).to_distance();
+    /// let chroma_dist = Quality::ApproxJpegli(70.0).to_distance();
+    /// let scale = chroma_dist / luma_dist;
+    ///
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    ///     .chroma_distance_scale(scale);
+    /// ```
+    #[must_use]
+    pub fn chroma_distance_scale(mut self, scale: f32) -> Self {
+        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
         self
     }
 
@@ -1793,6 +1838,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_allow_16bit_quant_tables(&self) -> bool {
         self.allow_16bit_quant_tables
+    }
+
+    /// Returns the configured chroma-distance multiplier. `1.0` when unset.
+    #[must_use]
+    pub fn get_chroma_distance_scale(&self) -> f32 {
+        self.chroma_distance_scale
     }
 
     /// Check if adaptive quantization (AQ) is enabled.

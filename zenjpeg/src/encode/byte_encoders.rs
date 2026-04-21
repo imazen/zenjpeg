@@ -159,6 +159,7 @@ impl BytesEncoder {
         ));
 
         builder = builder.tiny_file_mode(config.tiny_file_mode);
+        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -1032,6 +1033,7 @@ impl YCbCrPlanarEncoder {
         ));
 
         builder = builder.tiny_file_mode(config.tiny_file_mode);
+        builder = builder.chroma_distance_scale(config.chroma_distance_scale);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {

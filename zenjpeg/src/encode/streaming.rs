@@ -149,6 +149,14 @@ impl StreamingEncoder {
         // Generate quantization tables and zero-bias params
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
+        // Per-component distance: [Y, Cb, Cr]. The scalar
+        // `chroma_distance_scale` multiplies the chroma distances
+        // identically. `scale == 1.0` reproduces the single-distance
+        // path bit-for-bit (verified by `chroma_scale_default_identity`
+        // in the tests below).
+        let chroma_scale = builder.chroma_distance_scale;
+        let chroma_distance = distance * chroma_scale;
+        let distances_per_component = [distance, chroma_distance, chroma_distance];
         let color_space = if builder.use_xyb {
             ColorSpace::Xyb
         } else {
@@ -159,7 +167,7 @@ impl StreamingEncoder {
         let ((y_quant, cb_quant, cr_quant), (y_zero_bias, cb_zero_bias, cr_zero_bias)) =
             if let Some(ref tables) = builder.encoding_tables {
                 // Branch 1: Custom encoding tables provided explicitly
-                let quant = tables.generate_quant_tables(distance, is_420);
+                let quant = tables.generate_quant_tables(distances_per_component, is_420);
                 let zero_bias = tables.generate_zero_bias_all();
                 // Apply allow_16bit clamping if needed
                 let quant = if allow_16bit {
@@ -183,7 +191,7 @@ impl StreamingEncoder {
                     quality_u8,
                     force_baseline,
                 );
-                let quant = tables.generate_quant_tables(distance, is_420);
+                let quant = tables.generate_quant_tables(distances_per_component, is_420);
                 let zero_bias = tables.generate_zero_bias_all();
                 (quant, zero_bias)
             } else {
@@ -194,6 +202,10 @@ impl StreamingEncoder {
                 // jpegli behavior where the single chroma table uses the Cr matrix.
                 let cb_component = if builder.separate_chroma_tables { 1 } else { 2 };
 
+                // Luma uses the user's quality verbatim; chroma gets the
+                // scaled distance. When chroma_scale == 1.0 the
+                // `with_distance` call produces bit-identical tables to
+                // the old `ex`-variant (see quant_table_identity test).
                 let quant = (
                     quant::generate_quant_table_ex(
                         builder.quality,
@@ -203,16 +215,16 @@ impl StreamingEncoder {
                         is_420,
                         allow_16bit,
                     ),
-                    quant::generate_quant_table_ex(
-                        builder.quality,
+                    quant::generate_quant_table_with_distance(
+                        distances_per_component[1],
                         cb_component,
                         color_space,
                         builder.use_xyb,
                         is_420,
                         allow_16bit,
                     ),
-                    quant::generate_quant_table_ex(
-                        builder.quality,
+                    quant::generate_quant_table_with_distance(
+                        distances_per_component[2],
                         2,
                         color_space,
                         builder.use_xyb,
