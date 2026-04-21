@@ -309,6 +309,10 @@ required-features = ["__test-utils", "trellis", "decoder"]
 name = "boundary_rd_sweep"
 required-features = ["__test-utils", "trellis", "decoder"]
 
+[[example]]
+name = "boundary_rd_low_q_sweep"
+required-features = ["__test-utils", "trellis", "decoder"]
+
 # Examples requiring trellis feature
 [[example]]
 name = "hybrid_auto_detect"
