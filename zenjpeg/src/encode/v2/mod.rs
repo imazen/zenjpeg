@@ -50,7 +50,7 @@
 #[allow(unused_imports)] // Public API re-exports for backwards compatibility
 pub use super::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-exports
-pub use super::encoder_config::{BoundaryRd, BoundaryRdConfig, EncoderConfig, ImageContentType};
+pub use super::encoder_config::{BoundaryRd, BoundaryRdConfig, EncoderConfig};
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
 pub use super::encoder_types::ParallelEncoding;

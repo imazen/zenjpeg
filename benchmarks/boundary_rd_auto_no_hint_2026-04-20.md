@@ -1,17 +1,18 @@
-# boundary_rd Auto (no hint) vs default — 2026-04-20
+# boundary_rd default config vs baseline — 2026-04-20
 
-Headline evidence for the photo-safe Auto-no-hint preset shipped in
-`EncoderConfig::boundary_rd(BoundaryRd::Auto)` (PR #102, closes #91).
+Headline evidence for the tuned best-we-know `BoundaryRdConfig::default()`
+shipped in `EncoderConfig::boundary_rd(BoundaryRd::On(default))`
+(PR #102, closes #91).
 
-This run also doubles as the `PhotoFlat` preset evidence: the same
-tuned defaults (`α=1.0, threshold=0.05, shrink=0.5, retries=2,
-above=false`) are what `ImageContentType::PhotoFlat` resolves to. The
-mild `photo_mild()` preset that `PhotoNatural` / `PhotoDetailed` /
-no-hint resolve to is the more conservative
-`α=1.0, threshold=0.1, shrink=0.7, retries=1, above=false` — see the
-preset map in
-[`zenjpeg::encoder::ImageContentType`](../zenjpeg/src/encode/encoder_config.rs)
-for the complete table.
+The config measured here is the Phase-5 tuned
+`α=1.0, threshold=0.05, shrink=0.5, retries=2, above=false` — this is
+what `BoundaryRdConfig::default()` returns.
+
+The more conservative "photo-mild" preset
+(`α=1.0, threshold=0.1, shrink=0.7, retries=1, above=false`) remains
+available as a manually-constructed `BoundaryRdConfig` for callers who
+want a photo-safer setting before an automatic per-class classifier
+ships in issue #103.
 
 ## Command
 
@@ -52,12 +53,10 @@ adds quality at equal bits).
 - **Photo SSIM2 takes a small Pareto cost** (+0.18 % BD-rate). This is
   the sole regression and is well inside the +0.5 % guardrail from
   the issue #91 brief, but it is real.
-- **No-hint Auto picks the conservative `photo_mild()` preset
-  specifically to avoid even this small photo cost** when the content
-  class is unknown — the more aggressive `phase5_left_only` preset
-  used here is what callers get when they explicitly pass
-  `ImageContentType::PhotoFlat` or no hint with content known to be
-  flat-photo-dominant.
+- Callers who know the input is photographic can supply a gentler
+  `BoundaryRdConfig` manually (e.g.
+  `alpha=1.0, threshold=0.1, shrink=0.7, max_retries=1, above=false`)
+  until automatic per-class selection ships (issue #103).
 - Synthetic content (checkerboard / grid) saturates one side of the
   BBS metric and produces NA for BD-rate. This is expected: BBS is
   computed across blocks, and pure two-tone content has no

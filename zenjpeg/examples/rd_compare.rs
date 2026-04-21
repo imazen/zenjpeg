@@ -458,36 +458,67 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         })),
         // Boundary-continuity RD refinement (#91, non-trellis).
         //
-        // Uses the new public surface: BoundaryRd::Auto + an
-        // ImageContentType hint. ScreenContent hint unlocks the full
-        // Phase-4 (left+above) preset; no hint uses the photo-safe
-        // mild preset.
+        // Uses the public surface: BoundaryRd::On(BoundaryRdConfig).
+        // The `default()` config is the documented best-we-know preset
+        // for unknown content. The `_left_above` variants use the
+        // aggressive left+above preset characterised in
+        // benchmarks/boundary_rd_screenshot_preset_2026-04-20.md.
+        // Automatic per-class preset selection is deferred to #103.
         "boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
-            c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+            c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                zenjpeg::encoder::BoundaryRdConfig::default(),
+            ))
         })),
         "boundary_rd_444" => Some(mk(ChromaSubsampling::None, |c| {
-            c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+            c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                zenjpeg::encoder::BoundaryRdConfig::default(),
+            ))
+        })),
+        "boundary_rd_on_default" => Some(mk(ChromaSubsampling::Quarter, |c| {
+            c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                zenjpeg::encoder::BoundaryRdConfig::default(),
+            ))
         })),
         "auto_optimize_boundary_rd" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true)
-                .boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+                .boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                    zenjpeg::encoder::BoundaryRdConfig::default(),
+                ))
         })),
-        // left+above preset (same as ScreenContent hint on Auto).
+        // Phase-5 aggressive left+above preset (α=1.0, t=0.05, s=0.5, r=2, above=true).
         "boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
-            c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+            c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                zenjpeg::encoder::BoundaryRdConfig {
+                    alpha: 1.0,
+                    threshold: 0.05,
+                    shrink: 0.5,
+                    max_retries: 2,
+                    above: true,
+                },
+            ))
         })),
         "boundary_rd_left_above_444" => Some(mk(ChromaSubsampling::None, |c| {
-            c.boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+            c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                zenjpeg::encoder::BoundaryRdConfig {
+                    alpha: 1.0,
+                    threshold: 0.05,
+                    shrink: 0.5,
+                    max_retries: 2,
+                    above: true,
+                },
+            ))
         })),
         "auto_optimize_boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true)
-                .boundary_rd(zenjpeg::encoder::BoundaryRd::Auto)
-                .boundary_rd_hint(zenjpeg::encoder::ImageContentType::ScreenContent)
+                .boundary_rd(zenjpeg::encoder::BoundaryRd::On(
+                    zenjpeg::encoder::BoundaryRdConfig {
+                        alpha: 1.0,
+                        threshold: 0.05,
+                        shrink: 0.5,
+                        max_retries: 2,
+                        above: true,
+                    },
+                ))
         })),
         _ => None,
     }
