@@ -13,7 +13,7 @@ zero-bias-shrink knob sweep.
 | `default_rationale_2026-04-21.md` | Rationale for the current `BoundaryRdConfig::default()` values. Cites the low-Q full-grid sweep (next row). |
 | `simd_overhead_2026-04-20.md` | Wall-clock cost of the SIMD boundary-RD helpers (D_b, ac_energy, ref-block pack). |
 | `low_q_full/` | Phase-5 full-grid low-Q sweep (`grid.csv`, `per_class_per_q.csv`, `best_per_class_per_q.csv`). Source data for the current default. |
-| `zero_bias_sweep/` | Zero-bias-shrink sweep (Task 6): cross of `α × threshold × aq_shrink × zero_bias_shrink × max_retries`. See its local README for decision. |
+| `zero_bias_targeted/` | Targeted per-image Pareto validation of the `zero_bias_shrink` retry knob. Verdict: **DROP** — 2240 encodes across 40 images found no cell × candidate pair passing the 70 % per-image-Pareto-win threshold. The public knob was removed; this directory is the audit trail. |
 | `sweep_corpus/` | Committed synthetic line-art PNGs + an external manifest TSV pointing at source-of-truth corpus directories on block storage. |
 
 ## Reproduction

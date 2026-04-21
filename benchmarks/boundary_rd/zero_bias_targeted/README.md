@@ -149,7 +149,18 @@ other cells are affected.
 
 ## Reproduction
 
+The harness (`zenjpeg/examples/boundary_rd_zero_bias_targeted.rs`)
+and the public `with_zero_bias_shrink` API it exercised are both
+removed as part of applying the DROP decision — there is no supported
+way to re-run this sweep against the current tree. The evidence
+below is the audit trail; restoring the API + harness from git
+history (see the commit that introduced this directory) is what's
+required to re-run.
+
+The original run used:
+
 ```bash
+# Against commit 6207b7e9 (tree that still had the zb knob):
 cargo build --release -p zenjpeg --features "trellis decoder" \
   --example boundary_rd_zero_bias_targeted
 ./target/release/examples/boundary_rd_zero_bias_targeted
@@ -157,10 +168,11 @@ cargo build --release -p zenjpeg --features "trellis decoder" \
 
 Runtime ~1 minute on a Ryzen 9 7950X. The manifest paths in
 `corpus_manifest.tsv` must be accessible; the `sha256` column
-is for verification, not for downloading.
+is for file-identity verification.
 
 ## Action taken
 
 The `zero_bias_shrink` knob is removed from the public API in a
 follow-up commit. The broad sweep results and harness are also
-deleted as superseded by this targeted evidence.
+deleted as superseded by this targeted evidence. The targeted harness
+is deleted alongside the knob it tested.
