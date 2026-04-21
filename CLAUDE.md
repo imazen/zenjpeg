@@ -1513,13 +1513,23 @@ default = ["std", "yuv", "archmage-simd", "trellis"]
 trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-archmage-simd = []  # Legacy flag — archmage/magetypes are now mandatory dependencies.
+archmage-simd = []        # Legacy flag — archmage/magetypes are mandatory deps now.
+boundary-rd = ["decoder"] # Boundary-continuity refinement (#91 / PR #102, opt-in).
 cms = ["cms-lcms2"]       # Color management
 ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
 ffi-tests = []            # C++ parity tests (requires jpegli-sys)
 corpus-tests = []         # Corpus comparison tests
 test-utils = []           # Testing utilities
 ```
+
+**Boundary-RD:** Adds the post-quantization refinement from issue #91.
+Disabled by default — `cargo build -p zenjpeg` (with or without trellis)
+produces bit-for-bit identical output to pre-boundary-RD `origin/main`
+(enforced by `tests/boundary_rd_disabled_byte_identity.rs`). Enable with
+`--features boundary-rd` to unlock `EncoderConfig::boundary_rd()` and the
+`BoundaryRd`/`BoundaryRdConfig` types. The knob set and defaults are
+evolvable — coefficient (#94, #103) drives parameter-space exploration
+with GPU-backed metrics behind this flag.
 
 **Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
 API will have breaking changes.

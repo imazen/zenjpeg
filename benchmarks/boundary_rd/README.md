@@ -6,6 +6,18 @@ boundary-continuity RD refinement feature (`EncoderConfig::boundary_rd`)
 the SIMD overhead measurement, the line-art sweep corpus, and the
 zero-bias-shrink knob sweep.
 
+## Feature flag
+
+The entire boundary-RD code path is gated behind an opt-in Cargo
+feature, `boundary-rd`. It is **not** part of the default `cargo
+build -p zenjpeg`; a default build produces bit-for-bit identical
+output to pre-boundary-RD `origin/main` (enforced by
+`zenjpeg/tests/boundary_rd_disabled_byte_identity.rs`). To reproduce
+any of the sweeps below, add `boundary-rd` to the feature list, e.g.
+`--features "trellis decoder boundary-rd"`. The coefficient
+parameter-space exploration (#94, #103) will drive the feature
+enabled.
+
 ## Contents
 
 | Path | Role |
@@ -24,7 +36,7 @@ and the default `--lineart-dir` at `benchmarks/boundary_rd/sweep_corpus/lineart/
 
 ```bash
 cargo run --release --example boundary_rd_low_q_sweep \
-  --features "trellis decoder" \
+  --features "trellis decoder boundary-rd" \
   -- --output benchmarks/boundary_rd/low_q_full
 ```
 
