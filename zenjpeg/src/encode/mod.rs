@@ -136,7 +136,7 @@ pub(crate) use blocks::build_nonzero_mask;
 #[allow(unused_imports)] // Public API re-exports
 pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-exports
-pub use encoder_config::{BoundaryRd, BoundaryRdConfig, ContentClass, EncoderConfig};
+pub use encoder_config::{BoundaryRd, BoundaryRdConfig, EncoderConfig, ImageContentType};
 #[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ExpertConfig;
