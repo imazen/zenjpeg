@@ -1850,10 +1850,6 @@ pub struct JpegDecoder<'a> {
 impl zencodec::decode::Decode for JpegDecoder<'_> {
     type Error = Error;
 
-    // IccMatchTolerance was deprecated in zencodec 0.1.16 as a placebo parameter.
-    // Callers must still pass a variant to descriptor_for_decoded_pixels; zencodec
-    // itself uses `#[allow(deprecated)]` internally for the same reason.
-    #[allow(deprecated)]
     fn decode(self) -> Result<DecodeOutput, Error> {
         #[cfg(feature = "decoder")]
         {
@@ -1974,18 +1970,17 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 .inner
                 .correct_color
                 .as_ref()
-                .map(|_| zenpixels::Cicp::SRGB);
+                .map(|_| zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
 
             // Build PixelBuffer with zero-copy where possible
             let buf = if wants_f32 {
                 let pixels_f32 = result.into_pixels_f32().unwrap_or_default();
                 match format {
                     PixelFormat::Gray => {
-                        let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                        let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
                             zenpixels::PixelFormat::GrayF32,
                             &info.source_color,
                             corrected_cicp.as_ref(),
-                            zencodec::helpers::IccMatchTolerance::Intent,
                         )
                         .with_transfer(zenpixels::TransferFunction::Linear);
                         let gray: Vec<Gray<f32>> =
@@ -1998,22 +1993,20 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     _ => {
                         let pixel_count = (w as usize) * (h as usize);
                         if pixels_f32.len() == pixel_count * 3 {
-                            let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                            let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
                                 zenpixels::PixelFormat::RgbF32,
                                 &info.source_color,
                                 corrected_cicp.as_ref(),
-                                zencodec::helpers::IccMatchTolerance::Intent,
                             )
                             .with_transfer(zenpixels::TransferFunction::Linear);
                             let raw_bytes = bytemuck::cast_slice::<f32, u8>(&pixels_f32).to_vec();
                             PixelBuffer::from_vec(raw_bytes, w, h, desc)
                                 .map_err(|_| Error::internal("pixel buffer creation failed"))?
                         } else {
-                            let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                            let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
                                 zenpixels::PixelFormat::RgbaF32,
                                 &info.source_color,
                                 corrected_cicp.as_ref(),
-                                zencodec::helpers::IccMatchTolerance::Intent,
                             )
                             .with_transfer(zenpixels::TransferFunction::Linear);
                             let rgb: Vec<Rgb<f32>> = pixels_f32
@@ -2050,11 +2043,10 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                     PixelFormat::Bgra => zenpixels::PixelFormat::Bgra8,
                     _ => zenpixels::PixelFormat::Rgb8,
                 };
-                let desc = zencodec::helpers::descriptor_for_decoded_pixels(
+                let desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
                     pf,
                     &info.source_color,
                     corrected_cicp.as_ref(),
-                    zencodec::helpers::IccMatchTolerance::Intent,
                 );
                 PixelBuffer::from_vec(pixels_u8, w, h, desc)
                     .map_err(|_| Error::internal("pixel buffer creation failed"))?
@@ -2298,12 +2290,12 @@ fn decode_descriptor(
 ) -> PixelDescriptor {
     let base = select_decode_descriptor(preferred, header.num_components);
     let sc = source_color_from_header(header);
-    let corrected_cicp = correct_color.map(|_| zenpixels::Cicp::SRGB);
-    zencodec::helpers::descriptor_for_decoded_pixels(
+    let corrected_cicp =
+        correct_color.map(|_| zenpixels::ColorProfileSource::Cicp(zenpixels::Cicp::SRGB));
+    zencodec::helpers::descriptor_for_decoded_pixels_v2(
         base.pixel_format(),
         &sc,
         corrected_cicp.as_ref(),
-        zencodec::helpers::IccMatchTolerance::Intent,
     )
 }
 
