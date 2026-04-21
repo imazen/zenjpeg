@@ -124,19 +124,19 @@ fn manual_configs_decode() {
         BoundaryRdConfig::new()
             .with_alpha(1.0)
             .with_threshold(0.1)
-            .with_aq_shrink(0.7)
+            .with_shrink(0.7)
             .with_max_retries(1)
             .with_above(false),
         BoundaryRdConfig::new()
             .with_alpha(1.0)
             .with_threshold(0.05)
-            .with_aq_shrink(0.5)
+            .with_shrink(0.5)
             .with_max_retries(2)
             .with_above(false),
         BoundaryRdConfig::new()
             .with_alpha(1.0)
             .with_threshold(0.05)
-            .with_aq_shrink(0.5)
+            .with_shrink(0.5)
             .with_max_retries(2)
             .with_above(true),
     ];
@@ -162,7 +162,7 @@ fn manual_config_decodes() {
         BoundaryRdConfig::new()
             .with_alpha(2.0)
             .with_threshold(0.05)
-            .with_aq_shrink(0.5)
+            .with_shrink(0.5)
             .with_max_retries(2)
             .with_above(true),
     ));
@@ -189,7 +189,7 @@ fn on_left_above_differs_from_off_on_checkerboard() {
         BoundaryRdConfig::new()
             .with_alpha(1.0)
             .with_threshold(0.05)
-            .with_aq_shrink(0.5)
+            .with_shrink(0.5)
             .with_max_retries(2)
             .with_above(true),
     ));

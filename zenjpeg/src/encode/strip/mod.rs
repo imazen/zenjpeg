@@ -85,9 +85,8 @@ pub struct QuantContext {
 /// from the composable [`crate::encode::encoder_config::BoundaryRdConfig`].
 ///
 /// Kept `pub(crate)` — it is a hot-path resolved shape, not a public API.
-/// A value with `shrink_aq == 1.0 && shrink_zb == 1.0` produces no
-/// refinement (both retry knobs are no-ops), which is equivalent to
-/// `BoundaryRd::Off`.
+/// A value with `shrink == 1.0` produces no refinement (the retry picks the
+/// same result), which is equivalent to `BoundaryRd::Off`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BoundaryRdFlat {
     /// Seam-jump weight (α) in the D_b term.
@@ -96,13 +95,8 @@ pub(crate) struct BoundaryRdFlat {
     /// AC DCT energy.
     pub threshold: f32,
     /// AQ-strength multiplier applied on each retry. `1.0` disables
-    /// AQ-shrink retries (retries pick the same result).
-    pub shrink_aq: f32,
-    /// Zero-bias scale multiplier applied on each retry. `1.0` is a
-    /// no-op (identity). Smaller values weaken the zero-bias rule during
-    /// the retry quantize, preserving more AC coefficients near the
-    /// bias threshold.
-    pub shrink_zb: f32,
+    /// retries (they pick the same result).
+    pub shrink: f32,
     /// Maximum retries per triggered block.
     pub max_retries: u8,
     /// Whether the above-neighbor (top-edge) term is included in D_b.
@@ -1598,7 +1592,7 @@ impl StripProcessor {
 
         let alpha = state.config.alpha;
         let threshold = state.config.threshold;
-        let shrink_factor: f32 = state.config.shrink_aq;
+        let shrink_factor: f32 = state.config.shrink;
         let max_retries: u8 = state.config.max_retries;
         // Phase 4: above-neighbor term (opt-in on top of left-only).
         let use_above = state.config.above;
@@ -1736,18 +1730,17 @@ impl StripProcessor {
 
             if trigger {
                 let mut aq = aq_strength;
-                let zb_scale = state.config.shrink_zb;
                 for _ in 0..max_retries {
                     aq *= shrink_factor;
-                    // Retry uses the shrunken AQ strength AND the scaled
-                    // zero-bias vector. When `zb_scale == 1.0` (the default),
-                    // the threshold is bit-identical to the unscaled variant —
-                    // `x * 1.0 == x` in IEEE-754 — so the retry output is
-                    // byte-identical to pre-Task-3 behavior.
-                    let z = quant.y_quant_simd.quantize_with_scaled_zero_bias_zigzag(
+                    // Retry uses the shrunken AQ strength. The unscaled
+                    // zero-bias quantize is used throughout; the
+                    // `zero_bias_shrink` knob was removed (2026-04-21)
+                    // after the targeted validation sweep found no
+                    // consistent per-image Pareto improvement over
+                    // AQ-shrink alone.
+                    let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
-                        zb_scale,
                         aq,
                     );
                     let rec = br::idct_quantized_block(&z, quant_natural);

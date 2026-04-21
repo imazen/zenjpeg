@@ -308,7 +308,7 @@ fn build_config(knob: Option<ConfigKnob>, quality: u8) -> EncoderConfig {
             BoundaryRdConfig::new()
                 .with_alpha(k.alpha)
                 .with_threshold(k.threshold)
-                .with_aq_shrink(k.shrink)
+                .with_shrink(k.shrink)
                 .with_max_retries(k.retries)
                 .with_above(k.above),
         ));
