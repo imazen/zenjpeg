@@ -248,10 +248,7 @@ impl StreamingEncoderBuilder {
     /// the feature-disabled encode. `Some(flat)` installs the supplied
     /// resolved knobs into the strip processor.
     #[must_use]
-    pub(crate) fn boundary_rd_flat(
-        mut self,
-        flat: Option<super::strip::BoundaryRdFlat>,
-    ) -> Self {
+    pub(crate) fn boundary_rd_flat(mut self, flat: Option<super::strip::BoundaryRdFlat>) -> Self {
         self.boundary_rd_flat = flat;
         self
     }

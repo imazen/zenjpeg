@@ -13,7 +13,9 @@
 
 use enough::Unstoppable;
 use std::hash::{Hash, Hasher};
-use zenjpeg::encoder::{BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, PixelLayout};
+use zenjpeg::encoder::{
+    BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, PixelLayout,
+};
 
 fn gen_checkerboard(w: usize, h: usize, cell: usize) -> Vec<u8> {
     let mut out = vec![0u8; w * h * 3];

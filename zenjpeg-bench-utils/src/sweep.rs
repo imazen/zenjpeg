@@ -227,10 +227,7 @@ pub fn run_sweep(
     let total = images.len() * config_names.len() * qualities.len();
     let mut done = 0;
     for image in images {
-        let per_image = result
-            .results
-            .entry(image.label.clone())
-            .or_default();
+        let per_image = result.results.entry(image.label.clone()).or_default();
         result.classes.insert(image.label.clone(), image.class);
         for cfg in config_names {
             let points = per_image.entry(cfg.clone()).or_default();
@@ -287,7 +284,11 @@ mod tests {
                 base_bytes
             };
             let ssim2 = 100.0 - q as f64 / 2.0;
-            let ssim2 = if name == "candidate" { ssim2 - 2.0 } else { ssim2 };
+            let ssim2 = if name == "candidate" {
+                ssim2 - 2.0
+            } else {
+                ssim2
+            };
             let mut distortions = BTreeMap::new();
             distortions.insert(MetricKind::Ssim2, 100.0 - ssim2);
             distortions.insert(MetricKind::Bbs, (100.0 - ssim2) * 2.0);
@@ -299,13 +300,9 @@ mod tests {
         };
 
         let mut progress_calls = 0;
-        let result = run_sweep(
-            &imgs,
-            &configs,
-            &qs,
-            &encoder,
-            &mut |_, _| progress_calls += 1,
-        );
+        let result = run_sweep(&imgs, &configs, &qs, &encoder, &mut |_, _| {
+            progress_calls += 1
+        });
         assert_eq!(progress_calls, 2 * 2 * 2);
         assert_eq!(result.results.len(), 2);
         for img in &imgs {

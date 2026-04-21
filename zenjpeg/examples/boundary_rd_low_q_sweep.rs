@@ -77,16 +77,13 @@ fn parse_args() -> Args {
         lineart_dir: PathBuf::from("benchmarks/boundary_rd/sweep_corpus/lineart"),
         screenshots_dir: PathBuf::from(
             std::env::var_os("HOME")
-                .map(|h| {
-                    PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc")
-                })
+                .map(|h| PathBuf::from(h).join("work/codec-eval/codec-corpus/gb82-sc"))
                 .unwrap_or_else(|| PathBuf::from("gb82-sc")),
         ),
         photo_dir: PathBuf::from(
             std::env::var_os("HOME")
                 .map(|h| {
-                    PathBuf::from(h)
-                        .join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
+                    PathBuf::from(h).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation")
                 })
                 .unwrap_or_else(|| PathBuf::from("CID22/validation")),
         ),
@@ -223,7 +220,13 @@ fn load_image_as_corpus(path: &Path, class: ImageClass) -> Option<CorpusImage> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    Some(CorpusImage { label, width: w, height: h, rgb8, class })
+    Some(CorpusImage {
+        label,
+        width: w,
+        height: h,
+        rgb8,
+        class,
+    })
 }
 
 fn crop_center(img: &CorpusImage, new_w: usize, new_h: usize) -> CorpusImage {
@@ -339,21 +342,27 @@ fn decode_jpeg_rgb(data: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
 }
 
 fn metrics(orig: &[u8], recon: &[u8], w: usize, h: usize) -> (f64, f64) {
-    let orig_arr: Vec<[u8; 3]> =
-        orig.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-    let recon_arr: Vec<[u8; 3]> =
-        recon.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let orig_arr: Vec<[u8; 3]> = orig.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let recon_arr: Vec<[u8; 3]> = recon.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     let o = ImgVec::new(orig_arr, w, h);
     let r = ImgVec::new(recon_arr, w, h);
     let ssim2 = fast_ssim2::compute_ssimulacra2(o.as_ref(), r.as_ref()).unwrap_or(0.0);
 
     let orig_rgb: Vec<RGB<u8>> = orig
         .chunks_exact(3)
-        .map(|c| RGB { r: c[0], g: c[1], b: c[2] })
+        .map(|c| RGB {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+        })
         .collect();
     let recon_rgb: Vec<RGB<u8>> = recon
         .chunks_exact(3)
-        .map(|c| RGB { r: c[0], g: c[1], b: c[2] })
+        .map(|c| RGB {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+        })
         .collect();
     let orig_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&orig_rgb, w, h);
     let recon_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&recon_rgb, w, h);
@@ -418,8 +427,14 @@ fn preflight_q0() -> bool {
 
 fn main() {
     let args = parse_args();
-    eprintln!("[preflight] Q=0 encode+decode: {}",
-        if preflight_q0() { "ok" } else { "FAILED (using Q=5 floor)" });
+    eprintln!(
+        "[preflight] Q=0 encode+decode: {}",
+        if preflight_q0() {
+            "ok"
+        } else {
+            "FAILED (using Q=5 floor)"
+        }
+    );
     let qualities = args.qualities.clone();
     let mut images = load_corpus(&args);
     if let Some(lim) = args.limit_images {
@@ -454,7 +469,9 @@ fn main() {
         for &q in &qualities {
             let cfg = build_config(None, q);
             let start = Instant::now();
-            let Some(jpeg) = encode_jpeg(cfg, img) else { continue };
+            let Some(jpeg) = encode_jpeg(cfg, img) else {
+                continue;
+            };
             let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
             let Some(recon) = decode_jpeg_rgb(&jpeg, img.width, img.height) else {
                 continue;
@@ -508,8 +525,7 @@ fn main() {
     }
 
     // Per-(config, image) candidate points
-    let mut per_cfg_points: BTreeMap<String, BTreeMap<String, Vec<SamplePoint>>> =
-        BTreeMap::new();
+    let mut per_cfg_points: BTreeMap<String, BTreeMap<String, Vec<SamplePoint>>> = BTreeMap::new();
 
     let total = configs.len() * images.len() * qualities.len();
     let mut done = 0usize;
@@ -531,13 +547,11 @@ fn main() {
                     continue;
                 };
                 let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
-                let Some(recon) = decode_jpeg_rgb(&jpeg, img.width, img.height)
-                else {
+                let Some(recon) = decode_jpeg_rgb(&jpeg, img.width, img.height) else {
                     done += 1;
                     continue;
                 };
-                let (ssim2_d, bbs_d) =
-                    metrics(&img.rgb8, &recon, img.width, img.height);
+                let (ssim2_d, bbs_d) = metrics(&img.rgb8, &recon, img.width, img.height);
                 let pixels = (img.width * img.height).max(1) as f64;
                 pts.push(SamplePoint {
                     bpp: jpeg.len() as f64 * 8.0 / pixels,
@@ -592,8 +606,7 @@ fn main() {
         );
 
         // Checkpoint every 20 min to avoid losing progress on interrupt.
-        if t0.elapsed().saturating_sub(last_checkpoint.elapsed())
-            > checkpoint_interval
+        if t0.elapsed().saturating_sub(last_checkpoint.elapsed()) > checkpoint_interval
             || t0.elapsed() > last_checkpoint.elapsed() + checkpoint_interval
         {
             let ck = args.output_dir.join("grid.checkpoint.csv");
@@ -702,34 +715,26 @@ fn main() {
                     }
                     n_img += 1;
 
-                    let base_bbs_curve = RdCurve::from_points(
-                        base_q.iter().map(|p| RdPoint {
-                            rate_bpp: p.bpp,
-                            distortion: p.bbs_distortion,
-                            quality: p.quality,
-                        }),
-                    );
-                    let cand_bbs_curve = RdCurve::from_points(
-                        cand_q.iter().map(|p| RdPoint {
-                            rate_bpp: p.bpp,
-                            distortion: p.bbs_distortion,
-                            quality: p.quality,
-                        }),
-                    );
-                    let base_ssim2_curve = RdCurve::from_points(
-                        base_q.iter().map(|p| RdPoint {
-                            rate_bpp: p.bpp,
-                            distortion: p.ssim2_distortion,
-                            quality: p.quality,
-                        }),
-                    );
-                    let cand_ssim2_curve = RdCurve::from_points(
-                        cand_q.iter().map(|p| RdPoint {
-                            rate_bpp: p.bpp,
-                            distortion: p.ssim2_distortion,
-                            quality: p.quality,
-                        }),
-                    );
+                    let base_bbs_curve = RdCurve::from_points(base_q.iter().map(|p| RdPoint {
+                        rate_bpp: p.bpp,
+                        distortion: p.bbs_distortion,
+                        quality: p.quality,
+                    }));
+                    let cand_bbs_curve = RdCurve::from_points(cand_q.iter().map(|p| RdPoint {
+                        rate_bpp: p.bpp,
+                        distortion: p.bbs_distortion,
+                        quality: p.quality,
+                    }));
+                    let base_ssim2_curve = RdCurve::from_points(base_q.iter().map(|p| RdPoint {
+                        rate_bpp: p.bpp,
+                        distortion: p.ssim2_distortion,
+                        quality: p.quality,
+                    }));
+                    let cand_ssim2_curve = RdCurve::from_points(cand_q.iter().map(|p| RdPoint {
+                        rate_bpp: p.bpp,
+                        distortion: p.ssim2_distortion,
+                        quality: p.quality,
+                    }));
 
                     if let Some(bd) = rd::bd_rate(&base_bbs_curve, &cand_bbs_curve) {
                         bd_bbs_list.push(bd);
@@ -755,9 +760,7 @@ fn main() {
                                 per_q_bbs.push(cp.bbs_distortion / bp.bbs_distortion);
                             }
                             if bp.ssim2_distortion > 0.0 {
-                                per_q_ssim2.push(
-                                    cp.ssim2_distortion / bp.ssim2_distortion,
-                                );
+                                per_q_ssim2.push(cp.ssim2_distortion / bp.ssim2_distortion);
                             }
                         }
                     }
@@ -779,8 +782,16 @@ fn main() {
                     continue;
                 }
 
-                let bd_bbs = if bd_bbs_list.is_empty() { None } else { Some(mean_f64(&bd_bbs_list)) };
-                let bd_ssim2 = if bd_ssim2_list.is_empty() { None } else { Some(mean_f64(&bd_ssim2_list)) };
+                let bd_bbs = if bd_bbs_list.is_empty() {
+                    None
+                } else {
+                    Some(mean_f64(&bd_bbs_list))
+                };
+                let bd_ssim2 = if bd_ssim2_list.is_empty() {
+                    None
+                } else {
+                    Some(mean_f64(&bd_ssim2_list))
+                };
                 aggs.push(Agg {
                     config: cfg_label.clone(),
                     knob: *knob,

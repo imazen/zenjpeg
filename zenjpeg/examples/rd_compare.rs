@@ -39,9 +39,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use zenjpeg::encoder::{
-    ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout,
-};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout};
 use zenjpeg_bench_utils::rd;
 use zenjpeg_bench_utils::sweep::{
     self, CorpusImage, ImageClass, MetricKind, SampleOutput, SweepResult,
@@ -69,9 +67,18 @@ fn parse_args() -> Args {
     let mut baseline = String::from("default");
     let mut candidate = String::from("auto_optimize");
     let mut corpus_specs: Vec<CorpusSpec> = vec![
-        CorpusSpec { kind: "cid22".into(), count: 3 },
-        CorpusSpec { kind: "screenshots".into(), count: 2 },
-        CorpusSpec { kind: "synthetic".into(), count: 2 },
+        CorpusSpec {
+            kind: "cid22".into(),
+            count: 3,
+        },
+        CorpusSpec {
+            kind: "screenshots".into(),
+            count: 2,
+        },
+        CorpusSpec {
+            kind: "synthetic".into(),
+            count: 2,
+        },
     ];
     let mut qualities: Vec<u8> = vec![50, 65, 75, 85, 95];
     let mut metrics: Vec<MetricKind> = vec![MetricKind::Ssim2, MetricKind::Bbs];
@@ -242,10 +249,7 @@ fn collect_screenshots(n: usize) -> Vec<CorpusImage> {
     let root = home().join("work/codec-eval/codec-corpus/gb82-sc");
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&root) else {
-        eprintln!(
-            "warning: screenshots dir missing: {}",
-            root.display()
-        );
+        eprintln!("warning: screenshots dir missing: {}", root.display());
         return out;
     };
     let mut paths: Vec<_> = entries
@@ -280,7 +284,11 @@ fn generate_synthetic(n: usize) -> Vec<CorpusImage> {
     // noise+edges. Classes: the first is Synthetic (checkerboard),
     // second is LineArt, rest are Synthetic again.
     let generators: Vec<(&str, ImageClass, fn(usize, usize) -> Vec<u8>)> = vec![
-        ("synth_checkerboard", ImageClass::Synthetic, gen_checkerboard),
+        (
+            "synth_checkerboard",
+            ImageClass::Synthetic,
+            gen_checkerboard,
+        ),
         ("synth_stripes", ImageClass::LineArt, gen_stripes),
         ("synth_grid", ImageClass::LineArt, gen_grid),
         ("synth_noise_edges", ImageClass::Synthetic, gen_noise_edges),
@@ -354,7 +362,9 @@ fn gen_noise_edges(w: usize, h: usize) -> Vec<u8> {
     let mut state: u64 = 0xdeadbeefcafebabe;
     for y in 0..h {
         for x in 0..w {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let noise = (state >> 24) as u8;
             let block_x = x / 24;
             let block_y = y / 24;
@@ -555,11 +565,19 @@ fn compute_distortions(
     let mut out = BTreeMap::new();
     let orig_rgb_vec: Vec<RGB<u8>> = orig
         .chunks_exact(3)
-        .map(|c| RGB { r: c[0], g: c[1], b: c[2] })
+        .map(|c| RGB {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+        })
         .collect();
     let recon_rgb_vec: Vec<RGB<u8>> = recon
         .chunks_exact(3)
-        .map(|c| RGB { r: c[0], g: c[1], b: c[2] })
+        .map(|c| RGB {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+        })
         .collect();
     let orig_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&orig_rgb_vec, w, h);
     let recon_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&recon_rgb_vec, w, h);
@@ -568,7 +586,8 @@ fn compute_distortions(
         match m {
             MetricKind::Ssim2 => {
                 let orig_arr: Vec<[u8; 3]> = orig_rgb_vec.iter().map(|p| [p.r, p.g, p.b]).collect();
-                let recon_arr: Vec<[u8; 3]> = recon_rgb_vec.iter().map(|p| [p.r, p.g, p.b]).collect();
+                let recon_arr: Vec<[u8; 3]> =
+                    recon_rgb_vec.iter().map(|p| [p.r, p.g, p.b]).collect();
                 let o = ImgVec::new(orig_arr, w, h);
                 let r = ImgVec::new(recon_arr, w, h);
                 let score = fast_ssim2::compute_ssimulacra2(o.as_ref(), r.as_ref()).unwrap_or(0.0);
@@ -598,9 +617,7 @@ fn compute_distortions(
                 }
             }
             MetricKind::Dssim => {
-                eprintln!(
-                    "warning: dssim metric is not wired up in this example; skipping"
-                );
+                eprintln!("warning: dssim metric is not wired up in this example; skipping");
             }
             MetricKind::Custom(_) => {
                 // Silently skip custom metrics in this example.
@@ -621,7 +638,11 @@ fn main() {
         "loaded {} images, running {} × {} configs × qualities {:?}, metrics {:?}",
         images.len(),
         args.qualities.len(),
-        if args.baseline == args.candidate { 1 } else { 2 },
+        if args.baseline == args.candidate {
+            1
+        } else {
+            2
+        },
         args.qualities,
         args.metrics.iter().map(|m| m.slug()).collect::<Vec<_>>()
     );
@@ -684,11 +705,7 @@ fn main() {
 fn write_curves_csv(run_dir: &Path, result: &SweepResult, args: &Args) {
     let path = run_dir.join("curves.csv");
     let mut f = fs::File::create(&path).expect("create curves.csv");
-    write!(
-        f,
-        "image,class,config,quality,bytes,bpp,encode_ms"
-    )
-    .unwrap();
+    write!(f, "image,class,config,quality,bytes,bpp,encode_ms").unwrap();
     for m in &args.metrics {
         write!(f, ",dist_{}", m.slug()).unwrap();
     }

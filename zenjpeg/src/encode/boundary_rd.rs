@@ -345,7 +345,13 @@ mod tests {
         let left_col = [0.5f32; 8];
         let right_col = [-0.3f32; 8];
         // Both "rec" and "orig" use the same values — D_b must be zero.
-        let d = boundary_distortion(&left_col, Some(&right_col), &left_col, Some(&right_col), 1.0);
+        let d = boundary_distortion(
+            &left_col,
+            Some(&right_col),
+            &left_col,
+            Some(&right_col),
+            1.0,
+        );
         assert_eq!(d, 0.0);
     }
 
@@ -495,13 +501,8 @@ mod tests {
         for &alpha in &[0.0f32, 0.5, 1.0, 2.0, 4.0] {
             let expected =
                 scalar_boundary_distortion(&rec_cur, &rec_lr, &orig_cur, &orig_lr, alpha);
-            let got = boundary_distortion(
-                &rec_cur,
-                Some(&rec_lr),
-                &orig_cur,
-                Some(&orig_lr),
-                alpha,
-            );
+            let got =
+                boundary_distortion(&rec_cur, Some(&rec_lr), &orig_cur, Some(&orig_lr), alpha);
             // f32 FMA reorders additions vs scalar `+=`, so accept a small
             // relative tolerance. Scale tolerance with |expected| for large
             // magnitudes.

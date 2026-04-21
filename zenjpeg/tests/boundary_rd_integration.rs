@@ -141,8 +141,8 @@ fn manual_configs_decode() {
             .with_above(true),
     ];
     for cfg in configs {
-        let encoder_cfg =
-            EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(cfg));
+        let encoder_cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter)
+            .boundary_rd(BoundaryRd::On(cfg));
         let bytes = encode_rgb8(&rgb, w as u32, h as u32, encoder_cfg);
         let (dec, dw, dh) = decode_rgb8(&bytes);
         assert_eq!((dw, dh), (w as u32, h as u32));

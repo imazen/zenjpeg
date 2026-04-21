@@ -288,7 +288,12 @@ fn integrate_cubic_segment(coef: (f64, f64, f64, f64), xj: f64, x0: f64, x1: f64
 /// Integrate a cubic spline (as produced by [`natural_cubic_spline_coeffs`])
 /// over `[x_lo, x_hi]`. Returns `None` if the range lies outside the knot
 /// span.
-fn integrate_spline(xs: &[f64], coeffs: &[(f64, f64, f64, f64)], x_lo: f64, x_hi: f64) -> Option<f64> {
+fn integrate_spline(
+    xs: &[f64],
+    coeffs: &[(f64, f64, f64, f64)],
+    x_lo: f64,
+    x_hi: f64,
+) -> Option<f64> {
     if x_lo >= x_hi {
         return None;
     }
@@ -536,11 +541,7 @@ mod tests {
         let points: Vec<_> = (0..5)
             .map(|i| {
                 let q = 50 + i * 10;
-                pt(
-                    0.5 * (i + 1) as f64,
-                    10.0 / (i + 1) as f64,
-                    q as u8,
-                )
+                pt(0.5 * (i + 1) as f64, 10.0 / (i + 1) as f64, q as u8)
             })
             .collect();
         let a = RdCurve::from_points(points.clone());
@@ -552,7 +553,11 @@ mod tests {
             bd
         );
         let cmp = compare(&a, &b);
-        assert!(cmp.mean_distance.abs() < 1e-9, "identical curves mean_distance=0, got {}", cmp.mean_distance);
+        assert!(
+            cmp.mean_distance.abs() < 1e-9,
+            "identical curves mean_distance=0, got {}",
+            cmp.mean_distance
+        );
     }
 
     #[test]
@@ -572,12 +577,19 @@ mod tests {
             pt(3.2, 1.0, 95),
         ]);
         let bd = bd_rate(&baseline, &candidate).expect("should produce BD-rate");
-        assert!(bd < 0.0, "better candidate should have negative BD-rate, got {}", bd);
+        assert!(
+            bd < 0.0,
+            "better candidate should have negative BD-rate, got {}",
+            bd
+        );
         // 20% rate reduction at every point → BD-rate ≈ -20%.
         assert!((bd - (-20.0)).abs() < 1.0, "expected ≈ -20%, got {}", bd);
 
         let cmp = compare(&baseline, &candidate);
-        assert!(cmp.mean_distance > 0.0, "candidate at lower rate, same distortion → positive distance");
+        assert!(
+            cmp.mean_distance > 0.0,
+            "candidate at lower rate, same distortion → positive distance"
+        );
     }
 
     #[test]
@@ -596,34 +608,34 @@ mod tests {
             pt(5.0, 1.0, 95),
         ]);
         let bd = bd_rate(&baseline, &candidate).expect("should produce BD-rate");
-        assert!(bd > 0.0, "worse candidate should have positive BD-rate, got {}", bd);
+        assert!(
+            bd > 0.0,
+            "worse candidate should have positive BD-rate, got {}",
+            bd
+        );
         assert!((bd - 25.0).abs() < 1.5, "expected ≈ +25%, got {}", bd);
 
         let cmp = compare(&baseline, &candidate);
-        assert!(cmp.mean_distance < 0.0, "candidate at higher rate, same distortion → negative distance");
+        assert!(
+            cmp.mean_distance < 0.0,
+            "candidate at higher rate, same distortion → negative distance"
+        );
     }
 
     #[test]
     fn disjoint_distortion_ranges_return_none() {
-        let a = RdCurve::from_points([
-            pt(0.1, 100.0, 10),
-            pt(0.2, 80.0, 20),
-        ]);
-        let b = RdCurve::from_points([
-            pt(0.5, 5.0, 90),
-            pt(1.0, 1.0, 99),
-        ]);
-        assert!(bd_rate(&a, &b).is_none(), "disjoint distortion ranges → None");
+        let a = RdCurve::from_points([pt(0.1, 100.0, 10), pt(0.2, 80.0, 20)]);
+        let b = RdCurve::from_points([pt(0.5, 5.0, 90), pt(1.0, 1.0, 99)]);
+        assert!(
+            bd_rate(&a, &b).is_none(),
+            "disjoint distortion ranges → None"
+        );
     }
 
     #[test]
     fn too_few_points_returns_none() {
         let a = RdCurve::from_points([pt(1.0, 5.0, 75)]);
-        let b = RdCurve::from_points([
-            pt(0.5, 10.0, 50),
-            pt(1.0, 5.0, 75),
-            pt(2.0, 1.0, 90),
-        ]);
+        let b = RdCurve::from_points([pt(0.5, 10.0, 50), pt(1.0, 5.0, 75), pt(2.0, 1.0, 90)]);
         assert!(bd_rate(&a, &b).is_none(), "single-point baseline → None");
         assert!(bd_rate(&b, &a).is_none(), "single-point candidate → None");
     }
@@ -653,11 +665,7 @@ mod tests {
 
     #[test]
     fn closest_point_distance_sign_and_magnitude() {
-        let baseline = RdCurve::from_points([
-            pt(1.0, 10.0, 60),
-            pt(2.0, 5.0, 80),
-        ])
-        .pareto_hull();
+        let baseline = RdCurve::from_points([pt(1.0, 10.0, 60), pt(2.0, 5.0, 80)]).pareto_hull();
         // At rate = sqrt(2) ≈ 1.414 (log10-midpoint of 1 and 2),
         // linear interp in log-rate gives distortion = 7.5.
         let pt_below = pt(2.0_f64.sqrt(), 6.0, 70);
