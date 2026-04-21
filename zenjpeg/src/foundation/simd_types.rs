@@ -264,6 +264,37 @@ impl QuantTableSimd {
         quantize_block_zigzag(&self.mul_rows, block, zero_bias, aq_strength)
     }
 
+    /// Quantize with a scaled zero-bias vector, outputting directly in zigzag order.
+    ///
+    /// The `zb_scale` multiplier scales the entire zero-bias threshold:
+    /// with the usual formula `|qval| >= offset + mul * aq`, the scaled
+    /// form becomes `|qval| >= zb_scale * (offset + mul * aq)`.
+    ///
+    /// `zb_scale == 1.0` is a strict identity — it produces the same
+    /// output as [`Self::quantize_with_zero_bias_zigzag`] for the same
+    /// input. Smaller values weaken the zero-bias rule, preserving more
+    /// small AC coefficients.
+    ///
+    /// This is the retry-path entry point for boundary-RD (#91) — the
+    /// non-retry hot loop still uses the unscaled variant for codegen
+    /// stability (the retry only fires on triggered blocks).
+    #[inline]
+    pub fn quantize_with_scaled_zero_bias_zigzag(
+        &self,
+        block: &Block8x8f,
+        zero_bias: &ZeroBiasSimd,
+        zb_scale: f32,
+        aq_strength: f32,
+    ) -> [i16; 64] {
+        quantize_block_zigzag_scaled(
+            &self.mul_rows,
+            block,
+            zero_bias,
+            zb_scale,
+            aq_strength,
+        )
+    }
+
     #[inline]
     pub fn quantize_with_zero_bias(
         &self,
@@ -464,6 +495,82 @@ fn quantize_block_zigzag(
     ))
 }
 
+/// Dispatching scaled-zero-bias quantize with zigzag — magetypes
+/// multi-platform dispatch. Only used by boundary-RD's retry path.
+#[inline]
+fn quantize_block_zigzag_scaled(
+    mul_rows: &[[f32; 8]; 8],
+    block: &Block8x8f,
+    zero_bias: &ZeroBiasSimd,
+    zb_scale: f32,
+    aq_strength: f32,
+) -> [i16; 64] {
+    incant!(mage_quantize_block_zigzag_scaled(
+        block,
+        mul_rows,
+        zero_bias,
+        zb_scale,
+        aq_strength
+    ))
+}
+
+/// Magetypes-generic quantize with zigzag output and a scaled zero-bias
+/// vector. Same SIMD shape as `mage_quantize_block_zigzag`, with one
+/// extra f32x8 splat + multiply on the threshold. When `zb_scale ==
+/// 1.0`, the resulting threshold is bit-identical to the unscaled form
+/// (the FP multiply by 1.0 is an identity in IEEE-754).
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn mage_quantize_block_zigzag_scaled(
+    token: Token,
+    block: &Block8x8f,
+    mul_rows: &[[f32; 8]; 8],
+    zero_bias: &ZeroBiasSimd,
+    zb_scale: f32,
+    aq_strength: f32,
+) -> [i16; 64] {
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
+
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
+
+    let aq_m = f32x8::splat(token, aq_strength);
+    let zb_m = f32x8::splat(token, zb_scale);
+    let zero_i32 = i32x8::zero(token);
+    let mut result = [0i16; 64];
+
+    for row in 0..8 {
+        let block_m = f32x8::from_array(token, block.rows[row]);
+        let mul_m = f32x8::from_array(token, mul_rows[row]);
+        let offset_m = f32x8::from_array(token, zero_bias.offset_rows[row]);
+        let bias_mul_m = f32x8::from_array(token, zero_bias.mul_rows[row]);
+
+        let qval = block_m * mul_m;
+        let threshold = bias_mul_m.mul_add(aq_m, offset_m) * zb_m;
+        let abs_qval = qval.abs();
+        let mask = abs_qval.simd_ge(threshold);
+        let rounded = qval.to_i32_round();
+        let mask_i32 = mask.bitcast_to_i32();
+        let blended = i32x8::blend(mask_i32, rounded, zero_i32);
+
+        let arr = blended.to_array();
+        let k = row * 8;
+
+        result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
+    }
+
+    result
+}
+
 /// Dispatching quantize natural order — magetypes multi-platform dispatch.
 #[inline]
 fn quantize_block(
@@ -584,6 +691,96 @@ mod tests {
             assert_eq!(natural, ref_natural, "natural API mismatch at: {perm}");
         });
         eprintln!("quantize_api: {report}");
+    }
+
+    /// Boundary-RD retry path identity: `quantize_with_scaled_zero_bias_zigzag`
+    /// with `zb_scale == 1.0` must be byte-identical to the non-scaled
+    /// variant. This is the invariant that keeps `BoundaryRdConfig::default()`
+    /// (which resolves to `shrink_zb = 1.0`) byte-identical to the
+    /// pre-Task-3 retry output.
+    #[test]
+    fn scaled_zero_bias_scale_one_is_identity() {
+        let (block, quant, zero_bias, aq) = quantize_test_data();
+        let reference = quant.quantize_with_zero_bias_zigzag(&block, &zero_bias, aq);
+        let scaled = quant.quantize_with_scaled_zero_bias_zigzag(&block, &zero_bias, 1.0, aq);
+        assert_eq!(
+            scaled, reference,
+            "scaled(zb_scale=1.0) must match unscaled quantize"
+        );
+    }
+
+    /// A smaller `zb_scale` must produce *different* output whenever
+    /// the threshold actually bites — if this asserts equal, the retry
+    /// knob is a no-op and the Task-3 wiring is broken.
+    ///
+    /// We build a block of low-magnitude AC coefficients deliberately
+    /// close to the threshold so scaling the threshold by 0.25 (vs 1.0
+    /// vs 2.0) measurably flips the `|qval| >= threshold` decision for
+    /// at least one position.
+    #[test]
+    fn scaled_zero_bias_scale_below_one_differs() {
+        // All-zero block except a handful of AC coeffs near the threshold.
+        // With quant values = 16 and zero-bias params offset=0.5, mul=0.15,
+        // the unscaled threshold is 0.5 + 0.15*1.0 = 0.65 in quant-space.
+        // Since qval = coeff * (8.0 / 16) = coeff * 0.5, a coeff near 1.3
+        // lands at qval ≈ 0.65 — exactly on the threshold.
+        let mut coeffs = [0.0f32; 64];
+        // Seed a mix of coeffs that straddle the threshold at
+        // zb_scale=1.0 (threshold=0.65) vs zb_scale=0.25 (threshold=0.1625).
+        coeffs[1] = 1.2;
+        coeffs[2] = 1.0;
+        coeffs[9] = 0.9;
+        coeffs[16] = 0.6;
+        coeffs[17] = 0.4;
+        coeffs[24] = 0.3;
+        let block = Block8x8f::from_array(&coeffs);
+
+        let qvals = [16u16; 64];
+        let quant = QuantTableSimd::from_values(&qvals);
+
+        let bias_params = crate::quant::ZeroBiasParams {
+            offset: [0.5; 64],
+            mul: [0.15; 64],
+        };
+        let zero_bias = ZeroBiasSimd::from_params(&bias_params);
+        let aq = 1.0f32;
+
+        let reference = quant.quantize_with_zero_bias_zigzag(&block, &zero_bias, aq);
+        let scaled = quant.quantize_with_scaled_zero_bias_zigzag(&block, &zero_bias, 0.25, aq);
+        assert_ne!(
+            scaled, reference,
+            "zb_scale < 1.0 must measurably differ from the unscaled quantize \
+             on near-threshold coefficients"
+        );
+    }
+
+    /// Cross-tier parity for the scaled variant: every SIMD permutation
+    /// must agree on the output. Protects against the same class of bug
+    /// as `test_quantize_zigzag_dispatch_parity` for the new kernel.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_quantize_scaled_zigzag_dispatch_parity() {
+        use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+        let (block, quant, zero_bias, aq) = quantize_test_data();
+        let zb_scale = 0.4_f32;
+
+        let reference =
+            quantize_block_zigzag_scaled(&quant.mul_rows, &block, &zero_bias, zb_scale, aq);
+
+        let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+            let result =
+                quantize_block_zigzag_scaled(&quant.mul_rows, &block, &zero_bias, zb_scale, aq);
+            assert_eq!(
+                result, reference,
+                "quantize_block_zigzag_scaled mismatch at permutation: {perm}"
+            );
+        });
+        eprintln!("quantize_scaled_zigzag: {report}");
+        assert!(
+            report.permutations_run >= 2,
+            "expected at least 2 permutations"
+        );
     }
 
     #[test]

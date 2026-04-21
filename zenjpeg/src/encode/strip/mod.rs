@@ -1736,15 +1736,18 @@ impl StripProcessor {
 
             if trigger {
                 let mut aq = aq_strength;
+                let zb_scale = state.config.shrink_zb;
                 for _ in 0..max_retries {
                     aq *= shrink_factor;
-                    // `config.shrink_zb` is a field but unused in Task 1;
-                    // Task 3 replaces this call with a scaled-zero-bias
-                    // variant that applies `shrink_zb` alongside `aq`.
-                    let _ = state.config.shrink_zb;
-                    let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                    // Retry uses the shrunken AQ strength AND the scaled
+                    // zero-bias vector. When `zb_scale == 1.0` (the default),
+                    // the threshold is bit-identical to the unscaled variant —
+                    // `x * 1.0 == x` in IEEE-754 — so the retry output is
+                    // byte-identical to pre-Task-3 behavior.
+                    let z = quant.y_quant_simd.quantize_with_scaled_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
+                        zb_scale,
                         aq,
                     );
                     let rec = br::idct_quantized_block(&z, quant_natural);
