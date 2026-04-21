@@ -368,17 +368,7 @@ fn parse_triple_f64(value: &str) -> [f64; 3] {
 /// Returns bytes ready to splice into a JPEG codestream after SOI.
 #[must_use]
 pub fn create_xmp_app1_marker(xmp: &str) -> Vec<u8> {
-    let xmp_bytes = xmp.as_bytes();
-    let namespace = b"http://ns.adobe.com/xap/1.0/\0";
-    let total_length = 2 + namespace.len() + xmp_bytes.len();
-    let mut marker = Vec::with_capacity(2 + total_length);
-    marker.push(0xFF);
-    marker.push(0xE1);
-    marker.push(((total_length >> 8) & 0xFF) as u8);
-    marker.push((total_length & 0xFF) as u8);
-    marker.extend_from_slice(namespace);
-    marker.extend_from_slice(xmp_bytes);
-    marker
+    super::marker::create_app_segment(1, b"http://ns.adobe.com/xap/1.0/\0", xmp.as_bytes())
 }
 
 // ===========================================================================

@@ -511,7 +511,7 @@ pub fn is_ultrahdr(data: &[u8]) -> bool {
     for span in iter(data) {
         match span.kind {
             MarkerKind::App(2)
-                if span.payload.starts_with(super::iso21496::ISO_21496_1_URN)
+                if span.payload.starts_with(zencodec::ISO_21496_1_URN)
                     || span.payload.starts_with(super::mpf::MPF_IDENTIFIER) =>
             {
                 return true;
@@ -640,11 +640,11 @@ fn handle_app2(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) 
         return;
     }
 
-    if payload.starts_with(super::iso21496::ISO_21496_1_URN)
+    if payload.starts_with(zencodec::ISO_21496_1_URN)
         && wants.contains(Wants::ISO_GAINMAP)
         && probe.iso_gainmap.is_none()
     {
-        let start = (span.offset + 2 + 2 + super::iso21496::ISO_21496_1_URN.len()) as u32;
+        let start = (span.offset + 2 + 2 + zencodec::ISO_21496_1_URN.len()) as u32;
         let end = (span.offset + span.length) as u32;
         probe.iso_gainmap = Some(start..end);
     }
@@ -685,18 +685,16 @@ fn classify_gainmap_presence(p: &ContainerProbe) -> GainMapPresence {
 
 #[cfg(test)]
 mod tests {
-    use super::super::iso21496::append_app2_marker as iso21496_append_app2;
+    use super::super::marker::append_app_segment;
     use super::super::mpf::create_mpf_header;
     use super::*;
     use alloc::vec::Vec;
 
     /// Build a stub ISO 21496-1 APP2 segment with `payload` as its body
-    /// (after the URN). Test convenience — zenjpeg::container::iso21496
-    /// is `pub(crate)`, so its low-level appender is available to tests
-    /// in the same crate.
+    /// (after the URN). Test convenience.
     fn iso_app2(payload: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();
-        iso21496_append_app2(&mut v, payload);
+        append_app_segment(&mut v, 2, zencodec::ISO_21496_1_URN, payload);
         v
     }
 
