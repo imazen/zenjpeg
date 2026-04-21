@@ -22,11 +22,12 @@ use crate::types::EdgePaddingConfig;
 /// [`BoundaryRdConfig`] directly via `On(...)`.
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum BoundaryRd {
     /// Refinement disabled. Default. Output is byte-identical to the
     /// feature-off build; the module stays entirely out of the hot path.
+    #[default]
     Off,
     /// Refinement enabled with the supplied config.
     ///
@@ -39,12 +40,6 @@ pub enum BoundaryRd {
     ///
     /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
     On(BoundaryRdConfig),
-}
-
-impl Default for BoundaryRd {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// Seam-continuity distortion weighting for boundary-RD.
@@ -183,20 +178,15 @@ impl RetryPolicy {
 /// adds the top-edge term and requires a per-column cache of the committed
 /// bottom-edge row from the iMCU above — one extra `blocks_w × 16 f32`
 /// buffer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum NeighborScope {
     /// Consider only the left-neighbor's committed right-edge column.
     LeftOnly,
     /// Consider both the left-neighbor's right edge and the
     /// above-neighbor's committed bottom edge. Adds one inter-iMCU buffer.
+    #[default]
     LeftAndAbove,
-}
-
-impl Default for NeighborScope {
-    fn default() -> Self {
-        Self::LeftAndAbove
-    }
 }
 
 impl NeighborScope {
@@ -239,32 +229,20 @@ impl NeighborScope {
 /// the committed evidence under `benchmarks/boundary_rd/`.
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Retuned 2026-04-21 from the low-Q full-grid sweep. Composed defaults:
+/// `SeamPenalty { alpha=2.0, threshold=0.02 }`, `RetryPolicy { shrink=0.5,
+/// max_retries=2 }`, `NeighborScope::LeftAndAbove`. Strictly dominates the
+/// prior default (alpha=1.0, t=0.05, above=false) on BBS BD-rate across
+/// every (class_bucket, q_range) cell in
+/// `benchmarks/boundary_rd/low_q_full/per_class_per_q.csv`. Slight SSIM2
+/// cost (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange for
+/// the larger BBS gain; at mid+high Q the tradeoff is strictly Pareto.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub struct BoundaryRdConfig {
     seam: SeamPenalty,
     retry: RetryPolicy,
     neighbors: NeighborScope,
-}
-
-impl Default for BoundaryRdConfig {
-    fn default() -> Self {
-        // Retuned 2026-04-21 from the low-Q full-grid sweep. Strictly
-        // dominates the prior default (alpha=1.0, t=0.05, above=false) on
-        // BBS BD-rate across every (class_bucket, q_range) cell in
-        // benchmarks/boundary_rd/low_q_full/per_class_per_q.csv. Slight SSIM2 cost
-        // (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange
-        // for the larger BBS gain; at mid+high Q the tradeoff is strictly
-        // Pareto.
-        //
-        // Composed defaults: SeamPenalty { alpha=2.0, threshold=0.02 },
-        // RetryPolicy { shrink=0.5, max_retries=2 }, NeighborScope::LeftAndAbove.
-        Self {
-            seam: SeamPenalty::default(),
-            retry: RetryPolicy::default(),
-            neighbors: NeighborScope::default(),
-        }
-    }
 }
 
 impl BoundaryRdConfig {

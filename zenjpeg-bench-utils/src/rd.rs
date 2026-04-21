@@ -122,13 +122,13 @@ impl RdCurve {
         // Collapse duplicates-by-rate, keeping the smallest distortion.
         let mut dedup: Vec<RdPoint> = Vec::with_capacity(self.points.len());
         for p in &self.points {
-            if let Some(last) = dedup.last_mut() {
-                if (last.rate_bpp - p.rate_bpp).abs() < f64::EPSILON {
-                    if p.distortion < last.distortion {
-                        *last = *p;
-                    }
-                    continue;
+            if let Some(last) = dedup.last_mut()
+                && (last.rate_bpp - p.rate_bpp).abs() < f64::EPSILON
+            {
+                if p.distortion < last.distortion {
+                    *last = *p;
                 }
+                continue;
             }
             dedup.push(*p);
         }
