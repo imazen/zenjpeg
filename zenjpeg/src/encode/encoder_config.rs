@@ -34,8 +34,8 @@ pub enum BoundaryRd {
     /// is the documented best-we-know entry point. For per-class tuning
     /// before an automatic classifier ships (see [issue #103]), consult
     /// the committed BD-rate evidence in `benchmarks/boundary_rd_*.md`
-    /// and construct a [`BoundaryRdConfig`] with the appropriate
-    /// `threshold` / `shrink` / `max_retries` / `above` values.
+    /// and construct a [`BoundaryRdConfig`] via its composable sub-configs
+    /// (`SeamPenalty`, `RetryPolicy`, `NeighborScope`).
     ///
     /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
     On(BoundaryRdConfig),
@@ -47,6 +47,159 @@ impl Default for BoundaryRd {
     }
 }
 
+/// Seam-continuity distortion weighting for boundary-RD.
+///
+/// Controls the strength and trigger threshold of the D_b term added to
+/// the per-block rate-distortion score when evaluating whether to retry
+/// a quantization with a shrunken AQ strength.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct SeamPenalty {
+    /// Seam-jump weight in the D_b term. Larger → more aggressive
+    /// penalty on cross-seam gradient mismatch. Default `2.0`.
+    alpha: f32,
+    /// D_b trigger threshold, expressed as a multiplier of per-block AC
+    /// DCT energy. A block only triggers refinement if its D_b exceeds
+    /// `threshold * ac_energy`. Default `0.02`.
+    threshold: f32,
+}
+
+impl Default for SeamPenalty {
+    fn default() -> Self {
+        Self {
+            alpha: 2.0,
+            threshold: 0.02,
+        }
+    }
+}
+
+impl SeamPenalty {
+    /// Construct a seam penalty with defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Seam-jump weight (`α`) in the D_b term.
+    #[must_use]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    /// Trigger threshold, as a multiplier of per-block AC DCT energy.
+    #[must_use]
+    pub fn threshold(&self) -> f32 {
+        self.threshold
+    }
+
+    /// Set the seam-jump weight (`α`). Typical range `[0.5, 4.0]`.
+    #[must_use]
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    /// Set the trigger threshold, as a multiplier of per-block AC DCT
+    /// energy. Typical range `[0.01, 0.2]`.
+    #[must_use]
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = threshold;
+        self
+    }
+}
+
+/// Retry policy for boundary-RD refinement.
+///
+/// When a block's seam penalty exceeds [`SeamPenalty::threshold`], the
+/// encoder may retry quantization with a shrunken AQ strength. This
+/// struct controls how many retries are attempted and by how much
+/// strength shrinks each time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct RetryPolicy {
+    /// AQ-strength multiplier applied on each retry. Must be in
+    /// `(0, 1]`. Smaller values (e.g. `0.25`) shrink more aggressively;
+    /// `1.0` disables shrinkage (retries pick the same result).
+    /// Default `0.5`.
+    shrink: f32,
+    /// Maximum number of retries per triggered block. `0` disables
+    /// retry (the first quantization is always accepted). Default `2`.
+    max_retries: u8,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            shrink: 0.5,
+            max_retries: 2,
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Construct a retry policy with defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// AQ-strength shrink multiplier per retry.
+    #[must_use]
+    pub fn shrink(&self) -> f32 {
+        self.shrink
+    }
+
+    /// Maximum number of retries per triggered block.
+    #[must_use]
+    pub fn max_retries(&self) -> u8 {
+        self.max_retries
+    }
+
+    /// Set the AQ-strength shrink multiplier. Must be in `(0, 1]`.
+    #[must_use]
+    pub fn with_shrink(mut self, shrink: f32) -> Self {
+        self.shrink = shrink;
+        self
+    }
+
+    /// Set the maximum number of retries per triggered block.
+    #[must_use]
+    pub fn with_max_retries(mut self, max_retries: u8) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+}
+
+/// Which neighbor edges the D_b seam-continuity term considers.
+///
+/// Left-only is the cheapest (no inter-iMCU buffer needed). Left-and-above
+/// adds the top-edge term and requires a per-column cache of the committed
+/// bottom-edge row from the iMCU above — one extra `blocks_w × 16 f32`
+/// buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NeighborScope {
+    /// Consider only the left-neighbor's committed right-edge column.
+    LeftOnly,
+    /// Consider both the left-neighbor's right edge and the
+    /// above-neighbor's committed bottom edge. Adds one inter-iMCU buffer.
+    LeftAndAbove,
+}
+
+impl Default for NeighborScope {
+    fn default() -> Self {
+        Self::LeftAndAbove
+    }
+}
+
+impl NeighborScope {
+    /// Whether this scope includes the above-neighbor term.
+    #[must_use]
+    pub const fn includes_above(self) -> bool {
+        matches!(self, Self::LeftAndAbove)
+    }
+}
+
 /// Boundary-RD parameters.
 ///
 /// Passed via [`BoundaryRd::On`] when enabling the feature.
@@ -55,6 +208,24 @@ impl Default for BoundaryRd {
 /// (`benchmarks/low_q_full/` and
 /// `benchmarks/boundary_rd_default_2026-04-21.md`).
 ///
+/// # Composable structure
+///
+/// The config is composed of three `#[non_exhaustive]` sub-configs:
+///
+/// - [`SeamPenalty`] — `alpha` + `threshold`
+/// - [`RetryPolicy`] — `shrink` + `max_retries`
+/// - [`NeighborScope`] — left-only vs left-and-above
+///
+/// Builder methods come in three layers. For the common "tweak one knob
+/// off the default" case, the direct accessors like
+/// [`with_alpha`](Self::with_alpha) / [`with_threshold`](Self::with_threshold)
+/// / [`with_shrink`](Self::with_shrink) /
+/// [`with_max_retries`](Self::with_max_retries) / [`with_above`](Self::with_above)
+/// preserve the one-liner ergonomics of a flat struct. For structured
+/// construction, use the sub-config setters
+/// [`with_seam`](Self::with_seam) / [`with_retry`](Self::with_retry) /
+/// [`with_neighbors`](Self::with_neighbors).
+///
 /// Automatic per-image-class preset selection is deferred to [issue #103],
 /// which will introduce an in-house image-content analyzer. Until then,
 /// callers who want per-class tuning should supply values informed by
@@ -62,21 +233,11 @@ impl Default for BoundaryRd {
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct BoundaryRdConfig {
-    /// Seam-jump weight in the D_b term. Default `2.0`.
-    pub alpha: f32,
-    /// D_b trigger threshold as a multiplier of per-block AC DCT energy.
-    /// Default `0.02`.
-    pub threshold: f32,
-    /// AQ-strength multiplier applied on each refinement retry. Must be
-    /// in `(0, 1]`. Default `0.5`.
-    pub shrink: f32,
-    /// Maximum number of refinement retries per triggered block.
-    /// Default `2`.
-    pub max_retries: u8,
-    /// Enable the above-neighbor (top-edge) D_b term in addition to the
-    /// left-neighbor term. Adds an inter-iMCU buffer. Default `true`.
-    pub above: bool,
+    seam: SeamPenalty,
+    retry: RetryPolicy,
+    neighbors: NeighborScope,
 }
 
 impl Default for BoundaryRdConfig {
@@ -88,13 +249,119 @@ impl Default for BoundaryRdConfig {
         // (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange
         // for the larger BBS gain; at mid+high Q the tradeoff is strictly
         // Pareto.
+        //
+        // Composed defaults: SeamPenalty { alpha=2.0, threshold=0.02 },
+        // RetryPolicy { shrink=0.5, max_retries=2 }, NeighborScope::LeftAndAbove.
         Self {
-            alpha: 2.0,
-            threshold: 0.02,
-            shrink: 0.5,
-            max_retries: 2,
-            above: true,
+            seam: SeamPenalty::default(),
+            retry: RetryPolicy::default(),
+            neighbors: NeighborScope::default(),
         }
+    }
+}
+
+impl BoundaryRdConfig {
+    /// Construct a config with all defaults (the currently-tuned
+    /// best-we-know values — see [`BoundaryRdConfig::default`]).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // ── Sub-config getters ──
+
+    /// Seam-penalty weighting ([`SeamPenalty`]).
+    #[must_use]
+    pub fn seam(&self) -> SeamPenalty {
+        self.seam
+    }
+
+    /// Retry policy ([`RetryPolicy`]).
+    #[must_use]
+    pub fn retry(&self) -> RetryPolicy {
+        self.retry
+    }
+
+    /// Neighbor scope for the D_b term ([`NeighborScope`]).
+    #[must_use]
+    pub fn neighbors(&self) -> NeighborScope {
+        self.neighbors
+    }
+
+    // ── Sub-config setters (structured) ──
+
+    /// Replace the seam-penalty sub-config.
+    #[must_use]
+    pub fn with_seam(mut self, seam: SeamPenalty) -> Self {
+        self.seam = seam;
+        self
+    }
+
+    /// Replace the retry-policy sub-config.
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Replace the neighbor scope.
+    #[must_use]
+    pub fn with_neighbors(mut self, neighbors: NeighborScope) -> Self {
+        self.neighbors = neighbors;
+        self
+    }
+
+    // ── Convenience single-knob setters (preserve flat-struct ergonomics) ──
+
+    /// Set the seam-penalty α (see [`SeamPenalty::with_alpha`]).
+    #[must_use]
+    pub fn with_alpha(self, alpha: f32) -> Self {
+        self.with_seam(self.seam.with_alpha(alpha))
+    }
+
+    /// Set the seam-penalty trigger threshold
+    /// (see [`SeamPenalty::with_threshold`]).
+    #[must_use]
+    pub fn with_threshold(self, threshold: f32) -> Self {
+        self.with_seam(self.seam.with_threshold(threshold))
+    }
+
+    /// Set the retry shrink multiplier
+    /// (see [`RetryPolicy::with_shrink`]).
+    #[must_use]
+    pub fn with_shrink(self, shrink: f32) -> Self {
+        self.with_retry(self.retry.with_shrink(shrink))
+    }
+
+    /// Set the retry cap (see [`RetryPolicy::with_max_retries`]).
+    #[must_use]
+    pub fn with_max_retries(self, max_retries: u8) -> Self {
+        self.with_retry(self.retry.with_max_retries(max_retries))
+    }
+
+    /// Enable or disable the above-neighbor term.
+    /// `true` → [`NeighborScope::LeftAndAbove`];
+    /// `false` → [`NeighborScope::LeftOnly`].
+    #[must_use]
+    pub fn with_above(self, enable: bool) -> Self {
+        self.with_neighbors(if enable {
+            NeighborScope::LeftAndAbove
+        } else {
+            NeighborScope::LeftOnly
+        })
+    }
+
+    /// Flat view of the resolved parameters, for internal dispatch into
+    /// the strip processor. Returns
+    /// `(alpha, threshold, shrink, max_retries, above)`.
+    pub(crate) fn resolved_flat(&self) -> (f32, f32, f32, u8, bool) {
+        (
+            self.seam.alpha,
+            self.seam.threshold,
+            self.retry.shrink,
+            self.retry.max_retries,
+            self.neighbors.includes_above(),
+        )
     }
 }
 
@@ -1133,23 +1400,23 @@ impl EncoderConfig {
     /// Resolve the boundary-RD mode into concrete parameters for
     /// the low-level streaming builder. Returns `(enabled, alpha,
     /// threshold, shrink, max_retries, above)`. Off → all-default tuple.
+    ///
+    /// This is the resolver at the public-API → internal-flat-state
+    /// boundary: the composable public [`BoundaryRdConfig`] is unpacked
+    /// here into the flat tuple that the strip processor consumes.
     #[must_use]
     pub(crate) fn resolve_boundary_rd(&self) -> (bool, f32, f32, f32, u8, bool) {
-        let cfg = match self.boundary_rd_mode {
+        match self.boundary_rd_mode {
             BoundaryRd::Off => {
-                let d = BoundaryRdConfig::default();
-                return (false, d.alpha, d.threshold, d.shrink, d.max_retries, d.above);
+                let (alpha, threshold, shrink, max_retries, above) =
+                    BoundaryRdConfig::default().resolved_flat();
+                (false, alpha, threshold, shrink, max_retries, above)
             }
-            BoundaryRd::On(cfg) => cfg,
-        };
-        (
-            true,
-            cfg.alpha,
-            cfg.threshold,
-            cfg.shrink,
-            cfg.max_retries,
-            cfg.above,
-        )
+            BoundaryRd::On(cfg) => {
+                let (alpha, threshold, shrink, max_retries, above) = cfg.resolved_flat();
+                (true, alpha, threshold, shrink, max_retries, above)
+            }
+        }
     }
 
     // === Validation ===

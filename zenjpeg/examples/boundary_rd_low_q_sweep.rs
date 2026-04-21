@@ -304,13 +304,14 @@ fn load_corpus(args: &Args) -> Vec<CorpusImage> {
 fn build_config(knob: Option<ConfigKnob>, quality: u8) -> EncoderConfig {
     let mut c = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter);
     if let Some(k) = knob {
-        c = c.boundary_rd(BoundaryRd::On(BoundaryRdConfig {
-            alpha: k.alpha,
-            threshold: k.threshold,
-            shrink: k.shrink,
-            max_retries: k.retries,
-            above: k.above,
-        }));
+        c = c.boundary_rd(BoundaryRd::On(
+            BoundaryRdConfig::new()
+                .with_alpha(k.alpha)
+                .with_threshold(k.threshold)
+                .with_shrink(k.shrink)
+                .with_max_retries(k.retries)
+                .with_above(k.above),
+        ));
     }
     c
 }

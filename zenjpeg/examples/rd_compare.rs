@@ -488,36 +488,33 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
         // Phase-5 aggressive left+above preset (α=1.0, t=0.05, s=0.5, r=2, above=true).
         "boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
-                zenjpeg::encoder::BoundaryRdConfig {
-                    alpha: 1.0,
-                    threshold: 0.05,
-                    shrink: 0.5,
-                    max_retries: 2,
-                    above: true,
-                },
+                zenjpeg::encoder::BoundaryRdConfig::new()
+                    .with_alpha(1.0)
+                    .with_threshold(0.05)
+                    .with_shrink(0.5)
+                    .with_max_retries(2)
+                    .with_above(true),
             ))
         })),
         "boundary_rd_left_above_444" => Some(mk(ChromaSubsampling::None, |c| {
             c.boundary_rd(zenjpeg::encoder::BoundaryRd::On(
-                zenjpeg::encoder::BoundaryRdConfig {
-                    alpha: 1.0,
-                    threshold: 0.05,
-                    shrink: 0.5,
-                    max_retries: 2,
-                    above: true,
-                },
+                zenjpeg::encoder::BoundaryRdConfig::new()
+                    .with_alpha(1.0)
+                    .with_threshold(0.05)
+                    .with_shrink(0.5)
+                    .with_max_retries(2)
+                    .with_above(true),
             ))
         })),
         "auto_optimize_boundary_rd_left_above" => Some(mk(ChromaSubsampling::Quarter, |c| {
             c.auto_optimize(true)
                 .boundary_rd(zenjpeg::encoder::BoundaryRd::On(
-                    zenjpeg::encoder::BoundaryRdConfig {
-                        alpha: 1.0,
-                        threshold: 0.05,
-                        shrink: 0.5,
-                        max_retries: 2,
-                        above: true,
-                    },
+                    zenjpeg::encoder::BoundaryRdConfig::new()
+                        .with_alpha(1.0)
+                        .with_threshold(0.05)
+                        .with_shrink(0.5)
+                        .with_max_retries(2)
+                        .with_above(true),
                 ))
         })),
         _ => None,

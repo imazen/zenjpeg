@@ -121,27 +121,24 @@ fn manual_configs_decode() {
     // left+above" points of interest from the #91 tuning evidence
     // (see benchmarks/boundary_rd_*_2026-04-20.md).
     let configs = [
-        BoundaryRdConfig {
-            alpha: 1.0,
-            threshold: 0.1,
-            shrink: 0.7,
-            max_retries: 1,
-            above: false,
-        },
-        BoundaryRdConfig {
-            alpha: 1.0,
-            threshold: 0.05,
-            shrink: 0.5,
-            max_retries: 2,
-            above: false,
-        },
-        BoundaryRdConfig {
-            alpha: 1.0,
-            threshold: 0.05,
-            shrink: 0.5,
-            max_retries: 2,
-            above: true,
-        },
+        BoundaryRdConfig::new()
+            .with_alpha(1.0)
+            .with_threshold(0.1)
+            .with_shrink(0.7)
+            .with_max_retries(1)
+            .with_above(false),
+        BoundaryRdConfig::new()
+            .with_alpha(1.0)
+            .with_threshold(0.05)
+            .with_shrink(0.5)
+            .with_max_retries(2)
+            .with_above(false),
+        BoundaryRdConfig::new()
+            .with_alpha(1.0)
+            .with_threshold(0.05)
+            .with_shrink(0.5)
+            .with_max_retries(2)
+            .with_above(true),
     ];
     for cfg in configs {
         let encoder_cfg =
@@ -162,13 +159,12 @@ fn manual_config_decodes() {
     let (w, h) = (128usize, 128usize);
     let rgb = gen_noise_patches(w, h, 42);
     let cfg = EncoderConfig::ycbcr(85f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(
-        BoundaryRdConfig {
-            alpha: 2.0,
-            threshold: 0.05,
-            shrink: 0.5,
-            max_retries: 2,
-            above: true,
-        },
+        BoundaryRdConfig::new()
+            .with_alpha(2.0)
+            .with_threshold(0.05)
+            .with_shrink(0.5)
+            .with_max_retries(2)
+            .with_above(true),
     ));
     let bytes = encode_rgb8(&rgb, w as u32, h as u32, cfg);
     let (dec, _, _) = decode_rgb8(&bytes);
@@ -190,13 +186,12 @@ fn on_left_above_differs_from_off_on_checkerboard() {
 
     let off = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off);
     let on = EncoderConfig::ycbcr(80f32, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::On(
-        BoundaryRdConfig {
-            alpha: 1.0,
-            threshold: 0.05,
-            shrink: 0.5,
-            max_retries: 2,
-            above: true,
-        },
+        BoundaryRdConfig::new()
+            .with_alpha(1.0)
+            .with_threshold(0.05)
+            .with_shrink(0.5)
+            .with_max_retries(2)
+            .with_above(true),
     ));
 
     let bytes_off = encode_rgb8(&rgb, w as u32, h as u32, off);
