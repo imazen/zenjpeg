@@ -160,6 +160,15 @@ parallel = ["dep:rayon"]
 # Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
 # with TrellisConfig, HybridConfig, and Viterbi-based coefficient optimization.
 trellis = []
+# Boundary-continuity refinement (issue #91 / PR #102). Opt-in; adds encode-time
+# overhead when `BoundaryRd::On` is used (default remains `BoundaryRd::Off` which
+# keeps the module out of the hot path). Even with this feature enabled, the
+# default `EncoderConfig` produces byte-identical output to a feature-off build.
+# The knob set and defaults are evolvable — coefficient (#94, #103) will use this
+# feature for broader parameter-space exploration with GPU-backed metrics.
+# Requires `decoder` because the refinement IDCTs candidate blocks through the
+# decode path.
+boundary-rd = ["decoder"]
 # Color management via moxcms (pure Rust with SIMD). Required for .correct_color() and XYB.
 moxcms = ["dep:moxcms"]
 # ── Internal / dev-only features (prefixed with __ to signal "don't use") ──
@@ -299,19 +308,35 @@ required-features = ["__test-utils"]
 name = "low_q_report"
 required-features = ["__test-utils"]
 
-# Boundary-RD examples (#91).
-# These pull the BBS + RD + sweep infrastructure from
-# `zenjpeg-bench-utils` (dev-dep) — no crate-level feature gate needed.
+# Boundary-RD / BBS examples (#91 / PR #102).
+#
+# `bbs_measure` is independent of boundary-RD (it measures block-boundary
+# scores on any JPEG) so it stays outside the feature gate. `rd_explore`
+# uses `auto_optimize` (trellis-only). The other three examples
+# instantiate `BoundaryRd::On(...)` or call the boundary-RD harness
+# directly — they require `--features boundary-rd`.
 [[example]]
 name = "bbs_measure"
 
 [[example]]
+name = "rd_explore"
+required-features = ["trellis"]
+
+[[example]]
 name = "rd_compare"
-required-features = ["trellis", "decoder"]
+required-features = ["trellis", "decoder", "boundary-rd"]
 
 [[example]]
 name = "boundary_rd_low_q_sweep"
-required-features = ["trellis", "decoder"]
+required-features = ["trellis", "decoder", "boundary-rd"]
+
+[[example]]
+name = "boundary_rd_perf_bench"
+required-features = ["trellis", "decoder", "boundary-rd"]
+
+[[example]]
+name = "boundary_rd_callgrind"
+required-features = ["trellis", "decoder", "boundary-rd"]
 
 # Examples requiring trellis feature
 [[example]]

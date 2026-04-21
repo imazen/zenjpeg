@@ -39,10 +39,13 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) deringing: bool,
     /// Enable adaptive quantization (jpegli AQ). On by default.
     pub(crate) aq_enabled: bool,
-    /// Boundary-continuity refinement (#91) config. `None` (the default)
-    /// disables the refinement pass entirely and keeps the hot path
-    /// byte-identical to feature-disabled output. Populated from
+    /// Boundary-continuity refinement (#91 / PR #102) config. `None` (the
+    /// default) disables the refinement pass entirely and keeps the hot
+    /// path byte-identical to feature-disabled output. Populated from
     /// [`crate::encode::encoder_config::EncoderConfig::resolve_boundary_rd`].
+    ///
+    /// Only present when the crate is built with `--features boundary-rd`.
+    #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_flat: Option<super::strip::BoundaryRdFlat>,
     /// Allow 16-bit quantization tables (default: false)
     pub(crate) allow_16bit_quant_tables: bool,
@@ -92,6 +95,7 @@ impl StreamingEncoderBuilder {
             // Boundary-RD defaults to `None` (feature off). When the public
             // config sets `BoundaryRd::On`, the byte_encoders bridge fills
             // this in via `.with_boundary_rd_flat(Some(...))`.
+            #[cfg(feature = "boundary-rd")]
             boundary_rd_flat: None,
             allow_16bit_quant_tables: false,
             force_sof1: false,
@@ -247,6 +251,9 @@ impl StreamingEncoderBuilder {
     /// `None` is the hot-path identity: no refinement, byte-identical to
     /// the feature-disabled encode. `Some(flat)` installs the supplied
     /// resolved knobs into the strip processor.
+    ///
+    /// Only available when the crate is built with `--features boundary-rd`.
+    #[cfg(feature = "boundary-rd")]
     #[must_use]
     pub(crate) fn boundary_rd_flat(mut self, flat: Option<super::strip::BoundaryRdFlat>) -> Self {
         self.boundary_rd_flat = flat;

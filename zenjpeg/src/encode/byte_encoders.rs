@@ -144,9 +144,13 @@ impl BytesEncoder {
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
 
-        // Boundary-RD (#91, off by default). The public composable config
-        // is resolved into the flat internal knob struct here.
-        builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
+        // Boundary-RD (#91 / PR #102, off by default). The public composable
+        // config is resolved into the flat internal knob struct here. Only
+        // compiled when `--features boundary-rd` is enabled.
+        #[cfg(feature = "boundary-rd")]
+        {
+            builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
+        }
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(
@@ -1013,9 +1017,13 @@ impl YCbCrPlanarEncoder {
         builder = builder.deringing(config.deringing);
         builder = builder.aq_enabled(config.aq_enabled);
 
-        // Boundary-RD (#91, off by default). The public composable config
-        // is resolved into the flat internal knob struct here.
-        builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
+        // Boundary-RD (#91 / PR #102, off by default). The public composable
+        // config is resolved into the flat internal knob struct here. Only
+        // compiled when `--features boundary-rd` is enabled.
+        #[cfg(feature = "boundary-rd")]
+        {
+            builder = builder.boundary_rd_flat(config.resolve_boundary_rd());
+        }
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.force_sof1(matches!(

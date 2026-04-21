@@ -22,6 +22,7 @@ use crate::types::EdgePaddingConfig;
 /// [`BoundaryRdConfig`] directly via `On(...)`.
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub enum BoundaryRd {
@@ -47,6 +48,7 @@ pub enum BoundaryRd {
 /// Controls the strength and trigger threshold of the D_b term added to
 /// the per-block rate-distortion score when evaluating whether to retry
 /// a quantization with a shrunken AQ strength.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct SeamPenalty {
@@ -59,6 +61,7 @@ pub struct SeamPenalty {
     threshold: f32,
 }
 
+#[cfg(feature = "boundary-rd")]
 impl Default for SeamPenalty {
     fn default() -> Self {
         Self {
@@ -68,6 +71,7 @@ impl Default for SeamPenalty {
     }
 }
 
+#[cfg(feature = "boundary-rd")]
 impl SeamPenalty {
     /// Construct a seam penalty with defaults.
     #[must_use]
@@ -116,6 +120,7 @@ impl SeamPenalty {
 /// of bytes/SSIM2 without regression on the other) triggered on a
 /// single image, far below the 70 % bar for keeping the knob. See
 /// `benchmarks/boundary_rd/zero_bias_targeted/` for the evidence.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct RetryPolicy {
@@ -129,6 +134,7 @@ pub struct RetryPolicy {
     max_retries: u8,
 }
 
+#[cfg(feature = "boundary-rd")]
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
@@ -138,6 +144,7 @@ impl Default for RetryPolicy {
     }
 }
 
+#[cfg(feature = "boundary-rd")]
 impl RetryPolicy {
     /// Construct a retry policy with defaults.
     #[must_use]
@@ -178,6 +185,7 @@ impl RetryPolicy {
 /// adds the top-edge term and requires a per-column cache of the committed
 /// bottom-edge row from the iMCU above — one extra `blocks_w × 16 f32`
 /// buffer.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum NeighborScope {
@@ -189,6 +197,7 @@ pub enum NeighborScope {
     LeftAndAbove,
 }
 
+#[cfg(feature = "boundary-rd")]
 impl NeighborScope {
     /// Whether this scope includes the above-neighbor term.
     #[must_use]
@@ -237,6 +246,7 @@ impl NeighborScope {
 /// `benchmarks/boundary_rd/low_q_full/per_class_per_q.csv`. Slight SSIM2
 /// cost (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange for
 /// the larger BBS gain; at mid+high Q the tradeoff is strictly Pareto.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
 pub struct BoundaryRdConfig {
@@ -245,6 +255,7 @@ pub struct BoundaryRdConfig {
     neighbors: NeighborScope,
 }
 
+#[cfg(feature = "boundary-rd")]
 impl BoundaryRdConfig {
     /// Construct a config with all defaults (the currently-tuned
     /// best-we-know values — see [`BoundaryRdConfig::default`]).
@@ -416,8 +427,12 @@ pub struct EncoderConfig {
     /// which activates the optimizations (shared Huffman tables etc.) when
     /// the image pixel count falls below the heuristic's threshold.
     pub(crate) tiny_file_mode: TinyFileMode,
-    /// Boundary-continuity refinement mode (issue #91). Default
-    /// [`BoundaryRd::Off`] — no behavior change vs feature-off output.
+    /// Boundary-continuity refinement mode (issue #91 / PR #102).
+    ///
+    /// Only present when the crate is built with `--features boundary-rd`.
+    /// The default is [`BoundaryRd::Off`]; the feature-on default build is
+    /// byte-identical to a feature-off build.
+    #[cfg(feature = "boundary-rd")]
     pub(crate) boundary_rd_mode: BoundaryRd,
 }
 
@@ -573,6 +588,7 @@ impl EncoderConfig {
             segments: None,
             pre_blur: 0.0,
             tiny_file_mode: TinyFileMode::Auto,
+            #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
         }
     }
@@ -1330,9 +1346,14 @@ impl EncoderConfig {
         self.tiny_file_mode
     }
 
-    // === Boundary-RD (issue #91) ===
+    // === Boundary-RD (issue #91, feature = "boundary-rd") ===
 
     /// Enable or disable boundary-continuity refinement (issue #91).
+    ///
+    /// **Opt-in Cargo feature.** Only available when the crate is built
+    /// with `--features boundary-rd`. Without that feature, the whole
+    /// refinement code path (types, state, and hot-path dispatch) is
+    /// compiled out; callers only see the `Off`-equivalent default.
     ///
     /// Boundary-RD is an opt-in post-quantization refinement pass that
     /// reduces visible 8×8 block-seam discontinuities. It is **off by
@@ -1376,6 +1397,7 @@ impl EncoderConfig {
     /// This setting is a no-op when trellis quantization is active (the
     /// trellis code path has its own boundary-D-augment, which landed as
     /// a near-zero result in #91).
+    #[cfg(feature = "boundary-rd")]
     #[must_use]
     pub fn boundary_rd(mut self, mode: BoundaryRd) -> Self {
         self.boundary_rd_mode = mode;
@@ -1390,6 +1412,7 @@ impl EncoderConfig {
     /// This is the resolver at the public-API → internal-flat-state
     /// boundary: the composable public [`BoundaryRdConfig`] is unpacked
     /// here into the flat struct.
+    #[cfg(feature = "boundary-rd")]
     #[must_use]
     pub(crate) fn resolve_boundary_rd(&self) -> Option<super::strip::BoundaryRdFlat> {
         match self.boundary_rd_mode {

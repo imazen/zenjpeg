@@ -5,6 +5,7 @@
 //! This test lives on the public surface: `EncoderConfig::boundary_rd`
 //! is the only addition. Automatic per-image-class preset selection is
 //! deferred to issue #103.
+#![cfg(feature = "boundary-rd")]
 
 use enough::Unstoppable;
 use zenjpeg::encoder::{

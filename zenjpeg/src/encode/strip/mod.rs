@@ -87,6 +87,7 @@ pub struct QuantContext {
 /// Kept `pub(crate)` — it is a hot-path resolved shape, not a public API.
 /// A value with `shrink == 1.0` produces no refinement (the retry picks the
 /// same result), which is equivalent to `BoundaryRd::Off`.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BoundaryRdFlat {
     /// Seam-jump weight (α) in the D_b term.
@@ -115,6 +116,7 @@ pub(crate) struct BoundaryRdFlat {
 /// and `above_row_written` (one bit total, flips true once any full
 /// block row has been committed). Eliminates per-block Option-tag
 /// branches in the hot path.
+#[cfg(feature = "boundary-rd")]
 #[derive(Debug)]
 pub(crate) struct BoundaryRdState {
     /// Resolved per-block knobs.
@@ -150,6 +152,7 @@ pub(crate) struct BoundaryRdState {
     pub above_row_written: bool,
 }
 
+#[cfg(feature = "boundary-rd")]
 impl BoundaryRdState {
     pub fn new(config: BoundaryRdFlat) -> Self {
         Self {
@@ -530,14 +533,19 @@ pub struct StripProcessor {
     /// Enable overshoot deringing (on by default)
     deringing: bool,
 
-    // === Boundary-continuity refinement (Phase 2 of #91) ===
+    // === Boundary-continuity refinement (issue #91 / PR #102) ===
     /// `Some` enables the post-quantize refinement loop from #91: after each
     /// luma block is quantized via the non-trellis SIMD path, the encoder
     /// compares its reconstructed left (and optionally top) edge against the
     /// committed edges of its neighbors and may retry the quantize with
-    /// shrunken AQ strength and/or zero-bias. `None` (default) means the
-    /// whole refinement module stays out of the hot path — the default
+    /// shrunken AQ strength. `None` (default) means the whole refinement
+    /// module stays out of the hot path — the default
     /// `quantize_prev_pending_imcu` loop runs unmodified.
+    ///
+    /// Feature-gated: only present when the crate is built with
+    /// `--features boundary-rd`. Without the feature, the default fast
+    /// path is the only path.
+    #[cfg(feature = "boundary-rd")]
     boundary_rd: Option<BoundaryRdState>,
 
     // === Trellis quantization ===
@@ -821,6 +829,7 @@ impl StripProcessor {
 
             // Boundary-RD refinement (disabled by default; see issue #91).
             // `None` is the hot-path identity — zero overhead vs feature-off.
+            #[cfg(feature = "boundary-rd")]
             boundary_rd: None,
 
             // Trellis quantization (disabled by default)
@@ -934,11 +943,14 @@ impl StripProcessor {
         self.deringing = enable;
     }
 
-    /// Configure boundary-continuity refinement (Phase 2 of issue #91).
+    /// Configure boundary-continuity refinement (issue #91 / PR #102).
     ///
     /// `None` (the default) skips the refinement pass entirely; the default
     /// encode path is unchanged. `Some(flat)` installs the supplied resolved
     /// knobs and grows the per-row edge caches lazily on first use.
+    ///
+    /// Only compiled when `--features boundary-rd` is enabled.
+    #[cfg(feature = "boundary-rd")]
     pub(crate) fn set_boundary_rd(&mut self, flat: Option<BoundaryRdFlat>) {
         self.boundary_rd = flat.map(BoundaryRdState::new);
     }
@@ -1432,15 +1444,24 @@ impl StripProcessor {
         #[cfg(not(feature = "trellis"))]
         let store_dc_raw = false;
 
-        // Boundary-RD (Phase 2 of #91, opt-in) only fires for the non-trellis
-        // path — the trellis path will get its own D_b augmentation in Phase 3.
-        // `boundary_rd.is_some()` is the new fast-path check: `None` means the
-        // whole refinement module stays out of the loop.
-        if self.boundary_rd.is_some() && !use_trellis {
+        // Boundary-RD (#91 / PR #102) only fires for the non-trellis path —
+        // the trellis path will get its own D_b augmentation in a later phase.
+        // `boundary_rd.is_some()` is the fast-path check: `None` means the
+        // whole refinement module stays out of the loop. Entire branch is
+        // compiled out when the `boundary-rd` feature is off.
+        #[cfg(feature = "boundary-rd")]
+        let use_boundary_rd = self.boundary_rd.is_some() && !use_trellis;
+        #[cfg(not(feature = "boundary-rd"))]
+        let use_boundary_rd = false;
+
+        if use_boundary_rd {
             // Slower path: refinement after each luma block. The default path
             // (boundary_rd == None) still hits the fast loop below with zero
             // overhead.
+            #[cfg(feature = "boundary-rd")]
             self.quantize_y_with_boundary_rd(buffer_idx, aq_strengths, store_dc_raw);
+            #[cfg(not(feature = "boundary-rd"))]
+            unreachable!("use_boundary_rd is always false without the boundary-rd feature");
         } else {
             let quant = &self.quant;
             // Default fast path — unchanged from before boundary-RD was added.
@@ -1559,7 +1580,7 @@ impl StripProcessor {
     }
 
     /// Non-trellis Y-plane quantize with boundary-continuity refinement
-    /// (Phase 2 of #91, opt-in via
+    /// (issue #91 / PR #102, opt-in via
     /// [`Self::set_boundary_rd`]). This is the slow-path counterpart to
     /// the inline loop in [`Self::quantize_prev_pending_imcu`]; only
     /// invoked when `self.boundary_rd.is_some()` and trellis is NOT in
@@ -1568,6 +1589,7 @@ impl StripProcessor {
     /// Behavior contract: when `config.threshold <= 0.0`, the refinement
     /// never fires and output matches the default path — useful for
     /// debugging and A/B comparison.
+    #[cfg(feature = "boundary-rd")]
     fn quantize_y_with_boundary_rd(
         &mut self,
         buffer_idx: usize,
@@ -1599,6 +1621,7 @@ impl StripProcessor {
     /// Actual refinement body, taking disjoint borrows to keep the borrow
     /// checker happy. All reads of the per-block knobs go through
     /// `state.config`; all buffer accesses go through `state.*_edges`.
+    #[cfg(feature = "boundary-rd")]
     #[allow(clippy::too_many_arguments)]
     fn quantize_y_with_boundary_rd_impl(
         state: &mut BoundaryRdState,

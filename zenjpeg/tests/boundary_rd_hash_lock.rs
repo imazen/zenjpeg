@@ -10,6 +10,7 @@
 //! 2. `BoundaryRd::On(BoundaryRdConfig::default())` is deterministic
 //!    across runs. This freezes the documented best-we-know preset so
 //!    we know when it changes.
+#![cfg(feature = "boundary-rd")]
 
 use enough::Unstoppable;
 use std::hash::{Hash, Hasher};
