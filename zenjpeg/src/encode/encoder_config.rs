@@ -51,41 +51,49 @@ impl Default for BoundaryRd {
 ///
 /// Passed via [`BoundaryRd::On`] when enabling the feature.
 /// `BoundaryRdConfig::default()` is the tuned "best-we-know for unknown
-/// content" setting (Phase-5 tuned values from issue #91).
+/// content" setting, retuned from the low-Q full-grid sweep
+/// (`benchmarks/low_q_full/` and
+/// `benchmarks/boundary_rd_default_2026-04-21.md`).
 ///
 /// Automatic per-image-class preset selection is deferred to [issue #103],
 /// which will introduce an in-house image-content analyzer. Until then,
 /// callers who want per-class tuning should supply values informed by
-/// the committed evidence in `benchmarks/boundary_rd_*_2026-04-20.md`.
+/// the committed evidence in `benchmarks/boundary_rd_*.md`.
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundaryRdConfig {
-    /// Seam-jump weight in the D_b term. Default `1.0`.
+    /// Seam-jump weight in the D_b term. Default `2.0`.
     pub alpha: f32,
     /// D_b trigger threshold as a multiplier of per-block AC DCT energy.
-    /// Default `0.05` (Phase-5 tuned).
+    /// Default `0.02`.
     pub threshold: f32,
     /// AQ-strength multiplier applied on each refinement retry. Must be
-    /// in `(0, 1]`. Default `0.5` (Phase-5 tuned).
+    /// in `(0, 1]`. Default `0.5`.
     pub shrink: f32,
     /// Maximum number of refinement retries per triggered block.
-    /// Default `2` (Phase-5 tuned).
+    /// Default `2`.
     pub max_retries: u8,
     /// Enable the above-neighbor (top-edge) D_b term in addition to the
-    /// left-neighbor term. Phase-4 extension; adds an inter-iMCU buffer.
-    /// Default `false`.
+    /// left-neighbor term. Adds an inter-iMCU buffer. Default `true`.
     pub above: bool,
 }
 
 impl Default for BoundaryRdConfig {
     fn default() -> Self {
+        // Retuned 2026-04-21 from the low-Q full-grid sweep. Strictly
+        // dominates the prior default (alpha=1.0, t=0.05, above=false) on
+        // BBS BD-rate across every (class_bucket, q_range) cell in
+        // benchmarks/low_q_full/per_class_per_q.csv. Slight SSIM2 cost
+        // (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange
+        // for the larger BBS gain; at mid+high Q the tradeoff is strictly
+        // Pareto.
         Self {
-            alpha: 1.0,
-            threshold: 0.05,
+            alpha: 2.0,
+            threshold: 0.02,
             shrink: 0.5,
             max_retries: 2,
-            above: false,
+            above: true,
         }
     }
 }
