@@ -70,20 +70,31 @@ pub(crate) fn scale_table(
 /// Generate mozjpeg default (Robidoux) encoding tables for a given quality.
 ///
 /// Returns `EncodingTables` with:
-/// - Robidoux luma/chroma quant tables scaled to the given quality
+/// - Robidoux luma/chroma quant tables scaled to the given quality (chroma
+///   uses `chroma_quality` when `Some`, otherwise the same `quality` as luma)
 /// - Neutral zero-bias (0.0 mul, 0.5 AC offset) for standard rounding
 /// - `ScalingParams::Exact` (tables are already quality-scaled)
 ///
 /// The `force_baseline` parameter controls clamping:
 /// - `true`: clamp quant values to 255 (baseline JPEG, SOF0)
 /// - `false`: allow values up to 32767 (extended JPEG, SOF1)
-pub(crate) fn generate_mozjpeg_default_tables(
+///
+/// `chroma_quality` lets the caller supply an independent chroma scale on
+/// the mozjpeg 1–100 scale. `None` → chroma uses `quality` (historical
+/// behaviour). Useful when the caller has a separate chroma-quality budget
+/// (e.g. from `evalchroma::adjust_sampling().chroma_quality`) and wants
+/// the mozjpeg-compat path to honour it without converting through a
+/// distance ratio.
+pub(crate) fn generate_mozjpeg_default_tables_with_chroma(
     quality: u8,
+    chroma_quality: Option<u8>,
     force_baseline: bool,
 ) -> Box<EncodingTables> {
-    let scale = quality_to_scale_factor(quality);
-    let luma = scale_table(&ROBIDOUX_LUMINANCE, scale, force_baseline);
-    let chroma = scale_table(&ROBIDOUX_CHROMINANCE, scale, force_baseline);
+    let luma_scale = quality_to_scale_factor(quality);
+    let chroma_q = chroma_quality.unwrap_or(quality);
+    let chroma_scale = quality_to_scale_factor(chroma_q);
+    let luma = scale_table(&ROBIDOUX_LUMINANCE, luma_scale, force_baseline);
+    let chroma = scale_table(&ROBIDOUX_CHROMINANCE, chroma_scale, force_baseline);
 
     // Cb and Cr use the same chrominance table
     let quant = PerComponent {
@@ -152,13 +163,13 @@ mod tests {
 
     #[test]
     fn test_generate_mozjpeg_default_tables_exact() {
-        let tables = generate_mozjpeg_default_tables(85, false);
+        let tables = generate_mozjpeg_default_tables_with_chroma(85, None, false);
         assert!(tables.is_exact(), "Should use ScalingParams::Exact");
     }
 
     #[test]
     fn test_generate_mozjpeg_default_tables_neutral_bias() {
-        let tables = generate_mozjpeg_default_tables(85, false);
+        let tables = generate_mozjpeg_default_tables_with_chroma(85, None, false);
         // Neutral zero-bias: mul=0, AC offset=0.5, DC offset=0
         for &v in tables.zero_bias_mul.c0.iter() {
             assert_eq!(v, 0.0);
@@ -169,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_generate_mozjpeg_default_tables_baseline_clamp() {
-        let tables = generate_mozjpeg_default_tables(50, true);
+        let tables = generate_mozjpeg_default_tables_with_chroma(50, None, true);
         // All quant values should be <= 255
         for &v in tables.quant.c0.iter() {
             assert!(v <= 255.0);

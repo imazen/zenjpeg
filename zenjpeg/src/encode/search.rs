@@ -426,10 +426,12 @@ impl ExpertConfig {
             MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
                 // Use for_mozjpeg_tables() to preserve the original mozjpeg quality.
                 // to_internal() remaps for jpegli's distance system, producing wrong tables.
-                let mozjpeg_tables = super::tables::robidoux::generate_mozjpeg_default_tables(
-                    quality.for_mozjpeg_tables(),
-                    false,
-                );
+                let mozjpeg_tables =
+                    super::tables::robidoux::generate_mozjpeg_default_tables_with_chroma(
+                        quality.for_mozjpeg_tables(),
+                        None,
+                        false,
+                    );
                 // Mozjpeg uses neutral zero-bias (mul=0, offset=0.5), so
                 // HQ/LQ blend is irrelevant — both endpoints are zero.
                 let neutral = PerComponent::new([0.0f32; 64], [0.0f32; 64], [0.0f32; 64]);

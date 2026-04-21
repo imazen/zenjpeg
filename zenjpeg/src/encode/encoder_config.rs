@@ -443,6 +443,12 @@ pub struct EncoderConfig {
     ///
     /// Clamped to `[0.1, 5.0]` by the builder.
     pub(crate) chroma_distance_scale: f32,
+    /// Optional independent chroma quality on the mozjpeg 1–100 scale.
+    /// Only honoured by the mozjpeg-compat (Robidoux) quant-table path;
+    /// the jpegli perceptual path uses [`Self::chroma_distance_scale`]
+    /// for the same purpose. `None` keeps the historical behaviour of
+    /// using the same quality for both tables.
+    pub(crate) chroma_quality: Option<u8>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -600,6 +606,7 @@ impl EncoderConfig {
             #[cfg(feature = "boundary-rd")]
             boundary_rd_mode: BoundaryRd::Off,
             chroma_distance_scale: 1.0,
+            chroma_quality: None,
         }
     }
 
@@ -909,6 +916,42 @@ impl EncoderConfig {
     #[must_use]
     pub fn chroma_distance_scale(mut self, scale: f32) -> Self {
         self.chroma_distance_scale = scale.clamp(0.1, 5.0);
+        self
+    }
+
+    /// Set an independent chroma quality on the mozjpeg 1–100 scale.
+    ///
+    /// Only honoured by the mozjpeg-compat path
+    /// ([`QuantTableConfig::MozjpegRobidoux`]). On the jpegli
+    /// perceptual path (default), use
+    /// [`Self::chroma_distance_scale`] instead; the two surfaces do
+    /// the same thing but at different "scales of truth" — quality
+    /// numbers for mozjpeg users, butteraugli distance ratios for
+    /// jpegli users.
+    ///
+    /// `None` (the default) preserves the pre-existing behaviour of
+    /// using [`Self::quality`] for both luma and chroma tables —
+    /// output is bit-identical to callers that never touched this
+    /// setter.
+    ///
+    /// `Some(q)` scales the Robidoux chrominance base table by
+    /// `q`'s scale factor and the luminance table by the luma
+    /// quality's scale factor. Typical uses:
+    /// - `chroma_quality(Some(user_q - 15))` for flat-chroma
+    ///   photos to save bits on Cb/Cr without touching luma
+    /// - `chroma_quality(Some(user_q))` (or `None`) for
+    ///   text/screen content where chroma fidelity matters
+    ///
+    /// Clamped to 1..=100.
+    ///
+    /// *Hidden from rustdoc while the surface is experimental and
+    /// downstream calibration is ongoing. The API is stable and
+    /// tested, but we may tighten the semantics (e.g. whether
+    /// out-of-range clamps or errors) before promoting it.*
+    #[doc(hidden)]
+    #[must_use]
+    pub fn chroma_quality(mut self, quality: Option<u8>) -> Self {
+        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
         self
     }
 
@@ -1844,6 +1887,14 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_chroma_distance_scale(&self) -> f32 {
         self.chroma_distance_scale
+    }
+
+    /// Returns the configured independent chroma quality, or `None`
+    /// when the mozjpeg-compat path should reuse the luma quality.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn get_chroma_quality(&self) -> Option<u8> {
+        self.chroma_quality
     }
 
     /// Check if adaptive quantization (AQ) is enabled.

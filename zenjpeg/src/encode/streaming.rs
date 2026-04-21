@@ -187,8 +187,13 @@ impl StreamingEncoder {
                 // to_internal() remaps for jpegli's distance system, producing wrong tables.
                 let quality_u8 = builder.quality.for_mozjpeg_tables();
                 let force_baseline = !allow_16bit;
-                let tables = super::tables::robidoux::generate_mozjpeg_default_tables(
+                // Optional independent chroma quality. `None` → chroma
+                // tables scaled with the same quality as luma (historical
+                // behaviour; bit-identical to old callers). `Some(cq)`
+                // → chroma table scaled with `cq` instead.
+                let tables = super::tables::robidoux::generate_mozjpeg_default_tables_with_chroma(
                     quality_u8,
+                    builder.chroma_quality,
                     force_baseline,
                 );
                 let quant = tables.generate_quant_tables(distances_per_component, is_420);
