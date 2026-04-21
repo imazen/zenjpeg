@@ -111,17 +111,36 @@ impl SeamPenalty {
 /// Retry policy for boundary-RD refinement.
 ///
 /// When a block's seam penalty exceeds [`SeamPenalty::threshold`], the
-/// encoder may retry quantization with a shrunken AQ strength. This
-/// struct controls how many retries are attempted and by how much
-/// strength shrinks each time.
+/// encoder may retry quantization with a shrunken AQ strength and/or a
+/// scaled zero-bias vector. This struct controls how many retries are
+/// attempted and by how much each knob shrinks per retry.
+///
+/// The two shrink knobs act on the same retry call but affect different
+/// parts of the quantize:
+///
+/// - `aq_shrink` multiplies the AQ strength `aq` each iteration,
+///   lowering the effective per-coefficient quant step.
+/// - `zero_bias_shrink` scales the entire zero-bias vector (both offset
+///   and mul in the `|qval| >= offset + mul * aq` threshold),
+///   preserving more small-magnitude AC coefficients that would
+///   otherwise be zeroed.
+///
+/// `zero_bias_shrink = 1.0` is the identity — no change to the retry
+/// quantize. Values in `(0, 1)` weaken zero-bias proportionally.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct RetryPolicy {
     /// AQ-strength multiplier applied on each retry. Must be in
     /// `(0, 1]`. Smaller values (e.g. `0.25`) shrink more aggressively;
-    /// `1.0` disables shrinkage (retries pick the same result).
-    /// Default `0.5`.
-    shrink: f32,
+    /// `1.0` disables shrinkage (retries pick the same result unless
+    /// `zero_bias_shrink` does work). Default `0.5`.
+    aq_shrink: f32,
+    /// Zero-bias vector scale applied on each retry. `1.0` (default)
+    /// is the identity — no change. Values in `(0, 1)` weaken the
+    /// zero-bias rule, preserving more AC coefficients near the bias
+    /// threshold. Combined with `aq_shrink`, this gives a second axis
+    /// for the retry to trade rate for boundary continuity.
+    zero_bias_shrink: f32,
     /// Maximum number of retries per triggered block. `0` disables
     /// retry (the first quantization is always accepted). Default `2`.
     max_retries: u8,
@@ -130,7 +149,8 @@ pub struct RetryPolicy {
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            shrink: 0.5,
+            aq_shrink: 0.5,
+            zero_bias_shrink: 1.0,
             max_retries: 2,
         }
     }
@@ -145,8 +165,14 @@ impl RetryPolicy {
 
     /// AQ-strength shrink multiplier per retry.
     #[must_use]
-    pub fn shrink(&self) -> f32 {
-        self.shrink
+    pub fn aq_shrink(&self) -> f32 {
+        self.aq_shrink
+    }
+
+    /// Zero-bias vector scale applied on each retry.
+    #[must_use]
+    pub fn zero_bias_shrink(&self) -> f32 {
+        self.zero_bias_shrink
     }
 
     /// Maximum number of retries per triggered block.
@@ -157,8 +183,16 @@ impl RetryPolicy {
 
     /// Set the AQ-strength shrink multiplier. Must be in `(0, 1]`.
     #[must_use]
-    pub fn with_shrink(mut self, shrink: f32) -> Self {
-        self.shrink = shrink;
+    pub fn with_aq_shrink(mut self, aq_shrink: f32) -> Self {
+        self.aq_shrink = aq_shrink;
+        self
+    }
+
+    /// Set the zero-bias shrink multiplier. `1.0` is the identity;
+    /// values in `(0, 1)` weaken the zero-bias rule on each retry.
+    #[must_use]
+    pub fn with_zero_bias_shrink(mut self, zero_bias_shrink: f32) -> Self {
+        self.zero_bias_shrink = zero_bias_shrink;
         self
     }
 
@@ -219,7 +253,8 @@ impl NeighborScope {
 /// Builder methods come in three layers. For the common "tweak one knob
 /// off the default" case, the direct accessors like
 /// [`with_alpha`](Self::with_alpha) / [`with_threshold`](Self::with_threshold)
-/// / [`with_shrink`](Self::with_shrink) /
+/// / [`with_aq_shrink`](Self::with_aq_shrink) /
+/// [`with_zero_bias_shrink`](Self::with_zero_bias_shrink) /
 /// [`with_max_retries`](Self::with_max_retries) / [`with_above`](Self::with_above)
 /// preserve the one-liner ergonomics of a flat struct. For structured
 /// construction, use the sub-config setters
@@ -326,11 +361,18 @@ impl BoundaryRdConfig {
         self.with_seam(self.seam.with_threshold(threshold))
     }
 
-    /// Set the retry shrink multiplier
-    /// (see [`RetryPolicy::with_shrink`]).
+    /// Set the retry AQ-shrink multiplier
+    /// (see [`RetryPolicy::with_aq_shrink`]).
     #[must_use]
-    pub fn with_shrink(self, shrink: f32) -> Self {
-        self.with_retry(self.retry.with_shrink(shrink))
+    pub fn with_aq_shrink(self, aq_shrink: f32) -> Self {
+        self.with_retry(self.retry.with_aq_shrink(aq_shrink))
+    }
+
+    /// Set the retry zero-bias shrink multiplier
+    /// (see [`RetryPolicy::with_zero_bias_shrink`]).
+    #[must_use]
+    pub fn with_zero_bias_shrink(self, zero_bias_shrink: f32) -> Self {
+        self.with_retry(self.retry.with_zero_bias_shrink(zero_bias_shrink))
     }
 
     /// Set the retry cap (see [`RetryPolicy::with_max_retries`]).
@@ -358,12 +400,8 @@ impl BoundaryRdConfig {
         super::strip::BoundaryRdFlat {
             alpha: self.seam.alpha,
             threshold: self.seam.threshold,
-            shrink_aq: self.retry.shrink,
-            // Task 2 adds a real `zero_bias_shrink` field on RetryPolicy.
-            // Until then this is hard-wired to the identity value (`1.0`),
-            // which leaves Task 3's retry path byte-identical to the
-            // pre-Task-3 behavior.
-            shrink_zb: 1.0,
+            shrink_aq: self.retry.aq_shrink,
+            shrink_zb: self.retry.zero_bias_shrink,
             max_retries: self.retry.max_retries,
             above: self.neighbors.includes_above(),
         }

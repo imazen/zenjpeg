@@ -491,7 +491,7 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
                 zenjpeg::encoder::BoundaryRdConfig::new()
                     .with_alpha(1.0)
                     .with_threshold(0.05)
-                    .with_shrink(0.5)
+                    .with_aq_shrink(0.5)
                     .with_max_retries(2)
                     .with_above(true),
             ))
@@ -501,7 +501,7 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
                 zenjpeg::encoder::BoundaryRdConfig::new()
                     .with_alpha(1.0)
                     .with_threshold(0.05)
-                    .with_shrink(0.5)
+                    .with_aq_shrink(0.5)
                     .with_max_retries(2)
                     .with_above(true),
             ))
@@ -512,7 +512,7 @@ fn build_config(name: &str, quality: u8) -> Option<EncoderConfig> {
                     zenjpeg::encoder::BoundaryRdConfig::new()
                         .with_alpha(1.0)
                         .with_threshold(0.05)
-                        .with_shrink(0.5)
+                        .with_aq_shrink(0.5)
                         .with_max_retries(2)
                         .with_above(true),
                 ))
