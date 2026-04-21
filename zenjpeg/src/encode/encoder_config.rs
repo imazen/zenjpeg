@@ -33,7 +33,7 @@ pub enum BoundaryRd {
     /// For unknown content, `BoundaryRd::On(BoundaryRdConfig::default())`
     /// is the documented best-we-know entry point. For per-class tuning
     /// before an automatic classifier ships (see [issue #103]), consult
-    /// the committed BD-rate evidence in `benchmarks/boundary_rd_*.md`
+    /// the committed BD-rate evidence under `benchmarks/boundary_rd/`
     /// and construct a [`BoundaryRdConfig`] via its composable sub-configs
     /// (`SeamPenalty`, `RetryPolicy`, `NeighborScope`).
     ///
@@ -239,8 +239,8 @@ impl NeighborScope {
 /// Passed via [`BoundaryRd::On`] when enabling the feature.
 /// `BoundaryRdConfig::default()` is the tuned "best-we-know for unknown
 /// content" setting, retuned from the low-Q full-grid sweep
-/// (`benchmarks/low_q_full/` and
-/// `benchmarks/boundary_rd_default_2026-04-21.md`).
+/// (`benchmarks/boundary_rd/low_q_full/` and
+/// `benchmarks/boundary_rd/default_rationale_2026-04-21.md`).
 ///
 /// # Composable structure
 ///
@@ -264,7 +264,7 @@ impl NeighborScope {
 /// Automatic per-image-class preset selection is deferred to [issue #103],
 /// which will introduce an in-house image-content analyzer. Until then,
 /// callers who want per-class tuning should supply values informed by
-/// the committed evidence in `benchmarks/boundary_rd_*.md`.
+/// the committed evidence under `benchmarks/boundary_rd/`.
 ///
 /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -280,7 +280,7 @@ impl Default for BoundaryRdConfig {
         // Retuned 2026-04-21 from the low-Q full-grid sweep. Strictly
         // dominates the prior default (alpha=1.0, t=0.05, above=false) on
         // BBS BD-rate across every (class_bucket, q_range) cell in
-        // benchmarks/low_q_full/per_class_per_q.csv. Slight SSIM2 cost
+        // benchmarks/boundary_rd/low_q_full/per_class_per_q.csv. Slight SSIM2 cost
         // (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange
         // for the larger BBS gain; at mid+high Q the tradeoff is strictly
         // Pareto.
@@ -1411,7 +1411,7 @@ impl EncoderConfig {
     /// the follow-up that pairs boundary-RD with an in-house content
     /// analyzer. Until then, callers wanting per-class tuning should
     /// construct a [`BoundaryRdConfig`] with values informed by the
-    /// committed BD-rate evidence in `benchmarks/boundary_rd_*.md`.
+    /// committed BD-rate evidence under `benchmarks/boundary_rd/`.
     ///
     /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
     ///

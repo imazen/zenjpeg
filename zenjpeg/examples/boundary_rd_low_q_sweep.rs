@@ -69,12 +69,12 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut a = Args {
-        output_dir: PathBuf::from("benchmarks/low_q_sweep"),
+        output_dir: PathBuf::from("benchmarks/boundary_rd/low_q_full"),
         qualities: vec![5, 15, 30, 45, 60, 75, 85, 95],
         ssim2_penalty: 5.0,
         limit_images: None,
         limit_configs: None,
-        lineart_dir: PathBuf::from("benchmarks/sweep_corpus/lineart"),
+        lineart_dir: PathBuf::from("benchmarks/boundary_rd/sweep_corpus/lineart"),
         screenshots_dir: PathBuf::from(
             std::env::var_os("HOME")
                 .map(|h| {

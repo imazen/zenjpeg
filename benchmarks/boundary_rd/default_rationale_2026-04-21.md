@@ -2,7 +2,7 @@
 
 Date: 2026-04-21
 Branch: `boundary-rd-low-q-sweep` (stacked on #102 `boundary-rd-rollup`)
-Data: `benchmarks/low_q_full/{grid,per_class_per_q,best_per_class_per_q}.csv`
+Data: `benchmarks/boundary_rd/low_q_full/{grid,per_class_per_q,best_per_class_per_q}.csv`
 Harness: `zenjpeg/examples/boundary_rd_low_q_sweep.rs`
 
 ## TL;DR
@@ -21,7 +21,7 @@ extra BBS gain. At mid and high Q, the tradeoff is strictly Pareto.
 
 - Corpus: 18 images total
   - 13 labeled `screenshot` (Screenshot + LineArt classifier labels;
-    the 4 synthetic lineart images in `benchmarks/sweep_corpus/lineart/`
+    the 4 synthetic lineart images in `benchmarks/boundary_rd/sweep_corpus/lineart/`
     all classify as ScreenContent, so the `screenshot` bucket effectively
     means "non-photo block-grid-aligned content").
   - 5 labeled `photo`.
@@ -54,7 +54,7 @@ BD-rate across every (class_bucket, q_range) cell.
 | photo/mid      |                                   -5.08% |           -0.24% |                                  -6.77% |           -0.31% | Strictly Pareto better                                    |
 | photo/high     |                                   -4.63% |           -0.26% |                                  -5.94% |           -0.36% | Strictly Pareto better                                    |
 
-(Numbers from `benchmarks/low_q_full/per_class_per_q.csv`; full per-image
+(Numbers from `benchmarks/boundary_rd/low_q_full/per_class_per_q.csv`; full per-image
 BD-rate breakdowns + composite scores in the same CSV.)
 
 ## Framing
