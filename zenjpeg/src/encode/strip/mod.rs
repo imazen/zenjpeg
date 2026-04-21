@@ -109,33 +109,57 @@ pub(crate) struct BoundaryRdFlat {
 /// the entire refinement module stays out of the hot path. When `Some`,
 /// the Vec buffers are allocated lazily inside the refinement method
 /// (they start empty on first iMCU and get `resize`d to `blocks_w`).
+///
+/// Edge caches are **flat `Vec<[f32; 8]>`**, not `Vec<Option<[f32; 8]>>`:
+/// validity is tracked by `row_started` (per-row, reset on row start)
+/// and `above_row_written` (one bit total, flips true once any full
+/// block row has been committed). Eliminates per-block Option-tag
+/// branches in the hot path.
 #[derive(Debug)]
 pub(crate) struct BoundaryRdState {
     /// Resolved per-block knobs.
     pub config: BoundaryRdFlat,
     /// Per-block-row cache of the committed right-edge column for the
     /// last-written block in the current row. Indexed by `bx` in
-    /// `0..blocks_w`. `None` means no left neighbor yet (row start).
-    /// Values are in the DCT input domain ([-128, 127]).
-    pub left_edges: Vec<Option<[f32; 8]>>,
+    /// `0..blocks_w`. Only valid for indices `< row_emitted` within the
+    /// current row.
+    pub left_rec_edges: Vec<[f32; 8]>,
+    /// Companion cache: the *original* (unquantized IDCT) right-edge
+    /// column of each committed block in the current row. Avoids the
+    /// redundant `idct_reference_block(&prev_dct)` at each bx>0 block
+    /// (it was already computed when processing block bx-1).
+    pub left_orig_edges: Vec<[f32; 8]>,
+    /// How many blocks in the current row have been emitted so far.
+    /// Reset to 0 at each row boundary; `row_emitted` entries in both
+    /// `left_*_edges` are live and contain the committed/original
+    /// right-edge of those blocks.
+    pub row_emitted: usize,
     /// Per-column cache of the committed bottom-edge row for the block
     /// directly above (reconstructed, post-quantize). Persists across
     /// iMCUs so the first block row of a new iMCU can consult the last
     /// row of the previous iMCU. Only populated when `config.above`.
-    pub above_rec_edges: Vec<Option<[f32; 8]>>,
+    pub above_rec_edges: Vec<[f32; 8]>,
     /// Companion buffer holding the *original* (unquantized IDCT)
     /// bottom-edge row of the block above — needed for the "orig" side
     /// of the symmetric D_b term.
-    pub above_orig_edges: Vec<Option<[f32; 8]>>,
+    pub above_orig_edges: Vec<[f32; 8]>,
+    /// True once at least one full block row has been written into the
+    /// `above_*` buffers. Flips to `true` exactly when the first row
+    /// of an image finishes emitting; the second and subsequent rows
+    /// read the full `above_*` buffer.
+    pub above_row_written: bool,
 }
 
 impl BoundaryRdState {
     pub fn new(config: BoundaryRdFlat) -> Self {
         Self {
             config,
-            left_edges: Vec::new(),
+            left_rec_edges: Vec::new(),
+            left_orig_edges: Vec::new(),
+            row_emitted: 0,
             above_rec_edges: Vec::new(),
             above_orig_edges: Vec::new(),
+            above_row_written: false,
         }
     }
 }
@@ -1602,24 +1626,20 @@ impl StripProcessor {
         // serializer which reads `values[JPEG_NATURAL_ORDER[i]]`.
         let quant_natural = &quant.y_quant.values;
 
-        // Per-block-row cache of the committed right-edge column for the
-        // last-written block in the current row. Reset at each row boundary.
-        // Size by `blocks_w`; reuse the pre-allocated Vec to stay
-        // allocation-free on subsequent iMCUs.
-        if state.left_edges.len() < blocks_w {
-            state.left_edges.resize(blocks_w, None);
+        // Lazily grow per-row edge caches to `blocks_w`. Flat `Vec<[f32; 8]>` —
+        // validity is tracked by `state.row_emitted` within the current row
+        // (a counter of blocks committed; anything below that index is valid)
+        // and by `state.above_row_written` for the above-neighbor buffers.
+        if state.left_rec_edges.len() < blocks_w {
+            state.left_rec_edges.resize(blocks_w, [0.0f32; 8]);
+            state.left_orig_edges.resize(blocks_w, [0.0f32; 8]);
         }
-        // Phase 4: per-column cache of committed bottom-edge rows for the
-        // block directly above. Allocated only when above is on, but the
-        // buffers persist across iMCUs (they're how the first row of iMCU N
-        // sees the last row of iMCU N-1).
-        if use_above {
-            if state.above_rec_edges.len() < blocks_w {
-                state.above_rec_edges.resize(blocks_w, None);
-            }
-            if state.above_orig_edges.len() < blocks_w {
-                state.above_orig_edges.resize(blocks_w, None);
-            }
+        // Phase 4 above-neighbor buffers: allocated only when `above` is on,
+        // and persist across iMCUs (they're how the first row of iMCU N sees
+        // the last row of iMCU N-1).
+        if use_above && state.above_rec_edges.len() < blocks_w {
+            state.above_rec_edges.resize(blocks_w, [0.0f32; 8]);
+            state.above_orig_edges.resize(blocks_w, [0.0f32; 8]);
         }
 
         let pending_len = pending.y[buffer_idx].len();
@@ -1636,19 +1656,26 @@ impl StripProcessor {
 
             let bx = i % blocks_w;
             if bx == 0 {
-                // Start of a new row — there is no left neighbor in this row.
-                // Reset the entire cache lazily by marking the first slot.
-                // (Later slots are either refreshed or never consulted, since
-                // we only read at index `bx - 1`.)
-                for slot in state.left_edges.iter_mut().take(blocks_w) {
-                    *slot = None;
+                // Start of a new row — no left neighbor. Reset `row_emitted`
+                // to 0; entries in `left_*_edges` below the new `row_emitted`
+                // will be overwritten as we progress through the row.
+                //
+                // When `bx == 0` transitions from the last block of the
+                // previous row (row_emitted == blocks_w) to the first block
+                // of a new row, mark the above-neighbor buffers as fully
+                // written (valid for every column). Works across iMCUs
+                // because the state persists.
+                if use_above && state.row_emitted == blocks_w {
+                    state.above_row_written = true;
                 }
+                state.row_emitted = 0;
             }
 
             // Compute reference block (IDCT of unquantized f32 DCT).
-            // The current-block right edge isn't consulted here — it's only
-            // produced once we decide the current block is the committed
-            // state, cached for the NEXT block's left-neighbor lookup.
+            // Its LEFT-edge column (`orig_left`) is consumed here; its
+            // RIGHT-edge column is written into `left_orig_edges[bx]` at
+            // the end of the iteration so the NEXT block in the row
+            // (`bx+1`) can read it WITHOUT re-IDCTing the previous block.
             let ref_block = br::idct_reference_block(&dct);
             let orig_left = br::left_edge_col(&ref_block);
             // Phase 4: current-block's top-edge ROW (r=0), from the unquantized
@@ -1659,37 +1686,36 @@ impl StripProcessor {
                 [0.0f32; 8]
             };
 
-            // Left neighbor's right-edge column (committed).
-            let rec_left_right_opt = if bx > 0 {
-                state.left_edges[bx - 1].as_ref().copied()
+            // Left neighbor's right-edge columns (committed + original).
+            // Both were computed when block `bx-1` was processed; we read
+            // them directly here. `has_left_neighbor = bx > 0` — which
+            // is equivalent to `state.row_emitted > 0` after the row-start
+            // reset above, but we key on `bx` for clarity.
+            let has_left_neighbor = bx > 0;
+            let rec_left_right: &[f32; 8] = if has_left_neighbor {
+                &state.left_rec_edges[bx - 1]
             } else {
-                None
+                &[0.0f32; 8]
             };
-
-            // Left neighbor's original right-edge column — we need this for
-            // D_b. Since we didn't cache it explicitly, we compute it from
-            // the pending block at i-1 if available in-row.
-            let orig_left_right_opt = if bx > 0 {
-                // Pending buffer still holds unquantized DCT for the left
-                // block; recompute its reference right edge on demand.
-                let prev_dct = pending.y[buffer_idx][i - 1];
-                let prev_ref = br::idct_reference_block(&prev_dct);
-                Some(br::right_edge_col(&prev_ref))
+            let orig_left_right: &[f32; 8] = if has_left_neighbor {
+                &state.left_orig_edges[bx - 1]
             } else {
-                None
+                &[0.0f32; 8]
             };
 
             // Above neighbor's bottom-edge ROW (committed, reconstructed)
-            // and the same block's original bottom-edge row. Both are None
-            // for the very first row of the whole image; thereafter at
-            // least one previous row has populated the cross-iMCU buffer.
-            let (rec_top_above_opt, orig_top_above_opt) = if use_above {
-                (
-                    state.above_rec_edges[bx].as_ref().copied(),
-                    state.above_orig_edges[bx].as_ref().copied(),
-                )
+            // and the same block's original bottom-edge row. Available
+            // only after the first full row of blocks has been emitted.
+            let has_above_neighbor = use_above && state.above_row_written;
+            let rec_top_above: &[f32; 8] = if has_above_neighbor {
+                &state.above_rec_edges[bx]
             } else {
-                (None, None)
+                &[0.0f32; 8]
+            };
+            let orig_top_above: &[f32; 8] = if has_above_neighbor {
+                &state.above_orig_edges[bx]
+            } else {
+                &[0.0f32; 8]
             };
 
             // --- Candidate 1: default AQ strength (no zero-bias shrink) ---
@@ -1700,20 +1726,24 @@ impl StripProcessor {
             );
             let rec_default = br::idct_quantized_block(&zigzag_default, quant_natural);
             let rec_left_default = br::left_edge_col(&rec_default);
-            let db_default_left = br::boundary_distortion(
-                &rec_left_default,
-                rec_left_right_opt.as_ref(),
-                &orig_left,
-                orig_left_right_opt.as_ref(),
-                alpha,
-            );
-            let db_default_above = if use_above {
+            let db_default_left = if has_left_neighbor {
+                br::boundary_distortion_raw(
+                    &rec_left_default,
+                    rec_left_right,
+                    &orig_left,
+                    orig_left_right,
+                    alpha,
+                )
+            } else {
+                0.0
+            };
+            let db_default_above = if has_above_neighbor {
                 let rec_top_default = br::top_edge_row(&rec_default);
-                br::boundary_distortion(
+                br::boundary_distortion_raw(
                     &rec_top_default,
-                    rec_top_above_opt.as_ref(),
+                    rec_top_above,
                     &orig_top,
-                    orig_top_above_opt.as_ref(),
+                    orig_top_above,
                     alpha,
                 )
             } else {
@@ -1732,12 +1762,6 @@ impl StripProcessor {
                 let mut aq = aq_strength;
                 for _ in 0..max_retries {
                     aq *= shrink_factor;
-                    // Retry uses the shrunken AQ strength. The unscaled
-                    // zero-bias quantize is used throughout; the
-                    // `zero_bias_shrink` knob was removed (2026-04-21)
-                    // after the targeted validation sweep found no
-                    // consistent per-image Pareto improvement over
-                    // AQ-shrink alone.
                     let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
@@ -1745,20 +1769,24 @@ impl StripProcessor {
                     );
                     let rec = br::idct_quantized_block(&z, quant_natural);
                     let rec_left = br::left_edge_col(&rec);
-                    let db_left = br::boundary_distortion(
-                        &rec_left,
-                        rec_left_right_opt.as_ref(),
-                        &orig_left,
-                        orig_left_right_opt.as_ref(),
-                        alpha,
-                    );
-                    let db_above = if use_above {
+                    let db_left = if has_left_neighbor {
+                        br::boundary_distortion_raw(
+                            &rec_left,
+                            rec_left_right,
+                            &orig_left,
+                            orig_left_right,
+                            alpha,
+                        )
+                    } else {
+                        0.0
+                    };
+                    let db_above = if has_above_neighbor {
                         let rec_top = br::top_edge_row(&rec);
-                        br::boundary_distortion(
+                        br::boundary_distortion_raw(
                             &rec_top,
-                            rec_top_above_opt.as_ref(),
+                            rec_top_above,
                             &orig_top,
-                            orig_top_above_opt.as_ref(),
+                            orig_top_above,
                             alpha,
                         )
                     } else {
@@ -1773,20 +1801,23 @@ impl StripProcessor {
                 }
             }
 
-            // Cache THIS block's committed right-edge column for the next
-            // block in the row.
-            state.left_edges[bx] = Some(br::right_edge_col(&best_rec));
+            // Cache THIS block's committed right-edge column (for next block's
+            // rec lookup) and original right-edge column (for next block's
+            // orig lookup — avoids IDCTing `pending.y[buffer_idx][i]` again
+            // when that block is processed as `bx-1`).
+            state.left_rec_edges[bx] = br::right_edge_col(&best_rec);
+            state.left_orig_edges[bx] = br::right_edge_col(&ref_block);
             // Phase 4: cache THIS block's committed bottom-edge row for the
             // block directly below, and the corresponding orig row from the
             // unquantized reference. Writes persist across iMCUs — when the
             // next iMCU's first block row starts, `bx = i % blocks_w` maps
-            // to the column of the block above. No reset per row: the
-            // previous row's writes are the current row's "above" reads.
+            // to the column of the block above.
             if use_above {
-                state.above_rec_edges[bx] = Some(br::bottom_edge_row(&best_rec));
-                state.above_orig_edges[bx] = Some(br::bottom_edge_row(&ref_block));
+                state.above_rec_edges[bx] = br::bottom_edge_row(&best_rec);
+                state.above_orig_edges[bx] = br::bottom_edge_row(&ref_block);
             }
 
+            state.row_emitted = bx + 1;
             y_blocks.push(best_zigzag);
             all_aq_strengths.push(aq_strength);
         }

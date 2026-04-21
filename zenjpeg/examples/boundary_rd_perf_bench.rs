@@ -155,9 +155,15 @@ fn load_and_downscale(path: &Path, max_side: u32) -> Option<(Vec<u8>, usize, usi
     let (w, h) = (img.width(), img.height());
     let scaled = if w.max(h) > max_side {
         let (tw, th) = if w >= h {
-            (max_side, (h as u64 * max_side as u64 / w as u64).max(1) as u32)
+            (
+                max_side,
+                (h as u64 * max_side as u64 / w as u64).max(1) as u32,
+            )
         } else {
-            ((w as u64 * max_side as u64 / h as u64).max(1) as u32, max_side)
+            (
+                (w as u64 * max_side as u64 / h as u64).max(1) as u32,
+                max_side,
+            )
         };
         img.resize_exact(tw, th, image::imageops::FilterType::Triangle)
     } else {
@@ -190,11 +196,7 @@ fn encode_once(
     let t0 = Instant::now();
     let result = config.encode_bytes(rgb, w as u32, h as u32, PixelLayout::Rgb8Srgb);
     let elapsed = t0.elapsed();
-    if result.is_ok() {
-        Some(elapsed)
-    } else {
-        None
-    }
+    if result.is_ok() { Some(elapsed) } else { None }
 }
 
 fn median(mut xs: Vec<f64>) -> f64 {
@@ -297,8 +299,8 @@ fn main() {
         loaded_count += 1;
 
         // Warmup
-        let cfg_off = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
-            .boundary_rd(BoundaryRd::Off);
+        let cfg_off =
+            EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off);
         let _ = encode_once(cfg_off, &rgb, w, h);
         let cfg_on = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
             .boundary_rd(BoundaryRd::On(BoundaryRdConfig::default()));
@@ -308,8 +310,8 @@ fn main() {
         let mut off_times = Vec::new();
         let mut on_times = Vec::new();
         for _ in 0..iters {
-            let cfg_off =
-                EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off);
+            let cfg_off = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
+                .boundary_rd(BoundaryRd::Off);
             if let Some(d) = encode_once(cfg_off, &rgb, w, h) {
                 off_times.push(d.as_secs_f64() * 1000.0);
             }
@@ -365,7 +367,12 @@ fn main() {
     // Aggregate
     let summary_path = output_dir.join(format!("perf_{tag}_seed{seed}_q{}.md", quality as u32));
     let mut out = fs::File::create(&summary_path).unwrap();
-    writeln!(out, "# boundary_rd perf bench — {} — Q={}", tag, quality as u32).unwrap();
+    writeln!(
+        out,
+        "# boundary_rd perf bench — {} — Q={}",
+        tag, quality as u32
+    )
+    .unwrap();
     writeln!(out).unwrap();
     writeln!(
         out,

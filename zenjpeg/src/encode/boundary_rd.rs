@@ -178,6 +178,7 @@ pub(crate) fn bottom_edge_row(block: &[f32; DCT_BLOCK_SIZE]) -> [f32; 8] {
 ///
 /// Implementation: dispatches to a SIMD FMA chain (f32x8 load × 4, three
 /// fused SSDs in parallel) via magetypes multi-tier dispatch on x86/NEON/WASM.
+#[cfg(test)]
 #[inline]
 #[must_use]
 pub(crate) fn boundary_distortion(
@@ -193,6 +194,29 @@ pub(crate) fn boundary_distortion(
     let Some(orig_lr) = orig_left_right else {
         return 0.0;
     };
+    incant!(mage_boundary_distortion(
+        rec_curr_left,
+        rec_lr,
+        orig_curr_left,
+        orig_lr,
+        alpha,
+    ))
+}
+
+/// Like [`boundary_distortion`] but without the Option-wrapping — the
+/// caller asserts both neighbor edges exist. Used by the hot
+/// refinement loop, which gates on `has_left_neighbor` / `has_above_neighbor`
+/// and dispatches only when the edge pair is valid, eliminating the two
+/// `Option` tag branches per call (~4 per block in the hot path).
+#[inline]
+#[must_use]
+pub(crate) fn boundary_distortion_raw(
+    rec_curr_left: &[f32; 8],
+    rec_lr: &[f32; 8],
+    orig_curr_left: &[f32; 8],
+    orig_lr: &[f32; 8],
+    alpha: f32,
+) -> f32 {
     incant!(mage_boundary_distortion(
         rec_curr_left,
         rec_lr,

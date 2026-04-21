@@ -23,9 +23,15 @@ fn load_img(path: &Path, max_side: u32) -> (Vec<u8>, usize, usize) {
     let (w, h) = (img.width(), img.height());
     let scaled = if w.max(h) > max_side {
         let (tw, th) = if w >= h {
-            (max_side, (h as u64 * max_side as u64 / w as u64).max(1) as u32)
+            (
+                max_side,
+                (h as u64 * max_side as u64 / w as u64).max(1) as u32,
+            )
         } else {
-            ((w as u64 * max_side as u64 / h as u64).max(1) as u32, max_side)
+            (
+                (w as u64 * max_side as u64 / h as u64).max(1) as u32,
+                max_side,
+            )
         };
         img.resize_exact(tw, th, image::imageops::FilterType::Triangle)
     } else {
@@ -57,8 +63,9 @@ fn main() {
 
     for _ in 0..iters {
         let config = match mode.as_str() {
-            "off" => EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
-                .boundary_rd(BoundaryRd::Off),
+            "off" => {
+                EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter).boundary_rd(BoundaryRd::Off)
+            }
             "on" => EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
                 .boundary_rd(BoundaryRd::On(BoundaryRdConfig::default())),
             _ => panic!("mode must be off|on"),
