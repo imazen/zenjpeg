@@ -1,9 +1,0 @@
-class,metric,baseline,candidate,n,bd_rate_mean,bd_rate_stdev,mean_distance_mean,win_rate_mean
-lineart,bbs,default,mozjpeg_progressive,1,44.7073,0.0000,-1064.715578,0.0000
-lineart,ssim2,default,mozjpeg_progressive,1,52.8449,0.0000,-41.616219,0.0000
-photo,bbs,default,mozjpeg_progressive,3,0.0420,1.8720,3.634005,0.6000
-photo,ssim2,default,mozjpeg_progressive,3,4.5070,3.0129,-0.586748,0.2667
-screenshot,bbs,default,mozjpeg_progressive,2,11.4345,0.0000,-0.687233,0.0000
-screenshot,ssim2,default,mozjpeg_progressive,2,7.9979,0.0000,-0.295701,0.0000
-synthetic,bbs,default,mozjpeg_progressive,1,NaN,NaN,0.000000,0.0000
-synthetic,ssim2,default,mozjpeg_progressive,1,NaN,NaN,0.000000,0.0000
