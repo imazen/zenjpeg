@@ -123,6 +123,32 @@ pub struct MarkerSpan<'a> {
 /// Begin iteration over top-level JPEG markers in `data`.
 ///
 /// See the [module docs](self) for semantics.
+///
+/// # Examples
+///
+/// Count marker segments in a JPEG:
+///
+/// ```
+/// use zenjpeg::container::marker::{self, MarkerKind};
+///
+/// # let jpeg: &[u8] = &[
+/// #     0xFF, 0xD8,                         // SOI
+/// #     0xFF, 0xE0, 0x00, 0x10,             // APP0 length=16
+/// #     b'J', b'F', b'I', b'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+/// #     0xFF, 0xD9,                         // EOI
+/// # ];
+/// let mut app_segments = 0;
+/// let mut saw_eoi = false;
+/// for span in marker::iter(jpeg) {
+///     match span.kind {
+///         MarkerKind::App(_) => app_segments += 1,
+///         MarkerKind::Eoi => saw_eoi = true,
+///         _ => {}
+///     }
+/// }
+/// assert_eq!(app_segments, 1);
+/// assert!(saw_eoi);
+/// ```
 #[inline]
 #[must_use]
 pub fn iter(data: &'_ [u8]) -> MarkerIter<'_> {
@@ -146,7 +172,11 @@ impl<'a> MarkerIter<'a> {
     #[inline]
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0, ended: false }
+        Self {
+            data,
+            pos: 0,
+            ended: false,
+        }
     }
 
     /// Current byte offset within the input buffer.
@@ -504,7 +534,10 @@ mod tests {
         data.extend_from_slice(&[0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
         data.extend_from_slice(&[0xFF, 0xD9]); // EOI
         let kinds: Vec<_> = iter(&data).map(|s| s.kind).collect();
-        assert_eq!(kinds, vec![MarkerKind::Soi, MarkerKind::Sof(0), MarkerKind::Eoi]);
+        assert_eq!(
+            kinds,
+            vec![MarkerKind::Soi, MarkerKind::Sof(0), MarkerKind::Eoi]
+        );
     }
 
     #[test]
@@ -537,7 +570,10 @@ mod tests {
         // APP0 with length=4 (just the length word + 2 bytes), then EOI.
         let data = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0xAA, 0xBB, 0xFF, 0xD9];
         let kinds: Vec<_> = iter(&data).map(|s| s.kind).collect();
-        assert_eq!(kinds, vec![MarkerKind::Soi, MarkerKind::App(0), MarkerKind::Eoi]);
+        assert_eq!(
+            kinds,
+            vec![MarkerKind::Soi, MarkerKind::App(0), MarkerKind::Eoi]
+        );
     }
 
     #[test]

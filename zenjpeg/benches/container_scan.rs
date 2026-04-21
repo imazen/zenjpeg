@@ -83,9 +83,10 @@ fn encode_jpeg(w: u32, h: u32) -> Vec<u8> {
 /// the bench can fall back to only synthetic inputs in sandboxed CI.
 fn pixel_fixture() -> Option<Vec<u8>> {
     let home = std::env::var_os("HOME")?;
-    let p: PathBuf = PathBuf::from(home)
-        .join(".cache/codec-corpus/v1/ultrahdr-conformance/valid/jpeg/pixel-ultrahdr/\
-               Ultra_HDR_Samples_Originals_02.jpg");
+    let p: PathBuf = PathBuf::from(home).join(
+        ".cache/codec-corpus/v1/ultrahdr-conformance/valid/jpeg/pixel-ultrahdr/\
+               Ultra_HDR_Samples_Originals_02.jpg",
+    );
     std::fs::read(&p).ok()
 }
 
@@ -132,9 +133,7 @@ fn naive_primary_bounds(data: &[u8]) -> Option<std::ops::Range<usize>> {
         }
         if data[pos] == 0xFF {
             let marker = data[pos + 1];
-            if marker == 0x00 || marker == 0x01
-                || (0xD0..=0xD9).contains(&marker)
-                || marker == 0xFF
+            if marker == 0x00 || marker == 0x01 || (0xD0..=0xD9).contains(&marker) || marker == 0xFF
             {
                 pos += 2;
                 continue;
@@ -167,12 +166,15 @@ fn bench_find_boundaries(suite: &mut Suite, label: &str, data: &'static [u8]) {
             })
         });
 
-        g.bench("ultrahdr_core::metadata::mpf::find_jpeg_boundaries", move |b| {
-            b.iter(|| {
-                let r = ultrahdr_core::metadata::mpf::find_jpeg_boundaries(black_box(data));
-                black_box(r);
-            })
-        });
+        g.bench(
+            "ultrahdr_core::metadata::mpf::find_jpeg_boundaries",
+            move |b| {
+                b.iter(|| {
+                    let r = ultrahdr_core::metadata::mpf::find_jpeg_boundaries(black_box(data));
+                    black_box(r);
+                })
+            },
+        );
 
         g.bench("zenjpeg::container::find_jpeg_boundaries", move |b| {
             b.iter(|| {
@@ -204,7 +206,9 @@ fn bench_primary_bounds(suite: &mut Suite, label: &str, data: &'static [u8]) {
 }
 
 fn bench_probe_workflow(suite: &mut Suite, label: &str, data: &'static [u8]) {
-    use zenjpeg::container::{Iso21496Format, Wants, parse_iso_app2, parse_mpf, primary_bounds, probe};
+    use zenjpeg::container::{
+        Iso21496Format, Wants, parse_iso_app2, parse_mpf, primary_bounds, probe,
+    };
     suite.group(format!("probe_workflow/{label}"), |g| {
         g.throughput(Throughput::Bytes(data.len() as u64));
 

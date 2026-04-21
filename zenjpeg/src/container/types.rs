@@ -209,7 +209,11 @@ pub fn parse_container_items(xmp: &str) -> Vec<ContainerItem> {
         let block_end = xmp[abs_start..]
             .find("</rdf:li>")
             .map(|p| abs_start + p)
-            .or_else(|| xmp[abs_start + 6..].find("rdf:li").map(|p| abs_start + 6 + p))
+            .or_else(|| {
+                xmp[abs_start + 6..]
+                    .find("rdf:li")
+                    .map(|p| abs_start + 6 + p)
+            })
             .unwrap_or(xmp.len());
         let block = &xmp[abs_start..block_end];
         let semantic =
@@ -246,7 +250,10 @@ pub fn generate_container_directory(items: &[ContainerItem]) -> String {
             "                Item:Semantic=\"{}\"\n",
             item.semantic.as_xmp_str()
         ));
-        xml.push_str(&alloc::format!("                Item:Mime=\"{}\"", item.mime));
+        xml.push_str(&alloc::format!(
+            "                Item:Mime=\"{}\"",
+            item.mime
+        ));
         if let Some(length) = item.length {
             xml.push_str(&alloc::format!(
                 "\n                Item:Length=\"{length}\""
@@ -490,5 +497,70 @@ mod tests {
         assert_eq!(e.image_type, MpImageType::Disparity);
         assert_eq!(e.offset, 50_000);
         assert_eq!(e.size, 10_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Property tests: parse(generate(x)) == x (modulo canonicalization)
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn arb_item_semantic() -> impl Strategy<Value = ItemSemantic> {
+        prop_oneof![
+            Just(ItemSemantic::Primary),
+            Just(ItemSemantic::GainMap),
+            Just(ItemSemantic::DepthMap),
+            Just(ItemSemantic::ConfidenceMap),
+            // `Other` must avoid XML-special chars to survive a naive XML
+            // roundtrip. The parser doesn't decode entities, so restrict
+            // to a safe ASCII subset.
+            "[A-Za-z][A-Za-z0-9_-]{0,15}".prop_map(ItemSemantic::Other),
+        ]
+    }
+
+    fn arb_container_item() -> impl Strategy<Value = ContainerItem> {
+        (
+            arb_item_semantic(),
+            prop_oneof![
+                Just(String::from("image/jpeg")),
+                Just(String::from("image/png")),
+                Just(String::from("image/heic")),
+                Just(String::from("application/octet-stream")),
+            ],
+            proptest::option::of(1usize..10_000_000),
+            proptest::option::of(0usize..1024),
+        )
+            .prop_map(|(semantic, mime, length, padding)| ContainerItem {
+                semantic,
+                mime,
+                length,
+                padding,
+            })
+    }
+
+    proptest! {
+        /// Full field-preserving roundtrip:
+        /// `generate_container_directory` → `parse_container_items`
+        /// preserves `semantic`, `mime`, `length`, and `padding` exactly.
+        /// The emitter is a pure pass-through (no Primary-special-casing,
+        /// no forced defaults); `None` length/padding is absent in the XML
+        /// and parses back as `None`.
+        #[test]
+        fn container_directory_roundtrip(
+            items in proptest::collection::vec(arb_container_item(), 1..5),
+        ) {
+            let xml = generate_container_directory(&items);
+            let parsed = parse_container_items(&xml);
+            prop_assert_eq!(parsed.len(), items.len());
+            for (i, (orig, got)) in items.iter().zip(parsed.iter()).enumerate() {
+                prop_assert_eq!(
+                    &orig.semantic, &got.semantic,
+                    "item {}: semantic", i,
+                );
+                prop_assert_eq!(&orig.mime, &got.mime, "item {}: mime", i);
+                prop_assert_eq!(orig.length, got.length, "item {}: length", i);
+                prop_assert_eq!(orig.padding, got.padding, "item {}: padding", i);
+            }
+        }
     }
 }

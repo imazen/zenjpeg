@@ -305,6 +305,32 @@ impl Default for ContainerProbe {
 ///
 /// See the module docs for semantics. Safe on arbitrary input — never
 /// panics, never allocates.
+///
+/// # Examples
+///
+/// Detect Ultra HDR signals in a JPEG buffer:
+///
+/// ```
+/// use zenjpeg::container::probe::{probe, Wants, GainMapPresence};
+///
+/// # let jpeg: &[u8] = &[
+/// #     0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0,
+/// #     1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/// #     1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/// #     0xFF, 0xC0, 0x00, 0x11, 8, 0, 16, 0, 32, 3,
+/// #     1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1,
+/// #     0xFF, 0xC4, 0x00, 0x1F, 0,
+/// #     0,1,5,1,1,1,1,1,1,0,0,0,0,0,0,0,
+/// #     0,1,2,3,4,5,6,7,8,9,10,11,
+/// #     0xFF, 0xDA, 0x00, 0x0C, 3, 1, 0, 2, 0, 3, 0, 0, 0x3F, 0,
+/// #     0xFF, 0xD9,
+/// # ];
+/// let p = probe(jpeg, Wants::ULTRAHDR_DETECT | Wants::SOF_DIMENSIONS);
+/// assert_eq!(p.gainmap_presence, GainMapPresence::None);
+/// if let Some(sof) = p.sof {
+///     assert!(sof.width > 0 && sof.height > 0);
+/// }
+/// ```
 #[must_use]
 pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
     let mut p = ContainerProbe::default();
@@ -326,8 +352,7 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
         let mut image_idx = 0usize;
         super::marker::for_each_jpeg_boundary(data, |range| {
             if image_idx < p.image_ranges.len() {
-                p.image_ranges[image_idx] =
-                    Some((range.start as u32)..(range.end as u32));
+                p.image_ranges[image_idx] = Some((range.start as u32)..(range.end as u32));
             } else {
                 p.overflow.set(OverflowFlags::IMAGE_RANGES);
             }
@@ -355,20 +380,22 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
                     break;
                 }
             }
-            MarkerKind::Sof(sofn) if wants.contains(Wants::SOF_DIMENSIONS) && p.sof.is_none() => {
-                // SOF payload layout: [precision u8, height u16 BE,
-                // width u16 BE, num_components u8, per-component...].
-                if span.payload.len() >= 6 {
-                    let height = u16::from_be_bytes([span.payload[1], span.payload[2]]);
-                    let width = u16::from_be_bytes([span.payload[3], span.payload[4]]);
-                    let num_components = span.payload[5];
-                    p.sof = Some(ProbeSof {
-                        width,
-                        height,
-                        num_components,
-                        sofn: 0xC0 + sofn,
-                    });
-                }
+            // SOF payload layout: [precision u8, height u16 BE,
+            // width u16 BE, num_components u8, per-component...].
+            MarkerKind::Sof(sofn)
+                if wants.contains(Wants::SOF_DIMENSIONS)
+                    && p.sof.is_none()
+                    && span.payload.len() >= 6 =>
+            {
+                let height = u16::from_be_bytes([span.payload[1], span.payload[2]]);
+                let width = u16::from_be_bytes([span.payload[3], span.payload[4]]);
+                let num_components = span.payload[5];
+                p.sof = Some(ProbeSof {
+                    width,
+                    height,
+                    num_components,
+                    sofn: 0xC0 + sofn,
+                });
             }
             MarkerKind::App(1) => {
                 handle_app1(&mut p, &span, wants, &mut ext_xmp_idx);
@@ -390,28 +417,39 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
 /// Uses [`Wants::ULTRAHDR_DETECT`] and exits as soon as any positive
 /// signal is found. Typical cost: ~10-100 µs on a multi-MB file (the
 /// ISO URN APP2 sits inside the first ~30 KB).
+///
+/// # Examples
+///
+/// ```
+/// use zenjpeg::container::probe::is_ultrahdr;
+///
+/// // An empty or malformed buffer is never Ultra HDR.
+/// assert!(!is_ultrahdr(&[]));
+/// assert!(!is_ultrahdr(b"not a jpeg"));
+///
+/// // A plain JPEG with no gain-map signals is not Ultra HDR either.
+/// # let jpeg: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+/// assert!(!is_ultrahdr(jpeg));
+/// ```
 #[must_use]
 pub fn is_ultrahdr(data: &[u8]) -> bool {
     // For the short-circuit path we inline a smaller walker that stops
     // at the first positive hit rather than completing the full probe.
     for span in iter(data) {
         match span.kind {
-            MarkerKind::App(2) => {
+            MarkerKind::App(2)
                 if span.payload.starts_with(super::iso_jpeg::ISO_21496_1_URN)
-                    || span.payload.starts_with(super::mpf::MPF_IDENTIFIER)
+                    || span.payload.starts_with(super::mpf::MPF_IDENTIFIER) =>
+            {
+                return true;
+            }
+            MarkerKind::App(1) if looks_like_xmp(span.payload) => {
+                let xmp = xmp_body(span.payload);
+                if memmem_contains(xmp, b"hdrgm:Version")
+                    || memmem_contains(xmp, b"hdrgm:GainMapMax")
+                    || memmem_contains(xmp, b"Item:Semantic=\"GainMap\"")
                 {
                     return true;
-                }
-            }
-            MarkerKind::App(1) => {
-                if looks_like_xmp(span.payload) {
-                    let xmp = xmp_body(span.payload);
-                    if memmem_contains(xmp, b"hdrgm:Version")
-                        || memmem_contains(xmp, b"hdrgm:GainMapMax")
-                        || memmem_contains(xmp, b"Item:Semantic=\"GainMap\"")
-                    {
-                        return true;
-                    }
                 }
             }
             MarkerKind::Eoi | MarkerKind::Sos => {
@@ -450,7 +488,10 @@ fn handle_app1(
 ) {
     let payload = span.payload;
 
-    if payload.starts_with(EXIF_PREFIX) && wants.contains(Wants::EXIF_LOCATION) && probe.exif.is_none() {
+    if payload.starts_with(EXIF_PREFIX)
+        && wants.contains(Wants::EXIF_LOCATION)
+        && probe.exif.is_none()
+    {
         let start = (span.offset + 2 + 2 + EXIF_PREFIX.len()) as u32;
         let end = (span.offset + span.length) as u32;
         probe.exif = Some(start..end);
@@ -509,13 +550,14 @@ fn handle_app2(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) 
             if icc_bytes_end > icc_bytes_start {
                 probe.icc_profile = Some((icc_bytes_start as u32)..(icc_bytes_end as u32));
 
-                if wants.contains(Wants::ICC_IDENTIFY) && payload.len() >= ICC_PROFILE_PREFIX.len() + 2 {
+                if wants.contains(Wants::ICC_IDENTIFY)
+                    && payload.len() >= ICC_PROFILE_PREFIX.len() + 2
+                {
                     let seq_no = payload[ICC_PROFILE_PREFIX.len()];
                     let total_seqs = payload[ICC_PROFILE_PREFIX.len() + 1];
                     if seq_no == 1 && total_seqs == 1 {
                         let icc_bytes = &payload[ICC_PROFILE_PREFIX.len() + 2..];
-                        probe.icc_identification =
-                            zenpixels::icc::identify_common(icc_bytes);
+                        probe.icc_identification = zenpixels::icc::identify_common(icc_bytes);
                     }
                 }
             }
@@ -578,8 +620,8 @@ fn classify_gainmap_presence(p: &ContainerProbe) -> GainMapPresence {
 
 #[cfg(test)]
 mod tests {
-    use super::super::iso_jpeg::{ISO_21496_1_URN, create_iso_app2_marker};
-    use super::super::mpf::{MPF_IDENTIFIER, create_mpf_header};
+    use super::super::iso_jpeg::create_iso_app2_marker;
+    use super::super::mpf::create_mpf_header;
     use super::*;
     use alloc::vec::Vec;
 
@@ -730,7 +772,10 @@ mod tests {
 
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
-        let p = probe(&data, Wants::ISO_GAINMAP | Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS);
+        let p = probe(
+            &data,
+            Wants::ISO_GAINMAP | Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS,
+        );
         assert_eq!(p.gainmap_presence, GainMapPresence::IsoAndXmp);
     }
 
@@ -827,7 +872,7 @@ mod tests {
     #[test]
     fn probe_struct_is_cloneable_and_reasonable_size() {
         let p = ContainerProbe::default();
-        let _clone = p.clone();  // must compile; Clone == memcpy for this layout.
+        let _clone = p.clone(); // must compile; Clone == memcpy for this layout.
         // Size guardrail enforced by const_assert above.
     }
 
@@ -876,18 +921,26 @@ mod tests {
     ///
     /// Use a helper that extracts just the guard check as a testable
     /// function. Cleaner than faking slice pointers.
+    ///
+    /// Only meaningful on 64-bit targets: on 32-bit `usize == u32::MAX`,
+    /// so `is_oversized_for_u32` can never return `true` and the
+    /// `u32::MAX as usize + 1` test literal overflows at compile time.
+    #[cfg(target_pointer_width = "64")]
     #[test]
     fn probe_rejects_oversized_input_with_truncated_flag() {
-        // The guard triggers on `data.len() > u32::MAX as usize`.
-        // Directly test the branch by synthesizing a slice length
-        // through the public API: wrap an 8-byte buffer in a fake
-        // slice whose length we control. We use Box::leak + unsafe
-        // slice construction — BUT the crate forbids unsafe. So
-        // instead, extract the guard condition to a testable helper:
         assert!(is_oversized_for_u32(u32::MAX as usize + 1));
         assert!(is_oversized_for_u32(u32::MAX as usize + 1_000_000));
         assert!(!is_oversized_for_u32(u32::MAX as usize));
         assert!(!is_oversized_for_u32(1024 * 1024));
+        assert!(!is_oversized_for_u32(0));
+    }
+
+    /// 32-bit companion: on targets where `usize == u32`, the oversize
+    /// guard is structurally unreachable — document that invariant.
+    #[cfg(not(target_pointer_width = "64"))]
+    #[test]
+    fn probe_oversize_guard_unreachable_on_32bit() {
+        assert!(!is_oversized_for_u32(usize::MAX));
         assert!(!is_oversized_for_u32(0));
     }
 
@@ -896,5 +949,166 @@ mod tests {
         let garbage: Vec<u8> = (0..1024).map(|i| (i as u8).wrapping_mul(7)).collect();
         let _ = probe(&garbage, Wants::ALL);
         let _ = is_ultrahdr(&garbage);
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage-gap tests (added in polish pass)
+    // -----------------------------------------------------------------------
+
+    /// Helper: build an APP1 segment with the given namespace prefix.
+    fn app1_with_prefix(prefix: &[u8], body: &[u8]) -> Vec<u8> {
+        let total_len = 2 + prefix.len() + body.len();
+        let mut out = Vec::with_capacity(4 + prefix.len() + body.len());
+        out.push(0xFF);
+        out.push(0xE1);
+        out.extend_from_slice(&(total_len as u16).to_be_bytes());
+        out.extend_from_slice(prefix);
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// Helper: build an APP2 segment with the given prefix + body.
+    fn app2_with_prefix(prefix: &[u8], body: &[u8]) -> Vec<u8> {
+        let total_len = 2 + prefix.len() + body.len();
+        let mut out = Vec::with_capacity(4 + prefix.len() + body.len());
+        out.push(0xFF);
+        out.push(0xE2);
+        out.extend_from_slice(&(total_len as u16).to_be_bytes());
+        out.extend_from_slice(prefix);
+        out.extend_from_slice(body);
+        out
+    }
+
+    #[test]
+    fn wants_is_empty_and_contains() {
+        let empty = Wants::new(0);
+        assert!(empty.is_empty());
+        assert!(!Wants::IMAGE_RANGES.is_empty());
+        assert!(!Wants::ALL.is_empty());
+    }
+
+    #[test]
+    fn wants_bitor_assign() {
+        let mut w = Wants::IMAGE_RANGES;
+        w |= Wants::SOF_DIMENSIONS;
+        assert!(w.contains(Wants::IMAGE_RANGES));
+        assert!(w.contains(Wants::SOF_DIMENSIONS));
+        assert!(!w.contains(Wants::ICC_IDENTIFY));
+    }
+
+    #[test]
+    fn overflow_flags_is_empty_and_contains() {
+        let empty = OverflowFlags::default();
+        assert!(empty.is_empty());
+        assert!(!OverflowFlags::IMAGE_RANGES.is_empty());
+        assert!(OverflowFlags::IMAGE_RANGES.contains(OverflowFlags::IMAGE_RANGES));
+        assert!(!OverflowFlags::IMAGE_RANGES.contains(OverflowFlags::EXTENDED_XMP));
+    }
+
+    #[test]
+    fn probe_captures_exif_range() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        let exif_body = b"\x49\x49\x2A\x00\x08\x00\x00\x00"; // TIFF little-endian header, no entries
+        data.extend_from_slice(&app1_with_prefix(EXIF_PREFIX, exif_body));
+        data.extend_from_slice(&minimal_jpeg()[2..]);
+
+        let p = probe(&data, Wants::EXIF_LOCATION);
+        let r = p.exif.expect("exif range captured");
+        // Range should cover the EXIF body only (after segment length + identifier).
+        assert_eq!((r.end - r.start) as usize, exif_body.len());
+        // And the body at that range should match what we inserted.
+        assert_eq!(&data[r.start as usize..r.end as usize], exif_body);
+    }
+
+    #[test]
+    fn probe_records_extended_xmp_chunks() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        // Need a standard XMP APP1 first so XMP_LOCATION logic fires.
+        data.extend_from_slice(&app1_with_prefix(XMP_NAMESPACE_PREFIX, b"<x:xmpmeta/>"));
+        // Two Extended XMP chunks.
+        data.extend_from_slice(&app1_with_prefix(EXTENDED_XMP_PREFIX, b"chunk-one-body"));
+        data.extend_from_slice(&app1_with_prefix(EXTENDED_XMP_PREFIX, b"chunk-two-body"));
+        data.extend_from_slice(&minimal_jpeg()[2..]);
+
+        let p = probe(&data, Wants::XMP_LOCATION);
+        assert!(p.extended_xmp[0].is_some());
+        assert!(p.extended_xmp[1].is_some());
+        assert!(p.extended_xmp[2].is_none());
+        assert!(!p.overflow.contains(OverflowFlags::EXTENDED_XMP));
+    }
+
+    #[test]
+    fn probe_records_extended_xmp_overflow() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        data.extend_from_slice(&app1_with_prefix(XMP_NAMESPACE_PREFIX, b"<x:xmpmeta/>"));
+        // 5 Extended XMP chunks; the inline storage holds 4.
+        for i in 0..5 {
+            let body = alloc::format!("chunk-{i}");
+            data.extend_from_slice(&app1_with_prefix(EXTENDED_XMP_PREFIX, body.as_bytes()));
+        }
+        data.extend_from_slice(&minimal_jpeg()[2..]);
+
+        let p = probe(&data, Wants::XMP_LOCATION);
+        assert!(p.extended_xmp.iter().all(Option::is_some));
+        assert!(p.overflow.contains(OverflowFlags::EXTENDED_XMP));
+    }
+
+    /// Synthesize a single-chunk ICC_PROFILE APP2 with a minimal valid
+    /// header so `zenpixels::icc::identify_common` can classify it.
+    /// The profile size is tiny — well under the 128-byte ICC header —
+    /// but `identify_common` just looks at the header bytes it finds;
+    /// anything it doesn't recognize returns `None`, which still
+    /// exercises the identify code path we want to cover.
+    #[test]
+    fn probe_icc_identify_single_chunk() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        // payload = [seq=1, total=1, icc_bytes...]
+        let mut icc_payload = Vec::new();
+        icc_payload.push(1u8); // seq_no
+        icc_payload.push(1u8); // total_seqs
+        icc_payload.extend_from_slice(&[0u8; 32]); // fake ICC bytes
+        data.extend_from_slice(&app2_with_prefix(ICC_PROFILE_PREFIX, &icc_payload));
+        data.extend_from_slice(&minimal_jpeg()[2..]);
+
+        let p = probe(&data, Wants::ICC_LOCATION | Wants::ICC_IDENTIFY);
+        assert!(
+            p.icc_profile.is_some(),
+            "icc_profile range must be recorded"
+        );
+        // identify_common on garbage bytes returns None; the important
+        // coverage point is that the identify branch was taken (no panic,
+        // both `seq_no == 1 && total_seqs == 1` were satisfied).
+        let _ = p.icc_identification; // value-agnostic; type-level check suffices
+    }
+
+    #[test]
+    fn probe_gainmap_presence_iso_plus_gcontainer() {
+        // ISO 21496-1 APP2 + XMP with GContainer GainMap semantic, but
+        // NO hdrgm:Version fingerprint. Exercises the
+        // GainMapPresence::IsoAndGContainer arm of classify_gainmap_presence.
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        let iso_app2 = create_iso_app2_marker(&[0u8; 16]);
+        data.extend_from_slice(&iso_app2);
+
+        let xmp_body =
+            br#"<rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/">
+                <Container:Item Item:Semantic="GainMap"/>
+            </rdf:Description>"#;
+        data.extend_from_slice(&app1_with_prefix(XMP_NAMESPACE_PREFIX, xmp_body));
+        data.extend_from_slice(&minimal_jpeg()[2..]);
+
+        let p = probe(
+            &data,
+            Wants::ISO_GAINMAP | Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS,
+        );
+        assert!(p.iso_gainmap.is_some());
+        assert!(p.has_xmp_gcontainer_gainmap);
+        assert!(!p.has_xmp_hdrgm);
+        assert_eq!(p.gainmap_presence, GainMapPresence::IsoAndGContainer);
     }
 }

@@ -110,6 +110,27 @@ pub enum MpfError {
 /// is conventionally the primary image at absolute offset `0`; secondary
 /// entries carry absolute offsets computed from `tiff_header_pos +
 /// data_offset`.
+///
+/// # Examples
+///
+/// ```
+/// use zenjpeg::container::mpf::{self, MpfError};
+///
+/// // A plain JPEG (no MPF segment) returns NotFound, not a panic.
+/// # let jpeg: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+/// assert!(matches!(mpf::parse_mpf(jpeg), Err(MpfError::NotFound)));
+///
+/// // Build a synthetic MPF with one secondary and roundtrip it.
+/// let header = mpf::create_mpf_header(100_000, 5_000, None);
+/// let mut doc = vec![0xFF, 0xD8];
+/// doc.extend_from_slice(&header);
+/// doc.push(0xFF);
+/// doc.push(0xD9);
+/// let entries = mpf::parse_mpf(&doc).unwrap();
+/// assert_eq!(entries.len(), 2);
+/// assert_eq!(entries[0].size, 100_000);
+/// assert_eq!(entries[1].size, 5_000);
+/// ```
 pub fn parse_mpf(data: &[u8]) -> Result<Vec<MpfEntry>, MpfError> {
     for span in iter(data) {
         if !matches!(span.kind, MarkerKind::App(2)) {
@@ -139,7 +160,9 @@ pub fn parse_mpf_segment(
     tiff_header_pos: usize,
 ) -> Result<Vec<MpfEntry>, MpfError> {
     if mpf_data.len() < 8 {
-        return Err(MpfError::TooShort { got: mpf_data.len() });
+        return Err(MpfError::TooShort {
+            got: mpf_data.len(),
+        });
     }
 
     let big_endian = match &mpf_data[0..2] {
@@ -169,9 +192,16 @@ pub fn parse_mpf_segment(
         })
     };
 
-    let ifd_offset = r32(4)
-        .ok_or_else(|| MpfError::Other("missing IFD pointer".into()))? as usize;
-    if ifd_offset + 2 > mpf_data.len() {
+    // IFD offset comes from an attacker-controlled u32. On 32-bit targets
+    // `usize == u32`, so any addition below must use checked_add to avoid
+    // wrap. Each check surfaces `BadIfdOffset` / `BadEntryOffset` rather
+    // than treating an overflow as "in bounds".
+    let ifd_offset = r32(4).ok_or_else(|| MpfError::Other("missing IFD pointer".into()))? as usize;
+    let ifd_end = ifd_offset.checked_add(2).ok_or(MpfError::BadIfdOffset {
+        offset: ifd_offset,
+        payload_len: mpf_data.len(),
+    })?;
+    if ifd_end > mpf_data.len() {
         return Err(MpfError::BadIfdOffset {
             offset: ifd_offset,
             payload_len: mpf_data.len(),
@@ -183,14 +213,34 @@ pub fn parse_mpf_segment(
 
     let mut mp_entry_offset = 0usize;
     let mut mp_entry_count = 0u32;
-    let entry_start = ifd_offset + 2;
+    let entry_start = ifd_end;
     for i in 0..num_entries {
-        let off = entry_start + i * 12;
-        if off + 12 > mpf_data.len() {
+        // `off + 12` must be <= mpf_data.len(); compute checked so
+        // attacker-controlled num_entries * 12 can't wrap usize on 32-bit.
+        let Some(off) = i
+            .checked_mul(12)
+            .and_then(|delta| entry_start.checked_add(delta))
+        else {
+            break;
+        };
+        let Some(off_end) = off.checked_add(12) else {
+            break;
+        };
+        if off_end > mpf_data.len() {
             break;
         }
-        let tag = r16(off).unwrap();
-        let value_offset = r32(off + 8).unwrap();
+        // Bounds proved by the `off + 12 > len` guard above: `r16(off)`
+        // and `r32(off + 8)` both read within [off, off+12). Propagate
+        // defensively via `?` so a future refactor of the guard can
+        // surface as a parse error rather than a panic.
+        let tag = r16(off).ok_or(MpfError::BadIfdOffset {
+            offset: off,
+            payload_len: mpf_data.len(),
+        })?;
+        let value_offset = r32(off + 8).ok_or(MpfError::BadIfdOffset {
+            offset: off + 8,
+            payload_len: mpf_data.len(),
+        })?;
         match tag {
             TAG_NUMBER_OF_IMAGES => mp_entry_count = value_offset,
             TAG_MP_ENTRY => mp_entry_offset = value_offset as usize,
@@ -220,21 +270,68 @@ pub fn parse_mpf_segment(
         .min(max_possible)
         .min(MAX_MPF_ENTRIES);
 
-    if mp_entry_offset + mp_entry_count * 16 > mpf_data.len() {
+    // Capped above by `max_possible = (len - offset) / 16` and
+    // `MAX_MPF_ENTRIES`, so this multiply + add is bounded by `len`.
+    // checked_* anyway to stay wrap-safe on 32-bit.
+    let mp_entry_bytes = mp_entry_count
+        .checked_mul(16)
+        .ok_or(MpfError::BadEntryOffset {
+            offset: mp_entry_offset,
+            needed: usize::MAX,
+            payload_len: mpf_data.len(),
+        })?;
+    let mp_entry_end =
+        mp_entry_offset
+            .checked_add(mp_entry_bytes)
+            .ok_or(MpfError::BadEntryOffset {
+                offset: mp_entry_offset,
+                needed: mp_entry_bytes,
+                payload_len: mpf_data.len(),
+            })?;
+    if mp_entry_end > mpf_data.len() {
         return Err(MpfError::BadEntryOffset {
             offset: mp_entry_offset,
-            needed: mp_entry_count * 16,
+            needed: mp_entry_bytes,
             payload_len: mpf_data.len(),
         });
     }
 
     let mut entries = Vec::with_capacity(mp_entry_count);
     for i in 0..mp_entry_count {
-        let pos = mp_entry_offset + i * 16;
-        let attribute = r32(pos).unwrap();
-        let size = r32(pos + 4).unwrap() as usize;
-        let data_offset = r32(pos + 8).unwrap() as usize;
-        let abs_offset = if i == 0 { 0 } else { tiff_header_pos + data_offset };
+        // checked because on 32-bit, attacker-controlled mp_entry_offset
+        // (from a u32 in the file) can approach usize::MAX.
+        let pos = i
+            .checked_mul(16)
+            .and_then(|delta| mp_entry_offset.checked_add(delta))
+            .ok_or(MpfError::BadEntryOffset {
+                offset: mp_entry_offset,
+                needed: mp_entry_bytes,
+                payload_len: mpf_data.len(),
+            })?;
+        // Bounds proved by the `mp_entry_offset + mp_entry_count * 16 > len`
+        // guard above: each read stays within [pos, pos+16). Propagate
+        // defensively via `?` to surface refactor breakage as a parse
+        // error rather than a panic.
+        let attribute = r32(pos).ok_or(MpfError::BadEntryOffset {
+            offset: pos,
+            needed: 4,
+            payload_len: mpf_data.len(),
+        })?;
+        let size = r32(pos + 4).ok_or(MpfError::BadEntryOffset {
+            offset: pos + 4,
+            needed: 4,
+            payload_len: mpf_data.len(),
+        })? as usize;
+        let data_offset = r32(pos + 8).ok_or(MpfError::BadEntryOffset {
+            offset: pos + 8,
+            needed: 4,
+            payload_len: mpf_data.len(),
+        })? as usize;
+        let abs_offset = if i == 0 {
+            0
+        } else {
+            tiff_header_pos + data_offset
+        };
         entries.push(MpfEntry {
             image_type: MpImageType::from_type_code(attribute),
             offset: abs_offset,
@@ -252,9 +349,9 @@ pub fn parse_mpf_segment(
 // Emit
 // ===========================================================================
 
-/// Build an MPF APP2 segment (including the `FF E2` marker + length word
-/// + `MPF\0` identifier + TIFF directory) for a primary image plus N
-/// typed secondary images.
+/// Build an MPF APP2 segment (including the `FF E2` marker + length
+/// word + `MPF\0` identifier + TIFF directory) for a primary image plus
+/// N typed secondary images.
 ///
 /// - `primary_length`: total length of the primary JPEG in bytes.
 /// - `secondary_images`: `(image_type, byte_length)` for each secondary.
@@ -561,7 +658,10 @@ mod tests {
 
     #[test]
     fn parse_mpf_segment_rejects_too_short() {
-        assert!(matches!(parse_mpf_segment(&[], 0), Err(MpfError::TooShort { .. })));
+        assert!(matches!(
+            parse_mpf_segment(&[], 0),
+            Err(MpfError::TooShort { .. })
+        ));
         assert!(matches!(
             parse_mpf_segment(&[0; 7], 0),
             Err(MpfError::TooShort { .. })
@@ -736,5 +836,72 @@ mod tests {
             "emitter truncates oversize primary via `as u32` — this test pins that \
              behavior so a future fallible-emitter migration is a conscious change"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Property tests: parse(serialize(x)) == canonicalize(x)
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn arb_mpf_image_type() -> impl Strategy<Value = MpImageType> {
+        prop_oneof![
+            Just(MpImageType::Undefined),
+            Just(MpImageType::LargeThumbnailVga),
+            Just(MpImageType::LargeThumbnailFullHd),
+            Just(MpImageType::Panorama),
+            Just(MpImageType::Disparity),
+            Just(MpImageType::MultiAngle),
+            // BaselinePrimary is implicitly prepended by create_mpf_header_typed,
+            // so we don't pass it as a secondary.
+            (0u32..=0x00FF_FFFFu32).prop_map(MpImageType::Other),
+        ]
+    }
+
+    proptest! {
+        /// Any list of typed secondary images, with any primary size and
+        /// secondary sizes in the u32 range, must survive a parse →
+        /// serialize → parse roundtrip byte-for-byte at the entry level.
+        #[test]
+        fn mpf_roundtrip_typed_secondaries(
+            primary_len in 1usize..10_000_000,
+            secondaries in proptest::collection::vec(
+                (arb_mpf_image_type(), 1usize..10_000_000),
+                0..5,
+            ),
+        ) {
+            let built = create_mpf_header_typed(primary_len, &secondaries, None);
+            let tiff_start = 4 + MPF_IDENTIFIER.len();
+            let entries = parse_mpf_segment(&built[tiff_start..], tiff_start)
+                .expect("parse should succeed on self-generated data");
+
+            // 1 primary + N secondaries.
+            prop_assert_eq!(entries.len(), 1 + secondaries.len());
+            prop_assert_eq!(entries[0].image_type, MpImageType::BaselinePrimary);
+            prop_assert_eq!(entries[0].size, primary_len);
+
+            for (i, (typ, size)) in secondaries.iter().enumerate() {
+                prop_assert_eq!(entries[i + 1].image_type, *typ);
+                prop_assert_eq!(entries[i + 1].size, *size);
+            }
+        }
+
+        /// Untyped create_mpf_header (single-secondary convenience) also
+        /// roundtrips — same contract, narrower input.
+        #[test]
+        fn mpf_roundtrip_untyped_single(
+            primary_len in 1usize..10_000_000,
+            secondary_len in 1usize..10_000_000,
+            insert_offset in proptest::option::of(0usize..1024),
+        ) {
+            let built = create_mpf_header(primary_len, secondary_len, insert_offset);
+            let tiff_start = 4 + MPF_IDENTIFIER.len();
+            let reader_tiff_pos = insert_offset.unwrap_or(0) + tiff_start;
+            let entries = parse_mpf_segment(&built[tiff_start..], reader_tiff_pos)
+                .expect("parse should succeed");
+            prop_assert_eq!(entries.len(), 2);
+            prop_assert_eq!(entries[0].size, primary_len);
+            prop_assert_eq!(entries[1].size, secondary_len);
+        }
     }
 }

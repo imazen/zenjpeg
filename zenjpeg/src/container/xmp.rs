@@ -70,6 +70,24 @@ pub enum XmpError {
 /// the primary XMP carries only the directory and the gain-map XMP
 /// carries the numbers), use [`generate_primary_xmp`] +
 /// [`generate_gainmap_xmp`] instead.
+///
+/// # Examples
+///
+/// Roundtrip a default set of gain-map parameters:
+///
+/// ```
+/// use zenjpeg::container::xmp::{generate_xmp, parse_xmp};
+///
+/// let mut params = zencodec::GainMapParams::default();
+/// for c in &mut params.channels {
+///     c.max = 2.0;
+///     c.gamma = 1.0;
+/// }
+/// let xmp = generate_xmp(&params, 5_000);
+/// let (parsed, length) = parse_xmp(&xmp).expect("parse");
+/// assert_eq!(length, Some(5_000));
+/// assert!((parsed.channels[0].max - 2.0).abs() < 1e-5);
+/// ```
 #[must_use]
 pub fn generate_xmp(metadata: &zencodec::GainMapParams, gainmap_length: usize) -> String {
     let items = alloc::vec![
@@ -430,12 +448,9 @@ mod tests {
                     < XMP_FLOAT_TOL
             );
         }
+        assert!((parsed.base_hdr_headroom - original.base_hdr_headroom).abs() < XMP_FLOAT_TOL);
         assert!(
-            (parsed.base_hdr_headroom - original.base_hdr_headroom).abs() < XMP_FLOAT_TOL
-        );
-        assert!(
-            (parsed.alternate_hdr_headroom - original.alternate_hdr_headroom).abs()
-                < XMP_FLOAT_TOL
+            (parsed.alternate_hdr_headroom - original.alternate_hdr_headroom).abs() < XMP_FLOAT_TOL
         );
     }
 
@@ -505,7 +520,10 @@ mod tests {
     fn extract_attribute_finds_attribute_form() {
         let xmp = r#"<rdf:Description hdrgm:Version="1.0" hdrgm:GainMapMax="2.0"/>"#;
         assert_eq!(extract_attribute(xmp, "hdrgm:Version"), Some("1.0".into()));
-        assert_eq!(extract_attribute(xmp, "hdrgm:GainMapMax"), Some("2.0".into()));
+        assert_eq!(
+            extract_attribute(xmp, "hdrgm:GainMapMax"),
+            Some("2.0".into())
+        );
         assert_eq!(extract_attribute(xmp, "hdrgm:Missing"), None);
     }
 
@@ -571,5 +589,99 @@ mod tests {
         let _ = parse_xmp("hdrgm:GainMapMax=\"not_a_number\"");
         let garbage: String = (0..4096).map(|i| (i % 128) as u8 as char).collect();
         let _ = parse_xmp(&garbage);
+    }
+
+    // -----------------------------------------------------------------------
+    // Property tests: parse(generate(x)) ≈ x (within f64 serialization tol)
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    // `GainMapChannel` and `GainMapParams` are both `#[non_exhaustive]`
+    // in zencodec, so we can't construct them with struct-literal syntax
+    // from this crate. Default + field assignment is the only option;
+    // silence the clippy lint that wants struct literals.
+    #[allow(clippy::field_reassign_with_default)]
+    fn arb_gainmap_params() -> impl Strategy<Value = zencodec::GainMapParams> {
+        // Bounded ranges keep `{:.6}` formatting well inside the f64 ULP
+        // envelope. XMP gain-map values in the wild are bounded to
+        // roughly [-1024, 1024] — we restrict well within that.
+        let ch_arb = (
+            -100.0f64..100.0, // min
+            -100.0f64..100.0, // max
+            0.01f64..10.0,    // gamma (must be > 0 per spec)
+            0.0f64..1.0,      // base_offset
+            0.0f64..1.0,      // alternate_offset
+        )
+            .prop_map(|(min, max, gamma, bo, ao)| {
+                let mut c = zencodec::GainMapChannel::default();
+                c.min = min;
+                c.max = max;
+                c.gamma = gamma;
+                c.base_offset = bo;
+                c.alternate_offset = ao;
+                c
+            });
+
+        (
+            [ch_arb.clone(), ch_arb.clone(), ch_arb],
+            -10.0f64..10.0, // base_hdr_headroom
+            0.0f64..10.0,   // alternate_hdr_headroom
+            any::<bool>(),  // use_base_color_space
+        )
+            .prop_map(|(channels, base_hr, alt_hr, use_base)| {
+                let mut m = zencodec::GainMapParams::default();
+                m.channels = channels;
+                m.base_hdr_headroom = base_hr;
+                m.alternate_hdr_headroom = alt_hr;
+                m.use_base_color_space = use_base;
+                m
+            })
+    }
+
+    proptest! {
+        /// Any GainMapParams in the supported numeric range roundtrips
+        /// through `generate_xmp` → `parse_xmp` with all per-channel
+        /// fields (min, max, gamma, base_offset, alternate_offset) and
+        /// both headroom fields preserved within f64 `{:.6}` tolerance.
+        #[test]
+        fn gainmap_xmp_roundtrip(params in arb_gainmap_params(), length in 1usize..10_000_000) {
+            let xmp = generate_xmp(&params, length);
+            let (parsed, parsed_length) = parse_xmp(&xmp)
+                .expect("parse should succeed on self-generated XMP");
+            prop_assert_eq!(parsed_length, Some(length));
+
+            for i in 0..3 {
+                prop_assert!(
+                    (parsed.channels[i].min - params.channels[i].min).abs() < XMP_FLOAT_TOL,
+                    "ch[{i}].min: orig {} parsed {}", params.channels[i].min, parsed.channels[i].min
+                );
+                prop_assert!(
+                    (parsed.channels[i].max - params.channels[i].max).abs() < XMP_FLOAT_TOL,
+                    "ch[{i}].max",
+                );
+                prop_assert!(
+                    (parsed.channels[i].gamma - params.channels[i].gamma).abs() < XMP_FLOAT_TOL,
+                    "ch[{i}].gamma",
+                );
+                prop_assert!(
+                    (parsed.channels[i].base_offset - params.channels[i].base_offset).abs()
+                        < XMP_FLOAT_TOL,
+                    "ch[{i}].base_offset",
+                );
+                prop_assert!(
+                    (parsed.channels[i].alternate_offset - params.channels[i].alternate_offset).abs()
+                        < XMP_FLOAT_TOL,
+                    "ch[{i}].alternate_offset",
+                );
+            }
+            prop_assert!(
+                (parsed.base_hdr_headroom - params.base_hdr_headroom).abs() < XMP_FLOAT_TOL,
+            );
+            prop_assert!(
+                (parsed.alternate_hdr_headroom - params.alternate_hdr_headroom).abs()
+                    < XMP_FLOAT_TOL,
+            );
+        }
     }
 }

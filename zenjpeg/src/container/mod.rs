@@ -32,17 +32,17 @@ pub mod xmp;
 
 pub use iso_jpeg::{
     ISO_21496_1_URN, Iso21496Format, IsoJpegError, JpegIsoMarkers, create_iso_app2_marker,
-    create_jpeg_iso_markers, create_version_only_iso_app2, parse_iso21496, parse_iso_app2,
+    create_jpeg_iso_markers, create_version_only_iso_app2, parse_iso_app2, parse_iso21496,
     serialize_iso21496,
 };
 pub use marker::{
     MarkerIter, MarkerKind, MarkerSpan, find_jpeg_boundaries, for_each_jpeg_boundary, iter,
     primary_bounds,
 };
+pub use mpf::{MpfError, create_mpf_header, create_mpf_header_typed, parse_mpf, parse_mpf_segment};
 pub use probe::{
     ContainerProbe, GainMapPresence, OverflowFlags, ProbeSof, Wants, is_ultrahdr, probe,
 };
-pub use mpf::{MpfError, create_mpf_header, create_mpf_header_typed, parse_mpf, parse_mpf_segment};
 pub use types::{
     ContainerItem, ItemSemantic, MpImageType, MpfEntry, generate_container_directory,
     parse_container_items,
