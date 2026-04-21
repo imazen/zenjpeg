@@ -51,6 +51,9 @@
 pub use super::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-export
 pub use super::encoder_config::EncoderConfig;
+#[cfg(feature = "boundary-rd")]
+#[allow(unused_imports)] // Public API re-exports (opt-in behind boundary-rd feature)
+pub use super::encoder_config::{BoundaryRd, BoundaryRdConfig};
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
 pub use super::encoder_types::ParallelEncoding;

@@ -11,6 +11,356 @@ use super::trellis::TrellisConfig;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
+/// Boundary-continuity refinement mode (see [`EncoderConfig::boundary_rd`]).
+///
+/// Controls the optional post-quantization refinement from issue #91 that
+/// reduces visible 8×8 block-seam artifacts. Off by default.
+///
+/// This enum is `#[non_exhaustive]`: a future `Auto` variant is tracked
+/// in [issue #103], which will pair boundary-RD preset selection with an
+/// in-house image content analyzer. Until that lands, callers supply a
+/// [`BoundaryRdConfig`] directly via `On(...)`.
+///
+/// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
+pub enum BoundaryRd {
+    /// Refinement disabled. Default. Output is byte-identical to the
+    /// feature-off build; the module stays entirely out of the hot path.
+    #[default]
+    Off,
+    /// Refinement enabled with the supplied config.
+    ///
+    /// For unknown content, `BoundaryRd::On(BoundaryRdConfig::default())`
+    /// is the documented best-we-know entry point. For per-class tuning
+    /// before an automatic classifier ships (see [issue #103]), consult
+    /// the committed BD-rate evidence under `benchmarks/boundary_rd/`
+    /// and construct a [`BoundaryRdConfig`] via its composable sub-configs
+    /// (`SeamPenalty`, `RetryPolicy`, `NeighborScope`).
+    ///
+    /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
+    On(BoundaryRdConfig),
+}
+
+/// Seam-continuity distortion weighting for boundary-RD.
+///
+/// Controls the strength and trigger threshold of the D_b term added to
+/// the per-block rate-distortion score when evaluating whether to retry
+/// a quantization with a shrunken AQ strength.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct SeamPenalty {
+    /// Seam-jump weight in the D_b term. Larger → more aggressive
+    /// penalty on cross-seam gradient mismatch. Default `2.0`.
+    alpha: f32,
+    /// D_b trigger threshold, expressed as a multiplier of per-block AC
+    /// DCT energy. A block only triggers refinement if its D_b exceeds
+    /// `threshold * ac_energy`. Default `0.02`.
+    threshold: f32,
+}
+
+#[cfg(feature = "boundary-rd")]
+impl Default for SeamPenalty {
+    fn default() -> Self {
+        Self {
+            alpha: 2.0,
+            threshold: 0.02,
+        }
+    }
+}
+
+#[cfg(feature = "boundary-rd")]
+impl SeamPenalty {
+    /// Construct a seam penalty with defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Seam-jump weight (`α`) in the D_b term.
+    #[must_use]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    /// Trigger threshold, as a multiplier of per-block AC DCT energy.
+    #[must_use]
+    pub fn threshold(&self) -> f32 {
+        self.threshold
+    }
+
+    /// Set the seam-jump weight (`α`). Typical range `[0.5, 4.0]`.
+    #[must_use]
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    /// Set the trigger threshold, as a multiplier of per-block AC DCT
+    /// energy. Typical range `[0.01, 0.2]`.
+    #[must_use]
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = threshold;
+        self
+    }
+}
+
+/// Retry policy for boundary-RD refinement.
+///
+/// When a block's seam penalty exceeds [`SeamPenalty::threshold`], the
+/// encoder may retry quantization with a shrunken AQ strength. This
+/// struct controls how many retries are attempted and by how much the
+/// AQ strength shrinks per retry.
+///
+/// A companion `zero_bias_shrink` knob was evaluated and removed
+/// (2026-04-21). Over 2240 encodes across 40 stratified images and
+/// 6 configs, the per-image Pareto rule (strict improvement on one
+/// of bytes/SSIM2 without regression on the other) triggered on a
+/// single image, far below the 70 % bar for keeping the knob. See
+/// `benchmarks/boundary_rd/zero_bias_targeted/` for the evidence.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct RetryPolicy {
+    /// AQ-strength multiplier applied on each retry. Must be in
+    /// `(0, 1]`. Smaller values (e.g. `0.25`) shrink more aggressively;
+    /// `1.0` disables shrinkage (retries pick the same result).
+    /// Default `0.5`.
+    shrink: f32,
+    /// Maximum number of retries per triggered block. `0` disables
+    /// retry (the first quantization is always accepted). Default `2`.
+    max_retries: u8,
+}
+
+#[cfg(feature = "boundary-rd")]
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            shrink: 0.5,
+            max_retries: 2,
+        }
+    }
+}
+
+#[cfg(feature = "boundary-rd")]
+impl RetryPolicy {
+    /// Construct a retry policy with defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// AQ-strength shrink multiplier per retry.
+    #[must_use]
+    pub fn shrink(&self) -> f32 {
+        self.shrink
+    }
+
+    /// Maximum number of retries per triggered block.
+    #[must_use]
+    pub fn max_retries(&self) -> u8 {
+        self.max_retries
+    }
+
+    /// Set the AQ-strength shrink multiplier. Must be in `(0, 1]`.
+    #[must_use]
+    pub fn with_shrink(mut self, shrink: f32) -> Self {
+        self.shrink = shrink;
+        self
+    }
+
+    /// Set the maximum number of retries per triggered block.
+    #[must_use]
+    pub fn with_max_retries(mut self, max_retries: u8) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+}
+
+/// Which neighbor edges the D_b seam-continuity term considers.
+///
+/// Left-only is the cheapest (no inter-iMCU buffer needed). Left-and-above
+/// adds the top-edge term and requires a per-column cache of the committed
+/// bottom-edge row from the iMCU above — one extra `blocks_w × 16 f32`
+/// buffer.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum NeighborScope {
+    /// Consider only the left-neighbor's committed right-edge column.
+    LeftOnly,
+    /// Consider both the left-neighbor's right edge and the
+    /// above-neighbor's committed bottom edge. Adds one inter-iMCU buffer.
+    #[default]
+    LeftAndAbove,
+}
+
+#[cfg(feature = "boundary-rd")]
+impl NeighborScope {
+    /// Whether this scope includes the above-neighbor term.
+    #[must_use]
+    pub const fn includes_above(self) -> bool {
+        matches!(self, Self::LeftAndAbove)
+    }
+}
+
+/// Boundary-RD parameters.
+///
+/// Passed via [`BoundaryRd::On`] when enabling the feature.
+/// `BoundaryRdConfig::default()` is the tuned "best-we-know for unknown
+/// content" setting, retuned from the low-Q full-grid sweep
+/// (`benchmarks/boundary_rd/low_q_full/` and
+/// `benchmarks/boundary_rd/default_rationale_2026-04-21.md`).
+///
+/// # Composable structure
+///
+/// The config is composed of three `#[non_exhaustive]` sub-configs:
+///
+/// - [`SeamPenalty`] — `alpha` + `threshold`
+/// - [`RetryPolicy`] — `shrink` + `max_retries`
+/// - [`NeighborScope`] — left-only vs left-and-above
+///
+/// Builder methods come in three layers. For the common "tweak one knob
+/// off the default" case, the direct accessors like
+/// [`with_alpha`](Self::with_alpha) / [`with_threshold`](Self::with_threshold)
+/// / [`with_shrink`](Self::with_shrink) /
+/// [`with_max_retries`](Self::with_max_retries) / [`with_above`](Self::with_above)
+/// preserve the one-liner ergonomics of a flat struct. For structured
+/// construction, use the sub-config setters
+/// [`with_seam`](Self::with_seam) / [`with_retry`](Self::with_retry) /
+/// [`with_neighbors`](Self::with_neighbors).
+///
+/// Automatic per-image-class preset selection is deferred to [issue #103],
+/// which will introduce an in-house image-content analyzer. Until then,
+/// callers who want per-class tuning should supply values informed by
+/// the committed evidence under `benchmarks/boundary_rd/`.
+///
+/// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
+/// Retuned 2026-04-21 from the low-Q full-grid sweep. Composed defaults:
+/// `SeamPenalty { alpha=2.0, threshold=0.02 }`, `RetryPolicy { shrink=0.5,
+/// max_retries=2 }`, `NeighborScope::LeftAndAbove`. Strictly dominates the
+/// prior default (alpha=1.0, t=0.05, above=false) on BBS BD-rate across
+/// every (class_bucket, q_range) cell in
+/// `benchmarks/boundary_rd/low_q_full/per_class_per_q.csv`. Slight SSIM2
+/// cost (+0.17 to +0.20 pts BD-rate) at low Q is accepted in exchange for
+/// the larger BBS gain; at mid+high Q the tradeoff is strictly Pareto.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
+pub struct BoundaryRdConfig {
+    seam: SeamPenalty,
+    retry: RetryPolicy,
+    neighbors: NeighborScope,
+}
+
+#[cfg(feature = "boundary-rd")]
+impl BoundaryRdConfig {
+    /// Construct a config with all defaults (the currently-tuned
+    /// best-we-know values — see [`BoundaryRdConfig::default`]).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // ── Sub-config getters ──
+
+    /// Seam-penalty weighting ([`SeamPenalty`]).
+    #[must_use]
+    pub fn seam(&self) -> SeamPenalty {
+        self.seam
+    }
+
+    /// Retry policy ([`RetryPolicy`]).
+    #[must_use]
+    pub fn retry(&self) -> RetryPolicy {
+        self.retry
+    }
+
+    /// Neighbor scope for the D_b term ([`NeighborScope`]).
+    #[must_use]
+    pub fn neighbors(&self) -> NeighborScope {
+        self.neighbors
+    }
+
+    // ── Sub-config setters (structured) ──
+
+    /// Replace the seam-penalty sub-config.
+    #[must_use]
+    pub fn with_seam(mut self, seam: SeamPenalty) -> Self {
+        self.seam = seam;
+        self
+    }
+
+    /// Replace the retry-policy sub-config.
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Replace the neighbor scope.
+    #[must_use]
+    pub fn with_neighbors(mut self, neighbors: NeighborScope) -> Self {
+        self.neighbors = neighbors;
+        self
+    }
+
+    // ── Convenience single-knob setters (preserve flat-struct ergonomics) ──
+
+    /// Set the seam-penalty α (see [`SeamPenalty::with_alpha`]).
+    #[must_use]
+    pub fn with_alpha(self, alpha: f32) -> Self {
+        self.with_seam(self.seam.with_alpha(alpha))
+    }
+
+    /// Set the seam-penalty trigger threshold
+    /// (see [`SeamPenalty::with_threshold`]).
+    #[must_use]
+    pub fn with_threshold(self, threshold: f32) -> Self {
+        self.with_seam(self.seam.with_threshold(threshold))
+    }
+
+    /// Set the retry AQ-strength shrink multiplier
+    /// (see [`RetryPolicy::with_shrink`]).
+    #[must_use]
+    pub fn with_shrink(self, shrink: f32) -> Self {
+        self.with_retry(self.retry.with_shrink(shrink))
+    }
+
+    /// Set the retry cap (see [`RetryPolicy::with_max_retries`]).
+    #[must_use]
+    pub fn with_max_retries(self, max_retries: u8) -> Self {
+        self.with_retry(self.retry.with_max_retries(max_retries))
+    }
+
+    /// Enable or disable the above-neighbor term.
+    /// `true` → [`NeighborScope::LeftAndAbove`];
+    /// `false` → [`NeighborScope::LeftOnly`].
+    #[must_use]
+    pub fn with_above(self, enable: bool) -> Self {
+        self.with_neighbors(if enable {
+            NeighborScope::LeftAndAbove
+        } else {
+            NeighborScope::LeftOnly
+        })
+    }
+
+    /// Flat view of the resolved parameters, for internal dispatch into
+    /// the strip processor. This is the canonical "public → internal"
+    /// boundary for boundary-RD knobs.
+    pub(crate) fn resolved_flat(&self) -> super::strip::BoundaryRdFlat {
+        super::strip::BoundaryRdFlat {
+            alpha: self.seam.alpha,
+            threshold: self.seam.threshold,
+            shrink: self.retry.shrink,
+            max_retries: self.retry.max_retries,
+            above: self.neighbors.includes_above(),
+        }
+    }
+}
+
 /// JPEG encoder configuration. Dimension-independent, reusable across images.
 #[derive(Clone, Debug)]
 pub struct EncoderConfig {
@@ -77,6 +427,13 @@ pub struct EncoderConfig {
     /// which activates the optimizations (shared Huffman tables etc.) when
     /// the image pixel count falls below the heuristic's threshold.
     pub(crate) tiny_file_mode: TinyFileMode,
+    /// Boundary-continuity refinement mode (issue #91 / PR #102).
+    ///
+    /// Only present when the crate is built with `--features boundary-rd`.
+    /// The default is [`BoundaryRd::Off`]; the feature-on default build is
+    /// byte-identical to a feature-off build.
+    #[cfg(feature = "boundary-rd")]
+    pub(crate) boundary_rd_mode: BoundaryRd,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -231,6 +588,8 @@ impl EncoderConfig {
             segments: None,
             pre_blur: 0.0,
             tiny_file_mode: TinyFileMode::Auto,
+            #[cfg(feature = "boundary-rd")]
+            boundary_rd_mode: BoundaryRd::Off,
         }
     }
 
@@ -985,6 +1344,81 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_tiny_file_mode(&self) -> TinyFileMode {
         self.tiny_file_mode
+    }
+
+    // === Boundary-RD (issue #91, feature = "boundary-rd") ===
+
+    /// Enable or disable boundary-continuity refinement (issue #91).
+    ///
+    /// **Opt-in Cargo feature.** Only available when the crate is built
+    /// with `--features boundary-rd`. Without that feature, the whole
+    /// refinement code path (types, state, and hot-path dispatch) is
+    /// compiled out; callers only see the `Off`-equivalent default.
+    ///
+    /// Boundary-RD is an opt-in post-quantization refinement pass that
+    /// reduces visible 8×8 block-seam discontinuities. It is **off by
+    /// default**, and [`BoundaryRd::Off`] produces byte-identical output
+    /// to a build without the feature wired in.
+    ///
+    /// # Modes
+    ///
+    /// - [`BoundaryRd::Off`] — disabled (default).
+    /// - [`BoundaryRd::On(BoundaryRdConfig)`](BoundaryRd::On) — enabled
+    ///   with the supplied parameters. `BoundaryRdConfig::default()` is
+    ///   the tuned best-we-know setting for unknown content.
+    ///
+    /// # Automatic content-adaptive selection
+    ///
+    /// Per-image-class preset selection (photo vs screenshot vs
+    /// illustration) is intentionally deferred — see [issue #103] for
+    /// the follow-up that pairs boundary-RD with an in-house content
+    /// analyzer. Until then, callers wanting per-class tuning should
+    /// construct a [`BoundaryRdConfig`] with values informed by the
+    /// committed BD-rate evidence under `benchmarks/boundary_rd/`.
+    ///
+    /// [issue #103]: https://github.com/imazen/zenjpeg/issues/103
+    ///
+    /// # Honest characterisation
+    ///
+    /// On the corpora measured in issue #91:
+    ///
+    /// - **BBS Pareto win on every class** (−3.7% to −8.6% BD-rate on
+    ///   boundary-score).
+    /// - **SSIM2 Pareto win on line-art / illustration** (−3% to −9%
+    ///   BD-rate depending on image).
+    /// - **SSIM2 neutral on most screenshots** (some within-class
+    ///   bimodality — a few screenshots regress, most win or tie).
+    /// - **SSIM2 mildly worse on photos** (~+0.2% to +0.4% Pareto cost).
+    ///
+    /// Encode-time overhead is roughly +12-15% at Q85 after SIMD
+    /// optimization, depending on image, subsampling, and retry
+    /// trigger rate.
+    ///
+    /// This setting is a no-op when trellis quantization is active (the
+    /// trellis code path has its own boundary-D-augment, which landed as
+    /// a near-zero result in #91).
+    #[cfg(feature = "boundary-rd")]
+    #[must_use]
+    pub fn boundary_rd(mut self, mode: BoundaryRd) -> Self {
+        self.boundary_rd_mode = mode;
+        self
+    }
+
+    /// Resolve the boundary-RD mode into the flat internal knob struct
+    /// consumed by the strip processor. `None` = feature off (no
+    /// refinement hot-path, byte-identical to feature-disabled output).
+    /// `Some(flat)` = feature on with the supplied resolved knobs.
+    ///
+    /// This is the resolver at the public-API → internal-flat-state
+    /// boundary: the composable public [`BoundaryRdConfig`] is unpacked
+    /// here into the flat struct.
+    #[cfg(feature = "boundary-rd")]
+    #[must_use]
+    pub(crate) fn resolve_boundary_rd(&self) -> Option<super::strip::BoundaryRdFlat> {
+        match self.boundary_rd_mode {
+            BoundaryRd::Off => None,
+            BoundaryRd::On(cfg) => Some(cfg.resolved_flat()),
+        }
     }
 
     // === Validation ===

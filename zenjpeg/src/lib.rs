@@ -181,6 +181,11 @@ pub mod encoder;
 /// Provides min/typical/max estimates for peak memory and time.
 pub mod heuristics;
 
+// Codec-analysis metrics (BBS block-boundary score, RD-curve and
+// BD-rate harness, sweep orchestration) moved to the internal
+// `zenjpeg-bench-utils` crate. They are benchmark infrastructure, not
+// part of the shipped encoder library.
+
 /// JPEG encoder detection and quality estimation.
 ///
 /// Identifies which encoder produced a JPEG, estimates its quality level,

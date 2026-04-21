@@ -80,6 +80,93 @@ pub struct QuantContext {
     pub cr_zero_bias: ZeroBiasParams,
 }
 
+/// Flat, resolved boundary-continuity refinement knobs as consumed by
+/// [`StripProcessor`]. Produced at the public-API → internal-state boundary
+/// from the composable [`crate::encode::encoder_config::BoundaryRdConfig`].
+///
+/// Kept `pub(crate)` — it is a hot-path resolved shape, not a public API.
+/// A value with `shrink == 1.0` produces no refinement (the retry picks the
+/// same result), which is equivalent to `BoundaryRd::Off`.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BoundaryRdFlat {
+    /// Seam-jump weight (α) in the D_b term.
+    pub alpha: f32,
+    /// D_b trigger threshold, expressed as a multiplier of per-block
+    /// AC DCT energy.
+    pub threshold: f32,
+    /// AQ-strength multiplier applied on each retry. `1.0` disables
+    /// retries (they pick the same result).
+    pub shrink: f32,
+    /// Maximum retries per triggered block.
+    pub max_retries: u8,
+    /// Whether the above-neighbor (top-edge) term is included in D_b.
+    pub above: bool,
+}
+
+/// Live boundary-RD state owned by a [`StripProcessor`].
+///
+/// `None` in `StripProcessor::boundary_rd` means the feature is off and
+/// the entire refinement module stays out of the hot path. When `Some`,
+/// the Vec buffers are allocated lazily inside the refinement method
+/// (they start empty on first iMCU and get `resize`d to `blocks_w`).
+///
+/// Edge caches are **flat `Vec<[f32; 8]>`**, not `Vec<Option<[f32; 8]>>`:
+/// validity is tracked by `row_started` (per-row, reset on row start)
+/// and `above_row_written` (one bit total, flips true once any full
+/// block row has been committed). Eliminates per-block Option-tag
+/// branches in the hot path.
+#[cfg(feature = "boundary-rd")]
+#[derive(Debug)]
+pub(crate) struct BoundaryRdState {
+    /// Resolved per-block knobs.
+    pub config: BoundaryRdFlat,
+    /// Per-block-row cache of the committed right-edge column for the
+    /// last-written block in the current row. Indexed by `bx` in
+    /// `0..blocks_w`. Only valid for indices `< row_emitted` within the
+    /// current row.
+    pub left_rec_edges: Vec<[f32; 8]>,
+    /// Companion cache: the *original* (unquantized IDCT) right-edge
+    /// column of each committed block in the current row. Avoids the
+    /// redundant `idct_reference_block_fast(&prev_dct)` at each bx>0 block
+    /// (it was already computed when processing block bx-1).
+    pub left_orig_edges: Vec<[f32; 8]>,
+    /// How many blocks in the current row have been emitted so far.
+    /// Reset to 0 at each row boundary; `row_emitted` entries in both
+    /// `left_*_edges` are live and contain the committed/original
+    /// right-edge of those blocks.
+    pub row_emitted: usize,
+    /// Per-column cache of the committed bottom-edge row for the block
+    /// directly above (reconstructed, post-quantize). Persists across
+    /// iMCUs so the first block row of a new iMCU can consult the last
+    /// row of the previous iMCU. Only populated when `config.above`.
+    pub above_rec_edges: Vec<[f32; 8]>,
+    /// Companion buffer holding the *original* (unquantized IDCT)
+    /// bottom-edge row of the block above — needed for the "orig" side
+    /// of the symmetric D_b term.
+    pub above_orig_edges: Vec<[f32; 8]>,
+    /// True once at least one full block row has been written into the
+    /// `above_*` buffers. Flips to `true` exactly when the first row
+    /// of an image finishes emitting; the second and subsequent rows
+    /// read the full `above_*` buffer.
+    pub above_row_written: bool,
+}
+
+#[cfg(feature = "boundary-rd")]
+impl BoundaryRdState {
+    pub fn new(config: BoundaryRdFlat) -> Self {
+        Self {
+            config,
+            left_rec_edges: Vec::new(),
+            left_orig_edges: Vec::new(),
+            row_emitted: 0,
+            above_rec_edges: Vec::new(),
+            above_orig_edges: Vec::new(),
+            above_row_written: false,
+        }
+    }
+}
+
 impl QuantContext {
     /// Creates a default quantization context for tests (standard JPEG tables at q75).
     #[cfg(test)]
@@ -446,6 +533,21 @@ pub struct StripProcessor {
     /// Enable overshoot deringing (on by default)
     deringing: bool,
 
+    // === Boundary-continuity refinement (issue #91 / PR #102) ===
+    /// `Some` enables the post-quantize refinement loop from #91: after each
+    /// luma block is quantized via the non-trellis SIMD path, the encoder
+    /// compares its reconstructed left (and optionally top) edge against the
+    /// committed edges of its neighbors and may retry the quantize with
+    /// shrunken AQ strength. `None` (default) means the whole refinement
+    /// module stays out of the hot path — the default
+    /// `quantize_prev_pending_imcu` loop runs unmodified.
+    ///
+    /// Feature-gated: only present when the crate is built with
+    /// `--features boundary-rd`. Without the feature, the default fast
+    /// path is the only path.
+    #[cfg(feature = "boundary-rd")]
+    boundary_rd: Option<BoundaryRdState>,
+
     // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
@@ -725,6 +827,11 @@ impl StripProcessor {
             // Optional preprocessing (deringing on by default)
             deringing: true,
 
+            // Boundary-RD refinement (disabled by default; see issue #91).
+            // `None` is the hot-path identity — zero overhead vs feature-off.
+            #[cfg(feature = "boundary-rd")]
+            boundary_rd: None,
+
             // Trellis quantization (disabled by default)
             #[cfg(feature = "trellis")]
             hybrid_ctx: None,
@@ -834,6 +941,18 @@ impl StripProcessor {
     /// This technique was pioneered by @kornel in mozjpeg.
     pub fn set_deringing(&mut self, enable: bool) {
         self.deringing = enable;
+    }
+
+    /// Configure boundary-continuity refinement (issue #91 / PR #102).
+    ///
+    /// `None` (the default) skips the refinement pass entirely; the default
+    /// encode path is unchanged. `Some(flat)` installs the supplied resolved
+    /// knobs and grows the per-row edge caches lazily on first use.
+    ///
+    /// Only compiled when `--features boundary-rd` is enabled.
+    #[cfg(feature = "boundary-rd")]
+    pub(crate) fn set_boundary_rd(&mut self, flat: Option<BoundaryRdFlat>) {
+        self.boundary_rd = flat.map(BoundaryRdState::new);
     }
 
     /// Sets trellis quantization configuration.
@@ -1310,7 +1429,6 @@ impl StripProcessor {
     /// fast SIMD quantization.
     fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
         let buffer_idx = self.pending.prev_idx();
-        let quant = &self.quant;
 
         // Check if we have trellis context for R-D optimization
         #[cfg(feature = "trellis")]
@@ -1326,56 +1444,78 @@ impl StripProcessor {
         #[cfg(not(feature = "trellis"))]
         let store_dc_raw = false;
 
-        // Quantize Y blocks (vectors pre-allocated at construction)
-        for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
-            // Use get() with fallback to avoid branch on common path
-            let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+        // Boundary-RD (#91 / PR #102) only fires for the non-trellis path —
+        // the trellis path will get its own D_b augmentation in a later phase.
+        // `boundary_rd.is_some()` is the fast-path check: `None` means the
+        // whole refinement module stays out of the loop. Entire branch is
+        // compiled out when the `boundary-rd` feature is off.
+        #[cfg(feature = "boundary-rd")]
+        let use_boundary_rd = self.boundary_rd.is_some() && !use_trellis;
+        #[cfg(not(feature = "boundary-rd"))]
+        let use_boundary_rd = false;
 
-            // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
-            if store_dc_raw {
-                let row0: [f32; 8] = dct.rows[0];
-                let dc_raw = (row0[0] * 64.0).round() as i32;
-                self.y_dc_raw.push(dc_raw);
-            }
+        if use_boundary_rd {
+            // Slower path: refinement after each luma block. The default path
+            // (boundary_rd == None) still hits the fast loop below with zero
+            // overhead.
+            #[cfg(feature = "boundary-rd")]
+            self.quantize_y_with_boundary_rd(buffer_idx, aq_strengths, store_dc_raw);
+            #[cfg(not(feature = "boundary-rd"))]
+            unreachable!("use_boundary_rd is always false without the boundary-rd feature");
+        } else {
+            let quant = &self.quant;
+            // Default fast path — unchanged from before boundary-RD was added.
+            for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
+                // Use get() with fallback to avoid branch on common path
+                let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
-            #[cfg(feature = "trellis")]
-            let zigzag = if use_trellis {
-                // Trellis path: convert to array, quantize with R-D, apply zigzag
-                let dct_arr = dct.to_array();
-                let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                    &dct_arr,
-                    &quant.y_quant.values,
-                    aq_strength,
-                    1.0,  // dampen
-                    true, // is_luma
-                );
-                // Apply zigzag reordering
-                let mut result = [0i16; DCT_BLOCK_SIZE];
-                for j in 0..DCT_BLOCK_SIZE {
-                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+                if store_dc_raw {
+                    let row0: [f32; 8] = dct.rows[0];
+                    let dc_raw = (row0[0] * 64.0).round() as i32;
+                    self.y_dc_raw.push(dc_raw);
                 }
-                result
-            } else {
-                // Fast SIMD path: fused quantization + zigzag reorder
-                quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+
+                #[cfg(feature = "trellis")]
+                let zigzag = if use_trellis {
+                    // Trellis path: convert to array, quantize with R-D, apply zigzag
+                    let dct_arr = dct.to_array();
+                    let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                        &dct_arr,
+                        &quant.y_quant.values,
+                        aq_strength,
+                        1.0,  // dampen
+                        true, // is_luma
+                    );
+                    // Apply zigzag reordering
+                    let mut result = [0i16; DCT_BLOCK_SIZE];
+                    for j in 0..DCT_BLOCK_SIZE {
+                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                    }
+                    result
+                } else {
+                    // Fast SIMD path: fused quantization + zigzag reorder
+                    quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                        dct,
+                        &quant.y_zero_bias_simd,
+                        aq_strength,
+                    )
+                };
+                #[cfg(not(feature = "trellis"))]
+                let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                     dct,
                     &quant.y_zero_bias_simd,
                     aq_strength,
-                )
-            };
-            #[cfg(not(feature = "trellis"))]
-            let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
-                dct,
-                &quant.y_zero_bias_simd,
-                aq_strength,
-            );
+                );
 
-            self.y_blocks.push(zigzag);
-            self.all_aq_strengths.push(aq_strength);
+                self.y_blocks.push(zigzag);
+                self.all_aq_strengths.push(aq_strength);
+            }
         }
 
         // Quantize Cb/Cr blocks
         {
+            let quant = &self.quant;
             let y_blocks_w = self.layout.y_blocks_w;
             let y_blocks_h = self.layout.y_blocks_h;
             let c_blocks_w = self.layout.c_blocks_w;
@@ -1436,6 +1576,278 @@ impl StripProcessor {
                 y_blocks_w,
                 y_blocks_h,
             );
+        }
+    }
+
+    /// Non-trellis Y-plane quantize with boundary-continuity refinement
+    /// (issue #91 / PR #102, opt-in via
+    /// [`Self::set_boundary_rd`]). This is the slow-path counterpart to
+    /// the inline loop in [`Self::quantize_prev_pending_imcu`]; only
+    /// invoked when `self.boundary_rd.is_some()` and trellis is NOT in
+    /// use.
+    ///
+    /// Behavior contract: when `config.threshold <= 0.0`, the refinement
+    /// never fires and output matches the default path — useful for
+    /// debugging and A/B comparison.
+    #[cfg(feature = "boundary-rd")]
+    fn quantize_y_with_boundary_rd(
+        &mut self,
+        buffer_idx: usize,
+        aq_strengths: &[f32],
+        store_dc_raw: bool,
+    ) {
+        // Split borrow of `self`: take `&mut boundary_rd` state out, then
+        // borrow the rest of `self` freely. The state is put back via drop
+        // when the local goes out of scope (it's a `&mut Option<...>`, so
+        // we leave it in place and just access through `.as_mut()`).
+        let state = self
+            .boundary_rd
+            .as_mut()
+            .expect("quantize_y_with_boundary_rd invoked with boundary_rd == None");
+        Self::quantize_y_with_boundary_rd_impl(
+            state,
+            &self.pending,
+            &self.quant,
+            self.layout.blocks_w,
+            buffer_idx,
+            aq_strengths,
+            store_dc_raw,
+            &mut self.y_blocks,
+            &mut self.all_aq_strengths,
+            &mut self.y_dc_raw,
+        );
+    }
+
+    /// Actual refinement body, taking disjoint borrows to keep the borrow
+    /// checker happy. All reads of the per-block knobs go through
+    /// `state.config`; all buffer accesses go through `state.*_edges`.
+    #[cfg(feature = "boundary-rd")]
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_y_with_boundary_rd_impl(
+        state: &mut BoundaryRdState,
+        pending: &PendingBuffers,
+        quant: &QuantContext,
+        blocks_w: usize,
+        buffer_idx: usize,
+        aq_strengths: &[f32],
+        store_dc_raw: bool,
+        y_blocks: &mut Vec<[i16; DCT_BLOCK_SIZE]>,
+        all_aq_strengths: &mut Vec<f32>,
+        y_dc_raw: &mut Vec<i32>,
+    ) {
+        use super::boundary_rd as br;
+
+        let alpha = state.config.alpha;
+        let threshold = state.config.threshold;
+        let shrink_factor: f32 = state.config.shrink;
+        let max_retries: u8 = state.config.max_retries;
+        // Phase 4: above-neighbor term (opt-in on top of left-only).
+        let use_above = state.config.above;
+
+        // Summon SIMD tokens ONCE for this entire iMCU refinement pass.
+        // The kernel functions take this by copy and skip their own
+        // `incant!` atomic loads on subsequent calls.
+        let tokens = br::BoundaryRdTokens::summon();
+
+        // Natural-order quant values. `QuantTable.values` is natural-row-major
+        // despite its outdated docstring — verified by inspecting the DQT
+        // serializer which reads `values[JPEG_NATURAL_ORDER[i]]`.
+        let quant_natural = &quant.y_quant.values;
+
+        // Lazily grow per-row edge caches to `blocks_w`. Flat `Vec<[f32; 8]>` —
+        // validity is tracked by `state.row_emitted` within the current row
+        // (a counter of blocks committed; anything below that index is valid)
+        // and by `state.above_row_written` for the above-neighbor buffers.
+        if state.left_rec_edges.len() < blocks_w {
+            state.left_rec_edges.resize(blocks_w, [0.0f32; 8]);
+            state.left_orig_edges.resize(blocks_w, [0.0f32; 8]);
+        }
+        // Phase 4 above-neighbor buffers: allocated only when `above` is on,
+        // and persist across iMCUs (they're how the first row of iMCU N sees
+        // the last row of iMCU N-1).
+        if use_above && state.above_rec_edges.len() < blocks_w {
+            state.above_rec_edges.resize(blocks_w, [0.0f32; 8]);
+            state.above_orig_edges.resize(blocks_w, [0.0f32; 8]);
+        }
+
+        let pending_len = pending.y[buffer_idx].len();
+        for i in 0..pending_len {
+            // Copy the DCT (small: 256 bytes) so we can borrow self mutably
+            // below to push into y_blocks / y_dc_raw without aliasing.
+            let dct = pending.y[buffer_idx][i];
+            let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+
+            if store_dc_raw {
+                let dc_raw = (dct.rows[0][0] * 64.0).round() as i32;
+                y_dc_raw.push(dc_raw);
+            }
+
+            let bx = i % blocks_w;
+            if bx == 0 {
+                // Start of a new row — no left neighbor. Reset `row_emitted`
+                // to 0; entries in `left_*_edges` below the new `row_emitted`
+                // will be overwritten as we progress through the row.
+                //
+                // When `bx == 0` transitions from the last block of the
+                // previous row (row_emitted == blocks_w) to the first block
+                // of a new row, mark the above-neighbor buffers as fully
+                // written (valid for every column). Works across iMCUs
+                // because the state persists.
+                if use_above && state.row_emitted == blocks_w {
+                    state.above_row_written = true;
+                }
+                state.row_emitted = 0;
+            }
+
+            // Compute reference block (IDCT of unquantized f32 DCT).
+            // Its LEFT-edge column (`orig_left`) is consumed here; its
+            // RIGHT-edge column is written into `left_orig_edges[bx]` at
+            // the end of the iteration so the NEXT block in the row
+            // (`bx+1`) can read it WITHOUT re-IDCTing the previous block.
+            let ref_block = br::idct_reference_block_fast(tokens, &dct);
+            let orig_left = br::left_edge_col(&ref_block);
+            // Phase 4: current-block's top-edge ROW (r=0), from the unquantized
+            // reference block. Analogous to orig_left, just transposed.
+            let orig_top: [f32; 8] = if use_above {
+                br::top_edge_row(&ref_block)
+            } else {
+                [0.0f32; 8]
+            };
+
+            // Left neighbor's right-edge columns (committed + original).
+            // Both were computed when block `bx-1` was processed; we read
+            // them directly here. `has_left_neighbor = bx > 0` — which
+            // is equivalent to `state.row_emitted > 0` after the row-start
+            // reset above, but we key on `bx` for clarity.
+            let has_left_neighbor = bx > 0;
+            let rec_left_right: &[f32; 8] = if has_left_neighbor {
+                &state.left_rec_edges[bx - 1]
+            } else {
+                &[0.0f32; 8]
+            };
+            let orig_left_right: &[f32; 8] = if has_left_neighbor {
+                &state.left_orig_edges[bx - 1]
+            } else {
+                &[0.0f32; 8]
+            };
+
+            // Above neighbor's bottom-edge ROW (committed, reconstructed)
+            // and the same block's original bottom-edge row. Available
+            // only after the first full row of blocks has been emitted.
+            let has_above_neighbor = use_above && state.above_row_written;
+            let rec_top_above: &[f32; 8] = if has_above_neighbor {
+                &state.above_rec_edges[bx]
+            } else {
+                &[0.0f32; 8]
+            };
+            let orig_top_above: &[f32; 8] = if has_above_neighbor {
+                &state.above_orig_edges[bx]
+            } else {
+                &[0.0f32; 8]
+            };
+
+            // --- Candidate 1: default AQ strength (no zero-bias shrink) ---
+            let zigzag_default = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                &dct,
+                &quant.y_zero_bias_simd,
+                aq_strength,
+            );
+            let rec_default = br::idct_quantized_block_fast(tokens, &zigzag_default, quant_natural);
+            let rec_left_default = br::left_edge_col(&rec_default);
+            let db_default_left = if has_left_neighbor {
+                br::boundary_distortion_raw(
+                    &rec_left_default,
+                    rec_left_right,
+                    &orig_left,
+                    orig_left_right,
+                    alpha,
+                )
+            } else {
+                0.0
+            };
+            let db_default_above = if has_above_neighbor {
+                let rec_top_default = br::top_edge_row(&rec_default);
+                br::boundary_distortion_raw(
+                    &rec_top_default,
+                    rec_top_above,
+                    &orig_top,
+                    orig_top_above,
+                    alpha,
+                )
+            } else {
+                0.0
+            };
+            let db_default = db_default_left + db_default_above;
+
+            let ac_energy = br::ac_dct_energy(&dct);
+            let trigger = threshold > 0.0 && db_default > threshold * ac_energy;
+
+            let mut best_zigzag = zigzag_default;
+            let mut best_rec = rec_default;
+            let mut best_db = db_default;
+
+            if trigger {
+                let mut aq = aq_strength;
+                for _ in 0..max_retries {
+                    aq *= shrink_factor;
+                    let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                        &dct,
+                        &quant.y_zero_bias_simd,
+                        aq,
+                    );
+                    let rec = br::idct_quantized_block_fast(tokens, &z, quant_natural);
+                    let rec_left = br::left_edge_col(&rec);
+                    let db_left = if has_left_neighbor {
+                        br::boundary_distortion_raw(
+                            &rec_left,
+                            rec_left_right,
+                            &orig_left,
+                            orig_left_right,
+                            alpha,
+                        )
+                    } else {
+                        0.0
+                    };
+                    let db_above = if has_above_neighbor {
+                        let rec_top = br::top_edge_row(&rec);
+                        br::boundary_distortion_raw(
+                            &rec_top,
+                            rec_top_above,
+                            &orig_top,
+                            orig_top_above,
+                            alpha,
+                        )
+                    } else {
+                        0.0
+                    };
+                    let db = db_left + db_above;
+                    if db < best_db {
+                        best_db = db;
+                        best_zigzag = z;
+                        best_rec = rec;
+                    }
+                }
+            }
+
+            // Cache THIS block's committed right-edge column (for next block's
+            // rec lookup) and original right-edge column (for next block's
+            // orig lookup — avoids IDCTing `pending.y[buffer_idx][i]` again
+            // when that block is processed as `bx-1`).
+            state.left_rec_edges[bx] = br::right_edge_col(&best_rec);
+            state.left_orig_edges[bx] = br::right_edge_col(&ref_block);
+            // Phase 4: cache THIS block's committed bottom-edge row for the
+            // block directly below, and the corresponding orig row from the
+            // unquantized reference. Writes persist across iMCUs — when the
+            // next iMCU's first block row starts, `bx = i % blocks_w` maps
+            // to the column of the block above.
+            if use_above {
+                state.above_rec_edges[bx] = br::bottom_edge_row(&best_rec);
+                state.above_orig_edges[bx] = br::bottom_edge_row(&ref_block);
+            }
+
+            state.row_emitted = bx + 1;
+            y_blocks.push(best_zigzag);
+            all_aq_strengths.push(aq_strength);
         }
     }
 

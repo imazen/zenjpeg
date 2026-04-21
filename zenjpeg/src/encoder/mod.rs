@@ -148,6 +148,10 @@ pub use crate::error::{Error, Result};
 pub use crate::encode::Stop;
 pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 pub use crate::encode::encoder_config::EncoderConfig;
+#[cfg(feature = "boundary-rd")]
+pub use crate::encode::encoder_config::{
+    BoundaryRd, BoundaryRdConfig, NeighborScope, RetryPolicy, SeamPenalty,
+};
 pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, OptimizationPreset,
     PixelLayout, ProgressiveScanMode, Quality, QuantTableConfig, TinyFileMode, XybSubsampling,

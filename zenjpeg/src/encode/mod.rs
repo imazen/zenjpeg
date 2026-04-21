@@ -65,6 +65,18 @@ pub mod wasm_simd;
 /// It smooths hard edges to reduce visible ringing artifacts, especially on white
 /// backgrounds. Enabled by default with no quality penalty for photographic content.
 pub mod deringing;
+
+/// Boundary-continuity refinement (issue #91 / PR #102).
+///
+/// Opt-in behind the `boundary-rd` Cargo feature. Provides the D_b
+/// distortion math and IDCT helpers used by the non-trellis boundary-RD
+/// pass wired into
+/// [`strip::StripProcessor::quantize_prev_pending_imcu`]. The module (and
+/// the refinement dispatch) is compiled out entirely when the feature is
+/// disabled, keeping the default build byte-identical to pre-boundary-RD
+/// main.
+#[cfg(feature = "boundary-rd")]
+pub(crate) mod boundary_rd;
 #[cfg(feature = "parallel")]
 mod fused_parallel_encode;
 #[cfg(feature = "parallel")]
@@ -129,6 +141,9 @@ pub(crate) use blocks::build_nonzero_mask;
 pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_config::EncoderConfig;
+#[cfg(feature = "boundary-rd")]
+#[allow(unused_imports)] // Public API re-exports (opt-in behind boundary-rd feature)
+pub use encoder_config::{BoundaryRd, BoundaryRdConfig, NeighborScope, RetryPolicy, SeamPenalty};
 #[cfg(feature = "trellis")]
 #[allow(unused_imports)] // Public API re-export
 pub use encoder_types::ExpertConfig;
