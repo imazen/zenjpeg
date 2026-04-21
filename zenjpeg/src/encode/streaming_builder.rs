@@ -72,6 +72,11 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) quant_source: QuantTableSource,
     /// Tiny-file optimization mode (default: Auto).
     pub(crate) tiny_file_mode: TinyFileMode,
+    /// Multiplier applied to the butteraugli distance for chroma (Cb, Cr)
+    /// components only. Default `1.0` is bit-identical to the single-
+    /// quality path. Clamped to `[0.1, 5.0]` on ingress by the public
+    /// [`EncoderConfig::chroma_distance_scale`] setter.
+    pub(crate) chroma_distance_scale: f32,
 }
 
 impl StreamingEncoderBuilder {
@@ -110,6 +115,7 @@ impl StreamingEncoderBuilder {
             trellis: None,
             quant_source: QuantTableSource::default(),
             tiny_file_mode: TinyFileMode::default(),
+            chroma_distance_scale: 1.0,
         }
     }
 
@@ -335,6 +341,16 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn tiny_file_mode(mut self, mode: TinyFileMode) -> Self {
         self.tiny_file_mode = mode;
+        self
+    }
+
+    /// Sets the chroma-distance multiplier. See
+    /// [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]
+    /// for full semantics. Default `1.0` is bit-identical to pre-existing
+    /// single-quality behaviour.
+    #[must_use]
+    pub(crate) fn chroma_distance_scale(mut self, scale: f32) -> Self {
+        self.chroma_distance_scale = scale.clamp(0.1, 5.0);
         self
     }
 

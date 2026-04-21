@@ -522,10 +522,17 @@ impl EncodingTables {
     /// Generate quantization tables for all three components.
     ///
     /// Returns (Y/X, Cb/Y, Cr/B) quantization tables.
+    /// Generate quantization tables for all three components.
+    ///
+    /// `distances` is `[Y, Cb, Cr]` butteraugli distances. Callers that
+    /// want the pre-existing single-distance behaviour should pass
+    /// `[d, d, d]`. Per-component distances allow luma vs chroma
+    /// quality splits (see
+    /// [`crate::encode::encoder_config::EncoderConfig::chroma_distance_scale`]).
     #[must_use]
     pub fn generate_quant_tables(
         &self,
-        distance: f32,
+        distances: [f32; 3],
         is_420: bool,
     ) -> (
         crate::quant::QuantTable,
@@ -533,9 +540,9 @@ impl EncodingTables {
         crate::quant::QuantTable,
     ) {
         (
-            self.generate_quant_table(0, distance, is_420),
-            self.generate_quant_table(1, distance, is_420),
-            self.generate_quant_table(2, distance, is_420),
+            self.generate_quant_table(0, distances[0], is_420),
+            self.generate_quant_table(1, distances[1], is_420),
+            self.generate_quant_table(2, distances[2], is_420),
         )
     }
 
@@ -825,7 +832,7 @@ mod tests {
 
         for q in [50, 75, 90] {
             let distance = (100.0 - q as f32) / 10.0;
-            let (y, cb, cr) = tables.generate_quant_tables(distance, false);
+            let (y, cb, cr) = tables.generate_quant_tables([distance, distance, distance], false);
 
             assert!(y.values.iter().all(|&v| v > 0), "Y quant at q{q} has zeros");
             assert!(
