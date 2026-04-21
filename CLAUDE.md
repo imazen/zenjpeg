@@ -837,6 +837,35 @@ Memory bandwidth reduction per block:
 
 ## Investigation Notes
 
+**Cross-backend dispatch parity tolerance (2026-04-21):**
+
+`test_dispatch_parity` (zenjpeg/tests/encoder_regression.rs) tolerates up to
+**64 bytes** of size divergence between archmage token permutations. The
+April 1 ties-to-even fix (archmage c566f76) IS landed in magetypes 0.9.21,
+so this is NOT the old scalar-vs-SSE ties-away rounding bug.
+
+Observed failure was `progressive_444_opt Q90 ~41 bytes` on frymire when
+v3/v3-Crypto/AVX-512/v4x are all disabled. zenjpeg only registers
+`v3, neon, wasm128, scalar` tiers, so that permutation falls directly to
+scalar. Baseline configs stay within a handful of bytes; progressive Q90
+amplifies each boundary-flip through AC-refinement tokenization.
+
+Source is NOT YET LOCALIZED. A few ULPs of FP intermediate difference
+between the AVX2 and scalar paths cascade into occasional DCT coefficient
+flips near the zero-bias threshold, but it is not currently proven whether
+the divergence originates in magetypes or in zenjpeg's own SIMD code.
+
+Before filing anything upstream: write a unit test against magetypes only
+(no zenjpeg) that exercises the AVX2 vs scalar backends on the same input
+and looks for ULP-level divergence in the specific operations we use (DCT
+butterflies, quantization, AQ pre-erosion). If magetypes alone is
+bit-identical across backends, the divergence is ours.
+
+If the 64-byte threshold is exceeded again on baseline configs or at a
+quality/subsampling combination that previously passed, localize the
+regression to the specific encode-side SIMD change rather than raising
+the tolerance further.
+
 **Mozjpeg Parity Investigation (2026-03-26, commit 1aba86cf):**
 
 `Quality::ApproxMozjpeg(q)` + `MozjpegRobidoux` tables had a double-conversion bug:
