@@ -216,7 +216,7 @@ pub(crate) fn parse_gdepth_xmp(xmp: &str) -> Option<DepthMapData> {
 ///
 /// `file_data` is the complete JPEG file (including appended images).
 pub(crate) fn parse_ddf(xmp: &str, file_data: &[u8]) -> Option<DepthMapData> {
-    use ultrahdr_core::metadata::container::{ItemSemantic, parse_container_items};
+    use crate::container::types::{ItemSemantic, parse_container_items};
 
     // Check for Dynamic Depth namespace
     if !xmp.contains("Container:Directory") && !xmp.contains("http://ns.google.com/photos/dd/1.0/")
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn parse_ddf_container_directory() {
-        use ultrahdr_core::metadata::container::{ItemSemantic, parse_container_items};
+        use crate::container::types::{ItemSemantic, parse_container_items};
 
         let xmp = r#"<x:xmpmeta>
   <rdf:RDF>

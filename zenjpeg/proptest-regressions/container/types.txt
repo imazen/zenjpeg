@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7e15b4002ca54b2fde65aab04f51469e95b12c4e332ba6813980b80243d68d33 # shrinks to items = [ContainerItem { semantic: Primary, mime: "image/jpeg", length: Some(1), padding: None }]
