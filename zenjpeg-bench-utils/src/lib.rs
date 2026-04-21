@@ -5,12 +5,10 @@
 //! - Quality metrics (DSSIM, SSIMULACRA2)
 //! - Test image discovery and loading
 //! - Encoder comparison helpers
+//! - Rate-distortion sweep harness + BBS block-boundary score
+//!   ([`bbs`], [`rd`], [`sweep`] — formerly `zenjpeg::metrics`)
 //!
 //! All functions use `imgref` and `rgb` types for type-safe, zero-copy interfaces.
-
-// Allow patterns that newer Rust versions handle differently
-#![allow(clippy::manual_is_multiple_of)]
-#![allow(clippy::unnecessary_lazy_evaluations)]
 //!
 //! # Usage
 //!
@@ -29,6 +27,30 @@
 //! // ... encode and decode ...
 //! let dssim = QualityMetrics::dssim(original.as_ref(), decoded.as_ref());
 //! ```
+
+// Allow patterns that newer Rust versions handle differently
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
+
+// ── R-D sweep / BBS infrastructure (moved out of zenjpeg::metrics) ──
+//
+// These modules host the codec-analysis metrics used by the boundary-RD
+// experimental harness (#91) and related sweeps. They lived under
+// `zenjpeg::metrics` behind the `__test-utils` gate; moving them here
+// keeps the main crate's public surface smaller and drops the gate.
+
+/// Block Boundary Score — perceptual blocking metric.
+pub mod bbs;
+/// Rate-distortion curves and BD-rate math.
+pub mod rd;
+/// Rate-distortion sweep harness.
+pub mod sweep;
+
+pub use bbs::{BbsResult, bbs_planar_u8, bbs_rgb8};
+pub use rd::{RdComparison, RdCurve, RdPoint, bd_rate, closest_point_distance};
+pub use sweep::{
+    CorpusImage, ImageClass, MetricKind, PointResult, SampleOutput, SweepResult, run_sweep,
+};
 
 use imgref::{ImgRef, ImgVec};
 use rgb::{RGB8, RGBA8};

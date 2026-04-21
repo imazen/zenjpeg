@@ -42,8 +42,8 @@ use std::time::Instant;
 use zenjpeg::encoder::{
     ChromaSubsampling, EncoderConfig, OptimizationPreset, PixelLayout,
 };
-use zenjpeg::metrics::rd;
-use zenjpeg::metrics::sweep::{
+use zenjpeg_bench_utils::rd;
+use zenjpeg_bench_utils::sweep::{
     self, CorpusImage, ImageClass, MetricKind, SampleOutput, SweepResult,
 };
 
@@ -576,7 +576,7 @@ fn compute_distortions(
                 out.insert(MetricKind::Ssim2, 100.0 - score);
             }
             MetricKind::Bbs => {
-                let bbs = zenjpeg::metrics::bbs::bbs_rgb8(recon_img, orig_img);
+                let bbs = zenjpeg_bench_utils::bbs::bbs_rgb8(recon_img, orig_img);
                 out.insert(MetricKind::Bbs, bbs.total);
             }
             MetricKind::Butteraugli => {

@@ -181,18 +181,10 @@ pub mod encoder;
 /// Provides min/typical/max estimates for peak memory and time.
 pub mod heuristics;
 
-/// Internal quality metrics (BBS, RD-curve, BD-rate harness).
-///
-/// JPEG-specific or codec-analysis metrics used by internal validation
-/// harnesses. NOT part of the versioned public API: the module is
-/// `pub(crate)` by default and only exposed when the `__test-utils`
-/// Cargo feature is enabled (used by internal integration tests and
-/// example CLIs). Items here may change at any time without a semver bump.
-#[cfg(any(test, feature = "__test-utils"))]
-pub mod metrics;
-
-#[cfg(not(any(test, feature = "__test-utils")))]
-pub(crate) mod metrics;
+// Codec-analysis metrics (BBS block-boundary score, RD-curve and
+// BD-rate harness, sweep orchestration) moved to the internal
+// `zenjpeg-bench-utils` crate. They are benchmark infrastructure, not
+// part of the shipped encoder library.
 
 /// JPEG encoder detection and quality estimation.
 ///

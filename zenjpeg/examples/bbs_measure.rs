@@ -1,7 +1,7 @@
 //! BBS (Block Boundary Score) measurement CLI.
 //!
 //! Measures the cross-seam gradient distortion introduced by JPEG encoding.
-//! See `zenjpeg::metrics::bbs` for the algorithm and `issue #91` for the
+//! See `zenjpeg_bench_utils::bbs` for the algorithm and `issue #91` for the
 //! motivation.
 //!
 //! Two modes:
@@ -35,7 +35,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zenjpeg::metrics::{BbsResult, bbs_rgb8};
+use zenjpeg_bench_utils::{BbsResult, bbs_rgb8};
 
 struct Args {
     original: PathBuf,

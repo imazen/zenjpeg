@@ -29,10 +29,7 @@
 //! [`super::rd::RdCurve`] and run a full
 //! [`super::rd::RdComparison`] vs any other config.
 
-use alloc::borrow::ToOwned;
-use alloc::collections::BTreeMap;
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::collections::BTreeMap;
 
 use super::rd::{RdCurve, RdPoint};
 

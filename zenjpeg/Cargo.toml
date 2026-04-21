@@ -300,22 +300,22 @@ name = "low_q_report"
 required-features = ["__test-utils"]
 
 # Boundary-RD examples (#91).
-# All three access the pub(crate) metrics module via the __test-utils gate.
+# These pull the BBS + RD + sweep infrastructure from
+# `zenjpeg-bench-utils` (dev-dep) — no crate-level feature gate needed.
 [[example]]
 name = "bbs_measure"
-required-features = ["__test-utils"]
 
 [[example]]
 name = "rd_compare"
-required-features = ["__test-utils", "trellis", "decoder"]
+required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "boundary_rd_sweep"
-required-features = ["__test-utils", "trellis", "decoder"]
+required-features = ["trellis", "decoder"]
 
 [[example]]
 name = "boundary_rd_low_q_sweep"
-required-features = ["__test-utils", "trellis", "decoder"]
+required-features = ["trellis", "decoder"]
 
 # Examples requiring trellis feature
 [[example]]

@@ -44,8 +44,7 @@
 //! If the overlap is empty (or spans fewer than two points on either
 //! curve), [`bd_rate`] returns `None`.
 
-use alloc::vec;
-use alloc::vec::Vec;
+// (alloc types are re-exported through std; no explicit imports needed)
 
 /// A single rate-distortion sample.
 ///

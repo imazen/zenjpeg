@@ -49,8 +49,8 @@ use std::time::Instant;
 use zenjpeg::encoder::{
     BoundaryRd, BoundaryRdConfig, ChromaSubsampling, EncoderConfig, PixelLayout,
 };
-use zenjpeg::metrics::rd::{self, RdCurve, RdPoint};
-use zenjpeg::metrics::sweep::{CorpusImage, ImageClass};
+use zenjpeg_bench_utils::rd::{self, RdCurve, RdPoint};
+use zenjpeg_bench_utils::sweep::{CorpusImage, ImageClass};
 
 // ---------------- args ----------------
 
@@ -357,7 +357,7 @@ fn metrics(orig: &[u8], recon: &[u8], w: usize, h: usize) -> (f64, f64) {
         .collect();
     let orig_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&orig_rgb, w, h);
     let recon_img: ImgRef<'_, RGB<u8>> = ImgRef::new(&recon_rgb, w, h);
-    let bbs = zenjpeg::metrics::bbs::bbs_rgb8(recon_img, orig_img);
+    let bbs = zenjpeg_bench_utils::bbs::bbs_rgb8(recon_img, orig_img);
 
     (100.0 - ssim2, bbs.total)
 }
