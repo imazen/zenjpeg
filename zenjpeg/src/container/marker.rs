@@ -322,7 +322,7 @@ pub fn find_jpeg_boundaries(data: &[u8]) -> Vec<Range<usize>> {
 ///
 /// Useful when the caller has its own inline storage and wants to
 /// avoid the `Vec` allocation [`find_jpeg_boundaries`] makes.
-pub fn for_each_jpeg_boundary(data: &[u8], mut f: impl FnMut(Range<usize>)) {
+pub(crate) fn for_each_jpeg_boundary(data: &[u8], mut f: impl FnMut(Range<usize>)) {
     let mut pos = 0usize;
     while pos < data.len() {
         // memchr to the next 0xFF byte.

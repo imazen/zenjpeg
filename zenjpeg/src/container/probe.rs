@@ -35,11 +35,16 @@
 //!    wrap them in `(buffer_id, u32)` without a layout break behind
 //!    `#[non_exhaustive]`.
 //! 2. All public structs/enums are `#[non_exhaustive]`.
-//! 3. A [`ContainerProbe`] captured from a truncated buffer carries
-//!    `truncated = true` — consumers must treat every `Option::None`
-//!    as "not yet confirmed absent."
+//! 3. A [`ContainerProbe`] captured from a truncated buffer reports
+//!    [`ContainerProbe::truncated`] == `true`, and consumers must treat
+//!    every `None` accessor return as "not yet confirmed absent."
+//! 4. Storage fields are `pub(crate)`; consumers go through accessor
+//!    methods so storage can evolve (e.g. fixed inline → `TinyVec`)
+//!    without a semver break.
 
 use core::ops::Range;
+
+use tinyvec::ArrayVec;
 
 use super::marker::{MarkerKind, MarkerSpan, iter};
 
@@ -173,41 +178,13 @@ pub struct ProbeSof {
     pub sofn: u8,
 }
 
-/// Overflow flags surfaced when an input had more occurrences of a
-/// capped-storage item than the inline array can hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct OverflowFlags {
-    bits: u8,
-}
-
-impl OverflowFlags {
-    const fn new(bits: u8) -> Self {
-        Self { bits }
-    }
-
-    /// More than 8 top-level JPEG images in the buffer.
-    pub const IMAGE_RANGES: Self = Self::new(1 << 0);
-    /// More than 4 ExtendedXMP chunks.
-    pub const EXTENDED_XMP: Self = Self::new(1 << 1);
-
-    #[inline]
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.bits == 0
-    }
-    #[inline]
-    #[must_use]
-    pub const fn contains(self, other: Self) -> bool {
-        (self.bits & other.bits) == other.bits
-    }
-    #[inline]
-    fn set(&mut self, other: Self) {
-        self.bits |= other.bits;
-    }
-}
-
 /// Single-pass probe result. All byte ranges reference positions in
 /// the caller's buffer.
+///
+/// Fields are `pub(crate)`; consumers go through the accessor methods
+/// on `impl ContainerProbe` so internal storage (currently
+/// [`tinyvec::ArrayVec`] for the two bounded lists) can evolve without
+/// a semver break.
 ///
 /// Not `Copy` because [`Range`] deliberately isn't `Copy` (stdlib
 /// choice — Range is also an Iterator and Copy would make iteration
@@ -219,56 +196,43 @@ impl OverflowFlags {
 #[non_exhaustive]
 pub struct ContainerProbe {
     /// SOI..EOI byte ranges for each top-level image (primary first).
-    /// `None` entries are unused slots. Overflow (>8 images) is
-    /// signaled by [`OverflowFlags::IMAGE_RANGES`].
-    pub image_ranges: [Option<Range<u32>>; 8],
+    /// Bounded at 8 entries; further images are silently ignored.
+    pub(crate) image_ranges: ArrayVec<[Range<u32>; 8]>,
 
-    /// ICC profile APP2 payload range (single-segment). For
-    /// multi-segment profiles (>65KB), this is the FIRST segment; the
-    /// caller must reassemble from all APP2 ICC_PROFILE segments.
-    pub icc_profile: Option<Range<u32>>,
-    /// Result of [`zenpixels::icc::identify_common`] on the ICC
-    /// profile. Only populated when [`Wants::ICC_IDENTIFY`] is set
-    /// and the profile is single-segment.
-    pub icc_identification: Option<zenpixels::icc::IccIdentification>,
+    /// ICC profile APP2 payload range (single-segment).
+    pub(crate) icc_profile: Option<Range<u32>>,
+    /// Result of [`zenpixels::icc::identify_common`] on the ICC profile.
+    pub(crate) icc_identification: Option<zenpixels::icc::IccIdentification>,
 
     /// First APP1 Exif segment range.
-    pub exif: Option<Range<u32>>,
+    pub(crate) exif: Option<Range<u32>>,
 
     /// First APP1 XMP (adobe namespace) segment range.
-    pub xmp: Option<Range<u32>>,
-    /// Additional extended-XMP chunks (up to 4).
-    pub extended_xmp: [Option<Range<u32>>; 4],
+    pub(crate) xmp: Option<Range<u32>>,
+    /// Additional extended-XMP chunk ranges. Bounded at 4 entries.
+    pub(crate) extended_xmp: ArrayVec<[Range<u32>; 4]>,
 
     /// APP2 MPF segment range.
-    pub mpf: Option<Range<u32>>,
+    pub(crate) mpf: Option<Range<u32>>,
 
     /// APP2 ISO 21496-1 segment range.
-    pub iso_gainmap: Option<Range<u32>>,
+    pub(crate) iso_gainmap: Option<Range<u32>>,
 
-    /// Minimal SOF-derived info (when [`Wants::SOF_DIMENSIONS`]).
-    pub sof: Option<ProbeSof>,
+    /// Minimal SOF-derived info.
+    pub(crate) sof: Option<ProbeSof>,
 
     /// Number of SOS segments (1 = baseline, >1 = progressive).
-    /// Only populated when [`Wants::SCAN_COUNT`].
-    pub scan_count: u16,
+    pub(crate) scan_count: u16,
 
-    /// XMP payload contains `hdrgm:` namespace attributes (legacy
-    /// UltraHDR fingerprint).
-    pub has_xmp_hdrgm: bool,
-    /// XMP payload contains a `Item:Semantic="GainMap"` GContainer
-    /// entry.
-    pub has_xmp_gcontainer_gainmap: bool,
+    /// XMP contains `hdrgm:` namespace attributes.
+    pub(crate) has_xmp_hdrgm: bool,
+    /// XMP contains an `Item:Semantic="GainMap"` GContainer entry.
+    pub(crate) has_xmp_gcontainer_gainmap: bool,
     /// Computed gain-map presence classification.
-    pub gainmap_presence: GainMapPresence,
+    pub(crate) gainmap_presence: GainMapPresence,
 
-    /// Probe stopped early due to truncated / malformed input. When
-    /// true, every `None` field is ambiguous ("not yet confirmed
-    /// absent") rather than definitive.
-    pub truncated: bool,
-
-    /// Per-capped-array overflow flags.
-    pub overflow: OverflowFlags,
+    /// Probe stopped early due to truncated / malformed input.
+    pub(crate) truncated: bool,
 }
 
 // Guardrail: don't let this struct silently bloat.
@@ -282,12 +246,12 @@ const _: () = {
 impl Default for ContainerProbe {
     fn default() -> Self {
         Self {
-            image_ranges: [const { None }; 8],
+            image_ranges: ArrayVec::new(),
             icc_profile: None,
             icc_identification: None,
             exif: None,
             xmp: None,
-            extended_xmp: [const { None }; 4],
+            extended_xmp: ArrayVec::new(),
             mpf: None,
             iso_gainmap: None,
             sof: None,
@@ -296,8 +260,120 @@ impl Default for ContainerProbe {
             has_xmp_gcontainer_gainmap: false,
             gainmap_presence: GainMapPresence::None,
             truncated: false,
-            overflow: OverflowFlags::default(),
         }
+    }
+}
+
+impl ContainerProbe {
+    /// SOI..EOI byte ranges for each top-level image (primary first).
+    /// Bounded at 8 entries; further images are silently ignored.
+    #[inline]
+    #[must_use]
+    pub fn image_ranges(&self) -> &[Range<u32>] {
+        &self.image_ranges
+    }
+
+    /// ICC profile APP2 payload range (single-segment). `None` if
+    /// absent or if [`Wants::ICC_LOCATION`] was not requested.
+    #[inline]
+    #[must_use]
+    pub fn icc_profile(&self) -> Option<&Range<u32>> {
+        self.icc_profile.as_ref()
+    }
+
+    /// Result of [`zenpixels::icc::identify_common`] on the ICC profile.
+    /// `None` unless [`Wants::ICC_IDENTIFY`] was requested AND the
+    /// profile was single-segment AND identification succeeded.
+    #[inline]
+    #[must_use]
+    pub fn icc_identification(&self) -> Option<&zenpixels::icc::IccIdentification> {
+        self.icc_identification.as_ref()
+    }
+
+    /// First APP1 Exif segment payload range. `None` unless requested
+    /// and found.
+    #[inline]
+    #[must_use]
+    pub fn exif(&self) -> Option<&Range<u32>> {
+        self.exif.as_ref()
+    }
+
+    /// First APP1 XMP (adobe namespace) segment payload range.
+    #[inline]
+    #[must_use]
+    pub fn xmp(&self) -> Option<&Range<u32>> {
+        self.xmp.as_ref()
+    }
+
+    /// Additional Extended-XMP chunk payload ranges. Bounded at 4
+    /// entries — callers seeing `len() == 4` may be looking at a
+    /// truncated view of a longer chain.
+    #[inline]
+    #[must_use]
+    pub fn extended_xmp(&self) -> &[Range<u32>] {
+        &self.extended_xmp
+    }
+
+    /// APP2 MPF segment payload range.
+    #[inline]
+    #[must_use]
+    pub fn mpf(&self) -> Option<&Range<u32>> {
+        self.mpf.as_ref()
+    }
+
+    /// APP2 ISO 21496-1 segment payload range.
+    #[inline]
+    #[must_use]
+    pub fn iso_gainmap(&self) -> Option<&Range<u32>> {
+        self.iso_gainmap.as_ref()
+    }
+
+    /// SOF-derived frame info (dimensions, component count, SOFn byte).
+    #[inline]
+    #[must_use]
+    pub fn sof(&self) -> Option<&ProbeSof> {
+        self.sof.as_ref()
+    }
+
+    /// Number of SOS segments (1 = baseline, >1 = progressive). Only
+    /// populated when [`Wants::SCAN_COUNT`] was requested.
+    #[inline]
+    #[must_use]
+    pub fn scan_count(&self) -> u16 {
+        self.scan_count
+    }
+
+    /// `true` if any APP1 XMP payload carried `hdrgm:Version` or
+    /// `hdrgm:GainMapMax` — the legacy libultrahdr (pre-1.4) fingerprint.
+    #[inline]
+    #[must_use]
+    pub fn has_xmp_hdrgm(&self) -> bool {
+        self.has_xmp_hdrgm
+    }
+
+    /// `true` if any APP1 XMP payload carried an
+    /// `Item:Semantic="GainMap"` GContainer entry.
+    #[inline]
+    #[must_use]
+    pub fn has_xmp_gcontainer_gainmap(&self) -> bool {
+        self.has_xmp_gcontainer_gainmap
+    }
+
+    /// Gain-map presence classification, derived from ISO + XMP + GContainer
+    /// fingerprints.
+    #[inline]
+    #[must_use]
+    pub fn gainmap_presence(&self) -> GainMapPresence {
+        self.gainmap_presence
+    }
+
+    /// `true` if the probe stopped early due to truncated or malformed
+    /// input. When `true`, every `None` accessor return must be read as
+    /// "not yet confirmed absent" rather than definitive absence.
+    #[inline]
+    #[must_use]
+    pub fn truncated(&self) -> bool {
+        self.truncated
     }
 }
 
@@ -326,8 +402,8 @@ impl Default for ContainerProbe {
 /// #     0xFF, 0xD9,
 /// # ];
 /// let p = probe(jpeg, Wants::ULTRAHDR_DETECT | Wants::SOF_DIMENSIONS);
-/// assert_eq!(p.gainmap_presence, GainMapPresence::None);
-/// if let Some(sof) = p.sof {
+/// assert_eq!(p.gainmap_presence(), GainMapPresence::None);
+/// if let Some(sof) = p.sof() {
 ///     assert!(sof.width > 0 && sof.height > 0);
 /// }
 /// ```
@@ -349,14 +425,13 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
     // from the main marker walk below because `MarkerIter` stops at
     // the first EOI by design.
     if wants.contains(Wants::IMAGE_RANGES) {
-        let mut image_idx = 0usize;
         super::marker::for_each_jpeg_boundary(data, |range| {
-            if image_idx < p.image_ranges.len() {
-                p.image_ranges[image_idx] = Some((range.start as u32)..(range.end as u32));
-            } else {
-                p.overflow.set(OverflowFlags::IMAGE_RANGES);
-            }
-            image_idx += 1;
+            // ArrayVec silently drops pushes past its capacity. Consumers
+            // who care about "truncated list" semantics inspect `len()`
+            // against the cap (8).
+            let _ = p
+                .image_ranges
+                .try_push((range.start as u32)..(range.end as u32));
         });
     }
 
@@ -366,8 +441,6 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
     // must precede the primary's SOS. Scan counting past EOI is
     // unnecessary (progressive scans all live inside one image).
     let stop_at_first_sos = !wants.contains(Wants::SCAN_COUNT);
-
-    let mut ext_xmp_idx = 0usize;
 
     for span in iter(data) {
         match span.kind {
@@ -398,7 +471,7 @@ pub fn probe(data: &[u8], wants: Wants) -> ContainerProbe {
                 });
             }
             MarkerKind::App(1) => {
-                handle_app1(&mut p, &span, wants, &mut ext_xmp_idx);
+                handle_app1(&mut p, &span, wants);
             }
             MarkerKind::App(2) => {
                 handle_app2(&mut p, &span, wants);
@@ -438,7 +511,7 @@ pub fn is_ultrahdr(data: &[u8]) -> bool {
     for span in iter(data) {
         match span.kind {
             MarkerKind::App(2)
-                if span.payload.starts_with(super::iso_jpeg::ISO_21496_1_URN)
+                if span.payload.starts_with(super::iso21496::ISO_21496_1_URN)
                     || span.payload.starts_with(super::mpf::MPF_IDENTIFIER) =>
             {
                 return true;
@@ -480,12 +553,7 @@ const EXIF_PREFIX: &[u8; 6] = b"Exif\0\0";
 const XMP_NAMESPACE_PREFIX: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 const EXTENDED_XMP_PREFIX: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
 
-fn handle_app1(
-    probe: &mut ContainerProbe,
-    span: &MarkerSpan<'_>,
-    wants: Wants,
-    ext_xmp_idx: &mut usize,
-) {
+fn handle_app1(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) {
     let payload = span.payload;
 
     if payload.starts_with(EXIF_PREFIX)
@@ -526,14 +594,11 @@ fn handle_app1(
     }
 
     if payload.starts_with(EXTENDED_XMP_PREFIX) && wants.contains(Wants::XMP_LOCATION) {
-        if *ext_xmp_idx < probe.extended_xmp.len() {
-            let start = (span.offset + 2 + 2 + EXTENDED_XMP_PREFIX.len()) as u32;
-            let end = (span.offset + span.length) as u32;
-            probe.extended_xmp[*ext_xmp_idx] = Some(start..end);
-            *ext_xmp_idx += 1;
-        } else {
-            probe.overflow.set(OverflowFlags::EXTENDED_XMP);
-        }
+        let start = (span.offset + 2 + 2 + EXTENDED_XMP_PREFIX.len()) as u32;
+        let end = (span.offset + span.length) as u32;
+        // ArrayVec drops pushes past capacity (4). Consumers inspect
+        // `extended_xmp().len() == 4` to detect a truncated chain.
+        let _ = probe.extended_xmp.try_push(start..end);
     }
 }
 
@@ -575,11 +640,11 @@ fn handle_app2(probe: &mut ContainerProbe, span: &MarkerSpan<'_>, wants: Wants) 
         return;
     }
 
-    if payload.starts_with(super::iso_jpeg::ISO_21496_1_URN)
+    if payload.starts_with(super::iso21496::ISO_21496_1_URN)
         && wants.contains(Wants::ISO_GAINMAP)
         && probe.iso_gainmap.is_none()
     {
-        let start = (span.offset + 2 + 2 + super::iso_jpeg::ISO_21496_1_URN.len()) as u32;
+        let start = (span.offset + 2 + 2 + super::iso21496::ISO_21496_1_URN.len()) as u32;
         let end = (span.offset + span.length) as u32;
         probe.iso_gainmap = Some(start..end);
     }
@@ -620,10 +685,20 @@ fn classify_gainmap_presence(p: &ContainerProbe) -> GainMapPresence {
 
 #[cfg(test)]
 mod tests {
-    use super::super::iso_jpeg::create_iso_app2_marker;
+    use super::super::iso21496::append_app2_marker as iso21496_append_app2;
     use super::super::mpf::create_mpf_header;
     use super::*;
     use alloc::vec::Vec;
+
+    /// Build a stub ISO 21496-1 APP2 segment with `payload` as its body
+    /// (after the URN). Test convenience — zenjpeg::container::iso21496
+    /// is `pub(crate)`, so its low-level appender is available to tests
+    /// in the same crate.
+    fn iso_app2(payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        iso21496_append_app2(&mut v, payload);
+        v
+    }
 
     fn minimal_jpeg() -> Vec<u8> {
         let mut v = Vec::new();
@@ -640,16 +715,16 @@ mod tests {
     #[test]
     fn probe_empty_returns_defaults() {
         let p = probe(&[], Wants::ALL);
-        assert_eq!(p.scan_count, 0);
-        assert!(p.image_ranges.iter().all(|r| r.is_none()));
-        assert_eq!(p.gainmap_presence, GainMapPresence::None);
+        assert_eq!(p.scan_count(), 0);
+        assert!(p.image_ranges().is_empty());
+        assert_eq!(p.gainmap_presence(), GainMapPresence::None);
     }
 
     #[test]
     fn probe_sof_dimensions_parse_correctly() {
         let data = minimal_jpeg();
         let p = probe(&data, Wants::SOF_DIMENSIONS);
-        let sof = p.sof.expect("sof");
+        let sof = p.sof().expect("sof");
         assert_eq!(sof.height, 16);
         assert_eq!(sof.width, 32);
         assert_eq!(sof.num_components, 3);
@@ -660,17 +735,17 @@ mod tests {
     fn probe_scan_count_baseline() {
         let data = minimal_jpeg();
         let p = probe(&data, Wants::SCAN_COUNT);
-        assert_eq!(p.scan_count, 1);
+        assert_eq!(p.scan_count(), 1);
     }
 
     #[test]
     fn probe_image_ranges_single_image() {
         let data = minimal_jpeg();
         let p = probe(&data, Wants::IMAGE_RANGES);
-        let r = p.image_ranges[0].clone().expect("primary");
-        assert_eq!(r.start, 0);
-        assert_eq!(r.end, data.len() as u32);
-        assert!(p.image_ranges[1].is_none());
+        let ranges = p.image_ranges();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[0].end, data.len() as u32);
     }
 
     #[test]
@@ -679,13 +754,12 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xD8]);
         let mut dummy_iso = [0u8; 16];
         dummy_iso[0] = 0x00; // min_version byte 1
-        let iso_app2 = create_iso_app2_marker(&dummy_iso);
-        data.extend_from_slice(&iso_app2);
+        data.extend_from_slice(&iso_app2(&dummy_iso));
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::ISO_GAINMAP);
-        assert!(p.iso_gainmap.is_some());
-        assert_eq!(p.gainmap_presence, GainMapPresence::Iso21496);
+        assert!(p.iso_gainmap().is_some());
+        assert_eq!(p.gainmap_presence(), GainMapPresence::Iso21496);
     }
 
     #[test]
@@ -697,7 +771,7 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::MPF_LOCATION);
-        assert!(p.mpf.is_some());
+        assert!(p.mpf().is_some());
     }
 
     #[test]
@@ -725,9 +799,9 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS);
-        assert!(p.xmp.is_some());
-        assert!(p.has_xmp_hdrgm);
-        assert_eq!(p.gainmap_presence, GainMapPresence::XmpHdrgmLegacy);
+        assert!(p.xmp().is_some());
+        assert!(p.has_xmp_hdrgm());
+        assert_eq!(p.gainmap_presence(), GainMapPresence::XmpHdrgmLegacy);
     }
 
     #[test]
@@ -748,8 +822,8 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS);
-        assert!(p.has_xmp_gcontainer_gainmap);
-        assert_eq!(p.gainmap_presence, GainMapPresence::GContainerOnly);
+        assert!(p.has_xmp_gcontainer_gainmap());
+        assert_eq!(p.gainmap_presence(), GainMapPresence::GContainerOnly);
     }
 
     #[test]
@@ -758,8 +832,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xD8]);
 
         let dummy_iso = [0u8; 16];
-        let iso_app2 = create_iso_app2_marker(&dummy_iso);
-        data.extend_from_slice(&iso_app2);
+        data.extend_from_slice(&iso_app2(&dummy_iso));
 
         let xmp_payload = b"hdrgm:Version=\"1.0\"";
         let namespace = b"http://ns.adobe.com/xap/1.0/\0";
@@ -776,43 +849,43 @@ mod tests {
             &data,
             Wants::ISO_GAINMAP | Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS,
         );
-        assert_eq!(p.gainmap_presence, GainMapPresence::IsoAndXmp);
+        assert_eq!(p.gainmap_presence(), GainMapPresence::IsoAndXmp);
     }
 
     #[test]
     fn probe_wants_skips_unrequested_signals() {
         let mut data = Vec::new();
         data.extend_from_slice(&[0xFF, 0xD8]);
-        let iso_app2 = create_iso_app2_marker(&[0u8; 16]);
-        data.extend_from_slice(&iso_app2);
+        data.extend_from_slice(&iso_app2(&[0u8; 16]));
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         // Probe asking ONLY for SOF should NOT surface ISO.
         let p = probe(&data, Wants::SOF_DIMENSIONS);
-        assert!(p.iso_gainmap.is_none());
-        assert!(p.sof.is_some());
+        assert!(p.iso_gainmap().is_none());
+        assert!(p.sof().is_some());
     }
 
+    /// Regression: when more top-level images exist than the capped
+    /// `image_ranges` storage can hold (8), the array fills to 8 and
+    /// further images are silently dropped. Callers who care about
+    /// "was truncated" inspect `len() == 8`.
     #[test]
-    fn probe_overflow_flags_set_on_too_many_images() {
-        // Concatenate 10 minimal JPEGs (we only have 8 slots).
+    fn probe_image_ranges_cap_at_8() {
         let mut data = Vec::new();
         let j = minimal_jpeg();
         for _ in 0..10 {
             data.extend_from_slice(&j);
         }
         let p = probe(&data, Wants::IMAGE_RANGES);
-        assert!(p.overflow.contains(OverflowFlags::IMAGE_RANGES));
-        // First 8 should be populated.
-        assert!(p.image_ranges[7].is_some());
+        assert_eq!(p.image_ranges().len(), 8, "array capacity enforced");
     }
 
     #[test]
     fn probe_non_jpeg_returns_empty() {
         let p = probe(b"hello world", Wants::ALL);
-        assert_eq!(p.scan_count, 0);
-        assert!(p.image_ranges[0].is_none());
-        assert!(p.sof.is_none());
+        assert_eq!(p.scan_count(), 0);
+        assert!(p.image_ranges().is_empty());
+        assert!(p.sof().is_none());
     }
 
     #[test]
@@ -825,8 +898,7 @@ mod tests {
     fn is_ultrahdr_true_on_iso_gainmap() {
         let mut data = Vec::new();
         data.extend_from_slice(&[0xFF, 0xD8]);
-        let iso_app2 = create_iso_app2_marker(&[0u8; 16]);
-        data.extend_from_slice(&iso_app2);
+        data.extend_from_slice(&iso_app2(&[0u8; 16]));
         data.extend_from_slice(&minimal_jpeg()[2..]);
         assert!(is_ultrahdr(&data));
     }
@@ -903,7 +975,7 @@ mod tests {
 
         let p = probe(&data, Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS);
         assert!(
-            p.has_xmp_hdrgm,
+            p.has_xmp_hdrgm(),
             "fingerprint must surface even when the gain-map signal is in a later APP1 XMP"
         );
     }
@@ -997,15 +1069,6 @@ mod tests {
     }
 
     #[test]
-    fn overflow_flags_is_empty_and_contains() {
-        let empty = OverflowFlags::default();
-        assert!(empty.is_empty());
-        assert!(!OverflowFlags::IMAGE_RANGES.is_empty());
-        assert!(OverflowFlags::IMAGE_RANGES.contains(OverflowFlags::IMAGE_RANGES));
-        assert!(!OverflowFlags::IMAGE_RANGES.contains(OverflowFlags::EXTENDED_XMP));
-    }
-
-    #[test]
     fn probe_captures_exif_range() {
         let mut data = Vec::new();
         data.extend_from_slice(&[0xFF, 0xD8]);
@@ -1014,7 +1077,7 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::EXIF_LOCATION);
-        let r = p.exif.expect("exif range captured");
+        let r = p.exif().expect("exif range captured");
         // Range should cover the EXIF body only (after segment length + identifier).
         assert_eq!((r.end - r.start) as usize, exif_body.len());
         // And the body at that range should match what we inserted.
@@ -1033,14 +1096,14 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::XMP_LOCATION);
-        assert!(p.extended_xmp[0].is_some());
-        assert!(p.extended_xmp[1].is_some());
-        assert!(p.extended_xmp[2].is_none());
-        assert!(!p.overflow.contains(OverflowFlags::EXTENDED_XMP));
+        assert_eq!(p.extended_xmp().len(), 2);
     }
 
+    /// Regression: 5 Extended-XMP chunks into a 4-slot ArrayVec fills
+    /// to cap, then silently drops the 5th push. Callers inspect
+    /// `extended_xmp().len() == 4` to infer truncation.
     #[test]
-    fn probe_records_extended_xmp_overflow() {
+    fn probe_extended_xmp_cap_at_4() {
         let mut data = Vec::new();
         data.extend_from_slice(&[0xFF, 0xD8]);
         data.extend_from_slice(&app1_with_prefix(XMP_NAMESPACE_PREFIX, b"<x:xmpmeta/>"));
@@ -1052,8 +1115,7 @@ mod tests {
         data.extend_from_slice(&minimal_jpeg()[2..]);
 
         let p = probe(&data, Wants::XMP_LOCATION);
-        assert!(p.extended_xmp.iter().all(Option::is_some));
-        assert!(p.overflow.contains(OverflowFlags::EXTENDED_XMP));
+        assert_eq!(p.extended_xmp().len(), 4, "array capacity enforced");
     }
 
     /// Synthesize a single-chunk ICC_PROFILE APP2 with a minimal valid
@@ -1076,13 +1138,13 @@ mod tests {
 
         let p = probe(&data, Wants::ICC_LOCATION | Wants::ICC_IDENTIFY);
         assert!(
-            p.icc_profile.is_some(),
+            p.icc_profile().is_some(),
             "icc_profile range must be recorded"
         );
         // identify_common on garbage bytes returns None; the important
         // coverage point is that the identify branch was taken (no panic,
         // both `seq_no == 1 && total_seqs == 1` were satisfied).
-        let _ = p.icc_identification; // value-agnostic; type-level check suffices
+        let _ = p.icc_identification(); // value-agnostic; type-level check suffices
     }
 
     #[test]
@@ -1092,8 +1154,7 @@ mod tests {
         // GainMapPresence::IsoAndGContainer arm of classify_gainmap_presence.
         let mut data = Vec::new();
         data.extend_from_slice(&[0xFF, 0xD8]);
-        let iso_app2 = create_iso_app2_marker(&[0u8; 16]);
-        data.extend_from_slice(&iso_app2);
+        data.extend_from_slice(&iso_app2(&[0u8; 16]));
 
         let xmp_body =
             br#"<rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/">
@@ -1106,9 +1167,9 @@ mod tests {
             &data,
             Wants::ISO_GAINMAP | Wants::XMP_LOCATION | Wants::XMP_GAINMAP_FLAGS,
         );
-        assert!(p.iso_gainmap.is_some());
-        assert!(p.has_xmp_gcontainer_gainmap);
-        assert!(!p.has_xmp_hdrgm);
-        assert_eq!(p.gainmap_presence, GainMapPresence::IsoAndGContainer);
+        assert!(p.iso_gainmap().is_some());
+        assert!(p.has_xmp_gcontainer_gainmap());
+        assert!(!p.has_xmp_hdrgm());
+        assert_eq!(p.gainmap_presence(), GainMapPresence::IsoAndGContainer);
     }
 }

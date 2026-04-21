@@ -206,20 +206,19 @@ fn bench_primary_bounds(suite: &mut Suite, label: &str, data: &'static [u8]) {
 }
 
 fn bench_probe_workflow(suite: &mut Suite, label: &str, data: &'static [u8]) {
-    use zenjpeg::container::{
-        Iso21496Format, Wants, parse_iso_app2, parse_mpf, primary_bounds, probe,
-    };
+    use zenjpeg::container::{Wants, parse_mpf, primary_bounds, probe};
     suite.group(format!("probe_workflow/{label}"), |g| {
         g.throughput(Throughput::Bytes(data.len() as u64));
 
         // Sequential walks using new zenjpeg::container APIs as independent calls.
+        // (The iso21496 envelope parser is now `pub(crate)` — covered implicitly
+        // by the `single_probe_all` path via `Wants::ISO_GAINMAP`.)
         g.bench("sequential_unified", move |b| {
             b.iter(|| {
                 let images = zenjpeg::container::find_jpeg_boundaries(black_box(data));
                 let mpf = parse_mpf(black_box(data)).ok();
-                let iso = parse_iso_app2(black_box(data), Iso21496Format::JpegApp2).ok();
                 let bounds = primary_bounds(black_box(data));
-                black_box((images, mpf, iso, bounds));
+                black_box((images, mpf, bounds));
             })
         });
 

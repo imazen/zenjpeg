@@ -96,13 +96,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_container_iso_jpeg"
-path = "fuzz_targets/fuzz_container_iso_jpeg.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "fuzz_container_xmp"
 path = "fuzz_targets/fuzz_container_xmp.rs"
 test = false
