@@ -35,6 +35,9 @@ use crate::decode::idct::inverse_dct_8x8;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_NATURAL_ORDER};
 use crate::foundation::simd_types::Block8x8f;
 
+use archmage::prelude::*;
+use magetypes::simd::generic::f32x8 as GenericF32x8;
+
 /// Reconstruct the 8×8 spatial block from an unquantized f32 DCT block.
 ///
 /// Used as the "original" reference in D_b: DCT is invertible, so this
@@ -48,15 +51,40 @@ use crate::foundation::simd_types::Block8x8f;
 /// quantized path). We apply the ×8 factor here so the reference block
 /// comes out in the same pixel domain as
 /// [`idct_quantized_block`].
+///
+/// Both the ×8 scaling and the IDCT use SIMD dispatch via archmage.
 #[must_use]
 pub(crate) fn idct_reference_block(dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZE] {
-    let mut natural = [0.0f32; DCT_BLOCK_SIZE];
-    for r in 0..8 {
-        for c in 0..8 {
-            natural[r * 8 + c] = dct_f32.rows[r][c] * 8.0;
-        }
-    }
+    let natural = incant!(mage_scale_block_x8(dct_f32));
     inverse_dct_8x8(&natural)
+}
+
+/// SIMD ×8 scaler: packs `Block8x8f` into a flat `[f32; 64]` scaled by 8.
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn mage_scale_block_x8(token: Token, dct_f32: &Block8x8f) -> [f32; DCT_BLOCK_SIZE] {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let scale = f32x8::splat(token, 8.0);
+    let mut out = [0.0f32; DCT_BLOCK_SIZE];
+
+    // Loop through rows; LLVM unrolls this at #[magetypes] expansion time.
+    for row in 0..8 {
+        let v = f32x8::from_array(token, dct_f32.rows[row]);
+        let scaled = v * scale;
+        let arr = scaled.to_array();
+        let base = row * 8;
+        out[base] = arr[0];
+        out[base + 1] = arr[1];
+        out[base + 2] = arr[2];
+        out[base + 3] = arr[3];
+        out[base + 4] = arr[4];
+        out[base + 5] = arr[5];
+        out[base + 6] = arr[6];
+        out[base + 7] = arr[7];
+    }
+    out
 }
 
 /// Dequantize a zigzag-ordered i16 coefficient block to a natural-order
@@ -135,42 +163,6 @@ pub(crate) fn bottom_edge_row(block: &[f32; DCT_BLOCK_SIZE]) -> [f32; 8] {
     row
 }
 
-/// Sum of squared differences between two 8-element edge columns.
-#[inline]
-#[must_use]
-fn ssd_col(a: &[f32; 8], b: &[f32; 8]) -> f32 {
-    let mut s = 0.0f32;
-    for r in 0..8 {
-        let d = a[r] - b[r];
-        s += d * d;
-    }
-    s
-}
-
-/// Sum of squared differences between two "seam jumps" across an 8-pixel
-/// vertical seam, where `seam_jump[r] = right_col[r] - left_col[r]`.
-///
-/// This is the perceptual-target term from #91: if the reconstruction
-/// preserves the original cross-seam gradient, the seam is invisible;
-/// if it inflates or deflates the jump, the seam is perceptually visible.
-#[inline]
-#[must_use]
-fn ssd_seam_jump(
-    rec_left_right: &[f32; 8],
-    rec_curr_left: &[f32; 8],
-    orig_left_right: &[f32; 8],
-    orig_curr_left: &[f32; 8],
-) -> f32 {
-    let mut s = 0.0f32;
-    for r in 0..8 {
-        let jump_rec = rec_curr_left[r] - rec_left_right[r];
-        let jump_orig = orig_curr_left[r] - orig_left_right[r];
-        let d = jump_rec - jump_orig;
-        s += d * d;
-    }
-    s
-}
-
 /// Compute the boundary-continuity distortion D_b (issue #91 formula).
 ///
 /// ```text
@@ -183,6 +175,9 @@ fn ssd_seam_jump(
 /// If `rec_left_right_committed` is `None` (no left neighbor; first block
 /// of a row, or boundary_rd disabled for the left neighbor), D_b is
 /// returned as 0 — the refinement has nothing to consult.
+///
+/// Implementation: dispatches to a SIMD FMA chain (f32x8 load × 4, three
+/// fused SSDs in parallel) via magetypes multi-tier dispatch on x86/NEON/WASM.
 #[inline]
 #[must_use]
 pub(crate) fn boundary_distortion(
@@ -198,10 +193,55 @@ pub(crate) fn boundary_distortion(
     let Some(orig_lr) = orig_left_right else {
         return 0.0;
     };
-    let edge_current = ssd_col(rec_curr_left, orig_curr_left);
-    let edge_left = ssd_col(rec_lr, orig_lr);
-    let seam = ssd_seam_jump(rec_lr, rec_curr_left, orig_lr, orig_curr_left);
-    edge_current + edge_left + alpha * seam
+    incant!(mage_boundary_distortion(
+        rec_curr_left,
+        rec_lr,
+        orig_curr_left,
+        orig_lr,
+        alpha,
+    ))
+}
+
+/// SIMD core: one f32x8 pass computes edge_current + edge_left + α·seam.
+///
+/// Layout of the computation (all ops are 8-wide):
+///   d_cur  = rec_curr_left  - orig_curr_left      // len 8
+///   d_left = rec_lr         - orig_lr             // len 8
+///   jump_rec  = rec_curr_left  - rec_lr
+///   jump_orig = orig_curr_left - orig_lr
+///   d_seam = jump_rec - jump_orig
+///          = (rec_curr_left - rec_lr) - (orig_curr_left - orig_lr)
+///          = d_cur - d_left
+///   D_b = Σ d_cur² + Σ d_left² + α · Σ d_seam²
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn mage_boundary_distortion(
+    token: Token,
+    rec_curr_left: &[f32; 8],
+    rec_lr: &[f32; 8],
+    orig_curr_left: &[f32; 8],
+    orig_lr: &[f32; 8],
+    alpha: f32,
+) -> f32 {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    let rec_cur = f32x8::from_array(token, *rec_curr_left);
+    let rec_l = f32x8::from_array(token, *rec_lr);
+    let orig_cur = f32x8::from_array(token, *orig_curr_left);
+    let orig_l = f32x8::from_array(token, *orig_lr);
+
+    let d_cur = rec_cur - orig_cur;
+    let d_left = rec_l - orig_l;
+    let d_seam = d_cur - d_left;
+
+    // Fused square+accumulate: sum = d_cur² + d_left² + α·d_seam² (element-wise),
+    // then horizontal sum.
+    let alpha_v = f32x8::splat(token, alpha);
+    let sq_cur = d_cur * d_cur;
+    let sq_left = d_left * d_left;
+    let sq_seam_a = d_seam.mul_add(alpha_v * d_seam, sq_cur + sq_left);
+    sq_seam_a.reduce_add()
 }
 
 /// Per-block AC DCT energy. Sum of squared AC coefficients (DC excluded).
@@ -211,20 +251,43 @@ pub(crate) fn boundary_distortion(
 /// (flat regions) will never trigger refinement; blocks with large AC
 /// energy (texture) will tolerate proportionally higher D_b before
 /// refinement is deemed worthwhile.
+///
+/// Dispatches to a SIMD FMA sum-of-squares via magetypes.
 #[inline]
 #[must_use]
 pub(crate) fn ac_dct_energy(dct_f32: &Block8x8f) -> f32 {
-    let mut e = 0.0f32;
-    for r in 0..8 {
-        for c in 0..8 {
-            if r == 0 && c == 0 {
-                continue;
-            }
-            let v = dct_f32.rows[r][c];
-            e += v * v;
-        }
-    }
-    e
+    incant!(mage_ac_dct_energy(dct_f32))
+}
+
+#[magetypes(v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn mage_ac_dct_energy(token: Token, dct_f32: &Block8x8f) -> f32 {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+
+    // Row 0: zero out the DC (position [0][0]) then sum-of-squares.
+    let mut row0 = dct_f32.rows[0];
+    row0[0] = 0.0;
+    let v0 = f32x8::from_array(token, row0);
+    let mut acc = v0 * v0;
+
+    // Rows 1..8: full f32x8 square-and-accumulate.
+    let v1 = f32x8::from_array(token, dct_f32.rows[1]);
+    acc = v1.mul_add(v1, acc);
+    let v2 = f32x8::from_array(token, dct_f32.rows[2]);
+    acc = v2.mul_add(v2, acc);
+    let v3 = f32x8::from_array(token, dct_f32.rows[3]);
+    acc = v3.mul_add(v3, acc);
+    let v4 = f32x8::from_array(token, dct_f32.rows[4]);
+    acc = v4.mul_add(v4, acc);
+    let v5 = f32x8::from_array(token, dct_f32.rows[5]);
+    acc = v5.mul_add(v5, acc);
+    let v6 = f32x8::from_array(token, dct_f32.rows[6]);
+    acc = v6.mul_add(v6, acc);
+    let v7 = f32x8::from_array(token, dct_f32.rows[7]);
+    acc = v7.mul_add(v7, acc);
+
+    acc.reduce_add()
 }
 
 #[cfg(test)]
@@ -381,5 +444,94 @@ mod tests {
             assert_eq!(top[c], c as f32);
             assert_eq!(bottom[c], (70 + c) as f32);
         }
+    }
+
+    // --- SIMD parity checks ----------------------------------------------
+    //
+    // Scalar references of the three SIMD kernels, used only in tests to
+    // guard against divergence under any of the magetypes dispatch targets
+    // (x86-v3, NEON, wasm128, scalar).
+
+    fn scalar_boundary_distortion(
+        rec_curr_left: &[f32; 8],
+        rec_lr: &[f32; 8],
+        orig_curr_left: &[f32; 8],
+        orig_lr: &[f32; 8],
+        alpha: f32,
+    ) -> f32 {
+        let mut sum = 0.0f32;
+        for r in 0..8 {
+            let d_cur = rec_curr_left[r] - orig_curr_left[r];
+            let d_left = rec_lr[r] - orig_lr[r];
+            let d_seam = d_cur - d_left;
+            sum += d_cur * d_cur + d_left * d_left + alpha * d_seam * d_seam;
+        }
+        sum
+    }
+
+    fn scalar_ac_dct_energy(dct_f32: &Block8x8f) -> f32 {
+        let mut e = 0.0f32;
+        for r in 0..8 {
+            for c in 0..8 {
+                if r == 0 && c == 0 {
+                    continue;
+                }
+                let v = dct_f32.rows[r][c];
+                e += v * v;
+            }
+        }
+        e
+    }
+
+    #[test]
+    fn simd_boundary_distortion_matches_scalar() {
+        // A non-trivial pattern that exercises the full f32x8 load, three
+        // subtractions, three squared terms, and the FMA accumulate.
+        let rec_cur: [f32; 8] = [1.0, -3.0, 10.5, -7.5, 42.0, 0.0, -15.25, 8.0];
+        let rec_lr: [f32; 8] = [0.5, -2.5, 11.0, -8.0, 40.0, 1.0, -16.0, 7.0];
+        let orig_cur: [f32; 8] = [2.0, -4.0, 9.0, -6.5, 45.5, -1.0, -14.0, 6.5];
+        let orig_lr: [f32; 8] = [1.5, -3.0, 10.0, -9.0, 38.75, 2.5, -17.5, 9.125];
+
+        for &alpha in &[0.0f32, 0.5, 1.0, 2.0, 4.0] {
+            let expected =
+                scalar_boundary_distortion(&rec_cur, &rec_lr, &orig_cur, &orig_lr, alpha);
+            let got = boundary_distortion(
+                &rec_cur,
+                Some(&rec_lr),
+                &orig_cur,
+                Some(&orig_lr),
+                alpha,
+            );
+            // f32 FMA reorders additions vs scalar `+=`, so accept a small
+            // relative tolerance. Scale tolerance with |expected| for large
+            // magnitudes.
+            let tol = 1e-5f32 * expected.abs().max(1.0);
+            assert!(
+                (got - expected).abs() <= tol,
+                "alpha={alpha}: expected {expected}, got {got}, diff {}",
+                (got - expected).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn simd_ac_dct_energy_matches_scalar() {
+        // Fill the block with a deterministic non-trivial pattern.
+        let b = make_block(|r, c| ((r * 13 + c * 7) as i32 - 32) as f32 * 0.5);
+        let expected = scalar_ac_dct_energy(&b);
+        let got = ac_dct_energy(&b);
+        let tol = 1e-4f32 * expected.abs().max(1.0);
+        assert!(
+            (got - expected).abs() <= tol,
+            "expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn simd_ac_dct_energy_dc_only_is_zero() {
+        // DC coefficient huge, AC all zero — SIMD path must zero out DC
+        // explicitly and return 0.
+        let b = make_block(|r, c| if r == 0 && c == 0 { 12345.0 } else { 0.0 });
+        assert_eq!(ac_dct_energy(&b), 0.0);
     }
 }
