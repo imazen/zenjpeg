@@ -180,6 +180,12 @@ __corpus-tests = []
 __debug-tokens = []
 # Internal profiling instrumentation (scope timers)
 __profile = []
+# Internal: BD-RD per-block trace sink for refinement-field analysis.
+# Installs a thread-local sink that captures per-luma-block refinement
+# decisions (coefficient delta L1, D_b before/after, trigger/retries).
+# Used by `coefficient/examples/bdrd_anisotropy_trace.rs` to validate
+# the pattern-formation hypothesis. Off in every production build.
+__bdrd-trace = ["boundary-rd"]
 # Vec allocation instrumentation (logs utilization on drop)
 __alloc-instrument = []
 # Test utilities (image generation, quality verification)

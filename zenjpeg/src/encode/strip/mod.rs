@@ -102,6 +102,13 @@ pub(crate) struct BoundaryRdFlat {
     pub max_retries: u8,
     /// Whether the above-neighbor (top-edge) term is included in D_b.
     pub above: bool,
+    /// Drift-gain adaptive scaling: effective α for a candidate with
+    /// coefficient-delta L1 `d` (vs the baseline quantize) is
+    /// `α_base × (1 + drift_gain × d / 64)`. `0.0` disables.
+    pub drift_gain: f32,
+    /// Per-retry α multiplier: `α_k = α_0 × retry_beta^k`. `1.0`
+    /// disables. Applied multiplicatively with `drift_gain`.
+    pub retry_beta: f32,
 }
 
 /// Live boundary-RD state owned by a [`StripProcessor`].
@@ -1643,6 +1650,12 @@ impl StripProcessor {
         let max_retries: u8 = state.config.max_retries;
         // Phase 4: above-neighbor term (opt-in on top of left-only).
         let use_above = state.config.above;
+        // Adaptive α scaling knobs. Both disabled (0.0, 1.0) by default,
+        // which collapses the fast path back to the constant-α
+        // boundary_distortion_raw used in the original BD-RD loop.
+        let drift_gain: f32 = state.config.drift_gain;
+        let retry_beta: f32 = state.config.retry_beta;
+        let adaptive_on: bool = drift_gain > 0.0 || (retry_beta - 1.0).abs() > f32::EPSILON;
 
         // Summon SIMD tokens ONCE for this entire iMCU refinement pass.
         // The kernel functions take this by copy and skip their own
@@ -1671,6 +1684,11 @@ impl StripProcessor {
         }
 
         let pending_len = pending.y[buffer_idx].len();
+        // For the global `by` in trace entries, compute the number of
+        // full block rows already committed to `y_blocks` before this
+        // iMCU. Zero-cost when `__bdrd-trace` is off.
+        #[cfg(feature = "__bdrd-trace")]
+        let trace_by_base: usize = y_blocks.len() / blocks_w.max(1);
         for i in 0..pending_len {
             // Copy the DCT (small: 256 bytes) so we can borrow self mutably
             // below to push into y_blocks / y_dc_raw without aliasing.
@@ -1785,16 +1803,45 @@ impl StripProcessor {
             let mut best_zigzag = zigzag_default;
             let mut best_rec = rec_default;
             let mut best_db = db_default;
+            // Track retries actually executed and the AQ strength that
+            // produced the committed candidate, for the trace sink.
+            #[cfg(feature = "__bdrd-trace")]
+            let mut retries_run: u8 = 0;
+            #[cfg(feature = "__bdrd-trace")]
+            let mut best_aq: f32 = aq_strength;
 
             if trigger {
                 let mut aq = aq_strength;
+                // retry_beta_pow grows by retry_beta each iteration;
+                // stays at 1.0 when adaptive_on is false, so the
+                // adaptive formula collapses to the constant-α path.
+                let mut retry_beta_pow: f32 = 1.0;
                 for _ in 0..max_retries {
                     aq *= shrink_factor;
+                    retry_beta_pow *= retry_beta;
+                    #[cfg(feature = "__bdrd-trace")]
+                    {
+                        retries_run = retries_run.saturating_add(1);
+                    }
                     let z = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                         &dct,
                         &quant.y_zero_bias_simd,
                         aq,
                     );
+                    // Candidate-local α: when adaptive_on, scale α by
+                    // (1 + drift_gain × delta_l1 / 64) × retry_beta^k.
+                    // Both gates are zero-effect at default values.
+                    let alpha_eff: f32 = if adaptive_on {
+                        let mut delta_l1: u32 = 0;
+                        for k in 0..z.len() {
+                            let d = (z[k] as i32) - (zigzag_default[k] as i32);
+                            delta_l1 = delta_l1.saturating_add(d.unsigned_abs());
+                        }
+                        let drift_mul = 1.0 + drift_gain * (delta_l1 as f32) * (1.0 / 64.0);
+                        alpha * drift_mul * retry_beta_pow
+                    } else {
+                        alpha
+                    };
                     let rec = br::idct_quantized_block_fast(tokens, &z, quant_natural);
                     let rec_left = br::left_edge_col(&rec);
                     let db_left = if has_left_neighbor {
@@ -1803,7 +1850,7 @@ impl StripProcessor {
                             rec_left_right,
                             &orig_left,
                             orig_left_right,
-                            alpha,
+                            alpha_eff,
                         )
                     } else {
                         0.0
@@ -1815,7 +1862,7 @@ impl StripProcessor {
                             rec_top_above,
                             &orig_top,
                             orig_top_above,
-                            alpha,
+                            alpha_eff,
                         )
                     } else {
                         0.0
@@ -1825,8 +1872,37 @@ impl StripProcessor {
                         best_db = db;
                         best_zigzag = z;
                         best_rec = rec;
+                        #[cfg(feature = "__bdrd-trace")]
+                        {
+                            best_aq = aq;
+                        }
                     }
                 }
+            }
+
+            // Emit a per-block trace entry when the thread-local sink
+            // is active. Compiled out entirely without `__bdrd-trace`.
+            #[cfg(feature = "__bdrd-trace")]
+            {
+                use crate::encode::bdrd_trace::{BdrdBlockEntry, push_block};
+                let mut delta_l1: u32 = 0;
+                for k in 0..best_zigzag.len() {
+                    let d = (best_zigzag[k] as i32) - (zigzag_default[k] as i32);
+                    delta_l1 = delta_l1.saturating_add(d.unsigned_abs());
+                }
+                let by_local = i / blocks_w.max(1);
+                let by_global = (trace_by_base + by_local).min(u16::MAX as usize) as u16;
+                push_block(BdrdBlockEntry {
+                    bx: bx as u16,
+                    by: by_global,
+                    triggered: trigger,
+                    retries_run,
+                    db_default,
+                    db_final: best_db,
+                    ac_energy,
+                    aq_final: best_aq,
+                    coeff_delta_l1: delta_l1,
+                });
             }
 
             // Cache THIS block's committed right-edge column (for next block's

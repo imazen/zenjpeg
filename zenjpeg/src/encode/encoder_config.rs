@@ -48,6 +48,28 @@ pub enum BoundaryRd {
 /// Controls the strength and trigger threshold of the D_b term added to
 /// the per-block rate-distortion score when evaluating whether to retry
 /// a quantization with a shrunken AQ strength.
+///
+/// # Adaptive scaling (experimental)
+///
+/// When [`Self::with_drift_gain`] or [`Self::with_retry_beta`] is set to
+/// non-default values, α is scaled per retry candidate based on:
+/// - how much the candidate's coefficients have drifted from the
+///   baseline (default) quantization (via `drift_gain`), and
+/// - how many retries have run already (via `retry_beta`).
+///
+/// This exists because empirical measurement on the step-5 jpegli+BD-RD
+/// sweep showed ~20% of matched configs where BD-RD spent bits and
+/// got a WORSE butteraugli score despite an SSIM2 improvement. Per-block
+/// instrumentation (`__bdrd-trace`) found those configs have directional
+/// (median anisotropy 0.20 vs 0.05 on productive controls,
+/// Mann-Whitney p=0.006). The adaptive gates let each retry's cost
+/// reflect how far the candidate has drifted from baseline, which
+/// suppresses the accumulating-drift tail without the algorithm needing
+/// to reason globally. See `SeamPenalty::adaptive_alpha_for` in the
+/// strip processor for the exact formula.
+///
+/// Defaults are `0.0` / `1.0` — the adaptive gates are no-ops, keeping
+/// output bit-identical to the non-adaptive path.
 #[cfg(feature = "boundary-rd")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -59,6 +81,15 @@ pub struct SeamPenalty {
     /// DCT energy. A block only triggers refinement if its D_b exceeds
     /// `threshold * ac_energy`. Default `0.02`.
     threshold: f32,
+    /// Per-candidate α scaling by coefficient drift (L1 of the zigzag
+    /// delta between the candidate and the baseline quantization,
+    /// normalized by DCT block size 64). `0.0` disables the drift
+    /// penalty, which is the default.
+    drift_gain: f32,
+    /// Per-retry α scaling: `α_k = α_0 × retry_beta^k` (k = retries
+    /// completed so far). `1.0` disables, which is the default. Values
+    /// `> 1.0` make later retries pay a stiffer seam penalty.
+    retry_beta: f32,
 }
 
 #[cfg(feature = "boundary-rd")]
@@ -67,6 +98,8 @@ impl Default for SeamPenalty {
         Self {
             alpha: 2.0,
             threshold: 0.02,
+            drift_gain: 0.0,
+            retry_beta: 1.0,
         }
     }
 }
@@ -104,6 +137,36 @@ impl SeamPenalty {
     pub fn with_threshold(mut self, threshold: f32) -> Self {
         self.threshold = threshold;
         self
+    }
+
+    /// Drift gain (experimental). See [`SeamPenalty`] struct docs for
+    /// background. `0.0` disables the drift penalty (the default).
+    /// Typical productive range `[1.0, 8.0]` once enabled.
+    #[must_use]
+    pub fn with_drift_gain(mut self, drift_gain: f32) -> Self {
+        self.drift_gain = drift_gain.max(0.0);
+        self
+    }
+
+    /// Per-retry α multiplier (experimental). See [`SeamPenalty`] struct
+    /// docs. `1.0` disables (the default). Typical productive range
+    /// `[1.05, 1.50]`.
+    #[must_use]
+    pub fn with_retry_beta(mut self, retry_beta: f32) -> Self {
+        self.retry_beta = retry_beta.max(1.0);
+        self
+    }
+
+    /// Read the drift gain.
+    #[must_use]
+    pub fn drift_gain(&self) -> f32 {
+        self.drift_gain
+    }
+
+    /// Read the per-retry β.
+    #[must_use]
+    pub fn retry_beta(&self) -> f32 {
+        self.retry_beta
     }
 }
 
@@ -357,6 +420,8 @@ impl BoundaryRdConfig {
             shrink: self.retry.shrink,
             max_retries: self.retry.max_retries,
             above: self.neighbors.includes_above(),
+            drift_gain: self.seam.drift_gain,
+            retry_beta: self.seam.retry_beta,
         }
     }
 }

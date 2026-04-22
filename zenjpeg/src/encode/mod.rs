@@ -66,6 +66,8 @@ pub mod wasm_simd;
 /// backgrounds. Enabled by default with no quality penalty for photographic content.
 pub mod deringing;
 
+#[cfg(all(feature = "boundary-rd", feature = "__bdrd-trace"))]
+pub mod bdrd_trace;
 /// Boundary-continuity refinement (issue #91 / PR #102).
 ///
 /// Opt-in behind the `boundary-rd` Cargo feature. Provides the D_b
