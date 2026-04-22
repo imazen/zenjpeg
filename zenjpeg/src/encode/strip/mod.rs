@@ -1264,10 +1264,21 @@ impl StripProcessor {
         let actual_strip_blocks_h = strip_blocks_h.min(max_block_y.saturating_sub(start_block_y));
         let blocks_added = actual_strip_blocks_h * blocks_w;
 
-        // Compute DCT for Y blocks into pending buffer
+        // Compute DCT for the first strip buffer (y_strip) into pending.y.
+        //
+        // Channel mapping:
+        //   YCbCr mode: y_strip holds Y (luma), so deringing applies here
+        //               using y_quant.values[0] as the DC quant.
+        //   XYB mode:   y_strip holds X (red-green residual), NOT luma.
+        //               Mozjpeg-style overshoot-deringing is calibrated for
+        //               the luma-tone distribution — it would misbehave on X.
+        //               So deringing is skipped on this loop under XYB and
+        //               applied to the cb_strip (Y-perceptual-luma) loop
+        //               below instead.
+        let apply_deringing_here = self.deringing && !self.layout.use_xyb;
         #[cfg(feature = "parallel")]
         {
-            let deringing = if self.deringing {
+            let deringing = if apply_deringing_here {
                 Some(self.quant.y_quant.values[0])
             } else {
                 None
@@ -1303,8 +1314,8 @@ impl StripProcessor {
                         padded_width,
                     );
 
-                    // Apply deringing if enabled (on by default)
-                    if self.deringing {
+                    // Apply deringing only in YCbCr mode (see comment above).
+                    if apply_deringing_here {
                         super::deringing::preprocess_deringing_block(&mut block, y_dc_quant);
                     }
 
@@ -1330,6 +1341,12 @@ impl StripProcessor {
                 self.pending.cb[pending_idx]
                     .resize(cb_start + cb_blocks_total, Block8x8f::default());
 
+                // In XYB mode cb_strip holds the perceptual Y (luma)
+                // channel, so deringing — which is a luma-only
+                // preprocessor — applies here. DC quant comes from
+                // the component in the cb slot (Y under XYB).
+                let y_dc_quant_xyb = self.quant.cb_quant.values[0];
+                let apply_deringing_xyb_luma = self.deringing;
                 let mut cb_idx = 0;
                 for local_by in 0..strip_blocks_h {
                     let global_by = start_block_y + local_by;
@@ -1337,12 +1354,18 @@ impl StripProcessor {
                         break;
                     }
                     for bx in 0..blocks_w {
-                        let cb_block = extract_block_from_strip_wide(
+                        let mut cb_block = extract_block_from_strip_wide(
                             &self.cb_strip[..y_size],
                             bx,
                             local_by,
                             padded_width,
                         );
+                        if apply_deringing_xyb_luma {
+                            super::deringing::preprocess_deringing_block(
+                                &mut cb_block,
+                                y_dc_quant_xyb,
+                            );
+                        }
                         self.pending.cb[pending_idx][cb_start + cb_idx] =
                             forward_dct_dispatch(simd_token, &cb_block);
                         cb_idx += 1;
