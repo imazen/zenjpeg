@@ -77,6 +77,12 @@ pub(crate) struct StreamingEncoderBuilder {
     /// quality path. Clamped to `[0.1, 5.0]` on ingress by the public
     /// [`EncoderConfig::chroma_distance_scale`] setter.
     pub(crate) chroma_distance_scale: f32,
+    /// Independent chroma quality on the mozjpeg 1–100 scale. `None`
+    /// (the default) keeps the historical behaviour of using `quality`
+    /// for both luma and chroma tables. Only honoured by the mozjpeg-
+    /// compat (`QuantTableSource::MozjpegDefault`) path — the jpegli
+    /// path uses `chroma_distance_scale` for the same purpose.
+    pub(crate) chroma_quality: Option<u8>,
 }
 
 impl StreamingEncoderBuilder {
@@ -116,6 +122,7 @@ impl StreamingEncoderBuilder {
             quant_source: QuantTableSource::default(),
             tiny_file_mode: TinyFileMode::default(),
             chroma_distance_scale: 1.0,
+            chroma_quality: None,
         }
     }
 
@@ -351,6 +358,15 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn chroma_distance_scale(mut self, scale: f32) -> Self {
         self.chroma_distance_scale = scale.clamp(0.1, 5.0);
+        self
+    }
+
+    /// Sets the mozjpeg-compat chroma quality. Only honoured by the
+    /// mozjpeg Robidoux path (`quant_source == QuantTableSource::MozjpegDefault`).
+    /// See [`crate::encode::encoder_config::EncoderConfig::chroma_quality`].
+    #[must_use]
+    pub(crate) fn chroma_quality(mut self, quality: Option<u8>) -> Self {
+        self.chroma_quality = quality.map(|q| q.clamp(1, 100));
         self
     }
 
