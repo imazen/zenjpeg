@@ -372,7 +372,11 @@ fn run_lossy(
 
     // Step 4: Decode
     let need_deblock = args.deblock != DeblockArg::Off;
-    let decode_to_f32 = need_deblock || args.xyb;
+    // NOTE: do NOT force f32 for `--xyb` alone. zenjpeg's XYB encoder has
+    // a broken RgbF32Linear input path (produces all-255 output); the sRGB u8
+    // input path works correctly. Only enable f32 when the pipeline actually
+    // needs it (deblock). See KnownBug #7 in workspace CLAUDE.md.
+    let decode_to_f32 = need_deblock;
 
     let mut decoder = DecodeConfig::new().preserve(PreserveConfig::all());
     if decode_to_f32 {
@@ -451,19 +455,6 @@ fn run_lossy(
             );
         }
 
-        // XYB output round-trips badly through zenjpeg's current decoder (raw
-        // XYB samples leak as sRGB, producing a bimodal 0/255 distribution
-        // instead of real pixels). That's a decoder bug independent of search,
-        // so the metric would chase noise. Deblock alone still uses the f32
-        // encode path but the output is standard sRGB — that search works.
-        if args.xyb && search_target(args).is_some() {
-            anyhow::bail!(
-                "--search-* with --xyb is disabled: the zenjpeg decoder does not \
-                 currently round-trip XYB-encoded JPEGs back to sRGB correctly, \
-                 so the metric would not reflect perceptual quality. Drop --xyb \
-                 (u8 path) or use --deblock on (f32 encode → sRGB output)."
-            );
-        }
         let jpeg = if let Some((band, metric)) = search_target(args) {
             let (q_lo, q_hi) = args.resolve_quality_range()?;
             let seed = match quality {

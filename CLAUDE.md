@@ -938,24 +938,32 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
-7. **XYB-encoded JPEGs don't round-trip to sRGB in the u8 decode path (2026-04-23)** —
-   Encoding a normal sRGB image through `EncoderConfig::xyb(...)` produces a valid
-   XYB JPEG (ICC = `jxl` XYB profile), but decoding it with any of
-   `OutputTarget::{Srgb8, SrgbF32, LinearF32}` produces a bimodal 0/255 pixel
-   distribution instead of the original colors. `parser.info().is_xyb` correctly
-   returns `true` and the ICC is extracted under `PreserveConfig::all()`, so the
-   detection half works — the inverse transform (`xyb_planes_to_srgb_*_simd` at
-   `decode/parser/output.rs:1518`/`:1929`) is either not being called or is
-   receiving wrong-shaped input.
-   - Repro: `zjpeg process in.jpg --xyb -q 90 -o out.jpg && zjpeg process out.jpg -q 95 -o rt.jpg` → `rt.jpg` pixels are orange/cyan banding, not the original.
-   - Impact: zjpeg's `--search-ssim2` / `--search-distance` bail out when `--xyb`
-     is set, because the metric would be meaningless against the broken decode.
-     Standalone XYB encode still works for viewers that honour the XYB ICC profile
-     via external CMS.
-   - Investigation surface: `decode/parser/output.rs:1237` (`to_pixels_u8` gets
-     `is_xyb: bool` — verify whether the `if is_xyb { xyb_planes_to_srgb_u8_simd }`
-     branch actually fires for u8 output with a newly-encoded XYB file, or whether
-     a fast path further up is emitting raw XYB samples).
+7. **`EncoderConfig::xyb` + `PixelLayout::RgbF32Linear` input produces
+   broken JPEGs (2026-04-23)** — The XYB encoder's sRGB-u8 input path
+   works correctly (roundtrip within ±1 via `EncoderConfig::xyb(..,
+   XybSubsampling::{Full,BQuarter}).encode_bytes(&rgb_u8, w, h,
+   PixelLayout::Rgb8Srgb)` → decode → back to source ±1). The
+   `RgbF32Linear` input path produces a JPEG that decodes to all-255
+   (pure white). Same encoder, same XYB settings, just feeding already-
+   linear f32 pixels instead of sRGB u8.
+   - Repro (minimal): encode a solid sRGB `[220, 40, 40]` buffer vs. its
+     linear-f32 equivalent at the same quality; Rgb8Srgb gives (220, 39,
+     38), RgbF32Linear gives (255, 255, 255).
+   - Impact: any pipeline that decodes as LinearF32 and re-encodes as
+     XYB silently corrupts output. zjpeg's `process` previously forced
+     `decode_to_f32 = args.xyb || need_deblock`; fixed to
+     `decode_to_f32 = need_deblock` so `--xyb` alone stays on the
+     sRGB-u8 pipeline (where the encoder works). `--deblock --xyb`
+     together still hits the broken path; not wired, zjpeg doesn't
+     currently combine those.
+   - Decoder is NOT the bug here. `Decoder::new()` on a valid XYB JPEG
+     (produced via the sRGB-u8 path) returns correct pixels; the XYB
+     roundtrip test suite (`tests/bundled/xyb_roundtrip.rs`) passes.
+   - Fix surface: trace the encoder's XYB conversion when input is
+     RgbF32Linear. Suspect: missing or doubled sRGB→linear conversion
+     on the f32 input path before entering the XYB opsin step, which
+     would push pixel values outside the expected range and clamp to
+     255 after the full transform.
 
 ### Fixed / Resolved Bugs (historical reference)
 
