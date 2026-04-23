@@ -30,7 +30,10 @@ use zenresize::{FitMode, fit_cover_source_crop, fit_dims};
 use crate::batch::{self, BatchSummary, FileResult};
 use crate::coord;
 use crate::output::OutputConfig;
-use crate::{FlipArg, IccTargetArg, ProcessArgs, SubsamplingArg};
+use crate::{
+    DeblockArg, FitArg, FlipArg, IccTargetArg, OrientArg, ProcessArgs, StructureArg,
+    SubsamplingArg, TrellisArg,
+};
 
 /// Which pipeline to use for a given file.
 enum PipelineKind {
@@ -180,17 +183,17 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_resize =
         args.width.is_some() || args.height.is_some() || args.size.is_some() || args.dpr.is_some();
     let has_crop = args.crop.is_some();
-    let has_extend = args.extend.is_some();
+    let has_pad = args.pad.is_some();
     let has_quality = args.quality.is_some()
         || args.distance.is_some()
         || args.crush.is_some()
         || args.tolerance.is_some();
-    let has_deblock = args.deblock || args.deblock_boundary;
+    let has_deblock = args.deblock != DeblockArg::Off;
     let has_xyb = args.xyb;
     let has_icc = args.apply_icc.is_some();
     let has_sharp_yuv = args.sharp_yuv;
     let has_subsampling = args.subsampling.is_some();
-    let has_quant_tables = args.quant_tables.is_some();
+    let has_quant = args.quant.is_some();
     let has_chroma_tables = args.chroma_tables.is_some();
     let has_preset = args.preset.is_some();
     // optimize_scans requires entropy re-encoding (scan search tries 64 candidates),
@@ -198,18 +201,19 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     // restructure module gained scan search support on existing DCT coefficients.
     let has_optimize_scans = args.optimize_scans;
     let has_transform = args.rotate.is_some() || args.flip.is_some();
-    let has_structure = args.progressive || args.baseline;
+    let has_structure = args.structure != StructureArg::Auto;
+    let auto_orient = args.orient == OrientArg::Auto;
 
     let lossy_triggers = has_resize
         || has_crop
-        || has_extend
+        || has_pad
         || has_quality
         || has_deblock
         || has_xyb
         || has_icc
         || has_sharp_yuv
         || has_subsampling
-        || has_quant_tables
+        || has_quant
         || has_chroma_tables
         || has_preset
         || has_optimize_scans;
@@ -219,13 +223,13 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     }
 
     // No lossy triggers: check for restructure-only
-    if !has_transform && !args.effective_auto_orient() && has_structure {
+    if !has_transform && !auto_orient && has_structure {
         return PipelineKind::Restructure;
     }
 
     // Has transform/orient, or nothing at all → lossless
     // (auto-orient with no other flags = lossless orient)
-    if has_transform || args.effective_auto_orient() {
+    if has_transform || auto_orient {
         return PipelineKind::Lossless;
     }
 
@@ -244,7 +248,7 @@ fn run_lossless(
     output_config: &OutputConfig,
     is_single: bool,
 ) -> Result<(u64, bool)> {
-    let output = if args.effective_auto_orient() && args.rotate.is_none() && args.flip.is_none() {
+    let output = if args.orient == OrientArg::Auto && args.rotate.is_none() && args.flip.is_none() {
         // Pure auto-orient
         lossless::apply_exif_orientation(data, enough::Unstoppable)
             .map_err(|e| anyhow::anyhow!("orientation failed: {e}"))?
@@ -311,14 +315,9 @@ fn run_restructure(
     output_config: &OutputConfig,
     is_single: bool,
 ) -> Result<(u64, bool)> {
-    if args.progressive && args.baseline {
-        anyhow::bail!("cannot specify both --progressive and --baseline");
-    }
-
-    let output_mode = if args.progressive {
-        OutputMode::Progressive
-    } else {
-        OutputMode::Sequential
+    let output_mode = match args.structure {
+        StructureArg::Progressive => OutputMode::Progressive,
+        StructureArg::Baseline | StructureArg::Auto => OutputMode::Sequential,
     };
 
     let config = RestructureConfig {
@@ -370,7 +369,7 @@ fn run_lossy(
     let layout_result = build_layout(args, probe.dimensions.width, probe.dimensions.height)?;
 
     // Step 4: Decode
-    let need_deblock = args.deblock || args.deblock_boundary;
+    let need_deblock = args.deblock != DeblockArg::Off;
     let decode_to_f32 = need_deblock || args.xyb;
 
     let mut decoder = DecodeConfig::new().preserve(PreserveConfig::all());
@@ -378,7 +377,7 @@ fn run_lossy(
         decoder.output_target = OutputTarget::LinearF32;
     }
     decoder.correct_color = args.apply_icc.map(|t| convert_icc_target(t));
-    if args.effective_auto_orient() {
+    if args.orient == OrientArg::Auto {
         decoder = decoder.auto_orient(true);
     }
     if let Some(s) = args.strictness {
@@ -556,7 +555,7 @@ fn build_layout(args: &ProcessArgs, source_w: u32, source_h: u32) -> Result<Opti
     let (target_w, target_h) = args.resolve_dimensions()?;
 
     let has_spatial =
-        target_w.is_some() || target_h.is_some() || args.crop.is_some() || args.extend.is_some();
+        target_w.is_some() || target_h.is_some() || args.crop.is_some() || args.pad.is_some();
     if !has_spatial {
         return Ok(None);
     }
@@ -606,8 +605,8 @@ fn build_layout(args: &ProcessArgs, source_w: u32, source_h: u32) -> Result<Opti
     let (target_w, target_h) = resize_to.unwrap_or((fit_src_w, fit_src_h));
     let needs_resize = target_w != fit_src_w || target_h != fit_src_h;
 
-    // Post-resize padding (--extend T,R,B,L, pixels only, black fill).
-    let padding = if let Some(ref s) = args.extend {
+    // Post-resize padding (--pad T,R,B,L, pixels only, black fill).
+    let padding = if let Some(ref s) = args.pad {
         let trbl = coord::parse_trbl(s)?;
         if trbl.top.pixels > 0
             || trbl.right.pixels > 0
@@ -649,37 +648,16 @@ fn resolve_fit(
     tw: u32,
     th: u32,
 ) -> (Option<(u32, u32)>, Option<CropRect>) {
-    // Determine base mode from the mutually-exclusive fit flags.
-    // Default (no flag set) is Within — never upscale.
-    let mode = if args.contain {
-        FitMode::Fit
-    } else if args.cover {
-        FitMode::Cover
-    } else if args.fill {
-        FitMode::Stretch
-    } else {
-        FitMode::Within
-    };
-
-    // --no-upscale downgrades Fit/Cover when the source already fits inside
-    // the target (on both axes for Cover, on either axis for Fit). Matches
-    // zenlayout's `WithinCrop` / `WithinPad` semantics for the common case.
-    let effective_mode = if args.no_upscale {
-        match mode {
-            FitMode::Fit if fit_src_w <= tw && fit_src_h <= th => return (None, None),
-            FitMode::Cover if fit_src_w <= tw && fit_src_h <= th => return (None, None),
-            FitMode::Fit => FitMode::Within,
-            FitMode::Cover => mode, // Cover beyond bounds still fills; no-upscale
-            // only suppresses the upscale case above.
-            _ => mode,
-        }
-    } else {
-        mode
+    let mode = match args.fit {
+        FitArg::Within => FitMode::Within,
+        FitArg::Fit => FitMode::Fit,
+        FitArg::Cover => FitMode::Cover,
+        FitArg::Stretch => FitMode::Stretch,
     };
 
     // Cover needs an aspect-aligned source crop so the resize exactly fills
     // the target without stretching.
-    let aspect_crop = if matches!(effective_mode, FitMode::Cover) {
+    let aspect_crop = if matches!(mode, FitMode::Cover) {
         let (ax, ay, aw, ah) = fit_cover_source_crop(fit_src_w, fit_src_h, tw, th);
         (aw > 0 && ah > 0).then_some(CropRect {
             x: ax,
@@ -691,7 +669,7 @@ fn resolve_fit(
         None
     };
 
-    let (w, h) = fit_dims(fit_src_w, fit_src_h, tw, th, effective_mode);
+    let (w, h) = fit_dims(fit_src_w, fit_src_h, tw, th, mode);
     (Some((w, h)), aspect_crop)
 }
 
@@ -816,7 +794,8 @@ fn determine_encode_params(
     // Quality floor: prevent catastrophic generation loss.
     let quality = apply_quality_floor(quality, probe);
 
-    let quality = clamp_quality(quality, args.min_quality, args.max_quality);
+    let (min_q, max_q) = args.resolve_quality_range()?;
+    let quality = clamp_quality(quality, min_q, max_q);
     Ok((quality, sub))
 }
 
@@ -1011,12 +990,23 @@ fn build_encoder_config(
             crate::PresetArg::HybridProg => OptimizationPreset::HybridProgressive,
             crate::PresetArg::HybridMax => OptimizationPreset::HybridMaxCompression,
         });
-    } else if args.effective_auto_optimize() {
-        config = config.auto_optimize(true);
+    } else {
+        match args.trellis {
+            TrellisArg::Off => {}
+            TrellisArg::On => {
+                #[cfg(feature = "trellis")]
+                {
+                    config = config.trellis(true);
+                }
+            }
+            TrellisArg::Hybrid => {
+                config = config.auto_optimize(true);
+            }
+        }
     }
 
     // Quant tables override preset's table selection
-    if let Some(qt) = args.quant_tables {
+    if let Some(qt) = args.quant {
         config = config.quant_table_config(match qt {
             crate::QuantTablesArg::Jpegli => QuantTableConfig::Jpegli,
             crate::QuantTablesArg::Mozjpeg => QuantTableConfig::MozjpegRobidoux,
@@ -1028,11 +1018,10 @@ fn build_encoder_config(
         config = config.separate_chroma_tables(n == 3);
     }
 
-    if args.progressive {
-        config = config.progressive(true);
-    }
-    if args.baseline {
-        config = config.progressive(false);
+    match args.structure {
+        StructureArg::Progressive => config = config.progressive(true),
+        StructureArg::Baseline => config = config.progressive(false),
+        StructureArg::Auto => {}
     }
     if args.optimize_scans {
         config = config.progressive(ProgressiveScanMode::ProgressiveSearch);
@@ -1044,32 +1033,28 @@ fn build_encoder_config(
         config = config.pre_blur(args.blur);
     }
 
-    let strip_icc_for_apply = args.apply_icc.is_some();
+    let apply_icc_strips_icc = args.apply_icc.is_some();
 
     if let Some(extras) = extras {
-        if args.strip_all {
-            // Strip everything
-        } else if args.strip_gainmaps {
-            if !args.strip_icc
-                && !strip_icc_for_apply
-                && let Some(icc) = extras.icc_profile()
-            {
+        let (mut strip_exif, mut strip_icc, mut strip_xmp, strip_gainmaps) = args.strip_mask();
+        if apply_icc_strips_icc {
+            strip_icc = true;
+        }
+
+        if strip_exif && strip_icc && strip_xmp && strip_gainmaps {
+            // Strip everything — no segments added.
+        } else if strip_gainmaps {
+            // Keep non-MPF metadata but rebuild from scratch to drop MPF/gain-map segments.
+            if !strip_icc && let Some(icc) = extras.icc_profile() {
                 config = config.add_segment(0xE2, build_icc_segment(icc));
             }
-            if !args.strip_exif
-                && let Some(exif) = extras.exif()
-            {
+            if !strip_exif && let Some(exif) = extras.exif() {
                 config = config.add_segment(0xE1, build_exif_segment(exif));
             }
-            if !args.strip_xmp
-                && let Some(xmp) = extras.xmp()
-            {
+            if !strip_xmp && let Some(xmp) = extras.xmp() {
                 config = config.add_segment(0xE1, build_xmp_segment(xmp));
             }
-        } else if args.strip_exif || args.strip_icc || args.strip_xmp || strip_icc_for_apply {
-            let strip_exif = args.strip_exif;
-            let strip_icc = args.strip_icc || strip_icc_for_apply;
-            let strip_xmp = args.strip_xmp;
+        } else if strip_exif || strip_icc || strip_xmp {
             let segments = extras.to_encoder_segments_filtered(|seg| {
                 if strip_exif && seg.segment_type == SegmentType::Exif {
                     return false;
@@ -1133,12 +1118,15 @@ fn apply_deblock(
 ) {
     let content = classify_from_probe(probe);
 
-    let action = if args.deblock_boundary {
-        DeblockAction::Boundary4Tap
-    } else {
-        let zero_ac_frac = estimate_zero_ac_frac(probe);
-        let rec = recommend_deblock(probe, content, zero_ac_frac);
-        rec.action
+    let action = match args.deblock {
+        DeblockArg::Boundary => DeblockAction::Boundary4Tap,
+        DeblockArg::On | DeblockArg::Off => {
+            // `On` runs the auto-recommender; `Off` never gets here (caller gates on
+            // `args.deblock != Off`), but keep the match exhaustive.
+            let zero_ac_frac = estimate_zero_ac_frac(probe);
+            let rec = recommend_deblock(probe, content, zero_ac_frac);
+            rec.action
+        }
     };
 
     if !matches!(action, DeblockAction::Boundary4Tap) {

@@ -77,38 +77,17 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub force: bool,
 
-    // -- Fit modes (mutually exclusive) ----------------------------------
-    /// Fit inside target dimensions, preserving aspect ratio (may upscale).
-    #[arg(long, group = "fit_mode")]
-    pub contain: bool,
+    // -- Sizing / spatial ------------------------------------------------
+    /// Fit mode for resizing when width/height/size is set.
+    #[arg(long, value_enum, default_value_t = FitArg::default())]
+    pub fit: FitArg,
 
-    /// Fill target dimensions, cropping overflow.
-    #[arg(long, group = "fit_mode")]
-    pub cover: bool,
-
-    /// Stretch to exact target dimensions (distorts aspect ratio).
-    #[arg(long, group = "fit_mode")]
-    pub fill: bool,
-
-    /// Fit inside target, never upscale (default when dimensions given).
-    #[arg(long, group = "fit_mode")]
-    pub scale_down: bool,
-
-    /// Fit inside target with padding to exact dimensions.
-    #[arg(long, group = "fit_mode")]
-    pub pad: bool,
-
-    /// Modifier: prevent upscaling with --cover or --pad.
-    #[arg(long)]
-    pub no_upscale: bool,
-
-    // -- Sizing ----------------------------------------------------------
     /// Target width in pixels.
     #[arg(short, long)]
     pub width: Option<u32>,
 
     /// Target height in pixels.
-    #[arg(short, long)]
+    #[arg(long)]
     pub height: Option<u32>,
 
     /// Target size as WxH (e.g. 800x600, 800, x600).
@@ -119,14 +98,13 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub dpr: Option<f32>,
 
-    // -- Spatial operations -----------------------------------------------
-    /// Select a source crop rectangle: `x,y,w,h` in pixels.
+    /// Source crop rectangle: `x,y,w,h` in pixels.
     #[arg(long)]
     pub crop: Option<String>,
 
-    /// Post-resize padding (CSS TRBL shorthand, pixels). Filled with black.
+    /// Post-resize padding (CSS TRBL shorthand, pixels). Black fill.
     #[arg(long)]
-    pub extend: Option<String>,
+    pub pad: Option<String>,
 
     // -- Transforms -------------------------------------------------------
     /// Rotate clockwise by degrees (90, 180, 270).
@@ -137,46 +115,35 @@ pub struct ProcessArgs {
     #[arg(long, value_enum)]
     pub flip: Option<FlipArg>,
 
-    /// Apply EXIF orientation and reset tag (default: on).
-    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
-    pub auto_orient: bool,
+    /// EXIF orientation handling.
+    #[arg(long, value_enum, default_value_t = OrientArg::default())]
+    pub orient: OrientArg,
 
-    /// Disable auto-orient.
-    #[arg(long, overrides_with = "auto_orient")]
-    pub no_auto_orient: bool,
-
-    // -- Encoding ---------------------------------------------------------
-    /// Override quality (0-100, bypasses smart detection).
+    // -- Quality ---------------------------------------------------------
+    /// Exact quality target (0-100, bypasses smart detection).
     #[arg(short, long)]
     pub quality: Option<f32>,
 
-    /// Override butteraugli distance.
+    /// Exact butteraugli distance target (alternative to --quality).
     #[arg(short, long)]
     pub distance: Option<f32>,
 
-    /// Quality/size tradeoff preset.
+    /// Quality/size tradeoff preset for smart detection.
     #[arg(long, value_enum)]
     pub crush: Option<CrushLevel>,
 
-    /// Exact butteraugli tolerance (overrides --crush).
+    /// Smart-mode butteraugli tolerance override (overrides --crush).
     #[arg(long)]
     pub tolerance: Option<f32>,
 
-    /// Maximum quality ceiling.
-    #[arg(long, default_value = "97")]
-    pub max_quality: f32,
+    /// Smart-mode quality range as `MIN:MAX` (default `50:97`).
+    #[arg(long, default_value = "50:97")]
+    pub quality_range: String,
 
-    /// Minimum quality floor.
-    #[arg(long, default_value = "50")]
-    pub min_quality: f32,
-
-    /// Force progressive output.
-    #[arg(long)]
-    pub progressive: bool,
-
-    /// Force baseline output.
-    #[arg(long)]
-    pub baseline: bool,
+    // -- Format & structure ----------------------------------------------
+    /// Output structure.
+    #[arg(long, value_enum, default_value_t = StructureArg::default())]
+    pub structure: StructureArg,
 
     /// Search 64 progressive scan scripts for smallest output (~2% smaller, ~2x slower).
     #[arg(long)]
@@ -188,23 +155,19 @@ pub struct ProcessArgs {
 
     /// Quantization table family.
     #[arg(long, value_enum)]
-    pub quant_tables: Option<QuantTablesArg>,
+    pub quant: Option<QuantTablesArg>,
 
     /// Number of chroma quantization tables: 3 (separate Cb/Cr, default) or 2 (shared).
     #[arg(long, value_parser = clap::value_parser!(u8).range(2..=3))]
     pub chroma_tables: Option<u8>,
 
-    /// Optimization preset (overrides --auto-optimize).
+    /// Preset bundle (overrides individual tuning flags).
     #[arg(long, value_enum)]
     pub preset: Option<PresetArg>,
 
-    /// Enable auto_optimize (hybrid trellis, default: on).
-    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
-    pub auto_optimize: bool,
-
-    /// Disable auto_optimize.
-    #[arg(long, overrides_with = "auto_optimize")]
-    pub no_optimize: bool,
+    /// Trellis rate-distortion optimization.
+    #[arg(long, value_enum, default_value_t = TrellisArg::default())]
+    pub trellis: TrellisArg,
 
     /// Enable SharpYUV chroma downsampling.
     #[arg(long)]
@@ -214,13 +177,9 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub xyb: bool,
 
-    /// Enable content-aware deblocking.
-    #[arg(long)]
-    pub deblock: bool,
-
-    /// Force boundary 4-tap deblocking.
-    #[arg(long)]
-    pub deblock_boundary: bool,
+    /// Deblocking mode.
+    #[arg(long, value_enum, default_value_t = DeblockArg::default())]
+    pub deblock: DeblockArg,
 
     /// Pre-encode Gaussian blur sigma (0.0 = disabled).
     ///
@@ -229,35 +188,15 @@ pub struct ProcessArgs {
     #[arg(long, default_value = "0.0")]
     pub blur: f32,
 
-    // -- Decoding ---------------------------------------------------------
+    // -- Decoder ---------------------------------------------------------
     /// Decoder error tolerance for damaged/non-conformant JPEGs.
     #[arg(long, value_enum)]
     pub strictness: Option<StrictnessArg>,
 
-    // -- Metadata ---------------------------------------------------------
-    /// Strip all metadata.
-    #[arg(long)]
-    pub strip_all: bool,
-
-    /// Strip EXIF metadata only.
-    #[arg(long)]
-    pub strip_exif: bool,
-
-    /// Strip ICC profile only.
-    #[arg(long)]
-    pub strip_icc: bool,
-
-    /// Strip XMP metadata only.
-    #[arg(long)]
-    pub strip_xmp: bool,
-
-    /// Strip gain maps (UltraHDR).
-    #[arg(long)]
-    pub strip_gainmaps: bool,
-
-    /// Keep all metadata (default).
-    #[arg(long)]
-    pub keep_all: bool,
+    // -- Metadata --------------------------------------------------------
+    /// Metadata to strip (comma-separated). Values: all, none, exif, icc, xmp, gainmaps.
+    #[arg(long, value_enum, value_delimiter = ',')]
+    pub strip: Vec<StripArg>,
 
     /// Apply embedded ICC profile, converting to target color space.
     #[arg(long, value_enum)]
@@ -307,14 +246,58 @@ pub struct ProcessArgs {
 }
 
 impl ProcessArgs {
-    /// Whether auto-orient is effectively enabled (--auto-orient minus --no-auto-orient).
-    pub fn effective_auto_orient(&self) -> bool {
-        self.auto_orient && !self.no_auto_orient
+    /// Parse `--quality-range MIN:MAX`, returning `(min, max)` as f32.
+    pub fn resolve_quality_range(&self) -> Result<(f32, f32)> {
+        let (lo, hi) = self
+            .quality_range
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("--quality-range must be MIN:MAX (e.g. 50:97)"))?;
+        let lo: f32 = lo
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid quality-range MIN: '{lo}'"))?;
+        let hi: f32 = hi
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid quality-range MAX: '{hi}'"))?;
+        if lo > hi {
+            anyhow::bail!("--quality-range MIN ({lo}) exceeds MAX ({hi})");
+        }
+        Ok((lo, hi))
     }
 
-    /// Whether auto-optimize is effectively enabled.
-    pub fn effective_auto_optimize(&self) -> bool {
-        self.auto_optimize && !self.no_optimize
+    /// Effective strip decisions: `(exif, icc, xmp, gainmaps)`.
+    ///
+    /// `All` turns everything on; `None` turns everything off; individual
+    /// values toggle only that target. Later list entries take precedence
+    /// over earlier ones (so `all,none` = keep everything; `none,exif` =
+    /// strip only EXIF).
+    pub fn strip_mask(&self) -> (bool, bool, bool, bool) {
+        let mut exif = false;
+        let mut icc = false;
+        let mut xmp = false;
+        let mut gm = false;
+        for s in &self.strip {
+            match s {
+                StripArg::All => {
+                    exif = true;
+                    icc = true;
+                    xmp = true;
+                    gm = true;
+                }
+                StripArg::None => {
+                    exif = false;
+                    icc = false;
+                    xmp = false;
+                    gm = false;
+                }
+                StripArg::Exif => exif = true,
+                StripArg::Icc => icc = true,
+                StripArg::Xmp => xmp = true,
+                StripArg::Gainmaps => gm = true,
+            }
+        }
+        (exif, icc, xmp, gm)
     }
 
     /// Resolve target dimensions from --width, --height, --size, --dpr.
@@ -464,6 +447,74 @@ pub enum StrictnessArg {
     Lenient,
     /// Maximum compatibility with damaged files.
     Permissive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum FitArg {
+    /// Fit inside target, never upscale past source (default).
+    #[default]
+    Within,
+    /// Fit inside target, preserve aspect; may upscale.
+    Fit,
+    /// Fill target, center-cropping source to target aspect.
+    Cover,
+    /// Stretch to exact target (ignores aspect).
+    Stretch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum OrientArg {
+    /// Apply EXIF orientation and reset the tag (default).
+    #[default]
+    Auto,
+    /// Leave pixels as-is; keep the EXIF tag intact.
+    Keep,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum StructureArg {
+    /// Let the encoder choose based on preset / quality (default).
+    #[default]
+    Auto,
+    /// Force progressive output.
+    Progressive,
+    /// Force baseline (sequential) output.
+    Baseline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum TrellisArg {
+    /// Disable trellis entirely.
+    Off,
+    /// Standalone mozjpeg-style trellis.
+    On,
+    /// Hybrid trellis with RD lambda tuning (default, best quality).
+    #[default]
+    Hybrid,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum DeblockArg {
+    /// No deblocking (default).
+    #[default]
+    Off,
+    /// Content-aware deblocking.
+    On,
+    /// Force boundary 4-tap deblocking.
+    Boundary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum StripArg {
+    /// Strip all metadata (EXIF, ICC, XMP, gain maps).
+    All,
+    /// Keep all metadata.
+    None,
+    Exif,
+    Icc,
+    Xmp,
+    /// Strip UltraHDR gain map (demotes file to SDR).
+    Gainmaps,
 }
 
 // ============================================================================
@@ -748,49 +799,34 @@ fn main() -> Result<()> {
                     in_place: false,
                     suffix: String::new(),
                     force: false,
-                    contain: false,
-                    cover: false,
-                    fill: false,
-                    scale_down: false,
-                    pad: false,
-                    no_upscale: false,
+                    fit: FitArg::default(),
                     width: None,
                     height: None,
                     size: None,
                     dpr: None,
                     crop: None,
-                    extend: None,
+                    pad: None,
                     rotate: None,
                     flip: None,
-                    auto_orient: true,
-                    no_auto_orient: false,
+                    orient: OrientArg::default(),
                     quality: None,
                     distance: None,
                     crush: None,
                     tolerance: None,
-                    max_quality: 97.0,
-                    min_quality: 50.0,
-                    progressive: false,
-                    baseline: false,
+                    quality_range: "50:97".to_string(),
+                    structure: StructureArg::default(),
                     optimize_scans: false,
                     subsampling: None,
-                    quant_tables: None,
+                    quant: None,
                     chroma_tables: None,
                     preset: None,
-                    auto_optimize: true,
-                    no_optimize: false,
+                    trellis: TrellisArg::default(),
                     sharp_yuv: false,
                     xyb: false,
-                    deblock: false,
-                    deblock_boundary: false,
+                    deblock: DeblockArg::default(),
                     blur: 0.0,
                     strictness: None,
-                    strip_all: false,
-                    strip_exif: false,
-                    strip_icc: false,
-                    strip_xmp: false,
-                    strip_gainmaps: false,
-                    keep_all: false,
+                    strip: Vec::new(),
                     apply_icc: None,
                     filter: FilterArg::Mitchell,
                     down_filter: None,
