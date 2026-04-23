@@ -94,6 +94,7 @@ pub fn search_for_band<F>(
     band: Band,
     metric: Metric,
     quality_range: (f32, f32),
+    initial_quality: Option<f32>,
     attempts: u32,
     mut encode_at_q: F,
 ) -> Result<SearchResult>
@@ -111,10 +112,13 @@ where
 
     let mut best: Option<SearchResult> = None;
     let mut attempts_used = 0u32;
+    let mut next_q = initial_quality.map(|q| q.clamp(lo, hi));
 
     for _ in 0..attempts {
-        // Start at midpoint; subsequent iterations bisect toward target.
-        let q = ((lo + hi) / 2.0).clamp(0.0, 100.0);
+        // Use the seed on iteration 1 when provided; otherwise bisect current bounds.
+        let q = next_q
+            .take()
+            .unwrap_or_else(|| ((lo + hi) / 2.0).clamp(0.0, 100.0));
 
         let jpeg = encode_at_q(q)?;
         let measured = measure(&jpeg, source_rgb, width, height, metric)?;
@@ -331,6 +335,7 @@ mod tests {
             Band { min: 0.0, max: 1.0 },
             Metric::Ssim2,
             (20.0, 90.0),
+            None,
             3,
             |_q| {
                 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};

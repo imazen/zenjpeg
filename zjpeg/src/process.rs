@@ -505,6 +505,13 @@ fn run_lossy(
 
         let jpeg = if let Some((band, metric)) = search_target(args) {
             let (q_lo, q_hi) = args.resolve_quality_range()?;
+            // Seed: smart-detection result from `determine_encode_params` (source-relative
+            // proportional-tolerance quality). Typically 1-2 attempts closer to band than
+            // a naive midpoint.
+            let seed = match quality {
+                Quality::ApproxJpegli(q) => Some(q),
+                _ => None,
+            };
             let extras_ref = &extras;
             let result = crate::search::search_for_band(
                 &pixels_u8,
@@ -513,6 +520,7 @@ fn run_lossy(
                 band,
                 metric,
                 (q_lo, q_hi),
+                seed,
                 args.attempts,
                 |q| {
                     let q_typed = Quality::ApproxJpegli(q);
