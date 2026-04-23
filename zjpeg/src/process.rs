@@ -451,16 +451,75 @@ fn run_lossy(
             );
         }
 
-        if search_target(args).is_some() {
-            anyhow::bail!(
-                "--search-ssim2 / --search-distance are not supported with --xyb or --deblock yet"
-            );
-        }
-        let config = build_encoder_config(args, quality, subsampling, &extras);
-        let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
-        let jpeg = config
-            .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
-            .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?;
+        let jpeg = if let Some((band, metric)) = search_target(args) {
+            let (q_lo, q_hi) = args.resolve_quality_range()?;
+            let seed = match quality {
+                Quality::ApproxJpegli(q) => Some(q),
+                _ => None,
+            };
+            // Metric reference on the f32 encode path: encode at Q99 and decode
+            // the result. That bakes the encoder's own linear→sRGB transfer into
+            // the reference so subsequent lower-Q candidates are compared to a
+            // near-lossless version in the same color space (rather than to an
+            // sRGB conversion we roll ourselves, whose transfer function isn't
+            // byte-exact vs the encoder's internal one).
+            let extras_ref = &extras;
+            let ref_u8 = {
+                let q99_cfg = build_encoder_config(
+                    args,
+                    Quality::ApproxJpegli(99.0),
+                    subsampling,
+                    extras_ref,
+                );
+                let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
+                let q99_jpeg = q99_cfg
+                    .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
+                    .map_err(|e| anyhow::anyhow!("reference Q99 encode failed: {e}"))?;
+                crate::search::decode_to_srgb8(&q99_jpeg, width, height)?
+            };
+            let result = crate::search::search_for_band(
+                &ref_u8,
+                width,
+                height,
+                band,
+                metric,
+                (q_lo, q_hi),
+                seed,
+                args.attempts,
+                |q| {
+                    let q_typed = Quality::ApproxJpegli(q);
+                    let config = build_encoder_config(args, q_typed, subsampling, extras_ref);
+                    let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
+                    config
+                        .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
+                        .map_err(|e| anyhow::anyhow!("encode failed at Q{q:.1}: {e}"))
+                },
+            )?;
+            if !result.in_band {
+                eprintln!(
+                    "warning: search exhausted {} attempts without hitting band; using \
+                     Q{:.1} (metric {:.3}, band {}..{})",
+                    result.attempts_used, result.quality, result.metric, band.min, band.max,
+                );
+            } else if is_single {
+                eprintln!(
+                    "search: Q{:.1} → metric {:.3} (band {}..{}, {} attempt{})",
+                    result.quality,
+                    result.metric,
+                    band.min,
+                    band.max,
+                    result.attempts_used,
+                    if result.attempts_used == 1 { "" } else { "s" },
+                );
+            }
+            result.jpeg
+        } else {
+            let config = build_encoder_config(args, quality, subsampling, &extras);
+            let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
+            config
+                .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
+                .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
+        };
         let size = jpeg.len() as u64;
         (jpeg, size)
     } else {

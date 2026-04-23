@@ -11,7 +11,7 @@
 use anyhow::Result;
 use std::str::FromStr;
 
-use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, Strictness};
+use zenjpeg::decoder::{DecodeConfig, OutputTarget, PreserveConfig, Strictness, TargetColorSpace};
 
 /// Quality target band as `MIN..MAX` (inclusive on both ends).
 ///
@@ -192,7 +192,7 @@ fn measure(
     height: u32,
     metric: Metric,
 ) -> Result<f32> {
-    let decoded_rgb = decode_to_rgb8(jpeg_bytes, width, height)?;
+    let decoded_rgb = decode_to_srgb8(jpeg_bytes, width, height)?;
 
     match metric {
         Metric::Ssim2 => compute_ssim2(source_rgb, &decoded_rgb, width, height),
@@ -202,11 +202,18 @@ fn measure(
 
 /// Decode a JPEG byte stream back to tightly-packed RGB8 at the expected
 /// dimensions. Uses a permissive decoder so we don't reject our own encoder
-/// output over edge-case structural quirks.
-fn decode_to_rgb8(jpeg_bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
-    let mut cfg = DecodeConfig::new().preserve(PreserveConfig::none());
+/// output over edge-case structural quirks, and applies ICC color correction
+/// so XYB-encoded JPEGs produce comparable sRGB pixels (rather than raw
+/// XYB samples masquerading as sRGB).
+///
+/// Public so callers on the f32 encode path can build a reference by
+/// encoding at Q99 and decoding the result, matching the decoder-side
+/// transfer function of the candidates produced during the search loop.
+pub fn decode_to_srgb8(jpeg_bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
+    let mut cfg = DecodeConfig::new().preserve(PreserveConfig::all());
     cfg.strictness = Strictness::Permissive;
     cfg.output_target = OutputTarget::Srgb8;
+    cfg.correct_color = Some(TargetColorSpace::Srgb);
 
     let result = cfg
         .decode(jpeg_bytes, enough::Unstoppable)
