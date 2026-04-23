@@ -78,20 +78,34 @@ fn test_yuv444_dispatch_parity() {
 
 ### Exhaustive input coverage
 
-For single-pixel precision: iterate all 256³ RGB inputs (16M), convert RGB→YCbCr→RGB roundtrip, verify max error ≤ 1 level. Run as `#[ignore]` test (takes ~30s).
+For single-pixel precision: iterate all 256³ RGB inputs (16M) through the
+encoder, verify max error ≤ 1 level (Y) or ≤ 2 levels (4:2:0 chroma) vs a
+f64 reference. Three `#[ignore]` tests cover this (each ~5s):
+- `exhaustive_all_rgb_values` — BT.601 full-range 4:4:4 vs f32 reference
+- `exhaustive_all_matrix_range_444` — all 6 matrix×range combos vs f64
+- `exhaustive_all_matrix_range_420_uniform` — 4:2:0 chroma averaging path
+
+A full RGB→YCbCr→RGB roundtrip sweep is blocked until Phase 3 adds decode
+kernels. Add one then.
 
 ### Cross-platform CI
 
-7 targets minimum:
-- `x86_64-unknown-linux-gnu` (AVX2+FMA primary)
-- `x86_64-pc-windows-msvc`
-- `x86_64-apple-darwin` (macos-26-intel)
-- `aarch64-apple-darwin` (macos-latest, NEON)
-- `aarch64-unknown-linux-gnu` (cross, NEON)
-- `wasm32-unknown-unknown` (wasm-pack test, WASM SIMD128)
-- `i686-unknown-linux-gnu` (cross, 32-bit correctness)
+`.github/workflows/zenyuv-ci.yml` runs the full suite on:
+- `ubuntu-latest` (x86_64-linux, AVX2+FMA primary)
+- `ubuntu-24.04-arm` (aarch64-linux, NEON native)
+- `macos-latest` (aarch64-darwin, NEON)
+- `macos-26-intel` (x86_64-darwin)
+- `windows-latest` (x86_64-pc-windows-msvc)
+- `windows-11-arm` (aarch64-pc-windows-msvc)
+- `i686-unknown-linux-gnu` via `cross` (32-bit correctness)
 
-WASM tests MUST actually run (not just compile). Use `wasm-pack test --node` or similar.
+Plus a dedicated `exhaustive` job that runs the `#[ignore]`d 256³ tests
+on x86_64-linux, and a WASM *build* job for `wasm32-unknown-unknown`.
+
+**Gap:** WASM currently only builds, does not execute tests. Running
+`wasm-pack test --node` (or `wasm-bindgen-test-runner`) would require
+adding `wasm-bindgen-test` as a dev-dep and annotating tests with
+`#[wasm_bindgen_test]`. Not wired yet. Track under Phase 1 polish.
 
 ### Local NEON testing
 
@@ -141,9 +155,28 @@ Benchmark against `yuv` crate at every size from 256 to 4096. Must be faster or 
       zenyuv vs yuv-crate Professional at 256/512/1024/2048/4096)
 - [x] Precision comparison example (`examples/precision_vs_yuv_crate.rs` —
       demonstrates ±0 vs yuv-Pro on u8 output, ≤1 vs f32 reference)
-- [ ] CI on 7 platforms
-- [ ] Brute-force token permutation tests
-- [ ] Exhaustive 256³ roundtrip test
+- [x] CI on multiple platforms — `.github/workflows/zenyuv-ci.yml` covers
+      `ubuntu-latest` (x86_64-linux), `ubuntu-24.04-arm` (aarch64-linux NEON),
+      `macos-latest` (aarch64-darwin NEON), `macos-26-intel` (x86_64-darwin),
+      `windows-latest` (x86_64-msvc), `windows-11-arm` (aarch64-msvc),
+      `i686-unknown-linux-gnu` (via `cross`, 32-bit), plus a WASM build job
+      and a dedicated exhaustive-256³ job on x86_64-linux. The aspirational
+      7th target (`wasm32` actually *running* tests via wasm-bindgen-test)
+      is not yet wired — WASM is build-only today.
+- [x] Brute-force token permutation tests — `yuv444_dispatch_parity` and
+      `yuv420_dispatch_parity` in `src/lib.rs` use
+      `archmage::testing::for_each_token_permutation` with
+      `CompileTimePolicy::Warn`, covering all 6 matrix × range combos
+      (BT.601/709/2020 × Full/Limited) on x86_64. Byte-identical output
+      enforced across every tier permutation.
+- [x] Exhaustive 256³ encode-accuracy tests — `exhaustive_all_rgb_values`
+      (BT.601 full, ±1 vs f32), `exhaustive_all_matrix_range_444` (all 6
+      combos, ±1 vs f64), `exhaustive_all_matrix_range_420_uniform` (chroma
+      averaging path, ≤2 vs f64). Run in CI via the `exhaustive` job.
+      **Note:** these verify encode accuracy against a reference, not a
+      full RGB→YCbCr→RGB roundtrip — true roundtrip testing is blocked on
+      Phase 3 (YCbCr→RGB decode). Once decode lands, a roundtrip sweep is
+      cheap to add and should be checked in as a new `#[ignore]` test.
 
 ### Phase 2: Replace yuv in zenwebp
 - [ ] BT.601 limited-range 4:2:0 encode (VP8 needs studio range)
