@@ -238,9 +238,16 @@ impl StreamingEncoder {
                     ),
                 );
 
-                // Compute effective distance for quality-adaptive zero bias
-                let effective_distance =
-                    quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2);
+                // Compute effective distance for quality-adaptive zero bias.
+                // Color-space aware: XYB tables invert against the XYB base
+                // matrix + GLOBAL_SCALE_XYB; YCbCr tables invert against
+                // their own matrix + GLOBAL_SCALE_YCBCR.
+                let effective_distance = quant::quant_vals_to_distance(
+                    &quant.0,
+                    &quant.1,
+                    &quant.2,
+                    builder.use_xyb,
+                );
 
                 // Auto-select zero bias based on color mode
                 let zero_bias = if builder.use_xyb {

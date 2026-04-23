@@ -485,6 +485,13 @@ pub fn scale_to_distance(scale: f32, freq_idx: usize) -> f32 {
 /// It finds the distance that would produce the given quant tables
 /// when using jpegli's quantization formula.
 ///
+/// Color-space aware: XYB and YCbCr have different base matrices and
+/// global scales, so the inverse must know which tables were used. C++
+/// jpegli calls this only on the YCbCr path (`jpeg_color_space == JCS_YCbCr`
+/// at quant.cc:807); zenjpeg also calls it on XYB to drive
+/// `ZeroBiasParams::for_xyb`, so it must invert using XYB constants there
+/// to produce a meaningful distance.
+///
 /// This is used to compute zero-bias parameters appropriate for the
 /// actual quant values, rather than the input distance (which may differ
 /// at extreme quality levels where values are clamped to 1).
@@ -493,12 +500,19 @@ pub fn quant_vals_to_distance(
     y_quant: &QuantTable,
     cb_quant: &QuantTable,
     cr_quant: &QuantTable,
+    use_xyb: bool,
 ) -> f32 {
-    use crate::foundation::consts::{BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_YCBCR};
+    use crate::foundation::consts::{
+        BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
+    };
 
     const DIST_MAX: f32 = 10000.0;
 
-    let global_scale = GLOBAL_SCALE_YCBCR;
+    let (base_matrix, global_scale) = if use_xyb {
+        (&BASE_QUANT_MATRIX_XYB[..], GLOBAL_SCALE_XYB)
+    } else {
+        (&BASE_QUANT_MATRIX_YCBCR[..], GLOBAL_SCALE_YCBCR)
+    };
 
     // Determine quant_max based on table precision (matches C++ force_baseline logic)
     // If any table uses 16-bit precision, use extended range
@@ -517,7 +531,7 @@ pub fn quant_vals_to_distance(
 
     for (c, quant) in quant_tables.iter().enumerate() {
         let base_idx = c * DCT_BLOCK_SIZE;
-        let base_qm = &BASE_QUANT_MATRIX_YCBCR[base_idx..base_idx + DCT_BLOCK_SIZE];
+        let base_qm = &base_matrix[base_idx..base_idx + DCT_BLOCK_SIZE];
 
         for k in 0..DCT_BLOCK_SIZE {
             let mut dmin = 0.0f32;

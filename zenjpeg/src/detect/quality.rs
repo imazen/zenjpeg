@@ -227,7 +227,11 @@ fn estimate_jpegli_quality(scan: &ScanResult) -> QualityEstimate {
     let cb_qt = natural_to_quant_table(&cb.values, cb.precision);
     let cr_qt = natural_to_quant_table(&cr.values, cr.precision);
 
-    let distance = crate::quant::quant_vals_to_distance(&y_qt, &cb_qt, &cr_qt);
+    // Decoder-side: we don't know whether the JPEG was encoded with XYB or
+    // YCbCr. Default to YCbCr (the dominant case). A future improvement
+    // would try both inversions and pick the one with tighter dist_min..dist_max.
+    let distance =
+        crate::quant::quant_vals_to_distance(&y_qt, &cb_qt, &cr_qt, /* use_xyb = */ false);
 
     QualityEstimate {
         value: distance,
