@@ -22,6 +22,10 @@ enough = { workspace = true }
 glob = "0.3"
 bytemuck = { workspace = true }
 zenresize = { workspace = true }
+# Perceptual metrics for `--search-ssim2` / `--search-distance` target-band search.
+fast-ssim2 = { workspace = true }
+butteraugli = { workspace = true }
+imgref = "1.12"
 
 [features]
 default = []

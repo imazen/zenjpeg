@@ -187,7 +187,9 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_quality = args.quality.is_some()
         || args.distance.is_some()
         || args.crush.is_some()
-        || args.tolerance.is_some();
+        || args.tolerance.is_some()
+        || args.search_ssim2.is_some()
+        || args.search_distance.is_some();
     let has_deblock = args.deblock != DeblockArg::Off;
     let has_xyb = args.xyb;
     let has_icc = args.apply_icc.is_some();
@@ -449,6 +451,11 @@ fn run_lossy(
             );
         }
 
+        if search_target(args).is_some() {
+            anyhow::bail!(
+                "--search-ssim2 / --search-distance are not supported with --xyb or --deblock yet"
+            );
+        }
         let config = build_encoder_config(args, quality, subsampling, &extras);
         let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
         let jpeg = config
@@ -496,10 +503,49 @@ fn run_lossy(
             height = height + pad.top + pad.bottom;
         }
 
-        let config = build_encoder_config(args, quality, subsampling, &extras);
-        let jpeg = config
-            .encode_bytes(&pixels_u8, width, height, PixelLayout::Rgb8Srgb)
-            .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?;
+        let jpeg = if let Some((band, metric)) = search_target(args) {
+            let (q_lo, q_hi) = args.resolve_quality_range()?;
+            let extras_ref = &extras;
+            let result = crate::search::search_for_band(
+                &pixels_u8,
+                width,
+                height,
+                band,
+                metric,
+                (q_lo, q_hi),
+                args.attempts,
+                |q| {
+                    let q_typed = Quality::ApproxJpegli(q);
+                    let config = build_encoder_config(args, q_typed, subsampling, extras_ref);
+                    config
+                        .encode_bytes(&pixels_u8, width, height, PixelLayout::Rgb8Srgb)
+                        .map_err(|e| anyhow::anyhow!("encode failed at Q{q:.1}: {e}"))
+                },
+            )?;
+            if !result.in_band {
+                eprintln!(
+                    "warning: search exhausted {} attempts without hitting band; using \
+                     Q{:.1} (metric {:.3}, band {}..{})",
+                    result.attempts_used, result.quality, result.metric, band.min, band.max,
+                );
+            } else if is_single {
+                eprintln!(
+                    "search: Q{:.1} → metric {:.3} (band {}..{}, {} attempt{})",
+                    result.quality,
+                    result.metric,
+                    band.min,
+                    band.max,
+                    result.attempts_used,
+                    if result.attempts_used == 1 { "" } else { "s" },
+                );
+            }
+            result.jpeg
+        } else {
+            let config = build_encoder_config(args, quality, subsampling, &extras);
+            config
+                .encode_bytes(&pixels_u8, width, height, PixelLayout::Rgb8Srgb)
+                .map_err(|e| anyhow::anyhow!("encode failed: {e}"))?
+        };
         let size = jpeg.len() as u64;
         (jpeg, size)
     };
@@ -1314,4 +1360,22 @@ fn pad_f32_pixels(pixels: &[f32], width: usize, height: usize, pad: &PadValues) 
     }
 
     out
+}
+
+// ============================================================================
+// Target-band search helpers
+// ============================================================================
+
+/// Return the active `--search-*` target, if any.
+///
+/// `--search-ssim2` wins over `--search-distance` if both are somehow set
+/// (the clap `quality_target` group prevents this at the CLI level).
+fn search_target(args: &ProcessArgs) -> Option<(crate::search::Band, crate::search::Metric)> {
+    if let Some(band) = args.search_ssim2 {
+        return Some((band, crate::search::Metric::Ssim2));
+    }
+    if let Some(band) = args.search_distance {
+        return Some((band, crate::search::Metric::Distance));
+    }
+    None
 }

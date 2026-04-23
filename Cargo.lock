@@ -3265,10 +3265,13 @@ name = "zjpeg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "butteraugli 0.9.0",
  "bytemuck",
  "clap",
  "enough",
+ "fast-ssim2 0.8.0",
  "glob",
+ "imgref",
  "indicatif",
  "rayon",
  "rgb",

@@ -5,6 +5,7 @@ mod optimize;
 mod output;
 mod process;
 mod restructure;
+mod search;
 mod transform;
 
 use std::path::PathBuf;
@@ -121,15 +122,29 @@ pub struct ProcessArgs {
 
     // -- Quality ---------------------------------------------------------
     /// Exact quality target (0-100, bypasses smart detection).
-    #[arg(short, long)]
+    #[arg(short, long, group = "quality_target")]
     pub quality: Option<f32>,
 
     /// Exact butteraugli distance target (alternative to --quality).
-    #[arg(short, long)]
+    #[arg(short, long, group = "quality_target")]
     pub distance: Option<f32>,
 
+    /// Target SSIM2 band as `MIN..MAX` — search for smallest file in band.
+    /// Example: `--search-ssim2 85..92`.
+    #[arg(long, group = "quality_target")]
+    pub search_ssim2: Option<search::Band>,
+
+    /// Target butteraugli distance band as `MIN..MAX` — search for smallest file in band.
+    /// Example: `--search-distance 0.8..1.5`.
+    #[arg(long, group = "quality_target")]
+    pub search_distance: Option<search::Band>,
+
+    /// Max encode+measure iterations for --search-* (default 3).
+    #[arg(long, default_value_t = 3)]
+    pub attempts: u32,
+
     /// Quality/size tradeoff preset for smart detection.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, group = "quality_target")]
     pub crush: Option<CrushLevel>,
 
     /// Smart-mode butteraugli tolerance override (overrides --crush).
@@ -137,6 +152,7 @@ pub struct ProcessArgs {
     pub tolerance: Option<f32>,
 
     /// Smart-mode quality range as `MIN:MAX` (default `50:97`).
+    /// Also used as the quality search window for `--search-*`.
     #[arg(long, default_value = "50:97")]
     pub quality_range: String,
 
@@ -811,6 +827,9 @@ fn main() -> Result<()> {
                     orient: OrientArg::default(),
                     quality: None,
                     distance: None,
+                    search_ssim2: None,
+                    search_distance: None,
+                    attempts: 3,
                     crush: None,
                     tolerance: None,
                     quality_range: "50:97".to_string(),
