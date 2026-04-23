@@ -62,9 +62,7 @@ thiserror = { workspace = true }  # Error derive macros
 # lcms2 removed — use moxcms (pure Rust) instead
 moxcms = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }  # For parallel encoding
-# Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
-# Mandatory dependency — will be replaced with archmage-based code eventually.
-yuv = { workspace = true }
+# Fast SIMD RGB→YCbCr conversion via zenyuv (in-workspace crate, mandatory).
 zenyuv = { workspace = true }
 # Token-based safe SIMD intrinsics (mandatory — always compiled in)
 archmage = { workspace = true }
