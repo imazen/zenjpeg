@@ -26,6 +26,10 @@ zenresize = { workspace = true }
 fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 imgref = "1.12"
+# Exact sRGB OETF — invert the decoder's LinearF32 transfer so the metric
+# reference compares candidates against the original image (sRGB u8 domain)
+# rather than against the encoder's own noisy Q99 round-trip.
+linear-srgb = { workspace = true }
 
 [features]
 default = []

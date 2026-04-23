@@ -470,26 +470,15 @@ fn run_lossy(
                 Quality::ApproxJpegli(q) => Some(q),
                 _ => None,
             };
-            // Metric reference on the f32 encode path: encode at Q99 through
-            // the same encoder and decode the result. That bakes the encoder's
-            // own linear → sRGB transfer into the reference, so subsequent
-            // lower-Q candidates are compared against a near-lossless version
-            // in the same colour space they'll land in (rather than against a
-            // hand-rolled transfer that doesn't byte-match the encoder's).
+            // Metric reference on the f32 encode path: invert the decoder's
+            // LinearF32 transfer (sRGB OETF via `linear_srgb` crate, byte-equal
+            // to the decoder's own `srgb_u8_to_linear` LUT to ±1 u8). This
+            // compares candidates against the ORIGINAL source image in the sRGB
+            // u8 domain, rather than against a noisy Q99 re-encode (the
+            // encoder's linear→sRGB path has ~1.1 RMSE u8 noise that a
+            // Q99-reference would bake into the metric floor).
             let extras_ref = &extras;
-            let ref_u8 = {
-                let q99_cfg = build_encoder_config(
-                    args,
-                    Quality::ApproxJpegli(99.0),
-                    subsampling,
-                    extras_ref,
-                );
-                let pixel_bytes: &[u8] = bytemuck::cast_slice(&pixels_f32);
-                let q99_jpeg = q99_cfg
-                    .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
-                    .map_err(|e| anyhow::anyhow!("reference Q99 encode failed: {e}"))?;
-                crate::search::decode_to_srgb8(&q99_jpeg, width, height, false)?
-            };
+            let ref_u8 = linear_f32_to_srgb_u8(&pixels_f32, width, height);
             let result = crate::search::search_for_band(
                 &ref_u8,
                 width,
@@ -1447,6 +1436,25 @@ fn pad_f32_pixels(pixels: &[f32], width: usize, height: usize, pad: &PadValues) 
 // ============================================================================
 // Target-band search helpers
 // ============================================================================
+
+/// Convert a tightly-packed linear-f32 RGB buffer (nominal `[0, 1]`, clamped)
+/// to tightly-packed sRGB u8 using the same transfer function zenjpeg's decoder
+/// inverts when producing `OutputTarget::LinearF32` — so this is the exact
+/// inverse of the decoder's linearization step. Used on the f32 search path
+/// (`--deblock`) to build a metric reference that lives in the same sRGB u8
+/// domain as the search's decoded candidates.
+fn linear_f32_to_srgb_u8(pixels_f32: &[f32], w: u32, h: u32) -> Vec<u8> {
+    let n = (w as usize) * (h as usize) * 3;
+    debug_assert!(pixels_f32.len() >= n);
+    pixels_f32
+        .iter()
+        .take(n)
+        .map(|&v| {
+            let s = linear_srgb::default::linear_to_srgb(v.clamp(0.0, 1.0));
+            (s * 255.0).round().clamp(0.0, 255.0) as u8
+        })
+        .collect()
+}
 
 /// Return the active `--search-*` target, if any.
 ///
