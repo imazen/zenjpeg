@@ -6,65 +6,27 @@
 //! 3. MCU-aligned dimensions for axis-swapping transforms
 
 use crate::lossless::{EdgeHandling, LosslessTransform, TransformConfig};
-use zenlayout::{Command, Constraint, Orientation};
+
+use super::command::{Command, compose_orientation, needs_lossy};
+use zenresize::Orientation;
 
 /// Check if a set of layout commands can be handled losslessly.
 ///
 /// Returns the composed `LosslessTransform` if all commands are orientation-only
 /// (no resize, no crop, no padding). Returns `None` if lossy path is required.
 pub(crate) fn detect_lossless(commands: &[Command]) -> Option<LosslessTransform> {
-    let mut has_resize = false;
-    let mut has_crop = false;
-    let mut has_pad = false;
-    let mut has_region = false;
-    let mut orientation = Orientation::Identity;
-
-    for cmd in commands {
-        match cmd {
-            Command::AutoOrient(exif) => {
-                if let Some(o) = Orientation::from_exif(*exif) {
-                    orientation = orientation.compose(o);
-                }
-            }
-            Command::Rotate(r) => {
-                let o = match r {
-                    zenlayout::Rotation::Rotate90 => Orientation::Rotate90,
-                    zenlayout::Rotation::Rotate180 => Orientation::Rotate180,
-                    zenlayout::Rotation::Rotate270 => Orientation::Rotate270,
-                    _ => return None,
-                };
-                orientation = orientation.compose(o);
-            }
-            Command::Flip(axis) => {
-                let o = match axis {
-                    zenlayout::FlipAxis::Horizontal => Orientation::FlipH,
-                    zenlayout::FlipAxis::Vertical => Orientation::FlipV,
-                    _ => return None,
-                };
-                orientation = orientation.compose(o);
-            }
-            Command::Constrain(c) => {
-                has_resize = constraint_may_resize(c);
-            }
-            Command::Crop(_) => has_crop = true,
-            Command::Region(_) => has_region = true,
-            Command::Pad(_) => has_pad = true,
-            _ => return None, // Unknown command — conservative: not lossless
-        }
-    }
-
-    if has_resize || has_crop || has_pad || has_region {
+    if needs_lossy(commands) {
         return None;
     }
 
+    let orientation = compose_orientation(commands);
     if orientation.is_identity() {
         return Some(LosslessTransform::None);
     }
-
     orientation_to_lossless(orientation)
 }
 
-/// Map zenlayout Orientation to zenjpeg LosslessTransform.
+/// Map `zenpixels::Orientation` to zenjpeg `LosslessTransform`.
 fn orientation_to_lossless(o: Orientation) -> Option<LosslessTransform> {
     Some(match o {
         Orientation::Identity => LosslessTransform::None,
@@ -75,7 +37,7 @@ fn orientation_to_lossless(o: Orientation) -> Option<LosslessTransform> {
         Orientation::Rotate270 => LosslessTransform::Rotate270,
         Orientation::Transpose => LosslessTransform::Transpose,
         Orientation::Transverse => LosslessTransform::Transverse,
-        _ => return None, // Unknown orientation variant
+        _ => return None, // Non-exhaustive enum — unknown variant
     })
 }
 
@@ -290,20 +252,9 @@ fn parse_dri(jpeg_data: &[u8]) -> Option<u16> {
     None
 }
 
-/// Check if a constraint might cause a resize.
-/// Conservative: returns true unless we can prove it won't resize.
-fn constraint_may_resize(c: &Constraint) -> bool {
-    // If no target dimensions specified, it won't resize
-    if c.width.is_none() && c.height.is_none() {
-        return false;
-    }
-
-    // Any constraint with dimensions conservatively means lossy
-    true
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::command::{FlipAxis, Rotation};
     use super::*;
 
     #[test]
@@ -323,8 +274,6 @@ mod tests {
 
     #[test]
     fn detect_composed_orientation() {
-        use zenlayout::{FlipAxis, Rotation};
-
         let commands = vec![
             Command::Rotate(Rotation::Rotate90),
             Command::Flip(FlipAxis::Horizontal),
@@ -335,32 +284,36 @@ mod tests {
 
     #[test]
     fn detect_resize_is_lossy() {
-        use zenlayout::ConstraintMode;
         let commands = vec![
             Command::AutoOrient(6),
-            Command::Constrain(Constraint::new(ConstraintMode::Fit, 800, 600)),
+            Command::Fit {
+                mode: zenresize::FitMode::Fit,
+                w: 800,
+                h: 600,
+            },
         ];
         assert_eq!(detect_lossless(&commands), None);
     }
 
     #[test]
     fn detect_crop_is_lossy() {
-        let commands = vec![Command::Crop(zenlayout::SourceCrop::pixels(
-            10, 10, 100, 100,
-        ))];
+        let commands = vec![Command::Crop {
+            x: 10,
+            y: 10,
+            w: 100,
+            h: 100,
+        }];
         assert_eq!(detect_lossless(&commands), None);
     }
 
     #[test]
     fn parse_dri_absent() {
-        // Minimal valid JPEG: SOI + SOS (no DRI)
         let data = [0xFF, 0xD8, 0xFF, 0xDA];
         assert_eq!(super::parse_dri(&data), None);
     }
 
     #[test]
     fn parse_dri_present() {
-        // SOI + DRI(interval=16)
         let data = [
             0xFF, 0xD8, // SOI
             0xFF, 0xDD, 0x00, 0x04, 0x00, 0x10, // DRI: length=4, interval=16
@@ -371,7 +324,6 @@ mod tests {
 
     #[test]
     fn parse_dri_zero() {
-        // DRI with interval=0 (disabled)
         let data = [0xFF, 0xD8, 0xFF, 0xDD, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xDA];
         assert_eq!(super::parse_dri(&data), Some(0));
     }

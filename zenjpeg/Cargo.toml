@@ -76,9 +76,9 @@ web-sys = { version = "0.3", features = ["console"], optional = true }
 ultrahdr-core = { workspace = true }
 # Half-precision float (f16) — used for UltraHDR HDR pixel decoding
 half = { workspace = true, optional = true }
-# Layout pipeline: geometry computation + image resampling
-zenlayout = { workspace = true, optional = true }
-zenresize = { workspace = true, optional = true, features = ["layout"] }
+# Layout pipeline: image resampling. Constraint solver (FitMode) and
+# EXIF-orientation bridge live in zenresize 0.3+.
+zenresize = { workspace = true, optional = true }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
@@ -193,9 +193,11 @@ __wasm-simd = []
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/transfer", "dep:half"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
-# Layout pipeline: lossless transforms + lossy decode→resize→encode
-# Integrates zenlayout (geometry) and zenresize (resampling)
-layout = ["decoder", "dep:zenlayout", "dep:zenresize"]
+# Layout pipeline: lossless transforms + lossy decode→resize→encode.
+# Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
+# zenresize itself; orientation group algebra comes from zenpixels (re-exported
+# via zenresize). No separate zenlayout dep needed.
+layout = ["decoder", "dep:zenresize"]
 # Self-documenting pipeline node definitions (EncodeJpeg, DecodeJpeg)
 # zennode = ["dep:zennode", "zencodec"]
 

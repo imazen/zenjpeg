@@ -1344,9 +1344,9 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.9"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29091b0ec185f4d3fa802f1b1975a114b3f9b0beea9a71014427a8b6cb54970a"
+checksum = "aec728ff58a6af8e67dbab79f479ce908b2eb50d40011df945f287d506bd9e32"
 dependencies = [
  "archmage 0.9.21",
  "bytemuck",
@@ -3139,7 +3139,6 @@ dependencies = [
  "zenbench",
  "zencodec",
  "zenjpeg-bench-utils",
- "zenlayout",
  "zenpixels",
  "zenresize",
  "zensim",
@@ -3190,9 +3189,9 @@ dependencies = [
 
 [[package]]
 name = "zenresize"
-version = "0.2.2"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f673b0b4c93ab1916c4804265e1ad9154de694ce5d3ce9f28a4ed8af4c259a24"
+checksum = "0703679da7af627f10429532d0633b3d32fa0fd10d2b48ca94b5fcd0dbfd6e5a"
 dependencies = [
  "archmage 0.9.21",
  "imgref",
@@ -3203,7 +3202,6 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenlayout",
  "zenpixels",
 ]
 

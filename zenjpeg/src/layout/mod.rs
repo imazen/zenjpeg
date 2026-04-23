@@ -1,8 +1,10 @@
 //! Layout pipeline: lossless transforms + lossy decode → resize → encode.
 //!
-//! Integrates [`zenlayout`] for geometry computation and [`zenresize`] for image
-//! resampling. Automatically selects the lossless DCT-domain path when only
-//! orientation changes are requested (zero generation loss, ~3-5x faster).
+//! Uses [`zenresize`] for image resampling and constraint-solver math
+//! (`FitMode`, `fit_dims`) plus `zenpixels::Orientation` (re-exported via
+//! `zenresize::Orientation`) for EXIF orientation group algebra.
+//! Automatically selects the lossless DCT-domain path when only orientation
+//! changes are requested (zero generation loss, ~3-5x faster).
 //!
 //! # Example
 //!
@@ -25,20 +27,24 @@
 //! assert!(!result.lossless);
 //! ```
 
+pub(crate) mod command;
 mod gainmap;
 mod lossless;
 mod lossy;
+pub(crate) mod plan;
 
 use alloc::vec::Vec;
 
 use enough::Stop;
-use zenlayout::{Command, Constraint, ConstraintMode, FlipAxis, Rotation, SourceCrop};
 
 use crate::decode::DecodeConfig;
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::ChromaSubsampling;
 use crate::error::Result;
 pub use crate::lossless::EdgeHandling;
+
+pub use self::command::{Command, FlipAxis, Rotation};
+pub use zenresize::{FitMode, Orientation};
 
 /// Layout pipeline configuration. Reusable across operations.
 ///
@@ -50,7 +56,7 @@ pub struct LayoutConfig {
     subsampling: ChromaSubsampling,
     progressive: bool,
     auto_optimize: bool,
-    filter: zenresize::Filter,
+    pub(crate) filter: zenresize::Filter,
     edge_handling: EdgeHandling,
     pub(crate) fancy_upsampling: bool,
 }
@@ -180,39 +186,39 @@ impl<'a> LayoutRequest<'a> {
         self
     }
 
-    /// Crop to a pixel region.
-    pub fn crop(mut self, crop: SourceCrop) -> Self {
-        self.commands.push(Command::Crop(crop));
+    /// Crop to a pixel region in source coordinates (pre-orient).
+    pub fn crop(mut self, x: u32, y: u32, w: u32, h: u32) -> Self {
+        self.commands.push(Command::Crop { x, y, w, h });
         self
     }
 
     /// Fit within the given dimensions (may upscale).
     pub fn fit(mut self, w: u32, h: u32) -> Self {
-        self.commands.push(Command::Constrain(Constraint::new(
-            ConstraintMode::Fit,
+        self.commands.push(Command::Fit {
+            mode: FitMode::Fit,
             w,
             h,
-        )));
+        });
         self
     }
 
     /// Fit within the given dimensions (never upscale).
     pub fn within(mut self, w: u32, h: u32) -> Self {
-        self.commands.push(Command::Constrain(Constraint::new(
-            ConstraintMode::Within,
+        self.commands.push(Command::Fit {
+            mode: FitMode::Within,
             w,
             h,
-        )));
+        });
         self
     }
 
     /// Fill and crop to exact dimensions (may upscale).
     pub fn fit_crop(mut self, w: u32, h: u32) -> Self {
-        self.commands.push(Command::Constrain(Constraint::new(
-            ConstraintMode::FitCrop,
+        self.commands.push(Command::Fit {
+            mode: FitMode::Cover,
             w,
             h,
-        )));
+        });
         self
     }
 
@@ -255,7 +261,7 @@ impl<'a> LayoutRequest<'a> {
         // Detect UltraHDR gain map
         let gain_map_jpeg = self.detect_and_extract_gainmap(&info);
 
-        // Check EXIF for auto_orient commands that reference the source
+        // Resolve any AutoOrient(0) sentinels against source EXIF.
         let mut commands = self.resolve_auto_orient(&info);
 
         // When optimizing for decode, auto-apply EXIF orientation if it can be
@@ -349,20 +355,13 @@ impl<'a> LayoutRequest<'a> {
             });
         }
 
-        // Lossy path: compute full layout plan via zenlayout
-        let (ideal, request) = self.compute_layout(&commands, src_w, src_h)?;
-        let offer = zenlayout::DecoderOffer::full_decode(src_w, src_h);
-        let plan = ideal.finalize(&request, &offer);
-        let target_w = plan.canvas.width;
-        let target_h = plan.canvas.height;
+        // Lossy path: build a concrete Plan from the command list.
+        let plan = plan::plan_layout(&commands, src_w, src_h, self.config);
+        let target_w = plan.final_w;
+        let target_h = plan.final_h;
 
-        // Detect if any orientation commands are present (for EXIF orientation reset)
-        let has_orientation = commands.iter().any(|cmd| {
-            matches!(
-                cmd,
-                Command::AutoOrient(o) if *o != 1
-            ) || matches!(cmd, Command::Rotate(_) | Command::Flip(_))
-        });
+        // EXIF orientation reset needed if the plan applies any orient.
+        let has_orientation = !plan.orient.is_identity();
 
         let primary = lossy::execute_lossy(
             self.jpeg_data,
@@ -437,33 +436,12 @@ impl<'a> LayoutRequest<'a> {
 
     /// Resolve auto_orient commands that read from source EXIF.
     fn resolve_auto_orient(&self, info: &crate::decode::JpegInfo) -> Vec<Command> {
-        self.commands
-            .iter()
-            .map(|cmd| {
-                if let Command::AutoOrient(0) = cmd {
-                    // Auto-orient with 0 means "read from EXIF"
-                    let exif_orient = info
-                        .exif
-                        .as_ref()
-                        .and_then(|e| crate::lossless::parse_exif_orientation(e))
-                        .unwrap_or(1);
-                    Command::AutoOrient(exif_orient)
-                } else {
-                    cmd.clone()
-                }
-            })
-            .collect()
-    }
-
-    /// Compute full layout via zenlayout, returning the ideal layout and decoder request.
-    fn compute_layout(
-        &self,
-        commands: &[Command],
-        src_w: u32,
-        src_h: u32,
-    ) -> Result<(zenlayout::IdealLayout, zenlayout::DecoderRequest)> {
-        zenlayout::compute_layout(commands, src_w, src_h, None)
-            .map_err(|e| crate::error::Error::invalid_config(alloc::format!("layout error: {e}")))
+        let exif_orient = info
+            .exif
+            .as_ref()
+            .and_then(|e| crate::lossless::parse_exif_orientation(e))
+            .unwrap_or(1);
+        command::resolve_auto_orient(&self.commands, exif_orient)
     }
 }
 
@@ -480,7 +458,7 @@ pub struct LayoutResult {
 }
 
 // Re-export useful types from dependencies for ergonomics.
-pub use zenlayout::Command as LayoutCommand;
+pub use self::command::Command as LayoutCommand;
 pub use zenresize::Filter;
 
 #[cfg(test)]
@@ -574,7 +552,7 @@ mod tests {
             .within(256, 256)
             .execute(&Unstoppable)
             .unwrap();
-        // Within with larger target still goes through lossy path (conservative detection)
+        // Within with larger target goes through lossy path (conservative detection)
         // but dimensions should match source
         assert_eq!(result.width, 64);
         assert_eq!(result.height, 64);

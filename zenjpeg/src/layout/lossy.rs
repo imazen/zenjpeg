@@ -1,8 +1,9 @@
 //! Lossy path: decode → resize → encode.
 //!
 //! Uses streaming decode + streaming resize + streaming encode for bounded memory.
-//! Uses [`zenresize::streaming_from_plan()`] to build the streaming resizer from a
-//! [`zenlayout::LayoutPlan`], automatically handling crop, resize, and canvas padding.
+//! Builds a [`zenresize::StreamingResize`] from the local [`Plan`] — which owns
+//! the `ResizeConfig` (including any `source_region` crop) and an `OrientOutput`
+//! applied post-resize.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -17,14 +18,12 @@ use crate::encode::exif::Exif;
 use crate::error::Result;
 
 use super::LayoutConfig;
+use super::plan::Plan;
 
 /// Execute the lossy decode → resize → encode path.
 ///
 /// Decodes the JPEG to RGB8 via scanline reader, resizes using zenresize's
 /// streaming API for bounded memory, and re-encodes with the configured settings.
-///
-/// Uses `streaming_from_plan()` to build the streaming resizer from the
-/// layout plan, automatically handling crop, resize, and canvas padding.
 ///
 /// When `reset_orientation` is true, the EXIF orientation tag is set to 1
 /// (normal) because the pixels have already been oriented by the pipeline.
@@ -32,31 +31,16 @@ pub(crate) fn execute_lossy(
     jpeg_data: &[u8],
     info: &JpegInfo,
     config: &LayoutConfig,
-    plan: &zenlayout::LayoutPlan,
+    plan: &Plan,
     reset_orientation: bool,
     force_baseline: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
-    let src_w = info.dimensions.width;
-    let src_h = info.dimensions.height;
-    let target_w = plan.canvas.width;
-    let target_h = plan.canvas.height;
-
-    let needs_resize =
-        !plan.resize_is_identity || plan.trim.is_some() || target_w != src_w || target_h != src_h;
-
-    if needs_resize {
-        decode_resize_encode(
-            jpeg_data,
-            info,
-            config,
-            plan,
-            reset_orientation,
-            force_baseline,
-            stop,
-        )
-    } else {
-        decode_reencode(
+    if plan.is_identity {
+        // No resize, no crop, no orient — just re-encode at source dimensions.
+        let src_w = info.dimensions.width;
+        let src_h = info.dimensions.height;
+        return decode_reencode(
             jpeg_data,
             info,
             config,
@@ -65,38 +49,37 @@ pub(crate) fn execute_lossy(
             reset_orientation,
             force_baseline,
             stop,
-        )
+        );
     }
+    decode_resize_encode(
+        jpeg_data,
+        info,
+        config,
+        plan,
+        reset_orientation,
+        force_baseline,
+        stop,
+    )
 }
 
 /// Decode → resize → encode with streaming for bounded memory.
-///
-/// Uses `config_from_plan()` to build the resize config from the layout plan,
-/// which handles crop (trim), resize, and canvas padding automatically.
 fn decode_resize_encode(
     jpeg_data: &[u8],
     info: &JpegInfo,
     config: &LayoutConfig,
-    plan: &zenlayout::LayoutPlan,
+    plan: &Plan,
     reset_orientation: bool,
     force_baseline: bool,
     stop: &dyn Stop,
 ) -> Result<Vec<u8>> {
     let src_w = info.dimensions.width;
-    let src_h = info.dimensions.height;
-    let out_w = plan.canvas.width;
-    let out_h = plan.canvas.height;
+    let out_w = plan.final_w;
+    let out_h = plan.final_h;
 
-    // Build streaming resizer from layout plan (handles crop, resize, pad, orient).
+    // Build streaming resizer from the planned ResizeConfig; apply post-resize orient.
     let batch = 8u32;
-    let mut resizer = zenresize::streaming_from_plan_batched(
-        src_w,
-        src_h,
-        plan,
-        PixelDescriptor::RGB8_SRGB,
-        config.filter,
-        batch,
-    );
+    let mut resizer =
+        StreamingResize::with_batch_hint(&plan.resize, batch).with_orientation(plan.orient);
 
     // Build encoder with metadata from source.
     // force_baseline overrides progressive AFTER auto_optimize (which enables progressive).
@@ -160,7 +143,7 @@ fn decode_resize_encode(
     encoder.finish()
 }
 
-/// Simple decode → resize → encode without a layout plan.
+/// Simple decode → resize → encode without a full plan.
 ///
 /// Used for gain map proportional resize where no crop/pad/orient is needed.
 pub(crate) fn resize_simple(
@@ -319,10 +302,8 @@ fn attach_metadata<'a>(
         if reset_orientation {
             let mut exif_copy = exif.clone();
             crate::lossless::set_exif_orientation(&mut exif_copy, 1);
-            // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
             request = request.exif(Exif::Raw(exif_copy[EXIF_PREFIX_LEN..].to_vec()));
         } else {
-            // Strip the Exif\0\0 prefix — Exif::Raw expects raw TIFF bytes
             request = request.exif(Exif::Raw(exif[EXIF_PREFIX_LEN..].to_vec()));
         }
     }
