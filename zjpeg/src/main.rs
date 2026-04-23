@@ -1,5 +1,4 @@
 mod batch;
-mod color_parse;
 mod coord;
 mod info;
 mod optimize;
@@ -120,34 +119,14 @@ pub struct ProcessArgs {
     #[arg(long)]
     pub dpr: Option<f32>,
 
-    /// Crop to aspect ratio before resize (e.g. 16:9).
-    #[arg(long)]
-    pub aspect_crop: Option<String>,
-
     // -- Spatial operations -----------------------------------------------
-    /// Select a crop rectangle: x,y,w,h (px or %).
+    /// Select a source crop rectangle: `x,y,w,h` in pixels.
     #[arg(long)]
     pub crop: Option<String>,
 
-    /// Trim edges (CSS TRBL shorthand, px or %).
-    #[arg(long)]
-    pub inset: Option<String>,
-
-    /// Viewport region: left,top,right,bottom (px/pct/calc).
-    #[arg(long)]
-    pub region: Option<String>,
-
-    /// Post-padding (CSS TRBL shorthand, px or %).
+    /// Post-resize padding (CSS TRBL shorthand, pixels). Filled with black.
     #[arg(long)]
     pub extend: Option<String>,
-
-    /// Anchor position for crop/pad: center, top-left, 30%,70%, etc.
-    #[arg(long, default_value = "center")]
-    pub position: String,
-
-    /// Background color for padding (CSS hex or named color).
-    #[arg(long)]
-    pub bg: Option<String>,
 
     // -- Transforms -------------------------------------------------------
     /// Rotate clockwise by degrees (90, 180, 270).
@@ -325,11 +304,6 @@ pub struct ProcessArgs {
     /// Number of parallel jobs (default: num_cpus / 2).
     #[arg(short, long)]
     pub jobs: Option<usize>,
-
-    // -- Escape hatch -----------------------------------------------------
-    /// RIAPI query string for advanced layout (overrides spatial flags).
-    #[arg(long)]
-    pub riapi: Option<String>,
 }
 
 impl ProcessArgs {
@@ -784,13 +758,8 @@ fn main() -> Result<()> {
                     height: None,
                     size: None,
                     dpr: None,
-                    aspect_crop: None,
                     crop: None,
-                    inset: None,
-                    region: None,
                     extend: None,
-                    position: "center".into(),
-                    bg: None,
                     rotate: None,
                     flip: None,
                     auto_orient: true,
@@ -833,7 +802,6 @@ fn main() -> Result<()> {
                     csv: None,
                     dry_run: false,
                     jobs: None,
-                    riapi: None,
                 })
             }
         }

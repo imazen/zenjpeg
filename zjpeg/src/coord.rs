@@ -1,11 +1,10 @@
 //! Coordinate value parsing for the `process` subcommand.
 //!
 //! Supports pixel values, percentages (`%` or `pct`), and calc expressions
-//! (`50%+20`, `50pct-10`). Also provides CSS TRBL shorthand, crop rect,
-//! aspect ratio, position, and dimension parsers.
+//! (`50%+20`, `50pct-10`). Also provides CSS TRBL shorthand and dimension
+//! parsers.
 
 use anyhow::{Result, bail};
-use zenlayout::{Gravity, RegionCoord};
 
 /// A coordinate value with optional percent and pixel components.
 ///
@@ -39,11 +38,6 @@ impl CoordValue {
     #[cfg(test)]
     pub fn resolve(self, dim: u32) -> i32 {
         (self.percent * dim as f32).round() as i32 + self.pixels
-    }
-
-    /// Convert to a `RegionCoord`.
-    pub fn to_region_coord(self) -> RegionCoord {
-        RegionCoord::pct_px(self.percent, self.pixels)
     }
 }
 
@@ -171,93 +165,6 @@ pub fn parse_trbl(s: &str) -> Result<Trbl> {
     }
 }
 
-/// Parse a crop rect: `x,y,w,h` where each can be px or %.
-pub fn parse_crop_rect(s: &str) -> Result<[CoordValue; 4]> {
-    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-    if parts.len() != 4 {
-        bail!(
-            "crop rect requires 4 comma-separated values (x,y,w,h), got {}",
-            parts.len()
-        );
-    }
-    Ok([
-        parse_coord(parts[0])?,
-        parse_coord(parts[1])?,
-        parse_coord(parts[2])?,
-        parse_coord(parts[3])?,
-    ])
-}
-
-/// Parse an aspect ratio like `16:9` or `4:3`.
-pub fn parse_aspect_ratio(s: &str) -> Result<(u32, u32)> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        bail!("aspect ratio must be W:H (e.g. 16:9), got '{s}'");
-    }
-    let w: u32 = parts[0]
-        .trim()
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid aspect width: '{}'", parts[0]))?;
-    let h: u32 = parts[1]
-        .trim()
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid aspect height: '{}'", parts[1]))?;
-    if w == 0 || h == 0 {
-        bail!("aspect ratio values must be positive");
-    }
-    Ok((w, h))
-}
-
-/// Parse a position string into a `Gravity`.
-///
-/// Accepts:
-/// - Named positions: `center`, `top-left`, `top`, `top-right`, `left`, `right`,
-///   `bottom-left`, `bottom`, `bottom-right`
-/// - Percentage pair: `30%,70%` or `30pct,70pct`
-pub fn parse_position(s: &str) -> Result<Gravity> {
-    let s = s.trim().to_ascii_lowercase();
-    match s.as_str() {
-        "center" => Ok(Gravity::Center),
-        "top-left" | "topleft" => Ok(Gravity::Percentage(0.0, 0.0)),
-        "top" | "top-center" => Ok(Gravity::Percentage(0.5, 0.0)),
-        "top-right" | "topright" => Ok(Gravity::Percentage(1.0, 0.0)),
-        "left" | "center-left" => Ok(Gravity::Percentage(0.0, 0.5)),
-        "right" | "center-right" => Ok(Gravity::Percentage(1.0, 0.5)),
-        "bottom-left" | "bottomleft" => Ok(Gravity::Percentage(0.0, 1.0)),
-        "bottom" | "bottom-center" => Ok(Gravity::Percentage(0.5, 1.0)),
-        "bottom-right" | "bottomright" => Ok(Gravity::Percentage(1.0, 1.0)),
-        _ => {
-            // Try percent pair
-            let parts: Vec<&str> = s.split(',').collect();
-            if parts.len() == 2 {
-                let x = parse_pct_value(parts[0])?;
-                let y = parse_pct_value(parts[1])?;
-                Ok(Gravity::Percentage(x, y))
-            } else {
-                bail!("invalid position: '{s}' (expected named position or X%,Y%)")
-            }
-        }
-    }
-}
-
-/// Parse a percentage value like `30%` or `30pct` → 0.3.
-fn parse_pct_value(s: &str) -> Result<f32> {
-    let s = s.trim();
-    if let Some(num) = s.strip_suffix('%') {
-        let v: f32 = num
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid percent: '{s}'"))?;
-        Ok(v / 100.0)
-    } else if let Some(num) = s.strip_suffix("pct") {
-        let v: f32 = num
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid percent: '{s}'"))?;
-        Ok(v / 100.0)
-    } else {
-        bail!("position values must use % or pct suffix: '{s}'")
-    }
-}
-
 /// Parse a dimension string like `800x600`, `800`, or `x600`.
 ///
 /// Returns `(width, height)` where either can be `None`.
@@ -293,23 +200,6 @@ pub fn parse_dimensions(s: &str) -> Result<(Option<u32>, Option<u32>)> {
             .map_err(|_| anyhow::anyhow!("invalid dimension: '{s}'"))?;
         Ok((Some(w), None))
     }
-}
-
-/// Parse a region string: `left,top,right,bottom` where each can be px, %, or calc.
-pub fn parse_region(s: &str) -> Result<[CoordValue; 4]> {
-    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
-    if parts.len() != 4 {
-        bail!(
-            "region requires 4 comma-separated values (left,top,right,bottom), got {}",
-            parts.len()
-        );
-    }
-    Ok([
-        parse_coord(parts[0])?,
-        parse_coord(parts[1])?,
-        parse_coord(parts[2])?,
-        parse_coord(parts[3])?,
-    ])
 }
 
 #[cfg(test)]
@@ -404,59 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_crop_rect_basic() {
-        let r = parse_crop_rect("0,0,800,600").unwrap();
-        assert_eq!(r[0], CoordValue::px(0));
-        assert_eq!(r[1], CoordValue::px(0));
-        assert_eq!(r[2], CoordValue::px(800));
-        assert_eq!(r[3], CoordValue::px(600));
-    }
-
-    #[test]
-    fn parse_crop_rect_percent() {
-        let r = parse_crop_rect("10%,10%,80%,80%").unwrap();
-        assert!((r[0].percent - 0.1).abs() < 1e-6);
-        assert!((r[2].percent - 0.8).abs() < 1e-6);
-    }
-
-    #[test]
-    fn parse_aspect_basic() {
-        assert_eq!(parse_aspect_ratio("16:9").unwrap(), (16, 9));
-        assert_eq!(parse_aspect_ratio("4:3").unwrap(), (4, 3));
-        assert_eq!(parse_aspect_ratio("1:1").unwrap(), (1, 1));
-    }
-
-    #[test]
-    fn parse_aspect_zero_fails() {
-        assert!(parse_aspect_ratio("0:9").is_err());
-        assert!(parse_aspect_ratio("16:0").is_err());
-    }
-
-    #[test]
-    fn parse_position_named() {
-        assert!(matches!(parse_position("center").unwrap(), Gravity::Center));
-        assert!(matches!(
-            parse_position("top-left").unwrap(),
-            Gravity::Percentage(x, y) if x == 0.0 && y == 0.0
-        ));
-        assert!(matches!(
-            parse_position("bottom-right").unwrap(),
-            Gravity::Percentage(x, y) if x == 1.0 && y == 1.0
-        ));
-    }
-
-    #[test]
-    fn parse_position_percent() {
-        match parse_position("30%,70%").unwrap() {
-            Gravity::Percentage(x, y) => {
-                assert!((x - 0.3).abs() < 1e-6);
-                assert!((y - 0.7).abs() < 1e-6);
-            }
-            _ => panic!("expected Percentage"),
-        }
-    }
-
-    #[test]
     fn parse_dimensions_both() {
         assert_eq!(parse_dimensions("800x600").unwrap(), (Some(800), Some(600)));
     }
@@ -470,23 +307,5 @@ mod tests {
     #[test]
     fn parse_dimensions_height_only() {
         assert_eq!(parse_dimensions("x600").unwrap(), (None, Some(600)));
-    }
-
-    #[test]
-    fn parse_region_basic() {
-        let r = parse_region("0,0,100%,100%").unwrap();
-        assert_eq!(r[0], CoordValue::px(0));
-        assert_eq!(r[1], CoordValue::px(0));
-        assert!((r[2].percent - 1.0).abs() < 1e-6);
-        assert!((r[3].percent - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn parse_region_calc() {
-        let r = parse_region("-20,-20,100%+20,100%+20").unwrap();
-        assert_eq!(r[0], CoordValue::px(-20));
-        assert_eq!(r[1], CoordValue::px(-20));
-        assert!((r[2].percent - 1.0).abs() < 1e-6);
-        assert_eq!(r[2].pixels, 20);
     }
 }

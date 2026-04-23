@@ -25,13 +25,10 @@ use zenjpeg::encoder::{
 use zenjpeg::lossless::{
     self, LosslessTransform, OutputMode, RestartInterval, RestructureConfig, TransformConfig,
 };
-use zenlayout::{
-    CanvasColor, Constraint, ConstraintMode, Padding, Pipeline, Region, RegionCoord, SourceCrop,
-};
+use zenresize::{FitMode, fit_cover_source_crop, fit_dims};
 
 use crate::batch::{self, BatchSummary, FileResult};
-use crate::color_parse;
-use crate::coord::{self, CoordValue, Trbl};
+use crate::coord;
 use crate::output::OutputConfig;
 use crate::{FlipArg, IccTargetArg, ProcessArgs, SubsamplingArg};
 
@@ -182,10 +179,7 @@ fn process_inner(
 fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_resize =
         args.width.is_some() || args.height.is_some() || args.size.is_some() || args.dpr.is_some();
-    let has_crop = args.crop.is_some()
-        || args.inset.is_some()
-        || args.region.is_some()
-        || args.aspect_crop.is_some();
+    let has_crop = args.crop.is_some();
     let has_extend = args.extend.is_some();
     let has_quality = args.quality.is_some()
         || args.distance.is_some()
@@ -205,7 +199,6 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
     let has_optimize_scans = args.optimize_scans;
     let has_transform = args.rotate.is_some() || args.flip.is_some();
     let has_structure = args.progressive || args.baseline;
-    let has_riapi = args.riapi.is_some();
 
     let lossy_triggers = has_resize
         || has_crop
@@ -219,8 +212,7 @@ fn classify_pipeline(args: &ProcessArgs) -> PipelineKind {
         || has_quant_tables
         || has_chroma_tables
         || has_preset
-        || has_optimize_scans
-        || has_riapi;
+        || has_optimize_scans;
 
     if lossy_triggers {
         return PipelineKind::Lossy;
@@ -544,6 +536,7 @@ struct LayoutResult {
     padding: Option<PadValues>,
 }
 
+#[derive(Clone, Copy)]
 struct CropRect {
     x: u32,
     y: u32,
@@ -560,281 +553,168 @@ struct PadValues {
 }
 
 fn build_layout(args: &ProcessArgs, source_w: u32, source_h: u32) -> Result<Option<LayoutResult>> {
-    // If RIAPI escape hatch, use that
-    if let Some(ref query) = args.riapi {
-        return build_layout_riapi(query, source_w, source_h);
-    }
-
     let (target_w, target_h) = args.resolve_dimensions()?;
 
-    let has_spatial = target_w.is_some()
-        || target_h.is_some()
-        || args.crop.is_some()
-        || args.inset.is_some()
-        || args.region.is_some()
-        || args.extend.is_some()
-        || args.aspect_crop.is_some();
-
+    let has_spatial =
+        target_w.is_some() || target_h.is_some() || args.crop.is_some() || args.extend.is_some();
     if !has_spatial {
         return Ok(None);
     }
 
-    // Build zenlayout Pipeline
-    let mut pipeline = Pipeline::new(source_w, source_h);
-
-    // 1. Source crop / inset / region
-    if let Some(ref crop_str) = args.crop {
-        let vals = coord::parse_crop_rect(crop_str)?;
-        let crop = resolve_source_crop(&vals, source_w, source_h);
-        pipeline = pipeline.crop(crop);
-    } else if let Some(ref inset_str) = args.inset {
-        let trbl = coord::parse_trbl(inset_str)?;
-        let region = inset_to_region(&trbl, &resolve_bg(args)?);
-        pipeline = pipeline.region(region);
-    } else if let Some(ref region_str) = args.region {
-        let vals = coord::parse_region(region_str)?;
-        let region = resolve_region(&vals, &resolve_bg(args)?);
-        pipeline = pipeline.region(region);
-    }
-
-    // 2. Aspect crop
-    if let Some(ref aspect_str) = args.aspect_crop {
-        let (aw, ah) = coord::parse_aspect_ratio(aspect_str)?;
-        pipeline = pipeline.aspect_crop(aw, ah);
-    }
-
-    // 3. Constraint (resize)
-    if target_w.is_some() || target_h.is_some() {
-        let mode = resolve_constraint_mode(args);
-        let gravity = coord::parse_position(&args.position)?;
-        let bg_color = resolve_bg(args)?;
-
-        let constraint = match (target_w, target_h) {
-            (Some(w), Some(h)) => Constraint::new(mode, w, h),
-            (Some(w), None) => Constraint::width_only(mode, w),
-            (None, Some(h)) => Constraint::height_only(mode, h),
-            (None, None) => unreachable!(),
-        };
-
-        pipeline = pipeline.constrain(constraint.gravity(gravity).canvas_color(bg_color));
-    }
-
-    // 4. Post-padding (--extend)
-    if let Some(ref extend_str) = args.extend {
-        let trbl = coord::parse_trbl(extend_str)?;
-        let bg_color = resolve_bg(args)?;
-        let pad = resolve_padding(&trbl, source_w, source_h, &bg_color);
-        pipeline = pipeline.pad(pad);
-    }
-
-    // Compute layout
-    let (ideal, _request) = pipeline
-        .plan()
-        .map_err(|e| anyhow::anyhow!("layout error: {e:?}"))?;
-
-    let layout = &ideal.layout;
-
-    let source_crop = layout.source_crop.map(|r| CropRect {
-        x: r.x,
-        y: r.y,
-        w: r.width,
-        h: r.height,
-    });
-
-    let needs_resize = layout.needs_resize();
-    let target_w = layout.resize_to.width;
-    let target_h = layout.resize_to.height;
-
-    let padding = if layout.needs_padding() {
-        let (px, py) = layout.placement;
-        let canvas_w = layout.canvas.width;
-        let canvas_h = layout.canvas.height;
-        let content_w = target_w;
-        let content_h = target_h;
-        let left = px.max(0) as u32;
-        let top = py.max(0) as u32;
-        let right = canvas_w.saturating_sub(content_w + left);
-        let bottom = canvas_h.saturating_sub(content_h + top);
-        let color = canvas_color_to_rgb(&layout.canvas_color);
-        Some(PadValues {
-            top,
-            right,
-            bottom,
-            left,
-            color,
-        })
+    // Explicit source crop (pixel-only `x,y,w,h`). Chains with later Fit.
+    let source_crop = if let Some(ref s) = args.crop {
+        Some(parse_crop_pixels(s)?)
     } else {
         None
     };
 
-    Ok(Some(LayoutResult {
-        source_crop,
-        target_w,
-        target_h,
-        needs_resize,
-        padding,
-    }))
-}
+    // Dimensions of the source-as-seen-by-Fit: post-crop if explicit, else source.
+    let fit_src_w = source_crop.map(|c| c.w).unwrap_or(source_w);
+    let fit_src_h = source_crop.map(|c| c.h).unwrap_or(source_h);
 
-fn build_layout_riapi(query: &str, source_w: u32, source_h: u32) -> Result<Option<LayoutResult>> {
-    let parse_result = zenlayout::riapi::parse(query);
-    for w in &parse_result.warnings {
-        eprintln!("riapi warning: {w:?}");
-    }
-
-    let pipeline = parse_result
-        .instructions
-        .to_pipeline(source_w, source_h, None)
-        .map_err(|e| anyhow::anyhow!("riapi layout error: {e:?}"))?;
-
-    let (ideal, _request) = pipeline
-        .plan()
-        .map_err(|e| anyhow::anyhow!("layout error: {e:?}"))?;
-
-    let layout = &ideal.layout;
-
-    let source_crop = layout.source_crop.map(|r| CropRect {
-        x: r.x,
-        y: r.y,
-        w: r.width,
-        h: r.height,
-    });
-
-    let needs_resize = layout.needs_resize();
-    let target_w = layout.resize_to.width;
-    let target_h = layout.resize_to.height;
-
-    let padding = if layout.needs_padding() {
-        let (px, py) = layout.placement;
-        let canvas_w = layout.canvas.width;
-        let canvas_h = layout.canvas.height;
-        let content_w = target_w;
-        let content_h = target_h;
-        let left = px.max(0) as u32;
-        let top = py.max(0) as u32;
-        let right = canvas_w.saturating_sub(content_w + left);
-        let bottom = canvas_h.saturating_sub(content_h + top);
-        let color = canvas_color_to_rgb(&layout.canvas_color);
-        Some(PadValues {
-            top,
-            right,
-            bottom,
-            left,
-            color,
-        })
+    // Resolve the Fit mode + target dims. `--no-upscale` forces Within on any mode
+    // that would otherwise upscale (Fit/Cover). For `--cover --no-upscale`: if the
+    // source already fits inside the target on both axes, skip the crop and resize
+    // (matches zenlayout's old `WithinCrop` intent).
+    let (resize_to, aspect_crop) = if let (Some(tw), Some(th)) = (target_w, target_h) {
+        resolve_fit(args, fit_src_w, fit_src_h, tw, th)
+    } else if let Some(tw) = target_w {
+        // Width-only: derive height from aspect. `FitMode::Fit` at
+        // `(fit_src_w, fit_src_h) → (tw, u32::MAX)` gives a width-bound result.
+        let (w, h) = fit_dims(fit_src_w, fit_src_h, tw, u32::MAX, FitMode::Fit);
+        (Some((w, h)), None)
+    } else if let Some(th) = target_h {
+        let (w, h) = fit_dims(fit_src_w, fit_src_h, u32::MAX, th, FitMode::Fit);
+        (Some((w, h)), None)
     } else {
-        None
+        (None, None)
     };
 
-    Ok(Some(LayoutResult {
-        source_crop,
-        target_w,
-        target_h,
-        needs_resize,
-        padding,
-    }))
-}
+    // Combine explicit crop and aspect crop (from Cover) into a single source_region.
+    let combined_crop = match (source_crop, aspect_crop) {
+        (Some(c), Some(a)) => Some(CropRect {
+            x: c.x + a.x,
+            y: c.y + a.y,
+            w: a.w,
+            h: a.h,
+        }),
+        (Some(c), None) => Some(c),
+        (None, Some(a)) => Some(a),
+        (None, None) => None,
+    };
 
-fn resolve_constraint_mode(args: &ProcessArgs) -> ConstraintMode {
-    if args.contain {
-        ConstraintMode::Fit
-    } else if args.cover && args.no_upscale {
-        ConstraintMode::WithinCrop
-    } else if args.cover {
-        ConstraintMode::FitCrop
-    } else if args.fill {
-        ConstraintMode::Distort
-    } else if args.pad && args.no_upscale {
-        ConstraintMode::WithinPad
-    } else if args.pad {
-        ConstraintMode::FitPad
-    } else {
-        // Default: scale-down (Within = never upscale)
-        ConstraintMode::Within
-    }
-}
+    let (target_w, target_h) = resize_to.unwrap_or((fit_src_w, fit_src_h));
+    let needs_resize = target_w != fit_src_w || target_h != fit_src_h;
 
-fn resolve_bg(args: &ProcessArgs) -> Result<CanvasColor> {
-    if let Some(ref bg_str) = args.bg {
-        color_parse::parse_color(bg_str)
-            .ok_or_else(|| anyhow::anyhow!("invalid background color: '{bg_str}'"))
-    } else {
-        Ok(CanvasColor::Transparent)
-    }
-}
-
-fn canvas_color_to_rgb(color: &CanvasColor) -> [u8; 3] {
-    match color {
-        CanvasColor::Srgb { r, g, b, .. } => [*r, *g, *b],
-        CanvasColor::Linear { r, g, b, .. } => {
-            // Approximate linear → sRGB
-            let to_srgb = |v: f32| -> u8 {
-                let c = if v <= 0.0031308 {
-                    12.92 * v
-                } else {
-                    1.055 * v.powf(1.0 / 2.4) - 0.055
-                };
-                (c * 255.0).round().clamp(0.0, 255.0) as u8
-            };
-            [to_srgb(*r), to_srgb(*g), to_srgb(*b)]
+    // Post-resize padding (--extend T,R,B,L, pixels only, black fill).
+    let padding = if let Some(ref s) = args.extend {
+        let trbl = coord::parse_trbl(s)?;
+        if trbl.top.pixels > 0
+            || trbl.right.pixels > 0
+            || trbl.bottom.pixels > 0
+            || trbl.left.pixels > 0
+        {
+            Some(PadValues {
+                top: trbl.top.pixels.max(0) as u32,
+                right: trbl.right.pixels.max(0) as u32,
+                bottom: trbl.bottom.pixels.max(0) as u32,
+                left: trbl.left.pixels.max(0) as u32,
+                color: [0, 0, 0],
+            })
+        } else {
+            None
         }
-        // Transparent and any future variants default to black
-        _ => [0, 0, 0],
-    }
-}
-
-fn resolve_source_crop(vals: &[CoordValue; 4], source_w: u32, source_h: u32) -> SourceCrop {
-    // Check if any values use percent
-    let any_pct = vals.iter().any(|v| v.percent != 0.0);
-    if any_pct {
-        // Use percent crop (values are already 0..1 fractions)
-        SourceCrop::percent(
-            vals[0].percent + vals[0].pixels as f32 / source_w as f32,
-            vals[1].percent + vals[1].pixels as f32 / source_h as f32,
-            vals[2].percent + vals[2].pixels as f32 / source_w as f32,
-            vals[3].percent + vals[3].pixels as f32 / source_h as f32,
-        )
     } else {
-        SourceCrop::pixels(
-            vals[0].pixels as u32,
-            vals[1].pixels as u32,
-            vals[2].pixels as u32,
-            vals[3].pixels as u32,
-        )
-    }
+        None
+    };
+
+    Ok(Some(LayoutResult {
+        source_crop: combined_crop,
+        target_w,
+        target_h,
+        needs_resize,
+        padding,
+    }))
 }
 
-fn inset_to_region(trbl: &Trbl, bg: &CanvasColor) -> Region {
-    // Inset = trim from edges, so left = inset_left, right = 1.0 - inset_right, etc.
-    Region {
-        left: trbl.left.to_region_coord(),
-        top: trbl.top.to_region_coord(),
-        right: RegionCoord::pct_px(1.0 - trbl.right.percent, -trbl.right.pixels),
-        bottom: RegionCoord::pct_px(1.0 - trbl.bottom.percent, -trbl.bottom.pixels),
-        color: *bg,
-    }
+/// Resolve the fit mode + target dims for a two-axis constraint.
+///
+/// Returns `(Some(resize_to), Option<aspect_crop>)`. The aspect crop is set
+/// only for Cover — it's in coordinates relative to `fit_src_w × fit_src_h`
+/// (i.e. post-explicit-crop).
+fn resolve_fit(
+    args: &ProcessArgs,
+    fit_src_w: u32,
+    fit_src_h: u32,
+    tw: u32,
+    th: u32,
+) -> (Option<(u32, u32)>, Option<CropRect>) {
+    // Determine base mode from the mutually-exclusive fit flags.
+    // Default (no flag set) is Within — never upscale.
+    let mode = if args.contain {
+        FitMode::Fit
+    } else if args.cover {
+        FitMode::Cover
+    } else if args.fill {
+        FitMode::Stretch
+    } else {
+        FitMode::Within
+    };
+
+    // --no-upscale downgrades Fit/Cover when the source already fits inside
+    // the target (on both axes for Cover, on either axis for Fit). Matches
+    // zenlayout's `WithinCrop` / `WithinPad` semantics for the common case.
+    let effective_mode = if args.no_upscale {
+        match mode {
+            FitMode::Fit if fit_src_w <= tw && fit_src_h <= th => return (None, None),
+            FitMode::Cover if fit_src_w <= tw && fit_src_h <= th => return (None, None),
+            FitMode::Fit => FitMode::Within,
+            FitMode::Cover => mode, // Cover beyond bounds still fills; no-upscale
+            // only suppresses the upscale case above.
+            _ => mode,
+        }
+    } else {
+        mode
+    };
+
+    // Cover needs an aspect-aligned source crop so the resize exactly fills
+    // the target without stretching.
+    let aspect_crop = if matches!(effective_mode, FitMode::Cover) {
+        let (ax, ay, aw, ah) = fit_cover_source_crop(fit_src_w, fit_src_h, tw, th);
+        (aw > 0 && ah > 0).then_some(CropRect {
+            x: ax,
+            y: ay,
+            w: aw,
+            h: ah,
+        })
+    } else {
+        None
+    };
+
+    let (w, h) = fit_dims(fit_src_w, fit_src_h, tw, th, effective_mode);
+    (Some((w, h)), aspect_crop)
 }
 
-fn resolve_region(vals: &[CoordValue; 4], bg: &CanvasColor) -> Region {
-    Region {
-        left: vals[0].to_region_coord(),
-        top: vals[1].to_region_coord(),
-        right: vals[2].to_region_coord(),
-        bottom: vals[3].to_region_coord(),
-        color: *bg,
+/// Parse `--crop x,y,w,h` as four pixel values.
+fn parse_crop_pixels(s: &str) -> Result<CropRect> {
+    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
+    if parts.len() != 4 {
+        anyhow::bail!(
+            "crop rect requires 4 comma-separated pixel values (x,y,w,h), got {}",
+            parts.len()
+        );
     }
-}
-
-fn resolve_padding(trbl: &Trbl, _source_w: u32, _source_h: u32, bg: &CanvasColor) -> Padding {
-    // For pixel-only padding, resolve directly
-    // For percent padding, resolve against source dims
-    Padding::new(
-        trbl.top.pixels.max(0) as u32,
-        trbl.right.pixels.max(0) as u32,
-        trbl.bottom.pixels.max(0) as u32,
-        trbl.left.pixels.max(0) as u32,
-        *bg,
-    )
+    let parse_u32 = |p: &str| -> Result<u32> {
+        p.parse().map_err(|_| {
+            anyhow::anyhow!("invalid crop value '{p}' (expected a non-negative integer)")
+        })
+    };
+    Ok(CropRect {
+        x: parse_u32(parts[0])?,
+        y: parse_u32(parts[1])?,
+        w: parse_u32(parts[2])?,
+        h: parse_u32(parts[3])?,
+    })
 }
 
 // ============================================================================

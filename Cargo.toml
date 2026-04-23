@@ -103,12 +103,10 @@ half = { version = "2.7.1", default-features = false }
 ultrahdr-rs = "0.3.5"
 ultrahdr-core = { version = "0.4.0", default-features = false }
 
-# Resize pipeline. zenjpeg uses zenresize's FitMode constraint solver +
-# zenpixels::Orientation (via From<Orientation> for OrientOutput) and does
-# NOT depend on zenlayout. The `zjpeg` CLI still uses zenlayout's RIAPI
-# parser (query-string layout syntax) — port pending.
+# Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
+# both live in zenresize 0.3+. zenlayout is no longer used anywhere in this
+# workspace (replaced by direct zenresize calls in both zenjpeg and zjpeg).
 zenresize = { version = "0.3.1" }
-zenlayout = "0.2"
 
 [workspace.metadata.superwork.ci]
 delete_members = ["internal/jpegli-internals-sys", "zjpeg"]
