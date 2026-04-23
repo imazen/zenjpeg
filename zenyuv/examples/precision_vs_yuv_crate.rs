@@ -68,7 +68,12 @@ fn encode_zenyuv_444(rgb: &[u8], w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u
     (y, u, v)
 }
 
-fn encode_yuv_crate_444(rgb: &[u8], w: usize, h: usize, mode: YuvConversionMode) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn encode_yuv_crate_444(
+    rgb: &[u8],
+    w: usize,
+    h: usize,
+    mode: YuvConversionMode,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut img = YuvPlanarImageMut::alloc(w as u32, h as u32, YuvChromaSubsampling::Yuv444);
     rgb_to_yuv444(
         &mut img,
@@ -86,7 +91,12 @@ fn encode_yuv_crate_444(rgb: &[u8], w: usize, h: usize, mode: YuvConversionMode)
     )
 }
 
-fn encode_yuv_crate_420(rgb: &[u8], w: usize, h: usize, mode: YuvConversionMode) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn encode_yuv_crate_420(
+    rgb: &[u8],
+    w: usize,
+    h: usize,
+    mode: YuvConversionMode,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut img = YuvPlanarImageMut::alloc(w as u32, h as u32, YuvChromaSubsampling::Yuv420);
     rgb_to_yuv420(
         &mut img,
