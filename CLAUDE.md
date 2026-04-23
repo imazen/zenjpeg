@@ -938,6 +938,25 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
+7. **XYB-encoded JPEGs don't round-trip to sRGB in the u8 decode path (2026-04-23)** —
+   Encoding a normal sRGB image through `EncoderConfig::xyb(...)` produces a valid
+   XYB JPEG (ICC = `jxl` XYB profile), but decoding it with any of
+   `OutputTarget::{Srgb8, SrgbF32, LinearF32}` produces a bimodal 0/255 pixel
+   distribution instead of the original colors. `parser.info().is_xyb` correctly
+   returns `true` and the ICC is extracted under `PreserveConfig::all()`, so the
+   detection half works — the inverse transform (`xyb_planes_to_srgb_*_simd` at
+   `decode/parser/output.rs:1518`/`:1929`) is either not being called or is
+   receiving wrong-shaped input.
+   - Repro: `zjpeg process in.jpg --xyb -q 90 -o out.jpg && zjpeg process out.jpg -q 95 -o rt.jpg` → `rt.jpg` pixels are orange/cyan banding, not the original.
+   - Impact: zjpeg's `--search-ssim2` / `--search-distance` bail out when `--xyb`
+     is set, because the metric would be meaningless against the broken decode.
+     Standalone XYB encode still works for viewers that honour the XYB ICC profile
+     via external CMS.
+   - Investigation surface: `decode/parser/output.rs:1237` (`to_pixels_u8` gets
+     `is_xyb: bool` — verify whether the `if is_xyb { xyb_planes_to_srgb_u8_simd }`
+     branch actually fires for u8 output with a newly-encoded XYB file, or whether
+     a fast path further up is emitting raw XYB samples).
+
 ### Fixed / Resolved Bugs (historical reference)
 
 - **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -

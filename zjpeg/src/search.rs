@@ -95,6 +95,7 @@ pub fn search_for_band<F>(
     metric: Metric,
     quality_range: (f32, f32),
     initial_quality: Option<f32>,
+    candidate_needs_cms: bool,
     attempts: u32,
     mut encode_at_q: F,
 ) -> Result<SearchResult>
@@ -121,7 +122,14 @@ where
             .unwrap_or_else(|| ((lo + hi) / 2.0).clamp(0.0, 100.0));
 
         let jpeg = encode_at_q(q)?;
-        let measured = measure(&jpeg, source_rgb, width, height, metric)?;
+        let measured = measure(
+            &jpeg,
+            source_rgb,
+            width,
+            height,
+            metric,
+            candidate_needs_cms,
+        )?;
         attempts_used += 1;
 
         let in_band = measured >= band.min && measured <= band.max;
@@ -191,8 +199,9 @@ fn measure(
     width: u32,
     height: u32,
     metric: Metric,
+    apply_cms: bool,
 ) -> Result<f32> {
-    let decoded_rgb = decode_to_srgb8(jpeg_bytes, width, height)?;
+    let decoded_rgb = decode_to_srgb8(jpeg_bytes, width, height, apply_cms)?;
 
     match metric {
         Metric::Ssim2 => compute_ssim2(source_rgb, &decoded_rgb, width, height),
@@ -201,19 +210,24 @@ fn measure(
 }
 
 /// Decode a JPEG byte stream back to tightly-packed RGB8 at the expected
-/// dimensions. Uses a permissive decoder so we don't reject our own encoder
-/// output over edge-case structural quirks, and applies ICC color correction
-/// so XYB-encoded JPEGs produce comparable sRGB pixels (rather than raw
-/// XYB samples masquerading as sRGB).
+/// dimensions.
 ///
-/// Public so callers on the f32 encode path can build a reference by
-/// encoding at Q99 and decoding the result, matching the decoder-side
-/// transfer function of the candidates produced during the search loop.
-pub fn decode_to_srgb8(jpeg_bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
+/// `apply_cms` controls whether ICC color-management is applied:
+/// - `false` — direct YCbCr → sRGB decode. Correct for normal sRGB JPEGs;
+///   avoids CMS matrix rounding on content that doesn't need it.
+/// - `true` — apply the embedded ICC profile and convert to the sRGB
+///   target. Required for XYB-encoded JPEGs (whose raw samples are in
+///   XYB space, not sRGB). No-op for sRGB profiles in theory, but in
+///   practice adds a tiny rounding step — avoid when not needed.
+pub fn decode_to_srgb8(jpeg_bytes: &[u8], w: u32, h: u32, apply_cms: bool) -> Result<Vec<u8>> {
+    // `PreserveConfig::all()` is required for the decoder to extract the ICC
+    // profile — without it, XYB auto-detection never fires and XYB-encoded
+    // JPEGs come back as raw XYB samples.
     let mut cfg = DecodeConfig::new().preserve(PreserveConfig::all());
-    cfg.strictness = Strictness::Permissive;
     cfg.output_target = OutputTarget::Srgb8;
-    cfg.correct_color = Some(TargetColorSpace::Srgb);
+    if apply_cms {
+        cfg = cfg.correct_color(Some(TargetColorSpace::Srgb));
+    }
 
     let result = cfg
         .decode(jpeg_bytes, enough::Unstoppable)
@@ -343,6 +357,7 @@ mod tests {
             Metric::Ssim2,
             (20.0, 90.0),
             None,
+            false,
             3,
             |_q| {
                 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};

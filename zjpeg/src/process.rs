@@ -451,18 +451,31 @@ fn run_lossy(
             );
         }
 
+        // XYB output round-trips badly through zenjpeg's current decoder (raw
+        // XYB samples leak as sRGB, producing a bimodal 0/255 distribution
+        // instead of real pixels). That's a decoder bug independent of search,
+        // so the metric would chase noise. Deblock alone still uses the f32
+        // encode path but the output is standard sRGB — that search works.
+        if args.xyb && search_target(args).is_some() {
+            anyhow::bail!(
+                "--search-* with --xyb is disabled: the zenjpeg decoder does not \
+                 currently round-trip XYB-encoded JPEGs back to sRGB correctly, \
+                 so the metric would not reflect perceptual quality. Drop --xyb \
+                 (u8 path) or use --deblock on (f32 encode → sRGB output)."
+            );
+        }
         let jpeg = if let Some((band, metric)) = search_target(args) {
             let (q_lo, q_hi) = args.resolve_quality_range()?;
             let seed = match quality {
                 Quality::ApproxJpegli(q) => Some(q),
                 _ => None,
             };
-            // Metric reference on the f32 encode path: encode at Q99 and decode
-            // the result. That bakes the encoder's own linear→sRGB transfer into
-            // the reference so subsequent lower-Q candidates are compared to a
-            // near-lossless version in the same color space (rather than to an
-            // sRGB conversion we roll ourselves, whose transfer function isn't
-            // byte-exact vs the encoder's internal one).
+            // Metric reference on the f32 encode path: encode at Q99 through
+            // the same encoder and decode the result. That bakes the encoder's
+            // own linear → sRGB transfer into the reference, so subsequent
+            // lower-Q candidates are compared against a near-lossless version
+            // in the same colour space they'll land in (rather than against a
+            // hand-rolled transfer that doesn't byte-match the encoder's).
             let extras_ref = &extras;
             let ref_u8 = {
                 let q99_cfg = build_encoder_config(
@@ -475,7 +488,7 @@ fn run_lossy(
                 let q99_jpeg = q99_cfg
                     .encode_bytes(pixel_bytes, width, height, PixelLayout::RgbF32Linear)
                     .map_err(|e| anyhow::anyhow!("reference Q99 encode failed: {e}"))?;
-                crate::search::decode_to_srgb8(&q99_jpeg, width, height)?
+                crate::search::decode_to_srgb8(&q99_jpeg, width, height, false)?
             };
             let result = crate::search::search_for_band(
                 &ref_u8,
@@ -485,6 +498,7 @@ fn run_lossy(
                 metric,
                 (q_lo, q_hi),
                 seed,
+                false,
                 args.attempts,
                 |q| {
                     let q_typed = Quality::ApproxJpegli(q);
@@ -580,6 +594,7 @@ fn run_lossy(
                 metric,
                 (q_lo, q_hi),
                 seed,
+                false, // u8 path candidates are sRGB JPEGs — no CMS needed
                 args.attempts,
                 |q| {
                     let q_typed = Quality::ApproxJpegli(q);
