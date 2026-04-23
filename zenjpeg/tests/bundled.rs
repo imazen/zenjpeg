@@ -42,6 +42,8 @@ mod arithmetic_first_decode;
 mod arithmetic_minimal;
 #[path = "bundled/arithmetic_tolerance.rs"]
 mod arithmetic_tolerance;
+#[path = "bundled/bt601_reference.rs"]
+mod bt601_reference;
 #[path = "bundled/chroma_benchmark.rs"]
 mod chroma_benchmark;
 #[path = "bundled/chroma_upsample_regression.rs"]
@@ -252,8 +254,6 @@ mod xyb_linear_cpp_parity;
 mod xyb_roundtrip;
 #[path = "bundled/ycbcr_locked.rs"]
 mod ycbcr_locked;
-#[path = "bundled/yuv_crate_comparison.rs"]
-mod yuv_crate_comparison;
 #[path = "bundled/zero_quant_clamp.rs"]
 mod zero_quant_clamp;
 #[path = "bundled/zune_crash_repro.rs"]

@@ -134,8 +134,13 @@ Benchmark against `yuv` crate at every size from 256 to 4096. Must be faster or 
 - [x] BT.601 full-range 4:4:4 encode (AVX2 + generic)
 - [x] BT.601 full-range 4:2:0 encode (AVX2 + generic)
 - [x] Extract to standalone crate
-- [ ] Wire into zenjpeg encoder (replace fast_yuv.rs calls)
-- [ ] Add zenbench bench to crate itself (not just in zenjpeg)
+- [x] Wire into zenjpeg encoder (zenjpeg's `fast_yuv.rs` wraps zenyuv; the
+      scalar magetypes fallback was deleted when zenjpeg dropped the `yuv = []`
+      feature flag)
+- [x] Add zenbench bench to crate itself (`benches/rgb_to_yuv_bench.rs` —
+      zenyuv vs yuv-crate Professional at 256/512/1024/2048/4096)
+- [x] Precision comparison example (`examples/precision_vs_yuv_crate.rs` —
+      demonstrates ±0 vs yuv-Pro on u8 output, ≤1 vs f32 reference)
 - [ ] CI on 7 platforms
 - [ ] Brute-force token permutation tests
 - [ ] Exhaustive 256³ roundtrip test

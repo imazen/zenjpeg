@@ -22,6 +22,7 @@ libm = "0.2"
 [dev-dependencies]
 yuv = { workspace = true }
 png = { workspace = true }
+zenbench = { workspace = true }
 
 [features]
 default = ["std"]
@@ -29,3 +30,7 @@ std = []
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "rgb_to_yuv_bench"
+harness = false

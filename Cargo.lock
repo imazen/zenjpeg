@@ -3136,7 +3136,6 @@ dependencies = [
  "web-sys",
  "whereat",
  "wide 1.3.0",
- "yuv",
  "zenbench",
  "zencodec",
  "zenjpeg-bench-utils",
@@ -3249,6 +3248,7 @@ dependencies = [
  "png",
  "safe_unaligned_simd",
  "yuv",
+ "zenbench",
 ]
 
 [[package]]

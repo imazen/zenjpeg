@@ -163,36 +163,6 @@ fn encode_zenyuv_sharp(rgb: &[u8], w: usize, h: usize, iters: u32) -> (Vec<u8>, 
     (y, cb, cr)
 }
 
-fn encode_yuv_crate_pro(rgb: &[u8], w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let cw = w / 2;
-    let ch = h / 2;
-    let mut y = vec![0u8; w * h];
-    let mut cb = vec![0u8; cw * ch];
-    let mut cr = vec![0u8; cw * ch];
-    {
-        let mut img = yuv::YuvPlanarImageMut {
-            y_plane: yuv::BufferStoreMut::Borrowed(&mut y[..]),
-            y_stride: w as u32,
-            u_plane: yuv::BufferStoreMut::Borrowed(&mut cb[..]),
-            u_stride: cw as u32,
-            v_plane: yuv::BufferStoreMut::Borrowed(&mut cr[..]),
-            v_stride: cw as u32,
-            width: w as u32,
-            height: h as u32,
-        };
-        yuv::rgb_to_yuv420(
-            &mut img,
-            rgb,
-            (w * 3) as u32,
-            yuv::YuvRange::Full,
-            yuv::YuvStandardMatrix::Bt601,
-            yuv::YuvConversionMode::Professional,
-        )
-        .unwrap();
-    }
-    (y, cb, cr)
-}
-
 // ── Test ─────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone)]
@@ -255,7 +225,6 @@ fn yuv_roundtrip_quality_cid22() {
 
     let encoders: &[(&'static str, EncodeFn)] = &[
         ("zenyuv box", Box::new(encode_zenyuv_box)),
-        ("yuv crate Professional", Box::new(encode_yuv_crate_pro)),
         (
             "zenyuv sharp iters=1",
             Box::new(|r, w, h| encode_zenyuv_sharp(r, w, h, 1)),

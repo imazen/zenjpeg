@@ -1,8 +1,8 @@
-//! Head-to-head: internal magetypes RGB→YCbCr vs `yuv` crate Professional,
+//! Head-to-head perf: zenyuv's RGB→YCbCr vs `yuv` crate Professional mode,
 //! measured with zenbench (interleaved paired execution, not back-to-back
 //! runs — kills thermal/turbo bias that criterion bakes in).
 //!
-//! Run: `cargo bench --bench rgb_to_yuv_internal`
+//! Run: `cargo bench -p zenyuv --bench rgb_to_yuv_bench`
 
 use zenbench::prelude::*;
 
