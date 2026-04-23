@@ -195,10 +195,11 @@ Benchmark against `yuv` crate at every size from 256 to 4096. Must be faster or 
 - [ ] Add whatever's missing
 
 ### Phase 5: Publish
-- [ ] Move to own repo (or garb workspace)
+- [x] crates.io publish — `zenyuv = "0.1.2"` is live
+- [ ] Move to own repo (or garb workspace) — still vendored in `zen/zenjpeg`
 - [ ] README with benchmarks, badges
-- [ ] crates.io publish
-- [ ] Upstream zen crates switch from path dep to version dep
+- [ ] Upstream zen crates switch from path dep to version dep — workspace
+      `Cargo.toml` still has `zenyuv = { path = "zenyuv" }`
 
 ## Cross-Platform Golden Results
 
