@@ -27,8 +27,10 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - ubuntu-24.04-arm
           - macos-latest
           - macos-26-intel
+          - windows-latest
           - windows-11-arm
     steps:
       - uses: actions/checkout@v6
@@ -53,6 +55,38 @@ jobs:
 
       - name: Test
         run: cargo test -p zenyuv --release
+
+  exhaustive:
+    name: Exhaustive 256^3 (x86_64 linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: zenyuv-exhaustive
+
+      - name: Exhaustive 256^3 encode accuracy (all matrix/range combos)
+        run: |
+          cargo test -p zenyuv --release -- --ignored \
+            exhaustive_all_rgb_values \
+            exhaustive_all_matrix_range_444 \
+            exhaustive_all_matrix_range_420_uniform \
+            --nocapture
 
   i686:
     name: Test (i686)
