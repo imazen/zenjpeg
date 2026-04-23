@@ -572,15 +572,12 @@ pub struct StripProcessor {
     #[cfg(target_arch = "wasm32")]
     simd_token: Option<archmage::Wasm128Token>,
 
-    // === Reusable u8 buffers for yuv crate (yuv feature) ===
-    /// Temporary Y buffer for yuv crate conversion (avoids per-strip allocation)
-    #[cfg(feature = "yuv")]
+    // === Reusable u8 buffers for zenyuv path (avoids per-strip allocation) ===
+    /// Temporary Y buffer for zenyuv conversion
     yuv_temp_y: Vec<u8>,
-    /// Temporary Cb buffer for yuv crate conversion
-    #[cfg(feature = "yuv")]
+    /// Temporary Cb buffer for zenyuv conversion
     yuv_temp_cb: Vec<u8>,
-    /// Temporary Cr buffer for yuv crate conversion
-    #[cfg(feature = "yuv")]
+    /// Temporary Cr buffer for zenyuv conversion
     yuv_temp_cr: Vec<u8>,
 
     // === Reusable AQ strengths buffer ===
@@ -855,21 +852,18 @@ impl StripProcessor {
                 archmage::Wasm128Token::summon()
             },
 
-            // Reusable u8 buffers for yuv crate (one strip worth of pixels)
+            // Reusable u8 buffers for zenyuv (one strip worth of pixels)
             // Allocated once, reused for each strip to avoid per-strip allocation
-            #[cfg(feature = "yuv")]
             yuv_temp_y: if is_color {
                 vec![0u8; padded_width * strip_height]
             } else {
                 Vec::new()
             },
-            #[cfg(feature = "yuv")]
             yuv_temp_cb: if is_color {
                 vec![0u8; padded_width * strip_height]
             } else {
                 Vec::new()
             },
-            #[cfg(feature = "yuv")]
             yuv_temp_cr: if is_color {
                 vec![0u8; padded_width * strip_height]
             } else {
@@ -1043,14 +1037,11 @@ impl StripProcessor {
         }
 
         // Try fused 420 path when applicable (significantly faster)
-        #[cfg(feature = "yuv")]
+        if self.layout.subsampling == Subsampling::S420
+            && !self.pixel_format.is_grayscale()
+            && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
         {
-            if self.layout.subsampling == Subsampling::S420
-                && !self.pixel_format.is_grayscale()
-                && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
-            {
-                return Ok(true);
-            }
+            return Ok(true);
         }
 
         // Standard path: convert to YCbCr 444, then downsample separately

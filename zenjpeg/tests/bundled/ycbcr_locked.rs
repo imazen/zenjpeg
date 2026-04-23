@@ -313,7 +313,6 @@ fn test_exact_hash(
 // TESTS: Sequential (Baseline) Mode
 // =============================================================================
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -333,7 +332,6 @@ fn test_frymire_s444_sequential_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -353,7 +351,6 @@ fn test_frymire_s422_sequential_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -373,7 +370,6 @@ fn test_frymire_s420_sequential_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -393,7 +389,6 @@ fn test_frymire_s440_sequential_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -414,7 +409,6 @@ fn test_frymire_s444_sequential_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -435,7 +429,6 @@ fn test_frymire_s422_sequential_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -456,7 +449,6 @@ fn test_frymire_s420_sequential_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -481,7 +473,6 @@ fn test_frymire_s440_sequential_hash() {
 // TESTS: Progressive Mode
 // =============================================================================
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -501,7 +492,6 @@ fn test_frymire_s444_progressive_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -521,7 +511,6 @@ fn test_frymire_s422_progressive_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -541,7 +530,6 @@ fn test_frymire_s420_progressive_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -561,7 +549,6 @@ fn test_frymire_s440_progressive_sizes() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -582,7 +569,6 @@ fn test_frymire_s444_progressive_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -603,7 +589,6 @@ fn test_frymire_s422_progressive_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -624,7 +609,6 @@ fn test_frymire_s420_progressive_hash() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"
@@ -651,7 +635,6 @@ fn test_frymire_s440_progressive_hash() {
 
 /// Print current values if you need to update the locked constants.
 /// Run with: cargo test --test ycbcr_locked print_current_values -- --ignored --nocapture
-#[cfg(feature = "yuv")]
 #[cfg_attr(
     not(target_arch = "x86_64"),
     ignore = "locked values are x86_64-specific (NEON output differs)"

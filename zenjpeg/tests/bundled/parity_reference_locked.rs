@@ -266,7 +266,6 @@ fn compute_dssim(original: &[u8], decoded: &[u8], _width: usize, _height: usize)
     ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
 )]
 #[test]
-#[cfg(feature = "yuv")]
 fn test_s444_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
@@ -303,7 +302,6 @@ fn test_s444_opt_parity() {
     ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
 )]
 #[test]
-#[cfg(feature = "yuv")]
 fn test_s444_fixed_parity() {
     let (rgb, width, height) = load_test_image();
 
@@ -329,7 +327,6 @@ fn test_s444_fixed_parity() {
     ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
 )]
 #[test]
-#[cfg(feature = "yuv")]
 fn test_s420_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
@@ -366,7 +363,6 @@ fn test_s420_opt_parity() {
     ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
 )]
 #[test]
-#[cfg(feature = "yuv")]
 fn test_s422_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
@@ -400,7 +396,6 @@ fn test_s422_opt_parity() {
     ignore = "locked reference values are x86_64-specific (NEON produces different sizes)"
 )]
 #[test]
-#[cfg(feature = "yuv")]
 fn test_s440_opt_parity() {
     let (rgb, width, height) = load_test_image();
 

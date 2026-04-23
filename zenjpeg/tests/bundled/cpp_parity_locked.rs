@@ -459,7 +459,6 @@ fn test_cpp_parity_s422() {
 
 /// Test 4:4:4 optimized doesn't regress from expected values
 /// Only runs with the `yuv` feature (default); no-yuv path produces different output.
-#[cfg(feature = "yuv")]
 #[test]
 fn test_regression_s444_optimized() {
     let (rgb, width, height) = load_test_image();
@@ -527,7 +526,6 @@ fn test_regression_s444_optimized() {
 
 /// Test 4:4:4 fixed doesn't regress from expected values
 /// Only runs with the `yuv` feature (default); no-yuv path produces different output.
-#[cfg(feature = "yuv")]
 #[test]
 fn test_regression_s444_fixed() {
     let (rgb, width, height) = load_test_image();
@@ -593,7 +591,6 @@ fn test_regression_s444_fixed() {
 
 /// Test 4:2:0 doesn't regress from expected values
 /// Only runs with the `yuv` feature (default); no-yuv path produces different output.
-#[cfg(feature = "yuv")]
 #[test]
 fn test_regression_s420() {
     let (rgb, width, height) = load_test_image();
@@ -659,7 +656,6 @@ fn test_regression_s420() {
 
 /// Test 4:2:2 doesn't regress from expected values
 /// Only runs with the `yuv` feature (default); no-yuv path produces different output.
-#[cfg(feature = "yuv")]
 #[test]
 fn test_regression_s422() {
     let (rgb, width, height) = load_test_image();

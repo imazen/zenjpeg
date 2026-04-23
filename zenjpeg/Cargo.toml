@@ -146,11 +146,7 @@ zensim = { version = "0.2", features = ["classification"] }
 image = "0.25"
 
 [features]
-default = ["decoder", "yuv"]
-# Internal: yuv is a mandatory dependency. This empty flag is kept because 23 cfg(feature = "yuv")
-# gates in the source code select between yuv-crate and scalar fallback paths. The flag will be
-# removed when the scalar fallbacks are deleted and cfg gates stripped.
-yuv = []
+default = ["decoder"]
 # Enable the decoder API.
 decoder = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)

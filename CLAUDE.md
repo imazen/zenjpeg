@@ -1509,18 +1509,24 @@ use butteraugli::compute_butteraugli;
 
 ```toml
 [features]
-default = ["std", "yuv", "archmage-simd", "trellis"]
+default = ["decoder"]
 trellis = []              # Rate-distortion trellis quantization (mozjpeg-style)
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
-archmage-simd = []        # Legacy flag — archmage/magetypes are mandatory deps now.
 boundary-rd = ["decoder"] # Boundary-continuity refinement (#91 / PR #102, opt-in).
-cms = ["cms-lcms2"]       # Color management
+moxcms = ["dep:moxcms"]   # Color management (pure-Rust, SIMD). Required for XYB + .correct_color()
 ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
-ffi-tests = []            # C++ parity tests (requires jpegli-sys)
-corpus-tests = []         # Corpus comparison tests
-test-utils = []           # Testing utilities
+layout = ["decoder", "dep:zenlayout", "dep:zenresize"]  # Layout pipeline (geometry + resize)
+zencodec = ["decoder"]    # zencodec trait impls
+__ffi-tests = []          # C++ parity tests (requires C++ jpegli submodule + toolchain)
+__corpus-tests = []       # Corpus comparison tests
+__test-utils = []         # Testing utilities
 ```
+
+zenyuv (SIMD RGB→YCbCr) is a mandatory dependency — no feature flag. The
+old `yuv = []` gate used to select between zenyuv-via-`fast_yuv` and an
+in-crate magetypes scalar fallback; the scalar path was deleted so there's
+only one code path now.
 
 **Boundary-RD:** Adds the post-quantization refinement from issue #91.
 Disabled by default — `cargo build -p zenjpeg` (with or without trellis)

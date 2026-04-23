@@ -11,8 +11,7 @@ pub mod rgb_to_yuv;
 pub mod xyb;
 pub mod ycbcr;
 
-// Fast SIMD RGB→YCbCr conversion using the `yuv` crate (10-150× faster)
-#[cfg(feature = "yuv")]
+// Fast SIMD RGB→YCbCr conversion via zenyuv.
 pub mod fast_yuv;
 
 #[cfg(test)]

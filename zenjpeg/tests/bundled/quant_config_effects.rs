@@ -173,7 +173,6 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[test]
 fn test_zero_bias_changes_output() {
     let width = 64u32;
@@ -213,7 +212,6 @@ fn test_zero_bias_changes_output() {
     );
 }
 
-#[cfg(feature = "yuv")]
 #[test]
 fn test_custom_zero_bias_changes_output() {
     let width = 64u32;
