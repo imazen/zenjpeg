@@ -467,3 +467,187 @@ fn xyb_decode_byte_equal_with_and_without_correct_color() {
         "default and correct_color(Srgb) diverge for XYB — ICC double-transform regression?"
     );
 }
+
+// ============================================================================
+// Linear-input XYB pixel correctness (regression for Known Bug #7)
+// ============================================================================
+//
+// XYB + PixelLayout::RgbF32Linear / Rgb16Linear used to skip the scale_xyb
+// step and then multiplied the raw (unscaled) XYB by 255.0, pushing Y
+// off-scale and saturating every MCU to white. These tests assert that
+// linear-input XYB decodes to the same quadrant-dominant colors as the
+// sRGB-input XYB reference (`xyb_full_baseline_pixel_correctness`).
+
+fn make_quadrant_rgb_u8(w: u32, h: u32) -> Vec<u8> {
+    (0..h)
+        .flat_map(|y| {
+            (0..w).flat_map(move |x| {
+                let top = y < h / 2;
+                let left = x < w / 2;
+                match (top, left) {
+                    (true, true) => [220u8, 40, 40],    // TL red
+                    (true, false) => [40u8, 220, 40],   // TR green
+                    (false, true) => [40u8, 40, 220],   // BL blue
+                    (false, false) => [220u8, 220, 40], // BR yellow
+                }
+            })
+        })
+        .collect()
+}
+
+fn rgb_u8_to_linear_f32(rgb_u8: &[u8]) -> Vec<f32> {
+    rgb_u8
+        .iter()
+        .map(|&v| linear_srgb::default::srgb_to_linear(v as f32 / 255.0))
+        .collect()
+}
+
+fn rgb_u8_to_linear_u16(rgb_u8: &[u8]) -> Vec<u16> {
+    rgb_u8
+        .iter()
+        .map(|&v| {
+            let lin = linear_srgb::default::srgb_to_linear(v as f32 / 255.0);
+            (lin.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16
+        })
+        .collect()
+}
+
+fn assert_quadrants_correct(pixels: &[u8], w: u32, h: u32, label: &str) {
+    let probe = |x: u32, y: u32| -> (i32, i32, i32) {
+        let i = (y as usize * w as usize + x as usize) * 3;
+        (pixels[i] as i32, pixels[i + 1] as i32, pixels[i + 2] as i32)
+    };
+    let tl = probe(w / 4, h / 4);
+    let tr = probe(3 * w / 4, h / 4);
+    let bl = probe(w / 4, 3 * h / 4);
+    let br = probe(3 * w / 4, 3 * h / 4);
+
+    assert!(
+        tl.0 > tl.1 && tl.0 > tl.2,
+        "{label}: TL not red-dominant: {tl:?}"
+    );
+    assert!(
+        tr.1 > tr.0 && tr.1 > tr.2,
+        "{label}: TR not green-dominant: {tr:?}"
+    );
+    assert!(
+        bl.2 > bl.0 && bl.2 > bl.1,
+        "{label}: BL not blue-dominant: {bl:?}"
+    );
+    assert!(
+        br.1 > br.2 && br.0 > br.2,
+        "{label}: BR not yellow-ish (RG > B): {br:?}"
+    );
+}
+
+/// XYB + `PixelLayout::RgbF32Linear` should produce the same quadrant
+/// structure as XYB + `PixelLayout::Rgb8Srgb` on the same source image.
+#[test]
+fn xyb_full_linear_f32_pixel_correctness() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb_u8 = make_quadrant_rgb_u8(w, h);
+    let rgb_f32 = rgb_u8_to_linear_f32(&rgb_u8);
+    let bytes: &[u8] = bytemuck::cast_slice(&rgb_f32);
+
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::Full).progressive(false);
+    let jpeg = cfg
+        .encode_bytes(bytes, w, h, PixelLayout::RgbF32Linear)
+        .expect("encode XYB RgbF32Linear");
+    let decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("decode");
+    let pixels = decoded.pixels_u8().unwrap();
+    assert_quadrants_correct(&pixels, w, h, "RgbF32Linear+Full");
+}
+
+#[test]
+fn xyb_bquarter_linear_f32_pixel_correctness() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb_u8 = make_quadrant_rgb_u8(w, h);
+    let rgb_f32 = rgb_u8_to_linear_f32(&rgb_u8);
+    let bytes: &[u8] = bytemuck::cast_slice(&rgb_f32);
+
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::BQuarter).progressive(false);
+    let jpeg = cfg
+        .encode_bytes(bytes, w, h, PixelLayout::RgbF32Linear)
+        .expect("encode XYB RgbF32Linear BQuarter");
+    let decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("decode");
+    let pixels = decoded.pixels_u8().unwrap();
+    assert_quadrants_correct(&pixels, w, h, "RgbF32Linear+BQuarter");
+}
+
+#[test]
+fn xyb_full_linear_u16_pixel_correctness() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb_u8 = make_quadrant_rgb_u8(w, h);
+    let rgb_u16 = rgb_u8_to_linear_u16(&rgb_u8);
+    let bytes: &[u8] = bytemuck::cast_slice(&rgb_u16);
+
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::Full).progressive(false);
+    let jpeg = cfg
+        .encode_bytes(bytes, w, h, PixelLayout::Rgb16Linear)
+        .expect("encode XYB Rgb16Linear");
+    let decoded = Decoder::new()
+        .decode(&jpeg, enough::Unstoppable)
+        .expect("decode");
+    let pixels = decoded.pixels_u8().unwrap();
+    assert_quadrants_correct(&pixels, w, h, "Rgb16Linear+Full");
+}
+
+/// Solid-colour red: linear and sRGB inputs for XYB must decode to roughly
+/// the same thing. If the linear path has the old scale-xyb bug, the decode
+/// will saturate to near-white (≈255, 255, 255) instead of the expected
+/// near-red (~220, ~40, ~40).
+#[test]
+fn xyb_linear_matches_srgb_solid_red() {
+    let w = 128u32;
+    let h = 128u32;
+    let rgb_u8: Vec<u8> = (0..h * w).flat_map(|_| [220u8, 40, 40]).collect();
+    let rgb_f32 = rgb_u8_to_linear_f32(&rgb_u8);
+    let bytes: &[u8] = bytemuck::cast_slice(&rgb_f32);
+
+    let cfg = EncoderConfig::xyb(85.0, XybSubsampling::BQuarter).progressive(false);
+
+    // sRGB reference path (known good).
+    let jpeg_srgb = cfg
+        .encode_bytes(&rgb_u8, w, h, PixelLayout::Rgb8Srgb)
+        .expect("encode sRGB");
+    let decoded_srgb = Decoder::new()
+        .decode(&jpeg_srgb, enough::Unstoppable)
+        .expect("decode sRGB");
+    let ref_pixels = decoded_srgb.pixels_u8().unwrap();
+
+    // Linear f32 path — should land in the same colour neighbourhood.
+    let jpeg_lin = cfg
+        .encode_bytes(bytes, w, h, PixelLayout::RgbF32Linear)
+        .expect("encode RgbF32Linear");
+    let decoded_lin = Decoder::new()
+        .decode(&jpeg_lin, enough::Unstoppable)
+        .expect("decode RgbF32Linear");
+    let lin_pixels = decoded_lin.pixels_u8().unwrap();
+
+    let (rr, rg, rb) = (ref_pixels[0] as i32, ref_pixels[1] as i32, ref_pixels[2] as i32);
+    let (lr, lg, lb) = (lin_pixels[0] as i32, lin_pixels[1] as i32, lin_pixels[2] as i32);
+
+    // Guard: the sRGB reference must be red-dominant (sanity-check the known-good path).
+    assert!(rr > rg && rr > rb, "sRGB reference not red: ({rr},{rg},{rb})");
+    // Main assertion: linear-input must also decode as red. Pre-fix this is (255,255,255).
+    assert!(
+        lr > lg && lr > lb,
+        "RgbF32Linear should decode as red; got ({lr},{lg},{lb}) (sRGB ref: ({rr},{rg},{rb})). \
+         The old bug made this saturate to white."
+    );
+    // Tighter: within ~30 of the sRGB reference per channel.
+    let dr = (lr - rr).abs();
+    let dg = (lg - rg).abs();
+    let db = (lb - rb).abs();
+    assert!(
+        dr <= 30 && dg <= 30 && db <= 30,
+        "linear vs sRGB decode diverges too far: linear=({lr},{lg},{lb}) ref=({rr},{rg},{rb})"
+    );
+}
