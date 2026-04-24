@@ -372,11 +372,11 @@ fn run_lossy(
 
     // Step 4: Decode
     let need_deblock = args.deblock != DeblockArg::Off;
-    // NOTE: do NOT force f32 for `--xyb` alone. zenjpeg's XYB encoder has
-    // a broken RgbF32Linear input path (produces all-255 output); the sRGB u8
-    // input path works correctly. Only enable f32 when the pipeline actually
-    // needs it (deblock). See KnownBug #7 in workspace CLAUDE.md.
-    let decode_to_f32 = need_deblock;
+    // XYB wants linear-f32 input end-to-end (sRGB → linear conversion happens
+    // in the decoder rather than the encoder). The RgbF32Linear input path to
+    // `EncoderConfig::xyb` was broken until zenjpeg commit 04e5e5da (Known Bug
+    // #7) — fixed, so this can route through f32 again.
+    let decode_to_f32 = need_deblock || args.xyb;
 
     let mut decoder = DecodeConfig::new().preserve(PreserveConfig::all());
     if decode_to_f32 {
