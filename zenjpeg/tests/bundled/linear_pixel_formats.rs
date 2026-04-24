@@ -328,8 +328,10 @@ fn test_linear_format_subsampling_modes() {
 /// Test XYB mode with linear RGB input.
 /// XYB is defined in linear space, so this should work well.
 ///
-/// IGNORED: XYB encoding via legacy path has a bug with chroma block indexing.
-/// See CLAUDE.md "Known Bugs" #2 about XYB quality gap.
+/// Pixel-level correctness for linear-input XYB lives in
+/// `tests/bundled/xyb_roundtrip.rs` (see
+/// `xyb_full_linear_f32_pixel_correctness` and friends — regressions for the
+/// formerly-broken linear-input branch that saturated to white).
 #[test]
 fn test_xyb_with_linear_formats() {
     let width = 64;

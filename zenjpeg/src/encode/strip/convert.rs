@@ -697,13 +697,16 @@ impl StripProcessor {
                         _ => unreachable!(),
                     };
 
-                    // Convert linear RGB to XYB directly (XYB is defined in linear space)
-                    // Scale to match C++ jpegli's expected range (0-255 linear input)
-                    let (scaled_x, scaled_y, scaled_b) = crate::color::xyb::linear_rgb_to_xyb_255(
-                        r_linear * 255.0,
-                        g_linear * 255.0,
-                        b_linear * 255.0,
-                    );
+                    // Convert linear RGB (0..1) to raw XYB, then apply the same
+                    // scale_xyb() → ×255.0 pipeline as the sRGB-input branch. The
+                    // old path called `linear_rgb_to_xyb_255` (which returns UN-scaled
+                    // XYB on a 0-255 input range), then multiplied by 255 again,
+                    // yielding Y values around ~1600 that saturated every MCU to
+                    // white. See Known Bug #7 in CLAUDE.md.
+                    let (raw_x, raw_y, raw_b) =
+                        crate::color::xyb::linear_rgb_to_xyb(r_linear, g_linear, b_linear);
+                    let (scaled_x, scaled_y, scaled_b) =
+                        crate::color::xyb::scale_xyb(raw_x, raw_y, raw_b);
 
                     // Store: X→y_strip, Y→cb_strip, B→cr_strip
                     // Scale to JPEG sample range for level shift consistency
