@@ -938,38 +938,38 @@ sensitivity tables, and preset baselines.
    - Tests: `cargo test --release -p zenjpeg --features __ffi-tests --test quality_matrix -- progressive --ignored`
    - Investigation data: 4:4:4 Rust 141,187 vs C++ 138,513 (+1.9%), scan data +3,183 bytes
 
-7. **XYB encoder's linear-input paths (`Rgb16Linear`, `RgbF32Linear`)
-   produce pixel-broken JPEGs (2026-04-23, already known in-source)** —
-   zenjpeg's XYB encoder works correctly from sRGB u8 input (the path
-   every passing test exercises — `xyb_full_baseline_pixel_correctness`
-   et al. roundtrip within ±1 u8 across Full/BQuarter × baseline/
-   progressive). When fed already-linearised input it emits a JPEG that
-   decodes to all-255 (pure white) instead of the source colours. Both
-   `PixelLayout::Rgb16Linear` and `PixelLayout::RgbF32Linear` are
-   affected.
-   - Already documented in-source at `zenjpeg/tests/bundled/linear_pixel_formats.rs:330`:
-     "XYB encoding via legacy path has a bug with chroma block indexing."
-     The existing f32/16 XYB tests only call `verify_jpeg(...)`
-     (structural sanity), never decode-and-diff pixels — which is why
-     test suite green despite the issue.
-   - Repro (minimal): encode `[220, 40, 40]` as `Rgb8Srgb` → roundtrip
-     gives (220, 39, 38). Encode the same value pre-linearised as
-     `RgbF32Linear` or `Rgb16Linear` → roundtrip gives (255, 255, 255).
-   - Impact on zjpeg: `process` previously forced `decode_to_f32 =
-     args.xyb || need_deblock`, routing `--xyb` through the broken
-     encoder path. Fixed to `decode_to_f32 = need_deblock`, so `--xyb`
-     alone stays on the sRGB-u8 pipeline where the encoder works
-     correctly. Combining `--xyb` with `--deblock` would still hit the
-     broken path (deblock forces f32). zjpeg doesn't currently advertise
-     that combo.
-   - Fix surface (whoever picks it up): the existing in-source comment
-     cites "chroma block indexing." Suspect is either a missing/doubled
-     sRGB↔linear step somewhere before the XYB opsin-absorbance
-     conversion for the linear input formats, or a chroma plane stride
-     mismatch — the bug manifests identically across 16-bit and f32
-     linear inputs, so it's likely upstream of the precision split.
+~~7. **XYB encoder's linear-input paths (`Rgb16Linear`, `RgbF32Linear`)
+   produce pixel-broken JPEGs (2026-04-23)**~~ — **FIXED (2026-04-23,
+   commits 28658af6 + 9e2348fe).** The linear-input branch in
+   `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which
+   returns UN-scaled XYB on a 0-255 input range) and then multiplied by
+   255.0 again, producing Y values around ~1600 that saturated every
+   MCU to white. Fix: call `linear_rgb_to_xyb(r, g, b)` on the 0..1
+   linear RGB, then `scale_xyb(x, y, b)` to get scaled XYB matching the
+   sRGB-input SIMD branch, then the final ×255.0 JPEG-range step. No
+   changes to the Rgb8Srgb path (locked hashes unaffected).
+   - Tests: `xyb_linear_matches_srgb_solid_red`,
+     `xyb_full_linear_f32_pixel_correctness`,
+     `xyb_bquarter_linear_f32_pixel_correctness`,
+     `xyb_full_linear_u16_pixel_correctness` in
+     `zenjpeg/tests/bundled/xyb_roundtrip.rs`.
+   - The in-source comment at `linear_pixel_formats.rs:330` claimed
+     "chroma block indexing" — that was a red herring. The bug was
+     missing-scale-then-double-scale in the scalar f32/u16 branch.
 
 ### Fixed / Resolved Bugs (historical reference)
+
+- **XYB linear-input encoder path saturated to white (FIXED 2026-04-23, commit 9e2348fe)** -
+  `EncoderConfig::xyb` + `PixelLayout::RgbF32Linear` or `PixelLayout::Rgb16Linear`
+  produced JPEGs that decoded to solid white. The scalar linear-input branch in
+  `encode/strip/convert.rs:700` called `linear_rgb_to_xyb_255` (which returns
+  UN-scaled XYB for a 0-255-range input) and then multiplied by 255.0 again,
+  while the parallel sRGB-input SIMD branch correctly applied
+  `scale_xyb(x,y,b) = ((x+offset)*scale)` before the ×255.0 JPEG-range step.
+  Fix: linear branch now calls `linear_rgb_to_xyb(r,g,b)` on 0..1 RGB, then
+  `scale_xyb()`, then ×255.0 — same pipeline as the sRGB path. Sibling
+  `Rgb8Srgb` path unchanged; locked hashes unaffected.
+  - Tests: `xyb_linear_matches_srgb_solid_red` et al. in `xyb_roundtrip.rs`.
 
 - **Fused parallel decode bypassed coefficient storage (FIXED 2026-03-31, commit c9b47ec1)** -
   `try_fused_parallel_decode()` didn't check `decode_mode`, so it took the fused parallel
