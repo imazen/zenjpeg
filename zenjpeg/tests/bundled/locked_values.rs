@@ -31,9 +31,12 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 // =============================================================================
 
 /// SHA-256 hash of normalized values_archmage.csv (LF line endings, no trailing whitespace).
-/// Updated 2026-04-14: zenyuv integer math replaces yuv crate f32 for 4:2:0/4:4:4
+/// Updated 2026-04-24: re-lock after linear-input XYB encoder fix (04e5e5da).
+/// The pre-fix XYB linear-input path saturated to all-255; every XYB entry in the
+/// CSV was computed against that broken output. Regenerated to match the corrected
+/// scale_xyb + linear_rgb_to_xyb pipeline.
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "f600c44e504c23069fd05f702ebf93f8442326edf1f8f232d0da6f1f20e8fecd";
+const VALUES_FILE_HASH: &str = "f5f42354f7ca6544d58f9b716e3a5345d30537dc4a6d77d661f98d33a4498efd";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]

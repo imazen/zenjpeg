@@ -1,6 +1,6 @@
 # Locked encoder output values for frymire.png (1118x1105)
-# Generated: 2026-04-14
-# Reason: zenyuv integer math with exact avg_epu8 chroma parity
+# Generated: 2026-04-24
+# Reason: Regenerate XYB hashes after linear-input XYB encoder fix (commit 04e5e5da). Pre-fix path saturated to all-255; only the 6 XYB rows (baseline/progressive x Q50/75/90) changed.
 # SIMD variant: archmage
 #
 # Fields: mode,subsampling,huffman,quality,simd,hash,size
@@ -28,9 +28,9 @@ baseline,440,opt,90,archmage,d2542e762dd7cf75d126da5ede6a5391c289267fe40305c5e35
 baseline,440,fixed,50,archmage,9530c02bed008c66d8444f0cc12f7a958e4d287db3d7638af11b4ea246731538,306607
 baseline,440,fixed,75,archmage,70c41a9d6e9f9858d11c883e96a3f0ed4f17f761176a29c3409b6c4bf20ae9fc,430002
 baseline,440,fixed,90,archmage,edbdefbc87b866c4ec59dbf674a8c229be0b7f28cea329a6f2e10a678a1b55d9,628018
-baseline,xyb,opt,50,archmage,c756efdb8091ce06e64332a6a6f941e91f33012ecdf85d4032f4cf47d9825315,288497
-baseline,xyb,opt,75,archmage,c00d8f7aae4df7d98154d80441b44767cf60a6a2f5ef0feb06e2583d0be9b742,404405
-baseline,xyb,opt,90,archmage,b8abbeee445f8dcb6b1d4f058da7471a00c00d799d57d471aa0d35550cd6c148,604803
+baseline,xyb,opt,50,archmage,12507a42ba6b7d14a284851499f51778c56b2783408ca3149802a4caf0ad0935,291542
+baseline,xyb,opt,75,archmage,3ec24d72e1a075d7aa5964afed40448140ebf8ca77db190863dea608f6fc96d7,409196
+baseline,xyb,opt,90,archmage,e01a669034a978704ad5bef96e3091b09b0728002cd9574b4f713611a9dc5d42,615878
 progressive,444,opt,50,archmage,f00af008dbee2470763b6e0cdf25045a535714527fc0998e1aaeb00855016da4,320320
 progressive,444,opt,75,archmage,0d53a1fb7541e36263107ff6ff149613ebb65675521a27a72733f844d736de89,459506
 progressive,444,opt,90,archmage,5444cc8079456d65fa7b0715a369d3a83269bdf9c435578d62b98b7b8e0ff7e1,691442
@@ -43,6 +43,6 @@ progressive,420,opt,90,archmage,a3e03894135bd68665b2ccb7e95ac85d71eecd519b2206ae
 progressive,440,opt,50,archmage,17e27e3a8cd93aab35dc80ee3fea8f3601b3619c2f45f045d5bc6eb78d512679,284132
 progressive,440,opt,75,archmage,127f37a47bca3ee3573f89f67f989299cb1c009d3abbfd542f210f851b64895f,403572
 progressive,440,opt,90,archmage,de1034911dcf04d17e8784110730a7f620030d1802a89cb35069fa4b4dd9b640,591552
-progressive,xyb,opt,50,archmage,b071d6d36b691232ae8bc29e61f47f6d7ec37c727d3e8ccfe8fa59ce4bc9b50c,273028
-progressive,xyb,opt,75,archmage,cdc91ea4e859ae0a5b8d8235376d7e2c82f34f7592e727a35b98da2f5bed625f,384474
-progressive,xyb,opt,90,archmage,c377cd0735d3760010e89c8f7350018938d1ce123c9cdfb92cfae1df24350b04,572222
+progressive,xyb,opt,50,archmage,b4e1b660aac60eed5af047ab77a33762a4d625bd9bf39b8e35dab7aa1e19dcd3,276138
+progressive,xyb,opt,75,archmage,931bc12e26f8032d65c043b1a87681a7934f05a0f3a38ca2ec31c6b7940d49ce,388993
+progressive,xyb,opt,90,archmage,88cb092adec308a18f2dc1eaea09d3769b61cc0295ed99d780c4edb6aed7b217,580997
