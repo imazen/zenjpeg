@@ -492,3 +492,201 @@ fn test_gainmap_various_sizes() {
         );
     }
 }
+
+// ============================================================================
+// Coverage tests for previously-untested public HDR functions.
+// Audit (2026-04-26): the existing suite covered encode_ultrahdr,
+// decode_ultrahdr, decode_ultrahdr_hdr, encode_ultrahdr_luma,
+// tonemapper_from_ultrahdr, and create_hdr_reconstructor. These tests
+// fill the gap for encode_ultrahdr_with_curve, encode_ultrahdr_with_tonemapper,
+// create_gainmap_computer, encode_with_gainmap, and encode_with_gainmap_format.
+// ============================================================================
+
+#[test]
+fn encode_ultrahdr_with_curve_smoke() {
+    // Closes #71 — the LumaToneMap path. Bt2446C is the published default
+    // (used by encode_ultrahdr_luma). Driving it explicitly here means the
+    // single-channel splitter path stays exercised even if encode_ultrahdr_luma
+    // changes its default curve.
+    use zenjpeg::ultrahdr::encode_ultrahdr_with_curve;
+    use zentone::Bt2446C;
+
+    let hdr = create_test_hdr(64, 64);
+    let jpeg = encode_ultrahdr_with_curve(
+        &hdr,
+        &Bt2446C::new(1000.0, 203.0),
+        &GainMapConfig::default(),
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        Unstoppable,
+    )
+    .expect("encode_ultrahdr_with_curve should succeed");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
+
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let extras = decoded.extras().expect("extras");
+    assert!(extras.is_ultrahdr(), "should land as a real UltraHDR JPEG");
+}
+
+#[test]
+fn encode_ultrahdr_with_tonemapper_round_trip() {
+    // Encode once via encode_ultrahdr; pull the AdaptiveTonemapper out of the
+    // resulting gain map; re-encode a (modified) HDR pair using that learned
+    // tonemapper. This is the use case for editing HDR content without
+    // re-deriving the SDR curve.
+    use zenjpeg::ultrahdr::encode_ultrahdr_with_tonemapper;
+
+    let hdr_first = create_test_hdr(64, 64);
+    let jpeg_first = encode_ultrahdr(
+        &hdr_first,
+        &GainMapConfig::default(),
+        &ToneMapConfig::default(),
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        Unstoppable,
+    )
+    .expect("first encode");
+
+    let decoded_first = Decoder::new().decode(&jpeg_first, Unstoppable).unwrap();
+    let extras = decoded_first.extras().expect("extras");
+    let tonemapper = tonemapper_from_ultrahdr(extras).expect("tonemapper extraction");
+
+    // "Edited" HDR — same shape, different content.
+    let hdr_second = create_test_hdr(64, 64);
+    let jpeg_second = encode_ultrahdr_with_tonemapper(
+        &hdr_second,
+        &tonemapper,
+        &GainMapConfig::default(),
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        Unstoppable,
+    )
+    .expect("re-encode with learned tonemapper");
+
+    assert_eq!(&jpeg_second[0..2], &[0xFF, 0xD8]);
+    let decoded_second = Decoder::new().decode(&jpeg_second, Unstoppable).unwrap();
+    let extras2 = decoded_second.extras().expect("extras");
+    assert!(extras2.is_ultrahdr());
+}
+
+/// Build a synthetic SDR `PixelBuffer` (Rgba8 / sRGB) the same shape as the
+/// HDR test image. Used by the encode_with_gainmap_* coverage tests, which
+/// need a paired HDR+SDR to feed `compute_gainmap` — we don't have a public
+/// `tonemap_to_pixel_buffer` to derive SDR from HDR ourselves.
+fn create_test_sdr(width: u32, height: u32) -> ultrahdr_core::PixelBuffer {
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            // Slightly different gradient than the HDR so the gain map
+            // doesn't collapse to identity.
+            data.push(((x * 255) / width.max(1)) as u8);
+            data.push(((y * 200) / height.max(1)) as u8);
+            data.push(128);
+            data.push(0xFF);
+        }
+    }
+    pixel_buffer_from_vec(
+        data,
+        width,
+        height,
+        UhdrPixelFormat::Rgba8,
+        UhdrColorGamut::Bt709,
+        UhdrColorTransfer::Srgb,
+    )
+    .expect("synthetic SDR PixelBuffer")
+}
+
+#[test]
+fn create_gainmap_computer_constructs() {
+    // The streaming gain-map computer is the alternative to compute_gainmap()
+    // for memory-bounded callers. Building one validates that the descriptor
+    // negotiation works for the canonical HDR-RGBA-F32 + Bt709 inputs.
+    use ultrahdr_core::ColorPrimaries;
+    use zenjpeg::ultrahdr::create_gainmap_computer;
+
+    let _row_encoder =
+        create_gainmap_computer(128, 128, &GainMapConfig::default(), ColorPrimaries::Bt709)
+            .expect("create_gainmap_computer Bt709 ok");
+
+    // Bt2020 gamut path (HDR10 source primary) — separate code branch in
+    // RowEncoder::new for the gamut-conversion matrix.
+    let _row_encoder_2020 =
+        create_gainmap_computer(128, 128, &GainMapConfig::default(), ColorPrimaries::Bt2020)
+            .expect("create_gainmap_computer Bt2020 ok");
+}
+
+#[test]
+fn encode_with_gainmap_default_format() {
+    // encode_with_gainmap delegates to encode_with_gainmap_format with
+    // GainMapEncodingFormat::Both. Drive it with synthetic HDR + SDR via the
+    // public compute_gainmap to exercise the lower-level entry point.
+    use zenjpeg::ultrahdr::{compute_gainmap, encode_with_gainmap};
+
+    let hdr = create_test_hdr(64, 64);
+    let sdr = create_test_sdr(64, 64);
+    let (gainmap, metadata) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable)
+        .expect("gainmap compute");
+
+    let jpeg = encode_with_gainmap(
+        &sdr,
+        &gainmap,
+        &metadata,
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        Unstoppable,
+    )
+    .expect("encode_with_gainmap");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    let decoded = Decoder::new().decode(&jpeg, Unstoppable).unwrap();
+    let extras = decoded.extras().expect("extras");
+    assert!(
+        extras.is_ultrahdr(),
+        "default format should land as UltraHDR"
+    );
+}
+
+#[test]
+fn encode_with_gainmap_format_iso21496() {
+    // The format-explicit overload lets callers pick the metadata serialization.
+    // Iso21496 is the ISO 21496-1 box-only path (no XMP); useful for callers
+    // that care about minimum metadata size on the wire.
+    use zenjpeg::ultrahdr::{GainMapEncodingFormat, compute_gainmap, encode_with_gainmap_format};
+
+    let hdr = create_test_hdr(64, 64);
+    let sdr = create_test_sdr(64, 64);
+    let (gainmap, metadata) = compute_gainmap(&hdr, &sdr, &GainMapConfig::default(), &Unstoppable)
+        .expect("gainmap compute");
+
+    let jpeg_iso = encode_with_gainmap_format(
+        &sdr,
+        &gainmap,
+        &metadata,
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        GainMapEncodingFormat::Iso21496,
+        Unstoppable,
+    )
+    .expect("encode_with_gainmap_format Iso21496");
+    assert_eq!(&jpeg_iso[0..2], &[0xFF, 0xD8]);
+
+    // Both-format and Iso-only outputs differ in size: Both embeds XMP +
+    // ISO box, Iso embeds only the box. Sanity-check that the two paths
+    // produce DIFFERENT bytes (otherwise the format knob is silently a no-op).
+    let jpeg_both = encode_with_gainmap_format(
+        &sdr,
+        &gainmap,
+        &metadata,
+        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
+        75.0,
+        GainMapEncodingFormat::Both,
+        Unstoppable,
+    )
+    .expect("encode_with_gainmap_format Both");
+    assert_ne!(
+        jpeg_iso, jpeg_both,
+        "Iso21496 and Both should produce different bytes"
+    );
+}

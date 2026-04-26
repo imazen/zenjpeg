@@ -44,6 +44,8 @@ use crate::encode::encoder_types::{
     ChromaSubsampling, ProgressiveScanMode, Quality, XybSubsampling,
 };
 #[cfg(feature = "trellis")]
+use crate::encode::trellis::TrellisSpeedMode;
+#[cfg(feature = "trellis")]
 use crate::encode::trellis::{HybridConfig, TrellisConfig};
 use zenpixels::PixelSlice;
 
@@ -117,12 +119,13 @@ pub struct AutoForOptions {
     pub allow_progressive: bool,
 
     /// Allow slow encode-time features: trellis quantization, hybrid
-    /// AQ-coupled trellis, and progressive scan-script search.
-    /// **Default: `false`.** Set to `true` to opt into 5-15× longer
-    /// encode times for ~2-5% smaller files at the same quality.
-    /// The 2026-04-25 oracle showed trellis / hybrid-lambda configs
-    /// winning 33/70 cells at q < 40 and many of the q ≥ 40 photo
-    /// cells, so flipping this on is meaningful at any quality.
+    /// AQ-coupled trellis, AND `ProgressiveScanMode::ProgressiveSearch`
+    /// (the 64-candidate scan-script search, ~2× slower for ~2%
+    /// smaller files). **Default: `false`.** Set to `true` to opt
+    /// into 5-15× longer encode for ~2-5% smaller files at the same
+    /// quality. The 2026-04-25 oracle showed trellis / hybrid-lambda
+    /// configs winning 33/70 cells at q < 40 and many of the q ≥ 40
+    /// photo cells, so flipping this on is meaningful at any quality.
     pub allow_slow: bool,
 
     /// Restart-marker density. **Default: [`RestartMarkers::Off`].**
@@ -388,10 +391,12 @@ fn auto_for_internal(
 
     // Progressive: oracle universally prefers progressive at every
     // q-bin; respect caller's allow_progressive=false override.
-    let scan_mode = if options.allow_progressive {
-        ProgressiveScanMode::Progressive
-    } else {
-        ProgressiveScanMode::Baseline
+    // ProgressiveSearch (64-candidate scan-script search) is ~2× slower
+    // for ~2% smaller files — gated behind allow_slow.
+    let scan_mode = match (options.allow_progressive, options.allow_slow) {
+        (false, _) => ProgressiveScanMode::Baseline,
+        (true, true) => ProgressiveScanMode::ProgressiveSearch,
+        (true, false) => ProgressiveScanMode::Progressive,
     };
 
     // ---- Build the EncoderConfig ----
@@ -421,15 +426,24 @@ fn auto_for_internal(
     }
 
     // Trellis / hybrid: gated behind feature flag + caller permission.
+    // TrellisConfig::default() is "AC + DC trellis enabled, Adaptive
+    // speed". HybridConfig is AQ-coupled trellis with configurable
+    // `base_lambda_scale1` (the lambda the oracle's `hyb*` codec_name
+    // suffix encodes). `hybrid_config(enabled=true)` zeroes the
+    // standalone trellis slot internally.
     #[cfg(feature = "trellis")]
     {
         cfg = match trellis_choice {
             TrellisChoice::Off => cfg,
-            TrellisChoice::Standard => cfg.trellis(TrellisConfig::default()),
-            TrellisChoice::Hybrid(lambda) => cfg.trellis(TrellisConfig::Hybrid(HybridConfig {
-                lambda,
+            TrellisChoice::Standard => cfg.trellis(TrellisConfig {
+                speed_mode: TrellisSpeedMode::Adaptive,
+                ..TrellisConfig::default()
+            }),
+            TrellisChoice::Hybrid(lambda) => cfg.hybrid_config(HybridConfig {
+                enabled: true,
+                base_lambda_scale1: lambda,
                 ..HybridConfig::default()
-            })),
+            }),
         };
     }
     #[cfg(not(feature = "trellis"))]

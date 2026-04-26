@@ -70,9 +70,10 @@ struct ChromaSharpnessBreakdown {
     cr: ChannelSharpness,
 }
 
-/// Walk three rows at a time (a0 / a1 / a2) and accumulate horizontal
-/// + vertical 2nd-difference Cb/Cr energies plus per-channel peaks.
-/// Three-row sliding window pulled on demand from `stream`.
+/// Walk three rows at a time (`a0` / `a1` / `a2`) and accumulate
+/// horizontal + vertical 2nd-difference Cb/Cr energies plus
+/// per-channel peaks. Three-row sliding window pulled on demand from
+/// `stream`.
 fn image_sharpness_breakdown(
     stream: &mut RowStream<'_>,
     width: usize,

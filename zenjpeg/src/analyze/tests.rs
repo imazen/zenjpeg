@@ -118,7 +118,7 @@ fn checkerboard_has_high_freq_energy() {
 #[test]
 fn small_images_dont_panic() {
     // < 3×3 hits the Tier 2 short-circuit; < 8×8 hits the Tier 3 short-circuit.
-    let _ = analyze_rgb8(&vec![0; 3], 1, 1);
-    let _ = analyze_rgb8(&vec![0; 4 * 4 * 3], 4, 4);
-    let _ = analyze_rgb8(&vec![0; 7 * 7 * 3], 7, 7);
+    let _ = analyze_rgb8(&[0; 3], 1, 1);
+    let _ = analyze_rgb8(&[0; 4 * 4 * 3], 4, 4);
+    let _ = analyze_rgb8(&[0; 7 * 7 * 3], 7, 7);
 }
