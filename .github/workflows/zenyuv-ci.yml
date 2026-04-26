@@ -185,5 +185,16 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Strip non-CI workspace members
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            -e '/"zenjpeg"/d' \
+            -e '/"zenjpeg-bench-utils"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          rm -f Cargo.lock
+
       - name: Format check
         run: cargo fmt -p zenyuv -- --check
