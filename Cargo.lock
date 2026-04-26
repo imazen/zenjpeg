@@ -3270,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "zentone"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "archmage 0.9.22",
  "libm",
