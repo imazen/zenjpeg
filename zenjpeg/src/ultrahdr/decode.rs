@@ -3,12 +3,13 @@
 //! This module provides high-level functions for decoding UltraHDR JPEGs
 //! and reconstructing HDR content.
 
+use crate::container::xmp::parse_xmp;
 use crate::decode::DecodedExtras;
 use crate::decoder::Decoder;
 use crate::error::{Error, Result};
 use ultrahdr_core::{
-    ColorGamut, GainMap, GainMapMetadata, color::tonemap::AdaptiveTonemapper, gainmap::RowDecoder,
-    metadata::xmp::parse_xmp,
+    ColorPrimaries as ColorGamut, GainMap, GainMapMetadata, color::tonemap::AdaptiveTonemapper,
+    gainmap::RowDecoder,
 };
 
 /// Extension trait for [`DecodedExtras`] to check for UltraHDR content.
@@ -43,10 +44,13 @@ impl UltraHdrExtras for DecodedExtras {
     }
 
     fn ultrahdr_metadata(&self) -> Option<Result<(GainMapMetadata, Option<usize>)>> {
-        // First try primary XMP (legacy format: all metadata in primary)
+        // First try primary XMP (legacy format: all metadata in primary).
+        // Field shape changed in 0.5: gain ranges live on channel records now,
+        // not on a flat `gain_map_max: [f32; 3]`.
         if let Some(xmp) = self.xmp()
             && let Ok((metadata, len)) = parse_xmp(xmp)
-            && (metadata.gain_map_max != [0.0; 3] || metadata.alternate_hdr_headroom != 0.0)
+            && (metadata.channels.iter().any(|c| c.max != 0.0)
+                || metadata.alternate_hdr_headroom != 0.0)
         {
             return Some(Ok((metadata, len)));
         }
@@ -55,12 +59,12 @@ impl UltraHdrExtras for DecodedExtras {
         if let Some(gainmap_jpeg) = self.gainmap()
             && let Some(gm_xmp) = extract_xmp_from_jpeg(gainmap_jpeg)
         {
-            return Some(parse_xmp(&gm_xmp).map_err(ultrahdr_to_jpegli_error));
+            return Some(parse_xmp(&gm_xmp).map_err(xmp_to_jpegli_error));
         }
 
         // Fall back to primary XMP even if values are all-default
         let xmp = self.xmp()?;
-        Some(parse_xmp(xmp).map_err(ultrahdr_to_jpegli_error))
+        Some(parse_xmp(xmp).map_err(xmp_to_jpegli_error))
     }
 
     fn decode_gainmap(&self) -> Option<Result<GainMap>> {
@@ -229,6 +233,11 @@ fn extract_xmp_from_jpeg(jpeg: &[u8]) -> Option<String> {
 
 /// Convert ultrahdr_core::Error to jpegli Error.
 fn ultrahdr_to_jpegli_error(e: ultrahdr_core::Error) -> Error {
+    Error::decode_error(e.to_string())
+}
+
+/// Convert XMP parse errors (from `crate::container::xmp::parse_xmp`) to jpegli Error.
+fn xmp_to_jpegli_error(e: crate::container::xmp::XmpError) -> Error {
     Error::decode_error(e.to_string())
 }
 

@@ -4,6 +4,7 @@
 #![cfg(feature = "ultrahdr")]
 
 use enough::Unstoppable;
+use ultrahdr_core::pixel_buffer_from_vec;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
@@ -30,13 +31,13 @@ fn create_test_hdr(width: u32, height: u32) -> UhdrRawImage {
         }
     }
 
-    UhdrRawImage::from_data(
+    pixel_buffer_from_vec(
+        data,
         width,
         height,
-        UhdrPixelFormat::Rgba32F,
+        UhdrPixelFormat::RgbaF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
-        data,
     )
     .expect("Failed to create test HDR image")
 }
@@ -85,9 +86,9 @@ fn test_encode_decode_roundtrip() {
 
     // Verify metadata has reasonable values (gain_map_max is log2 [f64; 3] per channel)
     assert!(
-        metadata.gain_map_max[0] > 0.0
-            || metadata.gain_map_max[1] > 0.0
-            || metadata.gain_map_max[2] > 0.0,
+        metadata.channels[0].max as f32 > 0.0
+            || metadata.channels[1].max as f32 > 0.0
+            || metadata.channels[2].max as f32 > 0.0,
         "HDR should have gain_map_max > 0.0 (log2 boost > 1.0) in at least one channel"
     );
 
@@ -135,13 +136,13 @@ fn test_tonemapper_extraction() {
         tonemapper_from_ultrahdr(extras).expect("Tonemapper extraction should succeed");
 
     // Tonemapper should be usable
-    let test_input = UhdrRawImage::from_data(
+    let test_input = pixel_buffer_from_vec(
+        vec![0u8; 64],
         2,
         2,
-        UhdrPixelFormat::Rgba32F,
+        UhdrPixelFormat::RgbaF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
-        vec![0u8; 64],
     )
     .unwrap();
 

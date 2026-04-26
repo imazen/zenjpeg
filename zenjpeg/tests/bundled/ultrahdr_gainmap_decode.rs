@@ -55,6 +55,7 @@
 #![cfg(feature = "ultrahdr")]
 
 use enough::Unstoppable;
+use ultrahdr_core::pixel_buffer_from_vec;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
@@ -97,13 +98,13 @@ fn create_test_hdr_with_range(width: u32, height: u32, max_r: f32, max_g: f32) -
         }
     }
 
-    UhdrRawImage::from_data(
+    pixel_buffer_from_vec(
+        data,
         width,
         height,
-        UhdrPixelFormat::Rgba32F,
+        UhdrPixelFormat::RgbaF32,
         UhdrColorGamut::Bt709,
         UhdrColorTransfer::Linear,
-        data,
     )
     .expect("Failed to create test HDR image")
 }
@@ -200,29 +201,39 @@ fn test_full_decode_metadata_parsing() {
 
     // The source HDR has values up to 4.0 in red, so gain_map_max should be
     // positive in at least one channel (log2 of boost > 1.0).
-    let has_positive_max = metadata.gain_map_max.iter().any(|&v| v > 0.0);
+    let has_positive_max = [
+        metadata.channels[0].max as f32,
+        metadata.channels[1].max as f32,
+        metadata.channels[2].max as f32,
+    ]
+    .iter()
+    .any(|&v| v > 0.0);
     assert!(
         has_positive_max,
         "HDR image with values up to 4.0 should have gain_map_max > 0.0, got {:?}",
-        metadata.gain_map_max
+        [
+            metadata.channels[0].max as f32,
+            metadata.channels[1].max as f32,
+            metadata.channels[2].max as f32
+        ]
     );
 
     // gain_map_min should be <= gain_map_max for all channels
     for i in 0..3 {
         assert!(
-            metadata.gain_map_min[i] <= metadata.gain_map_max[i],
+            metadata.channels[i].min as f32 <= metadata.channels[i].max as f32,
             "gain_map_min[{i}] ({}) > gain_map_max[{i}] ({})",
-            metadata.gain_map_min[i],
-            metadata.gain_map_max[i]
+            metadata.channels[i].min as f32,
+            metadata.channels[i].max as f32
         );
     }
 
     // Gamma should be positive and finite
     for i in 0..3 {
         assert!(
-            metadata.gamma[i] > 0.0 && metadata.gamma[i].is_finite(),
+            metadata.channels[i].gamma > 0.0 && metadata.channels[i].gamma.is_finite(),
             "gamma[{i}] should be positive and finite, got {}",
-            metadata.gamma[i]
+            metadata.channels[i].gamma as f32
         );
     }
 
@@ -1046,7 +1057,7 @@ fn test_low_hdr_range_image() {
     // gain_map_max is log2 of the boost, so it should be small.
     for i in 0..3 {
         assert!(
-            metadata.gain_map_max[i].is_finite(),
+            metadata.channels[i].max.is_finite(),
             "gain_map_max[{i}] should be finite"
         );
     }
@@ -1071,9 +1082,9 @@ fn test_high_hdr_range_image() {
 
     // With high HDR values, gain_map_max should be relatively large
     let max_of_max = metadata
-        .gain_map_max
+        .channels
         .iter()
-        .copied()
+        .map(|c| c.max)
         .fold(f64::NEG_INFINITY, f64::max);
     assert!(
         max_of_max > 0.5,
@@ -1112,7 +1123,7 @@ fn test_xmp_contains_required_fields() {
         .expect("Should have UltraHDR metadata")
         .expect("Metadata parsing should succeed");
     assert!(
-        metadata.gain_map_max[0] != 0.0 || metadata.gain_map_max[1] != 0.0,
+        metadata.channels[0].max as f32 != 0.0 || metadata.channels[1].max as f32 != 0.0,
         "Metadata should have non-zero GainMapMax"
     );
 }
@@ -1144,15 +1155,15 @@ fn test_xmp_metadata_consistency() {
 
     for i in 0..3 {
         assert_eq!(
-            meta1.gain_map_max[i], meta2.gain_map_max[i],
+            meta1.channels[i].max as f32, meta2.channels[i].max as f32,
             "gain_map_max[{i}] should be deterministic"
         );
         assert_eq!(
-            meta1.gain_map_min[i], meta2.gain_map_min[i],
+            meta1.channels[i].min as f32, meta2.channels[i].min as f32,
             "gain_map_min[{i}] should be deterministic"
         );
         assert_eq!(
-            meta1.gamma[i], meta2.gamma[i],
+            meta1.channels[i].gamma as f32, meta2.channels[i].gamma as f32,
             "gamma[{i}] should be deterministic"
         );
     }

@@ -631,11 +631,22 @@ fn xyb_linear_matches_srgb_solid_red() {
         .expect("decode RgbF32Linear");
     let lin_pixels = decoded_lin.pixels_u8().unwrap();
 
-    let (rr, rg, rb) = (ref_pixels[0] as i32, ref_pixels[1] as i32, ref_pixels[2] as i32);
-    let (lr, lg, lb) = (lin_pixels[0] as i32, lin_pixels[1] as i32, lin_pixels[2] as i32);
+    let (rr, rg, rb) = (
+        ref_pixels[0] as i32,
+        ref_pixels[1] as i32,
+        ref_pixels[2] as i32,
+    );
+    let (lr, lg, lb) = (
+        lin_pixels[0] as i32,
+        lin_pixels[1] as i32,
+        lin_pixels[2] as i32,
+    );
 
     // Guard: the sRGB reference must be red-dominant (sanity-check the known-good path).
-    assert!(rr > rg && rr > rb, "sRGB reference not red: ({rr},{rg},{rb})");
+    assert!(
+        rr > rg && rr > rb,
+        "sRGB reference not red: ({rr},{rg},{rb})"
+    );
     // Main assertion: linear-input must also decode as red. Pre-fix this is (255,255,255).
     assert!(
         lr > lg && lr > lb,

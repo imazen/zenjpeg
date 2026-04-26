@@ -346,7 +346,7 @@ impl<'a> JpegParser<'a> {
         // still expects. Migrate to `crate::container::xmp::parse_xmp` (which
         // returns `zencodec::GainMapParams`) once ultrahdr-core 0.5 lands with
         // the GainMapMetadata-as-alias refactor from ultrahdr#6.
-        use ultrahdr_core::metadata::xmp::parse_xmp;
+        use crate::container::xmp::parse_xmp;
 
         const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
         const MPF_SIG: &[u8] = b"MPF\0";
@@ -479,7 +479,7 @@ impl<'a> JpegParser<'a> {
         // If primary XMP had only hdrgm:Version but no numeric metadata,
         // check the gain map JPEG's XMP (modern format used by libultrahdr).
         let metadata = if let (Some(meta), Some((gm_start, gm_end))) = (&metadata, gainmap_range) {
-            if meta.gain_map_max == [0.0; 3] && meta.alternate_hdr_headroom == 0.0 {
+            if meta.channels.iter().all(|c| c.max == 0.0) && meta.alternate_hdr_headroom == 0.0 {
                 // Try the gain map JPEG's XMP
                 let gm_data = &full_data[gm_start..gm_end];
                 if let Some(gm_xmp) = find_xmp_in_jpeg(gm_data) {

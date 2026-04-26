@@ -63,19 +63,29 @@ pub use encode::{
     encode_with_gainmap_format,
 };
 
-// Re-export core types from ultrahdr-core (aliased to avoid collisions)
+// Re-export core types from ultrahdr-core (aliased to avoid collisions).
+//
+// Container/metadata parsers (XMP, MPF, ISO 21496-1) used to live in
+// `ultrahdr_core::metadata::*` but moved out in 0.5: JPEG-shaped bits are
+// in `crate::container::*` (this crate) and codec-agnostic ISO 21496-1
+// payload parsing is in `zencodec::gainmap`. Consumers that want a stable
+// surface should import directly from `zencodec` for the payload + this
+// crate's `container::xmp` for the JPEG envelope.
 pub use ultrahdr_core::{
-    // Color types (aliased to avoid collision with jpegli types)
-    ColorGamut as UhdrColorGamut,
-    ColorTransfer as UhdrColorTransfer,
+    // Color types (aliased to avoid collision with jpegli types).
+    // `ColorPrimaries` is the zenpixels rename of the former `ColorGamut`;
+    // `TransferFunction` replaces `ColorTransfer`.
+    ColorPrimaries as UhdrColorGamut,
     // Gain map types
     GainMap,
     GainMapEncodingFormat,
     GainMapMetadata,
     // Metadata
     Iso21496Format,
+    // PixelBuffer is the zenpixels replacement for the former RawImage.
+    PixelBuffer as UhdrRawImage,
     PixelFormat as UhdrPixelFormat,
-    RawImage as UhdrRawImage,
+    TransferFunction as UhdrColorTransfer,
     // Fraction types (used by ISO 21496-1 binary format)
     UnsignedFraction,
     // Cancellation
@@ -88,11 +98,15 @@ pub use ultrahdr_core::{
     // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
     // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
     gainmap::{RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
-    metadata::iso21496::{
-        JpegIsoMarkers, create_iso_app2_marker, create_jpeg_iso_markers,
-        create_version_only_iso_app2, parse_iso21496, serialize_iso21496,
-    },
-    metadata::xmp::{generate_gainmap_xmp, generate_primary_xmp, generate_xmp, parse_xmp},
+};
+
+// ISO 21496-1 payload parse/serialize: now in zencodec.
+pub use zencodec::gainmap::{parse_iso21496_fmt, serialize_iso21496_fmt};
+// XMP parse/generate + JPEG ISO/MPF marker helpers: now zenjpeg-internal,
+// re-exported here for back-compat with consumers that imported the old
+// `ultrahdr_core::metadata::{iso21496,xmp}` paths.
+pub use crate::container::xmp::{
+    generate_gainmap_xmp, generate_primary_xmp, generate_xmp, parse_xmp,
 };
 
 // Re-export the Stop trait from enough (same one used by jpegli)
