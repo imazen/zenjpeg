@@ -34,6 +34,7 @@
 // by an unrelated commit on main); wiring it in here makes the file
 // actually reachable.
 mod adaptive;
+pub(crate) mod aq_controller;
 mod blocks;
 #[doc(hidden)]
 pub mod chroma;

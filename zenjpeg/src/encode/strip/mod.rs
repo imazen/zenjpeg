@@ -583,6 +583,19 @@ pub struct StripProcessor {
     // === Reusable AQ strengths buffer ===
     /// Buffer for AQ strengths from process_y_strip_into (avoids per-strip allocation)
     aq_strengths_buffer: Vec<f32>,
+
+    // === Per-iMCU AQ controller hook (issue #113, PR-A) ===
+    /// Optional controller invoked between `StreamingAQ` emitting per-iMCU
+    /// strengths and `quantize_prev_pending_imcu` consuming them. `None`
+    /// (default) is the byte-identity path — locked-hash tests verify
+    /// this. Future layers (Layers 3–4 of #113) install a real controller
+    /// to drive a target-zensim closed loop.
+    ///
+    /// Counts iMCU rows for which `adjust` has been called, so the
+    /// controller sees a monotonic 0-based index even when AQ buffers
+    /// arrive in irregular shapes (e.g. zero-length flush at EOI).
+    aq_controller: Option<Box<dyn crate::encode::aq_controller::AqController>>,
+    aq_controller_imcu_idx: usize,
 }
 
 impl StripProcessor {
@@ -873,6 +886,10 @@ impl StripProcessor {
             // Reusable AQ strengths buffer (one iMCU row worth of blocks)
             // Size: blocks_per_row * v_samp_factor (max 2 for 4:2:0)
             aq_strengths_buffer: vec![0.0f32; pending_y_capacity],
+
+            // No AQ controller installed by default (#113 PR-A scaffold).
+            aq_controller: None,
+            aq_controller_imcu_idx: 0,
         })
     }
 
@@ -954,6 +971,30 @@ impl StripProcessor {
     #[cfg(feature = "boundary-rd")]
     pub(crate) fn set_boundary_rd(&mut self, flat: Option<BoundaryRdFlat>) {
         self.boundary_rd = flat.map(BoundaryRdState::new);
+    }
+
+    /// Install a per-iMCU AQ-strength controller (#113 PR-A scaffold).
+    ///
+    /// `Some(ctrl)` enables the hook in `process_strip_common`: the
+    /// controller's `adjust` is invoked once per iMCU row, immediately
+    /// after `StreamingAQ` finalizes that iMCU's strengths and before
+    /// quantization consumes them. `None` (the default) leaves the
+    /// strength buffer untouched — encode is byte-identical to the
+    /// pre-controller path.
+    ///
+    /// The iMCU index passed to `adjust` is reset whenever a new
+    /// controller is installed.
+    ///
+    /// Currently unused inside the crate — wired up by external callers
+    /// in PR-D (target-zensim closed loop). The compiler's dead-code lint
+    /// is silenced until then.
+    #[allow(dead_code)]
+    pub(crate) fn set_aq_controller(
+        &mut self,
+        ctrl: Option<Box<dyn crate::encode::aq_controller::AqController>>,
+    ) {
+        self.aq_controller = ctrl;
+        self.aq_controller_imcu_idx = 0;
     }
 
     /// Sets trellis quantization configuration.
@@ -1211,7 +1252,17 @@ impl StripProcessor {
         // This is the key optimization: quantize to i16 immediately instead of storing f32.
         if let Some(count) = aq_count {
             // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+
+            // Per-iMCU AQ controller hook (#113 PR-A). Default is `None`,
+            // which leaves `temp_buffer` untouched — encode is byte-identical
+            // to the pre-controller path. Locked-hash regression tests verify
+            // this is preserved (see tests/bundled/locked_values.rs).
+            if let Some(ctrl) = self.aq_controller.as_mut() {
+                ctrl.adjust(&mut temp_buffer[..count], self.aq_controller_imcu_idx);
+                self.aq_controller_imcu_idx += 1;
+            }
+
             self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
             self.pending.clear_prev();
@@ -2358,6 +2409,70 @@ mod tests {
                 psnr,
                 height
             );
+        }
+    }
+
+    /// AqController scaffold (#113 PR-A): the hook is invoked once per
+    /// iMCU row with a monotonic index. The trait requires `Send`, so
+    /// the test stashes its log in a thread_local instead of `Rc<RefCell>`.
+    /// We exercise the live encode path via `process_strip` and verify
+    /// the controller saw at least one call with monotonic indices and
+    /// non-empty strength slices.
+    #[test]
+    fn aq_controller_hook_is_called_per_imcu() {
+        use crate::encode::aq_controller::AqController;
+        use core::cell::RefCell;
+
+        thread_local! {
+            static LOG: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+        }
+
+        #[derive(Debug)]
+        struct Recorder;
+        impl AqController for Recorder {
+            fn adjust(&mut self, strengths: &mut [f32], imcu_idx: usize) {
+                LOG.with(|l| l.borrow_mut().push((imcu_idx, strengths.len())));
+            }
+        }
+
+        LOG.with(|l| l.borrow_mut().clear());
+
+        let width = 64usize;
+        let height = 64usize;
+        let mut rgb = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                rgb[idx] = ((x * 4) & 0xFF) as u8;
+                rgb[idx + 1] = ((y * 4) & 0xFF) as u8;
+                rgb[idx + 2] = (((x + y) * 2) & 0xFF) as u8;
+            }
+        }
+
+        let mut processor = StripProcessor::new(width, height, Subsampling::S420, PixelFormat::Rgb)
+            .expect("processor creation");
+        processor.set_aq_controller(Some(Box::new(Recorder)));
+
+        let strip_h = processor.strip_height();
+        for strip_y in (0..height).step_by(strip_h) {
+            let h = strip_h.min(height - strip_y);
+            let row_size = width * 3;
+            let strip = &rgb[strip_y * row_size..(strip_y + h) * row_size];
+            processor
+                .process_strip(strip, strip_y)
+                .expect("process_strip");
+        }
+
+        let log = LOG.with(|l| l.borrow().clone());
+        // 64-row 4:2:0 image is 4 iMCU rows (16 px per iMCU). StreamingAQ
+        // holds back the first iMCU as lookahead for fuzzy erosion, so
+        // the trailing emission lands at flush time (not exercised by
+        // process_strip alone). What this test pins down: the hook
+        // fires, indices are monotonic from 0, slices are non-empty.
+        assert!(!log.is_empty(), "controller adjust never called");
+        for (n, (idx, len)) in log.iter().enumerate() {
+            assert_eq!(*idx, n, "imcu_idx must be monotonic from 0");
+            assert!(*len > 0, "strength slice must not be empty");
         }
     }
 }
