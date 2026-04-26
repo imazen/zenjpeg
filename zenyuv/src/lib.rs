@@ -241,6 +241,10 @@ mod tests {
 
     /// All combinations of Matrix × Range that must produce byte-identical
     /// output across SIMD dispatch tiers.
+    /// Matrix × Range combinations that have a clean canonical (Kr, Kb)
+    /// decomposition. Used for f64-reference exhaustive accuracy tests
+    /// where we compare zenyuv's integer kernel against a `kr * r + kg * g
+    /// + kb * b` ground truth.
     const ALL_MATRIX_RANGE: &[(Matrix, Range, &str)] = &[
         (Matrix::Bt601, Range::Full, "BT.601 Full"),
         (Matrix::Bt601, Range::Limited, "BT.601 Limited"),
@@ -248,6 +252,22 @@ mod tests {
         (Matrix::Bt709, Range::Limited, "BT.709 Limited"),
         (Matrix::Bt2020, Range::Full, "BT.2020 Full"),
         (Matrix::Bt2020, Range::Limited, "BT.2020 Limited"),
+    ];
+
+    /// Every Matrix × Range combination the dispatch-parity tests must
+    /// cover, including [`Matrix::WebpEncoder`] which is empirical and
+    /// has no canonical (Kr, Kb) — so we test it for SIMD-tier byte
+    /// equivalence here, but pin its values directly against libwebp's
+    /// reference in `webp_encoder_matches_libwebp_kwebp_matrix` rather
+    /// than against a derived f64 ground truth.
+    const ALL_DISPATCH_MATRIX_RANGE: &[(Matrix, Range, &str)] = &[
+        (Matrix::Bt601, Range::Full, "BT.601 Full"),
+        (Matrix::Bt601, Range::Limited, "BT.601 Limited"),
+        (Matrix::Bt709, Range::Full, "BT.709 Full"),
+        (Matrix::Bt709, Range::Limited, "BT.709 Limited"),
+        (Matrix::Bt2020, Range::Full, "BT.2020 Full"),
+        (Matrix::Bt2020, Range::Limited, "BT.2020 Limited"),
+        (Matrix::WebpEncoder, Range::Limited, "WebpEncoder Limited"),
     ];
 
     /// Verify all SIMD dispatch tiers produce BYTE-IDENTICAL output for 4:4:4
@@ -263,7 +283,7 @@ mod tests {
         let rgb = make_pattern(w, h);
         let n = w * h;
 
-        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+        for &(matrix, range, name) in ALL_DISPATCH_MATRIX_RANGE {
             let mut y_ref = vec![0u8; n];
             let mut cb_ref = vec![0u8; n];
             let mut cr_ref = vec![0u8; n];
@@ -304,7 +324,7 @@ mod tests {
         let ch = h.div_ceil(2);
         let rgb = make_pattern(w, h);
 
-        for &(matrix, range, name) in ALL_MATRIX_RANGE {
+        for &(matrix, range, name) in ALL_DISPATCH_MATRIX_RANGE {
             let mut y_ref = vec![0u8; w * h];
             let mut cb_ref = vec![0u8; cw * ch];
             let mut cr_ref = vec![0u8; cw * ch];
@@ -338,6 +358,12 @@ mod tests {
             Matrix::Bt601 => (0.299f64, 0.114),
             Matrix::Bt709 => (0.2126, 0.0722),
             Matrix::Bt2020 => (0.2627, 0.0593),
+            // WebpEncoder doesn't decompose cleanly to (Kr, Kb); the
+            // exhaustive f64-reference tests iterate ALL_MATRIX_RANGE
+            // (canonical only) so this arm is never reached. Falls back
+            // to canonical Bt601 to keep the function total instead of
+            // panicking — matches `Matrix::kr_kb()` policy.
+            Matrix::WebpEncoder => (0.299f64, 0.114),
         };
         let kg = 1.0 - kr - kb;
         let (rf, gf, bf) = (r as f64, g as f64, b as f64);
@@ -562,6 +588,12 @@ mod tests {
             Matrix::Bt601 => (0.299f64, 0.114),
             Matrix::Bt709 => (0.2126, 0.0722),
             Matrix::Bt2020 => (0.2627, 0.0593),
+            // WebpEncoder doesn't decompose cleanly to (Kr, Kb); the
+            // exhaustive f64-reference tests iterate ALL_MATRIX_RANGE
+            // (canonical only) so this arm is never reached. Falls back
+            // to canonical Bt601 to keep the function total instead of
+            // panicking — matches `Matrix::kr_kb()` policy.
+            Matrix::WebpEncoder => (0.299f64, 0.114),
         };
         let kg = 1.0 - kr - kb;
         let (cb, cr) = match range {
@@ -1229,5 +1261,95 @@ mod tests {
             _ => return None,
         };
         Some((rgb, info.width, info.height))
+    }
+
+    /// Pin `Matrix::WebpEncoder` Y output to libwebp's PREC=16 reference
+    /// for every R=G=B input.
+    ///
+    /// This is the byte-exactness contract the variant exists to provide:
+    /// for any gray input, our PREC=15 zenyuv kernel must produce the same
+    /// Y value as libwebp's hardcoded `(16839, 33059, 6420)` PREC=16 math.
+    /// Drift on any of the 256 inputs means the variant has lost its
+    /// libwebp-parity reason for existing — investigate before changing.
+    ///
+    /// Reference (from `libwebp/src/dsp/yuv.h` `VP8RGBToY`):
+    ///   `Y = (16839*r + 33059*g + 6420*b + (1 << 15) + (16 << 16)) >> 16`
+    #[test]
+    fn webp_encoder_matches_libwebp_kwebp_matrix() {
+        // libwebp's exact scalar Y for R=G=B=g.
+        fn libwebp_y(g: u8) -> u8 {
+            const COEFF: i32 = 16839 + 33059 + 6420; // = 56318
+            const FIX: i32 = 16;
+            const HALF: i32 = 1 << (FIX - 1);
+            const OFFSET: i32 = (16 << FIX) + HALF;
+            ((COEFF * g as i32 + OFFSET) >> FIX).clamp(0, 255) as u8
+        }
+
+        // 16x16 image with constant gray; sweep gray 0..=255.
+        let (w, h) = (16usize, 16usize);
+        let mut mismatches: Vec<(u8, u8, u8)> = Vec::new();
+        for g in 0..=255u8 {
+            let rgb: Vec<u8> = vec![g; w * h * 3];
+            let mut y = vec![0u8; w * h];
+            let mut cb = vec![0u8; w * h];
+            let mut cr = vec![0u8; w * h];
+            let mut ctx = YuvContext::new(Range::Limited, Matrix::WebpEncoder);
+            ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, w, h);
+
+            let expected_y = libwebp_y(g);
+            let actual_y = y[(h / 2) * w + w / 2]; // center pixel; avoid any padding
+            if actual_y != expected_y {
+                mismatches.push((g, expected_y, actual_y));
+            }
+
+            // Chroma must be exactly 128 for grayscale (R=G=B → U=V=128
+            // mathematically, regardless of matrix).
+            let center = (h / 2) * w + w / 2;
+            assert_eq!(cb[center], 128, "U at gray={g}");
+            assert_eq!(cr[center], 128, "V at gray={g}");
+        }
+        assert!(
+            mismatches.is_empty(),
+            "Matrix::WebpEncoder Y diverges from libwebp's kWebpMatrix on {} of 256 grays \
+             (first mismatch: gray={}, expected={}, got={})",
+            mismatches.len(),
+            mismatches[0].0,
+            mismatches[0].1,
+            mismatches[0].2,
+        );
+    }
+
+    /// `Matrix::WebpEncoder + Range::Full` silently maps to canonical
+    /// Bt601 Full because libwebp itself uses `kRec601FullMatrix` for
+    /// Full range — `kWebpMatrix` only exists in libwebp's source for
+    /// Limited. So the fallback is the libwebp-correct behavior.
+    #[test]
+    fn webp_encoder_full_range_falls_back_to_canonical_bt601_forward() {
+        let webp_full = crate::types::ForwardCoeffs::new(Matrix::WebpEncoder, Range::Full);
+        let bt601_full = crate::types::ForwardCoeffs::new(Matrix::Bt601, Range::Full);
+        // Y/Cb/Cr i16 coefficients must match Bt601 Full bytewise.
+        assert_eq!(webp_full.yr, bt601_full.yr);
+        assert_eq!(webp_full.yg, bt601_full.yg);
+        assert_eq!(webp_full.yb, bt601_full.yb);
+        assert_eq!(webp_full.cb_r, bt601_full.cb_r);
+        assert_eq!(webp_full.cb_g, bt601_full.cb_g);
+        assert_eq!(webp_full.cb_b, bt601_full.cb_b);
+        assert_eq!(webp_full.cr_r, bt601_full.cr_r);
+        assert_eq!(webp_full.cr_g, bt601_full.cr_g);
+        assert_eq!(webp_full.cr_b, bt601_full.cr_b);
+        assert_eq!(webp_full.y_bias, bt601_full.y_bias);
+        assert_eq!(webp_full.uv_bias, bt601_full.uv_bias);
+    }
+
+    #[test]
+    fn webp_encoder_full_range_falls_back_to_canonical_bt601_inverse() {
+        let webp_full = crate::types::InverseCoeffs::new(Matrix::WebpEncoder, Range::Full);
+        let bt601_full = crate::types::InverseCoeffs::new(Matrix::Bt601, Range::Full);
+        assert_eq!(webp_full.y_coeff, bt601_full.y_coeff);
+        assert_eq!(webp_full.cr_to_r, bt601_full.cr_to_r);
+        assert_eq!(webp_full.cr_to_g, bt601_full.cr_to_g);
+        assert_eq!(webp_full.cb_to_g, bt601_full.cb_to_g);
+        assert_eq!(webp_full.cb_to_b, bt601_full.cb_to_b);
+        assert_eq!(webp_full.y_offset, bt601_full.y_offset);
     }
 }
