@@ -136,6 +136,14 @@ jobs:
           # fails open instead of breaking workspace metadata resolution.
           sed -e 's|^ultrahdr = \[.*\]$|ultrahdr = []|' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          # Strip the zentone path-dep entirely from both workspace and subcrate.
+          # zentone is unpublished, only referenced from the now-disabled `ultrahdr`
+          # feature, and the cross container can't see ../zentone. The optional
+          # subcrate dep declaration also goes (its only ref was `dep:zentone` in
+          # the stripped feature).
+          sed -e '/^zentone = /d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zentone = /d' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
       - uses: Swatinem/rust-cache@v2
