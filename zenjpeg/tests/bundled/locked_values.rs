@@ -35,8 +35,13 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsamp
 /// The pre-fix XYB linear-input path saturated to all-255; every XYB entry in the
 /// CSV was computed against that broken output. Regenerated to match the corrected
 /// scale_xyb + linear_rgb_to_xyb pipeline.
+///
+/// Re-locked 2026-04-26: commit a4f5dc4e set this constant to a value that
+/// didn't match the CSV it shipped — every CI run since has failed this test.
+/// The CSV bytes are unchanged from a4f5dc4e; only the constant is corrected
+/// to actually hash the committed CSV.
 #[cfg(target_arch = "x86_64")]
-const VALUES_FILE_HASH: &str = "f5f42354f7ca6544d58f9b716e3a5345d30537dc4a6d77d661f98d33a4498efd";
+const VALUES_FILE_HASH: &str = "ccfd6df6db0791f74a3f4fe4f9c0a13c84b5885b25fa9d858ef166b06fd3954a";
 
 /// SHA-256 hash of normalized values_wide.csv (LF line endings, no trailing whitespace).
 #[cfg(not(target_arch = "x86_64"))]
