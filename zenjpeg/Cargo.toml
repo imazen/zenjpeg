@@ -76,6 +76,9 @@ web-sys = { version = "0.3", features = ["console"], optional = true }
 ultrahdr-core = { workspace = true }
 # Half-precision float (f16) — used for UltraHDR HDR pixel decoding
 half = { workspace = true, optional = true }
+# Tone-mapping curves wired into encode_ultrahdr_luma. Optional, gated behind
+# the `ultrahdr` feature so the dep is only pulled when HDR encoding is used.
+zentone = { workspace = true, optional = true }
 # Layout pipeline: image resampling. Constraint solver (FitMode) and
 # EXIF-orientation bridge live in zenresize 0.3+.
 zenresize = { workspace = true, optional = true }
@@ -191,7 +194,7 @@ __wasm-simd = []
 # now mandatory there); container/metadata parsers moved to zencodec::gainmap
 # + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
 # ColorPrimaries, TransferFunction, PixelBuffer).
-ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/zentone", "dep:half"]
+ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/zentone", "dep:half", "dep:zentone"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode.

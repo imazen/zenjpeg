@@ -56,11 +56,16 @@
 mod decode;
 mod encode;
 
-// Re-export the main workflow functions
-pub use decode::{UltraHdrExtras, create_hdr_reconstructor, tonemapper_from_ultrahdr};
+// Re-export the main workflow functions.
+// One-call convenience entries (libultrahdr parity surface) come first;
+// the more granular building blocks live below.
+pub use decode::{
+    UltraHdrExtras, create_hdr_reconstructor, decode_ultrahdr, decode_ultrahdr_hdr,
+    tonemapper_from_ultrahdr,
+};
 pub use encode::{
-    create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_with_tonemapper, encode_with_gainmap,
-    encode_with_gainmap_format,
+    create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_luma, encode_ultrahdr_with_curve,
+    encode_ultrahdr_with_tonemapper, encode_with_gainmap, encode_with_gainmap_format,
 };
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions).

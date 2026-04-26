@@ -159,6 +159,33 @@ fn test_reencode_ultrahdr() {
     unimplemented!("reencode_ultrahdr API was removed");
 }
 
+/// Smoke test for the idiot-proof convenience entry: a single call should
+/// produce a valid Ultra HDR JPEG from an HDR `PixelBuffer` with no config
+/// assembly required.
+#[test]
+fn encode_ultrahdr_luma_smoke() {
+    use ultrahdr_core::gainmap::HdrOutputFormat;
+    use zenjpeg::ultrahdr::{decode_ultrahdr, decode_ultrahdr_hdr, encode_ultrahdr_luma};
+
+    let hdr = create_test_hdr(32, 32);
+    let bytes = encode_ultrahdr_luma(&hdr).expect("encode_ultrahdr_luma should succeed");
+
+    // Output must be a JPEG with SOI/EOI bookends and UltraHDR XMP.
+    assert_eq!(&bytes[0..2], &[0xFF, 0xD8]);
+    assert_eq!(&bytes[bytes.len() - 2..], &[0xFF, 0xD9]);
+
+    // SDR-decode round-trip via convenience entry: should yield Rgba8 sRGB.
+    let sdr = decode_ultrahdr(&bytes).expect("decode_ultrahdr should succeed");
+    assert_eq!(sdr.width(), 32);
+    assert_eq!(sdr.height(), 32);
+
+    // HDR-decode at 4× boost via convenience entry: linear f32 RGBA.
+    let hdr_back = decode_ultrahdr_hdr(&bytes, 4.0, HdrOutputFormat::LinearFloat)
+        .expect("decode_ultrahdr_hdr should succeed");
+    assert_eq!(hdr_back.width(), 32);
+    assert_eq!(hdr_back.height(), 32);
+}
+
 #[test]
 fn test_metadata_passthrough() {
     let hdr = create_test_hdr(32, 32);

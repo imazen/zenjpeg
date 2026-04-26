@@ -7,9 +7,14 @@ use crate::container::xmp::parse_xmp;
 use crate::decode::DecodedExtras;
 use crate::decoder::Decoder;
 use crate::error::{Error, Result};
+use crate::types::PixelFormat as JpegPixelFormat;
+use enough::Unstoppable;
 use ultrahdr_core::{
-    ColorPrimaries as ColorGamut, GainMap, GainMapMetadata, color::tonemap::AdaptiveTonemapper,
-    gainmap::RowDecoder,
+    ColorPrimaries, ColorPrimaries as ColorGamut, GainMap, GainMapMetadata, PixelBuffer,
+    PixelFormat, TransferFunction,
+    color::tonemap::AdaptiveTonemapper,
+    gainmap::{HdrOutputFormat, RowDecoder, apply_gainmap},
+    pixel_buffer_from_vec,
 };
 
 /// Extension trait for [`DecodedExtras`] to check for UltraHDR content.
@@ -174,6 +179,115 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
         .ok_or_else(|| Error::decode_error("Not an UltraHDR image".to_string()))??;
 
     Ok(AdaptiveTonemapper::from_gainmap(&metadata))
+}
+
+// ===========================================================================
+// One-call convenience entry points (libultrahdr parity surface)
+// ===========================================================================
+
+/// Decode an Ultra HDR JPEG to its SDR base image.
+///
+/// One-call equivalent of libultrahdr's `uhdr_decode` followed by
+/// `uhdr_get_decoded_image` with `display_boost = 1.0`. Returns the SDR
+/// base image as `Rgba8` with sRGB transfer — what every viewer can show
+/// without an HDR-aware compositor. For HDR output, use
+/// [`decode_ultrahdr_hdr`].
+///
+/// Works on any JPEG (Ultra HDR or not) since it returns the primary
+/// rendition. Use `DecodeResult::extras().is_ultrahdr()` first if you
+/// need to discriminate.
+pub fn decode_ultrahdr(bytes: &[u8]) -> Result<PixelBuffer> {
+    let decoded = Decoder::new().decode(bytes, Unstoppable)?;
+    decode_result_to_pixel_buffer(decoded)
+}
+
+/// Decode an Ultra HDR JPEG to HDR pixels using its gain map.
+///
+/// One-call equivalent of libultrahdr's `uhdr_decode` →
+/// `uhdr_dec_set_out_max_display_boost` → `uhdr_get_decoded_image` flow.
+///
+/// `display_boost` is the linear HDR capacity:
+/// - `1.0` = SDR (gain map ignored)
+/// - `2.0` = 2× headroom
+/// - `4.0` = typical HDR display
+/// - `8.0`+ = full reconstruction at PQ peak
+///
+/// `format` picks the output pixel layout. See [`HdrOutputFormat`] —
+/// `LinearFloat`/`LinearF16` produce linear HDR (1.0 = SDR white),
+/// `Srgb8` clips to SDR for fallback rendering.
+///
+/// Returns an error if the input isn't an Ultra HDR image (no gain map
+/// or metadata).
+pub fn decode_ultrahdr_hdr(
+    bytes: &[u8],
+    display_boost: f32,
+    format: HdrOutputFormat,
+) -> Result<PixelBuffer> {
+    let mut decoded = Decoder::new().decode(bytes, Unstoppable)?;
+    let extras = decoded
+        .take_extras()
+        .ok_or_else(|| Error::decode_error("decoded JPEG has no extras".to_string()))?;
+    let (metadata, _) = extras
+        .ultrahdr_metadata()
+        .ok_or_else(|| Error::decode_error("not an Ultra HDR image".to_string()))??;
+    let gainmap = extras
+        .decode_gainmap()
+        .ok_or_else(|| Error::decode_error("not an Ultra HDR image".to_string()))??;
+
+    let sdr = decode_result_to_pixel_buffer(decoded)?;
+    apply_gainmap(
+        &sdr,
+        &gainmap,
+        &metadata,
+        display_boost,
+        format,
+        Unstoppable,
+    )
+    .map_err(ultrahdr_to_jpegli_error)
+}
+
+/// Convert a [`crate::decode::DecodeResult`] to a `PixelBuffer` with sRGB
+/// transfer + Bt709 primaries. Maps the codec-internal [`JpegPixelFormat`]
+/// to [`zenpixels::PixelFormat`]; expands 3-channel RGB to 4-channel Rgba8
+/// when the codec returned packed RGB (the common case).
+fn decode_result_to_pixel_buffer(decoded: crate::decode::DecodeResult) -> Result<PixelBuffer> {
+    let width = decoded.width;
+    let height = decoded.height;
+    let format = decoded.format;
+    let (pixels_u8, _pixels_f32, _w, _h, _f, _extras) = decoded.into_parts();
+    let data = pixels_u8.ok_or_else(|| {
+        Error::unsupported_feature("decode_ultrahdr: decoder produced no u8 pixels")
+    })?;
+
+    let (bytes, zp_format) = match format {
+        JpegPixelFormat::Rgb => (rgb_to_rgba8(&data), PixelFormat::Rgba8),
+        JpegPixelFormat::Rgba => (data, PixelFormat::Rgba8),
+        JpegPixelFormat::Gray => (data, PixelFormat::Gray8),
+        other => {
+            return Err(Error::decode_error(format!(
+                "decode_ultrahdr: codec returned {other:?}; expected Rgb / Rgba / Gray"
+            )));
+        }
+    };
+    pixel_buffer_from_vec(
+        bytes,
+        width,
+        height,
+        zp_format,
+        ColorPrimaries::Bt709,
+        TransferFunction::Srgb,
+    )
+    .map_err(ultrahdr_to_jpegli_error)
+}
+
+/// Pad packed RGB bytes to RGBA8 with `A=0xFF`. Done in-place via Vec growth.
+fn rgb_to_rgba8(rgb: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
+    for px in rgb.chunks_exact(3) {
+        out.extend_from_slice(px);
+        out.push(0xFF);
+    }
+    out
 }
 
 /// Decode a gain map JPEG to GainMap struct.

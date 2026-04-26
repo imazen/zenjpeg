@@ -3160,6 +3160,7 @@ dependencies = [
  "zenresize",
  "zensim",
  "zensim-regress",
+ "zentone",
  "zenyuv",
  "zune-core",
  "zune-jpeg",
