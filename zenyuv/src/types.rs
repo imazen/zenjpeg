@@ -1,7 +1,12 @@
 //! Color matrix standards, signal ranges, and coefficient computation.
 
 /// Color matrix standard.
+///
+/// `#[non_exhaustive]` — adding new matrix variants in future minor
+/// releases is non-breaking. Downstream `match` arms must include a
+/// wildcard `_ =>` arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Matrix {
     /// ITU-R BT.601 (SD video, JFIF JPEG). Kr=0.299, Kb=0.114.
     Bt601,

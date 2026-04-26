@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-26
+
+### Breaking
+
+- `Matrix` is now `#[non_exhaustive]` — pattern matches outside the
+  crate must include a wildcard `_ =>` arm. Future variant additions
+  will be non-breaking minor releases (746487a).
+- New `Matrix::WebpEncoder` variant breaks exhaustive matches that
+  predate this release. Released as a patch with prior 0.1.x versions
+  yanked rather than a 0.2.0 minor — early-adopter compensation.
+
+### Added
+
+- `Matrix::WebpEncoder` exposes libwebp's empirical `kWebpMatrix`
+  coefficients (16839, 33059, 6420 at PREC=16, halved with ties-away
+  for our PREC=15 i16 lanes). Use this when producing WebP files that
+  need byte-identical Y to libwebp's WebP encoder. Limited-range only;
+  `Range::Full` silently maps to canonical `Bt601 Full` because libwebp
+  itself uses `kRec601FullMatrix` for Full range. (746487a)
+- `webp_encoder_matches_libwebp_kwebp_matrix` test pins the contract:
+  zenyuv's PREC=15 Y matches libwebp's PREC=16 Y bytewise across all
+  256 R=G=B inputs. Drift on any input means the variant has lost its
+  reason for existing — investigate before changing.
+- `webp_encoder_full_range_falls_back_to_canonical_bt601_{forward,inverse}`
+  tests pin the silent-fallback semantics so future refactors can't
+  change the mapping without updating both crates.
+
+### Fixed
+
+- Zero panics in `src/`. Previously the crate had no panics in public
+  paths, but the WebpEncoder PR initially added some; they were removed
+  before merge. Documented as the policy going forward.
+
 ## [0.1.2] - 2026-04-16
 
 ### Added
