@@ -130,6 +130,12 @@ jobs:
           # Strip path overrides from ultrahdr deps in subcrate (cross can't see sibling repos)
           sed -e 's|, path = "../../ultrahdr/[^"]*"||g' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          # Disable the `ultrahdr` feature: it pulls `ultrahdr-core/zentone` which
+          # only exists in 0.4+; the i686 strip pins 0.3 to keep cross-build cheap.
+          # Replace the feature definition with a no-op so any caller asking for it
+          # fails open instead of breaking workspace metadata resolution.
+          sed -e 's|^ultrahdr = \[.*\]$|ultrahdr = []|' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
 
       - uses: Swatinem/rust-cache@v2
