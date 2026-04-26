@@ -42,6 +42,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -93,6 +98,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -158,6 +168,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -240,6 +255,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps (keep jpegli-internals-sys)
         shell: bash
@@ -327,6 +347,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -374,6 +399,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -413,6 +443,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -456,6 +491,11 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          # Path-pinned by ultrahdr-core's [patch.crates-io] for the in-flight
+          # zenpixels 0.2.11 (RgbaF16) and by zenjpeg's `ultrahdr` feature for
+          # zentone (Bt2446C in encode_ultrahdr_luma). Both unpublished.
+          git clone --depth 1 https://github.com/imazen/zenpixels.git
+          git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
