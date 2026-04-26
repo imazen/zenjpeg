@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `encode_ultrahdr_with_curve` migrated off the retired
+  `ultrahdr_core::gainmap::compute::compute_gainmap_tonemap` and
+  `ultrahdr_core::gainmap::splitter::*` paths — the splitter (and its
+  `LumaToneMap` trait) now lives in `zentone` and is re-exported at
+  `ultrahdr_core`'s crate root for back-compat. The encode path now derives
+  the SDR base via `LumaGainMapSplitter` then runs `compute_gainmap` on the
+  (HDR, SDR) pair. Public API shape unchanged. (closes #16)
 - `push_decoder_native` silently returned BGRA for 4-component JPEGs even
   when `cmyk_handling == Passthrough`, because the streaming ScanlineReader
   has no raw-CMYK path. Now falls back to the buffered decoder for that

@@ -10,13 +10,10 @@ use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
 use enough::{Stop, Unstoppable};
 use ultrahdr_core::{
-    ColorPrimaries, GainMap, GainMapEncodingFormat, GainMapMetadata, PixelBuffer, PixelFormat,
-    TransferFunction,
+    ColorPrimaries, GainMap, GainMapEncodingFormat, GainMapMetadata, LumaGainMapSplitter,
+    LumaToneMap, PixelBuffer, PixelFormat, SplitConfig, SplitStats, TransferFunction,
     color::tonemap::{AdaptiveTonemapper, ToneMapConfig, tonemap_image_to_srgb8},
-    gainmap::{
-        GainMapConfig, RowEncoder, compute::compute_gainmap_tonemap, compute_gainmap,
-        splitter::LumaToneMap,
-    },
+    gainmap::{GainMapConfig, RowEncoder, compute_gainmap},
     pixel_buffer_from_vec,
 };
 use zencodec::Iso21496Format;
@@ -113,12 +110,13 @@ pub fn create_gainmap_computer(
 
 /// Encode an HDR image as Ultra HDR JPEG using a caller-supplied tone curve.
 ///
-/// Closes #71's "wire `LumaToneMap` into encode_ultrahdr" by routing the
-/// HDR→SDR step through `compute_gainmap_tonemap`, which takes any
-/// `LumaToneMap` from zentone (`Bt2446A` / `Bt2446B` / `Bt2446C`,
-/// `Bt2408Tonemapper`, `CompiledFilmicSpline`, `HableFilmic`, …). The
-/// curve runs in luma-only luminance-preserving form (chromaticity
-/// stays untouched) — that's the whole point of the splitter path.
+/// Closes #71's "wire `LumaToneMap` into encode_ultrahdr". Derives the SDR
+/// base via zentone's [`LumaGainMapSplitter`] (luma-only,
+/// chromaticity-preserving) around the supplied curve, then computes the
+/// gain map from the resulting (HDR, SDR) pair via
+/// [`compute_gainmap`]. Accepts any `LumaToneMap` from zentone
+/// (`Bt2446A` / `Bt2446B` / `Bt2446C`, `Bt2408Yrgb`, `CompiledFilmicSpline`,
+/// `HableFilmic`, …).
 ///
 /// `gainmap_config.multi_channel` MUST be `false` (the splitter is
 /// single-channel by design). Multi-channel callers use
@@ -132,9 +130,22 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
     gainmap_quality: f32,
     stop: impl Stop,
 ) -> Result<Vec<u8>> {
-    let (sdr_linear, gainmap, metadata) =
-        compute_gainmap_tonemap(hdr.as_slice(), curve, gainmap_config, &stop)
-            .map_err(ultrahdr_to_jpegli_error)?;
+    if gainmap_config.multi_channel {
+        return Err(Error::unsupported_feature(
+            "encode_ultrahdr_with_curve does not support multi-channel gain maps; \
+             use encode_ultrahdr with separate HDR/SDR images instead",
+        ));
+    }
+
+    let sdr_linear = split_hdr_to_sdr_via_curve(hdr, curve, gainmap_config, &stop)?;
+    stop.check()?;
+
+    // Derive gain map + metadata from the (HDR, SDR) pair produced by the
+    // splitter. Equivalent metadata to the legacy single-pass
+    // `compute_gainmap_tonemap` because the splitter's chromaticity-preserving
+    // rescale leaves luma in the same proportion the curve dictated.
+    let (gainmap, metadata) = compute_gainmap(hdr, &sdr_linear, gainmap_config, &stop)
+        .map_err(ultrahdr_to_jpegli_error)?;
     stop.check()?;
 
     // The splitter emits SDR as RgbaF32 / Linear. Encode wants Rgba8 / Srgb.
@@ -149,6 +160,178 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
         gainmap_quality,
         stop,
     )
+}
+
+/// Run zentone's [`LumaGainMapSplitter`] over `hdr`, producing a same-size
+/// `RgbaF32` / `Linear` SDR `PixelBuffer`. The gain rows the splitter emits
+/// are discarded; the gain map is computed afterwards from the (HDR, SDR)
+/// pair via [`compute_gainmap`] so its metadata matches the
+/// canonical single-pass formula.
+fn split_hdr_to_sdr_via_curve<C: LumaToneMap>(
+    hdr: &PixelBuffer,
+    curve: &C,
+    gainmap_config: &GainMapConfig,
+    stop: &impl Stop,
+) -> Result<PixelBuffer> {
+    let width = hdr.width();
+    let height = hdr.height();
+    let hdr_gamut = hdr.descriptor().primaries;
+
+    let split_cfg = SplitConfig {
+        luma_weights: luma_weights_for(hdr_gamut),
+        base_offset: gainmap_config.base_offset,
+        alternate_offset: gainmap_config.alternate_offset,
+        min_log2: gainmap_config.min_boost.log2(),
+        max_log2: gainmap_config.max_boost.log2(),
+        ..SplitConfig::default()
+    };
+
+    let splitter = LumaGainMapSplitter::new(curve, split_cfg);
+
+    let mut sdr_buffer = ultrahdr_core::new_pixel_buffer(
+        width,
+        height,
+        PixelFormat::RgbaF32,
+        hdr_gamut,
+        TransferFunction::Linear,
+    )
+    .map_err(ultrahdr_to_jpegli_error)?;
+
+    let w = width as usize;
+    let mut hdr_row = vec![0.0_f32; w * 4];
+    let mut sdr_row = vec![0.0_f32; w * 4];
+    let mut gain_row = vec![0.0_f32; w];
+    let mut stats = SplitStats::default();
+
+    for y in 0..height {
+        stop.check()?;
+        // Linearize one HDR row into interleaved RGBA f32. Mirrors the
+        // retired `extract_linear_row_rgba` helper from ultrahdr-core 0.4.
+        extract_hdr_row_rgba_linear(hdr, y, &mut hdr_row);
+
+        splitter.split_row(&hdr_row, &mut sdr_row, &mut gain_row, 4, &mut stats);
+
+        // Copy the splitter's SDR row into the RgbaF32 output buffer. Stride
+        // is exactly width*16 here (new_pixel_buffer hands back tight rows),
+        // but go through row_mut to stay generic over future stride changes.
+        let mut sdr_slice = sdr_buffer.as_slice_mut();
+        let dst = sdr_slice.row_mut(y);
+        let row_bytes: &[u8] = bytemuck::cast_slice(&sdr_row[..w * 4]);
+        dst[..row_bytes.len()].copy_from_slice(row_bytes);
+    }
+
+    Ok(sdr_buffer)
+}
+
+/// Map a [`ColorPrimaries`] to the matching luma-weights triplet expected
+/// by [`SplitConfig::luma_weights`]. Falls back to BT.709 for unknown
+/// primaries (matches what `rgb_to_luminance` does internally).
+fn luma_weights_for(primaries: ColorPrimaries) -> [f32; 3] {
+    match primaries {
+        ColorPrimaries::Bt2020 => zentone::LUMA_BT2020,
+        ColorPrimaries::DisplayP3 => zentone::LUMA_P3,
+        _ => zentone::LUMA_BT709,
+    }
+}
+
+/// Read one HDR row, linearize via the descriptor's transfer function, and
+/// emit interleaved RGBA f32 (alpha forced to 1.0 — the gain map flow is
+/// alpha-agnostic). Supports the formats `compute_gainmap` already accepts:
+/// `Rgba8`, `Rgb8`, `RgbaF32`, `RgbaF16`, `RgbF16`, `Gray8`.
+fn extract_hdr_row_rgba_linear(hdr: &PixelBuffer, y: u32, out: &mut [f32]) {
+    use ultrahdr_core::color::transfer::{hlg_eotf, pq_eotf, srgb_eotf};
+
+    let slice = hdr.as_slice();
+    let desc = slice.descriptor();
+    let format = desc.pixel_format();
+    let transfer = desc.transfer();
+    let stride = slice.stride();
+    let data = slice.as_strided_bytes();
+    let width = slice.width() as usize;
+    let row_off = y as usize * stride;
+
+    let linearize = |c: f32| -> f32 {
+        match transfer {
+            TransferFunction::Srgb => srgb_eotf(c),
+            TransferFunction::Linear => c,
+            TransferFunction::Pq => pq_eotf(c),
+            // HLG with default display peak (1000 nits) — same fallback as
+            // ultrahdr-core's `apply_transfer_to_linear`.
+            TransferFunction::Hlg => hlg_eotf(c, 1000.0),
+            _ => srgb_eotf(c),
+        }
+    };
+
+    for x in 0..width {
+        let (r, g, b) = match format {
+            PixelFormat::Rgba8 => {
+                let i = row_off + x * 4;
+                (
+                    data[i] as f32 / 255.0,
+                    data[i + 1] as f32 / 255.0,
+                    data[i + 2] as f32 / 255.0,
+                )
+            }
+            PixelFormat::Rgb8 => {
+                let i = row_off + x * 3;
+                (
+                    data[i] as f32 / 255.0,
+                    data[i + 1] as f32 / 255.0,
+                    data[i + 2] as f32 / 255.0,
+                )
+            }
+            PixelFormat::RgbaF32 => {
+                let i = row_off + x * 16;
+                (
+                    f32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]),
+                    f32::from_le_bytes([data[i + 4], data[i + 5], data[i + 6], data[i + 7]]),
+                    f32::from_le_bytes([data[i + 8], data[i + 9], data[i + 10], data[i + 11]]),
+                )
+            }
+            PixelFormat::RgbaF16 => {
+                let i = row_off + x * 8;
+                (
+                    half::f16::from_le_bytes([data[i], data[i + 1]]).to_f32(),
+                    half::f16::from_le_bytes([data[i + 2], data[i + 3]]).to_f32(),
+                    half::f16::from_le_bytes([data[i + 4], data[i + 5]]).to_f32(),
+                )
+            }
+            PixelFormat::RgbF16 => {
+                let i = row_off + x * 6;
+                (
+                    half::f16::from_le_bytes([data[i], data[i + 1]]).to_f32(),
+                    half::f16::from_le_bytes([data[i + 2], data[i + 3]]).to_f32(),
+                    half::f16::from_le_bytes([data[i + 4], data[i + 5]]).to_f32(),
+                )
+            }
+            PixelFormat::Gray8 => {
+                let i = row_off + x;
+                let v = data[i] as f32 / 255.0;
+                (v, v, v)
+            }
+            _ => (0.0, 0.0, 0.0),
+        };
+
+        let (lr, lg, lb) = match format {
+            // f32/f16 paths already store linear (or PQ/HLG/sRGB-encoded
+            // float values) — apply the transfer if present.
+            PixelFormat::RgbaF32 | PixelFormat::RgbaF16 | PixelFormat::RgbF16 => {
+                (linearize(r), linearize(g), linearize(b))
+            }
+            // 8-bit paths: 8-bit linear isn't really a thing in practice; if
+            // transfer says linear, trust it; otherwise apply sRGB EOTF.
+            _ => match transfer {
+                TransferFunction::Linear => (r, g, b),
+                _ => (srgb_eotf(r), srgb_eotf(g), srgb_eotf(b)),
+            },
+        };
+
+        let i = x * 4;
+        out[i] = lr;
+        out[i + 1] = lg;
+        out[i + 2] = lb;
+        out[i + 3] = 1.0;
+    }
 }
 
 /// Idiot-proof one-call Ultra HDR encode for the most basic case:
