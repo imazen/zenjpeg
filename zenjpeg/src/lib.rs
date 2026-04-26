@@ -344,11 +344,11 @@ pub mod layout;
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
-// Image content analysis for `EncoderConfig::auto_for`.
+// Image content analysis for `EncoderConfig::adaptive`.
 //
 // Internal by default — the analyzer output and tier helpers are
-// pub(crate); the public surface is the `EncoderConfig::auto_for`
-// constructor in `encode::auto_for`.
+// pub(crate); the public surface is the `EncoderConfig::adaptive`
+// constructor in `encode::adaptive`.
 //
 // Exposed as `pub` via `__test-utils` so coefficient's parity
 // harness can drive `analyze::analyze_rgb8` directly. Don't rely on

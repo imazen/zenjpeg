@@ -1,10 +1,10 @@
-# `EncoderConfig::auto_for` — design notes
+# `EncoderConfig::adaptive` — design notes
 
 This file is the **design rationale**: why we made the choices we did,
 post-mortems of earlier approaches, and what's still open.
 
 For the **operational reference** (the analyzer features, the oracle
-dispatch table, the `AutoForOptions` semantics, the provenance of
+dispatch table, the `AdaptiveOptions` semantics, the provenance of
 every claim), see
 [`coefficient/docs/CODEC_SELECTION_REFERENCE.md`](https://github.com/imazen/coefficient/blob/main/docs/CODEC_SELECTION_REFERENCE.md).
 
@@ -18,8 +18,8 @@ A self-contained, no-deps API that turns
 into a tuned `EncoderConfig`:
 
 ```rust
-let config = EncoderConfig::auto_for(image, Quality::ApproxSsim2(82.0))?;
-let config = EncoderConfig::auto_for_with(image, q, AutoForOptions::default()
+let config = EncoderConfig::adaptive(image, Quality::ApproxSsim2(82.0))?;
+let config = EncoderConfig::adaptive_with(image, q, AdaptiveOptions::default()
     .effort(Effort::Balanced)
     .allow_xyb(true))?;
 ```
@@ -55,7 +55,7 @@ of the public surface.
 ### No bucket-keyed lookup table
 
 The first attempt's dispatch was a 105-arm match on
-`(ContentBucket, AutoForMetric, q_bin) → most_frequent_winner_codec`.
+`(ContentBucket, AdaptiveMetric, q_bin) → most_frequent_winner_codec`.
 That throws away the predictive power that the actual decision
 trees encode.
 
@@ -134,20 +134,20 @@ mode.
 
 ```rust
 impl EncoderConfig {
-    pub fn auto_for(
+    pub fn adaptive(
         image: PixelSlice<'_>,
         quality: impl Into<Quality>,
     ) -> Result<Self, String>;
 
-    pub fn auto_for_with(
+    pub fn adaptive_with(
         image: PixelSlice<'_>,
         quality: impl Into<Quality>,
-        options: AutoForOptions,
+        options: AdaptiveOptions,
     ) -> Result<Self, String>;
 }
 
 #[non_exhaustive]
-pub struct AutoForOptions {
+pub struct AdaptiveOptions {
     pub allow_xyb: bool,
     pub allow_progressive: bool,
     pub effort: Effort,             // reuses zenjpeg::Effort
@@ -169,8 +169,8 @@ to ssim2.
 
 The fitter (`coefficient/scripts/fit_oracle_tree.py`) emits the full
 serialized tree per cell now (added by prior session at `serialize_node`).
-A future `gen_auto_for.py` should walk that JSON and emit
-`zenjpeg/src/encode/auto_for_rules.rs` with nested if/else against
+A future `gen_adaptive.py` should walk that JSON and emit
+`zenjpeg/src/encode/adaptive_rules.rs` with nested if/else against
 `AnalyzerOutput` field names — closing the 16% mode gap.
 
 The hand-distilled `pick_oracle()` body becomes the fallback that
@@ -178,7 +178,7 @@ matches when the codegen says "this cell is trivial / single-class".
 
 ### `max_iterations`
 
-`AutoForOptions::max_iterations` is intentionally **not surfaced**.
+`AdaptiveOptions::max_iterations` is intentionally **not surfaced**.
 It lands when the BD-RD / `zensim_iters` iterative search loop is
 implemented. Until then exposing it would be a no-op callers might
 depend on.
@@ -208,9 +208,9 @@ zenjpeg config. Options for the future:
 ## Order of operations (where we are)
 
 1. ✅ `ImageAnalyzer` (Tier 1+2+3) on `pub(crate)`/`__test-utils`.
-2. ✅ `EncoderConfig::auto_for` + `auto_for_with` + `AutoForOptions`.
+2. ✅ `EncoderConfig::adaptive` + `adaptive_with` + `AdaptiveOptions`.
 3. ✅ Hand-distilled `pick_oracle()` from oracle JSON.
-4. ⬜ `gen_auto_for.py` codegen → `auto_for_rules.rs` if/else trees.
+4. ⬜ `gen_adaptive.py` codegen → `adaptive_rules.rs` if/else trees.
 5. ⬜ `max_iterations` once BD-RD search loop lands.
 
 ## Verifying changes
@@ -227,7 +227,7 @@ trees were trained against the exact normalization scales in
 coefficient's reference; any drift silently breaks dispatch
 accuracy.
 
-For the dispatch itself, 10 unit tests in `auto_for.rs::tests` cover
+For the dispatch itself, 10 unit tests in `adaptive.rs::tests` cover
 preset shapes, builder chaining, q_bin partition boundaries, restart
 marker emission round-trip, image-dim XYB gate, and end-to-end
 encode round-trips. Both default features and full-feature builds

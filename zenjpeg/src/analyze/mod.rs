@@ -1,4 +1,4 @@
-//! Image content analysis for `EncoderConfig::auto_for`.
+//! Image content analysis for `EncoderConfig::adaptive`.
 //!
 //! Computes the numeric features the oracle decision trees split on
 //! (`scripts/fit_oracle_tree.py` in `coefficient`). The set is the
@@ -34,8 +34,8 @@
 //! convenience [`analyze_rgb8`]). The taxonomy that the trees were
 //! trained against is an implementation detail — there is no public
 //! `ContentBucket` enum, no public per-feature struct on the
-//! `EncoderConfig::auto_for` API. See
-//! `src/encode/auto_for_design.md` for the rationale.
+//! `EncoderConfig::adaptive` API. See
+//! `src/encode/adaptive_design.md` for the rationale.
 
 #![allow(dead_code)] // Some pub helpers ride along for the parity harness.
 
@@ -48,11 +48,11 @@ use zenpixels::{PixelDescriptor, PixelSlice};
 
 use row_stream::RowStream;
 
-/// Numeric image features consumed by the auto_for decision trees.
+/// Numeric image features consumed by the adaptive decision trees.
 ///
 /// Field names match the keys in `oracle-d2/source_features.json`
 /// produced by `coefficient::examples::oracle_extract_features`, so
-/// the codegen pass (`scripts/gen_auto_for.py`) can emit
+/// the codegen pass (`scripts/gen_adaptive.py`) can emit
 /// `if features.<name> <= T` without an extra mapping layer.
 ///
 /// All values are normalized into stable ranges (see per-field docs).

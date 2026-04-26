@@ -54,7 +54,7 @@ enough = { workspace = true }
 zencodec = { workspace = true }
 zenpixels = { workspace = true }
 # Row-by-row pixel format / colorspace conversion. Used by `analyze`
-# (auto_for content classifier) so callers can pass any PixelSlice
+# (adaptive content classifier) so callers can pass any PixelSlice
 # without materializing a full RGB8 buffer.
 zenpixels-convert = { workspace = true }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)

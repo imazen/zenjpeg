@@ -1,9 +1,9 @@
-//! `EncoderConfig::auto_for` — content-adaptive config from a single image.
+//! `EncoderConfig::adaptive` — content-adaptive config from a single image.
 //!
 //! Takes any [`PixelSlice`] plus a target [`Quality`] and returns an
 //! `EncoderConfig` tuned for that image. The target can be metric-
 //! native (`Quality::ApproxButteraugli(1.5)`,
-//! `Quality::ApproxSsim2(82.0)`) — the variant tells `auto_for` both
+//! `Quality::ApproxSsim2(82.0)`) — the variant tells `adaptive` both
 //! the JPEG-q-scale to dial in *and* which oracle decision tree to
 //! consult; or it can be a plain JPEG-q scalar (`Quality::ApproxJpegli`,
 //! `Quality::ApproxMozjpeg`), in which case ssim2 is the default
@@ -11,11 +11,11 @@
 //!
 //! ## Caller-side constraints
 //!
-//! Pass [`AutoForOptions`] to [`EncoderConfig::auto_for_with`] to
+//! Pass [`AdaptiveOptions`] to [`EncoderConfig::adaptive_with`] to
 //! constrain what the dispatch is allowed to pick (XYB on/off,
 //! sequential vs progressive, restart-marker density, slow-encoder
-//! features). [`EncoderConfig::auto_for`] is the no-options shorthand
-//! and uses [`AutoForOptions::default`].
+//! features). [`EncoderConfig::adaptive`] is the no-options shorthand
+//! and uses [`AdaptiveOptions::default`].
 //!
 //! # Dispatch (oracle-distilled, manual-tree)
 //!
@@ -51,7 +51,7 @@ use crate::encode::trellis::TrellisSpeedMode;
 use crate::encode::trellis::{HybridConfig, TrellisConfig};
 use zenpixels::PixelSlice;
 
-/// Restart-marker density choice for [`AutoForOptions`].
+/// Restart-marker density choice for [`AdaptiveOptions`].
 ///
 /// Restart markers partition the entropy-coded stream so decoders can
 /// resync, recover from corruption, and decode segments in parallel.
@@ -89,7 +89,7 @@ impl RestartMarkers {
     }
 }
 
-/// Caller-side capability + preference constraints for [`EncoderConfig::auto_for_with`].
+/// Caller-side capability + preference constraints for [`EncoderConfig::adaptive_with`].
 ///
 /// Each field narrows what the dispatch is allowed to pick. Defaults
 /// match the most-portable, lowest-encode-latency output: progressive
@@ -98,10 +98,10 @@ impl RestartMarkers {
 /// to spend more encode time for tighter compression.
 ///
 /// `#[non_exhaustive]` so future fields don't break callers — always
-/// build via `AutoForOptions::default()` + builder methods.
+/// build via `AdaptiveOptions::default()` + builder methods.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub struct AutoForOptions {
+pub struct AdaptiveOptions {
     /// Allow the dispatch to select XYB color space when it's a clear
     /// quality win on a given image. **Default: `false`** — XYB still
     /// has decoder-compatibility gaps in the wild (some browsers,
@@ -121,7 +121,7 @@ pub struct AutoForOptions {
     pub allow_progressive: bool,
 
     /// Encode-time effort budget. Reuses zenjpeg's existing
-    /// [`Effort`] enum so the auto_for surface uses the same vocab
+    /// [`Effort`] enum so the adaptive surface uses the same vocab
     /// the rest of the encoder API does.
     ///
     /// **Default: [`Effort::Fast`]** — no trellis, no hybrid lambda,
@@ -156,10 +156,10 @@ pub struct AutoForOptions {
     // BD-RD / zensim_iters loop) is intentionally NOT surfaced yet.
     // It lands when the iterative search loop is implemented; until
     // then exposing it would be a no-op that callers might depend on.
-    // See `auto_for_design.md` for the planned shape.
+    // See `adaptive_design.md` for the planned shape.
 }
 
-impl Default for AutoForOptions {
+impl Default for AdaptiveOptions {
     fn default() -> Self {
         Self {
             allow_xyb: false,
@@ -170,7 +170,7 @@ impl Default for AutoForOptions {
     }
 }
 
-impl AutoForOptions {
+impl AdaptiveOptions {
     /// Preset for fast / parallel decode: forces baseline (sequential)
     /// scan and inserts restart markers at the default density. Trades
     /// ~3-5% bpp + 0.04% restart overhead for single-pass parallel-
@@ -238,7 +238,7 @@ impl AutoForOptions {
 
 impl EncoderConfig {
     /// Build a content-adaptive `EncoderConfig` for `image` targeting
-    /// `quality`, using [`AutoForOptions::default`]. The `quality`
+    /// `quality`, using [`AdaptiveOptions::default`]. The `quality`
     /// argument carries both the target value (a JPEG-q scalar, an
     /// SSIMULACRA2 score, or a butteraugli distance) and the implicit
     /// optimization metric (via the `Quality` variant).
@@ -248,13 +248,13 @@ impl EncoderConfig {
     /// ```rust,ignore
     /// // Target butteraugli distance 1.5 — picks the butter-trained
     /// // tree internally, returns a config tuned for that metric.
-    /// let config = EncoderConfig::auto_for(image, Quality::ApproxButteraugli(1.5))?;
+    /// let config = EncoderConfig::adaptive(image, Quality::ApproxButteraugli(1.5))?;
     ///
     /// // Target SSIM2 score 82 — picks the ssim2-trained tree.
-    /// let config = EncoderConfig::auto_for(image, Quality::ApproxSsim2(82.0))?;
+    /// let config = EncoderConfig::adaptive(image, Quality::ApproxSsim2(82.0))?;
     ///
     /// // Plain quality scalar — defaults to ssim2-optimized.
-    /// let config = EncoderConfig::auto_for(image, 75.0)?;
+    /// let config = EncoderConfig::adaptive(image, 75.0)?;
     /// ```
     ///
     /// # Errors
@@ -262,21 +262,21 @@ impl EncoderConfig {
     /// Returns an error string when `image`'s descriptor isn't
     /// convertible to RGB8 (e.g. CMYK without a CMS plugin loaded
     /// into `zenpixels-convert::RowConverter`).
-    pub fn auto_for(image: PixelSlice<'_>, quality: impl Into<Quality>) -> Result<Self, String> {
-        Self::auto_for_with(image, quality, AutoForOptions::default())
+    pub fn adaptive(image: PixelSlice<'_>, quality: impl Into<Quality>) -> Result<Self, String> {
+        Self::adaptive_with(image, quality, AdaptiveOptions::default())
     }
 
-    /// Like [`EncoderConfig::auto_for`] but with caller-side
-    /// constraints. See [`AutoForOptions`].
-    pub fn auto_for_with(
+    /// Like [`EncoderConfig::adaptive`] but with caller-side
+    /// constraints. See [`AdaptiveOptions`].
+    pub fn adaptive_with(
         image: PixelSlice<'_>,
         quality: impl Into<Quality>,
-        options: AutoForOptions,
+        options: AdaptiveOptions,
     ) -> Result<Self, String> {
         let quality = quality.into();
-        let metric = AutoForMetric::from_quality(&quality);
+        let metric = AdaptiveMetric::from_quality(&quality);
         let features = analyze(image)?;
-        Ok(auto_for_internal(&features, quality, metric, options))
+        Ok(adaptive_internal(&features, quality, metric, options))
     }
 }
 
@@ -284,17 +284,17 @@ impl EncoderConfig {
 /// `Quality` variant — metric-native targets pick their own tree,
 /// plain JPEG-q targets default to ssim2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AutoForMetric {
+enum AdaptiveMetric {
     Ssim2,
     Butter,
 }
 
-impl AutoForMetric {
+impl AdaptiveMetric {
     fn from_quality(q: &Quality) -> Self {
         match q {
-            Quality::ApproxButteraugli(_) => AutoForMetric::Butter,
+            Quality::ApproxButteraugli(_) => AdaptiveMetric::Butter,
             Quality::ApproxSsim2(_) | Quality::ApproxJpegli(_) | Quality::ApproxMozjpeg(_) => {
-                AutoForMetric::Ssim2
+                AdaptiveMetric::Ssim2
             }
         }
     }
@@ -382,12 +382,12 @@ fn q_bin(q: f32) -> QBin {
 /// produces. Replaces the prior "chroma-detail → 4:4:4" two-line
 /// heuristic with something that actually reflects the measured
 /// Pareto frontier, while staying readable + auditable. Switches to
-/// the codegen-emitted decision tree when `gen_auto_for.py` lands.
-fn auto_for_internal(
+/// the codegen-emitted decision tree when `gen_adaptive.py` lands.
+fn adaptive_internal(
     features: &AnalyzerOutput,
     quality: Quality,
-    metric: AutoForMetric,
-    options: AutoForOptions,
+    metric: AdaptiveMetric,
+    options: AdaptiveOptions,
 ) -> EncoderConfig {
     let bucket = infer_bucket(features);
     let q_internal = quality.to_internal();
@@ -511,7 +511,7 @@ enum TrellisChoice {
 /// run). Coarse but data-grounded: at low q the dominant winner is
 /// hybrid trellis on 4:2:0; at high q it's `trelStd` on 4:4:4 + XYB
 /// for photo content, `trelOff` 4:4:4 + XYB for synthetic.
-fn pick_oracle(bucket: InferredBucket, qb: QBin, metric: AutoForMetric) -> OraclePick {
+fn pick_oracle(bucket: InferredBucket, qb: QBin, metric: AdaptiveMetric) -> OraclePick {
     use InferredBucket::*;
     use QBin::*;
 
@@ -555,9 +555,9 @@ fn pick_oracle(bucket: InferredBucket, qb: QBin, metric: AutoForMetric) -> Oracl
             subsampling: ChromaSubsampling::None,
             use_xyb: true,
             trellis: match (qb, metric) {
-                (Q90Plus, AutoForMetric::Butter) => TrellisChoice::Off,
+                (Q90Plus, AdaptiveMetric::Butter) => TrellisChoice::Off,
                 (Q60_89 | Q90Plus, _) => TrellisChoice::Standard,
-                (Q40_59, AutoForMetric::Butter) => TrellisChoice::Standard,
+                (Q40_59, AdaptiveMetric::Butter) => TrellisChoice::Standard,
                 _ => TrellisChoice::Off,
             },
         },
@@ -568,7 +568,7 @@ fn pick_oracle(bucket: InferredBucket, qb: QBin, metric: AutoForMetric) -> Oracl
             subsampling: ChromaSubsampling::None,
             use_xyb: true,
             trellis: match (qb, metric) {
-                (Q40_59, AutoForMetric::Ssim2) => TrellisChoice::Standard,
+                (Q40_59, AdaptiveMetric::Ssim2) => TrellisChoice::Standard,
                 _ => TrellisChoice::Off,
             },
         },
@@ -602,21 +602,21 @@ mod tests {
     #[test]
     fn flat_image_builds_config() {
         let rgb = vec![128u8; 64 * 64 * 3];
-        let _cfg = EncoderConfig::auto_for(slice(&rgb, 64, 64), 75.0).unwrap();
+        let _cfg = EncoderConfig::adaptive(slice(&rgb, 64, 64), 75.0).unwrap();
     }
 
     #[test]
     fn butter_target_doesnt_panic() {
         let rgb = vec![64u8; 64 * 64 * 3];
         let _cfg =
-            EncoderConfig::auto_for(slice(&rgb, 64, 64), Quality::ApproxButteraugli(1.5)).unwrap();
+            EncoderConfig::adaptive(slice(&rgb, 64, 64), Quality::ApproxButteraugli(1.5)).unwrap();
     }
 
     #[test]
     fn ssim2_target_doesnt_panic() {
         let rgb = vec![200u8; 32 * 32 * 3];
         let _cfg =
-            EncoderConfig::auto_for(slice(&rgb, 32, 32), Quality::ApproxSsim2(82.0)).unwrap();
+            EncoderConfig::adaptive(slice(&rgb, 32, 32), Quality::ApproxSsim2(82.0)).unwrap();
     }
 
     #[test]
@@ -637,7 +637,7 @@ mod tests {
         }
 
         let cfg =
-            EncoderConfig::auto_for_with(slice(&rgb, w, h), 75.0, AutoForOptions::fast_decode())
+            EncoderConfig::adaptive_with(slice(&rgb, w, h), 75.0, AdaptiveOptions::fast_decode())
                 .unwrap();
         let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(&rgb, Unstoppable).unwrap();
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_for_round_trips_through_encoder() {
+    fn adaptive_round_trips_through_encoder() {
         use crate::encode::PixelLayout;
         use enough::Unstoppable;
 
@@ -672,7 +672,7 @@ mod tests {
             }
         }
 
-        let cfg = EncoderConfig::auto_for(slice(&rgb, w, h), 75.0).unwrap();
+        let cfg = EncoderConfig::adaptive(slice(&rgb, w, h), 75.0).unwrap();
         let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(&rgb, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn options_builder_chains() {
-        let opts = AutoForOptions::default()
+        let opts = AdaptiveOptions::default()
             .allow_xyb(true)
             .allow_progressive(false)
             .effort({
@@ -706,12 +706,12 @@ mod tests {
 
     #[test]
     fn presets_have_expected_shape() {
-        let fast = AutoForOptions::fast_decode();
+        let fast = AdaptiveOptions::fast_decode();
         assert!(!fast.allow_progressive);
         assert!(matches!(fast.effort, Effort::Fast));
         assert_eq!(fast.restart_markers, RestartMarkers::Auto);
 
-        let best = AutoForOptions::best_quality();
+        let best = AdaptiveOptions::best_quality();
         assert!(best.allow_xyb);
         assert!(best.allow_progressive);
         // best_quality picks Max when trellis is on, falls back to
@@ -759,8 +759,8 @@ mod tests {
                 rgb[i + 2] = ((x * 17) ^ (y * 3)) as u8;
             }
         }
-        let opts = AutoForOptions::best_quality(); // allow_xyb = true
-        let cfg = EncoderConfig::auto_for_with(slice(&rgb, w, h), 95.0, opts).unwrap();
+        let opts = AdaptiveOptions::best_quality(); // allow_xyb = true
+        let cfg = EncoderConfig::adaptive_with(slice(&rgb, w, h), 95.0, opts).unwrap();
         // We can't introspect the config directly, but we can encode
         // and look for the JFIF/Adobe app marker — XYB JPEGs embed
         // an ICC profile (App2 with "ICC_PROFILE\0" magic). Absent
