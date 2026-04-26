@@ -31,17 +31,19 @@
 //! - **q ≥ 40 + screen / illustration**: `trelOff` 4:4:4 + XYB,
 //!   essentially regardless of metric. Fast.
 //!
-//! When `allow_slow=false`, every cell falls through to a fast path
-//! (`trelOff`, no hybrid lambda search), trading some bpp for encode
-//! latency. When `allow_xyb=false` the XYB cells fall back to YCbCr.
-//! When megapixels < 0.25, XYB is suppressed regardless of permission
-//! — its ICC-profile overhead (~2 KB) becomes a meaningful fraction
-//! of the file at thumbnail sizes.
+//! With `effort = Effort::Fast`, every cell falls through to a fast
+//! path (`trelOff`, no hybrid lambda search, no scan-script search),
+//! trading some bpp for encode latency. `Effort::Balanced` honors the
+//! oracle's trellis pick; `Effort::Max` adds the 64-candidate scan
+//! search on top. When `allow_xyb=false` the XYB cells fall back to
+//! YCbCr. When megapixels < 0.25, XYB is suppressed regardless of
+//! permission — its ICC-profile overhead (~2 KB) becomes a meaningful
+//! fraction of the file at thumbnail sizes.
 
 use crate::analyze::{AnalyzerOutput, analyze};
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{
-    ChromaSubsampling, ProgressiveScanMode, Quality, XybSubsampling,
+    ChromaSubsampling, Effort, ProgressiveScanMode, Quality, XybSubsampling,
 };
 #[cfg(feature = "trellis")]
 use crate::encode::trellis::TrellisSpeedMode;
@@ -118,15 +120,30 @@ pub struct AutoForOptions {
     /// hardware decoders, streaming, fast preview pipelines).
     pub allow_progressive: bool,
 
-    /// Allow slow encode-time features: trellis quantization, hybrid
-    /// AQ-coupled trellis, AND `ProgressiveScanMode::ProgressiveSearch`
-    /// (the 64-candidate scan-script search, ~2× slower for ~2%
-    /// smaller files). **Default: `false`.** Set to `true` to opt
-    /// into 5-15× longer encode for ~2-5% smaller files at the same
-    /// quality. The 2026-04-25 oracle showed trellis / hybrid-lambda
-    /// configs winning 33/70 cells at q < 40 and many of the q ≥ 40
-    /// photo cells, so flipping this on is meaningful at any quality.
-    pub allow_slow: bool,
+    /// Encode-time effort budget. Reuses zenjpeg's existing
+    /// [`Effort`] enum so the auto_for surface uses the same vocab
+    /// the rest of the encoder API does.
+    ///
+    /// **Default: [`Effort::Fast`]** — no trellis, no hybrid lambda,
+    /// no scan-script search. Match the speed of a plain
+    /// `EncoderConfig::ycbcr` call.
+    ///
+    /// - [`Effort::Fast`]: oracle's slow features all disabled.
+    ///   Every cell falls through to `trelOff` + standard progressive.
+    /// - [`Effort::Balanced`]: oracle's trellis pick honored
+    ///   (`Standard` or `Hybrid` lambda) but scan-script search stays
+    ///   off. The middle gear that didn't exist with the old `bool`.
+    ///   Requires the `trellis` feature.
+    /// - [`Effort::Max`]: oracle's trellis pick honored AND
+    ///   `ProgressiveScanMode::ProgressiveSearch` enabled. ~2× slower
+    ///   than `Balanced` for another ~2% bpp. Requires the `trellis`
+    ///   feature.
+    ///
+    /// The 2026-04-25 oracle showed trellis / hybrid-lambda configs
+    /// winning 33/70 cells at q < 40 and many of the q ≥ 40 photo
+    /// cells — `Effort::Balanced` is the right pick for any quality
+    /// target where encode time isn't the constraint.
+    pub effort: Effort,
 
     /// Restart-marker density. **Default: [`RestartMarkers::Off`].**
     ///
@@ -147,7 +164,7 @@ impl Default for AutoForOptions {
         Self {
             allow_xyb: false,
             allow_progressive: true,
-            allow_slow: false,
+            effort: Effort::Fast,
             restart_markers: RestartMarkers::Off,
         }
     }
@@ -157,29 +174,35 @@ impl AutoForOptions {
     /// Preset for fast / parallel decode: forces baseline (sequential)
     /// scan and inserts restart markers at the default density. Trades
     /// ~3-5% bpp + 0.04% restart overhead for single-pass parallel-
-    /// decodable output. Encode-side stays fast (`allow_slow = false`).
+    /// decodable output. Encode-side stays fast (`Effort::Fast`).
     #[must_use]
     pub const fn fast_decode() -> Self {
         Self {
             allow_xyb: false,
             allow_progressive: false,
-            allow_slow: false,
+            effort: Effort::Fast,
             restart_markers: RestartMarkers::Auto,
         }
     }
 
     /// Preset for best metric quality regardless of decoder
     /// compatibility or encode latency: enables XYB, allows
-    /// progressive, no restart markers, and enables slow encode-time
-    /// optimization (trellis / hybrid-lambda search). Use when you
+    /// progressive, no restart markers, and uses [`Effort::Max`]
+    /// (trellis + hybrid-lambda + scan-script search). Use when you
     /// control the decoder and want the smallest file at a given
     /// target metric value.
+    ///
+    /// Requires the `trellis` feature; without it, falls back to
+    /// [`Effort::Fast`] (the only variant available).
     #[must_use]
     pub const fn best_quality() -> Self {
         Self {
             allow_xyb: true,
             allow_progressive: true,
-            allow_slow: true,
+            #[cfg(feature = "trellis")]
+            effort: Effort::Max,
+            #[cfg(not(feature = "trellis"))]
+            effort: Effort::Fast,
             restart_markers: RestartMarkers::Off,
         }
     }
@@ -198,11 +221,10 @@ impl AutoForOptions {
         self
     }
 
-    /// Builder: allow / forbid slow encode-time features (trellis,
-    /// hybrid lambda, scan search).
+    /// Builder: set encode-time effort budget. See [`Effort`].
     #[must_use]
-    pub const fn allow_slow(mut self, v: bool) -> Self {
-        self.allow_slow = v;
+    pub const fn effort(mut self, v: Effort) -> Self {
+        self.effort = v;
         self
     }
 
@@ -383,20 +405,30 @@ fn auto_for_internal(
 
     // Slow features (hybrid lambda, full trellis) are only used when
     // the caller opts in. Without permission, fall back to trelOff.
-    let trellis_choice = if options.allow_slow {
-        pick.trellis
-    } else {
-        TrellisChoice::Off
+    let trellis_choice = match options.effort {
+        Effort::Fast => TrellisChoice::Off,
+        // Balanced + Max both honor the oracle's trellis pick.
+        // (Trellis-feature-gated variants only exist when `trellis`
+        // is on, so we don't need a feature-cfg here — the match is
+        // already exhaustive at compile time.)
+        #[cfg(feature = "trellis")]
+        Effort::Balanced | Effort::Max => pick.trellis,
     };
 
     // Progressive: oracle universally prefers progressive at every
     // q-bin; respect caller's allow_progressive=false override.
-    // ProgressiveSearch (64-candidate scan-script search) is ~2× slower
-    // for ~2% smaller files — gated behind allow_slow.
-    let scan_mode = match (options.allow_progressive, options.allow_slow) {
-        (false, _) => ProgressiveScanMode::Baseline,
-        (true, true) => ProgressiveScanMode::ProgressiveSearch,
-        (true, false) => ProgressiveScanMode::Progressive,
+    // ProgressiveSearch (64-candidate scan-script search) is the
+    // extra ~2× slower step that lives ONLY in Effort::Max.
+    let scan_mode = if !options.allow_progressive {
+        ProgressiveScanMode::Baseline
+    } else {
+        match options.effort {
+            Effort::Fast => ProgressiveScanMode::Progressive,
+            #[cfg(feature = "trellis")]
+            Effort::Balanced => ProgressiveScanMode::Progressive,
+            #[cfg(feature = "trellis")]
+            Effort::Max => ProgressiveScanMode::ProgressiveSearch,
+        }
     };
 
     // ---- Build the EncoderConfig ----
@@ -458,6 +490,10 @@ fn auto_for_internal(
 struct OraclePick {
     subsampling: ChromaSubsampling,
     use_xyb: bool,
+    /// Only consulted when `Effort::Balanced | Effort::Max` are
+    /// reachable (i.e. the `trellis` feature is on). Without trellis,
+    /// every dispatch path lands on `TrellisChoice::Off` directly.
+    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
     trellis: TrellisChoice,
 }
 
@@ -650,25 +686,40 @@ mod tests {
         let opts = AutoForOptions::default()
             .allow_xyb(true)
             .allow_progressive(false)
-            .allow_slow(true)
+            .effort({
+                #[cfg(feature = "trellis")]
+                {
+                    Effort::Balanced
+                }
+                #[cfg(not(feature = "trellis"))]
+                {
+                    Effort::Fast
+                }
+            })
             .restart_markers(RestartMarkers::AutoSparse);
         assert!(opts.allow_xyb);
         assert!(!opts.allow_progressive);
-        assert!(opts.allow_slow);
         assert_eq!(opts.restart_markers, RestartMarkers::AutoSparse);
+        // Effort doesn't impl PartialEq Hash/Eq publicly — checking
+        // the shape via the dispatch is the load-bearing test.
     }
 
     #[test]
     fn presets_have_expected_shape() {
         let fast = AutoForOptions::fast_decode();
         assert!(!fast.allow_progressive);
-        assert!(!fast.allow_slow);
+        assert!(matches!(fast.effort, Effort::Fast));
         assert_eq!(fast.restart_markers, RestartMarkers::Auto);
 
         let best = AutoForOptions::best_quality();
         assert!(best.allow_xyb);
         assert!(best.allow_progressive);
-        assert!(best.allow_slow);
+        // best_quality picks Max when trellis is on, falls back to
+        // Fast otherwise.
+        #[cfg(feature = "trellis")]
+        assert!(matches!(best.effort, Effort::Max));
+        #[cfg(not(feature = "trellis"))]
+        assert!(matches!(best.effort, Effort::Fast));
         assert_eq!(best.restart_markers, RestartMarkers::Off);
     }
 
