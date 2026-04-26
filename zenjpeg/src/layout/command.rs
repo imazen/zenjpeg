@@ -10,7 +10,7 @@
 
 use alloc::vec::Vec;
 
-pub use zenresize::{FitMode, OrientOutput, Orientation};
+pub use zenresize::{FitMode, Orientation};
 
 /// A single builder-level operation on the layout request.
 #[derive(Clone, Copy, Debug)]
