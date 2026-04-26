@@ -30,6 +30,9 @@
 //! ```
 
 // Internal implementation modules (pub for internal crate re-exports)
+// Content-adaptive `EncoderConfig::auto_for` constructor — see
+// `auto_for_design.md` for rationale and the placeholder dispatch.
+mod auto_for;
 mod blocks;
 #[doc(hidden)]
 pub mod chroma;
@@ -136,6 +139,8 @@ pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
 // (Now from encoder_types, encoder_config, byte_encoders - v2 re-exports for compatibility)
+#[allow(unused_imports)] // Public API re-export
+pub use auto_for::AutoForOptions;
 #[allow(unused_imports)] // Public API re-export
 pub use blocks::HuffmanSymbolFrequencies;
 pub(crate) use blocks::build_nonzero_mask;

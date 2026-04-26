@@ -1005,6 +1005,7 @@ checksum = "61ee8d8f5e43a45183480ea077c4e046e43ab9604928c87d6ad2080e666dc519"
 dependencies = [
  "archmage 0.9.21",
  "bytemuck",
+ "paste",
 ]
 
 [[package]]
@@ -3140,6 +3141,7 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
+ "zenpixels-convert",
  "zenresize",
  "zensim",
  "zensim-regress",
@@ -3176,6 +3178,23 @@ dependencies = [
  "imgref",
  "rgb",
  "whereat",
+]
+
+[[package]]
+name = "zenpixels-convert"
+version = "0.2.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8448e21cea740838e8d7bde61ce22074e75d98b4b02757af71ac59342a930f6f"
+dependencies = [
+ "archmage 0.9.21",
+ "bytemuck",
+ "garb",
+ "linear-srgb",
+ "magetypes",
+ "once_cell",
+ "paste",
+ "whereat",
+ "zenpixels",
 ]
 
 [[package]]
