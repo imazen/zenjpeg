@@ -167,10 +167,10 @@ fn bench_find_boundaries(suite: &mut Suite, label: &str, data: &'static [u8]) {
         });
 
         g.bench(
-            "ultrahdr_core::metadata::mpf::find_jpeg_boundaries",
+            "zenjpeg::container::marker::find_jpeg_boundaries",
             move |b| {
                 b.iter(|| {
-                    let r = ultrahdr_core::metadata::mpf::find_jpeg_boundaries(black_box(data));
+                    let r = zenjpeg::container::marker::find_jpeg_boundaries(black_box(data));
                     black_box(r);
                 })
             },
