@@ -344,6 +344,21 @@ pub mod layout;
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
+// Image content analysis for `EncoderConfig::auto_for`.
+//
+// Internal by default — the analyzer output and tier helpers are
+// pub(crate); the public surface is the `EncoderConfig::auto_for`
+// constructor in `encode::auto_for`.
+//
+// Exposed as `pub` via `__test-utils` so coefficient's parity
+// harness can drive `analyze::analyze_rgb8` directly. Don't rely on
+// this surface from a normal consumer.
+#[cfg(feature = "__test-utils")]
+#[doc(hidden)]
+pub mod analyze;
+#[cfg(not(feature = "__test-utils"))]
+pub(crate) mod analyze;
+
 // zencodec trait implementations
 #[cfg(feature = "zencodec")]
 mod codec;

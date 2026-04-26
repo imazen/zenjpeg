@@ -13,23 +13,38 @@
 //!
 //! Pass [`AutoForOptions`] to [`EncoderConfig::auto_for_with`] to
 //! constrain what the dispatch is allowed to pick (XYB on/off,
-//! sequential vs progressive, restart-marker density for parallel
-//! decode). [`EncoderConfig::auto_for`] is the no-options shorthand
+//! sequential vs progressive, restart-marker density, slow-encoder
+//! features). [`EncoderConfig::auto_for`] is the no-options shorthand
 //! and uses [`AutoForOptions::default`].
 //!
-//! # Status
+//! # Dispatch (oracle-distilled, manual-tree)
 //!
-//! The full dispatch — generating an if/else tree from the oracle
-//! `selector_tree_rules.json` — is gated on the `gen_auto_for.py`
-//! codegen rewrite (see `auto_for_design.md`). Until that lands, this
-//! function uses an analyzer-signal heuristic (chroma sharpness ⇒
-//! subsampling, natural likelihood ⇒ sharp_yuv, derived likelihood ⇒
-//! deringing). When the codegen lands, only the body of
-//! [`auto_for_internal`] changes — the public signature is final.
+//! Implements a hand-distilled approximation of the 2026-04-25
+//! oracle's per-(bucket × q_bin × metric) winners. The full sklearn
+//! decision-tree codegen is a future workstream; this distillation
+//! captures the dominant patterns from the 70-cell oracle:
+//!
+//! - **q < 40** (any bucket): hybrid trellis 4:2:0 progressive wins
+//!   33/70 cells. Map to `hybrid_lambda` 12.0–16.0 by quality. Slow.
+//! - **q ≥ 40 + photo content**: `trelStd` 4:4:4 with XYB at the top
+//!   end is the most common winner. Slow.
+//! - **q ≥ 40 + screen / illustration**: `trelOff` 4:4:4 + XYB,
+//!   essentially regardless of metric. Fast.
+//!
+//! When `allow_slow=false`, every cell falls through to a fast path
+//! (`trelOff`, no hybrid lambda search), trading some bpp for encode
+//! latency. When `allow_xyb=false` the XYB cells fall back to YCbCr.
+//! When megapixels < 0.25, XYB is suppressed regardless of permission
+//! — its ICC-profile overhead (~2 KB) becomes a meaningful fraction
+//! of the file at thumbnail sizes.
 
 use crate::analyze::{AnalyzerOutput, analyze};
 use crate::encode::encoder_config::EncoderConfig;
-use crate::encode::encoder_types::{ChromaSubsampling, ProgressiveScanMode, Quality};
+use crate::encode::encoder_types::{
+    ChromaSubsampling, ProgressiveScanMode, Quality, XybSubsampling,
+};
+#[cfg(feature = "trellis")]
+use crate::encode::trellis::{HybridConfig, TrellisConfig};
 use zenpixels::PixelSlice;
 
 /// Restart-marker density choice for [`AutoForOptions`].
@@ -61,8 +76,6 @@ pub enum RestartMarkers {
 }
 
 impl RestartMarkers {
-    /// Lower to the underlying `restart_mcu_rows` integer that
-    /// `EncoderConfig::restart_mcu_rows` consumes.
     fn to_mcu_rows(self) -> u16 {
         match self {
             RestartMarkers::Off => 0,
@@ -75,9 +88,10 @@ impl RestartMarkers {
 /// Caller-side capability + preference constraints for [`EncoderConfig::auto_for_with`].
 ///
 /// Each field narrows what the dispatch is allowed to pick. Defaults
-/// match what zenjpeg returns from a plain `EncoderConfig::ycbcr(q,
-/// _)` call: progressive JPEG, no XYB, no restart markers. Override
-/// per call when you need broader compatibility or faster decode.
+/// match the most-portable, lowest-encode-latency output: progressive
+/// JPEG, no XYB, no restart markers, no slow features. Override per
+/// call when you need broader compatibility, faster decode, or want
+/// to spend more encode time for tighter compression.
 ///
 /// `#[non_exhaustive]` so future fields don't break callers — always
 /// build via `AutoForOptions::default()` + builder methods.
@@ -89,14 +103,27 @@ pub struct AutoForOptions {
     /// has decoder-compatibility gaps in the wild (some browsers,
     /// older mobile decoders, embedded systems). Set to `true` when
     /// you control the decoder side or are willing to accept fallback.
+    ///
+    /// Even when `true`, XYB is suppressed for very small images
+    /// (`megapixels < 0.25`) because the embedded ICC profile (~2 KB)
+    /// is a meaningful fraction of thumbnail file size.
     pub allow_xyb: bool,
 
     /// Allow progressive scan ordering (multi-pass DCT, ~3-5% smaller
     /// at the cost of multi-pass decode + higher memory). **Default:
     /// `true`.** Set to `false` to force baseline (sequential) JPEG —
     /// useful when callers need single-pass, low-latency decode (e.g.
-    /// hardware decoders, streaming use cases, fast preview pipelines).
+    /// hardware decoders, streaming, fast preview pipelines).
     pub allow_progressive: bool,
+
+    /// Allow slow encode-time features: trellis quantization, hybrid
+    /// AQ-coupled trellis, and progressive scan-script search.
+    /// **Default: `false`.** Set to `true` to opt into 5-15× longer
+    /// encode times for ~2-5% smaller files at the same quality.
+    /// The 2026-04-25 oracle showed trellis / hybrid-lambda configs
+    /// winning 33/70 cells at q < 40 and many of the q ≥ 40 photo
+    /// cells, so flipping this on is meaningful at any quality.
+    pub allow_slow: bool,
 
     /// Restart-marker density. **Default: [`RestartMarkers::Off`].**
     ///
@@ -117,6 +144,7 @@ impl Default for AutoForOptions {
         Self {
             allow_xyb: false,
             allow_progressive: true,
+            allow_slow: false,
             restart_markers: RestartMarkers::Off,
         }
     }
@@ -126,26 +154,29 @@ impl AutoForOptions {
     /// Preset for fast / parallel decode: forces baseline (sequential)
     /// scan and inserts restart markers at the default density. Trades
     /// ~3-5% bpp + 0.04% restart overhead for single-pass parallel-
-    /// decodable output. Use when decoder throughput matters more than
-    /// file size (e.g. server-side preview pipelines, embedded systems).
+    /// decodable output. Encode-side stays fast (`allow_slow = false`).
     #[must_use]
     pub const fn fast_decode() -> Self {
         Self {
             allow_xyb: false,
             allow_progressive: false,
+            allow_slow: false,
             restart_markers: RestartMarkers::Auto,
         }
     }
 
     /// Preset for best metric quality regardless of decoder
-    /// compatibility: enables XYB, allows progressive, no restart
-    /// markers. Use when you control the decoder and want the smallest
-    /// file at a given target metric value.
+    /// compatibility or encode latency: enables XYB, allows
+    /// progressive, no restart markers, and enables slow encode-time
+    /// optimization (trellis / hybrid-lambda search). Use when you
+    /// control the decoder and want the smallest file at a given
+    /// target metric value.
     #[must_use]
     pub const fn best_quality() -> Self {
         Self {
             allow_xyb: true,
             allow_progressive: true,
+            allow_slow: true,
             restart_markers: RestartMarkers::Off,
         }
     }
@@ -161,6 +192,14 @@ impl AutoForOptions {
     #[must_use]
     pub const fn allow_progressive(mut self, v: bool) -> Self {
         self.allow_progressive = v;
+        self
+    }
+
+    /// Builder: allow / forbid slow encode-time features (trellis,
+    /// hybrid lambda, scan search).
+    #[must_use]
+    pub const fn allow_slow(mut self, v: bool) -> Self {
+        self.allow_slow = v;
         self
     }
 
@@ -203,29 +242,7 @@ impl EncoderConfig {
     }
 
     /// Like [`EncoderConfig::auto_for`] but with caller-side
-    /// constraints — XYB permission, progressive permission, restart
-    /// marker density. See [`AutoForOptions`].
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Fast-decode pipeline: sequential JPEG with restart markers
-    /// // for parallel decoding.
-    /// let cfg = EncoderConfig::auto_for_with(
-    ///     image,
-    ///     Quality::ApproxSsim2(82.0),
-    ///     AutoForOptions::fast_decode(),
-    /// )?;
-    ///
-    /// // Allow XYB but force baseline scan for compatibility.
-    /// let cfg = EncoderConfig::auto_for_with(
-    ///     image,
-    ///     75.0,
-    ///     AutoForOptions::default()
-    ///         .allow_xyb(true)
-    ///         .allow_progressive(false),
-    /// )?;
-    /// ```
+    /// constraints. See [`AutoForOptions`].
     pub fn auto_for_with(
         image: PixelSlice<'_>,
         quality: impl Into<Quality>,
@@ -258,49 +275,269 @@ impl AutoForMetric {
     }
 }
 
-/// Heuristic dispatch. Replaced wholesale when the tree codegen lands
-/// (see `auto_for_design.md`). Choices are conservative — they avoid
-/// known regressions from the 2026-04-25 oracle (e.g. 4:4:4 on flat
-/// content costs −1.0 to −1.35 zensim) without claiming to find the
-/// frontier. Caller-side constraints from `options` clip the search
-/// space (XYB off, sequential only, restart marker density).
+/// Coarse content classification distilled from analyzer features —
+/// matches the oracle's 5-bucket taxonomy as closely as the analyzer
+/// signals allow. Internal only; not part of the public surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InferredBucket {
+    PhotoNatural,
+    PhotoDetailed,
+    PhotoFlat,
+    Illustration,
+    ScreenContent,
+}
+
+fn infer_bucket(f: &AnalyzerOutput) -> InferredBucket {
+    // Strong synthetic signals win first (text/screen content have
+    // very distinctive feature signatures).
+    if f.text_likelihood > 0.55 {
+        // Text + low chroma + sharp edges → screen content / document.
+        // The oracle's 'ScreenContent' bucket dominates at q ≥ 25 and
+        // wants XYB+4:4:4; 'Illustration' is similar but with more
+        // chroma. Differentiate by chroma signal strength.
+        if f.chroma_complexity > 0.04 || f.cb_peak_sharpness > 5.0 {
+            return InferredBucket::Illustration;
+        }
+        return InferredBucket::ScreenContent;
+    }
+    if f.screen_content_likelihood > 0.5 {
+        return InferredBucket::ScreenContent;
+    }
+    // Photo-class: differentiate by content density.
+    if f.uniformity > 0.55 || f.flat_color_block_ratio > 0.25 {
+        return InferredBucket::PhotoFlat;
+    }
+    if f.high_freq_energy_ratio > 0.30
+        || f.edge_density > 0.18
+        || f.cb_peak_sharpness > 8.0
+        || f.cr_peak_sharpness > 8.0
+    {
+        return InferredBucket::PhotoDetailed;
+    }
+    InferredBucket::PhotoNatural
+}
+
+/// Coarsen `Quality::to_internal()` (a 0-100 jpegli q-scale) into the
+/// oracle's 7-way q_bin partition. Same boundaries as
+/// `coefficient::scripts::fit_oracle_tree.py`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QBin {
+    Q0_7,
+    Q8_14,
+    Q15_24,
+    Q25_39,
+    Q40_59,
+    Q60_89,
+    Q90Plus,
+}
+
+fn q_bin(q: f32) -> QBin {
+    if q < 8.0 {
+        QBin::Q0_7
+    } else if q < 15.0 {
+        QBin::Q8_14
+    } else if q < 25.0 {
+        QBin::Q15_24
+    } else if q < 40.0 {
+        QBin::Q25_39
+    } else if q < 60.0 {
+        QBin::Q40_59
+    } else if q < 90.0 {
+        QBin::Q60_89
+    } else {
+        QBin::Q90Plus
+    }
+}
+
+/// Oracle-distilled dispatch: per (bucket × q_bin × metric) cell,
+/// pick the codec config the 2026-04-25 oracle most often crowned a
+/// winner — clamped to caller permissions in `options`.
+///
+/// This is a manual approximation of the 70 sklearn trees the fitter
+/// produces. Replaces the prior "chroma-detail → 4:4:4" two-line
+/// heuristic with something that actually reflects the measured
+/// Pareto frontier, while staying readable + auditable. Switches to
+/// the codegen-emitted decision tree when `gen_auto_for.py` lands.
 fn auto_for_internal(
     features: &AnalyzerOutput,
     quality: Quality,
-    _metric: AutoForMetric,
+    metric: AutoForMetric,
     options: AutoForOptions,
 ) -> EncoderConfig {
-    let high_chroma_detail = (features.cb_peak_sharpness > 10.0
-        || features.cr_peak_sharpness > 10.0)
-        && features.chroma_complexity > 0.05;
-    let subsampling = if high_chroma_detail {
-        ChromaSubsampling::None
+    let bucket = infer_bucket(features);
+    let q_internal = quality.to_internal();
+    let qb = q_bin(q_internal);
+
+    // ---- Pick the headline (subsampling, xyb, trellis-shape) ----
+    let pick = pick_oracle(bucket, qb, metric);
+
+    // ---- Apply caller constraints ----
+    // XYB has decoder-compat + image-size gates layered on top of
+    // the oracle pick. Image-size gate is image-dependent (megapixels);
+    // permission gate is caller-dependent.
+    let xyb_allowed = options.allow_xyb && features.megapixels >= 0.25;
+    let use_xyb = pick.use_xyb && xyb_allowed;
+
+    // Slow features (hybrid lambda, full trellis) are only used when
+    // the caller opts in. Without permission, fall back to trelOff.
+    let trellis_choice = if options.allow_slow {
+        pick.trellis
     } else {
-        ChromaSubsampling::Quarter
+        TrellisChoice::Off
     };
 
-    let sharp_yuv = features.natural_likelihood > 0.5
-        && features.screen_content_likelihood < 0.4
-        && features.text_likelihood < 0.4;
-
+    // Progressive: oracle universally prefers progressive at every
+    // q-bin; respect caller's allow_progressive=false override.
     let scan_mode = if options.allow_progressive {
         ProgressiveScanMode::Progressive
     } else {
         ProgressiveScanMode::Baseline
     };
 
-    // XYB: gated entirely on caller permission until the tree codegen
-    // gives us the per-bucket signals to know when XYB is the win
-    // (the 2026-04-25 oracle showed mixed XYB results — winner on
-    // some PhotoNatural cells, regressor on others). Conservative:
-    // don't pick it heuristically even when allowed.
-    let _allow_xyb = options.allow_xyb; // wired when tree dispatch lands
+    // ---- Build the EncoderConfig ----
+    let mut cfg = if use_xyb {
+        // XYB always wants 4:4:4 in the oracle (or BQuarter for the
+        // B-channel). Pick BQuarter — that's the published recommendation
+        // and matches every winning XYB cell in the rules JSON.
+        EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
+    } else {
+        EncoderConfig::ycbcr(quality, pick.subsampling)
+    };
 
-    EncoderConfig::ycbcr(quality, subsampling)
+    cfg = cfg
         .progressive(scan_mode)
-        .sharp_yuv(sharp_yuv)
         .deringing(true)
-        .restart_mcu_rows(options.restart_markers.to_mcu_rows())
+        .restart_mcu_rows(options.restart_markers.to_mcu_rows());
+
+    // sharp_yuv: helps natural / detailed photos, hurts text/screen.
+    // Only meaningful in YCbCr mode (XYB doesn't subsample chroma the
+    // same way).
+    if !use_xyb {
+        let sharp_yuv = matches!(
+            bucket,
+            InferredBucket::PhotoNatural | InferredBucket::PhotoDetailed
+        ) && features.natural_likelihood > 0.5;
+        cfg = cfg.sharp_yuv(sharp_yuv);
+    }
+
+    // Trellis / hybrid: gated behind feature flag + caller permission.
+    #[cfg(feature = "trellis")]
+    {
+        cfg = match trellis_choice {
+            TrellisChoice::Off => cfg,
+            TrellisChoice::Standard => cfg.trellis(TrellisConfig::default()),
+            TrellisChoice::Hybrid(lambda) => cfg.trellis(TrellisConfig::Hybrid(HybridConfig {
+                lambda,
+                ..HybridConfig::default()
+            })),
+        };
+    }
+    #[cfg(not(feature = "trellis"))]
+    {
+        let _ = trellis_choice;
+    }
+
+    cfg
+}
+
+/// What the oracle wants for a given (bucket, q_bin, metric) cell.
+struct OraclePick {
+    subsampling: ChromaSubsampling,
+    use_xyb: bool,
+    trellis: TrellisChoice,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TrellisChoice {
+    Off,
+    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
+    Standard,
+    #[cfg_attr(not(feature = "trellis"), allow(dead_code))]
+    Hybrid(f32),
+}
+
+/// Distilled oracle dispatch. Patterns extracted from the 70-cell
+/// `selector_tree_rules.json` (commit corresponds to the 2026-04-25
+/// run). Coarse but data-grounded: at low q the dominant winner is
+/// hybrid trellis on 4:2:0; at high q it's `trelStd` on 4:4:4 + XYB
+/// for photo content, `trelOff` 4:4:4 + XYB for synthetic.
+fn pick_oracle(bucket: InferredBucket, qb: QBin, metric: AutoForMetric) -> OraclePick {
+    use InferredBucket::*;
+    use QBin::*;
+
+    // --- Low-q (q < 40): hybrid lambda + 4:2:0 dominates regardless
+    //     of bucket. Lambda value drifts with q-bin and bucket.
+    let low_q = matches!(qb, Q0_7 | Q8_14 | Q15_24 | Q25_39);
+    if low_q {
+        let lambda = match (bucket, qb) {
+            // PhotoFlat / Illustration / ScreenContent want stronger
+            // hybrid pull-up at very low q (smaller files via more
+            // aggressive zeroing).
+            (PhotoFlat | Illustration, Q0_7 | Q8_14) => 12.0,
+            (ScreenContent, Q0_7 | Q8_14) => 16.0,
+            (PhotoDetailed, _) => 14.7,
+            (PhotoNatural, _) => 13.5,
+            (_, Q15_24 | Q25_39) => 14.0,
+            _ => 14.0,
+        };
+        return OraclePick {
+            subsampling: ChromaSubsampling::Quarter, // 4:2:0
+            use_xyb: false,
+            trellis: TrellisChoice::Hybrid(lambda),
+        };
+    }
+
+    // --- High-q (q ≥ 40): XYB+4:4:4 wins most photo & synthetic
+    //     cells; the choice between trelStd / trelOff depends on
+    //     bucket + metric.
+    match bucket {
+        // Synthetic content: XYB+4:4:4+trelOff lands the most cells
+        // across both metrics.
+        ScreenContent | Illustration => OraclePick {
+            subsampling: ChromaSubsampling::None, // 4:4:4
+            use_xyb: true,
+            trellis: TrellisChoice::Off,
+        },
+        // Detailed photos: XYB+4:4:4 with FULL trellis at the very top
+        // of q (q60-89, q90+); trelOff is a reasonable downgrade
+        // when callers don't want trellis.
+        PhotoDetailed => OraclePick {
+            subsampling: ChromaSubsampling::None,
+            use_xyb: true,
+            trellis: match (qb, metric) {
+                (Q90Plus, AutoForMetric::Butter) => TrellisChoice::Off,
+                (Q60_89 | Q90Plus, _) => TrellisChoice::Standard,
+                (Q40_59, AutoForMetric::Butter) => TrellisChoice::Standard,
+                _ => TrellisChoice::Off,
+            },
+        },
+        // Flat photos: mixed bag in oracle. XYB+4:4:4+trelOff at the
+        // top end is the safe pick; trellis on for the q40-59 ssim2
+        // case.
+        PhotoFlat => OraclePick {
+            subsampling: ChromaSubsampling::None,
+            use_xyb: true,
+            trellis: match (qb, metric) {
+                (Q40_59, AutoForMetric::Ssim2) => TrellisChoice::Standard,
+                _ => TrellisChoice::Off,
+            },
+        },
+        // Natural photos: XYB only at the very top (oracle has just
+        // one PhotoNatural XYB winner at q90+); below that, hybrid
+        // 4:2:0 with strong lambda.
+        PhotoNatural => match qb {
+            Q90Plus => OraclePick {
+                subsampling: ChromaSubsampling::None,
+                use_xyb: true,
+                trellis: TrellisChoice::Off,
+            },
+            _ => OraclePick {
+                subsampling: ChromaSubsampling::Quarter,
+                use_xyb: false,
+                trellis: TrellisChoice::Hybrid(16.0),
+            },
+        },
+    }
 }
 
 #[cfg(test)]
@@ -337,9 +574,6 @@ mod tests {
         use crate::encode::PixelLayout;
         use enough::Unstoppable;
 
-        // Need ≥ 4 MCU rows so RestartMarkers::Auto actually emits at
-        // least one RST marker. At 4:2:0 the MCU is 16 px tall, so a
-        // 96-row image gives 6 MCU rows = 1 restart segment + tail.
         let w: u32 = 96;
         let h: u32 = 96;
         let mut rgb = vec![0u8; (w * h * 3) as usize];
@@ -352,12 +586,9 @@ mod tests {
             }
         }
 
-        let cfg = EncoderConfig::auto_for_with(
-            slice(&rgb, w, h),
-            75.0,
-            AutoForOptions::fast_decode(),
-        )
-        .unwrap();
+        let cfg =
+            EncoderConfig::auto_for_with(slice(&rgb, w, h), 75.0, AutoForOptions::fast_decode())
+                .unwrap();
         let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(&rgb, Unstoppable).unwrap();
         let jpeg = enc.finish().unwrap();
@@ -379,15 +610,15 @@ mod tests {
         use crate::encode::PixelLayout;
         use enough::Unstoppable;
 
-        let w: u32 = 32;
-        let h: u32 = 32;
+        let w: u32 = 64;
+        let h: u32 = 64;
         let mut rgb = vec![0u8; (w * h * 3) as usize];
         for y in 0..h {
             for x in 0..w {
                 let i = ((y * w + x) * 3) as usize;
-                rgb[i] = (x * 8) as u8;
-                rgb[i + 1] = (y * 8) as u8;
-                rgb[i + 2] = ((x ^ y) * 8) as u8;
+                rgb[i] = (x * 4) as u8;
+                rgb[i + 1] = (y * 4) as u8;
+                rgb[i + 2] = ((x ^ y) * 4) as u8;
             }
         }
 
@@ -405,9 +636,11 @@ mod tests {
         let opts = AutoForOptions::default()
             .allow_xyb(true)
             .allow_progressive(false)
+            .allow_slow(true)
             .restart_markers(RestartMarkers::AutoSparse);
         assert!(opts.allow_xyb);
         assert!(!opts.allow_progressive);
+        assert!(opts.allow_slow);
         assert_eq!(opts.restart_markers, RestartMarkers::AutoSparse);
     }
 
@@ -415,11 +648,13 @@ mod tests {
     fn presets_have_expected_shape() {
         let fast = AutoForOptions::fast_decode();
         assert!(!fast.allow_progressive);
+        assert!(!fast.allow_slow);
         assert_eq!(fast.restart_markers, RestartMarkers::Auto);
 
         let best = AutoForOptions::best_quality();
         assert!(best.allow_xyb);
         assert!(best.allow_progressive);
+        assert!(best.allow_slow);
         assert_eq!(best.restart_markers, RestartMarkers::Off);
     }
 
@@ -428,5 +663,52 @@ mod tests {
         assert_eq!(RestartMarkers::Off.to_mcu_rows(), 0);
         assert_eq!(RestartMarkers::Auto.to_mcu_rows(), 4);
         assert_eq!(RestartMarkers::AutoSparse.to_mcu_rows(), 8);
+    }
+
+    #[test]
+    fn q_bin_partitions_match_oracle() {
+        assert_eq!(q_bin(0.0), QBin::Q0_7);
+        assert_eq!(q_bin(7.9), QBin::Q0_7);
+        assert_eq!(q_bin(8.0), QBin::Q8_14);
+        assert_eq!(q_bin(14.5), QBin::Q8_14);
+        assert_eq!(q_bin(40.0), QBin::Q40_59);
+        assert_eq!(q_bin(89.999), QBin::Q60_89);
+        assert_eq!(q_bin(90.0), QBin::Q90Plus);
+        assert_eq!(q_bin(100.0), QBin::Q90Plus);
+    }
+
+    #[test]
+    fn small_image_suppresses_xyb_even_when_allowed() {
+        // 256×256 = 0.066 MP, well below the 0.25 MP gate. Even with
+        // allow_xyb=true and a high q (where the oracle would pick
+        // XYB), the dispatch should fall back to YCbCr.
+        let w: u32 = 256;
+        let h: u32 = 256;
+        let mut rgb = vec![0u8; (w * h * 3) as usize];
+        // Photo-detailed-ish content: high-freq + chroma variation.
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 3) as usize;
+                rgb[i] = ((x * 13) ^ (y * 7)) as u8;
+                rgb[i + 1] = ((x * 5) ^ (y * 11)) as u8;
+                rgb[i + 2] = ((x * 17) ^ (y * 3)) as u8;
+            }
+        }
+        let opts = AutoForOptions::best_quality(); // allow_xyb = true
+        let cfg = EncoderConfig::auto_for_with(slice(&rgb, w, h), 95.0, opts).unwrap();
+        // We can't introspect the config directly, but we can encode
+        // and look for the JFIF/Adobe app marker — XYB JPEGs embed
+        // an ICC profile (App2 with "ICC_PROFILE\0" magic). Absent
+        // that, we're in YCbCr mode (the gate fired).
+        use crate::encode::PixelLayout;
+        use enough::Unstoppable;
+        let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).unwrap();
+        enc.push_packed(&rgb, Unstoppable).unwrap();
+        let jpeg = enc.finish().unwrap();
+        let has_icc = jpeg.windows(12).any(|w| w == b"ICC_PROFILE\0");
+        assert!(
+            !has_icc,
+            "XYB suppressed for sub-0.25-MP image even with allow_xyb=true"
+        );
     }
 }
