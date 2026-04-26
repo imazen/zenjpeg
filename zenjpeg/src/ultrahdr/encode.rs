@@ -10,10 +10,11 @@ use crate::encoder::{EncoderConfig, PixelLayout};
 use crate::error::{Error, Result};
 use enough::{Stop, Unstoppable};
 use ultrahdr_core::{
-    ColorPrimaries, GainMap, GainMapEncodingFormat, GainMapMetadata, LumaGainMapSplitter,
-    LumaToneMap, PixelBuffer, PixelFormat, SplitConfig, SplitStats, TransferFunction,
+    ColorPrimaries, GainMap, GainMapChannel, GainMapEncodingFormat, GainMapMetadata,
+    LumaGainMapSplitter, LumaToneMap, PixelBuffer, PixelFormat, SplitConfig, SplitStats,
+    TransferFunction,
     color::tonemap::{AdaptiveTonemapper, ToneMapConfig, tonemap_image_to_srgb8},
-    gainmap::{GainMapConfig, RowEncoder, compute_gainmap},
+    gainmap::{GainMapConfig, RowEncoder, compute_gain_row, compute_gainmap},
     pixel_buffer_from_vec,
 };
 use zencodec::Iso21496Format;
@@ -137,15 +138,11 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
         ));
     }
 
-    let sdr_linear = split_hdr_to_sdr_via_curve(hdr, curve, gainmap_config, &stop)?;
-    stop.check()?;
-
-    // Derive gain map + metadata from the (HDR, SDR) pair produced by the
-    // splitter. Equivalent metadata to the legacy single-pass
-    // `compute_gainmap_tonemap` because the splitter's chromaticity-preserving
-    // rescale leaves luma in the same proportion the curve dictated.
-    let (gainmap, metadata) = compute_gainmap(hdr, &sdr_linear, gainmap_config, &stop)
-        .map_err(ultrahdr_to_jpegli_error)?;
+    // Single-pass: walk HDR rows once, splitting into SDR and quantizing
+    // gain-map bytes inline via ultrahdr-core's `compute_gain_row`. Saves a
+    // full second pixel walk + materialization vs the previous two-pass flow.
+    let (sdr_linear, gainmap, metadata) =
+        split_and_compute_gainmap(hdr, curve, gainmap_config, &stop)?;
     stop.check()?;
 
     // The splitter emits SDR as RgbaF32 / Linear. Encode wants Rgba8 / Srgb.
@@ -162,17 +159,25 @@ pub fn encode_ultrahdr_with_curve<C: LumaToneMap>(
     )
 }
 
-/// Run zentone's [`LumaGainMapSplitter`] over `hdr`, producing a same-size
-/// `RgbaF32` / `Linear` SDR `PixelBuffer`. The gain rows the splitter emits
-/// are discarded; the gain map is computed afterwards from the (HDR, SDR)
-/// pair via [`compute_gainmap`] so its metadata matches the
-/// canonical single-pass formula.
-fn split_hdr_to_sdr_via_curve<C: LumaToneMap>(
+/// Single-pass fused splitter + gain-map quantization.
+///
+/// Walks each HDR row once: zentone's [`LumaGainMapSplitter`] writes the SDR
+/// output, and on the subset of rows that map to a gain-map row,
+/// `compute_gain_row` from ultrahdr-core quantizes gain-map bytes from the
+/// (HDR, SDR) row pair. Replaces the prior two-pass flow that ran
+/// `split_hdr_to_sdr_via_curve` followed by `compute_gainmap` — about 2× the
+/// memory bandwidth on encode at typical 4K resolutions.
+///
+/// Sampling matches `compute_gainmap_slice`: each gain-map cell `(gx, gy)`
+/// reads the source pixel at `(gx*scale + scale/2, gy*scale + scale/2)`,
+/// clamped to image bounds. Gain-map metadata bounds are accumulated across
+/// the same pixels via `compute_gain_row`'s `observed_min_max` accumulator.
+fn split_and_compute_gainmap<C: LumaToneMap>(
     hdr: &PixelBuffer,
     curve: &C,
     gainmap_config: &GainMapConfig,
     stop: &impl Stop,
-) -> Result<PixelBuffer> {
+) -> Result<(PixelBuffer, GainMap, GainMapMetadata)> {
     let width = hdr.width();
     let height = hdr.height();
     let hdr_gamut = hdr.descriptor().primaries;
@@ -198,10 +203,33 @@ fn split_hdr_to_sdr_via_curve<C: LumaToneMap>(
     .map_err(ultrahdr_to_jpegli_error)?;
 
     let w = width as usize;
+    let scale = gainmap_config.scale_factor.max(1) as u32;
+    let gm_width = width.div_ceil(scale);
+    let gm_height = height.div_ceil(scale);
+    let gm_w = gm_width as usize;
+
+    let mut gainmap = GainMap::new(gm_width, gm_height).map_err(ultrahdr_to_jpegli_error)?;
+
     let mut hdr_row = vec![0.0_f32; w * 4];
     let mut sdr_row = vec![0.0_f32; w * 4];
     let mut gain_row = vec![0.0_f32; w];
     let mut stats = SplitStats::default();
+
+    // Subsampled HDR + SDR rows fed to compute_gain_row at gain-map resolution.
+    let mut hdr_gm_row = vec![0.0_f32; gm_w * 4];
+    let mut sdr_gm_row = vec![0.0_f32; gm_w * 4];
+
+    let mut min_max = (f32::MAX, f32::MIN);
+    // Reverse-map: which HDR row index does each gain-map row pull from?
+    // Matches compute_gainmap_slice's center-pixel sampling policy.
+    let gm_row_for_y: Vec<u32> = (0..gm_height)
+        .map(|gy| (gy * scale + scale / 2).min(height - 1))
+        .collect();
+    // Forward-map for fast lookup during the row walk.
+    let mut gy_for_y: Vec<Option<u32>> = vec![None; height as usize];
+    for (gy, &y) in gm_row_for_y.iter().enumerate() {
+        gy_for_y[y as usize] = Some(gy as u32);
+    }
 
     for y in 0..height {
         stop.check()?;
@@ -218,9 +246,65 @@ fn split_hdr_to_sdr_via_curve<C: LumaToneMap>(
         let dst = sdr_slice.row_mut(y);
         let row_bytes: &[u8] = bytemuck::cast_slice(&sdr_row[..w * 4]);
         dst[..row_bytes.len()].copy_from_slice(row_bytes);
+
+        // If this y maps to a gain-map row, subsample columns and quantize.
+        if let Some(gy) = gy_for_y[y as usize] {
+            for gx in 0..gm_w {
+                let x = ((gx as u32 * scale + scale / 2).min(width - 1)) as usize;
+                let src_off = x * 4;
+                let dst_off = gx * 4;
+                hdr_gm_row[dst_off] = hdr_row[src_off];
+                hdr_gm_row[dst_off + 1] = hdr_row[src_off + 1];
+                hdr_gm_row[dst_off + 2] = hdr_row[src_off + 2];
+                hdr_gm_row[dst_off + 3] = hdr_row[src_off + 3];
+                sdr_gm_row[dst_off] = sdr_row[src_off];
+                sdr_gm_row[dst_off + 1] = sdr_row[src_off + 1];
+                sdr_gm_row[dst_off + 2] = sdr_row[src_off + 2];
+                sdr_gm_row[dst_off + 3] = sdr_row[src_off + 3];
+            }
+            let row_start = gy as usize * gm_w;
+            let row_end = row_start + gm_w;
+            // SDR is in the HDR's gamut here (LumaGainMapSplitter is
+            // chromaticity-preserving), so both primaries match.
+            compute_gain_row(
+                &hdr_gm_row,
+                &sdr_gm_row,
+                4,
+                hdr_gamut,
+                hdr_gamut,
+                &mut gainmap.data[row_start..row_end],
+                gainmap_config,
+                &mut min_max,
+            );
+        }
     }
 
-    Ok(sdr_buffer)
+    let metadata = build_gainmap_metadata(gainmap_config, min_max);
+    Ok((sdr_buffer, gainmap, metadata))
+}
+
+/// Build [`GainMapMetadata`] from the configured ranges and the `(min, max)`
+/// gain accumulator returned by `compute_gain_row` across the image. Mirrors
+/// `compute_gainmap_slice`'s metadata construction (clamp to config range,
+/// log2 conversion, ISO 21496-1 fields), kept here so we don't depend on
+/// ultrahdr-core's `pub(crate) metadata_from_arrays`.
+fn build_gainmap_metadata(config: &GainMapConfig, min_max: (f32, f32)) -> GainMapMetadata {
+    let actual_min = min_max.0.max(config.min_boost);
+    let actual_max = min_max.1.min(config.max_boost);
+    let channel = GainMapChannel {
+        min: (actual_min as f64).log2(),
+        max: (actual_max as f64).log2(),
+        gamma: config.gamma as f64,
+        base_offset: config.base_offset as f64,
+        alternate_offset: config.alternate_offset as f64,
+    };
+    let mut metadata = GainMapMetadata::default();
+    metadata.channels = [channel; 3];
+    metadata.base_hdr_headroom = (config.base_hdr_headroom as f64).log2();
+    metadata.alternate_hdr_headroom = (config.alternate_hdr_headroom.max(actual_max) as f64).log2();
+    metadata.use_base_color_space = true;
+    metadata.backward_direction = false;
+    metadata
 }
 
 /// Map a [`ColorPrimaries`] to the matching luma-weights triplet expected
