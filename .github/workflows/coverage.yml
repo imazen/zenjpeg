@@ -36,7 +36,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
           git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
@@ -109,7 +108,6 @@ jobs:
           git clone --depth 1 https://github.com/imazen/ultrahdr.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
-          git clone --depth 1 https://github.com/imazen/zenpixels.git
           git clone --depth 1 https://github.com/imazen/zentone.git
 
       - name: Strip non-CI workspace members and deps
