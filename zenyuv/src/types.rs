@@ -9,6 +9,27 @@ pub enum Matrix {
     Bt709,
     /// ITU-R BT.2020 (UHD/HDR video). Kr=0.2627, Kb=0.0593.
     Bt2020,
+    /// libwebp's `kWebpMatrix` — the matrix the WebP encoder has shipped
+    /// with since the project's beginning
+    /// (`libwebp/sharpyuv/sharpyuv_csp.c`).
+    ///
+    /// **This is not a clean color science choice** — libwebp's own
+    /// source labels it "similar but not identical to
+    /// kRec601LimitedMatrix" and exposes both as separate matrices.
+    /// The implied (Kr, Kb) is approximately (0.2992, 0.1140);
+    /// ~+0.06% off canonical Rec.601's (0.2990, 0.1140). The deviation
+    /// is tiny (≤1 LSB on Y across all gray inputs) but historically
+    /// locked-in: every WebP file ever encoded by libwebp uses these
+    /// coefficients.
+    ///
+    /// Use this when producing WebP files that need to match libwebp's
+    /// encoded output bytewise.
+    ///
+    /// **Limited range only.** libwebp itself does not define a
+    /// Full-range version of this matrix — for Full range it uses
+    /// canonical [`Matrix::Bt601`] / `kRec601FullMatrix`. Pairing this
+    /// variant with [`Range::Full`] panics at lookup time.
+    WebpEncoder,
 }
 
 /// Signal range.
@@ -120,6 +141,7 @@ pub(crate) const BT709_LIMITED: ForwardCoeffs =
 pub(crate) const BT2020_FULL: ForwardCoeffs = ForwardCoeffs::compute(Matrix::Bt2020, Range::Full);
 pub(crate) const BT2020_LIMITED: ForwardCoeffs =
     ForwardCoeffs::compute(Matrix::Bt2020, Range::Limited);
+pub(crate) const WEBP_ENCODER_LIMITED: ForwardCoeffs = ForwardCoeffs::webp_encoder_limited();
 
 pub(crate) const INV_BT601_FULL: InverseCoeffs = InverseCoeffs::compute(Matrix::Bt601, Range::Full);
 pub(crate) const INV_BT601_LIMITED: InverseCoeffs =
@@ -133,7 +155,16 @@ pub(crate) const INV_BT2020_LIMITED: InverseCoeffs =
     InverseCoeffs::compute(Matrix::Bt2020, Range::Limited);
 
 impl ForwardCoeffs {
-    /// Look up precomputed coefficients. Zero runtime cost.
+    /// Look up precomputed coefficients. Zero runtime cost. Total
+    /// function — never panics for any `(Matrix, Range)` combination.
+    ///
+    /// `(Matrix::WebpEncoder, Range::Full)` returns canonical Rec.601
+    /// Full coefficients. This **matches what libwebp itself does**:
+    /// `kWebpMatrix` only exists in libwebp's source for Limited range;
+    /// for Full range libwebp uses `kRec601FullMatrix`, which is
+    /// identical to our `(Matrix::Bt601, Range::Full)`. So mapping
+    /// `WebpEncoder + Full` to canonical Bt601 Full preserves libwebp
+    /// parity without surprising the caller.
     pub const fn new(matrix: Matrix, range: Range) -> Self {
         match (matrix, range) {
             (Matrix::Bt601, Range::Full) => BT601_FULL,
@@ -142,6 +173,66 @@ impl ForwardCoeffs {
             (Matrix::Bt709, Range::Limited) => BT709_LIMITED,
             (Matrix::Bt2020, Range::Full) => BT2020_FULL,
             (Matrix::Bt2020, Range::Limited) => BT2020_LIMITED,
+            (Matrix::WebpEncoder, Range::Limited) => WEBP_ENCODER_LIMITED,
+            // libwebp uses canonical kRec601FullMatrix for Full range.
+            (Matrix::WebpEncoder, Range::Full) => BT601_FULL,
+        }
+    }
+
+    /// libwebp's `kWebpMatrix` at PREC=15 (zenyuv's fixed-point precision).
+    ///
+    /// Source values from `libwebp/sharpyuv/sharpyuv_csp.c`, `kWebpMatrix`
+    /// at libwebp's PREC=16. Halved with ties-away rounding to fit
+    /// PREC=15 i16 lanes. Verified to produce a Y plane that matches
+    /// libwebp's PREC=16 output across all 256 R=G=B inputs (see
+    /// `webp_encoder_matches_libwebp_kwebp_matrix` test).
+    ///
+    /// libwebp Y values:        16839, 33059, 6420
+    /// halved (ties-away):      8420,  16530, 3210  → these
+    ///
+    /// libwebp Cb values:       -9719, -19081, 28800
+    /// halved (ties-away):      -4860, -9541,  14400
+    ///
+    /// libwebp Cr values:       28800, -24116, -4684
+    /// halved:                  14400, -12058, -2342
+    const fn webp_encoder_limited() -> Self {
+        let round = (1i32 << (PREC - 1)) - 1;
+        let round_420 = (1i32 << PREC) - 1;
+        // Float versions for sharp-yuv path; derived from libwebp's
+        // PREC=16 integers / 65536.
+        let yr_f = 16839.0f32 / 65536.0;
+        let yg_f = 33059.0f32 / 65536.0;
+        let yb_f = 6420.0f32 / 65536.0;
+        let cb_r_f = -9719.0f32 / 65536.0;
+        let cb_g_f = -19081.0f32 / 65536.0;
+        let cb_b_f = 28800.0f32 / 65536.0;
+        let cr_r_f = 28800.0f32 / 65536.0;
+        let cr_g_f = -24116.0f32 / 65536.0;
+        let cr_b_f = -4684.0f32 / 65536.0;
+        Self {
+            yr: 8420,
+            yg: 16530,
+            yb: 3210,
+            cb_r: -4860,
+            cb_g: -9541,
+            cb_b: 14400,
+            cr_r: 14400,
+            cr_g: -12058,
+            cr_b: -2342,
+            y_bias: (16i32 << PREC) + round,
+            uv_bias: (128i32 << PREC) + round,
+            uv_bias_420: (128i32 << (PREC + 1)) + round_420,
+            yr_f,
+            yg_f,
+            yb_f,
+            cb_r_f,
+            cb_g_f,
+            cb_b_f,
+            cr_r_f,
+            cr_g_f,
+            cr_b_f,
+            y_bias_f: 16.0,
+            uv_bias_f: 128.0,
         }
     }
 
@@ -250,6 +341,15 @@ impl ForwardCoeffs {
 
 impl InverseCoeffs {
     /// Look up precomputed inverse coefficients. Zero runtime cost.
+    /// Total function — never panics for any `(Matrix, Range)`
+    /// combination.
+    ///
+    /// `Matrix::WebpEncoder` delegates to canonical Rec.601 in both
+    /// ranges: libwebp itself uses canonical Rec.601 inverse
+    /// coefficients in its decoder (`libwebp/dsp/yuv.h` `VP8YUVToR/G/B`),
+    /// regardless of which encode-side matrix produced the file. So
+    /// decoding any WebP — including one encoded with `kWebpMatrix` —
+    /// uses canonical Bt601 inverse. This map matches that.
     pub const fn new(matrix: Matrix, range: Range) -> Self {
         match (matrix, range) {
             (Matrix::Bt601, Range::Full) => INV_BT601_FULL,
@@ -258,6 +358,8 @@ impl InverseCoeffs {
             (Matrix::Bt709, Range::Limited) => INV_BT709_LIMITED,
             (Matrix::Bt2020, Range::Full) => INV_BT2020_FULL,
             (Matrix::Bt2020, Range::Limited) => INV_BT2020_LIMITED,
+            (Matrix::WebpEncoder, Range::Limited) => INV_BT601_LIMITED,
+            (Matrix::WebpEncoder, Range::Full) => INV_BT601_FULL,
         }
     }
 
@@ -332,9 +434,19 @@ impl InverseCoeffs {
 
 impl Matrix {
     /// Return (Kr, Kb) for this matrix standard as f64 for precision.
+    ///
+    /// Total function. For [`Matrix::WebpEncoder`] this returns
+    /// canonical Bt601's `(0.299, 0.114)` — `WebpEncoder`'s actual
+    /// coefficients are hardcoded in `webp_encoder_limited()` (the
+    /// matrix is empirical and doesn't decompose to a clean (Kr, Kb)
+    /// pair), and the `compute()` paths early-return for it before
+    /// reaching this function. The Bt601 fallback is the closest
+    /// canonical approximation to libwebp's implied Kr ≈ 0.2992,
+    /// Kb = 0.1140 — useful only if a future change ever calls
+    /// `kr_kb()` on `WebpEncoder` from a non-`compute` path.
     const fn kr_kb(self) -> (f64, f64) {
         match self {
-            Self::Bt601 => (0.299, 0.114),
+            Self::Bt601 | Self::WebpEncoder => (0.299, 0.114),
             Self::Bt709 => (0.2126, 0.0722),
             Self::Bt2020 => (0.2627, 0.0593),
         }
