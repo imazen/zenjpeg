@@ -2715,6 +2715,57 @@ fn sdr_srgb_does_not_trip_hdr_present() {
 
 #[cfg(feature = "experimental")]
 #[test]
+#[ignore] // run with `cargo test --release --features experimental -- perf_strip_alpha_vs_convert --ignored --nocapture`
+fn perf_strip_alpha_vs_convert() {
+    // RGBA8 used to route through RowConverter; now takes the
+    // native StripAlpha8 path. Compare the per-call cost to RGB8.
+    use crate::feature::{AnalysisQuery, FeatureSet};
+    use std::time::Instant;
+
+    let q = AnalysisQuery::new(FeatureSet::SUPPORTED);
+    let w: u32 = 4096;
+    let h: u32 = 4096;
+    let rgb = synth_rgb(w, h, 0xCAFE_F00D);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+        px[0] = rgb[i * 3];
+        px[1] = rgb[i * 3 + 1];
+        px[2] = rgb[i * 3 + 2];
+        px[3] = 0xFF;
+    }
+
+    let s_rgb = PixelSlice::new(&rgb, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+    let _ = crate::analyze_features(s_rgb, &q).unwrap(); // warmup
+
+    let mut rgb8_us = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let s = PixelSlice::new(&rgb, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+        let t0 = Instant::now();
+        let _ = crate::analyze_features(s, &q).unwrap();
+        rgb8_us.push(t0.elapsed().as_micros() as u64);
+    }
+    rgb8_us.sort_unstable();
+
+    let mut rgba8_us = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let s = PixelSlice::new(&rgba, w, h, (w * 4) as usize, PixelDescriptor::RGBA8_SRGB)
+            .unwrap();
+        let t0 = Instant::now();
+        let _ = crate::analyze_features(s, &q).unwrap();
+        rgba8_us.push(t0.elapsed().as_micros() as u64);
+    }
+    rgba8_us.sort_unstable();
+
+    eprintln!(
+        "4K full-feature-set: RGB8 {} µs, RGBA8 {} µs (Δ = {} µs)",
+        rgb8_us[2],
+        rgba8_us[2],
+        rgba8_us[2] as i64 - rgb8_us[2] as i64
+    );
+}
+
+#[cfg(feature = "experimental")]
+#[test]
 #[ignore] // run with `cargo test --release --features experimental -- perf_full_feature_set --ignored --nocapture`
 fn perf_full_feature_set() {
     // Ad-hoc timing check: full feature surface on synthetic images

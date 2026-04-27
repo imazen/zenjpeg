@@ -1,7 +1,10 @@
-//! **DRAFT — not yet wired into the crate.** Public-API surface for
-//! the next major (0.x → 0.y) of zenanalyze: a stable, opaque,
-//! set-composable feature interface that lets multiple codecs share
-//! one analysis pass.
+//! Public API surface: a stable, opaque, set-composable feature
+//! interface that lets multiple codecs share one analysis pass.
+//!
+//! **Stability contract: there is no 0.2.x.** Every change in 0.1.x
+//! is additive — new variants on `#[non_exhaustive]` enums, new
+//! parallel functions, never a signature change to a shipped item.
+//! See `CLAUDE.md`.
 //!
 //! Stability contract:
 //! - [`AnalysisFeature`] discriminants are **immutable once shipped**.
