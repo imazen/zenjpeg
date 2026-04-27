@@ -320,9 +320,14 @@ impl AdaptiveMetric {
     fn from_quality(q: &Quality) -> Self {
         match q {
             Quality::ApproxButteraugli(_) => AdaptiveMetric::Butter,
-            Quality::ApproxSsim2(_) | Quality::ApproxJpegli(_) | Quality::ApproxMozjpeg(_) => {
-                AdaptiveMetric::Ssim2
-            }
+            // Zq is calibrated against zensim, which is the same family
+            // as ssim2 (multi-scale perceptual). The adaptive oracle's
+            // ssim2 trees are the closest behavioral match.
+            Quality::ApproxSsim2(_)
+            | Quality::ApproxJpegli(_)
+            | Quality::ApproxMozjpeg(_)
+            | Quality::Zq(_)
+            | Quality::ZqExplicit(_) => AdaptiveMetric::Ssim2,
         }
     }
 }

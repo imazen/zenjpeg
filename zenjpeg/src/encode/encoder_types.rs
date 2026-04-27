@@ -22,6 +22,25 @@ pub enum Quality {
     /// Approximate Butteraugli distance target.
     /// Range: 0.0+ (lower = better). <1.0 excellent, <3.0 good.
     ApproxButteraugli(f32),
+
+    /// Target perceptual quality in `zq` units (issue #113).
+    ///
+    /// `zq` is calibrated against zensim score so that the encoder lands
+    /// at roughly the same PERCEIVED quality regardless of content type.
+    /// Unlike `ApproxJpegli` (which is a fixed algorithmic knob), `Zq`
+    /// triggers a closed-loop encode: the encoder iterates per-block
+    /// quantization until the achieved zensim score is at or above
+    /// `target` (within the default budget).
+    ///
+    /// Range: ~30–100 useful, with 75–90 the typical web/CDN range.
+    /// Uses [`zq::ZqTarget::default()`] for everything except the target
+    /// value; for explicit budget/strictness control, use
+    /// [`Quality::ZqExplicit`].
+    Zq(f32),
+
+    /// Target perceptual quality with explicit iteration policy
+    /// (issue #113). See [`zq::ZqTarget`] for the per-knob semantics.
+    ZqExplicit(crate::encode::zq::ZqTarget),
 }
 
 impl Default for Quality {
@@ -50,6 +69,11 @@ impl From<i32> for Quality {
 
 impl Quality {
     /// Convert to internal quality value (0.0-100.0 scale).
+    ///
+    /// For [`Quality::Zq`] / [`Quality::ZqExplicit`] this returns the
+    /// STARTING jpegli quality for the iteration loop's first pass, NOT
+    /// the eventual achieved quality. The closed-loop encoder adjusts
+    /// per-block AQ from this baseline.
     #[must_use]
     pub fn to_internal(&self) -> f32 {
         match self {
@@ -57,6 +81,27 @@ impl Quality {
             Quality::ApproxMozjpeg(q) => mozjpeg_to_internal(*q),
             Quality::ApproxSsim2(score) => ssim2_to_internal(*score),
             Quality::ApproxButteraugli(dist) => butteraugli_to_internal(*dist),
+            Quality::Zq(zq) => crate::encode::zq::zq_to_starting_jpegli_q(*zq),
+            Quality::ZqExplicit(t) => crate::encode::zq::zq_to_starting_jpegli_q(t.target),
+        }
+    }
+
+    /// Whether this quality variant triggers the closed-loop iteration
+    /// path (i.e. requires the decoder + zensim measurement on each
+    /// pass). Returns `false` for the existing one-shot variants.
+    #[must_use]
+    pub fn is_zq_target(&self) -> bool {
+        matches!(self, Quality::Zq(_) | Quality::ZqExplicit(_))
+    }
+
+    /// Resolve to a [`crate::encode::zq::ZqTarget`] when this is a
+    /// closed-loop variant. Returns `None` for the one-shot variants.
+    #[must_use]
+    pub fn zq_target(&self) -> Option<crate::encode::zq::ZqTarget> {
+        match self {
+            Quality::Zq(zq) => Some(crate::encode::zq::ZqTarget::new(*zq)),
+            Quality::ZqExplicit(t) => Some(*t),
+            _ => None,
         }
     }
 

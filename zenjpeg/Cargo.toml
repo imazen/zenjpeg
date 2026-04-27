@@ -93,6 +93,9 @@ zentone = { workspace = true, optional = true }
 zenresize = { workspace = true, optional = true }
 # Self-documenting node definitions for pipeline integration
 # zennode = { path = "../../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
+# Perceptual metric used by Quality::Zq target-perceptual-quality variants
+# (issue #113). Pulled in only when the `target-zq` feature is enabled.
+zensim = { workspace = true, optional = true }
 
 [dev-dependencies]
 wide = { workspace = true }
@@ -207,6 +210,11 @@ __wasm-simd = []
 ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
+# Target-perceptual-quality (`Quality::Zq` / `Quality::ZqExplicit`) closed-loop
+# encoder. Iterates encode + decode + zensim diffmap to land at a perceptual
+# score target (issue #113). Pulls in `decoder` (for re-decoding each pass)
+# and the zensim crate (for the perceptual metric).
+target-zq = ["decoder", "dep:zensim"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode.
 # Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
 # zenresize itself; orientation group algebra comes from zenpixels (re-exported
