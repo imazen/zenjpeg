@@ -1,0 +1,78 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/home/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.10s
+     Running `target/release/examples/zq_calibrate --corpus /tmp/zq_calib_corpus --max-images 80`
+[zq_calibrate] 76 image(s), 17 q values × 7 targets
+  progress: 5/76
+  progress: 10/76
+  progress: 15/76
+  progress: 20/76
+  progress: 25/76
+  progress: 30/76
+  progress: 35/76
+  progress: 40/76
+  progress: 45/76
+  progress: 50/76
+  progress: 55/76
+  progress: 60/76
+  progress: 65/76
+  progress: 70/76
+  progress: 75/76
+
+=== Calibration anchors per bucket ===
+
+// PhotoNatural (n=7)
+const PHOTONATURAL: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=7, p25=20 p50=20 p75=20
+    (60.0, 25.0),  // n=7, p25=20 p50=25 p75=25
+    (75.0, 60.0),  // n=7, p25=55 p50=60 p75=65
+    (80.0, 75.0),  // n=7, p25=70 p50=75 p75=80
+    (85.0, 90.0),  // n=7, p25=85 p50=90 p75=90
+    (90.0, 95.0),  // n=7, p25=95 p50=95 p75=100
+    (95.0, 100.0),  // n=7, p25=100 p50=100 p75=100
+];
+
+// PhotoDetailed (n=36)
+const PHOTODETAILED: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=36, p25=20 p50=20 p75=20
+    (60.0, 25.0),  // n=36, p25=20 p50=25 p75=40
+    (75.0, 70.0),  // n=36, p25=60 p50=70 p75=75
+    (80.0, 80.0),  // n=36, p25=75 p50=80 p75=85
+    (85.0, 90.0),  // n=36, p25=90 p50=90 p75=95
+    (90.0, 100.0),  // n=36, p25=95 p50=100 p75=100
+    (95.0, 100.0),  // n=36, p25=100 p50=100 p75=100
+];
+
+// PhotoFlat (n=13)
+const PHOTOFLAT: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=13, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=13, p25=20 p50=20 p75=20
+    (75.0, 60.0),  // n=13, p25=45 p50=60 p75=65
+    (80.0, 75.0),  // n=13, p25=65 p50=75 p75=80
+    (85.0, 90.0),  // n=13, p25=85 p50=90 p75=95
+    (90.0, 100.0),  // n=13, p25=95 p50=100 p75=100
+    (95.0, 100.0),  // n=13, p25=100 p50=100 p75=100
+];
+
+// Illustration (n=1)
+const ILLUSTRATION: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=1, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=1, p25=20 p50=20 p75=20
+    (75.0, 40.0),  // n=1, p25=40 p50=40 p75=40
+    (80.0, 65.0),  // n=1, p25=65 p50=65 p75=65
+    (85.0, 85.0),  // n=1, p25=85 p50=85 p75=85
+    (90.0, 100.0),  // n=1, p25=100 p50=100 p75=100
+    (95.0, 100.0),  // n=1, p25=100 p50=100 p75=100
+];
+
+// ScreenContent (n=19)
+const SCREENCONTENT: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=19, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=19, p25=20 p50=20 p75=20
+    (75.0, 45.0),  // n=19, p25=40 p50=45 p75=60
+    (80.0, 70.0),  // n=19, p25=65 p50=70 p75=75
+    (85.0, 85.0),  // n=19, p25=85 p50=85 p75=90
+    (90.0, 95.0),  // n=19, p25=95 p50=95 p75=100
+    (95.0, 100.0),  // n=19, p25=100 p50=100 p75=100
+];
+

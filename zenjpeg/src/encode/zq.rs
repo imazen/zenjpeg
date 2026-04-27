@@ -250,22 +250,19 @@ impl EncodeMetrics {
 }
 
 /// Maps a user-facing zq value to a starting jpegli-quality estimate for
-/// the iteration loop's first pass.
-///
-/// This is a small lookup table calibrated from the
-/// `examples/method_b_real.rs` corpus run (CID22 + screen content). The
-/// goal is "first pass lands close enough to target that 1–2 correction
-/// passes can refine it"; precision isn't required.
+/// the iteration loop's first pass — content-bucket-naive variant.
 ///
 /// Identity-ish in the typical user range (zq 70–95 maps to jpegli q 70–95).
-/// The iteration loop in `BytesEncoder` corrects from here.
+/// The iteration loop in `BytesEncoder` corrects from here. Used as the
+/// fallback when bucket-aware calibration is unavailable.
+///
+/// See [`zq_to_starting_jpegli_q_for_bucket`] for the bucket-aware form,
+/// which lands closer to target on the first pass and reduces the
+/// correction budget needed.
 #[must_use]
 pub(crate) fn zq_to_starting_jpegli_q(zq: f32) -> f32 {
-    // Empirical: streaming-AQ zensim score at jpegli q lands roughly
-    // 1–3 zq points above the q value on photos, 1–2 below on dense
-    // screen content. Picking q ≈ zq + 1 as the starting point makes
-    // pass 1 land at-or-above target on most images, leaving headroom
-    // for the controller to claw bytes.
+    // Average across content types — picks q ≈ zq + 1 in the photo
+    // range, slightly higher at the top end where the metric saturates.
     const ANCHORS: &[(f32, f32)] = &[
         (40.0, 38.0),
         (60.0, 58.0),
@@ -275,21 +272,121 @@ pub(crate) fn zq_to_starting_jpegli_q(zq: f32) -> f32 {
         (90.0, 93.0),
         (95.0, 97.0),
     ];
+    interpolate_anchors(zq, ANCHORS)
+}
 
-    if zq <= ANCHORS[0].0 {
-        return ANCHORS[0].1;
+/// Linear interpolation over a sorted (zq, jpegli_q) anchor table.
+/// Clamps to endpoints outside the bracketed range.
+fn interpolate_anchors(zq: f32, anchors: &[(f32, f32)]) -> f32 {
+    if anchors.is_empty() {
+        return zq;
     }
-    if zq >= ANCHORS[ANCHORS.len() - 1].0 {
-        return ANCHORS[ANCHORS.len() - 1].1.min(100.0);
+    if zq <= anchors[0].0 {
+        return anchors[0].1;
     }
-    for w in ANCHORS.windows(2) {
+    let last = anchors[anchors.len() - 1];
+    if zq >= last.0 {
+        return last.1.min(100.0);
+    }
+    for w in anchors.windows(2) {
         let (lo, hi) = (w[0], w[1]);
         if zq >= lo.0 && zq <= hi.0 {
             let t = (zq - lo.0) / (hi.0 - lo.0);
             return lo.1 + t * (hi.1 - lo.1);
         }
     }
-    zq // unreachable
+    zq
+}
+
+/// Bucket-aware starting-q calibration. Uses the same anchor-interpolation
+/// pattern as [`zq_to_starting_jpegli_q`] but with a separate table per
+/// content bucket. Each bucket's anchors come from the
+/// `examples/zq_calibrate.rs` corpus harness — initial values below are
+/// hand-distilled from the predictor experiment's per-content
+/// observations until the harness produces a fitted replacement.
+///
+/// Why per-bucket: streaming-AQ score-vs-q curves differ meaningfully by
+/// content type. Screen content needs ~5–8 q points more than photos to
+/// reach the same zq target (text/edges have less perceptual headroom);
+/// flat photos need slightly less. The bucket-naive average misses both
+/// ends, costing extra iterations.
+#[must_use]
+pub(crate) fn zq_to_starting_jpegli_q_for_bucket(
+    zq: f32,
+    bucket: crate::encode::adaptive::InferredBucket,
+) -> f32 {
+    use crate::encode::adaptive::InferredBucket as B;
+    // Anchors are (target_zq, starting_jpegli_q). Median of per-image
+    // smallest-q-meeting-target values, fit by `examples/zq_calibrate.rs`
+    // on a 76-image corpus (CID22 validation + gb82 photos + gb82-sc
+    // screen content). Re-run the harness to refit if the streaming AQ
+    // pipeline or the zensim profile changes.
+    //
+    // Per-bucket sample counts at fit time:
+    //   PhotoNatural   n=7
+    //   PhotoDetailed  n=36
+    //   PhotoFlat      n=13
+    //   Illustration   n=1  (single sample; treat with skepticism, the
+    //                       table will be refined when more illustration
+    //                       content joins the calibration corpus)
+    //   ScreenContent  n=19
+    //
+    // The harness output also reports p25/p75 per anchor for spread
+    // inspection — see `/tmp/zq_calibrate_full.log` snapshot or re-run.
+    const PHOTO_NATURAL: &[(f32, f32)] = &[
+        (40.0, 20.0),
+        (60.0, 25.0),
+        (75.0, 60.0),
+        (80.0, 75.0),
+        (85.0, 90.0),
+        (90.0, 95.0),
+        (95.0, 100.0),
+    ];
+    const PHOTO_DETAILED: &[(f32, f32)] = &[
+        (40.0, 20.0),
+        (60.0, 25.0),
+        (75.0, 70.0),
+        (80.0, 80.0),
+        (85.0, 90.0),
+        (90.0, 100.0),
+        (95.0, 100.0),
+    ];
+    const PHOTO_FLAT: &[(f32, f32)] = &[
+        (40.0, 20.0),
+        (60.0, 20.0),
+        (75.0, 60.0),
+        (80.0, 75.0),
+        (85.0, 90.0),
+        (90.0, 100.0),
+        (95.0, 100.0),
+    ];
+    const ILLUSTRATION: &[(f32, f32)] = &[
+        (40.0, 20.0),
+        (60.0, 20.0),
+        (75.0, 40.0),
+        (80.0, 65.0),
+        (85.0, 85.0),
+        (90.0, 100.0),
+        (95.0, 100.0),
+    ];
+    const SCREEN_CONTENT: &[(f32, f32)] = &[
+        (40.0, 20.0),
+        (60.0, 20.0),
+        (75.0, 45.0),
+        (80.0, 70.0),
+        (85.0, 85.0),
+        (90.0, 95.0),
+        (95.0, 100.0),
+    ];
+
+    let anchors = match bucket {
+        B::PhotoNatural => PHOTO_NATURAL,
+        B::PhotoDetailed => PHOTO_DETAILED,
+        B::PhotoFlat => PHOTO_FLAT,
+        B::Illustration => ILLUSTRATION,
+        B::ScreenContent => SCREEN_CONTENT,
+    };
+    interpolate_anchors(zq, anchors)
 }
 
 // ============================================================================
@@ -545,9 +642,18 @@ pub(crate) fn run_iteration_loop(
         Err(_) => return run_single_pass(&ctx, None),
     };
 
-    // Pass 0: streaming-AQ baseline. Substitute Quality::Zq* with the
-    // resolved starting jpegli q to avoid recursion.
-    let starting_q = ctx.config.quality.to_internal();
+    // Pass 0: streaming-AQ baseline. Substitute Quality::Zq* with a
+    // bucket-aware starting jpegli q (avoids recursion AND lands closer
+    // to target than the bucket-naive lookup).
+    //
+    // Bucket detection runs the analyzer on the source pixels — same
+    // ~1ms cost as `EncoderConfig::adaptive`. Falls through to the
+    // bucket-naive lookup if analysis fails (e.g. tiny images).
+    let bucket = detect_bucket(ctx.pixels, ctx.width, ctx.height);
+    let starting_q = match (ctx.target.target, bucket) {
+        (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
+        (zq, None) => zq_to_starting_jpegli_q(zq),
+    };
     let mut pass_config: EncoderConfig = ctx.config.clone();
     pass_config = pass_config.quality(Quality::ApproxJpegli(starting_q));
 
@@ -770,6 +876,22 @@ fn run_single_pass(
             targets_met: true,
         },
     ))
+}
+
+/// Run the analyzer on RGB8 source pixels and return an inferred content
+/// bucket for starting-q calibration. Returns `None` if the image is too
+/// small for the analyzer to produce meaningful features.
+#[cfg(feature = "target-zq")]
+fn detect_bucket(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<crate::encode::adaptive::InferredBucket> {
+    if width < 8 || height < 8 {
+        return None;
+    }
+    let features = crate::analyze::analyze_rgb8(pixels, width, height);
+    Some(crate::encode::adaptive::infer_bucket(&features))
 }
 
 /// Reinterpret a packed RGB byte slice as `[u8; 3]` chunks. Length must

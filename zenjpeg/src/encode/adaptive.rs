@@ -334,9 +334,11 @@ impl AdaptiveMetric {
 
 /// Coarse content classification distilled from analyzer features —
 /// matches the oracle's 5-bucket taxonomy as closely as the analyzer
-/// signals allow. Internal only; not part of the public surface.
+/// signals allow. Internal only (not part of the public surface) but
+/// `pub(crate)` so target-zq calibration in `super::zq` can route the
+/// per-bucket starting-q lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InferredBucket {
+pub(crate) enum InferredBucket {
     PhotoNatural,
     PhotoDetailed,
     PhotoFlat,
@@ -344,7 +346,7 @@ enum InferredBucket {
     ScreenContent,
 }
 
-fn infer_bucket(r: &AnalysisResults) -> InferredBucket {
+pub(crate) fn infer_bucket(r: &AnalysisResults) -> InferredBucket {
     // CALIBRATION-PENDING (2026-04-27, zenanalyze 0.1.x):
     // The peak (`cb_peak_sharpness > 5.0`, `cr_peak_sharpness > 8.0`)
     // and high-freq (`high_freq_energy_ratio > 0.30`) cutoffs below
