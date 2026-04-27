@@ -18,9 +18,9 @@ use super::feature::RawAnalysis;
 use super::row_stream::RowStream;
 use archmage::{incant, magetypes};
 
-const KR: f32 = 0.299;
-const KG: f32 = 0.587;
-const KB: f32 = 0.114;
+// Luma weights are no longer constants — they're picked per-source-
+// primaries by `crate::luma::LumaWeights::for_primaries(...)` and
+// threaded into the SIMD kernels as `kr / kg / kb` parameters.
 const EDGE_THRESH_SQ: f32 = 400.0; // (|∇L| > 20)²
 
 /// Stripe height. Matches the 8×8 block size used for uniformity so
@@ -95,6 +95,13 @@ pub fn extract_tier1_into(out: &mut RawAnalysis, stream: &mut RowStream<'_>, pix
         return;
     }
 
+    // Per-primaries luma weights — wide-gamut u8 sources go through
+    // RowStream's Native zero-copy path with their bytes intact, so
+    // the analyzer must use the right matrix for those bytes (BT.2020
+    // for Rec.2020 sources, etc.) rather than the BT.601 sRGB
+    // baseline. See `crate::luma::LumaWeights::for_primaries`.
+    let weights = crate::luma::LumaWeights::for_primaries(stream.primaries());
+
     let stripe_step = compute_stripe_step(w, h, pixel_budget);
     let row_bytes = w * 3;
     let blocks_x = w / STRIPE_H;
@@ -120,7 +127,7 @@ pub fn extract_tier1_into(out: &mut RawAnalysis, stream: &mut RowStream<'_>, pix
     // Stripe scratch holds 9 rows (the 8-row stripe + the lookahead
     // row for vertical gradient at the last interior row of the
     // stripe). Allocated once, reused across every active stripe.
-    // 9 × max_width × 3 = ~108 KB at 4K width.
+    // 9 × max_width × 3 = ~108 kb at 4K width.
     let stripe_rows = STRIPE_H + 1;
     let mut stripe_buf = vec![0u8; stripe_rows * row_bytes];
 
@@ -171,7 +178,7 @@ pub fn extract_tier1_into(out: &mut RawAnalysis, stream: &mut RowStream<'_>, pix
                 None
             };
 
-            accumulate_row_dispatch(&stripe_buf, row_off, next_row_off, w, &mut stats);
+            accumulate_row_dispatch(&stripe_buf, row_off, next_row_off, w, &weights, &mut stats);
 
             // Laplacian: 3-row window. Skip the topmost row of the
             // image (no `prev_row` available) and the bottom row of
@@ -191,7 +198,7 @@ pub fn extract_tier1_into(out: &mut RawAnalysis, stream: &mut RowStream<'_>, pix
                     let prev_row = &stripe_buf[prev_off..prev_off + row_bytes];
                     let cur_row = &stripe_buf[cur_off..cur_off + row_bytes];
                     let nxt_row = &stripe_buf[nxt_off..nxt_off + row_bytes];
-                    accumulate_laplacian_dispatch(prev_row, cur_row, nxt_row, w, &mut stats);
+                    accumulate_laplacian_dispatch(prev_row, cur_row, nxt_row, w, &weights, &mut stats);
                 }
             }
 
@@ -471,9 +478,21 @@ fn accumulate_row_dispatch(
     row_off: usize,
     next_row_off: Option<usize>,
     width: usize,
+    weights: &crate::luma::LumaWeights,
     stats: &mut PixelStats,
 ) {
-    let row_stats = incant!(accumulate_row_simd(rgb, row_off, next_row_off, width));
+    let kr = weights.kr;
+    let kg = weights.kg;
+    let kb = weights.kb;
+    let row_stats = incant!(accumulate_row_simd(
+        rgb,
+        row_off,
+        next_row_off,
+        width,
+        kr,
+        kg,
+        kb
+    ));
     stats.merge(&row_stats);
 }
 
@@ -637,6 +656,9 @@ fn accumulate_row_simd(
     row_off: usize,
     next_row_off: Option<usize>,
     width: usize,
+    kr: f32,
+    kg: f32,
+    kb: f32,
 ) -> PixelStats {
     // Outer f64 accumulators — only touched during the periodic flush.
     let mut luma_sum: f64 = 0.0;
@@ -655,9 +677,9 @@ fn accumulate_row_simd(
     let next_row = next_row_off.map(|nr| &rgb[nr..nr + width * 3]);
 
     // ---- f32x8 stats pass: 8 pixels (24 bytes) per chunk ----
-    let kr_v = f32x8::splat(token, KR);
-    let kg_v = f32x8::splat(token, KG);
-    let kb_v = f32x8::splat(token, KB);
+    let kr_v = f32x8::splat(token, kr);
+    let kg_v = f32x8::splat(token, kg);
+    let kb_v = f32x8::splat(token, kb);
     let inv_255_v = f32x8::splat(token, 1.0 / 255.0);
     let half_v = f32x8::splat(token, 0.5);
 
@@ -754,7 +776,7 @@ fn accumulate_row_simd(
         let r = px[0] as f32;
         let g = px[1] as f32;
         let b = px[2] as f32;
-        let l = KR * r + KG * g + KB * b;
+        let l = kr * r + kg * g + kb * b;
         luma_sum += l as f64;
         luma_sq_sum += (l * l) as f64;
         let cb = (b - l) * (1.0 / 255.0);
@@ -796,11 +818,11 @@ fn accumulate_row_simd(
                 let cr_ = c[i * 3] as f32;
                 let cg_ = c[i * 3 + 1] as f32;
                 let cb_ = c[i * 3 + 2] as f32;
-                let l = KR * cr_ + KG * cg_ + KB * cb_;
+                let l = kr * cr_ + kg * cg_ + kb * cb_;
                 let rr_ = r_chunk[i * 3] as f32;
                 let rg_ = r_chunk[i * 3 + 1] as f32;
                 let rb_ = r_chunk[i * 3 + 2] as f32;
-                let lr = KR * rr_ + KG * rg_ + KB * rb_;
+                let lr = kr * rr_ + kg * rg_ + kb * rb_;
                 let gx = lr - l;
                 let mut grad_sq = gx * gx;
 
@@ -813,9 +835,9 @@ fn accumulate_row_simd(
                 chroma_grad_count += 1;
 
                 if has_next {
-                    let ld = KR * d_chunk[i * 3] as f32
-                        + KG * d_chunk[i * 3 + 1] as f32
-                        + KB * d_chunk[i * 3 + 2] as f32;
+                    let ld = kr * d_chunk[i * 3] as f32
+                        + kg * d_chunk[i * 3 + 1] as f32
+                        + kb * d_chunk[i * 3 + 2] as f32;
                     grad_sq += (ld - l) * (ld - l);
                 }
                 if grad_sq > EDGE_THRESH_SQ {
@@ -828,15 +850,15 @@ fn accumulate_row_simd(
         let processed = (width - 1) / 8 * 8;
         for x in processed..width - 1 {
             let off = row_off + x * 3;
-            let l = KR * rgb[off] as f32 + KG * rgb[off + 1] as f32 + KB * rgb[off + 2] as f32;
+            let l = kr * rgb[off] as f32 + kg * rgb[off + 1] as f32 + kb * rgb[off + 2] as f32;
             let roff = row_off + (x + 1) * 3;
-            let lr = KR * rgb[roff] as f32 + KG * rgb[roff + 1] as f32 + KB * rgb[roff + 2] as f32;
+            let lr = kr * rgb[roff] as f32 + kg * rgb[roff + 1] as f32 + kb * rgb[roff + 2] as f32;
             let gx = lr - l;
             let mut grad_sq = gx * gx;
             if has_next {
                 let doff = next_row_off.unwrap() + x * 3;
                 let ld =
-                    KR * rgb[doff] as f32 + KG * rgb[doff + 1] as f32 + KB * rgb[doff + 2] as f32;
+                    kr * rgb[doff] as f32 + kg * rgb[doff + 1] as f32 + kb * rgb[doff + 2] as f32;
                 grad_sq += (ld - l) * (ld - l);
             }
             if grad_sq > EDGE_THRESH_SQ {
@@ -883,6 +905,9 @@ fn accumulate_laplacian_simd(
     cur_row: &[u8],
     next_row: &[u8],
     width: usize,
+    kr: f32,
+    kg: f32,
+    kb: f32,
 ) -> (f64, f64, u64) {
     if width < 3 {
         return (0.0, 0.0, 0);
@@ -892,14 +917,14 @@ fn accumulate_laplacian_simd(
     let mut next_l = vec![0.0f32; width];
     for x in 0..width {
         let off = x * 3;
-        prev_l[x] = KR * prev_row[off] as f32
-            + KG * prev_row[off + 1] as f32
-            + KB * prev_row[off + 2] as f32;
+        prev_l[x] = kr * prev_row[off] as f32
+            + kg * prev_row[off + 1] as f32
+            + kb * prev_row[off + 2] as f32;
         cur_l[x] =
-            KR * cur_row[off] as f32 + KG * cur_row[off + 1] as f32 + KB * cur_row[off + 2] as f32;
-        next_l[x] = KR * next_row[off] as f32
-            + KG * next_row[off + 1] as f32
-            + KB * next_row[off + 2] as f32;
+            kr * cur_row[off] as f32 + kg * cur_row[off + 1] as f32 + kb * cur_row[off + 2] as f32;
+        next_l[x] = kr * next_row[off] as f32
+            + kg * next_row[off + 1] as f32
+            + kb * next_row[off + 2] as f32;
     }
 
     // Stencil over interior columns 1..width-1. Process 8 pixels per
@@ -962,10 +987,14 @@ fn accumulate_laplacian_dispatch(
     cur_row: &[u8],
     next_row: &[u8],
     width: usize,
+    weights: &crate::luma::LumaWeights,
     stats: &mut PixelStats,
 ) {
+    let kr = weights.kr;
+    let kg = weights.kg;
+    let kb = weights.kb;
     let (s, sq, n) = incant!(accumulate_laplacian_simd(
-        prev_row, cur_row, next_row, width
+        prev_row, cur_row, next_row, width, kr, kg, kb
     ));
     stats.laplacian_sum += s;
     stats.laplacian_sq_sum += sq;

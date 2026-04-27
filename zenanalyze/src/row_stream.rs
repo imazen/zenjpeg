@@ -34,6 +34,10 @@ pub struct RowStream<'a> {
     inner: Inner<'a>,
     width: u32,
     height: u32,
+    /// Source primaries — captured at construction so per-primaries
+    /// luma weights / chroma matrices can be looked up by tier code
+    /// without holding a back-reference to the slice.
+    primaries: zenpixels::ColorPrimaries,
     /// Row-of-RGB8 scratch reused across `fetch_into` and `borrow_row`.
     scratch: Vec<u8>,
 }
@@ -115,8 +119,18 @@ impl<'a> RowStream<'a> {
             inner,
             width,
             height,
+            primaries: desc.primaries,
             scratch: vec![0u8; scratch_len],
         })
+    }
+
+    /// Source primaries — the analyzer tiers look this up to pick the
+    /// right luma weights for a u8 RGB byte stream that's still in
+    /// the source's primaries (Native zero-copy path) without
+    /// converting. See [`crate::luma::LumaWeights::for_primaries`].
+    #[inline]
+    pub fn primaries(&self) -> zenpixels::ColorPrimaries {
+        self.primaries
     }
 
     #[inline]

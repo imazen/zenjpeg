@@ -183,16 +183,30 @@ answers. (Verified by garb's exact-identity narrowing
 `(u16 * 255 + 32768) >> 16` for `u16 = u8 * 257`.)
 
 **Wide gamut adapts the values, not the API.** RGB8 with Display P3 / Rec.2020
-/ AdobeRGB primaries passes through the zero-copy `Native` row path. The
-BT.601 luma weights produce slightly different numbers vs sRGB content — that
-is the principled outcome, since wide-gamut content is more saturated, chroma
-signals legitimately read higher.
+/ AdobeRGB primaries passes through the zero-copy `Native` row path with its
+bytes intact. The standard tiers pick the **right luma matrix per source
+primaries**: BT.601 weights for sRGB / BT.709 (preserving the trained-threshold
+baseline — coefficient's existing thresholds were calibrated against this
+matrix on sRGB content), BT.2020 weights for Rec.2020 sources, the Y row of
+each primary set's RGB→XYZ matrix for Display P3 / AdobeRGB. Fixed-point
+integer-luma scales are normalised to the same sum-220 libwebp baseline so a
+pure-white pixel hits the same histogram bin regardless of source primaries —
+what differs is the per-channel weight that lands it there. No conversion, no
+clipping, just the right matrix. See `src/luma.rs`.
 
-**HDR f32 / linear inputs** are handled by the dedicated `tier_depth` pass,
-which reads source samples directly via `PixelSlice::row` (bypassing
-`RowConverter` entirely) and decodes through the descriptor's transfer
-function — sRGB / BT.709 / Gamma2.2 / Linear / PQ / HLG — to linear nits. The
-reference convention is stable across 0.1.x:
+**HDR f32 / linear inputs.** Standard tiers see what an SDR display would
+show — `RowConverter` clips out-of-[0, 1] linear values, applies the sRGB
+OETF, and narrows to u8. That's the legitimate input for SDR-calibrated
+thresholds; tonemapping a 4 000-nit highlight into a visible mid-tone
+before measuring "high-frequency-energy ratio" would just lie about what's
+there. The above-clip signal lives in `tier_depth`, which reads the source
+samples directly via `PixelSlice::row` (bypassing `RowConverter` entirely)
+and decodes through the descriptor's transfer function — sRGB / BT.709 /
+Gamma 2.2 / Linear / PQ / HLG — to linear nits. Two views of the same
+source: the SDR-display view for trained thresholds, the source-direct view
+for HDR / wide-gamut signal.
+
+The `tier_depth` reference convention is stable across 0.1.x:
 
 | Transfer | Linear 1.0 maps to | Convention |
 |---|---|---|

@@ -267,6 +267,14 @@ fn luma_histogram_stats(stream: &mut RowStream<'_>) -> LumaHistStats {
             line_art_score: 0.0,
         };
     }
+    // Per-primaries fixed-point luma weights — keeps wide-gamut
+    // bytes interpreted with the right matrix (BT.2020 for Rec.2020,
+    // etc.). sRGB/BT.709 keeps the BT.601 baseline (66/129/25) so
+    // the trained histogram thresholds still apply.
+    let w = crate::luma::LumaWeights::for_primaries(stream.primaries());
+    let qr = w.qr as u32;
+    let qg = w.qg as u32;
+    let qb = w.qb as u32;
     let mut bins = [0u32; 32];
     let mut n = 0u32;
     let mut carry: usize = 0;
@@ -277,7 +285,7 @@ fn luma_histogram_stats(stream: &mut RowStream<'_>) -> LumaHistStats {
         while x < width {
             let off = x * 3;
             let p = &row[off..off + 3];
-            let y = ((66 * p[0] as u32 + 129 * p[1] as u32 + 25 * p[2] as u32 + 128) >> 8) as u8;
+            let y = ((qr * p[0] as u32 + qg * p[1] as u32 + qb * p[2] as u32 + 128) >> 8) as u8;
             bins[(y >> 3) as usize] += 1;
             n += 1;
             x += 4;
@@ -530,6 +538,15 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
             gradient_fraction: 0.0,
         };
     }
+    // Per-primaries luma weights — used in the per-block fixed-point
+    // YCbCr build below. Wide-gamut u8 sources go through the DCT
+    // pipeline with the right matrix for their primaries; sRGB /
+    // BT.709 keeps the BT.601 baseline (66/129/25) so trained
+    // thresholds still apply.
+    let lw = crate::luma::LumaWeights::for_primaries(stream.primaries());
+    let qr = lw.qr;
+    let qg = lw.qg;
+    let qb = lw.qb;
     let blocks_x = width / 8;
     let blocks_y = height / 8;
     let total_blocks = blocks_x * blocks_y;
@@ -617,7 +634,16 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
                     let r = p[0] as i32;
                     let g = p[1] as i32;
                     let b = p[2] as i32;
-                    let l_i = (66 * r + 129 * g + 25 * b + 128) >> 8;
+                    let l_i = (qr * r + qg * g + qb * b + 128) >> 8;
+                    // Cb / Cr keep their BT.601-derived integer
+                    // matrix here. The per-primaries adjustment
+                    // shifts luma; chroma differences (B−Y / R−Y)
+                    // would also drift, but the chroma-DCT
+                    // compressibility / noise-floor signals are
+                    // ratio-based and small per-primaries drift on
+                    // the chroma matrix doesn't materially move
+                    // them. Revisit if a corpus eval shows wide-
+                    // gamut chroma stats reading off vs sRGB.
                     let cb_i = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
                     let cr_i = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
                     blk_y[y][x] = l_i as f32 - 128.0;

@@ -130,6 +130,7 @@
 
 mod alpha;
 pub mod feature;
+pub(crate) mod luma;
 mod palette;
 pub(crate) mod row_stream;
 pub(crate) mod tier1;

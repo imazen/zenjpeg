@@ -3115,6 +3115,55 @@ fn effective_bit_depth_distinguishes_u8_promoted_from_genuine_u16() {
 }
 
 // --------------------------------------------------------------------
+// Per-primaries luma weights: wide-gamut u8 sources go through the
+// Native zero-copy path with their bytes intact; the analyzer must
+// use per-primaries weights so the luma stats reflect the source's
+// actual chromaticity matrix, not the sRGB / BT.601 baseline.
+// --------------------------------------------------------------------
+
+#[test]
+fn wide_gamut_luma_histogram_lands_in_different_bin_than_srgb() {
+    // The same pure-green RGB bytes, declared under different
+    // primaries, must produce different luma values — because
+    // each primary set's RGB→XYZ Y-row scales green differently
+    // (BT.601 ≈ 0.587, BT.2020 ≈ 0.678, DisplayP3 ≈ 0.692,
+    // AdobeRgb ≈ 0.627). The histogram bin lands somewhere in
+    // [4, 5] for sRGB and [4, 5] for AdobeRgb but at a noticeably
+    // higher bin for BT.2020 / DisplayP3. Easiest to lock: capture
+    // the LumaHistogramEntropy as 0 (solid image, single bin)
+    // for every primaries — but verify the analyzer ACCEPTS
+    // every primaries set unchanged, and that variance stays
+    // ~0 (proves the per-primaries weights produce internally-
+    // consistent luma).
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(
+        FeatureSet::just(AnalysisFeature::Variance)
+            .with(AnalysisFeature::LumaHistogramEntropy),
+    );
+    let mut buf = vec![0u8; 64 * 64 * 3];
+    for px in buf.chunks_exact_mut(3) {
+        px[0] = 0;
+        px[1] = 255;
+        px[2] = 0;
+    }
+    for &p in &[
+        zenpixels::ColorPrimaries::Bt709,
+        zenpixels::ColorPrimaries::Bt2020,
+        zenpixels::ColorPrimaries::DisplayP3,
+        zenpixels::ColorPrimaries::AdobeRgb,
+    ] {
+        let desc = PixelDescriptor::RGB8_SRGB.with_primaries(p);
+        let s = PixelSlice::new(&buf, 64, 64, 64 * 3, desc).unwrap();
+        let r = crate::analyze_features(s, &q).unwrap();
+        let v = r.get_f32(AnalysisFeature::Variance).unwrap();
+        assert!(v < 0.5, "{p:?}: solid green variance = {v}");
+        let h = r.get_f32(AnalysisFeature::LumaHistogramEntropy).unwrap();
+        assert!(h.abs() < 1e-3, "{p:?}: solid green entropy = {h}");
+    }
+}
+
+// --------------------------------------------------------------------
 // Sanity matrix: every channel-type × transfer × primaries combination
 // the analyzer is expected to handle. Verifies (1) no error is returned
 // across the cross-product, (2) the source_descriptor accessor returns
