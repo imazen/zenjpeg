@@ -74,6 +74,9 @@ jobs:
       - name: Test (no defaults, decoder only)
         run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
 
+      - name: Test zenanalyze
+        run: cargo test -p zenanalyze --release --lib --tests
+
   i686:
     name: Test (i686)
     runs-on: ubuntu-latest
@@ -126,6 +129,9 @@ jobs:
             --skip codec_corpus_conformance::test_image_rs_progressive
         env:
           CODEC_CORPUS_CACHE: /tmp/codec-corpus
+
+      - name: Test zenanalyze (i686)
+        run: cross test -p zenanalyze --target i686-unknown-linux-gnu --lib --tests
 
   wasm32:
     name: Build (wasm32-wasip1)
@@ -180,6 +186,14 @@ jobs:
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
         run: cargo build --release -p zenjpeg --target wasm32-wasip1 --example wasm_bench --no-default-features --features decoder
+
+      - name: Build zenanalyze (wasm32-wasip1, scalar)
+        run: cargo build -p zenanalyze --target wasm32-wasip1
+
+      - name: Build zenanalyze (wasm32-wasip1, SIMD128)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo build -p zenanalyze --target wasm32-wasip1
 
   cpp-parity:
     name: C++ Parity (${{ matrix.os }})

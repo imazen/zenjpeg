@@ -40,7 +40,33 @@
 //! permission — its ICC-profile overhead (~2 KB) becomes a meaningful
 //! fraction of the file at thumbnail sizes.
 
-use crate::analyze::{AnalyzerOutput, analyze};
+use crate::analyze::{
+    AnalysisFeature, AnalysisQuery, AnalysisResults, FeatureSet, analyze_features,
+};
+
+/// Features the adaptive selector consults. Compose other codecs'
+/// preset `FeatureSet`s with this via `FeatureSet::union` if
+/// orchestrating multi-codec analysis from one pass.
+const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
+    .with(AnalysisFeature::ChromaComplexity)
+    .with(AnalysisFeature::CbPeakSharpness)
+    .with(AnalysisFeature::CrPeakSharpness)
+    .with(AnalysisFeature::Uniformity)
+    .with(AnalysisFeature::FlatColorBlockRatio)
+    .with(AnalysisFeature::EdgeDensity)
+    .with(AnalysisFeature::HighFreqEnergyRatio)
+    .with(AnalysisFeature::TextLikelihood)
+    .with(AnalysisFeature::ScreenContentLikelihood)
+    .with(AnalysisFeature::NaturalLikelihood);
+
+/// Tiny accessor: read an f32 feature out of [`AnalysisResults`],
+/// defaulting to 0.0 when missing. The adaptive selector treats
+/// "feature absent" as "no signal" — the legacy `AnalyzerOutput`'s
+/// per-field `f32::default() == 0.0` had the same semantic.
+#[inline]
+fn f(r: &AnalysisResults, feature: AnalysisFeature) -> f32 {
+    r.get_f32(feature).unwrap_or(0.0)
+}
 use crate::encode::encoder_config::EncoderConfig;
 use crate::encode::encoder_types::{
     ChromaSubsampling, Effort, ProgressiveScanMode, Quality, XybSubsampling,
@@ -275,7 +301,8 @@ impl EncoderConfig {
     ) -> Result<Self, String> {
         let quality = quality.into();
         let metric = AdaptiveMetric::from_quality(&quality);
-        let features = analyze(image)?;
+        let features = analyze_features(image, &AnalysisQuery::new(ADAPTIVE_FEATURES))
+            .map_err(|e| e.to_string())?;
         Ok(adaptive_internal(&features, quality, metric, options))
     }
 }
@@ -312,30 +339,46 @@ enum InferredBucket {
     ScreenContent,
 }
 
-fn infer_bucket(f: &AnalyzerOutput) -> InferredBucket {
+fn infer_bucket(r: &AnalysisResults) -> InferredBucket {
+    // CALIBRATION-PENDING (2026-04-27, zenanalyze 0.1.x):
+    // The peak (`cb_peak_sharpness > 5.0`, `cr_peak_sharpness > 8.0`)
+    // and high-freq (`high_freq_energy_ratio > 0.30`) cutoffs below
+    // were hand-derived against zenanalyze 0.1.0 outputs which had
+    // three numeric bugs (asymmetric Cb/Cr halving, odd-width
+    // edge-column drop, trailing-fragment drop, raster-order high-freq
+    // split). Those bugs are now fixed; the analyzer outputs have
+    // shifted somewhat. The thresholds here may want re-derivation
+    // against a corpus sweep before the next adaptive-quality
+    // recalibration pass — none of the bucket choices are catastrophic
+    // either way (PhotoDetailed and PhotoNatural both ship sensible
+    // configs), but a fresh sweep should tighten the boundary.
+    //
     // Strong synthetic signals win first (text/screen content have
     // very distinctive feature signatures).
-    if f.text_likelihood > 0.55 {
+    if f(r, AnalysisFeature::TextLikelihood) > 0.55 {
         // Text + low chroma + sharp edges → screen content / document.
         // The oracle's 'ScreenContent' bucket dominates at q ≥ 25 and
         // wants XYB+4:4:4; 'Illustration' is similar but with more
         // chroma. Differentiate by chroma signal strength.
-        if f.chroma_complexity > 0.04 || f.cb_peak_sharpness > 5.0 {
+        if f(r, AnalysisFeature::ChromaComplexity) > 0.04
+            || f(r, AnalysisFeature::CbPeakSharpness) > 5.0
+        {
             return InferredBucket::Illustration;
         }
         return InferredBucket::ScreenContent;
     }
-    if f.screen_content_likelihood > 0.5 {
+    if f(r, AnalysisFeature::ScreenContentLikelihood) > 0.5 {
         return InferredBucket::ScreenContent;
     }
     // Photo-class: differentiate by content density.
-    if f.uniformity > 0.55 || f.flat_color_block_ratio > 0.25 {
+    if f(r, AnalysisFeature::Uniformity) > 0.55 || f(r, AnalysisFeature::FlatColorBlockRatio) > 0.25
+    {
         return InferredBucket::PhotoFlat;
     }
-    if f.high_freq_energy_ratio > 0.30
-        || f.edge_density > 0.18
-        || f.cb_peak_sharpness > 8.0
-        || f.cr_peak_sharpness > 8.0
+    if f(r, AnalysisFeature::HighFreqEnergyRatio) > 0.30
+        || f(r, AnalysisFeature::EdgeDensity) > 0.18
+        || f(r, AnalysisFeature::CbPeakSharpness) > 8.0
+        || f(r, AnalysisFeature::CrPeakSharpness) > 8.0
     {
         return InferredBucket::PhotoDetailed;
     }
@@ -384,7 +427,7 @@ fn q_bin(q: f32) -> QBin {
 /// Pareto frontier, while staying readable + auditable. Switches to
 /// the codegen-emitted decision tree when `gen_adaptive.py` lands.
 fn adaptive_internal(
-    features: &AnalyzerOutput,
+    features: &AnalysisResults,
     quality: Quality,
     metric: AdaptiveMetric,
     options: AdaptiveOptions,
@@ -399,8 +442,9 @@ fn adaptive_internal(
     // ---- Apply caller constraints ----
     // XYB has decoder-compat + image-size gates layered on top of
     // the oracle pick. Image-size gate is image-dependent (megapixels);
-    // permission gate is caller-dependent.
-    let xyb_allowed = options.allow_xyb && features.megapixels >= 0.25;
+    // permission gate is caller-dependent. Megapixels lives on the
+    // results' geometry, not on the feature set.
+    let xyb_allowed = options.allow_xyb && features.geometry().megapixels() >= 0.25;
     let use_xyb = pick.use_xyb && xyb_allowed;
 
     // Slow features (hybrid lambda, full trellis) are only used when
@@ -453,7 +497,7 @@ fn adaptive_internal(
         let sharp_yuv = matches!(
             bucket,
             InferredBucket::PhotoNatural | InferredBucket::PhotoDetailed
-        ) && features.natural_likelihood > 0.5;
+        ) && f(features, AnalysisFeature::NaturalLikelihood) > 0.5;
         cfg = cfg.sharp_yuv(sharp_yuv);
     }
 

@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EncoderConfig::force_restart_markers(bool)` opt-in to emit RST markers in
   progressive mode. Default off — progressive suppresses RST markers because
   they provide no benefit and cost ~10% in overhead (066a9206).
+
+### Changed
+
+- The `analyze` module (image content analyzers — variance, edges, chroma
+  sharpness, DCT energy, derived likelihoods) was extracted into the new
+  `zenanalyze` workspace crate so other zen codecs can share the same
+  oracle-trained feature pipeline. `zenjpeg::analyze::*` paths still work
+  via re-export shim — no source changes required for existing callers.
+  `zenpixels-convert` is now a transitive dep through `zenanalyze` rather
+  than a direct dep of `zenjpeg`.
 - `decoder::IdctMethod` and `decoder::DeblockMode` are now public re-exports
   so callers can actually use `DecodeConfig::idct_method()` and `.deblock()`
   (67c96ea1).
