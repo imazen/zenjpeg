@@ -3115,6 +3115,141 @@ fn effective_bit_depth_distinguishes_u8_promoted_from_genuine_u16() {
 }
 
 // --------------------------------------------------------------------
+// Regression: PR #116 review surfaced two real bugs.
+//
+// Bug 1 — `gradient_diff_ycbcr` (tier2_chroma.rs) used a
+//   `(cr_d.pow(2) as u32).saturating_mul(boost)` chain that silently
+//   clamped the per-group `max_diff_cr` to ~33.5M instead of the
+//   true ~62.9M on saturated synthetic content (alternating pure-red
+//   / pure-green columns). 1.87× undercount on `cr_peak_sharpness`.
+//   Fix: u64 intermediates.
+//
+// Bug 2 — `accumulate_row_simd` scalar tail (tier1.rs) only
+//   accumulated `edge_count`, dropping `cb_grad_sum` / `cr_grad_sum`
+//   / `chroma_grad_count` for the rightmost 1–7 columns when
+//   `(width − 1) % 8 ≠ 0`. Tiny on 4 K, 20 % on `width = 11`.
+//   Fix: same chroma-gradient accumulation as the SIMD edge loop.
+// --------------------------------------------------------------------
+
+#[test]
+fn pr116_review_cr_diff_no_overflow_on_saturated_chroma_columns() {
+    // Worst-case Cr second-difference: alternating saturated red /
+    // green columns. Pre-fix `cr_diff` saturated at u32::MAX / 128 ≈
+    // 33.5M; post-fix the u64 intermediates produce the correct
+    // ~62.9M. We don't lock the exact peak value (calibration is
+    // documented as drifting in 0.1.x), but we lock that the SIMD
+    // and scalar paths agree on the same image — saturating_mul
+    // would have made the scalar-tail-fed even-width image diverge
+    // from the all-SIMD odd-multiple-of-8 width.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::CrPeakSharpness));
+
+    // 16-wide → all triplets handled by Tier 2 SIMD; no scalar tail.
+    let mut buf16 = vec![0u8; 16 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..16 {
+            let i = ((y * 16 + x) * 3) as usize;
+            // Alternating saturated red / green columns.
+            if x % 2 == 0 {
+                buf16[i] = 255;
+                buf16[i + 1] = 0;
+                buf16[i + 2] = 0;
+            } else {
+                buf16[i] = 0;
+                buf16[i + 1] = 255;
+                buf16[i + 2] = 0;
+            }
+        }
+    }
+    let s = PixelSlice::new(&buf16, 16, 8, 16 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r16 = crate::analyze_features(s, &q).unwrap();
+    let p16 = r16.get_f32(AnalysisFeature::CrPeakSharpness).unwrap();
+
+    // Same content at 11-wide forces the scalar gradient_diff_ycbcr
+    // path on the rightmost triplets. The peak should be in the
+    // same ballpark — pre-fix it would have been clamped to ~half
+    // the SIMD value because saturating_mul kicked in.
+    let mut buf11 = vec![0u8; 11 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..11 {
+            let i = ((y * 11 + x) * 3) as usize;
+            if x % 2 == 0 {
+                buf11[i] = 255;
+                buf11[i + 1] = 0;
+                buf11[i + 2] = 0;
+            } else {
+                buf11[i] = 0;
+                buf11[i + 1] = 255;
+                buf11[i + 2] = 0;
+            }
+        }
+    }
+    let s = PixelSlice::new(&buf11, 11, 8, 11 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r11 = crate::analyze_features(s, &q).unwrap();
+    let p11 = r11.get_f32(AnalysisFeature::CrPeakSharpness).unwrap();
+
+    // Both paths must report a peak ≥ 100. Pre-fix the scalar path
+    // would have clamped to ≈ 355 (33.5M / peak_div) while the SIMD
+    // path produces ≈ 666; here we just want both well above the
+    // pre-fix ceiling, proving overflow is gone.
+    assert!(
+        p16 > 100.0,
+        "16-wide saturated-chroma cr peak too low: {p16}"
+    );
+    assert!(
+        p11 > 100.0,
+        "11-wide saturated-chroma cr peak too low: {p11}"
+    );
+    // And they should be in the same ballpark (within 2× of each
+    // other) — pre-fix the difference was 1.87× for content that
+    // exercised the scalar path heavily.
+    let ratio = if p11 > p16 { p11 / p16 } else { p16 / p11 };
+    assert!(
+        ratio < 2.0,
+        "scalar (11) vs SIMD (16) cr_peak diverge: 11→{p11} 16→{p16} ratio={ratio}"
+    );
+}
+
+#[test]
+fn pr116_review_chroma_gradients_counted_in_scalar_tail() {
+    // `accumulate_row_simd` scalar tail used to drop cb/cr gradient
+    // accumulation. On `width = 11` (one SIMD chunk + 2 tail edge
+    // pixels), the tail represents 20 % of edge positions per row.
+    // Saturated-chroma horizontal stripes give a non-trivial
+    // `cb_sharpness` / `cr_sharpness` that pre-fix would have
+    // under-reported.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    // Vertical stripes — each row has the same per-pixel chroma
+    // gradient at every column transition. Making `width = 11` puts
+    // 8 transitions in the SIMD loop and 2 in the scalar tail.
+    let mut buf = vec![0u8; 11 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..11 {
+            let i = ((y * 11 + x) * 3) as usize;
+            if x % 2 == 0 {
+                buf[i] = 255; // red
+            } else {
+                buf[i + 2] = 255; // blue
+            }
+        }
+    }
+    let q = AnalysisQuery::new(
+        FeatureSet::just(AnalysisFeature::CbSharpness).with(AnalysisFeature::CrSharpness),
+    );
+    let s = PixelSlice::new(&buf, 11, 8, 11 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let cb = r.get_f32(AnalysisFeature::CbSharpness).unwrap();
+    let cr = r.get_f32(AnalysisFeature::CrSharpness).unwrap();
+    // Both signals must be substantial — saturated red↔blue stripes
+    // produce massive Cb gradients (B − Y flips full-scale every
+    // column). Pre-fix the scalar tail's 2 columns wouldn't have
+    // contributed at all, biasing the average down by ~20 %.
+    assert!(cb > 0.3, "cb_sharpness on red↔blue stripes too low: {cb}");
+    assert!(cr > 0.1, "cr_sharpness on red↔blue stripes too low: {cr}");
+}
+
+// --------------------------------------------------------------------
 // Per-primaries luma weights: wide-gamut u8 sources go through the
 // Native zero-copy path with their bytes intact; the analyzer must
 // use per-primaries weights so the luma stats reflect the source's

@@ -847,14 +847,36 @@ fn accumulate_row_simd(
         }
 
         // Scalar tail for the remaining 0..7 edge pixels.
+        //
+        // Accumulates the **same** four reductions as the SIMD edge
+        // loop above (luma edge_count + cb/cr gradient sums + count).
+        // Earlier revisions only updated `edge_count` here, silently
+        // dropping the rightmost 1–7 column positions per row from
+        // the chroma sharpness signal — a measurable undercount on
+        // small or non-multiple-of-8 widths.
         let processed = (width - 1) / 8 * 8;
         for x in processed..width - 1 {
             let off = row_off + x * 3;
-            let l = kr * rgb[off] as f32 + kg * rgb[off + 1] as f32 + kb * rgb[off + 2] as f32;
+            let cr_ = rgb[off] as f32;
+            let cg_ = rgb[off + 1] as f32;
+            let cb_ = rgb[off + 2] as f32;
+            let l = kr * cr_ + kg * cg_ + kb * cb_;
             let roff = row_off + (x + 1) * 3;
-            let lr = kr * rgb[roff] as f32 + kg * rgb[roff + 1] as f32 + kb * rgb[roff + 2] as f32;
+            let rr_ = rgb[roff] as f32;
+            let rg_ = rgb[roff + 1] as f32;
+            let rb_ = rgb[roff + 2] as f32;
+            let lr = kr * rr_ + kg * rg_ + kb * rb_;
             let gx = lr - l;
             let mut grad_sq = gx * gx;
+            // Chroma gradients (matched against the SIMD edge loop's
+            // same definitions: Cb = (B−Y)/255, Cr = (R−Y)/255).
+            let cb_cur = (cb_ - l) / 255.0;
+            let cb_right = (rb_ - lr) / 255.0;
+            let cr_cur = (cr_ - l) / 255.0;
+            let cr_right = (rr_ - lr) / 255.0;
+            cb_grad_sum += (cb_right - cb_cur).abs() as f64;
+            cr_grad_sum += (cr_right - cr_cur).abs() as f64;
+            chroma_grad_count += 1;
             if has_next {
                 let doff = next_row_off.unwrap() + x * 3;
                 let ld =

@@ -119,8 +119,10 @@ struct Tier3DctStats {
     /// normalized to `[0, 1]` by dividing by 32.
     noise_floor_uv: f32,
     /// Fraction `[0, 1]` of sampled luma 8×8 blocks where the
-    /// low-zigzag (positions 1..16) energy is ≥ 90 % of the total
-    /// AC energy. **Smooth-content / gradient signal** — drives JXL
+    /// low-zigzag (indices 1–15, the 15 AC positions matched by
+    /// the same `zz < 16` predicate as `high_freq_energy_ratio`)
+    /// energy is ≥ 90 % of the total AC energy. **Smooth-content /
+    /// gradient signal** — drives JXL
     /// `with_force_strategy` (DCT16 / DCT32 selection — larger
     /// transforms pay off when most energy is in the lowest
     /// frequencies) and zenrav1e's deblock strength. Distinct from
@@ -130,9 +132,17 @@ struct Tier3DctStats {
     gradient_fraction: f32,
 }
 
-/// libwebp `GetAlpha`-style score on a single 8×8 DCT block. Returns
-/// `[0, 255]` where higher = harder to compress (more spread AC,
-/// fewer near-zero coefficients).
+/// libwebp `GetAlpha`-style score on a single 8×8 DCT block. Higher
+/// = harder to compress (more spread AC, fewer near-zero coefficients).
+///
+/// **Range:** the formula `256 * last_non_zero / max_count` returns
+/// values in `[0, 256 × 63 / 2] = [0, 8064]`, not `[0, 255]` as
+/// earlier docs claimed. `last_non_zero` ∈ `[0, 63]` is the highest
+/// histogram bin with at least one coefficient; `max_count` ≥ 2 by
+/// the guard below. On real corpora `compressibility_y` lands in
+/// `[0, ~30]` for photos and `compressibility_uv` even lower —
+/// nowhere near the theoretical max — but downstream calibration
+/// must NOT clamp or normalise against 255.
 ///
 /// Build a 64-bin histogram of `|AC[k]| / bin_div` (clipped to 63),
 /// find `max_count` and `last_non_zero` index, return
@@ -144,8 +154,7 @@ struct Tier3DctStats {
 /// for luma (the libwebp convention) and `BIN_DIV_CHROMA = 8` for
 /// chroma. Chroma DCT coefficient magnitudes run ~half luma's; the
 /// finer chroma bin spreads the histogram into the same dynamic
-/// range as luma, so the chroma α uses the full 0-255 output rather
-/// than piling up near 0.
+/// range as luma so chroma α isn't suppressed near zero.
 #[inline(always)]
 fn block_alpha(coeffs: &[[f32; 8]; 8], bin_div: f32) -> u32 {
     let mut histo = [0u32; 64];
@@ -505,14 +514,15 @@ const DCT_COEF_T: [[f32; 8]; 8] = {
 };
 
 /// Ratio of high-frequency to low-frequency AC DCT energy on sampled
-/// 8×8 luma blocks. `Σ AC[zz≥16] / max(1, Σ AC[zz∈1..16])` where `zz`
-/// is the JPEG ITU-T T.81 zigzag index — the same scan order JPEG
-/// itself uses to drop high frequencies first. The split at `zz=16`
-/// puts the upper-left 4×4 triangle (the lowest 16 zigzag positions
-/// after DC, mostly `u + v ≤ 3`) on the "low" side and the lower-right
-/// 6×6+ region on the "high" side — symmetric in horizontal/vertical
-/// detail, unlike the older raster-order split which biased toward
-/// vertical content.
+/// 8×8 luma blocks. `Σ AC[zz ≥ 16] / max(1, Σ AC[zz ∈ 1..=15])` where
+/// `zz` is the JPEG ITU-T T.81 zigzag index — the same scan order
+/// JPEG itself uses to drop high frequencies first. The split is at
+/// the predicate `zz < 16` (low side ⇒ zigzag indices 1–15 = **15
+/// AC positions** after DC; zigzag 16 and beyond go to the high
+/// side). The 15 low positions cover most of the upper-left 4×4
+/// triangle (`u + v ≤ 3`), keeping the split symmetric in
+/// horizontal/vertical detail, unlike the older raster-order split
+/// which biased toward vertical content.
 ///
 /// Naive separable 1D DCT — exactness isn't required for a feature,
 /// only stable scale and ordering. A faster approximate DCT could

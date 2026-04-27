@@ -312,13 +312,21 @@ features_table! {
     CbHorizSharpness = 13 : f32 => cb_horiz_sharpness,
     /// `f32`. Cb vertical gradient energy / 1e5.
     CbVertSharpness = 14 : f32 => cb_vert_sharpness,
-    /// `f32`. Cb peak gradient magnitude on `[0, 100]`.
+    /// `f32`. Cb peak gradient magnitude. Calibrated so natural
+    /// photographic content lands `< 100`; saturated synthetic
+    /// inputs (alternating-channel chroma stripes) can reach
+    /// `~666`. Renormalising onto a stable `[0, 100]` ceiling is a
+    /// follow-up calibration task — until then, code that wants
+    /// "is this peak unusually high?" should compare against a
+    /// content-class-appropriate threshold rather than clamping.
     CbPeakSharpness = 15 : f32 => cb_peak_sharpness,
     /// `f32`. Cr horizontal gradient energy / 1e5.
     CrHorizSharpness = 16 : f32 => cr_horiz_sharpness,
     /// `f32`. Cr vertical gradient energy / 1e5.
     CrVertSharpness = 17 : f32 => cr_vert_sharpness,
-    /// `f32`. Cr peak gradient magnitude on `[0, 100]`.
+    /// `f32`. Cr peak gradient magnitude. Same calibration story as
+    /// [`Self::CbPeakSharpness`] — natural photographs `< 100`,
+    /// saturated synthetic content up to `~666`.
     CrPeakSharpness = 18 : f32 => cr_peak_sharpness,
 
     // ---------------- Tier 3: DCT energy + entropy -------------------
@@ -326,10 +334,18 @@ features_table! {
     HighFreqEnergyRatio = 19 : f32 => high_freq_energy_ratio,
     /// `f32`. Shannon entropy of a 32-bin luma histogram, in bits.
     LumaHistogramEntropy = 20 : f32 => luma_histogram_entropy,
-    /// `f32`. libwebp α on luma DCT blocks. `[0, 255]`.
+    /// `f32`. Mean libwebp α on sampled luma 8×8 DCT blocks. Higher
+    /// = harder to compress (more spread AC, fewer near-zero coefs).
+    /// **Range:** theoretical `[0, ~8064]` from `256 * last_non_zero
+    /// / max_count`; on real photo corpora the median sits at ~16,
+    /// p90 at ~30. Downstream calibration must NOT clamp / normalise
+    /// against 255 (earlier docs were wrong about that).
     #[cfg(feature = "experimental")]
     DctCompressibilityY = 21 : f32 => dct_compressibility_y,
-    /// `f32`. libwebp α on chroma DCT blocks (max of Cb/Cr).
+    /// `f32`. Same shape on chroma DCT blocks, `max(α_cb, α_cr)` per
+    /// block. Same `[0, ~8064]` theoretical range; chroma values run
+    /// lower in practice (median ~5 on photos). Scale matches
+    /// [`Self::DctCompressibilityY`].
     #[cfg(feature = "experimental")]
     DctCompressibilityUV = 22 : f32 => dct_compressibility_uv,
     /// `f32`. Fraction `[0, 1]` of sampled blocks matching another.

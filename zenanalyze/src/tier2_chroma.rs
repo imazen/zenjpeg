@@ -66,8 +66,19 @@ fn gradient_diff_ycbcr(
     let edge = (a0.0 - a2.0).abs();
     let no_edge_boost = y_max * 2 - edge;
     let boost = ((no_edge_boost + contrast_boost).max(0) as u32) / 32;
-    let cb_diff = (cb_d.pow(2) as u32).saturating_mul(boost) / 128;
-    let cr_diff = (cr_d.pow(2) as u32).saturating_mul(boost) / 128;
+    // u64 intermediates: post-symmetry-repair `cr_d` reaches ±6120
+    // (Cr = 6R − 5G − B + 6×255 ⇒ second-difference range is ±6120).
+    // `cr_d² × boost_max = 37 454 400 × 215 = 8 052 696 000 > u32::MAX`,
+    // so the previous `(cr_d.pow(2) as u32).saturating_mul(boost)` was
+    // silently clamping the saturated-chroma case to u32::MAX / 128 =
+    // 33 554 431 instead of the real 62 911 687 — a 1.87× undercount
+    // of the per-group `max_diff_cr`. The SIMD path uses f32
+    // throughout and was unaffected; this matched it. Cb's range is
+    // narrower (max product ≈ 2.01 B, fits in u32), but using u64
+    // for both keeps the two paths symmetric and rules out future
+    // symmetry-repair surprises.
+    let cb_diff = ((cb_d.pow(2) as u64 * boost as u64) / 128) as u32;
+    let cr_diff = ((cr_d.pow(2) as u64 * boost as u64) / 128) as u32;
     (cb_diff, cr_diff)
 }
 
@@ -197,8 +208,22 @@ fn image_sharpness_breakdown(
     // p99 peak: 99th percentile of per-group max-pixel-diffs. With
     // a single hot pixel, the absolute max grows linearly with image
     // size; p99 is more stable. Falls back to the running global max
-    // when the sample is too small (<= 4 entries) for percentile to
+    // when the sample is too small (≤ 4 entries) for percentile to
     // mean anything.
+    //
+    // **Accuracy note:** this is genuinely the 99th percentile only
+    // for `N ≥ 100` samples. At smaller N the index `floor(0.99 * (N
+    // − 1))` lands at a coarser percentile:
+    //
+    //   N = 5  → 80th percentile
+    //   N = 10 → 90th
+    //   N = 50 → 98th
+    //   N ≥ 100 → ~99th
+    //
+    // Tier 2 hits N ≥ 100 row-groups on any image taller than ~600
+    // px, which is the dominant case. Smaller images get a coarser-
+    // percentile peak that still serves the "robust against single
+    // hot pixel" goal — accepted trade-off, not a bug.
     fn percentile_99(samples: &mut [u32], fallback: u32) -> u32 {
         if samples.len() <= 4 {
             return fallback;
@@ -209,8 +234,22 @@ fn image_sharpness_breakdown(
     let peak_cb = percentile_99(&mut peak_samples_cb, max_diff.0);
     let peak_cr = percentile_99(&mut peak_samples_cr, max_diff.1);
 
-    // Peak normalization: same `(6 * 256 * 2)² / 100` reference scale
-    // as before — keeps the peak field in [0, 100] for typical images.
+    // Peak normalization: `(6 * 256 * 2)² / 100` reference scale,
+    // carried over from the pre-symmetry-repair code where Cr's
+    // effective range was narrower.
+    //
+    // **Output range:** for natural photographic content the peak
+    // field typically lands < 100 (the original calibration target).
+    // After the symmetry repair (CHANGELOG note above) the SIMD
+    // path's true `max_diff_cr` is ≈ 62 911 687, which divides to
+    // a peak of ≈ 666 — saturated synthetic content (e.g. alternating
+    // pure-red / pure-green columns) reaches that ceiling. Code that
+    // calibrates against `cb_peak_sharpness` / `cr_peak_sharpness`
+    // must NOT clamp to [0, 100]; production photos do, but
+    // synthetic / chart / extreme-chroma inputs don't.
+    // Renormalising the peak fields onto a stable [0, 100] scale is a
+    // follow-up calibration task tracked in `infer_bucket`'s
+    // `CALIBRATION-PENDING` note.
     let max_diff_max = (6 * 256 * 2u32).pow(2);
     let peak_div = (max_diff_max / 100).max(1);
 
