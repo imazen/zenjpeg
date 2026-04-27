@@ -3071,6 +3071,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenanalyze"
+version = "0.1.0"
+dependencies = [
+ "archmage 0.9.22",
+ "image",
+ "linear-srgb",
+ "magetypes",
+ "zenpixels",
+ "zenpixels-convert",
+]
+
+[[package]]
 name = "zenbench"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3161,11 +3173,11 @@ dependencies = [
  "web-sys",
  "whereat",
  "wide 1.3.0",
+ "zenanalyze",
  "zenbench",
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
- "zenpixels-convert",
  "zenresize",
  "zensim",
  "zensim-regress",

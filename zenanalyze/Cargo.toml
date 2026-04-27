@@ -1,0 +1,54 @@
+[package]
+name = "zenanalyze"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Image content analyzers (variance, edges, chroma sharpness, DCT energy, derived likelihoods) for adaptive codec decisions. Pulls rows on demand from any zenpixels PixelSlice."
+keywords = ["image", "analysis", "features", "codec", "saliency"]
+categories = ["multimedia::images"]
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.93"
+readme = "README.md"
+
+[lib]
+name = "zenanalyze"
+
+[features]
+default = []
+# Opt-in to features whose mathematical definition or numeric scale
+# may change in 0.1.x patches. Stable features (those with at least
+# one in-tree consumer in coefficient / zenjpeg / zenwebp as of
+# 0.1.0) ship without this flag; numeric drift on stable features is
+# governed by the crate-level threshold contract — `experimental` is
+# for *structural* uncertainty (no consumer pinned the meaning yet,
+# or the metric is research-stage).
+#
+# The `cfg(feature = "experimental")` attribute on a row of the
+# `features_table!` invocation in `feature.rs` propagates through the
+# macro to every emission site (enum variant, `from_u16` arm, `name`
+# arm, `RawAnalysis` field, `into_results` write, `FeatureSet::
+# SUPPORTED`). Single source of truth.
+experimental = []
+
+[dependencies]
+zenpixels = { workspace = true }
+zenpixels-convert = { workspace = true }
+archmage = { workspace = true }
+magetypes = { workspace = true }
+# `transfer` feature exposes scalar PQ / HLG / sRGB / BT.709 EOTFs used by
+# the source-direct HDR / depth tier (`tier_depth`). The tier reads source
+# samples without going through `RowConverter` so it can compute peak
+# luminance / headroom on PQ / HLG / linear-light HDR content directly,
+# rather than measuring a tonemapped SDR rendition.
+linear-srgb = { workspace = true, features = ["transfer"] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "corpus_eval"
+required-features = ["experimental"]
