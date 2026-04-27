@@ -349,11 +349,10 @@ impl BytesEncoder {
         if let Some(buf) = &self.zq_pixel_buffer {
             let bpp = self.layout.bytes_per_pixel();
             let row_bytes = self.width as usize * bpp;
-            if row_bytes == 0 {
-                0
-            } else {
-                (buf.len() / row_bytes) as u32
-            }
+            buf.len()
+                .checked_div(row_bytes)
+                .map(|n| n as u32)
+                .unwrap_or(0)
         } else {
             self.inner.rows_pushed() as u32
         }
@@ -540,6 +539,7 @@ impl BytesEncoder {
     /// Errors when [`super::zq::ZqTarget::max_undershoot`] or
     /// [`super::zq::BlockArtifactBound::max_overshoot`] strictness was
     /// set and the achieved value falls outside that band.
+    #[cfg_attr(not(feature = "target-zq"), allow(unused_mut))]
     pub fn finish_with_metrics(mut self) -> Result<(Vec<u8>, super::zq::EncodeMetrics)> {
         #[cfg(feature = "target-zq")]
         if let (Some(buf), Some(target)) =

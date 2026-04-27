@@ -24,10 +24,26 @@
 
 use enough::Unstoppable;
 use std::path::PathBuf;
-use zenjpeg::analyze::analyze_rgb8;
+use zenanalyze::analyze_features_rgb8;
+use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 use zenjpeg::decode::Decoder;
 use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use zensim::{DiffmapWeighting, RgbSlice, Zensim, ZensimProfile};
+
+/// Features the bucket-classification heuristic in `main()` reads.
+/// Mirrors the field set used by `zenjpeg::encode::adaptive::infer_bucket`.
+fn calibrate_features() -> FeatureSet {
+    FeatureSet::new()
+        .with(AnalysisFeature::TextLikelihood)
+        .with(AnalysisFeature::ScreenContentLikelihood)
+        .with(AnalysisFeature::Uniformity)
+        .with(AnalysisFeature::FlatColorBlockRatio)
+        .with(AnalysisFeature::HighFreqEnergyRatio)
+        .with(AnalysisFeature::EdgeDensity)
+        .with(AnalysisFeature::CbPeakSharpness)
+        .with(AnalysisFeature::CrPeakSharpness)
+        .with(AnalysisFeature::ChromaComplexity)
+}
 
 const ZQ_TARGETS: &[f32] = &[40.0, 60.0, 75.0, 80.0, 85.0, 90.0, 95.0];
 const Q_GRID: &[u8] = &[
@@ -35,23 +51,30 @@ const Q_GRID: &[u8] = &[
 ];
 
 struct Args {
-    corpus: PathBuf,
+    corpora: Vec<PathBuf>,
     max_images: usize,
 }
 
 fn parse_args() -> Args {
-    let mut corpus =
-        PathBuf::from("/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/validation");
-    let mut max_images = 64;
+    let mut corpora: Vec<PathBuf> = Vec::new();
+    let mut max_images = 1024;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--corpus" => corpus = PathBuf::from(it.next().unwrap()),
+            "--corpus" => corpora.push(PathBuf::from(it.next().unwrap())),
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
             other => panic!("unknown arg: {other}"),
         }
     }
-    Args { corpus, max_images }
+    if corpora.is_empty() {
+        corpora.push(PathBuf::from(
+            "/home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/validation",
+        ));
+    }
+    Args {
+        corpora,
+        max_images,
+    }
 }
 
 fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
@@ -119,16 +142,23 @@ fn main() {
     let args = parse_args();
     let z = Zensim::new(ZensimProfile::latest());
 
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&args.corpus)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", args.corpus.display()))
-        .filter_map(|r| r.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("png"))
-        .collect();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for corpus in &args.corpora {
+        let entries = std::fs::read_dir(corpus)
+            .unwrap_or_else(|e| panic!("read_dir {}: {e}", corpus.display()));
+        for entry in entries.filter_map(|r| r.ok()) {
+            let p = entry.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("png") {
+                paths.push(p);
+            }
+        }
+    }
     paths.sort();
     paths.truncate(args.max_images);
     eprintln!(
-        "[zq_calibrate] {} image(s), {} q values × {} targets",
+        "[zq_calibrate] {} image(s) across {} corpora, {} q values × {} targets",
         paths.len(),
+        args.corpora.len(),
         Q_GRID.len(),
         ZQ_TARGETS.len()
     );
@@ -140,19 +170,21 @@ fn main() {
     use std::collections::HashMap;
     let mut by_bucket: HashMap<&'static str, Vec<Vec<(f32, u8)>>> = HashMap::new();
 
+    let query = AnalysisQuery::new(calibrate_features());
     for (i, path) in paths.iter().enumerate() {
         let (rgb, w, h) = load_png(path);
-        let features = analyze_rgb8(&rgb, w, h);
+        let analysis = analyze_features_rgb8(&rgb, w, h, &query);
+        let f = |feat: AnalysisFeature| analysis.get_f32(feat).unwrap_or(0.0);
         let bucket_label: &'static str = match (
-            features.text_likelihood,
-            features.screen_content_likelihood,
-            features.uniformity,
-            features.flat_color_block_ratio,
-            features.high_freq_energy_ratio,
-            features.edge_density,
-            features.cb_peak_sharpness,
-            features.cr_peak_sharpness,
-            features.chroma_complexity,
+            f(AnalysisFeature::TextLikelihood),
+            f(AnalysisFeature::ScreenContentLikelihood),
+            f(AnalysisFeature::Uniformity),
+            f(AnalysisFeature::FlatColorBlockRatio),
+            f(AnalysisFeature::HighFreqEnergyRatio),
+            f(AnalysisFeature::EdgeDensity),
+            f(AnalysisFeature::CbPeakSharpness),
+            f(AnalysisFeature::CrPeakSharpness),
+            f(AnalysisFeature::ChromaComplexity),
         ) {
             (txt, _, _, _, _, _, cb_p, _, c) if txt > 0.55 && (c > 0.04 || cb_p > 5.0) => {
                 "Illustration"

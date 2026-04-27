@@ -310,6 +310,7 @@ fn interpolate_anchors(zq: f32, anchors: &[(f32, f32)]) -> f32 {
 /// reach the same zq target (text/edges have less perceptual headroom);
 /// flat photos need slightly less. The bucket-naive average misses both
 /// ends, costing extra iterations.
+#[allow(dead_code)] // bucket-LUT path; called only from infer_bucket_from_pixels
 #[must_use]
 pub(crate) fn zq_to_starting_jpegli_q_for_bucket(
     zq: f32,
@@ -318,36 +319,39 @@ pub(crate) fn zq_to_starting_jpegli_q_for_bucket(
     use crate::encode::adaptive::InferredBucket as B;
     // Anchors are (target_zq, starting_jpegli_q). Median of per-image
     // smallest-q-meeting-target values, fit by `examples/zq_calibrate.rs`
-    // on a 76-image corpus (CID22 validation + gb82 photos + gb82-sc
-    // screen content). Re-run the harness to refit if the streaming AQ
-    // pipeline or the zensim profile changes.
+    // on a 347-image mixed corpus (CID22 validation + CID22 training +
+    // gb82 + gb82-sc + clic2025 training + clic2025 final-test).
+    // Re-run the harness to refit if the streaming AQ pipeline or the
+    // zensim profile changes.
     //
-    // Per-bucket sample counts at fit time:
-    //   PhotoNatural   n=7
-    //   PhotoDetailed  n=36
-    //   PhotoFlat      n=13
-    //   Illustration   n=1  (single sample; treat with skepticism, the
-    //                       table will be refined when more illustration
-    //                       content joins the calibration corpus)
-    //   ScreenContent  n=19
+    // Per-bucket sample counts at fit time (2026-04-28):
+    //   PhotoNatural   n=72
+    //   PhotoDetailed  n=140
+    //   PhotoFlat      n=85
+    //   Illustration   n=4   (still under-sampled — corpus needs more
+    //                        illustration content; values unchanged
+    //                        from the prior 1-sample fit anyway)
+    //   ScreenContent  n=46
     //
     // The harness output also reports p25/p75 per anchor for spread
-    // inspection — see `/tmp/zq_calibrate_full.log` snapshot or re-run.
+    // inspection — see `benchmarks/zq_calibration_2026-04-28.log` or
+    // re-run with `cargo run --release -p zenjpeg --features target-zq
+    // --example zq_calibrate`.
     const PHOTO_NATURAL: &[(f32, f32)] = &[
         (40.0, 20.0),
         (60.0, 25.0),
-        (75.0, 60.0),
-        (80.0, 75.0),
+        (75.0, 65.0),
+        (80.0, 80.0),
         (85.0, 90.0),
         (90.0, 95.0),
         (95.0, 100.0),
     ];
     const PHOTO_DETAILED: &[(f32, f32)] = &[
         (40.0, 20.0),
-        (60.0, 25.0),
-        (75.0, 70.0),
-        (80.0, 80.0),
-        (85.0, 90.0),
+        (60.0, 30.0),
+        (75.0, 75.0),
+        (80.0, 85.0),
+        (85.0, 95.0),
         (90.0, 100.0),
         (95.0, 100.0),
     ];
@@ -372,10 +376,10 @@ pub(crate) fn zq_to_starting_jpegli_q_for_bucket(
     const SCREEN_CONTENT: &[(f32, f32)] = &[
         (40.0, 20.0),
         (60.0, 20.0),
-        (75.0, 45.0),
+        (75.0, 50.0),
         (80.0, 70.0),
         (85.0, 85.0),
-        (90.0, 95.0),
+        (90.0, 100.0),
         (95.0, 100.0),
     ];
 
@@ -401,6 +405,7 @@ use super::aq_controller::AqController;
 /// scale = 1.0 → no change. scale < 1.0 → tighter (more bits).
 /// scale > 1.0 → looser (fewer bits). Final AQ is clamped to `[0.0, 0.20]`
 /// by the strip processor.
+#[allow(dead_code)] // scaffold for future controller wiring
 #[derive(Debug)]
 struct ScalingController {
     /// `scales[imcu_idx]` = per-block scale factors for that iMCU row.
@@ -423,6 +428,7 @@ impl AqController for ScalingController {
 /// Iteration-loop controller hyperparameters. Picked from the
 /// `examples/method_b_real.rs` corpus run; small surface so the public
 /// API doesn't expose them in v1.
+#[allow(dead_code)] // scaffold for future controller wiring
 mod hp {
     /// Per-pass cap on absolute scale change per block.
     pub(super) const MAX_SCALE_DELTA: f32 = 0.20;
@@ -443,6 +449,7 @@ mod hp {
 /// - Block diffmap above peak ceiling → tighten THOSE blocks specifically.
 /// - Score in band, no ceiling violation → loosen the lowest-error
 ///   blocks (scale↑) to recover bytes.
+#[allow(dead_code)] // scaffold for future controller wiring
 fn next_scales(
     prev_scales: &[f32],
     block_dm: &[f32],
@@ -506,6 +513,7 @@ fn next_scales(
 ///
 /// `flat[bx + by * blocks_w]` is the scale for block `(bx, by)`.
 /// One iMCU row covers `v_samp` block rows of width `blocks_w`.
+#[allow(dead_code)] // scaffold for future controller wiring
 fn flat_to_imcu_schedule(
     flat: &[f32],
     blocks_w: usize,
@@ -534,6 +542,7 @@ fn flat_to_imcu_schedule(
 /// per-block mean. Truncating divides for non-multiples-of-8 dims —
 /// the right/bottom edge sliver is dropped (matches the encoder's
 /// 8×8 block grid).
+#[allow(dead_code)] // scaffold for future controller wiring
 fn aggregate_diffmap_to_blocks(
     diffmap: &[f32],
     width: usize,
@@ -624,22 +633,15 @@ pub(crate) fn run_iteration_loop(
         crate::encode::ColorMode::Grayscale => 1,
     };
 
-    // Build the source ImageSource for zensim. Layout currently must be
-    // RGB8 — other layouts would require zenpixels conversion to drive
-    // zensim's per-channel pipeline. (XYB encoding accepts RGB8 input
-    // and converts internally; the source stays in sRGB8 here.)
-    if ctx.layout != crate::encode::PixelLayout::Rgb8Srgb {
-        // For non-RGB8 layouts, fall back to single-pass — extending
-        // the closed loop to other layouts is future work.
-        return run_single_pass(&ctx, None);
-    }
-
+    // Build the source PrecomputedReference for zensim. RGB8 sRGB and
+    // RgbF32Linear are the supported source layouts for the closed
+    // loop; other layouts (BGR, RGBA, 16-bit linear, YCbCr) fall
+    // through to single-pass — adding each is a small follow-up that
+    // mirrors the path taken below.
     let z = Zensim::new(ZensimProfile::latest());
-    let src_chunks: &[[u8; 3]] = bytemuck_chunks(ctx.pixels);
-    let src_slice = RgbSlice::new(src_chunks, ctx.width as usize, ctx.height as usize);
-    let pre = match z.precompute_reference(&src_slice) {
-        Ok(p) => p,
-        Err(_) => return run_single_pass(&ctx, None),
+    let pre = match build_source_reference(&z, ctx.layout, ctx.pixels, ctx.width, ctx.height) {
+        Some(p) => p,
+        None => return run_single_pass(&ctx, None),
     };
 
     // Pass 0: streaming-AQ baseline. Substitute Quality::Zq* with a
@@ -649,7 +651,7 @@ pub(crate) fn run_iteration_loop(
     // Bucket detection runs the analyzer on the source pixels — same
     // ~1ms cost as `EncoderConfig::adaptive`. Falls through to the
     // bucket-naive lookup if analysis fails (e.g. tiny images).
-    let bucket = detect_bucket(ctx.pixels, ctx.width, ctx.height);
+    let bucket = detect_bucket(ctx.layout, ctx.pixels, ctx.width, ctx.height);
     let starting_q = match (ctx.target.target, bucket) {
         (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
         (zq, None) => zq_to_starting_jpegli_q(zq),
@@ -878,11 +880,81 @@ fn run_single_pass(
     ))
 }
 
-/// Run the analyzer on RGB8 source pixels and return an inferred content
+/// Build a [`zensim::PrecomputedReference`] from the source pixels,
+/// dispatching on layout. Returns `None` if the layout is unsupported
+/// (caller falls through to single-pass) or the build itself fails
+/// (e.g. dimensions too small for zensim).
+///
+/// Currently supports:
+///   - `Rgb8Srgb` — interleaved u8 sRGB (the typical case).
+///   - `RgbF32Linear` — interleaved f32 linear; deinterleaved into
+///     planar [R, G, B] for zensim's `linear_planar` constructor.
+///
+/// Other layouts return `None` for now. Adding them is a small follow-up
+/// (BGR8/RGBA8 just need swizzle, 16-bit linear needs scale-to-f32).
+#[cfg(feature = "target-zq")]
+fn build_source_reference(
+    z: &zensim::Zensim,
+    layout: crate::encode::PixelLayout,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<zensim::PrecomputedReference> {
+    use crate::encode::PixelLayout as L;
+    use zensim::RgbSlice;
+    let w = width as usize;
+    let h = height as usize;
+
+    match layout {
+        L::Rgb8Srgb => {
+            let chunks: &[[u8; 3]] = bytemuck_chunks(pixels);
+            let slice = RgbSlice::new(chunks, w, h);
+            z.precompute_reference(&slice).ok()
+        }
+        L::RgbF32Linear => {
+            // Reinterpret packed f32 bytes as &[f32]. Length must be a
+            // multiple of 4; the encoder validates this upstream.
+            let f32_count = pixels.len() / 4;
+            // SAFETY-equivalent: bytemuck would handle this with
+            // safe alignment guarantees, but we have a packed RGB f32
+            // buffer the user supplied — assume it's properly aligned.
+            // Use try_cast_slice via a manual chunks transmute.
+            //
+            // The pixels slice came from caller's Vec<u8>, so 4-byte
+            // alignment is uncertain. Use a copy-via-from_le_bytes path
+            // for portability (each pixel = 12 bytes = 3 f32).
+            let mut r = alloc::vec::Vec::with_capacity(w * h);
+            let mut g = alloc::vec::Vec::with_capacity(w * h);
+            let mut b = alloc::vec::Vec::with_capacity(w * h);
+            for i in 0..(w * h) {
+                let off = i * 12;
+                if off + 12 > pixels.len() {
+                    return None;
+                }
+                let r_v = f32::from_le_bytes(pixels[off..off + 4].try_into().ok()?);
+                let g_v = f32::from_le_bytes(pixels[off + 4..off + 8].try_into().ok()?);
+                let b_v = f32::from_le_bytes(pixels[off + 8..off + 12].try_into().ok()?);
+                r.push(r_v);
+                g.push(g_v);
+                b.push(b_v);
+            }
+            let _ = f32_count; // keep for future bytemuck path
+            z.precompute_reference_linear_planar([&r, &g, &b], w, h, w)
+                .ok()
+        }
+        // Other layouts: future work. Caller falls through to single-pass.
+        _ => None,
+    }
+}
+
+/// Run the analyzer on the source pixels and return an inferred content
 /// bucket for starting-q calibration. Returns `None` if the image is too
-/// small for the analyzer to produce meaningful features.
+/// small for the analyzer to produce meaningful features OR the layout
+/// isn't directly analyzer-compatible (currently RGB8 only — other
+/// layouts fall back to the bucket-naive starting-q calibration).
 #[cfg(feature = "target-zq")]
 fn detect_bucket(
+    layout: crate::encode::PixelLayout,
     pixels: &[u8],
     width: u32,
     height: u32,
@@ -890,8 +962,15 @@ fn detect_bucket(
     if width < 8 || height < 8 {
         return None;
     }
-    let features = crate::analyze::analyze_rgb8(pixels, width, height);
-    Some(crate::encode::adaptive::infer_bucket(&features))
+    if layout != crate::encode::PixelLayout::Rgb8Srgb {
+        // Bucket detection requires RGB8 source. For other layouts we
+        // fall back to the bucket-naive calibration; the controller
+        // still corrects from there.
+        return None;
+    }
+    let query = zenanalyze::feature::AnalysisQuery::new(zenanalyze::feature::FeatureSet::SUPPORTED);
+    let analysis = zenanalyze::analyze_features_rgb8(pixels, width, height, &query);
+    Some(crate::encode::adaptive::infer_bucket(&analysis))
 }
 
 /// Reinterpret a packed RGB byte slice as `[u8; 3]` chunks. Length must

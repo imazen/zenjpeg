@@ -1,0 +1,76 @@
+# Loading benchmarks/zq_pareto_2026-04-28b.tsv...
+# Loaded 1388 (image, size) cells
+# Loaded 1388 feature rows × 19 columns
+# Joined keys: 1388
+
+## Train/val split
+- val images: 69
+- train images: 278
+
+## Pareto-front summary 
+- (image, size) cells: 1388 
+- median |Pareto front|: 40.0  (a perfect single-config dominator would give 1)
+
+### Optimal-config frequency across all (image, size, zq_target) labels:
+- config 1 (ycbcr_420_baseline): 3638 (22.2%)
+- config 4 (xyb_444_baseline): 2911 (17.8%)
+- config 3 (ycbcr_420_progressive): 2643 (16.2%)
+- config 6 (ycbcr_420_auto_optimize): 2070 (12.7%)
+- config 5 (xyb_420_baseline): 1924 (11.8%)
+- config 7 (ycbcr_444_auto_optimize): 1203 (7.4%)
+- config 0 (ycbcr_444_baseline): 1094 (6.7%)
+- config 2 (ycbcr_444_progressive): 880 (5.4%)
+
+## Per-config regression — predict starting_q given (features, zq)
+
+### config 0 (ycbcr_444_baseline)
+- train n=12917, val n=3232
+- val RMSE: 11.13  bias: +0.36
+- weights = [16.0477, -138.9837, 230.952, 0.0003, -0.8828, 38.5038, -60.6975, 55.2309, -57.5656, 41.8486, -68.6869, -42.4601, 26.5839, -14.4772, 50.6614, -13.6024, 50.0944, -0.1448, 0.8638, -0.011, 1.1834, 0.0004, -0.5167]
+### config 1 (ycbcr_420_baseline)
+- train n=10476, val n=2592
+- val RMSE: 9.29  bias: -0.37
+- weights = [-3.8961, -115.2817, 229.9978, 0.001, -2.9465, -6.4698, -1.1237, 29.353, -27.609, 23.8655, -46.3561, -11.4236, -8.7966, -16.2735, 62.0281, -14.144, 53.6846, 0.0477, 0.8065, 0.1206, 0.3623, 0.0004, 1.6308]
+### config 2 (ycbcr_444_progressive)
+- train n=12917, val n=3232
+- val RMSE: 11.13  bias: +0.36
+- weights = [16.0477, -138.9837, 230.952, 0.0003, -0.8828, 38.5038, -60.6975, 55.2309, -57.5656, 41.8486, -68.6869, -42.4601, 26.5839, -14.4772, 50.6614, -13.6024, 50.0944, -0.1448, 0.8638, -0.011, 1.1834, 0.0004, -0.5167]
+### config 3 (ycbcr_420_progressive)
+- train n=10476, val n=2592
+- val RMSE: 9.29  bias: -0.37
+- weights = [-3.8961, -115.2817, 229.9978, 0.001, -2.9465, -6.4698, -1.1237, 29.353, -27.609, 23.8655, -46.3561, -11.4236, -8.7966, -16.2735, 62.0281, -14.144, 53.6846, 0.0477, 0.8065, 0.1206, 0.3623, 0.0004, 1.6308]
+### config 4 (xyb_444_baseline)
+- train n=13093, val n=3268
+- val RMSE: 10.95  bias: +0.50
+- weights = [36.3379, -151.4802, 236.9282, 0.0002, -1.323, 57.1821, -88.4853, 10.2012, -7.2657, 31.8978, -57.2003, -65.8404, 61.4758, -13.8686, 44.8787, -10.197, 38.5808, -0.2741, 0.925, -0.0345, 1.2113, 0.0006, -1.369]
+### config 5 (xyb_420_baseline)
+- train n=12734, val n=3196
+- val RMSE: 9.02  bias: +0.02
+- weights = [9.6226, -80.7736, 189.462, 0.0006, -2.3968, 2.4621, -18.5855, -126.8169, 150.0206, 17.8803, -37.017, -39.9085, 32.0508, -10.8835, 39.7057, -8.663, 33.6279, -0.1058, 0.9068, 0.0075, 0.2237, 0.0004, 0.335]
+### config 6 (ycbcr_420_auto_optimize)
+- train n=10520, val n=2600
+- val RMSE: 8.32  bias: -0.25
+- weights = [14.4694, -154.2255, 255.8865, 0.001, -2.7704, -11.549, 1.6463, 45.6728, -44.8191, 24.3874, -45.5847, -18.1858, -0.2004, -14.0646, 52.4442, -13.5261, 49.6839, 0.0384, 0.8039, 0.1093, 0.551, 0.0004, 1.2761]
+### config 7 (ycbcr_444_auto_optimize)
+- train n=12932, val n=3234
+- val RMSE: 10.65  bias: +0.45
+- weights = [30.9221, -166.2621, 248.0084, 0.0003, -0.8913, 45.6468, -71.0653, 82.529, -87.5045, 39.8173, -64.5218, -47.215, 32.4662, -13.9171, 45.1015, -12.7421, 46.1246, -0.1613, 0.7729, -0.0157, 1.3319, 0.0004, -0.8281]
+
+## Pareto-overhead (bytes vs ideal, config-naive)
+
+zq_tgt | n | mean overhead | p50 | p75 |
+-------|---|---------------|-----|-----|
+ 40    | 270 | +2.1%       | +0.0% | +1.7% |
+ 50    | 269 | +2.2%       | +0.0% | +1.7% |
+ 60    | 267 | +3.5%       | +0.6% | +3.4% |
+ 65    | 267 | +6.8%       | +1.6% | +6.2% |
+ 70    | 265 | +10.1%       | +4.1% | +11.1% |
+ 75    | 261 | +16.2%       | +7.4% | +15.2% |
+ 80    | 243 | +16.8%       | +11.6% | +19.4% |
+ 85    | 232 | +34.8%       | +22.2% | +42.2% |
+ 88    | 211 | +53.8%       | +33.9% | +63.5% |
+ 90    | 169 | +65.5%       | +32.4% | +110.2% |
+ 92    | 116 | +85.4%       | +80.1% | +109.6% |
+ 95    |  22 | +3.9%       | +4.7% | +6.2% |
+
+Interpretation: overhead is bytes-vs-Pareto for the bucket-1-naive (ycbcr_420_baseline) controller. Positive = the naive controller ships more bytes than necessary; negative = the chosen target wasn't reached and the scaffold falls back.

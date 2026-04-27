@@ -301,6 +301,45 @@ fn zq_works_with_xyb_full() {
 }
 
 #[test]
+fn zq_works_with_linear_f32_input() {
+    use zenjpeg::encode::XybSubsampling;
+    let (w, h) = (128u32, 128);
+    // Convert sRGB8 → linear f32 RGB. This is the typical XYB-input
+    // pipeline (pre-converted linear light from a higher-precision
+    // source).
+    let rgb_u8 = synthetic_image(w, h);
+    let mut rgb_f32 = vec![0u8; (w as usize) * (h as usize) * 12];
+    for i in 0..(w as usize) * (h as usize) {
+        for c in 0..3 {
+            let u = rgb_u8[i * 3 + c] as f32 / 255.0;
+            // sRGB → linear (approximate gamma 2.2; exact is fine too).
+            let lin = if u <= 0.04045 {
+                u / 12.92
+            } else {
+                ((u + 0.055) / 1.055).powf(2.4)
+            };
+            rgb_f32[i * 12 + c * 4..i * 12 + c * 4 + 4].copy_from_slice(&lin.to_le_bytes());
+        }
+    }
+    let config = EncoderConfig::xyb(Quality::Zq(80.0), XybSubsampling::BQuarter);
+    let mut enc = config
+        .encode_from_bytes(w, h, PixelLayout::RgbF32Linear)
+        .expect("encoder creation");
+    enc.push_packed(&rgb_f32, Unstoppable).expect("push");
+    let (jpeg, metrics) = enc
+        .finish_with_metrics()
+        .expect("XYB linear-f32 Zq encode should succeed");
+    assert!(!jpeg.is_empty());
+    // PR-E lets the iteration loop run on linear-f32 input — measurement
+    // uses zensim's linear_planar source path. achieved_score should be
+    // finite (NOT NaN, which would indicate single-pass fallback).
+    assert!(
+        metrics.achieved_score.is_finite(),
+        "linear-f32 path must run iteration loop, not fall through to single_pass"
+    );
+}
+
+#[test]
 fn non_zq_quality_does_not_iterate() {
     let (w, h) = (128u32, 128);
     let rgb = synthetic_image(w, h);

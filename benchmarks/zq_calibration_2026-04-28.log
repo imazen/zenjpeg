@@ -1,0 +1,141 @@
+warning: jpegli-internals-sys@0.1.0: Using pre-built jpegli from "/home/lilith/work/zen/zenjpeg/internal/jpegli-cpp/build"
+warning: jpegli-internals-sys@0.1.0: ✓ Building with instrumented C++ FFI (jpegli_test_ffi)
+warning: unused import: `RgbSlice`
+   --> zenjpeg/src/encode/zq.rs:597:18
+    |
+597 |     use zensim::{RgbSlice, Zensim, ZensimProfile};
+    |                  ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenjpeg` (lib) generated 1 warning (run `cargo fix --lib -p zenjpeg` to apply 1 suggestion)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `target/release/examples/zq_calibrate --corpus /home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/validation --corpus /home/lilith/work/codec-eval/codec-corpus/CID22/CID22-512/training --corpus /home/lilith/work/codec-eval/codec-corpus/gb82 --corpus /home/lilith/work/codec-eval/codec-corpus/gb82-sc --corpus /home/lilith/work/codec-eval/codec-corpus/clic2025/training --corpus /home/lilith/work/codec-eval/codec-corpus/clic2025/final-test --max-images 1024`
+[zq_calibrate] 347 image(s) across 6 corpora, 17 q values × 7 targets
+  progress: 5/347
+  progress: 10/347
+  progress: 15/347
+  progress: 20/347
+  progress: 25/347
+  progress: 30/347
+  progress: 35/347
+  progress: 40/347
+  progress: 45/347
+  progress: 50/347
+  progress: 55/347
+  progress: 60/347
+  progress: 65/347
+  progress: 70/347
+  progress: 75/347
+  progress: 80/347
+  progress: 85/347
+  progress: 90/347
+  progress: 95/347
+  progress: 100/347
+  progress: 105/347
+  progress: 110/347
+  progress: 115/347
+  progress: 120/347
+  progress: 125/347
+  progress: 130/347
+  progress: 135/347
+  progress: 140/347
+  progress: 145/347
+  progress: 150/347
+  progress: 155/347
+  progress: 160/347
+  progress: 165/347
+  progress: 170/347
+  progress: 175/347
+  progress: 180/347
+  progress: 185/347
+  progress: 190/347
+  progress: 195/347
+  progress: 200/347
+  progress: 205/347
+  progress: 210/347
+  progress: 215/347
+  progress: 220/347
+  progress: 225/347
+  progress: 230/347
+  progress: 235/347
+  progress: 240/347
+  progress: 245/347
+  progress: 250/347
+  progress: 255/347
+  progress: 260/347
+  progress: 265/347
+  progress: 270/347
+  progress: 275/347
+  progress: 280/347
+  progress: 285/347
+  progress: 290/347
+  progress: 295/347
+  progress: 300/347
+  progress: 305/347
+  progress: 310/347
+  progress: 315/347
+  progress: 320/347
+  progress: 325/347
+  progress: 330/347
+  progress: 335/347
+  progress: 340/347
+  progress: 345/347
+
+=== Calibration anchors per bucket ===
+
+// PhotoNatural (n=72)
+const PHOTONATURAL: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=72, p25=20 p50=20 p75=20
+    (60.0, 25.0),  // n=72, p25=20 p50=25 p75=30
+    (75.0, 65.0),  // n=72, p25=60 p50=65 p75=70
+    (80.0, 80.0),  // n=72, p25=75 p50=80 p75=85
+    (85.0, 90.0),  // n=72, p25=90 p50=90 p75=90
+    (90.0, 95.0),  // n=72, p25=95 p50=95 p75=100
+    (95.0, 100.0),  // n=72, p25=100 p50=100 p75=100
+];
+
+// PhotoDetailed (n=140)
+const PHOTODETAILED: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=140, p25=20 p50=20 p75=20
+    (60.0, 30.0),  // n=140, p25=25 p50=30 p75=45
+    (75.0, 75.0),  // n=140, p25=70 p50=75 p75=80
+    (80.0, 85.0),  // n=140, p25=80 p50=85 p75=90
+    (85.0, 95.0),  // n=140, p25=90 p50=95 p75=95
+    (90.0, 100.0),  // n=140, p25=100 p50=100 p75=100
+    (95.0, 100.0),  // n=140, p25=100 p50=100 p75=100
+];
+
+// PhotoFlat (n=85)
+const PHOTOFLAT: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=85, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=85, p25=20 p50=20 p75=25
+    (75.0, 60.0),  // n=85, p25=50 p50=60 p75=70
+    (80.0, 75.0),  // n=85, p25=70 p50=75 p75=85
+    (85.0, 90.0),  // n=85, p25=90 p50=90 p75=95
+    (90.0, 100.0),  // n=85, p25=95 p50=100 p75=100
+    (95.0, 100.0),  // n=85, p25=100 p50=100 p75=100
+];
+
+// Illustration (n=4)
+const ILLUSTRATION: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=4, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=4, p25=20 p50=20 p75=20
+    (75.0, 40.0),  // n=4, p25=25 p50=40 p75=40
+    (80.0, 65.0),  // n=4, p25=45 p50=65 p75=70
+    (85.0, 85.0),  // n=4, p25=75 p50=85 p75=85
+    (90.0, 100.0),  // n=4, p25=95 p50=100 p75=100
+    (95.0, 100.0),  // n=4, p25=100 p50=100 p75=100
+];
+
+// ScreenContent (n=46)
+const SCREENCONTENT: &[(f32, f32)] = &[
+    (40.0, 20.0),  // n=46, p25=20 p50=20 p75=20
+    (60.0, 20.0),  // n=46, p25=20 p50=20 p75=20
+    (75.0, 50.0),  // n=46, p25=30 p50=50 p75=60
+    (80.0, 70.0),  // n=46, p25=60 p50=70 p75=85
+    (85.0, 85.0),  // n=46, p25=80 p50=85 p75=95
+    (90.0, 100.0),  // n=46, p25=95 p50=100 p75=100
+    (95.0, 100.0),  // n=46, p25=100 p50=100 p75=100
+];
+
