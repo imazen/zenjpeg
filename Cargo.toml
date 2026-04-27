@@ -100,17 +100,12 @@ img-parts = "0.4"
 # Half-precision floating point
 half = { version = "2.7.1", default-features = false }
 
-# Tone-mapping curves (Bt2446C default for encode_ultrahdr_luma). Path-pinned
-# until 0.1.x publishes; CI clones the sibling repo via the same pattern as
-# ultrahdr-core.
-zentone = { path = "../zentone", version = "0.1", default-features = false }
+# Tone-mapping curves (Bt2446C default for encode_ultrahdr_luma).
+zentone = { version = "0.1", default-features = false }
 
 # Our ultrahdr crates
 ultrahdr-rs = "0.3.5"
-# Sibling-path pin for in-flight ultrahdr-core 0.5.0 (`metadata::*` modules
-# deleted in PR imazen/ultrahdr#12, parsers rehomed in zencodec::gainmap +
-# zenjpeg::container::xmp). Drop the path once 0.5.0 publishes.
-ultrahdr-core = { path = "../ultrahdr/ultrahdr-core", version = "0.5", default-features = false }
+ultrahdr-core = { version = "0.5", default-features = false }
 
 # Resize pipeline. Constraint solver (FitMode) and EXIF-orientation bridge
 # both live in zenresize 0.3+. zenlayout is no longer used anywhere in this

@@ -457,6 +457,41 @@ fn skip_entropy_scan(data: &[u8], start: usize) -> usize {
 // APP segment writer
 // ───────────────────────────────────────────────────────────────────────
 
+/// Append a raw JPEG marker segment (`0xFF <marker>` + `u16 BE` length +
+/// `identifier` + `payload`) to `dst`.
+///
+/// This is the canonical segment writer. `marker` is the second marker
+/// byte (e.g., `0xE0..=0xEF` for APPn, `0xFE` for COM). `identifier` is
+/// the optional per-segment namespace tag and may be empty when callers
+/// have already concatenated it into `payload`. `payload` is everything
+/// after the identifier.
+///
+/// The length word counts itself + identifier + payload (JPEG
+/// convention). Total segment size is `4 + identifier.len() + payload.len()`
+/// bytes. No intermediate allocation — writes straight into `dst`.
+///
+/// Use [`append_app_segment`] when you specifically need APP0..APP15
+/// with index validation. For COM, DRI, or other non-APP markers, call
+/// this directly.
+///
+/// # Panics
+///
+/// - If `2 + identifier.len() + payload.len() > u16::MAX as usize`
+///   (JPEG segments cap at `u16::MAX` including the length word;
+///   callers must split oversize content into multiple segments).
+pub(crate) fn write_raw_segment(dst: &mut Vec<u8>, marker: u8, identifier: &[u8], payload: &[u8]) {
+    let length_field = 2 + identifier.len() + payload.len();
+    let length_u16: u16 = length_field
+        .try_into()
+        .expect("JPEG segment exceeds u16::MAX length");
+    dst.reserve(2 + length_field);
+    dst.push(0xFF);
+    dst.push(marker);
+    dst.extend_from_slice(&length_u16.to_be_bytes());
+    dst.extend_from_slice(identifier);
+    dst.extend_from_slice(payload);
+}
+
 /// Append a JPEG `APPn` segment (`0xFF 0xE<n>` + `u16 BE` length +
 /// `identifier` + `payload`) to `dst`.
 ///
@@ -465,9 +500,7 @@ fn skip_entropy_scan(data: &[u8], start: usize) -> usize {
 /// for XMP, `"MPF\0"` for MPF, [`zencodec::ISO_21496_1_URN`] for ISO
 /// 21496-1). `payload` is everything after the identifier.
 ///
-/// The length word counts itself + identifier + payload (JPEG
-/// convention). Total segment size is `4 + identifier.len() + payload.len()`
-/// bytes. No intermediate allocation — writes straight into `dst`.
+/// Thin wrapper over [`write_raw_segment`] that validates the APP index.
 ///
 /// # Panics
 ///
@@ -482,16 +515,7 @@ pub(crate) fn append_app_segment(
     payload: &[u8],
 ) {
     assert!(app_index <= 15, "APP index must be 0..=15, got {app_index}");
-    let length_field = 2 + identifier.len() + payload.len();
-    let length_u16: u16 = length_field
-        .try_into()
-        .expect("APP segment exceeds u16::MAX length");
-    dst.reserve(2 + length_field);
-    dst.push(0xFF);
-    dst.push(0xE0 | app_index);
-    dst.extend_from_slice(&length_u16.to_be_bytes());
-    dst.extend_from_slice(identifier);
-    dst.extend_from_slice(payload);
+    write_raw_segment(dst, 0xE0 | app_index, identifier, payload);
 }
 
 /// Vec-returning variant of [`append_app_segment`].
@@ -812,11 +836,63 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "APP segment exceeds u16::MAX")]
+    #[should_panic(expected = "JPEG segment exceeds u16::MAX")]
     fn append_app_segment_rejects_oversize_payload() {
         let mut out = Vec::new();
         let big = vec![0u8; u16::MAX as usize];
         append_app_segment(&mut out, 2, b"id", &big);
+    }
+
+    #[test]
+    fn write_raw_segment_com_marker_no_identifier() {
+        let mut out = Vec::new();
+        write_raw_segment(&mut out, 0xFE, &[], b"COM data");
+        assert_eq!(out[0], 0xFF);
+        assert_eq!(out[1], 0xFE);
+        let length = u16::from_be_bytes([out[2], out[3]]);
+        assert_eq!(length as usize, 2 + b"COM data".len());
+        assert_eq!(&out[4..], b"COM data");
+    }
+
+    #[test]
+    fn write_raw_segment_with_identifier() {
+        let mut out = Vec::new();
+        write_raw_segment(&mut out, 0xE1, b"Exif\0\0", b"payload");
+        assert_eq!(out[0], 0xFF);
+        assert_eq!(out[1], 0xE1);
+        let length = u16::from_be_bytes([out[2], out[3]]);
+        assert_eq!(length as usize, 2 + b"Exif\0\0".len() + b"payload".len());
+        assert_eq!(&out[4..10], b"Exif\0\0");
+        assert_eq!(&out[10..], b"payload");
+    }
+
+    #[test]
+    fn write_raw_segment_matches_inline_legacy_layout() {
+        // Mirror the legacy write_segment behaviour: caller pre-concatenated
+        // identifier into payload, identifier slice is empty.
+        let pre_concat: Vec<u8> = b"MPF\0directory_bytes".to_vec();
+        let mut new_out = Vec::new();
+        write_raw_segment(&mut new_out, 0xE2, &[], &pre_concat);
+
+        // Hand-rolled equivalent of the old inline writer.
+        let mut legacy = Vec::new();
+        legacy.push(0xFF);
+        legacy.push(0xE2);
+        let length = (pre_concat.len() + 2) as u16;
+        legacy.push((length >> 8) as u8);
+        legacy.push(length as u8);
+        legacy.extend_from_slice(&pre_concat);
+
+        assert_eq!(new_out, legacy);
+    }
+
+    #[test]
+    fn write_raw_segment_matches_append_app_segment() {
+        let mut via_raw = Vec::new();
+        write_raw_segment(&mut via_raw, 0xE2, b"MPF\0", b"directory");
+        let mut via_app = Vec::new();
+        append_app_segment(&mut via_app, 2, b"MPF\0", b"directory");
+        assert_eq!(via_raw, via_app);
     }
 
     #[test]

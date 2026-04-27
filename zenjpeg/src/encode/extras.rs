@@ -731,13 +731,13 @@ fn detect_segment_type(marker: u8, data: &[u8]) -> SegmentType {
 }
 
 /// Write a single segment to output buffer.
+///
+/// Thin wrapper over [`crate::container::marker::write_raw_segment`].
+/// Callers pass the full segment body (identifier + payload already
+/// concatenated into `data`); the empty-identifier delegation keeps
+/// byte output identical to the legacy inline writer.
 pub(crate) fn write_segment(output: &mut Vec<u8>, marker: u8, data: &[u8]) {
-    output.push(0xFF);
-    output.push(marker);
-    let length = (data.len() + 2) as u16;
-    output.push((length >> 8) as u8);
-    output.push(length as u8);
-    output.extend_from_slice(data);
+    crate::container::marker::write_raw_segment(output, marker, &[], data);
 }
 
 /// Write all encoder segments to output buffer (in correct order).
