@@ -57,6 +57,21 @@ pub(crate) struct PaletteStats {
     pub indexed_width: u32,
     /// Convenience: `indexed_width != 0`.
     pub fits_in_256: bool,
+    /// Total pixels walked by the scan (`width × height`). Used to
+    /// compute fractions like `GrayscaleScore` from `non_grayscale`.
+    /// Set by `scan_palette` only; `scan_palette_quick` may have
+    /// early-exited before walking every pixel and leaves this at 0.
+    pub total_pixels: u64,
+    /// Pixels that failed the grayscale gate (`max(R, G, B) − min ≤ 4`).
+    /// Computed on the same full walk that builds the bin histogram.
+    /// **100 % coverage** — at stripe-sampled budgets a single colour
+    /// pixel in a sea of gray would have ~95 % chance of being missed,
+    /// breaking the binary "is this image grayscale?" classifier.
+    /// Hosting it on the always-full-scan palette tier gives the
+    /// right answer at no extra cost (the row walk is bandwidth-bound
+    /// on the flag-array store; the 4-instruction max−min gate fits
+    /// in the same target_feature loop).
+    pub non_grayscale: u64,
 }
 
 /// Map a distinct-colour count to the smallest power-of-2 palette
@@ -81,7 +96,7 @@ fn width_for_count(count: u32) -> u32 {
 /// store (no read-modify-write); the final count is a linear pop over
 /// the array, which LLVM autovectorizes. At full scan the raw count is
 /// the population truth — no extrapolation needed.
-pub(crate) fn scan_palette(stream: &mut RowStream<'_>) -> PaletteStats {
+pub(crate) fn scan_palette(stream: &mut RowStream<'_>, want_grayscale: bool) -> PaletteStats {
     let width = stream.width() as usize;
     let height = stream.height();
     if width == 0 || height == 0 {
@@ -102,11 +117,17 @@ pub(crate) fn scan_palette(stream: &mut RowStream<'_>) -> PaletteStats {
     // ~10 ns lookup `height` times and the wins from chunks-of-24
     // never amortized. Pulling the row loop in lets v3/v4 autovec the
     // index batch *and* the final reduction in the same code generation.
-    let distinct = scan_and_count(stream, &mut flags);
+    let (distinct, non_grayscale) = scan_and_count(stream, &mut flags, want_grayscale);
     PaletteStats {
         distinct,
         indexed_width: width_for_count(distinct),
         fits_in_256: distinct <= 256,
+        total_pixels: if want_grayscale {
+            (width as u64) * (height as u64)
+        } else {
+            0
+        },
+        non_grayscale,
     }
 }
 
@@ -144,10 +165,18 @@ pub(crate) fn scan_palette_quick(stream: &mut RowStream<'_>) -> PaletteStats {
         .try_into()
         .expect("32 KB heap alloc for palette flag array");
     let (count, exceeded) = scan_quick_inner(stream, &mut flags);
+    // The quick path doesn't compute grayscale (the early-exit
+    // structure can bail before walking all pixels, and the
+    // grayscale gate has no analogous early-exit at this
+    // granularity). Callers that request `GrayscaleScore` route
+    // through the full `scan_palette` path because `GrayscaleScore`
+    // is in `PALETTE_FULL_FEATURES`.
     PaletteStats {
-        distinct: 0, // not computed in the quick path
+        distinct: 0,
         indexed_width: if exceeded { 0 } else { width_for_count(count) },
         fits_in_256: !exceeded,
+        total_pixels: 0,
+        non_grayscale: 0,
     }
 }
 
@@ -166,8 +195,26 @@ pub(crate) fn scan_palette_quick(stream: &mut RowStream<'_>) -> PaletteStats {
 /// inside this fn since `borrow_row` is `#[inline]` and itself a tiny
 /// pointer indirection. The hot work — chunked index compute + 32 KB
 /// reduction — is what we wanted in the v4x context anyway.
+/// Two-mode scan: with-grayscale or without. The runtime `want_gray`
+/// flag dispatches to one of two `#[autoversion]`-tier inner kernels
+/// so the without-grayscale path keeps its tight original codegen
+/// (no per-pixel max/min/compare in the inner loop) while the
+/// with-grayscale path adds the gate inside the same target_feature
+/// region.
+fn scan_and_count(
+    stream: &mut RowStream<'_>,
+    flags: &mut [u8; 32_768],
+    want_gray: bool,
+) -> (u32, u64) {
+    if want_gray {
+        scan_and_count_gray(stream, flags)
+    } else {
+        (scan_and_count_no_gray(stream, flags), 0)
+    }
+}
+
 #[autoversion(v4x, v4, v3, neon, scalar)]
-fn scan_and_count(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> u32 {
+fn scan_and_count_no_gray(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> u32 {
     let width = stream.width() as usize;
     let height = stream.height();
     let row_bytes = width * 3;
@@ -179,9 +226,6 @@ fn scan_and_count(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> u32 {
         for c in 0..full_chunks {
             let base = c * chunk_bytes;
             let chunk: &[u8; 24] = (&row[base..base + chunk_bytes]).try_into().unwrap();
-            // Eight independent index computes — no inter-iteration
-            // dependencies, so the autovectorizer can issue them as a
-            // SIMD shift+or sequence at v3/v4 and emit eight stores.
             let mut i = 0;
             while i < 8 {
                 let r = (chunk[i * 3] >> 3) as usize;
@@ -192,7 +236,6 @@ fn scan_and_count(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> u32 {
                 i += 1;
             }
         }
-        // Tail: the < 8-pixel remainder.
         let tail_start = full_chunks * chunk_bytes;
         for px in row[tail_start..].chunks_exact(3) {
             let idx = (((px[0] >> 3) as usize) << 10)
@@ -202,6 +245,53 @@ fn scan_and_count(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> u32 {
         }
     }
     flags.iter().map(|&f| f as u32).sum()
+}
+
+#[autoversion(v4x, v4, v3, neon, scalar)]
+fn scan_and_count_gray(stream: &mut RowStream<'_>, flags: &mut [u8; 32_768]) -> (u32, u64) {
+    let width = stream.width() as usize;
+    let height = stream.height();
+    let row_bytes = width * 3;
+    let chunk_bytes = 24usize;
+    let mut non_gray: u64 = 0;
+    for y in 0..height {
+        let row = stream.borrow_row(y);
+        let row = &row[..row_bytes.min(row.len())];
+        let full_chunks = row.len() / chunk_bytes;
+        for c in 0..full_chunks {
+            let base = c * chunk_bytes;
+            let chunk: &[u8; 24] = (&row[base..base + chunk_bytes]).try_into().unwrap();
+            let mut i = 0;
+            while i < 8 {
+                let r = chunk[i * 3];
+                let g = chunk[i * 3 + 1];
+                let b = chunk[i * 3 + 2];
+                let idx = (((r >> 3) as usize) << 10)
+                    | (((g >> 3) as usize) << 5)
+                    | ((b >> 3) as usize);
+                flags[idx] = 1;
+                let mx = r.max(g).max(b);
+                let mn = r.min(g).min(b);
+                non_gray += (mx - mn > 4) as u64;
+                i += 1;
+            }
+        }
+        let tail_start = full_chunks * chunk_bytes;
+        for px in row[tail_start..].chunks_exact(3) {
+            let r = px[0];
+            let g = px[1];
+            let b = px[2];
+            let idx = (((r >> 3) as usize) << 10)
+                | (((g >> 3) as usize) << 5)
+                | ((b >> 3) as usize);
+            flags[idx] = 1;
+            let mx = r.max(g).max(b);
+            let mn = r.min(g).min(b);
+            non_gray += (mx - mn > 4) as u64;
+        }
+    }
+    let distinct: u32 = flags.iter().map(|&f| f as u32).sum();
+    (distinct, non_gray)
 }
 
 /// Same row+chunks(24) skeleton as `scan_and_count`, but with a

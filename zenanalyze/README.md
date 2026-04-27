@@ -123,6 +123,8 @@ enumerate the surface without hand-listing variants.
 | `NoiseFloorY` / `NoiseFloorUV` | zenjpeg `pre_blur`, jxl `noise/denoise`, webp `sns_strength`, zenrav1e `film_grain` |
 | `LineArtScore` | webp `Preset::Drawing`, jxl `splines` / `patches`, png palette preference |
 | `GradientFraction` | jxl `with_force_strategy` (DCT16 / DCT32 selection), zenrav1e deblock strength |
+| `SkinToneFraction` | photo-vs-other dispatch (one-direction signal, AUC 0.80) — webp `Preset::Photo`, jxl perceptual presets, jpeg chroma-aware quant |
+| `EdgeSlopeStdev` | screen-vs-photo dispatch (AUC 0.84, second only to `PatchFraction`) — webp `Preset::Drawing` vs `Photo`, jxl modular vs VarDCT |
 
 ### Source-direct HDR / wide-gamut / bit-depth tier
 
@@ -263,20 +265,69 @@ its narrowing clips PQ / HLG into sRGB-display).
 
 Release build, AVX2, no `target-cpu=native`, full `FeatureSet::SUPPORTED`:
 
-| Image | RGB8 input | RGBA8 input |
+| Input | 4 MP | RowStream path |
 |---|---|---|
-| 1 MP | ~5 ms | — |
-| 4 MP | ~7 ms | — |
-| 16 MP | ~17 ms (~1 ms/MP) | ~41 ms |
+| RGB8 / Rgbx8 with sRGB / wide-gamut primaries | 9.5 ms | `Native` (zero-copy slice subindex) |
+| RGBA8 | 10.9 ms | `StripAlpha8` (garb SIMD strip) |
+| BGRA8 | 12.0 ms | `StripAlpha8` (garb SIMD strip + swap) |
+| RGB16 | 24.7 ms | `Convert` (zenpixels-convert RowConverter) |
+| RGBA16 | 28.6 ms | `Convert` (zenpixels-convert handles strip + narrow) |
 
-The RGBA8 path's higher cost is the per-row strip-alpha pass repeated for
-each tier's row fetch; still ~2× cheaper than the previous full-RowConverter
-path, with zero converter setup allocation.
+The RGBA8 strip uses `garb::bytes::rgba_to_rgb` / `bgra_to_rgb`
+(SIMD-dispatched via `archmage::incant!`) — measured 7× faster than
+the previous in-tree scalar strip on a 2048-px row, dropping the
+RGBA8 overhead vs RGB8 baseline from +5.8 ms to +1.4 ms. The 16-bit
+input paths cost more because RowConverter does transfer-function-
+aware narrowing — that's the correct tool for genuinely
+heterogeneous input.
 
 Per-call working-set memory is ~265 KB across ~7 allocations (largest single
 chunk is the Tier 1 stripe scratch at 9 × width × 3 = 108 KB at 4 K). All
 allocations are infallible today; the `OutOfMemory` variant exists so a
 future minor can flip them without API breakage.
+
+## Empirical operating thresholds
+
+Picked on a 219-image labeled corpus from coefficient
+(`benchmarks/classifier-eval/labels.tsv`, spanning cid22-train/val,
+clic2025-1024, gb82, gb82-sc, imageflow, kadid10k, qoi-benchmark). 174
+photo, 36 screen, 9 illustration, 44 marked synthetic. F1 / AUC are
+for binary screen-vs-photo classification.
+
+**For codec-orchestrator dispatch ("is this a screen or a photo?"):**
+
+| signal | threshold | F1 | AUC | notes |
+|---|---|---|---|---|
+| `line_art_score > 0` | any nonzero | 0.978 | 0.750 | near-deterministic — line art ⇒ screen-like |
+| `natural_likelihood >= 0.06` | photo detection | 0.924 | 0.814 | high precision photo classifier |
+| `patch_fraction >= 0.27` | screen detection | **0.769** | **0.880** | **strongest single screen discriminator** |
+| `edge_slope_stdev >= 35` | screen detection | — | **0.844** | **second-strongest screen discriminator** — photos cluster 15–32, screens 32–58 |
+| `screen_content_likelihood >= 0.60` | screen detection | 0.750 | 0.831 | derived from flat blocks + palette + chroma |
+| `flat_color_block_ratio >= 0.53` | screen detection | 0.750 | 0.838 | raw — same F1 as the derived `_likelihood` |
+| `skin_tone_fraction >= 0.05` | photo detection | 0.824 | 0.799 | one-direction (presence ⇒ photo); pigmentation-invariant Chai-Ngan YCbCr |
+| `text_likelihood >= 0.30` | text detection | 0.682 | 0.774 | weaker but real |
+| `grayscale_score >= 0.99` | grayscale dispatch | — | — | encoder gap-filler, near-binary on real grayscale |
+
+**Note:** the three `*_likelihood` features empirically saturate at
+~0.70 (not 1.0) on real content, because each is a weighted sum of
+clamped sub-components that don't simultaneously max on real images.
+**Don't threshold them at `>= 0.8` — nothing will fire.** Operating
+points are in the 0.3–0.6 band. The exact corpus maxes are:
+
+- `text_likelihood` max **0.71**
+- `screen_content_likelihood` max **0.70**
+- `natural_likelihood` max **0.69**
+
+**For descriptor-gap detection** the thresholds are content-physical
+(see the "Descriptor-gap detection" table above): `GrayscaleScore >= 0.99`,
+`GamutCoverageSrgb >= 0.99`, etc. Those are spec-driven, not corpus-fit.
+
+The full per-class distributions, ROC-AUC ranking for every feature,
+Spearman redundancy matrix, and the recalibration findings that were
+considered and rejected are recorded in
+[`docs/calibration-corpus-2026-04-27.md`](docs/calibration-corpus-2026-04-27.md).
+That file is the pre-0.1.0-ship empirical baseline; subsequent 0.1.x
+patches that drift numerics should compare against it.
 
 ## Threshold contract
 

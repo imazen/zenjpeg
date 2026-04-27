@@ -36,6 +36,11 @@ zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true }
 archmage = { workspace = true }
 magetypes = { workspace = true }
+# `garb` provides SIMD pixel-format conversions (`rgba_to_rgb`,
+# `bgra_to_rgb`, etc.) via `archmage::incant!` — used by the
+# `RowStream::StripAlpha8` fast path. Measured ~7× speedup over the
+# in-tree scalar strip on a 2048-px row (0.13 µs vs 0.94 µs at 4 MP).
+garb = { workspace = true }
 # `transfer` feature exposes scalar PQ / HLG / sRGB / BT.709 EOTFs used by
 # the source-direct HDR / depth tier (`tier_depth`). The tier reads source
 # samples without going through `RowConverter` so it can compute peak
@@ -51,4 +56,13 @@ workspace = true
 
 [[example]]
 name = "corpus_eval"
+required-features = ["experimental"]
+
+[[example]]
+name = "edge_skin_bench"
+required-features = ["experimental"]
+
+
+[[example]]
+name = "tier1_bench"
 required-features = ["experimental"]

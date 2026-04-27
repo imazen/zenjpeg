@@ -966,6 +966,24 @@ fn dct2d_8_three_planes_simd(
 /// caller's monomorphized variant, so the unused branches contribute
 /// zero code and zero runtime cost.
 ///
+/// **Empirical saturation.** Each likelihood is a weighted sum of
+/// clamped sub-components and is `clamp(0, 1)`'d again at the end.
+/// On a 219-image labeled corpus the observed maxes are:
+///
+/// - `text_likelihood`: max 0.71 (entropy_low + edge_hi + chroma_lo
+///   don't all max simultaneously on real text)
+/// - `screen_content_likelihood`: max 0.70 (typical screens have
+///   > 4000 distinct color bins, forcing `palette_small` to 0)
+/// - `natural_likelihood`: max 0.69 (entropy_hi + palette_large +
+///   chroma_moderate + not_flat don't all max simultaneously)
+///
+/// Recommended consumer thresholds (best F1 on the labeled corpus):
+/// `text_likelihood >= 0.30`, `screen_content_likelihood >= 0.60`,
+/// `natural_likelihood >= 0.06` (photo detection). Thresholds at
+/// or above 0.8 fire on nothing. See
+/// `docs/calibration-corpus-2026-04-27.md` for the full empirical
+/// distribution and AUC table.
+///
 /// [`text_likelihood`]: crate::feature::AnalysisFeature::TextLikelihood
 /// [`natural_likelihood`]: crate::feature::AnalysisFeature::NaturalLikelihood
 /// [`screen_content_likelihood`]: crate::feature::AnalysisFeature::ScreenContentLikelihood

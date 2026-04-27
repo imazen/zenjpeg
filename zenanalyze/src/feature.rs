@@ -349,21 +349,32 @@ features_table! {
     #[cfg(feature = "experimental")]
     DctCompressibilityUV = 22 : f32 => dct_compressibility_uv,
     /// `f32`. Fraction `[0, 1]` of sampled blocks matching another.
-    /// Strong photo-vs-screen-content discriminator.
+    /// Strongest single photo-vs-screen-content discriminator on
+    /// real corpora.
     ///
-    /// Empirically validated on a 50-photo / 10-screen corpus
-    /// (CID22-512 + CLIC2025-final + gb82-sc): default-budget
-    /// classifier ROC-AUC = 0.978 (vs 0.980 at dense scan), and
-    /// Spearman ρ between default and dense = 0.887 — rank order is
-    /// preserved across the full image set. Photos cluster below
-    /// 0.05; screen content sits above 0.7. The earlier "57 % p50
-    /// error" measurement was relative error blowing up on photos
-    /// near zero; absolute error is p50=0.010 / p90=0.039, well
-    /// below any sensible classification threshold.
+    /// **Empirical AUC = 0.880** for screen-vs-photo on a 219-image
+    /// labeled corpus (cid22 + clic2025 + gb82 + gb82-sc + imageflow
+    /// + kadid10k + qoi-benchmark) — higher than every other shipped
+    /// feature, including the derived [`Self::ScreenContentLikelihood`]
+    /// (AUC 0.83). Photos: p50 = 0.002, p90 = 0.037. Screens: p50 =
+    /// 0.726, p90 = 0.906. **Recommended operating threshold:
+    /// `patch_fraction >= 0.27`** (F1 = 0.769, P = 0.91, R = 0.67)
+    /// for screen-like classification.
     ///
-    /// Bumping `hf_max_blocks` to 4096+ tightens the absolute error
-    /// further but doesn't materially improve the classifier — the
-    /// 1024-block default is fit for codec dispatch as shipped.
+    /// Originally validated on a smaller 50-photo / 10-screen pilot
+    /// corpus where the default-budget classifier scored ROC-AUC =
+    /// 0.978 (vs 0.980 at dense scan) and Spearman ρ between
+    /// default and dense = 0.887. The 219-image labeled-corpus AUC
+    /// is lower because that corpus includes screen-like
+    /// illustrations and edge-case "uniform photos" that genuinely
+    /// sit closer to the boundary; the rank order remains correct
+    /// and the 1024-block default budget is fit for codec dispatch
+    /// as shipped.
+    ///
+    /// Bumping `hf_max_blocks` to 4096+ tightens absolute error
+    /// further but doesn't materially improve the classifier — see
+    /// `docs/calibration-corpus-2026-04-27.md` for the full
+    /// per-class distribution and AUC ranking.
     ///
     /// Gated behind `experimental` for 0.1.0 because no in-tree
     /// codec consumes it yet; promote when a consumer wires up.
@@ -379,11 +390,40 @@ features_table! {
     AlphaBimodalScore = 26 : f32 => alpha_bimodal_score,
 
     // ---------------- Derived likelihoods ----------------------------
-    /// `f32`. Soft `[0, 1]` score: rendered text / document content.
+    /// `f32`. Soft score: rendered text / document content.
+    ///
+    /// Theoretical range `[0, 1]`. **Empirical max on a 219-image
+    /// labeled corpus: 0.71** — the formula's three sub-components
+    /// (low entropy + high edge density + low chroma) don't all max
+    /// simultaneously on real content. Recommended operating
+    /// threshold: `text_likelihood >= 0.30` (F1 = 0.682, AUC = 0.774
+    /// for screen-like classification). Do not threshold at `>= 0.8`
+    /// — nothing fires there. See
+    /// `docs/calibration-corpus-2026-04-27.md`.
     TextLikelihood = 27 : f32 => text_likelihood,
-    /// `f32`. Soft `[0, 1]` score: UI / chart / synthetic content.
+    /// `f32`. Soft score: UI / chart / synthetic content.
+    ///
+    /// Theoretical range `[0, 1]`. **Empirical max on a 219-image
+    /// labeled corpus: 0.70** — typical screen content has flat
+    /// blocks and low chroma (which drive the formula's 0.6 + 0.1
+    /// weights to 1) but a moderate distinct-color count (>= 4000
+    /// bins) which forces the `palette_small` term to 0, capping the
+    /// total at ~0.70. Recommended operating threshold:
+    /// `screen_content_likelihood >= 0.60` (F1 = 0.750, P = 0.86,
+    /// R = 0.67). For the strongest single screen-vs-photo
+    /// discriminator, see [`Self::PatchFraction`] (AUC = 0.88) which
+    /// outperforms this derived likelihood (AUC = 0.83). See
+    /// `docs/calibration-corpus-2026-04-27.md`.
     ScreenContentLikelihood = 28 : f32 => screen_content_likelihood,
-    /// `f32`. Soft `[0, 1]` score: natural photographic content.
+    /// `f32`. Soft score: natural photographic content.
+    ///
+    /// Theoretical range `[0, 1]`. **Empirical max on a 219-image
+    /// labeled corpus: 0.69**, and photos cleanly separate from
+    /// screens at a low threshold: `natural_likelihood >= 0.06`
+    /// gives F1 = 0.924, P = 0.876, R = 0.977 for photo
+    /// classification. Equivalent to a probability — high values
+    /// reliably mean photo. See
+    /// `docs/calibration-corpus-2026-04-27.md`.
     NaturalLikelihood = 29 : f32 => natural_likelihood,
 
     // ---------------- Quick-path palette signals --------------------
@@ -544,6 +584,105 @@ features_table! {
     /// driven by palette and high-frequency energy).
     #[cfg(feature = "experimental")]
     LineArtScore = 45 : f32 => line_art_score,
+
+    /// `f32`. Fraction `[0, 1]` of sampled pixels in the canonical
+    /// chrominance-only skin-tone region. The chroma gates are
+    /// **invariant to skin pigmentation** (Cb / Cr quantify hue, not
+    /// brightness), so the same thresholds work across light, medium,
+    /// and dark skin. Luma covers a wide range to span every tone:
+    ///
+    /// - `Y  ∈ [40,  240]` — spans deep shadow on dark skin to bright
+    ///   highlight on light skin without rejecting either end
+    /// - `Cb ∈ [77,  127]` — Chai & Ngan (1999) chrominance bound
+    /// - `Cr ∈ [133, 173]` — Chai & Ngan (1999) chrominance bound
+    ///
+    /// Computed per-pixel in Tier 1 alongside the existing grayscale
+    /// counter, reusing the BT.601 fixed-point YCbCr conversion. Zero
+    /// added allocations; ~2 ns/pixel on a 7950X.
+    ///
+    /// **One-direction signal.** Non-zero fraction is strong evidence
+    /// of a natural photograph (humans, animals, food). Zero fraction
+    /// is **not** evidence against a photograph — landscapes,
+    /// architecture, and macro shots without skin tones all score
+    /// zero. Use as a positive-only confirmation, never as a negative
+    /// classifier.
+    ///
+    /// **Why YCbCr instead of CIELAB.** CIELAB skin classifiers
+    /// (Garcia & Tziritas 1999) outperform YCbCr by ~2 percentage
+    /// points on standard skin-detection benchmarks but cost a
+    /// non-linear sRGB → XYZ → LAB conversion per pixel. The Chai-Ngan
+    /// YCbCr classifier is within ~5 % of LAB at zero extra
+    /// arithmetic — already paid for by `chroma_complexity`,
+    /// `cb_sharpness`, and the BT.601 luma the analyzer needs anyway.
+    ///
+    /// **Empirical ranges** (from a 219-image labeled corpus —
+    /// `docs/calibration-corpus-2026-04-27.md`):
+    ///
+    /// - `photo_natural`:   p10 = 0.009, p50 = 0.130, p90 = 0.543
+    /// - `photo_portrait`:  p10 = 0.047, p50 = 0.241, p90 = 0.541 — 94 % > 1 %
+    /// - `photo_detailed`:  p10 = 0.021, p50 = 0.300, p90 = 0.470
+    /// - `screen_document`: p10 = 0.000, p50 = 0.006, p90 = 0.077
+    /// - `screen_ui`:       p10 = 0.000, p50 = 0.027, p90 = 0.127
+    /// - `illustration`:    p10 = 0.001, p50 = 0.081, p90 = 0.323
+    ///
+    /// AUC = `0.799` for photo-vs-other classification — comparable
+    /// to [`Self::NaturalLikelihood`] (0.814).
+    ///
+    /// **Operating threshold:** `skin_tone_fraction >= 0.05` gives
+    /// `P = 0.89, R = 0.76, F1 = 0.82` for photo classification.
+    /// Lower thresholds (`> 0`) maximize recall (`F1 = 0.882`).
+    ///
+    /// References: Chai & Ngan, "Face segmentation using skin-color
+    /// map in videophone applications", IEEE TCSVT 1999;
+    /// Vezhnevets et al., "A Survey on Pixel-Based Skin Color
+    /// Detection Techniques", Graphicon 2003.
+    #[cfg(feature = "experimental")]
+    SkinToneFraction = 49 : f32 => skin_tone_fraction,
+
+    /// `f32`. Standard deviation of luma gradient magnitudes across
+    /// pixels that crossed the [`Self::EdgeDensity`] threshold
+    /// (`|∇L|² > 400`, i.e. `|∇L| > 20`). Range `[0, ~150]` on the
+    /// 0–255 luma scale.
+    ///
+    /// Tier 1 piggyback: the same SIMD edge sweep that produces
+    /// `edge_density` accumulates `Σ g` and `Σ g²` over the threshold-
+    /// crossing subset. Stddev is computed at row close from those
+    /// running sums. Returns `0.0` if zero edges crossed (smooth
+    /// image or below-threshold-only gradients).
+    ///
+    /// **Physical signal.** Natural photographs have edges anti-
+    /// aliased by lens MTF + sensor pixel pitch — gradient magnitudes
+    /// cluster tightly around the optical cutoff (typical stddev
+    /// ~`8–18` on 0–255 luma). Digital artwork has either no edges
+    /// (smooth gradients), single-pixel edges (line art — already
+    /// caught by [`Self::LineArtScore`]), or **bimodal** gradients
+    /// from variable-pressure brushwork or stylization (typical
+    /// stddev `> 25`). JPEG-roundtripped artwork's blocking artifacts
+    /// also widen this stddev relative to a pristine PNG photograph.
+    ///
+    /// **Empirical ranges** (from a 219-image labeled corpus —
+    /// `docs/calibration-corpus-2026-04-27.md`):
+    ///
+    /// - `photo_natural`:   p10 = 15.9, p50 = 24.2, p90 = 31.8
+    /// - `photo_portrait`:  p10 = 15.3, p50 = 20.7, p90 = 27.0
+    /// - `photo_detailed`:  p10 = 18.2, p50 = 23.1, p90 = 32.0
+    /// - `illustration`:    p10 = 12.9, p50 = 20.9, p90 = 26.7
+    /// - `screen_document`: p10 = 42.0, p50 = 55.3, p90 = 57.5
+    /// - `screen_ui`:       p10 = 31.6, p50 = 42.1, p90 = 54.4
+    ///
+    /// AUC = `0.843` for screen-vs-photo classification (high values →
+    /// screen content). The strongest single screen-content signal
+    /// after [`Self::PatchFraction`].
+    ///
+    /// **Operating thresholds:**
+    /// - `edge_slope_stdev > 35` ⇒ very likely screen / chart / UI
+    /// - `15 ≤ edge_slope_stdev ≤ 32` ⇒ photographic-edge distribution
+    /// - `< 15` with low [`Self::EdgeDensity`] ⇒ smooth content
+    ///   (illustrations or low-detail photos overlap here, ~13–27)
+    ///
+    /// Tracks the issue #123 proposal `EdgeSlopeStdev`.
+    #[cfg(feature = "experimental")]
+    EdgeSlopeStdev = 50 : f32 => edge_slope_stdev,
 }
 
 /// A scalar feature value — discriminated by the value type, not by
@@ -829,6 +968,12 @@ pub(crate) const PALETTE_FULL_FEATURES: FeatureSet = {
     #[cfg(feature = "experimental")]
     {
         s = s.with(AnalysisFeature::PaletteDensity);
+        // GrayscaleScore is computed on the same full-scan walk that
+        // builds the palette histogram. It needs 100 % coverage —
+        // stripe-sampling at ~5 % budget would let a single colour
+        // pixel slip past the gate ~95 % of the time and produce a
+        // false-positive grayscale classification.
+        s = s.with(AnalysisFeature::GrayscaleScore);
     }
     s
 };

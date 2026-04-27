@@ -63,6 +63,18 @@ pub(crate) struct LumaWeights {
 const LUMA_SUM_220: i32 = 220;
 
 impl LumaWeights {
+    /// True iff this weight set is the BT.601 baseline shared by
+    /// sRGB / BT.709 / Unknown sources. Used by the Tier 1 SIMD
+    /// dispatcher to pick the const-folded `accumulate_row_simd::<true>`
+    /// specialisation, which lets LLVM emit `vfmadd*` immediates for
+    /// `kr / kg / kb` instead of register-loaded splats.
+    #[inline]
+    pub(crate) fn is_bt601_baseline(&self) -> bool {
+        // The constants are chosen so equality holds bit-exact against
+        // the `bt601()` constructor below — no tolerance needed.
+        self.kr == 0.299 && self.kg == 0.587 && self.kb == 0.114
+    }
+
     /// Pick weights for a source's declared [`ColorPrimaries`].
     ///
     /// - `Bt709` (sRGB / BT.709): BT.601 weights — preserves the

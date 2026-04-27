@@ -3061,6 +3061,7 @@ name = "zenanalyze"
 version = "0.1.0"
 dependencies = [
  "archmage 0.9.23",
+ "garb",
  "image",
  "linear-srgb",
  "magetypes",

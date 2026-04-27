@@ -3046,6 +3046,120 @@ fn aq_map_std_low_for_uniform_high_for_heterogeneous() {
 
 #[cfg(feature = "experimental")]
 #[test]
+fn skin_tone_fraction_fires_on_skin_colored_pixels_zero_on_neutral() {
+    // The Chai-Ngan YCbCr classifier (Cb [77,127], Cr [133,173], Y [40,240])
+    // is invariant to skin pigmentation by design — chroma quantifies hue
+    // not lightness. Verify that a representative tone in each common
+    // pigmentation lands inside the gate.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::SkinToneFraction));
+
+    // Three sRGB skin tones spanning a wide range of pigmentations:
+    //   light  : (236, 188, 180)  — light pinkish
+    //   medium : (198, 134, 105)  — medium tan
+    //   dark   : (90,  56,  37)   — deep brown
+    // Each YCbCr-conversion lands inside the Chai-Ngan rectangle.
+    for (label, rgb) in [
+        ("light", [236u8, 188, 180]),
+        ("medium", [198u8, 134, 105]),
+        ("dark", [90u8, 56, 37]),
+    ] {
+        let mut buf = vec![0u8; 64 * 64 * 3];
+        for px in buf.chunks_exact_mut(3) {
+            px[0] = rgb[0];
+            px[1] = rgb[1];
+            px[2] = rgb[2];
+        }
+        let s = PixelSlice::new(&buf, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let r = crate::analyze_features(s, &q).unwrap();
+        let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+        assert!(
+            f > 0.95,
+            "{label} skin tone {:?} should fire near 1.0, got {f}",
+            rgb
+        );
+    }
+
+    // Pure neutral grey: Cb = Cr = 128 — outside Cr [133, 173], so 0.
+    let neutral = vec![128u8; 64 * 64 * 3];
+    let s = PixelSlice::new(&neutral, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+    assert!(f < 0.01, "neutral grey ⇒ ~0.0, got {f}");
+
+    // Saturated blue: Cb high (≈240), outside the Cb [77, 127] gate.
+    let mut blue = vec![0u8; 64 * 64 * 3];
+    for px in blue.chunks_exact_mut(3) {
+        px[0] = 0;
+        px[1] = 0;
+        px[2] = 255;
+    }
+    let s = PixelSlice::new(&blue, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+    assert!(f < 0.01, "saturated blue ⇒ ~0.0, got {f}");
+}
+
+#[cfg(feature = "experimental")]
+#[test]
+fn edge_slope_stdev_low_for_uniform_high_for_varied_edges() {
+    // Synthetic two-tone bands at one luma step (all crossings have the
+    // same gradient magnitude) ⇒ very low stddev. Mixed-amplitude edges
+    // (alternating step heights) ⇒ higher stddev.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::EdgeSlopeStdev));
+
+    // Uniform-amplitude vertical bands: every transition is the same
+    // magnitude. stddev should be ~0 (mean grad = single value).
+    let mut uniform = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let v = if (x / 4) % 2 == 0 { 50 } else { 200 };
+            let off = (y * 64 + x) * 3;
+            uniform[off] = v;
+            uniform[off + 1] = v;
+            uniform[off + 2] = v;
+        }
+    }
+    let s = PixelSlice::new(&uniform, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let e = r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap();
+    assert!(
+        e < 5.0,
+        "uniform bands should have low stddev, got {e}"
+    );
+
+    // Mixed-amplitude vertical bands: alternating step heights produce
+    // a bimodal gradient distribution ⇒ higher stddev.
+    let mut mixed = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            // 4-period: 0, 100, 50, 250 ⇒ steps of 100, 50, 200
+            let v = match (x / 4) % 4 {
+                0 => 0,
+                1 => 100,
+                2 => 50,
+                _ => 250,
+            };
+            let off = (y * 64 + x) * 3;
+            mixed[off] = v;
+            mixed[off + 1] = v;
+            mixed[off + 2] = v;
+        }
+    }
+    let s = PixelSlice::new(&mixed, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let e = r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap();
+    assert!(
+        e > 30.0,
+        "mixed-amplitude bands should have high stddev, got {e}"
+    );
+}
+
+#[cfg(feature = "experimental")]
+#[test]
 fn grayscale_score_one_for_neutral_image_zero_for_saturated() {
     // Neutral (R=G=B) ⇒ score = 1.0; saturated colour ⇒ score ≈ 0.
     use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
