@@ -198,7 +198,8 @@ __wasm-simd = []
 # now mandatory there); container/metadata parsers moved to zencodec::gainmap
 # + zenjpeg::container::xmp; types fold to zenpixels (PixelFormat,
 # ColorPrimaries, TransferFunction, PixelBuffer).
-ultrahdr = ["decoder", "ultrahdr-core/std", "dep:half", "dep:zentone"]
+# `tonemap` pulls in zentone for AdaptiveTonemapper / FitConfig / ToneMapConfig.
+ultrahdr = ["decoder", "ultrahdr-core/std", "ultrahdr-core/tonemap", "dep:half", "dep:zentone"]
 # zencodec trait implementations (EncoderConfig, DecoderConfig, etc.)
 zencodec = ["decoder"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode.
