@@ -98,8 +98,11 @@ fn image_sharpness_breakdown(
     stream.fetch_into(1, &mut row1);
     stream.fetch_into(2, &mut row2);
 
-    let mut sumh: (usize, usize) = (0, 0);
-    let mut sumv: (usize, usize) = (0, 0);
+    // u64 (not usize) so 32-bit builds don't overflow:
+    // gradient_diff_ycbcr can return values up to ~437K per pixel, and
+    // fragments span thousands of pixels — summing in usize=u32 wraps.
+    let mut sumh: (u64, u64) = (0, 0);
+    let mut sumv: (u64, u64) = (0, 0);
     let mut max_sumh: (u32, u32) = (0, 0);
     let mut max_sumv: (u32, u32) = (0, 0);
     let mut max_diff: (u32, u32) = (0, 0);
@@ -140,15 +143,15 @@ fn image_sharpness_breakdown(
                 max_diff.1 = h.1;
             }
 
-            sumh.0 += h.0 as usize;
-            sumh.1 += h.1 as usize;
-            sumv.0 += v.0 as usize;
-            sumv.1 += v.1 as usize;
+            sumh.0 += h.0 as u64;
+            sumh.1 += h.1 as u64;
+            sumv.0 += v.0 as u64;
+            sumv.1 += v.1 as u64;
         }
 
         fragment_height += 1;
         if fragment_height >= fragment_max_height {
-            let denom = fragment_height * width;
+            let denom = (fragment_height * width) as u64;
             max_sumh.0 = max_sumh.0.max((sumh.0 / denom) as u32);
             max_sumh.1 = max_sumh.1.max((sumh.1 / denom) as u32);
             max_sumv.0 = max_sumv.0.max((sumv.0 / denom) as u32);
@@ -170,7 +173,7 @@ fn image_sharpness_breakdown(
         stream.fetch_into(need_y2 as u32, &mut row2);
     }
     if fragment_height > 16 {
-        let denom = fragment_height * width;
+        let denom = (fragment_height * width) as u64;
         max_sumh.0 = max_sumh.0.max((sumh.0 / denom) as u32);
         max_sumh.1 = max_sumh.1.max((sumh.1 / denom) as u32);
         max_sumv.0 = max_sumv.0.max((sumv.0 / denom) as u32);
