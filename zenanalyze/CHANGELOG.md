@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-28
+
+First public release. Published to crates.io as
+[zenanalyze 0.1.0](https://crates.io/crates/zenanalyze/0.1.0); GitHub
+release [zenanalyze-v0.1.0](https://github.com/imazen/zenjpeg/releases/tag/zenanalyze-v0.1.0).
+
+### Cargo features
+
+- **default** — stable raw signals (variance, edge density, chroma
+  sharpness, DCT energy, alpha, palette, distinct-color bins). Numeric
+  drift in 0.1.x bounded by the threshold contract; signatures frozen.
+- **`experimental`** — research-stage signals (PatchFraction,
+  AqMapMean / AqMapStd, NoiseFloorY / UV, GradientFraction, source-direct
+  HDR / wide-gamut / bit-depth tier). Metric definition or scale may
+  change in 0.1.x patches.
+- **`composites`** — classifier-style scores (TextLikelihood,
+  ScreenContentLikelihood, NaturalLikelihood, LineArtScore). Hand-tuned
+  weighted combinators of stable raw signals; the *combinator
+  coefficients* drift as the corpus calibration matures. The raw signals
+  these consume are stable.
+
+### Added (since the rest of this section)
+
+- **`composites` cargo feature** gating `TextLikelihood` /
+  `ScreenContentLikelihood` / `NaturalLikelihood` / `LineArtScore`. The
+  three likelihood enum variants and `LineArtScore` now require this
+  cargo feature. Variants stay defined either way; without the flag
+  their `RawAnalysis` fields, `into_results` writes, and SUPPORTED
+  entries cfg out together. `compute_derived_likelihoods()` body is
+  cfg-gated with a no-op stub when the flag is off.
+- **Tier 1 SKIN const-bool axis.** `accumulate_row_simd` was
+  `<BT601, FULL>`; now `<BT601, FULL, SKIN>`. Splitting `SkinToneFraction`
+  off the `FULL` accumulators frees AVX2 register pressure (joint kernel
+  spilled 12 vmovups + 13 vbroadcastss because all accumulators —
+  luma stats, Hasler M3, BT.601 chroma matrix, Chai-Ngan thresholds —
+  were live at once). Callers can now request just Variance /
+  Colourfulness / EdgeSlope or just SkinToneFraction without paying for
+  the other half. New `feature::TIER1_FULL_FEATURES` and
+  `feature::TIER1_SKIN_FEATURES` sets drive an 8-arm match on
+  (BT601, FULL, SKIN). 1 MP Tier 1 Variance only: 3.15 ms → 3.01 ms
+  (-4 %).
+
 ### Added
 
 - Initial release. Image content analyzers extracted from `zenjpeg::analyze`
