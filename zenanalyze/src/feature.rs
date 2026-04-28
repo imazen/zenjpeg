@@ -395,11 +395,13 @@ features_table! {
     /// Theoretical range `[0, 1]`. **Empirical max on a 219-image
     /// labeled corpus: 0.71** — the formula's three sub-components
     /// (low entropy + high edge density + low chroma) don't all max
-    /// simultaneously on real content. Recommended operating
-    /// threshold: `text_likelihood >= 0.30` (F1 = 0.682, AUC = 0.774
-    /// for screen-like classification). Do not threshold at `>= 0.8`
-    /// — nothing fires there. See
-    /// `docs/calibration-corpus-2026-04-27.md`.
+    /// simultaneously on real content. **Stretched to `[0, 1]`**
+    /// post-2026-04-28 — multiply old thresholds by `1 / 0.71` to
+    /// translate. Recommended operating threshold (post-stretch):
+    /// `text_likelihood >= 0.35` (F1 = 0.585, P = 0.50, R = 0.71,
+    /// AUC = 0.713 vs `has_text` ground truth on the 219-image
+    /// labeled corpus). Do not threshold at `>= 0.7` — almost nothing
+    /// fires there. See `docs/calibration-corpus-2026-04-27.md`.
     #[cfg(feature = "composites")]
     TextLikelihood = 27 : f32 => text_likelihood,
     /// `f32`. Soft score: UI / chart / synthetic content.
@@ -409,22 +411,30 @@ features_table! {
     /// blocks and low chroma (which drive the formula's 0.6 + 0.1
     /// weights to 1) but a moderate distinct-color count (>= 4000
     /// bins) which forces the `palette_small` term to 0, capping the
-    /// total at ~0.70. Recommended operating threshold:
-    /// `screen_content_likelihood >= 0.60` (F1 = 0.750, P = 0.86,
-    /// R = 0.67). For the strongest single screen-vs-photo
-    /// discriminator, see [`Self::PatchFraction`] (AUC = 0.88) which
-    /// outperforms this derived likelihood (AUC = 0.83). See
+    /// total at ~0.70. **Reformulated and stretched 2026-04-28** — the
+    /// `palette_small` term has been replaced with `patch_fraction`
+    /// (when `experimental` is on; legacy formula otherwise) and the
+    /// post-clamp value is divided by 0.70 so the composite reaches
+    /// `[0, 1]` cleanly. Recommended operating threshold (post-stretch):
+    /// `screen_content_likelihood >= 0.80` (F1 = **0.779**, P = 0.94,
+    /// R = 0.67, AUC = **0.845**). For the strongest single screen-vs-
+    /// photo discriminator, see [`Self::PatchFraction`] (AUC = 0.88)
+    /// which still outperforms this derived likelihood — but the new
+    /// composite F1 (0.779) is now competitive with PatchFraction's
+    /// F1 (0.769) at its own optimal operating point. See
     /// `docs/calibration-corpus-2026-04-27.md`.
     #[cfg(feature = "composites")]
     ScreenContentLikelihood = 28 : f32 => screen_content_likelihood,
     /// `f32`. Soft score: natural photographic content.
     ///
     /// Theoretical range `[0, 1]`. **Empirical max on a 219-image
-    /// labeled corpus: 0.69**, and photos cleanly separate from
-    /// screens at a low threshold: `natural_likelihood >= 0.06`
-    /// gives F1 = 0.924, P = 0.876, R = 0.977 for photo
+    /// labeled corpus: 0.69 → stretched to 1.0 post-2026-04-28**.
+    /// Photos cleanly separate from screens at a low threshold:
+    /// **`natural_likelihood >= 0.10`** (post-stretch) gives F1 =
+    /// **0.923**, P = 0.88, R = 0.97, AUC = 0.814 for photo
     /// classification. Equivalent to a probability — high values
-    /// reliably mean photo. See
+    /// reliably mean photo. (Pre-stretch threshold was `>= 0.06`;
+    /// multiply old thresholds by `1 / 0.69` to translate.) See
     /// `docs/calibration-corpus-2026-04-27.md`.
     #[cfg(feature = "composites")]
     NaturalLikelihood = 29 : f32 => natural_likelihood,
@@ -1168,6 +1178,17 @@ pub(crate) const T3_NEEDED_BY: FeatureSet = {
     {
         s = s.with(AnalysisFeature::TextLikelihood);
         s = s.with(AnalysisFeature::NaturalLikelihood);
+        // Post-2026-04-28: `screen_content_likelihood` reads
+        // `patch_fraction` (when `experimental` is on; legacy formula
+        // otherwise). `patch_fraction` is a Tier 3 output, so
+        // requesting `ScreenContentLikelihood` must trigger Tier 3
+        // even when no other Tier 3 feature was requested. Without
+        // this, the composite reads zero-initialized `patch_fraction`
+        // and silently produces 0.
+        #[cfg(feature = "experimental")]
+        {
+            s = s.with(AnalysisFeature::ScreenContentLikelihood);
+        }
     }
     s
 };

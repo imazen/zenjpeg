@@ -975,22 +975,38 @@ fn dct2d_8_three_planes_simd(
 /// caller's monomorphized variant, so the unused branches contribute
 /// zero code and zero runtime cost.
 ///
-/// **Empirical saturation.** Each likelihood is a weighted sum of
-/// clamped sub-components and is `clamp(0, 1)`'d again at the end.
-/// On a 219-image labeled corpus the observed maxes are:
+/// **Calibration (re-normalized 2026-04-28).** Each likelihood is a
+/// weighted sum of clamped sub-components, then re-stretched against
+/// its empirical saturation point so values cleanly span `[0, 1]` on
+/// real content. Without the post-stretch, all three composites capped
+/// at ~0.7 on the 219-image labeled corpus because the sub-components
+/// don't co-fire to their individual maxima on natural inputs.
 ///
-/// - `text_likelihood`: max 0.71 (entropy_low + edge_hi + chroma_lo
-///   don't all max simultaneously on real text)
-/// - `screen_content_likelihood`: max 0.70 (typical screens have
-///   > 4000 distinct color bins, forcing `palette_small` to 0)
-/// - `natural_likelihood`: max 0.69 (entropy_hi + palette_large +
-///   chroma_moderate + not_flat don't all max simultaneously)
+/// **Pre-stretch saturation points** (raw output max on the labeled corpus):
 ///
-/// Recommended consumer thresholds (best F1 on the labeled corpus):
-/// `text_likelihood >= 0.30`, `screen_content_likelihood >= 0.60`,
-/// `natural_likelihood >= 0.06` (photo detection). Thresholds at
-/// or above 0.8 fire on nothing. See
-/// `docs/calibration-corpus-2026-04-27.md` for the full empirical
+/// - `text_likelihood`: 0.71
+/// - `screen_content_likelihood`: 0.70 (current formula)
+/// - `natural_likelihood`: 0.69
+///
+/// After stretch, real content reliably reaches the upper end of `[0, 1]`.
+/// AUC is preserved (rank order unchanged); operating thresholds shift
+/// proportionally — see updated thresholds below.
+///
+/// **Recommended consumer thresholds** (best F1 on the labeled corpus,
+/// post-stretch):
+///
+/// | Composite | Threshold | F1 | P | R | Notes |
+/// |---|---:|---:|---:|---:|---|
+/// | `text_likelihood >= 0.35` | 0.35 | 0.585 | 0.50 | 0.71 | AUC = 0.713; same AUC pre/post-stretch (rank-preserving). |
+/// | `screen_content_likelihood >= 0.80` | 0.80 | **0.779** | 0.94 | 0.67 | AUC = 0.845 (was 0.831); the formula reshape from `palette_small`-based to `patch_fraction`-based lifted both AUC AND peak F1 (0.59 → 0.78). |
+/// | `natural_likelihood >= 0.10` | 0.10 | **0.923** | 0.88 | 0.97 | AUC = 0.814; same AUC pre/post-stretch. |
+///
+/// Thresholds shifted vs the pre-2026-04-28 calibration: stretching by
+/// `MAX` divisors moves every operating point. If you have rules
+/// hardcoded against the old 0.06-0.60 range, multiply by the inverse
+/// stretch factor (e.g. `old_threshold / 0.71` for `text_likelihood`).
+///
+/// See `docs/calibration-corpus-2026-04-27.md` for the full empirical
 /// distribution and AUC table.
 ///
 /// [`text_likelihood`]: crate::feature::AnalysisFeature::TextLikelihood
@@ -1003,18 +1019,45 @@ pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut Ra
     let edge_hi = (out.edge_density / 0.25).min(1.0);
     let flat_high = (out.flat_color_block_ratio / 0.5).min(1.0);
 
+    // Empirically-derived re-stretch divisors (see module-level docstring).
+    // `clamp(0, 1.0)` after the stretch since some inputs (mostly synthetic
+    // pathological cases) can briefly exceed the corpus max.
+    const TEXT_MAX: f32 = 0.71;
+    const SCREEN_MAX: f32 = 0.70;
+    const NATURAL_MAX: f32 = 0.69;
+
     if T3 {
         let entropy_low = (4.0 - out.luma_histogram_entropy).clamp(0.0, 4.0) / 4.0;
-        out.text_likelihood = (entropy_low * 0.4 + edge_hi * 0.3 + chroma_lo * 0.3).clamp(0.0, 1.0);
+        let raw = (entropy_low * 0.4 + edge_hi * 0.3 + chroma_lo * 0.3).clamp(0.0, 1.0);
+        out.text_likelihood = (raw / TEXT_MAX).clamp(0.0, 1.0);
     }
     if PAL {
-        let palette_small = if out.distinct_color_bins == 0 {
-            0.0
-        } else {
-            (1.0 - (out.distinct_color_bins as f32 / 4000.0).min(1.0)).clamp(0.0, 1.0)
+        // Post-2026-04-28 reformulation: the previous formula combined
+        // `flat_high * 0.6 + palette_small * 0.3 + chroma_lo * 0.1`. The
+        // `palette_small` weight was dragging the AUC down: real screen
+        // content (charts, anti-aliased UIs) routinely has > 4000 distinct
+        // colour bins, so `palette_small` collapsed to 0 on most positive
+        // examples. Replacing it with `patch_fraction` (when available)
+        // lifts AUC from 0.83 to 0.85 on the 219-image labeled corpus.
+        // (`patch_fraction` alone hits 0.88 — the residual 0.03 the
+        // composite gives up vs the raw feature is the price of combining
+        // inputs at all.)
+        //
+        // `patch_fraction` lives behind `experimental`; when that feature
+        // is off the field doesn't exist on `RawAnalysis`, so fall back
+        // to the previous formula. Both branches stretch by `SCREEN_MAX`.
+        #[cfg(feature = "experimental")]
+        let raw = (out.patch_fraction * 0.6 + flat_high * 0.4).clamp(0.0, 1.0);
+        #[cfg(not(feature = "experimental"))]
+        let raw = {
+            let palette_small = if out.distinct_color_bins == 0 {
+                0.0
+            } else {
+                (1.0 - (out.distinct_color_bins as f32 / 4000.0).min(1.0)).clamp(0.0, 1.0)
+            };
+            (flat_high * 0.6 + palette_small * 0.3 + chroma_lo * 0.1).clamp(0.0, 1.0)
         };
-        out.screen_content_likelihood =
-            (flat_high * 0.6 + palette_small * 0.3 + chroma_lo * 0.1).clamp(0.0, 1.0);
+        out.screen_content_likelihood = (raw / SCREEN_MAX).clamp(0.0, 1.0);
     }
     if T3 && PAL {
         let entropy_hi = (out.luma_histogram_entropy - 3.5).clamp(0.0, 1.5) / 1.5;
@@ -1025,9 +1068,10 @@ pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut Ra
         };
         let chroma_moderate = (chroma_sh / 0.012).min(1.0);
         let not_flat = (1.0 - (out.flat_color_block_ratio / 0.3).min(1.0)).clamp(0.0, 1.0);
-        out.natural_likelihood =
+        let raw =
             (entropy_hi * 0.3 + palette_large * 0.25 + chroma_moderate * 0.2 + not_flat * 0.25)
                 .clamp(0.0, 1.0);
+        out.natural_likelihood = (raw / NATURAL_MAX).clamp(0.0, 1.0);
     }
 }
 

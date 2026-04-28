@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (operating thresholds — read this before upgrading consumers)
+
+- **Calibrated `text_likelihood` / `screen_content_likelihood` / `natural_likelihood`
+  to saturate at 1.0 on real content** (previously capped at 0.71 / 0.70 / 0.69 on
+  the 219-image labeled corpus because the sub-components don't co-fire to their
+  individual maxima). Each composite now divides its raw value by its empirical
+  saturation point, then re-clamps to `[0, 1]`. **AUC is preserved** (rank order
+  unchanged) — only the scale stretches.
+- **Reformulated `screen_content_likelihood`** when `experimental` is enabled:
+  the old `palette_small`-based formula collapsed to 0 on real screens (charts /
+  anti-aliased UIs routinely exceed 4000 distinct color bins). Replaced with
+  `0.6 * patch_fraction + 0.4 * flat_high`, which lifts AUC from 0.831 to **0.845**
+  and peak F1 from 0.59 to **0.78** on the same labeled corpus. When `experimental`
+  is off, the legacy formula remains (still stretched by the same divisor).
+- **Operating thresholds shifted** — divide old thresholds by the per-composite
+  saturation point to translate, or use the recommended new thresholds:
+
+  | Composite | Old threshold | **New threshold** | New F1 | New AUC |
+  |---|---:|---:|---:|---:|
+  | `text_likelihood` | 0.30 | **0.35** | 0.585 | 0.713 |
+  | `screen_content_likelihood` | 0.60 | **0.80** | **0.779** | **0.845** |
+  | `natural_likelihood` | 0.06 | **0.10** | **0.923** | 0.814 |
+
+  The `screen_content_likelihood >= 0.80` threshold reflects both the formula
+  reshape AND the saturation stretch.
+- **Dependency change:** `screen_content_likelihood` now requires Tier 3 to run
+  (it reads `patch_fraction` when `experimental` is enabled). Previously it only
+  required the palette pass. `T3_NEEDED_BY` updated to include
+  `ScreenContentLikelihood` so the dispatcher activates Tier 3 automatically.
+  Callers requesting only `ScreenContentLikelihood` will see the analysis pay an
+  extra Tier 3 pass; callers already requesting any other Tier 3 feature pay
+  nothing extra.
+
 ## [0.1.0] - 2026-04-28
 
 First public release. Published to crates.io as
