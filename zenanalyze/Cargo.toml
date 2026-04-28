@@ -30,12 +30,33 @@ default = []
 # arm, `RawAnalysis` field, `into_results` write, `FeatureSet::
 # SUPPORTED`). Single source of truth.
 experimental = []
+# Opt-in to *classifier-style composite scores* — features whose
+# value is a hand-tuned combination of stable raw signals via
+# weighted sums / mins / thresholds. Examples in 0.1.0:
+# `TextLikelihood`, `ScreenContentLikelihood`, `NaturalLikelihood`,
+# `LineArtScore`. The raw signals these consume (Variance,
+# EdgeDensity, distinct_color_bins, luma_histogram_entropy,
+# flat_color_block_ratio, …) are stable in 0.1.x; the *composite
+# coefficients* are calibration-driven and will drift as the
+# corpus-trained tuning matures. Consumers wanting a single
+# decision number opt in here; consumers building their own
+# classifier on top of the raw signals don't need it.
+#
+# Same single-source-of-truth model as `experimental` —
+# `cfg(feature = "composites")` on a `features_table!` row
+# propagates through to enum / record / SUPPORTED / `into_results`.
+composites = []
 
 [dependencies]
 zenpixels = { workspace = true }
 zenpixels-convert = { workspace = true }
 archmage = { workspace = true }
 magetypes = { workspace = true }
+# `garb` provides SIMD pixel-format conversions (`rgba_to_rgb`,
+# `bgra_to_rgb`, etc.) via `archmage::incant!` — used by the
+# `RowStream::StripAlpha8` fast path. Measured ~7× speedup over the
+# in-tree scalar strip on a 2048-px row (0.13 µs vs 0.94 µs at 4 MP).
+garb = { workspace = true }
 # `transfer` feature exposes scalar PQ / HLG / sRGB / BT.709 EOTFs used by
 # the source-direct HDR / depth tier (`tier_depth`). The tier reads source
 # samples without going through `RowConverter` so it can compute peak
@@ -51,4 +72,13 @@ workspace = true
 
 [[example]]
 name = "corpus_eval"
+required-features = ["experimental", "composites"]
+
+[[example]]
+name = "edge_skin_bench"
 required-features = ["experimental"]
+
+
+[[example]]
+name = "tier1_bench"
+required-features = ["experimental", "composites"]

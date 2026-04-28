@@ -56,7 +56,12 @@ zenpixels = { workspace = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
 # used by `EncoderConfig::adaptive`. Pulls rows on demand from any
 # PixelSlice via zenpixels-convert internally.
-zenanalyze = { workspace = true }
+# `composites` enables the classifier-style likelihoods
+# (TextLikelihood, ScreenContentLikelihood, NaturalLikelihood,
+# LineArtScore) that drive the adaptive path. Their combinator
+# coefficients are calibration-driven and may drift in 0.1.x —
+# zenjpeg pins to whichever zenanalyze patch ships in lockstep.
+zenanalyze = { workspace = true, features = ["composites"] }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes

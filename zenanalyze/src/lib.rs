@@ -105,24 +105,57 @@
 //! rows, and shares no inner loop with T1/T2/T3 to specialize. So
 //! it's wired as a runtime branch outside the const-bool dispatch.
 //!
-//! ## Feature-overlap notes (corpus-eval 2026-04-27)
+//! ## Empirical calibration (corpus-eval 2026-04-27)
 //!
-//! Empirical Spearman ρ across CID22 / CLIC2025 / gb82 / gb82-sc:
+//! Pre-0.1.0-ship calibration baseline measured on a 219-image
+//! labeled corpus from `coefficient/benchmarks/classifier-eval/labels.tsv`
+//! (174 photo, 36 screen, 9 illustration, 44 marked synthetic;
+//! pooled from cid22-train/val, clic2025-1024, gb82, gb82-sc,
+//! imageflow, kadid10k, qoi-benchmark). Full per-class
+//! distributions, ROC-AUC ranking for every feature, recommended
+//! operating thresholds, and the recalibration candidates that
+//! were considered and rejected are recorded in
+//! `docs/calibration-corpus-2026-04-27.md`.
 //!
-//! - `aq_map_mean` ↔ `noise_floor_y`: ρ ≈ +0.91. Both fall when
-//!   blocks are flat (low AC energy). They drive different
-//!   downstream knobs (zenjpeg trellis-λ vs `pre_blur` strength), so
-//!   keep both — but if a future consumer reads only one of them,
-//!   delete the other.
-//! - `noise_floor_y` ↔ `screen_content_likelihood`: ρ ≈ −0.88.
+//! Top-line empirical findings:
+//!
+//! - **Strongest single screen-vs-photo discriminator**:
+//!   [`feature::AnalysisFeature::PatchFraction`] (AUC = 0.880,
+//!   F1 = 0.769 at `>= 0.27`).
+//! - **Strongest photo classifier**:
+//!   [`feature::AnalysisFeature::NaturalLikelihood`] (F1 = 0.924
+//!   at `>= 0.06`).
+//! - **Near-deterministic line-art signal**:
+//!   [`feature::AnalysisFeature::LineArtScore`] `> 0`
+//!   (F1 = 0.978).
+//! - **Derived likelihoods empirically saturate at ~0.70**, not
+//!   1.0 — operating thresholds live in the 0.3–0.6 band, not 0.8+.
+//!
+//! Spearman ρ |≥ 0.85| pairs (mostly structural, all kept):
+//!
+//! - `distinct_color_bins` ↔ `palette_density`: ρ = +1.00 — derived.
+//! - `flat_color_block_ratio` ↔ `screen_content_likelihood`: ρ =
+//!   +0.99 — structural, the former is the latter's primary input.
+//! - `uniformity` ↔ `aq_map_mean`: ρ = −0.97. Both measure block
+//!   flatness; drive different knobs (T1 fast-path vs T3 AQ-driven
+//!   trellis-λ).
+//! - `chroma_complexity` ↔ `colourfulness`: ρ = +0.97. Both
+//!   quantify chroma spread; one is normalised, the other is the
+//!   raw Hasler-Süsstrunk M3 published scale — keep both for
+//!   ergonomics.
+//! - `aq_map_mean` ↔ `noise_floor_y`: ρ = +0.91. Both fall when
+//!   blocks are flat. Different downstream knobs (zenjpeg trellis-λ
+//!   vs `pre_blur`), keep both.
+//! - `noise_floor_y` ↔ `screen_content_likelihood`: ρ = −0.89.
 //!   Screen content is clean-by-construction; photos carry sensor
-//!   noise. The signals come from different passes (T3 noise floor
-//!   vs derived likelihood) and feed different knobs (`pre_blur` vs
-//!   `Preset`), so the redundancy is descriptive, not load-bearing.
-//! - `aq_map_mean` ↔ `edge_density`: ρ ≈ +0.85. Expected — both
-//!   measure busyness. Keep both.
+//!   noise. Different passes, different knobs.
+//! - `cb_sharpness` ↔ `cr_sharpness`: ρ = +0.89. Co-vary by
+//!   construction in natural content.
 //!
-//! All other feature pairs are at |ρ| < 0.85. No deletion candidates.
+//! No deletion candidates were found. Numeric drift in 0.1.x
+//! patches is permitted by the threshold contract above; the
+//! committed `docs/calibration-corpus-2026-04-27.md` is the
+//! pre-ship baseline against which patch drift can be compared.
 
 // `#[archmage::autoversion]` generates dispatch trampolines that
 // don't always reference the unversioned base function.
@@ -130,6 +163,7 @@
 
 mod alpha;
 pub mod feature;
+pub(crate) mod luma;
 mod palette;
 pub(crate) mod row_stream;
 pub(crate) mod tier1;
@@ -330,6 +364,35 @@ pub fn analyze_features(
     // (much faster on photographic content). Computed once per call;
     // analyze_specialized_raw const-folds nothing on this axis.
     let palette_full_required = features.intersects(feature::PALETTE_FULL_FEATURES);
+    // GrayscaleScore lives on the palette tier (full-scan, 100 %
+    // coverage) but its per-pixel max/min gate isn't free — only run
+    // the gate when the caller actually requested it.
+    #[cfg(feature = "experimental")]
+    let palette_wants_grayscale = features.contains(feature::AnalysisFeature::GrayscaleScore);
+    #[cfg(not(feature = "experimental"))]
+    let palette_wants_grayscale = false;
+
+    // Tier 1 dispatch: skip the separate Laplacian SIMD row pass
+    // when LaplacianVariance isn't requested. Load-bearing for
+    // orchestrator-style callers like zenjpeg's ADAPTIVE_FEATURES,
+    // which doesn't ask for LaplacianVariance and currently pays
+    // the full cost of the separate SIMD row walk anyway.
+    #[cfg(feature = "experimental")]
+    let tier1_wants_laplacian = features.contains(feature::AnalysisFeature::LaplacianVariance);
+    #[cfg(not(feature = "experimental"))]
+    let tier1_wants_laplacian = false;
+
+    // Tier 1 full-kernel gate: flip on for `Variance` /
+    // `Colourfulness` / `EdgeSlopeStdev` / `LaplacianVariance` — the
+    // accumulators inside `accumulate_row_simd`'s `if FULL` block.
+    // See `feature::TIER1_FULL_FEATURES`.
+    let tier1_full_kernel = features.intersects(feature::TIER1_FULL_FEATURES);
+    // Tier 1 skin-gate: peeled off `wants_full_kernel` so callers
+    // that only want `SkinToneFraction` don't pay for Variance /
+    // Colourfulness / edge-slope, and vice versa. The BT.601 chroma
+    // matrix + Chai-Ngan thresholds spent 12 vmovups + 13 broadcasts
+    // of register-spill traffic when bundled — see `cargo asm` audit.
+    let tier1_wants_skin = features.intersects(feature::TIER1_SKIN_FEATURES);
 
     // Depth tier is a runtime axis (not const-bool) — adding it to
     // the 16-arm dispatch would double to 32 arms for one extra
@@ -349,6 +412,10 @@ pub fn analyze_features(
                 feature::DEFAULT_PIXEL_BUDGET,
                 feature::DEFAULT_HF_MAX_BLOCKS,
                 palette_full_required,
+                palette_wants_grayscale,
+                tier1_wants_laplacian,
+                tier1_full_kernel,
+                tier1_wants_skin,
                 run_depth,
             )?;
             Ok(raw.into_results(features, geometry, source_descriptor))
@@ -397,6 +464,10 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
     pixel_budget: usize,
     hf_max_blocks: usize,
     palette_full_required: bool,
+    palette_wants_grayscale: bool,
+    tier1_wants_laplacian: bool,
+    tier1_full_kernel: bool,
+    tier1_wants_skin: bool,
     run_depth: bool,
 ) -> Result<(feature::RawAnalysis, feature::ImageGeometry), AnalyzeError> {
     let width = slice.width();
@@ -434,7 +505,7 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
     // image rows.
     let palette_stats = if PAL {
         if palette_full_required {
-            palette::scan_palette(&mut stream)
+            palette::scan_palette(&mut stream, palette_wants_grayscale)
         } else {
             palette::scan_palette_quick(&mut stream)
         }
@@ -445,7 +516,22 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
     let mut raw = feature::RawAnalysis::default();
 
     if width >= 2 && height >= 2 {
-        tier1::extract_tier1_into(&mut raw, &mut stream, pixel_budget);
+        // Tier 1 dispatch knobs — currently just `wants_laplacian`,
+        // which lets orchestrator-style callers (e.g. zenjpeg's
+        // `ADAPTIVE_FEATURES`) skip the separate Laplacian SIMD row
+        // pass when `LaplacianVariance` isn't requested.
+        // `TIER1_EXTRAS_FEATURES` is the union of all features whose
+        // accumulators add cost beyond the Tier 1 baseline; for now
+        // only LaplacianVariance gates a runtime branch, but the
+        // dispatch struct is laid out to grow more knobs (skin /
+        // edge-slope / colourfulness const-fold) without churning
+        // call sites.
+        let t1_dispatch = tier1::Tier1Dispatch {
+            wants_laplacian: tier1_wants_laplacian,
+            wants_full_kernel: tier1_full_kernel,
+            wants_skin: tier1_wants_skin,
+        };
+        tier1::extract_tier1_into_dispatch(&mut raw, &mut stream, pixel_budget, t1_dispatch);
         if T2 && width >= 3 && height >= 3 {
             tier2_chroma::populate_tier2(&mut raw, &mut stream, pixel_budget);
         }
@@ -486,6 +572,20 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
                 let denom = pixel_count.clamp(1.0, 32_768.0);
                 raw.palette_density =
                     (raw.distinct_color_bins as f64 / denom).clamp(0.0, 1.0) as f32;
+                // GrayscaleScore is computed on the same full-scan walk
+                // as the distinct-bin histogram. 100 % coverage is
+                // load-bearing — the score is used downstream as a
+                // binary classifier (`>= 0.99` ⇒ encode as grayscale),
+                // and stripe-sampling at ~5 % budget would let one
+                // colour pixel slip past the gate ~95 % of the time.
+                raw.grayscale_score = if palette_stats.total_pixels > 0 {
+                    let gray = palette_stats
+                        .total_pixels
+                        .saturating_sub(palette_stats.non_grayscale);
+                    (gray as f64 / palette_stats.total_pixels as f64) as f32
+                } else {
+                    0.0
+                };
             }
         }
         let _ = palette_stats; // silence unused on the all-experimental-off path
@@ -525,6 +625,10 @@ pub fn __analyze_internal(
         query.pixel_budget,
         query.hf_max_blocks,
         true, // override path always uses full palette scan
+        true, // and includes the grayscale gate (test path wants every signal)
+        true, // and the Laplacian SIMD pass
+        true, // and the Tier 1 full kernel (luma stats / Hasler M3 / edge slope)
+        true, // and the Tier 1 skin gate
         run_depth,
     )?;
     Ok(raw.into_results(query.features, geometry, source_descriptor))
@@ -551,7 +655,9 @@ pub(crate) fn analyze_full_raw_for_test(
     // Tests want every signal — always run the full palette path,
     // and the depth tier when it's compiled in.
     let run_depth = cfg!(feature = "experimental");
-    analyze_specialized_raw::<true, true, true, true>(slice, pb, hf, true, run_depth)
+    analyze_specialized_raw::<true, true, true, true>(
+        slice, pb, hf, true, true, true, true, true, run_depth,
+    )
 }
 
 /// Convenience entry for callers holding a packed RGB8 buffer plus a

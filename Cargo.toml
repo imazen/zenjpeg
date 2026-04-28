@@ -72,9 +72,9 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 linear-srgb = "0.6.12"
 
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.9.21", features = ["macros", "avx512", "testable_dispatch"] }
+archmage = { version = "0.9.23", features = ["macros", "avx512", "testable_dispatch"] }
 safe_unaligned_simd = { version = "0.2.5", features = ["avx512"] }
-magetypes = { version = "0.9.21", features = ["avx512"] }
+magetypes = { version = "0.9.23", features = ["avx512"] }
 
 # Error tracing with location tracking
 whereat = "0.1.5"
@@ -86,9 +86,9 @@ thiserror = { version = "2.0", default-features = false }
 enough = { version = "0.4", features = ["std"] }
 almost-enough = { version = "0.4", features = ["std"] }
 zencodec = { version = "0.1.20" }
-zenpixels = { version = "0.2.10", default-features = false, features = ["imgref"] }
-zenpixels-convert = { version = "0.2.10", default-features = false }
-garb = { version = "0.2.5", default-features = false }
+zenpixels = { version = "0.2.11", default-features = false, features = ["imgref"] }
+zenpixels-convert = { version = "0.2.11", default-features = false }
+garb = { version = "0.2.6", default-features = false }
 
 # Published crates
 butteraugli = "0.9.0"

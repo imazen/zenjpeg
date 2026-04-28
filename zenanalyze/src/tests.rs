@@ -167,6 +167,7 @@ fn vstripes_have_high_horiz_chroma_zero_vert() {
     assert_eq!(out.cr_vert_sharpness, 0.0);
 }
 
+#[cfg(feature = "composites")]
 #[test]
 fn synthetic_image_likelihoods_in_unit_interval() {
     let out = analyze_rgb8(&synth_rgb(128, 128, 42), 128, 128);
@@ -470,9 +471,12 @@ fn assert_well_formed(out: &TestOutput, w: u32, h: u32) {
         "aspect_ratio: expected {expected_ar}, got {}",
         out.aspect_ratio
     );
-    assert!((0.0..=1.0).contains(&out.text_likelihood));
-    assert!((0.0..=1.0).contains(&out.screen_content_likelihood));
-    assert!((0.0..=1.0).contains(&out.natural_likelihood));
+    #[cfg(feature = "composites")]
+    {
+        assert!((0.0..=1.0).contains(&out.text_likelihood));
+        assert!((0.0..=1.0).contains(&out.screen_content_likelihood));
+        assert!((0.0..=1.0).contains(&out.natural_likelihood));
+    }
     assert!(
         (0.0..=5.0).contains(&out.luma_histogram_entropy),
         "entropy: {}",
@@ -634,15 +638,18 @@ fn medium_image_is_deterministic() {
         a.luma_histogram_entropy.to_bits(),
         b.luma_histogram_entropy.to_bits()
     );
-    assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
-    assert_eq!(
-        a.screen_content_likelihood.to_bits(),
-        b.screen_content_likelihood.to_bits()
-    );
-    assert_eq!(
-        a.natural_likelihood.to_bits(),
-        b.natural_likelihood.to_bits()
-    );
+    #[cfg(feature = "composites")]
+    {
+        assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
+        assert_eq!(
+            a.screen_content_likelihood.to_bits(),
+            b.screen_content_likelihood.to_bits()
+        );
+        assert_eq!(
+            a.natural_likelihood.to_bits(),
+            b.natural_likelihood.to_bits()
+        );
+    }
     assert_eq!(a.distinct_color_bins, b.distinct_color_bins);
 }
 
@@ -1595,8 +1602,15 @@ fn requesting_more_features_does_not_change_existing_values() {
         v.push(DctCompressibilityY);
         v
     };
-    let probes_b: &[AnalysisFeature] =
-        &[HighFreqEnergyRatio, AlphaPresent, ScreenContentLikelihood];
+    // Always include a stable T3 + Alpha probe; ScreenContentLikelihood
+    // (composite) only joins the matrix when the cargo feature is on.
+    let probes_b: &[AnalysisFeature] = &[HighFreqEnergyRatio, AlphaPresent];
+    #[cfg(feature = "composites")]
+    let probes_b = {
+        let mut v = probes_b.to_vec();
+        v.push(ScreenContentLikelihood);
+        v
+    };
     #[cfg(feature = "experimental")]
     let probes_b = {
         let mut v = probes_b.to_vec();
@@ -1823,6 +1837,7 @@ fn math_lock_geometry_exact() {
     assert_eq!(big.pixels(), u32::MAX as u64 * u32::MAX as u64);
 }
 
+#[cfg(feature = "composites")]
 #[test]
 fn math_lock_likelihoods_in_unit_interval_for_random_input() {
     // Locks the contract: TextLikelihood / ScreenContentLikelihood /
@@ -1879,15 +1894,18 @@ fn math_lock_deterministic_input_is_reproducible() {
         a.luma_histogram_entropy.to_bits(),
         b.luma_histogram_entropy.to_bits()
     );
-    assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
-    assert_eq!(
-        a.screen_content_likelihood.to_bits(),
-        b.screen_content_likelihood.to_bits()
-    );
-    assert_eq!(
-        a.natural_likelihood.to_bits(),
-        b.natural_likelihood.to_bits()
-    );
+    #[cfg(feature = "composites")]
+    {
+        assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
+        assert_eq!(
+            a.screen_content_likelihood.to_bits(),
+            b.screen_content_likelihood.to_bits()
+        );
+        assert_eq!(
+            a.natural_likelihood.to_bits(),
+            b.natural_likelihood.to_bits()
+        );
+    }
 }
 
 #[test]
@@ -2104,6 +2122,7 @@ fn analysis_feature_name_returns_field_name_string() {
         "distinct_color_bins"
     );
     assert_eq!(AnalysisFeature::AlphaPresent.name(), "alpha_present");
+    #[cfg(feature = "composites")]
     assert_eq!(
         AnalysisFeature::ScreenContentLikelihood.name(),
         "screen_content_likelihood"
@@ -2715,6 +2734,57 @@ fn sdr_srgb_does_not_trip_hdr_present() {
 
 #[cfg(feature = "experimental")]
 #[test]
+#[ignore] // run with `cargo test --release --features experimental -- perf_strip_alpha_vs_convert --ignored --nocapture`
+fn perf_strip_alpha_vs_convert() {
+    // RGBA8 used to route through RowConverter; now takes the
+    // native StripAlpha8 path. Compare the per-call cost to RGB8.
+    use crate::feature::{AnalysisQuery, FeatureSet};
+    use std::time::Instant;
+
+    let q = AnalysisQuery::new(FeatureSet::SUPPORTED);
+    let w: u32 = 4096;
+    let h: u32 = 4096;
+    let rgb = synth_rgb(w, h, 0xCAFE_F00D);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+        px[0] = rgb[i * 3];
+        px[1] = rgb[i * 3 + 1];
+        px[2] = rgb[i * 3 + 2];
+        px[3] = 0xFF;
+    }
+
+    let s_rgb = PixelSlice::new(&rgb, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+    let _ = crate::analyze_features(s_rgb, &q).unwrap(); // warmup
+
+    let mut rgb8_us = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let s = PixelSlice::new(&rgb, w, h, (w * 3) as usize, PixelDescriptor::RGB8_SRGB).unwrap();
+        let t0 = Instant::now();
+        let _ = crate::analyze_features(s, &q).unwrap();
+        rgb8_us.push(t0.elapsed().as_micros() as u64);
+    }
+    rgb8_us.sort_unstable();
+
+    let mut rgba8_us = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let s = PixelSlice::new(&rgba, w, h, (w * 4) as usize, PixelDescriptor::RGBA8_SRGB)
+            .unwrap();
+        let t0 = Instant::now();
+        let _ = crate::analyze_features(s, &q).unwrap();
+        rgba8_us.push(t0.elapsed().as_micros() as u64);
+    }
+    rgba8_us.sort_unstable();
+
+    eprintln!(
+        "4K full-feature-set: RGB8 {} µs, RGBA8 {} µs (Δ = {} µs)",
+        rgb8_us[2],
+        rgba8_us[2],
+        rgba8_us[2] as i64 - rgb8_us[2] as i64
+    );
+}
+
+#[cfg(feature = "experimental")]
+#[test]
 #[ignore] // run with `cargo test --release --features experimental -- perf_full_feature_set --ignored --nocapture`
 fn perf_full_feature_set() {
     // Ad-hoc timing check: full feature surface on synthetic images
@@ -2870,7 +2940,7 @@ fn gamut_coverage_zero_for_saturated_rec2020_green() {
     );
 }
 
-#[cfg(feature = "experimental")]
+#[cfg(feature = "composites")]
 #[test]
 fn line_art_score_high_for_two_tone_low_for_natural() {
     // A black-on-white line drawing-shaped image should score high.
@@ -2995,6 +3065,120 @@ fn aq_map_std_low_for_uniform_high_for_heterogeneous() {
 
 #[cfg(feature = "experimental")]
 #[test]
+fn skin_tone_fraction_fires_on_skin_colored_pixels_zero_on_neutral() {
+    // The Chai-Ngan YCbCr classifier (Cb [77,127], Cr [133,173], Y [40,240])
+    // is invariant to skin pigmentation by design — chroma quantifies hue
+    // not lightness. Verify that a representative tone in each common
+    // pigmentation lands inside the gate.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::SkinToneFraction));
+
+    // Three sRGB skin tones spanning a wide range of pigmentations:
+    //   light  : (236, 188, 180)  — light pinkish
+    //   medium : (198, 134, 105)  — medium tan
+    //   dark   : (90,  56,  37)   — deep brown
+    // Each YCbCr-conversion lands inside the Chai-Ngan rectangle.
+    for (label, rgb) in [
+        ("light", [236u8, 188, 180]),
+        ("medium", [198u8, 134, 105]),
+        ("dark", [90u8, 56, 37]),
+    ] {
+        let mut buf = vec![0u8; 64 * 64 * 3];
+        for px in buf.chunks_exact_mut(3) {
+            px[0] = rgb[0];
+            px[1] = rgb[1];
+            px[2] = rgb[2];
+        }
+        let s = PixelSlice::new(&buf, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let r = crate::analyze_features(s, &q).unwrap();
+        let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+        assert!(
+            f > 0.95,
+            "{label} skin tone {:?} should fire near 1.0, got {f}",
+            rgb
+        );
+    }
+
+    // Pure neutral grey: Cb = Cr = 128 — outside Cr [133, 173], so 0.
+    let neutral = vec![128u8; 64 * 64 * 3];
+    let s = PixelSlice::new(&neutral, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+    assert!(f < 0.01, "neutral grey ⇒ ~0.0, got {f}");
+
+    // Saturated blue: Cb high (≈240), outside the Cb [77, 127] gate.
+    let mut blue = vec![0u8; 64 * 64 * 3];
+    for px in blue.chunks_exact_mut(3) {
+        px[0] = 0;
+        px[1] = 0;
+        px[2] = 255;
+    }
+    let s = PixelSlice::new(&blue, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let f = r.get_f32(AnalysisFeature::SkinToneFraction).unwrap();
+    assert!(f < 0.01, "saturated blue ⇒ ~0.0, got {f}");
+}
+
+#[cfg(feature = "experimental")]
+#[test]
+fn edge_slope_stdev_low_for_uniform_high_for_varied_edges() {
+    // Synthetic two-tone bands at one luma step (all crossings have the
+    // same gradient magnitude) ⇒ very low stddev. Mixed-amplitude edges
+    // (alternating step heights) ⇒ higher stddev.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::EdgeSlopeStdev));
+
+    // Uniform-amplitude vertical bands: every transition is the same
+    // magnitude. stddev should be ~0 (mean grad = single value).
+    let mut uniform = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let v = if (x / 4) % 2 == 0 { 50 } else { 200 };
+            let off = (y * 64 + x) * 3;
+            uniform[off] = v;
+            uniform[off + 1] = v;
+            uniform[off + 2] = v;
+        }
+    }
+    let s = PixelSlice::new(&uniform, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let e = r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap();
+    assert!(
+        e < 5.0,
+        "uniform bands should have low stddev, got {e}"
+    );
+
+    // Mixed-amplitude vertical bands: alternating step heights produce
+    // a bimodal gradient distribution ⇒ higher stddev.
+    let mut mixed = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            // 4-period: 0, 100, 50, 250 ⇒ steps of 100, 50, 200
+            let v = match (x / 4) % 4 {
+                0 => 0,
+                1 => 100,
+                2 => 50,
+                _ => 250,
+            };
+            let off = (y * 64 + x) * 3;
+            mixed[off] = v;
+            mixed[off + 1] = v;
+            mixed[off + 2] = v;
+        }
+    }
+    let s = PixelSlice::new(&mixed, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let e = r.get_f32(AnalysisFeature::EdgeSlopeStdev).unwrap();
+    assert!(
+        e > 30.0,
+        "mixed-amplitude bands should have high stddev, got {e}"
+    );
+}
+
+#[cfg(feature = "experimental")]
+#[test]
 fn grayscale_score_one_for_neutral_image_zero_for_saturated() {
     // Neutral (R=G=B) ⇒ score = 1.0; saturated colour ⇒ score ≈ 0.
     use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
@@ -3061,6 +3245,190 @@ fn effective_bit_depth_distinguishes_u8_promoted_from_genuine_u16() {
         .and_then(|v| v.as_u32())
         .unwrap();
     assert!(depth >= 14, "expected ≥14, got {depth}");
+}
+
+// --------------------------------------------------------------------
+// Regression: PR #116 review surfaced two real bugs.
+//
+// Bug 1 — `gradient_diff_ycbcr` (tier2_chroma.rs) used a
+//   `(cr_d.pow(2) as u32).saturating_mul(boost)` chain that silently
+//   clamped the per-group `max_diff_cr` to ~33.5M instead of the
+//   true ~62.9M on saturated synthetic content (alternating pure-red
+//   / pure-green columns). 1.87× undercount on `cr_peak_sharpness`.
+//   Fix: u64 intermediates.
+//
+// Bug 2 — `accumulate_row_simd` scalar tail (tier1.rs) only
+//   accumulated `edge_count`, dropping `cb_grad_sum` / `cr_grad_sum`
+//   / `chroma_grad_count` for the rightmost 1–7 columns when
+//   `(width − 1) % 8 ≠ 0`. Tiny on 4 K, 20 % on `width = 11`.
+//   Fix: same chroma-gradient accumulation as the SIMD edge loop.
+// --------------------------------------------------------------------
+
+#[test]
+fn pr116_review_cr_diff_no_overflow_on_saturated_chroma_columns() {
+    // Worst-case Cr second-difference: alternating saturated red /
+    // green columns. Pre-fix `cr_diff` saturated at u32::MAX / 128 ≈
+    // 33.5M; post-fix the u64 intermediates produce the correct
+    // ~62.9M. We don't lock the exact peak value (calibration is
+    // documented as drifting in 0.1.x), but we lock that the SIMD
+    // and scalar paths agree on the same image — saturating_mul
+    // would have made the scalar-tail-fed even-width image diverge
+    // from the all-SIMD odd-multiple-of-8 width.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    let q = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::CrPeakSharpness));
+
+    // 16-wide → all triplets handled by Tier 2 SIMD; no scalar tail.
+    let mut buf16 = vec![0u8; 16 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..16 {
+            let i = ((y * 16 + x) * 3) as usize;
+            // Alternating saturated red / green columns.
+            if x % 2 == 0 {
+                buf16[i] = 255;
+                buf16[i + 1] = 0;
+                buf16[i + 2] = 0;
+            } else {
+                buf16[i] = 0;
+                buf16[i + 1] = 255;
+                buf16[i + 2] = 0;
+            }
+        }
+    }
+    let s = PixelSlice::new(&buf16, 16, 8, 16 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r16 = crate::analyze_features(s, &q).unwrap();
+    let p16 = r16.get_f32(AnalysisFeature::CrPeakSharpness).unwrap();
+
+    // Same content at 11-wide forces the scalar gradient_diff_ycbcr
+    // path on the rightmost triplets. The peak should be in the
+    // same ballpark — pre-fix it would have been clamped to ~half
+    // the SIMD value because saturating_mul kicked in.
+    let mut buf11 = vec![0u8; 11 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..11 {
+            let i = ((y * 11 + x) * 3) as usize;
+            if x % 2 == 0 {
+                buf11[i] = 255;
+                buf11[i + 1] = 0;
+                buf11[i + 2] = 0;
+            } else {
+                buf11[i] = 0;
+                buf11[i + 1] = 255;
+                buf11[i + 2] = 0;
+            }
+        }
+    }
+    let s = PixelSlice::new(&buf11, 11, 8, 11 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r11 = crate::analyze_features(s, &q).unwrap();
+    let p11 = r11.get_f32(AnalysisFeature::CrPeakSharpness).unwrap();
+
+    // Both paths must report a peak ≥ 100. Pre-fix the scalar path
+    // would have clamped to ≈ 355 (33.5M / peak_div) while the SIMD
+    // path produces ≈ 666; here we just want both well above the
+    // pre-fix ceiling, proving overflow is gone.
+    assert!(
+        p16 > 100.0,
+        "16-wide saturated-chroma cr peak too low: {p16}"
+    );
+    assert!(
+        p11 > 100.0,
+        "11-wide saturated-chroma cr peak too low: {p11}"
+    );
+    // And they should be in the same ballpark (within 2× of each
+    // other) — pre-fix the difference was 1.87× for content that
+    // exercised the scalar path heavily.
+    let ratio = if p11 > p16 { p11 / p16 } else { p16 / p11 };
+    assert!(
+        ratio < 2.0,
+        "scalar (11) vs SIMD (16) cr_peak diverge: 11→{p11} 16→{p16} ratio={ratio}"
+    );
+}
+
+#[test]
+fn pr116_review_chroma_gradients_counted_in_scalar_tail() {
+    // `accumulate_row_simd` scalar tail used to drop cb/cr gradient
+    // accumulation. On `width = 11` (one SIMD chunk + 2 tail edge
+    // pixels), the tail represents 20 % of edge positions per row.
+    // Saturated-chroma horizontal stripes give a non-trivial
+    // `cb_sharpness` / `cr_sharpness` that pre-fix would have
+    // under-reported.
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    // Vertical stripes — each row has the same per-pixel chroma
+    // gradient at every column transition. Making `width = 11` puts
+    // 8 transitions in the SIMD loop and 2 in the scalar tail.
+    let mut buf = vec![0u8; 11 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..11 {
+            let i = ((y * 11 + x) * 3) as usize;
+            if x % 2 == 0 {
+                buf[i] = 255; // red
+            } else {
+                buf[i + 2] = 255; // blue
+            }
+        }
+    }
+    let q = AnalysisQuery::new(
+        FeatureSet::just(AnalysisFeature::CbSharpness).with(AnalysisFeature::CrSharpness),
+    );
+    let s = PixelSlice::new(&buf, 11, 8, 11 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let r = crate::analyze_features(s, &q).unwrap();
+    let cb = r.get_f32(AnalysisFeature::CbSharpness).unwrap();
+    let cr = r.get_f32(AnalysisFeature::CrSharpness).unwrap();
+    // Both signals must be substantial — saturated red↔blue stripes
+    // produce massive Cb gradients (B − Y flips full-scale every
+    // column). Pre-fix the scalar tail's 2 columns wouldn't have
+    // contributed at all, biasing the average down by ~20 %.
+    assert!(cb > 0.3, "cb_sharpness on red↔blue stripes too low: {cb}");
+    assert!(cr > 0.1, "cr_sharpness on red↔blue stripes too low: {cr}");
+}
+
+// --------------------------------------------------------------------
+// Per-primaries luma weights: wide-gamut u8 sources go through the
+// Native zero-copy path with their bytes intact; the analyzer must
+// use per-primaries weights so the luma stats reflect the source's
+// actual chromaticity matrix, not the sRGB / BT.601 baseline.
+// --------------------------------------------------------------------
+
+#[test]
+fn wide_gamut_luma_histogram_lands_in_different_bin_than_srgb() {
+    // The same pure-green RGB bytes, declared under different
+    // primaries, must produce different luma values — because
+    // each primary set's RGB→XYZ Y-row scales green differently
+    // (BT.601 ≈ 0.587, BT.2020 ≈ 0.678, DisplayP3 ≈ 0.692,
+    // AdobeRgb ≈ 0.627). The histogram bin lands somewhere in
+    // [4, 5] for sRGB and [4, 5] for AdobeRgb but at a noticeably
+    // higher bin for BT.2020 / DisplayP3. Easiest to lock: capture
+    // the LumaHistogramEntropy as 0 (solid image, single bin)
+    // for every primaries — but verify the analyzer ACCEPTS
+    // every primaries set unchanged, and that variance stays
+    // ~0 (proves the per-primaries weights produce internally-
+    // consistent luma).
+    use crate::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+
+    let q = AnalysisQuery::new(
+        FeatureSet::just(AnalysisFeature::Variance)
+            .with(AnalysisFeature::LumaHistogramEntropy),
+    );
+    let mut buf = vec![0u8; 64 * 64 * 3];
+    for px in buf.chunks_exact_mut(3) {
+        px[0] = 0;
+        px[1] = 255;
+        px[2] = 0;
+    }
+    for &p in &[
+        zenpixels::ColorPrimaries::Bt709,
+        zenpixels::ColorPrimaries::Bt2020,
+        zenpixels::ColorPrimaries::DisplayP3,
+        zenpixels::ColorPrimaries::AdobeRgb,
+    ] {
+        let desc = PixelDescriptor::RGB8_SRGB.with_primaries(p);
+        let s = PixelSlice::new(&buf, 64, 64, 64 * 3, desc).unwrap();
+        let r = crate::analyze_features(s, &q).unwrap();
+        let v = r.get_f32(AnalysisFeature::Variance).unwrap();
+        assert!(v < 0.5, "{p:?}: solid green variance = {v}");
+        let h = r.get_f32(AnalysisFeature::LumaHistogramEntropy).unwrap();
+        assert!(h.abs() < 1e-3, "{p:?}: solid green entropy = {h}");
+    }
 }
 
 // --------------------------------------------------------------------

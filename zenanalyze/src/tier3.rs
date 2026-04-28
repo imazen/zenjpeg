@@ -45,7 +45,7 @@ pub(crate) const DEFAULT_HF_MAX_BLOCKS: usize = 1024;
 pub fn populate_tier3(out: &mut RawAnalysis, stream: &mut RowStream<'_>, hf_max_blocks: usize) {
     let h_stats = luma_histogram_stats(stream);
     out.luma_histogram_entropy = h_stats.entropy;
-    #[cfg(feature = "experimental")]
+    #[cfg(feature = "composites")]
     {
         out.line_art_score = h_stats.line_art_score;
     }
@@ -119,8 +119,10 @@ struct Tier3DctStats {
     /// normalized to `[0, 1]` by dividing by 32.
     noise_floor_uv: f32,
     /// Fraction `[0, 1]` of sampled luma 8×8 blocks where the
-    /// low-zigzag (positions 1..16) energy is ≥ 90 % of the total
-    /// AC energy. **Smooth-content / gradient signal** — drives JXL
+    /// low-zigzag (indices 1–15, the 15 AC positions matched by
+    /// the same `zz < 16` predicate as `high_freq_energy_ratio`)
+    /// energy is ≥ 90 % of the total AC energy. **Smooth-content /
+    /// gradient signal** — drives JXL
     /// `with_force_strategy` (DCT16 / DCT32 selection — larger
     /// transforms pay off when most energy is in the lowest
     /// frequencies) and zenrav1e's deblock strength. Distinct from
@@ -130,9 +132,17 @@ struct Tier3DctStats {
     gradient_fraction: f32,
 }
 
-/// libwebp `GetAlpha`-style score on a single 8×8 DCT block. Returns
-/// `[0, 255]` where higher = harder to compress (more spread AC,
-/// fewer near-zero coefficients).
+/// libwebp `GetAlpha`-style score on a single 8×8 DCT block. Higher
+/// = harder to compress (more spread AC, fewer near-zero coefficients).
+///
+/// **Range:** the formula `256 * last_non_zero / max_count` returns
+/// values in `[0, 256 × 63 / 2] = [0, 8064]`, not `[0, 255]` as
+/// earlier docs claimed. `last_non_zero` ∈ `[0, 63]` is the highest
+/// histogram bin with at least one coefficient; `max_count` ≥ 2 by
+/// the guard below. On real corpora `compressibility_y` lands in
+/// `[0, ~30]` for photos and `compressibility_uv` even lower —
+/// nowhere near the theoretical max — but downstream calibration
+/// must NOT clamp or normalise against 255.
 ///
 /// Build a 64-bin histogram of `|AC[k]| / bin_div` (clipped to 63),
 /// find `max_count` and `last_non_zero` index, return
@@ -144,8 +154,7 @@ struct Tier3DctStats {
 /// for luma (the libwebp convention) and `BIN_DIV_CHROMA = 8` for
 /// chroma. Chroma DCT coefficient magnitudes run ~half luma's; the
 /// finer chroma bin spreads the histogram into the same dynamic
-/// range as luma, so the chroma α uses the full 0-255 output rather
-/// than piling up near 0.
+/// range as luma so chroma α isn't suppressed near zero.
 #[inline(always)]
 fn block_alpha(coeffs: &[[f32; 8]; 8], bin_div: f32) -> u32 {
     let mut histo = [0u32; 64];
@@ -267,6 +276,14 @@ fn luma_histogram_stats(stream: &mut RowStream<'_>) -> LumaHistStats {
             line_art_score: 0.0,
         };
     }
+    // Per-primaries fixed-point luma weights — keeps wide-gamut
+    // bytes interpreted with the right matrix (BT.2020 for Rec.2020,
+    // etc.). sRGB/BT.709 keeps the BT.601 baseline (66/129/25) so
+    // the trained histogram thresholds still apply.
+    let w = crate::luma::LumaWeights::for_primaries(stream.primaries());
+    let qr = w.qr as u32;
+    let qg = w.qg as u32;
+    let qb = w.qb as u32;
     let mut bins = [0u32; 32];
     let mut n = 0u32;
     let mut carry: usize = 0;
@@ -277,7 +294,7 @@ fn luma_histogram_stats(stream: &mut RowStream<'_>) -> LumaHistStats {
         while x < width {
             let off = x * 3;
             let p = &row[off..off + 3];
-            let y = ((66 * p[0] as u32 + 129 * p[1] as u32 + 25 * p[2] as u32 + 128) >> 8) as u8;
+            let y = ((qr * p[0] as u32 + qg * p[1] as u32 + qb * p[2] as u32 + 128) >> 8) as u8;
             bins[(y >> 3) as usize] += 1;
             n += 1;
             x += 4;
@@ -497,14 +514,15 @@ const DCT_COEF_T: [[f32; 8]; 8] = {
 };
 
 /// Ratio of high-frequency to low-frequency AC DCT energy on sampled
-/// 8×8 luma blocks. `Σ AC[zz≥16] / max(1, Σ AC[zz∈1..16])` where `zz`
-/// is the JPEG ITU-T T.81 zigzag index — the same scan order JPEG
-/// itself uses to drop high frequencies first. The split at `zz=16`
-/// puts the upper-left 4×4 triangle (the lowest 16 zigzag positions
-/// after DC, mostly `u + v ≤ 3`) on the "low" side and the lower-right
-/// 6×6+ region on the "high" side — symmetric in horizontal/vertical
-/// detail, unlike the older raster-order split which biased toward
-/// vertical content.
+/// 8×8 luma blocks. `Σ AC[zz ≥ 16] / max(1, Σ AC[zz ∈ 1..=15])` where
+/// `zz` is the JPEG ITU-T T.81 zigzag index — the same scan order
+/// JPEG itself uses to drop high frequencies first. The split is at
+/// the predicate `zz < 16` (low side ⇒ zigzag indices 1–15 = **15
+/// AC positions** after DC; zigzag 16 and beyond go to the high
+/// side). The 15 low positions cover most of the upper-left 4×4
+/// triangle (`u + v ≤ 3`), keeping the split symmetric in
+/// horizontal/vertical detail, unlike the older raster-order split
+/// which biased toward vertical content.
 ///
 /// Naive separable 1D DCT — exactness isn't required for a feature,
 /// only stable scale and ordering. A faster approximate DCT could
@@ -530,6 +548,15 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
             gradient_fraction: 0.0,
         };
     }
+    // Per-primaries luma weights — used in the per-block fixed-point
+    // YCbCr build below. Wide-gamut u8 sources go through the DCT
+    // pipeline with the right matrix for their primaries; sRGB /
+    // BT.709 keeps the BT.601 baseline (66/129/25) so trained
+    // thresholds still apply.
+    let lw = crate::luma::LumaWeights::for_primaries(stream.primaries());
+    let qr = lw.qr;
+    let qg = lw.qg;
+    let qb = lw.qb;
     let blocks_x = width / 8;
     let blocks_y = height / 8;
     let total_blocks = blocks_x * blocks_y;
@@ -557,8 +584,12 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
     // compresses the heavy right tail (texture blocks vs flat
     // blocks differ by 4-5 orders of magnitude in raw energy) and
     // gives a mean / std that lives on a useful 0-7 scale.
-    let mut aq_log_sum: f64 = 0.0;
-    let mut aq_log_sq_sum: f64 = 0.0;
+    //
+    // We stage the raw `block_ac` values into a Vec during the main
+    // DCT loop and batch the `log10(1 + ac)` reduction afterwards
+    // via magetypes `log2_lowp` — vectorising 8 lanes per call vs
+    // 8 sequential scalar `f64::ln()` invocations (~50 cycles each).
+    let mut block_acs: Vec<f32> = Vec::with_capacity(max_blocks.min(4096));
     // Per-block low-AC-energy, retained for noise-floor estimation.
     // 10th percentile across blocks ≈ noise floor (flattest blocks'
     // residual AC). 4-byte storage × max_blocks = ~4 KB at default.
@@ -617,7 +648,16 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
                     let r = p[0] as i32;
                     let g = p[1] as i32;
                     let b = p[2] as i32;
-                    let l_i = (66 * r + 129 * g + 25 * b + 128) >> 8;
+                    let l_i = (qr * r + qg * g + qb * b + 128) >> 8;
+                    // Cb / Cr keep their BT.601-derived integer
+                    // matrix here. The per-primaries adjustment
+                    // shifts luma; chroma differences (B−Y / R−Y)
+                    // would also drift, but the chroma-DCT
+                    // compressibility / noise-floor signals are
+                    // ratio-based and small per-primaries drift on
+                    // the chroma matrix doesn't materially move
+                    // them. Revisit if a corpus eval shows wide-
+                    // gamut chroma stats reading off vs sRGB.
                     let cb_i = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
                     let cr_i = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
                     blk_y[y][x] = l_i as f32 - 128.0;
@@ -658,9 +698,7 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
                     high_energy += e;
                 }
             }
-            let block_log = (1.0 + block_ac).ln() / core::f64::consts::LN_10;
-            aq_log_sum += block_log;
-            aq_log_sq_sum += block_log * block_log;
+            block_acs.push(block_ac as f32);
             block_low_y.push(block_low_y_ac as f32);
 
             // Per-block gradient flag. Threshold 0.9 picks blocks
@@ -744,6 +782,13 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
         0.0
     };
 
+    // Batched log10(1 + ac) over `block_acs` via magetypes `ln_lowp`,
+    // dispatched to v4 / v3 / NEON / WASM128 / scalar. Replaces the
+    // per-block scalar `f64::ln()` (was ~50 cycles each × N blocks)
+    // with one `ln_lowp` call per 8 blocks at low precision (well
+    // above the noise floor for an aq_map_std on the 0–7 log scale).
+    let (aq_log_sum, aq_log_sq_sum) =
+        log10_sum_and_sq_sum_dispatch(&block_acs);
     let (aq_map_mean, aq_map_std) = if blocks_sampled > 0 {
         let n = blocks_sampled as f64;
         let mean = aq_log_sum / n;
@@ -930,9 +975,28 @@ fn dct2d_8_three_planes_simd(
 /// caller's monomorphized variant, so the unused branches contribute
 /// zero code and zero runtime cost.
 ///
+/// **Empirical saturation.** Each likelihood is a weighted sum of
+/// clamped sub-components and is `clamp(0, 1)`'d again at the end.
+/// On a 219-image labeled corpus the observed maxes are:
+///
+/// - `text_likelihood`: max 0.71 (entropy_low + edge_hi + chroma_lo
+///   don't all max simultaneously on real text)
+/// - `screen_content_likelihood`: max 0.70 (typical screens have
+///   > 4000 distinct color bins, forcing `palette_small` to 0)
+/// - `natural_likelihood`: max 0.69 (entropy_hi + palette_large +
+///   chroma_moderate + not_flat don't all max simultaneously)
+///
+/// Recommended consumer thresholds (best F1 on the labeled corpus):
+/// `text_likelihood >= 0.30`, `screen_content_likelihood >= 0.60`,
+/// `natural_likelihood >= 0.06` (photo detection). Thresholds at
+/// or above 0.8 fire on nothing. See
+/// `docs/calibration-corpus-2026-04-27.md` for the full empirical
+/// distribution and AUC table.
+///
 /// [`text_likelihood`]: crate::feature::AnalysisFeature::TextLikelihood
 /// [`natural_likelihood`]: crate::feature::AnalysisFeature::NaturalLikelihood
 /// [`screen_content_likelihood`]: crate::feature::AnalysisFeature::ScreenContentLikelihood
+#[cfg(feature = "composites")]
 pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut RawAnalysis) {
     let chroma_sh = out.cb_sharpness + out.cr_sharpness;
     let chroma_lo = (0.005 - chroma_sh).clamp(0.0, 0.005) / 0.005;
@@ -965,4 +1029,69 @@ pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut Ra
             (entropy_hi * 0.3 + palette_large * 0.25 + chroma_moderate * 0.2 + not_flat * 0.25)
                 .clamp(0.0, 1.0);
     }
+}
+
+/// `composites`-disabled stub — keeps the call site in `lib.rs`
+/// unconditional. With `composites` off, no likelihood fields exist
+/// on `RawAnalysis`, so the body collapses to a no-op.
+#[cfg(not(feature = "composites"))]
+pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(_out: &mut RawAnalysis) {}
+
+/// Dispatcher for the batched `log10(1 + ac)` reduction over the
+/// `block_acs` accumulator collected during the DCT-stats pass.
+/// Returns `(Σ log10(1+ac), Σ log10(1+ac)²)` as f64 — same shape
+/// the per-block scalar version produced.
+fn log10_sum_and_sq_sum_dispatch(block_acs: &[f32]) -> (f64, f64) {
+    incant!(log10_sum_and_sq_sum_simd(block_acs))
+}
+
+/// SIMD batched `log10(1 + ac)` and its square-sum, vectorised
+/// 8 lanes at a time via magetypes `log10_lowp`. The low-precision
+/// variant is ~12-bit accurate — far above the noise floor on the
+/// `aq_map_std` 0–7 log scale that consumes this output. Switching
+/// from per-block scalar `f64::ln() / LN_10` (~50 cycles each) to
+/// `log10_lowp` over an 8-wide vector removes a per-block transcendental
+/// call from the hot Tier 3 DCT loop.
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+fn log10_sum_and_sq_sum_simd(token: Token, block_acs: &[f32]) -> (f64, f64) {
+    let one_v = f32x8::splat(token, 1.0);
+    let mut sum_v = f32x8::zero(token);
+    let mut sq_sum_v = f32x8::zero(token);
+    let mut sum_f64: f64 = 0.0;
+    let mut sq_sum_f64: f64 = 0.0;
+    // FLUSH cadence — same `f32`-mantissa argument as the row-stats
+    // pass: log10 outputs land in `[0, ~7]` so partial sums of 32
+    // 8-lane chunks reach ~1.8 K, well below the 16 M f32 mantissa
+    // boundary.
+    const FLUSH: usize = 32;
+    let mut iters_since_flush = 0usize;
+    let chunks = block_acs.chunks_exact(8);
+    let remainder = chunks.remainder();
+    for chunk in chunks {
+        let arr: &[f32; 8] = chunk.try_into().unwrap();
+        let ac_v = f32x8::load(token, arr);
+        let log_v = (ac_v + one_v).log10_lowp();
+        sum_v += log_v;
+        sq_sum_v = log_v.mul_add(log_v, sq_sum_v);
+        iters_since_flush += 1;
+        if iters_since_flush >= FLUSH {
+            sum_f64 += sum_v.reduce_add() as f64;
+            sq_sum_f64 += sq_sum_v.reduce_add() as f64;
+            sum_v = f32x8::zero(token);
+            sq_sum_v = f32x8::zero(token);
+            iters_since_flush = 0;
+        }
+    }
+    sum_f64 += sum_v.reduce_add() as f64;
+    sq_sum_f64 += sq_sum_v.reduce_add() as f64;
+    // Scalar tail (≤ 7 leftover blocks) — use the same `log10_lowp`
+    // semantics the SIMD pass produced so the lowp/scalar boundary
+    // doesn't drift the aggregate. Native `f32::log10` is fine here
+    // because the tail count is tiny (typical ≤ 7 calls per analysis).
+    for &ac in remainder {
+        let l = (ac + 1.0).log10();
+        sum_f64 += l as f64;
+        sq_sum_f64 += (l as f64) * (l as f64);
+    }
+    (sum_f64, sq_sum_f64)
 }
