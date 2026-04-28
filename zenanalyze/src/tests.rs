@@ -167,6 +167,7 @@ fn vstripes_have_high_horiz_chroma_zero_vert() {
     assert_eq!(out.cr_vert_sharpness, 0.0);
 }
 
+#[cfg(feature = "composites")]
 #[test]
 fn synthetic_image_likelihoods_in_unit_interval() {
     let out = analyze_rgb8(&synth_rgb(128, 128, 42), 128, 128);
@@ -470,9 +471,12 @@ fn assert_well_formed(out: &TestOutput, w: u32, h: u32) {
         "aspect_ratio: expected {expected_ar}, got {}",
         out.aspect_ratio
     );
-    assert!((0.0..=1.0).contains(&out.text_likelihood));
-    assert!((0.0..=1.0).contains(&out.screen_content_likelihood));
-    assert!((0.0..=1.0).contains(&out.natural_likelihood));
+    #[cfg(feature = "composites")]
+    {
+        assert!((0.0..=1.0).contains(&out.text_likelihood));
+        assert!((0.0..=1.0).contains(&out.screen_content_likelihood));
+        assert!((0.0..=1.0).contains(&out.natural_likelihood));
+    }
     assert!(
         (0.0..=5.0).contains(&out.luma_histogram_entropy),
         "entropy: {}",
@@ -634,15 +638,18 @@ fn medium_image_is_deterministic() {
         a.luma_histogram_entropy.to_bits(),
         b.luma_histogram_entropy.to_bits()
     );
-    assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
-    assert_eq!(
-        a.screen_content_likelihood.to_bits(),
-        b.screen_content_likelihood.to_bits()
-    );
-    assert_eq!(
-        a.natural_likelihood.to_bits(),
-        b.natural_likelihood.to_bits()
-    );
+    #[cfg(feature = "composites")]
+    {
+        assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
+        assert_eq!(
+            a.screen_content_likelihood.to_bits(),
+            b.screen_content_likelihood.to_bits()
+        );
+        assert_eq!(
+            a.natural_likelihood.to_bits(),
+            b.natural_likelihood.to_bits()
+        );
+    }
     assert_eq!(a.distinct_color_bins, b.distinct_color_bins);
 }
 
@@ -1595,8 +1602,15 @@ fn requesting_more_features_does_not_change_existing_values() {
         v.push(DctCompressibilityY);
         v
     };
-    let probes_b: &[AnalysisFeature] =
-        &[HighFreqEnergyRatio, AlphaPresent, ScreenContentLikelihood];
+    // Always include a stable T3 + Alpha probe; ScreenContentLikelihood
+    // (composite) only joins the matrix when the cargo feature is on.
+    let probes_b: &[AnalysisFeature] = &[HighFreqEnergyRatio, AlphaPresent];
+    #[cfg(feature = "composites")]
+    let probes_b = {
+        let mut v = probes_b.to_vec();
+        v.push(ScreenContentLikelihood);
+        v
+    };
     #[cfg(feature = "experimental")]
     let probes_b = {
         let mut v = probes_b.to_vec();
@@ -1823,6 +1837,7 @@ fn math_lock_geometry_exact() {
     assert_eq!(big.pixels(), u32::MAX as u64 * u32::MAX as u64);
 }
 
+#[cfg(feature = "composites")]
 #[test]
 fn math_lock_likelihoods_in_unit_interval_for_random_input() {
     // Locks the contract: TextLikelihood / ScreenContentLikelihood /
@@ -1879,15 +1894,18 @@ fn math_lock_deterministic_input_is_reproducible() {
         a.luma_histogram_entropy.to_bits(),
         b.luma_histogram_entropy.to_bits()
     );
-    assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
-    assert_eq!(
-        a.screen_content_likelihood.to_bits(),
-        b.screen_content_likelihood.to_bits()
-    );
-    assert_eq!(
-        a.natural_likelihood.to_bits(),
-        b.natural_likelihood.to_bits()
-    );
+    #[cfg(feature = "composites")]
+    {
+        assert_eq!(a.text_likelihood.to_bits(), b.text_likelihood.to_bits());
+        assert_eq!(
+            a.screen_content_likelihood.to_bits(),
+            b.screen_content_likelihood.to_bits()
+        );
+        assert_eq!(
+            a.natural_likelihood.to_bits(),
+            b.natural_likelihood.to_bits()
+        );
+    }
 }
 
 #[test]
@@ -2104,6 +2122,7 @@ fn analysis_feature_name_returns_field_name_string() {
         "distinct_color_bins"
     );
     assert_eq!(AnalysisFeature::AlphaPresent.name(), "alpha_present");
+    #[cfg(feature = "composites")]
     assert_eq!(
         AnalysisFeature::ScreenContentLikelihood.name(),
         "screen_content_likelihood"
@@ -2921,7 +2940,7 @@ fn gamut_coverage_zero_for_saturated_rec2020_green() {
     );
 }
 
-#[cfg(feature = "experimental")]
+#[cfg(feature = "composites")]
 #[test]
 fn line_art_score_high_for_two_tone_low_for_natural() {
     // A black-on-white line drawing-shaped image should score high.

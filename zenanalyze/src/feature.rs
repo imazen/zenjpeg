@@ -400,6 +400,7 @@ features_table! {
     /// for screen-like classification). Do not threshold at `>= 0.8`
     /// — nothing fires there. See
     /// `docs/calibration-corpus-2026-04-27.md`.
+    #[cfg(feature = "composites")]
     TextLikelihood = 27 : f32 => text_likelihood,
     /// `f32`. Soft score: UI / chart / synthetic content.
     ///
@@ -414,6 +415,7 @@ features_table! {
     /// discriminator, see [`Self::PatchFraction`] (AUC = 0.88) which
     /// outperforms this derived likelihood (AUC = 0.83). See
     /// `docs/calibration-corpus-2026-04-27.md`.
+    #[cfg(feature = "composites")]
     ScreenContentLikelihood = 28 : f32 => screen_content_likelihood,
     /// `f32`. Soft score: natural photographic content.
     ///
@@ -424,6 +426,7 @@ features_table! {
     /// classification. Equivalent to a probability — high values
     /// reliably mean photo. See
     /// `docs/calibration-corpus-2026-04-27.md`.
+    #[cfg(feature = "composites")]
     NaturalLikelihood = 29 : f32 => natural_likelihood,
 
     // ---------------- Quick-path palette signals --------------------
@@ -582,7 +585,10 @@ features_table! {
     /// `Preset::Drawing`, jxl modular path selection, png palette
     /// preference. Distinct from `ScreenContentLikelihood` (which is
     /// driven by palette and high-frequency energy).
-    #[cfg(feature = "experimental")]
+    ///
+    /// Behind the `composites` cargo feature: the combinator
+    /// coefficients are calibration-driven and may drift in 0.1.x.
+    #[cfg(feature = "composites")]
     LineArtScore = 45 : f32 => line_art_score,
 
     /// `f32`. Fraction `[0, 1]` of sampled pixels in the canonical
@@ -1000,6 +1006,70 @@ pub(crate) const PALETTE_QUICK_FEATURES: FeatureSet = {
 /// (which produces both signal classes).
 pub(crate) const PALETTE_FEATURES: FeatureSet = PALETTE_FULL_FEATURES.union(PALETTE_QUICK_FEATURES);
 
+/// Tier 1 "extras" — the optional accumulators that elevate the
+/// SIMD kernel from `Minimal` to `Full`. When the requested
+/// `FeatureSet` doesn't intersect this set, `accumulate_row_simd`
+/// is dispatched as `<FULL = false>` and skips the per-chunk
+/// luma_sum / Hasler-Süsstrunk M3 (rg/yb) / skin-tone / edge-slope
+/// accumulators — and `extract_tier1_into` skips the separate
+/// Laplacian SIMD row pass entirely. Drops ~10 lane-wise f32x8
+/// accumulators on AVX2, freeing register pressure on the Tier 1
+/// hot path.
+///
+/// Driven by zenjpeg's actual `ADAPTIVE_FEATURES` query — neither
+/// `Variance`, `Colourfulness`, `LaplacianVariance`,
+/// `SkinToneFraction`, nor `EdgeSlopeStdev` is in that set, so
+/// every zenjpeg analyze call lands in the `Minimal` bucket.
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const TIER1_EXTRAS_FEATURES: FeatureSet = {
+    let mut s = FeatureSet::new();
+    s = s.with(AnalysisFeature::Variance);
+    #[cfg(feature = "experimental")]
+    {
+        s = s.with(AnalysisFeature::Colourfulness);
+        s = s.with(AnalysisFeature::LaplacianVariance);
+        s = s.with(AnalysisFeature::SkinToneFraction);
+        s = s.with(AnalysisFeature::EdgeSlopeStdev);
+    }
+    s
+};
+
+/// Subset of [`TIER1_EXTRAS_FEATURES`] gated by the
+/// `accumulate_row_simd` `FULL` const-bool: luma stats (Variance) +
+/// Hasler M3 (Colourfulness) + edge-slope batching
+/// (EdgeSlopeStdev) + the separate Laplacian SIMD pass
+/// (LaplacianVariance). `SkinToneFraction` is peeled off into
+/// [`TIER1_SKIN_FEATURES`] so the two halves share register
+/// pressure on AVX2 only when both are requested.
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const TIER1_FULL_FEATURES: FeatureSet = {
+    let mut s = FeatureSet::new();
+    s = s.with(AnalysisFeature::Variance);
+    #[cfg(feature = "experimental")]
+    {
+        s = s.with(AnalysisFeature::Colourfulness);
+        s = s.with(AnalysisFeature::LaplacianVariance);
+        s = s.with(AnalysisFeature::EdgeSlopeStdev);
+    }
+    s
+};
+
+/// Subset of [`TIER1_EXTRAS_FEATURES`] gated by the
+/// `accumulate_row_simd` `SKIN` const-bool: BT.601 chroma matrix
+/// (2 fma chains) + 6 Chai-Ngan threshold compares + 5 mask
+/// AND-chain + masked counter. Independent of `FULL` — a caller
+/// that only wants `SkinToneFraction` dispatches with
+/// `<*, false, true>` and skips luma stats / Hasler M3 entirely.
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const TIER1_SKIN_FEATURES: FeatureSet = {
+    let mut s = FeatureSet::new();
+    #[cfg(feature = "experimental")]
+    {
+        s = s.with(AnalysisFeature::SkinToneFraction);
+    }
+    s
+};
+
 pub(crate) const TIER2_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::CbHorizSharpness)
     .with(AnalysisFeature::CbVertSharpness)
@@ -1008,6 +1078,7 @@ pub(crate) const TIER2_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::CrVertSharpness)
     .with(AnalysisFeature::CrPeakSharpness);
 
+#[allow(unused_mut, unused_assignments)]
 pub(crate) const TIER3_FEATURES: FeatureSet = {
     let mut s = FeatureSet::new();
     s = s.with(AnalysisFeature::HighFreqEnergyRatio);
@@ -1021,8 +1092,11 @@ pub(crate) const TIER3_FEATURES: FeatureSet = {
         s = s.with(AnalysisFeature::AqMapStd);
         s = s.with(AnalysisFeature::NoiseFloorY);
         s = s.with(AnalysisFeature::NoiseFloorUV);
-        s = s.with(AnalysisFeature::LineArtScore);
         s = s.with(AnalysisFeature::GradientFraction);
+    }
+    #[cfg(feature = "composites")]
+    {
+        s = s.with(AnalysisFeature::LineArtScore);
     }
     s
 };
@@ -1056,10 +1130,17 @@ pub(crate) const DEPTH_FEATURES: FeatureSet = {
     s
 };
 
-pub(crate) const DERIVED_FEATURES: FeatureSet = FeatureSet::new()
-    .with(AnalysisFeature::TextLikelihood)
-    .with(AnalysisFeature::ScreenContentLikelihood)
-    .with(AnalysisFeature::NaturalLikelihood);
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const DERIVED_FEATURES: FeatureSet = {
+    let mut s = FeatureSet::new();
+    #[cfg(feature = "composites")]
+    {
+        s = s.with(AnalysisFeature::TextLikelihood);
+        s = s.with(AnalysisFeature::ScreenContentLikelihood);
+        s = s.with(AnalysisFeature::NaturalLikelihood);
+    }
+    s
+};
 
 // --- Derived-feature dependency closures ----------------------------
 //
@@ -1080,9 +1161,16 @@ pub(crate) const DERIVED_FEATURES: FeatureSet = FeatureSet::new()
 /// - [`AnalysisFeature::NaturalLikelihood`] (uses `luma_histogram_entropy`).
 ///
 /// `ScreenContentLikelihood` is **not** here — it's palette + T1 only.
-pub(crate) const T3_NEEDED_BY: FeatureSet = TIER3_FEATURES
-    .with(AnalysisFeature::TextLikelihood)
-    .with(AnalysisFeature::NaturalLikelihood);
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const T3_NEEDED_BY: FeatureSet = {
+    let mut s = TIER3_FEATURES;
+    #[cfg(feature = "composites")]
+    {
+        s = s.with(AnalysisFeature::TextLikelihood);
+        s = s.with(AnalysisFeature::NaturalLikelihood);
+    }
+    s
+};
 
 /// Features whose computation reads from palette outputs
 /// (`distinct_color_bins`). Includes:
@@ -1091,9 +1179,16 @@ pub(crate) const T3_NEEDED_BY: FeatureSet = TIER3_FEATURES
 /// - [`AnalysisFeature::NaturalLikelihood`] (uses `distinct_color_bins`).
 ///
 /// `TextLikelihood` is **not** here — it's T3-entropy + T1 only.
-pub(crate) const PAL_NEEDED_BY: FeatureSet = PALETTE_FEATURES
-    .with(AnalysisFeature::ScreenContentLikelihood)
-    .with(AnalysisFeature::NaturalLikelihood);
+#[allow(unused_mut, unused_assignments)]
+pub(crate) const PAL_NEEDED_BY: FeatureSet = {
+    let mut s = PALETTE_FEATURES;
+    #[cfg(feature = "composites")]
+    {
+        s = s.with(AnalysisFeature::ScreenContentLikelihood);
+        s = s.with(AnalysisFeature::NaturalLikelihood);
+    }
+    s
+};
 
 // `RawAnalysis` and `into_results` are generated by the
 // `features_table!` invocation at the top of this file.

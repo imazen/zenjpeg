@@ -24,10 +24,22 @@ fn bench(label: &str, iters: usize, mut f: impl FnMut()) {
 }
 
 fn main() {
-    // Tier 1 only: just request one Tier 1 feature so other tiers
-    // skip themselves.
     let q_t1 = AnalysisQuery::new(FeatureSet::just(AnalysisFeature::Variance));
     let q_all = AnalysisQuery::new(FeatureSet::SUPPORTED);
+    // zenjpeg's actual ADAPTIVE_FEATURES — the realistic orchestrator
+    // hot path that drives Bucket-dispatch design choices.
+    let mut zj = FeatureSet::new();
+    zj = zj.with(AnalysisFeature::ChromaComplexity);
+    zj = zj.with(AnalysisFeature::CbPeakSharpness);
+    zj = zj.with(AnalysisFeature::CrPeakSharpness);
+    zj = zj.with(AnalysisFeature::Uniformity);
+    zj = zj.with(AnalysisFeature::FlatColorBlockRatio);
+    zj = zj.with(AnalysisFeature::EdgeDensity);
+    zj = zj.with(AnalysisFeature::HighFreqEnergyRatio);
+    zj = zj.with(AnalysisFeature::TextLikelihood);
+    zj = zj.with(AnalysisFeature::ScreenContentLikelihood);
+    zj = zj.with(AnalysisFeature::NaturalLikelihood);
+    let q_zj = AnalysisQuery::new(zj);
 
     for (label, w, h) in [
         ("1 MP   1024x1024", 1024u32, 1024u32),
@@ -41,12 +53,12 @@ fn main() {
 
         let iters = if w >= 4096 { 10 } else { 30 };
 
-        // Tier 1 only
         bench("Tier 1 only (Variance)", iters, || {
             let _ = zenanalyze::analyze_features(mk(), &q_t1).unwrap();
         });
-
-        // Full pipeline
+        bench("zenjpeg ADAPTIVE_FEATURES", iters, || {
+            let _ = zenanalyze::analyze_features(mk(), &q_zj).unwrap();
+        });
         bench("FeatureSet::SUPPORTED", iters, || {
             let _ = zenanalyze::analyze_features(mk(), &q_all).unwrap();
         });

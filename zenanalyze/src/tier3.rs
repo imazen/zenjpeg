@@ -45,7 +45,7 @@ pub(crate) const DEFAULT_HF_MAX_BLOCKS: usize = 1024;
 pub fn populate_tier3(out: &mut RawAnalysis, stream: &mut RowStream<'_>, hf_max_blocks: usize) {
     let h_stats = luma_histogram_stats(stream);
     out.luma_histogram_entropy = h_stats.entropy;
-    #[cfg(feature = "experimental")]
+    #[cfg(feature = "composites")]
     {
         out.line_art_score = h_stats.line_art_score;
     }
@@ -584,8 +584,12 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
     // compresses the heavy right tail (texture blocks vs flat
     // blocks differ by 4-5 orders of magnitude in raw energy) and
     // gives a mean / std that lives on a useful 0-7 scale.
-    let mut aq_log_sum: f64 = 0.0;
-    let mut aq_log_sq_sum: f64 = 0.0;
+    //
+    // We stage the raw `block_ac` values into a Vec during the main
+    // DCT loop and batch the `log10(1 + ac)` reduction afterwards
+    // via magetypes `log2_lowp` — vectorising 8 lanes per call vs
+    // 8 sequential scalar `f64::ln()` invocations (~50 cycles each).
+    let mut block_acs: Vec<f32> = Vec::with_capacity(max_blocks.min(4096));
     // Per-block low-AC-energy, retained for noise-floor estimation.
     // 10th percentile across blocks ≈ noise floor (flattest blocks'
     // residual AC). 4-byte storage × max_blocks = ~4 KB at default.
@@ -694,9 +698,7 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
                     high_energy += e;
                 }
             }
-            let block_log = (1.0 + block_ac).ln() / core::f64::consts::LN_10;
-            aq_log_sum += block_log;
-            aq_log_sq_sum += block_log * block_log;
+            block_acs.push(block_ac as f32);
             block_low_y.push(block_low_y_ac as f32);
 
             // Per-block gradient flag. Threshold 0.9 picks blocks
@@ -780,6 +782,13 @@ fn dct_stats(stream: &mut RowStream<'_>, max_blocks: usize) -> Tier3DctStats {
         0.0
     };
 
+    // Batched log10(1 + ac) over `block_acs` via magetypes `ln_lowp`,
+    // dispatched to v4 / v3 / NEON / WASM128 / scalar. Replaces the
+    // per-block scalar `f64::ln()` (was ~50 cycles each × N blocks)
+    // with one `ln_lowp` call per 8 blocks at low precision (well
+    // above the noise floor for an aq_map_std on the 0–7 log scale).
+    let (aq_log_sum, aq_log_sq_sum) =
+        log10_sum_and_sq_sum_dispatch(&block_acs);
     let (aq_map_mean, aq_map_std) = if blocks_sampled > 0 {
         let n = blocks_sampled as f64;
         let mean = aq_log_sum / n;
@@ -987,6 +996,7 @@ fn dct2d_8_three_planes_simd(
 /// [`text_likelihood`]: crate::feature::AnalysisFeature::TextLikelihood
 /// [`natural_likelihood`]: crate::feature::AnalysisFeature::NaturalLikelihood
 /// [`screen_content_likelihood`]: crate::feature::AnalysisFeature::ScreenContentLikelihood
+#[cfg(feature = "composites")]
 pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut RawAnalysis) {
     let chroma_sh = out.cb_sharpness + out.cr_sharpness;
     let chroma_lo = (0.005 - chroma_sh).clamp(0.0, 0.005) / 0.005;
@@ -1019,4 +1029,69 @@ pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(out: &mut Ra
             (entropy_hi * 0.3 + palette_large * 0.25 + chroma_moderate * 0.2 + not_flat * 0.25)
                 .clamp(0.0, 1.0);
     }
+}
+
+/// `composites`-disabled stub — keeps the call site in `lib.rs`
+/// unconditional. With `composites` off, no likelihood fields exist
+/// on `RawAnalysis`, so the body collapses to a no-op.
+#[cfg(not(feature = "composites"))]
+pub fn compute_derived_likelihoods<const T3: bool, const PAL: bool>(_out: &mut RawAnalysis) {}
+
+/// Dispatcher for the batched `log10(1 + ac)` reduction over the
+/// `block_acs` accumulator collected during the DCT-stats pass.
+/// Returns `(Σ log10(1+ac), Σ log10(1+ac)²)` as f64 — same shape
+/// the per-block scalar version produced.
+fn log10_sum_and_sq_sum_dispatch(block_acs: &[f32]) -> (f64, f64) {
+    incant!(log10_sum_and_sq_sum_simd(block_acs))
+}
+
+/// SIMD batched `log10(1 + ac)` and its square-sum, vectorised
+/// 8 lanes at a time via magetypes `log10_lowp`. The low-precision
+/// variant is ~12-bit accurate — far above the noise floor on the
+/// `aq_map_std` 0–7 log scale that consumes this output. Switching
+/// from per-block scalar `f64::ln() / LN_10` (~50 cycles each) to
+/// `log10_lowp` over an 8-wide vector removes a per-block transcendental
+/// call from the hot Tier 3 DCT loop.
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+fn log10_sum_and_sq_sum_simd(token: Token, block_acs: &[f32]) -> (f64, f64) {
+    let one_v = f32x8::splat(token, 1.0);
+    let mut sum_v = f32x8::zero(token);
+    let mut sq_sum_v = f32x8::zero(token);
+    let mut sum_f64: f64 = 0.0;
+    let mut sq_sum_f64: f64 = 0.0;
+    // FLUSH cadence — same `f32`-mantissa argument as the row-stats
+    // pass: log10 outputs land in `[0, ~7]` so partial sums of 32
+    // 8-lane chunks reach ~1.8 K, well below the 16 M f32 mantissa
+    // boundary.
+    const FLUSH: usize = 32;
+    let mut iters_since_flush = 0usize;
+    let chunks = block_acs.chunks_exact(8);
+    let remainder = chunks.remainder();
+    for chunk in chunks {
+        let arr: &[f32; 8] = chunk.try_into().unwrap();
+        let ac_v = f32x8::load(token, arr);
+        let log_v = (ac_v + one_v).log10_lowp();
+        sum_v += log_v;
+        sq_sum_v = log_v.mul_add(log_v, sq_sum_v);
+        iters_since_flush += 1;
+        if iters_since_flush >= FLUSH {
+            sum_f64 += sum_v.reduce_add() as f64;
+            sq_sum_f64 += sq_sum_v.reduce_add() as f64;
+            sum_v = f32x8::zero(token);
+            sq_sum_v = f32x8::zero(token);
+            iters_since_flush = 0;
+        }
+    }
+    sum_f64 += sum_v.reduce_add() as f64;
+    sq_sum_f64 += sq_sum_v.reduce_add() as f64;
+    // Scalar tail (≤ 7 leftover blocks) — use the same `log10_lowp`
+    // semantics the SIMD pass produced so the lowp/scalar boundary
+    // doesn't drift the aggregate. Native `f32::log10` is fine here
+    // because the tail count is tiny (typical ≤ 7 calls per analysis).
+    for &ac in remainder {
+        let l = (ac + 1.0).log10();
+        sum_f64 += l as f64;
+        sq_sum_f64 += (l as f64) * (l as f64);
+    }
+    (sum_f64, sq_sum_f64)
 }

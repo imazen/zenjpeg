@@ -372,6 +372,28 @@ pub fn analyze_features(
     #[cfg(not(feature = "experimental"))]
     let palette_wants_grayscale = false;
 
+    // Tier 1 dispatch: skip the separate Laplacian SIMD row pass
+    // when LaplacianVariance isn't requested. Load-bearing for
+    // orchestrator-style callers like zenjpeg's ADAPTIVE_FEATURES,
+    // which doesn't ask for LaplacianVariance and currently pays
+    // the full cost of the separate SIMD row walk anyway.
+    #[cfg(feature = "experimental")]
+    let tier1_wants_laplacian = features.contains(feature::AnalysisFeature::LaplacianVariance);
+    #[cfg(not(feature = "experimental"))]
+    let tier1_wants_laplacian = false;
+
+    // Tier 1 full-kernel gate: flip on for `Variance` /
+    // `Colourfulness` / `EdgeSlopeStdev` / `LaplacianVariance` — the
+    // accumulators inside `accumulate_row_simd`'s `if FULL` block.
+    // See `feature::TIER1_FULL_FEATURES`.
+    let tier1_full_kernel = features.intersects(feature::TIER1_FULL_FEATURES);
+    // Tier 1 skin-gate: peeled off `wants_full_kernel` so callers
+    // that only want `SkinToneFraction` don't pay for Variance /
+    // Colourfulness / edge-slope, and vice versa. The BT.601 chroma
+    // matrix + Chai-Ngan thresholds spent 12 vmovups + 13 broadcasts
+    // of register-spill traffic when bundled — see `cargo asm` audit.
+    let tier1_wants_skin = features.intersects(feature::TIER1_SKIN_FEATURES);
+
     // Depth tier is a runtime axis (not const-bool) — adding it to
     // the 16-arm dispatch would double to 32 arms for one extra
     // pass with negligible LLVM monomorphization wins. The depth
@@ -391,6 +413,9 @@ pub fn analyze_features(
                 feature::DEFAULT_HF_MAX_BLOCKS,
                 palette_full_required,
                 palette_wants_grayscale,
+                tier1_wants_laplacian,
+                tier1_full_kernel,
+                tier1_wants_skin,
                 run_depth,
             )?;
             Ok(raw.into_results(features, geometry, source_descriptor))
@@ -440,6 +465,9 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
     hf_max_blocks: usize,
     palette_full_required: bool,
     palette_wants_grayscale: bool,
+    tier1_wants_laplacian: bool,
+    tier1_full_kernel: bool,
+    tier1_wants_skin: bool,
     run_depth: bool,
 ) -> Result<(feature::RawAnalysis, feature::ImageGeometry), AnalyzeError> {
     let width = slice.width();
@@ -488,7 +516,22 @@ fn analyze_specialized_raw<const PAL: bool, const T2: bool, const T3: bool, cons
     let mut raw = feature::RawAnalysis::default();
 
     if width >= 2 && height >= 2 {
-        tier1::extract_tier1_into(&mut raw, &mut stream, pixel_budget);
+        // Tier 1 dispatch knobs — currently just `wants_laplacian`,
+        // which lets orchestrator-style callers (e.g. zenjpeg's
+        // `ADAPTIVE_FEATURES`) skip the separate Laplacian SIMD row
+        // pass when `LaplacianVariance` isn't requested.
+        // `TIER1_EXTRAS_FEATURES` is the union of all features whose
+        // accumulators add cost beyond the Tier 1 baseline; for now
+        // only LaplacianVariance gates a runtime branch, but the
+        // dispatch struct is laid out to grow more knobs (skin /
+        // edge-slope / colourfulness const-fold) without churning
+        // call sites.
+        let t1_dispatch = tier1::Tier1Dispatch {
+            wants_laplacian: tier1_wants_laplacian,
+            wants_full_kernel: tier1_full_kernel,
+            wants_skin: tier1_wants_skin,
+        };
+        tier1::extract_tier1_into_dispatch(&mut raw, &mut stream, pixel_budget, t1_dispatch);
         if T2 && width >= 3 && height >= 3 {
             tier2_chroma::populate_tier2(&mut raw, &mut stream, pixel_budget);
         }
@@ -583,6 +626,9 @@ pub fn __analyze_internal(
         query.hf_max_blocks,
         true, // override path always uses full palette scan
         true, // and includes the grayscale gate (test path wants every signal)
+        true, // and the Laplacian SIMD pass
+        true, // and the Tier 1 full kernel (luma stats / Hasler M3 / edge slope)
+        true, // and the Tier 1 skin gate
         run_depth,
     )?;
     Ok(raw.into_results(query.features, geometry, source_descriptor))
@@ -609,7 +655,9 @@ pub(crate) fn analyze_full_raw_for_test(
     // Tests want every signal — always run the full palette path,
     // and the depth tier when it's compiled in.
     let run_depth = cfg!(feature = "experimental");
-    analyze_specialized_raw::<true, true, true, true>(slice, pb, hf, true, true, run_depth)
+    analyze_specialized_raw::<true, true, true, true>(
+        slice, pb, hf, true, true, true, true, true, run_depth,
+    )
 }
 
 /// Convenience entry for callers holding a packed RGB8 buffer plus a
