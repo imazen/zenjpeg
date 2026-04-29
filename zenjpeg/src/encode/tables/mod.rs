@@ -62,6 +62,14 @@ pub mod presets;
 /// Use for thumbnails, LQIP, and progressive placeholders.
 pub mod glassa;
 
+/// SA-optimized piecewise quantization tables (v4) for jpegli-style encoding.
+///
+/// 20 quality-anchored tables (q5-q100, step 5) with linear interpolation.
+/// Beats jpegli's parametric tables on 99/100 quality levels with mean
+/// pareto +6.602 on CID22-512 training and +6.09 on holdout. See module
+/// docs for corpus / metric / when-to-use.
+pub mod sa_piecewise_v4;
+
 // Re-export base quantization matrices
 pub use crate::foundation::consts::{
     BASE_QUANT_MATRIX_STD as BASE_QUANT_STD, BASE_QUANT_MATRIX_XYB as BASE_QUANT_XYB,
