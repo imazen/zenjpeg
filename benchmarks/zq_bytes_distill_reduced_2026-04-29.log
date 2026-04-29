@@ -1,0 +1,19 @@
+
+# Distilled MLP — 8-feature reduced schema
+Train rows: 30833, val rows: 7673
+Teacher: HistGB per-config × 120, simple inputs (14: 8 feats + 4 size + log_px + zq)
+Student: MLP 26 -> 64 -> 64 -> 120, engineered inputs, 13688 params (~53.5 KB f32)
+
+## Argmin metrics (held-out images, all configs allowed)
+HistGB teacher: argmin_acc=13.2%  n=7673  unreach=0  overhead mean=+7.0% p50=+4.7% p75=+9.6% p90=+16.3%
+MLP student:    argmin_acc=10.5%  n=7673  unreach=0  overhead mean=+8.2% p50=+5.0% p75=+11.3% p90=+18.5%
+
+## Features kept (8)
+  feat_variance
+  feat_edge_density
+  feat_uniformity
+  feat_chroma_complexity
+  feat_cb_sharpness
+  feat_cr_sharpness
+  feat_high_freq_energy_ratio
+  feat_luma_histogram_entropy
