@@ -61,7 +61,7 @@ zenpixels = { workspace = true }
 # LineArtScore) that drive the adaptive path. Their combinator
 # coefficients are calibration-driven and may drift in 0.1.x —
 # zenjpeg pins to whichever zenanalyze patch ships in lockstep.
-zenanalyze = { workspace = true, features = ["composites"] }
+zenanalyze = { workspace = true, features = ["composites", "experimental"] }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
