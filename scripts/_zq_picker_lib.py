@@ -321,6 +321,89 @@ def teacher_predict_all(
     return out
 
 
+# ---------- Subsample for fast iteration ----------
+
+
+def subsample_for_iteration(
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    meta: list[tuple],
+    fraction: float = 0.5,
+    seed: int = SEED_DEFAULT,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Drop a random `1 - fraction` of training images (image-level,
+    not row-level) to speed up iteration. Val set kept full so
+    metrics remain comparable across runs.
+
+    Use during architecture / cross-term exploration. Switch back to
+    full training data for the production bake.
+    """
+    rng = np.random.default_rng(seed)
+    train_images = sorted({meta[i][0] for i in train_idx.tolist()})
+    rng.shuffle(train_images)
+    n_keep = max(1, int(len(train_images) * fraction))
+    keep_set = set(train_images[:n_keep])
+    new_train_idx = np.array(
+        [i for i in train_idx.tolist() if meta[i][0] in keep_set]
+    )
+    sys.stderr.write(
+        f"[subsample] keeping {len(keep_set)}/{len(train_images)} train images "
+        f"({len(new_train_idx)}/{len(train_idx)} rows, val unchanged)\n"
+    )
+    return new_train_idx, val_idx
+
+
+# ---------- Timing instrumentation ----------
+
+
+class StepTimer:
+    """Context-manager + accumulator for "where did the time go" reports.
+
+    Usage:
+
+        timer = StepTimer()
+        with timer.step("load"):
+            data = load_or_build_dataset(...)
+        with timer.step("teacher"):
+            teachers = train_teachers_parallel(...)
+        timer.report()  # prints accumulated wall-time per step
+    """
+
+    def __init__(self) -> None:
+        self._timings: list[tuple[str, float]] = []
+        self._t0: float | None = None
+        self._label: str | None = None
+
+    def step(self, label: str) -> "StepTimer":
+        self._label = label
+        return self
+
+    def __enter__(self) -> "StepTimer":
+        import time
+
+        self._t0 = time.monotonic()
+        sys.stderr.write(f"[timer] {self._label}…\n")
+        return self
+
+    def __exit__(self, *_) -> None:
+        import time
+
+        assert self._t0 is not None and self._label is not None
+        elapsed = time.monotonic() - self._t0
+        self._timings.append((self._label, elapsed))
+        sys.stderr.write(f"[timer] {self._label}: {elapsed:.2f}s\n")
+        self._t0 = None
+        self._label = None
+
+    def report(self) -> None:
+        total = sum(t for _, t in self._timings)
+        sys.stderr.write("\n[timer] step summary:\n")
+        for label, t in self._timings:
+            pct = (100.0 * t / total) if total > 0 else 0.0
+            sys.stderr.write(f"  {label:30s} {t:6.2f}s ({pct:4.1f}%)\n")
+        sys.stderr.write(f"  {'TOTAL':30s} {total:6.2f}s\n")
+
+
 # ---------- Argmin evaluation (shared) ----------
 
 
