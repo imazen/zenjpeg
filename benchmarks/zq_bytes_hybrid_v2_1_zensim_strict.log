@@ -1,0 +1,61 @@
+
+# Hybrid-heads picker — categorical bytes + scalar (chroma_scale, lambda)
+Safety profile: zensim_strict
+  bytes head: quantile q=0.99
+  reach gate: cells with reach_rate < 0.99 per zq are masked
+    zq=  0:  8/12 cells safe (rates: min 0.98, max 1.00)
+    zq=  5:  8/12 cells safe (rates: min 0.97, max 1.00)
+    zq= 10:  6/12 cells safe (rates: min 0.97, max 1.00)
+    zq= 15:  6/12 cells safe (rates: min 0.97, max 1.00)
+    zq= 20:  6/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 25:  6/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 30:  6/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 35:  4/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 40:  4/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 45:  4/12 cells safe (rates: min 0.96, max 1.00)
+    zq= 50:  4/12 cells safe (rates: min 0.95, max 1.00)
+    zq= 55:  4/12 cells safe (rates: min 0.95, max 1.00)
+    zq= 60:  4/12 cells safe (rates: min 0.95, max 1.00)
+    zq= 65:  4/12 cells safe (rates: min 0.95, max 1.00)
+    zq= 70:  4/12 cells safe (rates: min 0.95, max 1.00)
+    zq= 72:  3/12 cells safe (rates: min 0.94, max 1.00)
+    zq= 74:  2/12 cells safe (rates: min 0.93, max 1.00)
+    zq= 76:  2/12 cells safe (rates: min 0.92, max 1.00)
+    zq= 78:  2/12 cells safe (rates: min 0.90, max 1.00)
+    zq= 80:  2/12 cells safe (rates: min 0.86, max 1.00)
+    zq= 82:  1/12 cells safe (rates: min 0.80, max 1.00)
+    zq= 84:  2/12 cells safe (rates: min 0.69, max 1.00)
+    zq= 86:  6/12 cells safe (rates: min 0.41, max 1.00)
+    zq= 88:  6/12 cells safe (rates: min 0.08, max 1.00)
+    zq= 90:  6/12 cells safe (rates: min 0.02, max 1.00)
+    zq= 92:  6/12 cells safe (rates: min 0.00, max 1.00)
+    zq= 94:  4/12 cells safe (rates: min 0.00, max 1.00)
+    zq= 96:  2/12 cells safe (rates: min 0.00, max 1.00)
+    zq= 98:  0/12 cells safe (rates: min 0.00, max 0.97)
+Train rows: 30833, val rows: 7673
+n_cells: 12, output_dim: 36
+Student: MLP 80 -> 128 -> 128 -> 36, 31524 params (~61.6 KB f16)
+
+## Categorical cells
+   0: xyb_420_noT                     (5 member configs)
+   1: xyb_420_trellis                 (15 member configs)
+   2: xyb_444_noT                     (5 member configs)
+   3: xyb_444_trellis                 (15 member configs)
+   4: ycbcr_420_noT                   (5 member configs)
+   5: ycbcr_420_noT_sa                (5 member configs)
+   6: ycbcr_420_trellis               (15 member configs)
+   7: ycbcr_420_trellis_sa            (15 member configs)
+   8: ycbcr_444_noT                   (5 member configs)
+   9: ycbcr_444_noT_sa                (5 member configs)
+  10: ycbcr_444_trellis               (15 member configs)
+  11: ycbcr_444_trellis_sa            (15 member configs)
+
+## Argmin (categorical) — vs reachable per-row optimal
+  Teacher: mean 8.52%  argmin_acc 36.6%
+  Student: mean 7.38%  argmin_acc 40.7%
+
+## Scalar regression RMSE
+  Teacher chroma_scale RMSE: 0.2148  (MAE 0.1441, range 0.6..1.5)
+  Teacher lambda RMSE:       2.821   (MAE 1.692, range 8..25)
+  Student chroma_scale RMSE: 0.2290  (MAE 0.1587)
+  Student lambda RMSE:       2.912   (MAE 1.882)

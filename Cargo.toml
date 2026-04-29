@@ -50,7 +50,7 @@ rayon = "1.10"
 # Color conversion (for benchmarking/comparison - faster than libyuv)
 yuv = { version = "0.8", features = ["professional_mode"] }
 zenyuv = { path = "zenyuv" }
-zenanalyze = "0.1"
+zenanalyze = { path = "../zenanalyze", version = "0.1" }
 
 # Testing
 approx = "0.5"

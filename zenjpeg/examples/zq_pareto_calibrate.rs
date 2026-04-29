@@ -171,6 +171,11 @@ struct Args {
     features_output: PathBuf,
     max_images: usize,
     threads: usize,
+    /// When true, skip the per-config encode + zensim loop and emit
+    /// only the per-(image, size) features TSV. Used to extend an
+    /// existing Pareto sweep with new analyzer features without
+    /// re-running the expensive encode pass.
+    features_only: bool,
 }
 
 fn parse_args() -> Args {
@@ -178,6 +183,7 @@ fn parse_args() -> Args {
     let mut sizes: Vec<u32> = Vec::new();
     let mut max_images = 1024;
     let mut threads = 0;
+    let mut features_only = false;
     let date = chrono_today();
     let mut output = PathBuf::from(format!("benchmarks/zq_pareto_{date}.tsv"));
     let mut features_output = PathBuf::from(format!("benchmarks/zq_pareto_features_{date}.tsv"));
@@ -200,6 +206,7 @@ fn parse_args() -> Args {
             "--features-output" => features_output = PathBuf::from(it.next().unwrap()),
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
             "--threads" => threads = it.next().unwrap().parse().expect("threads uint"),
+            "--features-only" => features_only = true,
             other => panic!("unknown arg: {other}"),
         }
     }
@@ -224,6 +231,7 @@ fn parse_args() -> Args {
         sizes,
         output,
         features_output,
+        features_only,
         max_images,
         threads,
     }
@@ -368,43 +376,14 @@ fn full_feature_set() -> FeatureSet {
 }
 
 fn feature_columns() -> Vec<AnalysisFeature> {
-    use AnalysisFeature::*;
-    let mut cols = Vec::new();
-    // Walk every supported feature; include only the ones that ship in
-    // this build so the column count matches what we can populate.
-    for f in [
-        Variance,
-        EdgeDensity,
-        ChromaComplexity,
-        CbSharpness,
-        CrSharpness,
-        Uniformity,
-        FlatColorBlockRatio,
-        DistinctColorBins,
-        CbHorizSharpness,
-        CbVertSharpness,
-        CbPeakSharpness,
-        CrHorizSharpness,
-        CrVertSharpness,
-        CrPeakSharpness,
-        HighFreqEnergyRatio,
-        LumaHistogramEntropy,
-        AlphaPresent,
-        AlphaUsedFraction,
-        AlphaBimodalScore,
-    ] {
-        cols.push(f);
-    }
-    // composites — present only when zenanalyze was built with that flag.
-    #[cfg(feature = "composites_passthrough")]
-    {
-        cols.push(TextLikelihood);
-        cols.push(ScreenContentLikelihood);
-        cols.push(NaturalLikelihood);
-    }
-    // We rely on AnalysisResults::get_f32 returning None for unknown
-    // features; the writer below converts None to the empty TSV cell.
-    cols
+    // Walk every analyzer feature this zenanalyze build supports.
+    // FeatureSet::SUPPORTED reflects compile-time feature gates, so a
+    // build without the `composites` cargo feature emits a strictly
+    // smaller TSV — automatic + future-proof.
+    //
+    // Picker training scripts read column names; new features land
+    // here without code changes the moment they ship in zenanalyze.
+    zenanalyze::feature::FeatureSet::SUPPORTED.iter().collect()
 }
 
 fn feature_value_str(
@@ -471,24 +450,30 @@ fn main() {
     );
 
     // Open output files in append mode. Write headers if files are new.
+    // In features-only mode the main pareto TSV is never opened.
     if let Some(parent) = args.output.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let main_is_new = !args.output.exists();
-    let main_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&args.output)
-        .expect("open output");
-    let main_file = Mutex::new(main_file);
-    if main_is_new {
-        let mut f = main_file.lock().unwrap();
-        writeln!(
-            f,
-            "image_path\tsize_class\twidth\theight\tconfig_id\tconfig_name\tq\tbytes\tzensim\tencode_ms\ttotal_ms"
-        )
-        .ok();
-    }
+    let main_file: Option<Mutex<std::fs::File>> = if args.features_only {
+        None
+    } else {
+        let main_is_new = !args.output.exists();
+        let main_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&args.output)
+            .expect("open output");
+        let main_file = Mutex::new(main_file);
+        if main_is_new {
+            let mut f = main_file.lock().unwrap();
+            writeln!(
+                f,
+                "image_path\tsize_class\twidth\theight\tconfig_id\tconfig_name\tq\tbytes\tzensim\tencode_ms\ttotal_ms"
+            )
+            .ok();
+        }
+        Some(main_file)
+    };
 
     let feat_is_new = !args.features_output.exists();
     let feat_file = OpenOptions::new()
@@ -544,54 +529,57 @@ fn main() {
             f.flush().ok();
         }
 
-        // Pre-compute zensim reference once.
-        let src_chunks: &[[u8; 3]] = rgb.as_chunks::<3>().0;
-        let src_slice = RgbSlice::new(src_chunks, w as usize, h as usize);
-        let pre = z.precompute_reference(&src_slice).expect("precompute");
+        // Skip the expensive encode + zensim loop when --features-only.
+        if let Some(main_file) = main_file.as_ref() {
+            // Pre-compute zensim reference once.
+            let src_chunks: &[[u8; 3]] = rgb.as_chunks::<3>().0;
+            let src_slice = RgbSlice::new(src_chunks, w as usize, h as usize);
+            let pre = z.precompute_reference(&src_slice).expect("precompute");
 
-        // Cartesian over configs × q.
-        for spec in CONFIGS {
-            for &q in Q_GRID {
-                let row = encode_decode_score(&z, &pre, &rgb, w, h, *spec, q);
-                let mut f = main_file.lock().unwrap();
-                match row {
-                    Some((bytes, zensim, encode_ms, total_ms)) => {
-                        writeln!(
-                            f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.3}\t{:.3}",
-                            path.display(),
-                            size_class,
-                            w,
-                            h,
-                            spec.id,
-                            spec.name,
-                            q,
-                            bytes,
-                            zensim,
-                            encode_ms,
-                            total_ms,
-                        )
-                        .ok();
-                    }
-                    None => {
-                        // Record a row with empty bytes/zensim to mark
-                        // the failure — keeps the cell index dense.
-                        writeln!(
-                            f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t\t\t\t",
-                            path.display(),
-                            size_class,
-                            w,
-                            h,
-                            spec.id,
-                            spec.name,
-                            q,
-                        )
-                        .ok();
+            // Cartesian over configs × q.
+            for spec in CONFIGS {
+                for &q in Q_GRID {
+                    let row = encode_decode_score(&z, &pre, &rgb, w, h, *spec, q);
+                    let mut f = main_file.lock().unwrap();
+                    match row {
+                        Some((bytes, zensim, encode_ms, total_ms)) => {
+                            writeln!(
+                                f,
+                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.3}\t{:.3}",
+                                path.display(),
+                                size_class,
+                                w,
+                                h,
+                                spec.id,
+                                spec.name,
+                                q,
+                                bytes,
+                                zensim,
+                                encode_ms,
+                                total_ms,
+                            )
+                            .ok();
+                        }
+                        None => {
+                            // Record a row with empty bytes/zensim to mark
+                            // the failure — keeps the cell index dense.
+                            writeln!(
+                                f,
+                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t\t\t\t",
+                                path.display(),
+                                size_class,
+                                w,
+                                h,
+                                spec.id,
+                                spec.name,
+                                q,
+                            )
+                            .ok();
+                        }
                     }
                 }
+                main_file.lock().unwrap().flush().ok();
             }
-            main_file.lock().unwrap().flush().ok();
         }
 
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -606,9 +594,13 @@ fn main() {
         }
     });
 
+    let primary = if args.features_only {
+        args.features_output.display().to_string()
+    } else {
+        args.output.display().to_string()
+    };
     eprintln!(
-        "[zq_pareto_calibrate] done in {:.0}s, output at {}",
+        "[zq_pareto_calibrate] done in {:.0}s, output at {primary}",
         started.elapsed().as_secs_f64(),
-        args.output.display(),
     );
 }
