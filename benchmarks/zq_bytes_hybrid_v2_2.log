@@ -1,0 +1,32 @@
+
+# Hybrid-heads picker — categorical bytes + scalar (chroma_scale, lambda)
+Safety profile: size_optimal
+  bytes head: mean (squared error)
+  reach gate: none — any reachable cell allowed at inference
+Train rows: 8965, val rows: 2240
+n_cells: 12, output_dim: 36
+Student: MLP 178 -> 192 -> 192 -> 192 -> 36, 115428 params (~225.4 KB f16)
+
+## Categorical cells
+   0: xyb_420_noT                     (5 member configs)
+   1: xyb_420_trellis                 (15 member configs)
+   2: xyb_444_noT                     (5 member configs)
+   3: xyb_444_trellis                 (15 member configs)
+   4: ycbcr_420_noT                   (5 member configs)
+   5: ycbcr_420_noT_sa                (5 member configs)
+   6: ycbcr_420_trellis               (15 member configs)
+   7: ycbcr_420_trellis_sa            (15 member configs)
+   8: ycbcr_444_noT                   (5 member configs)
+   9: ycbcr_444_noT_sa                (5 member configs)
+  10: ycbcr_444_trellis               (15 member configs)
+  11: ycbcr_444_trellis_sa            (15 member configs)
+
+## Argmin (categorical) — vs reachable per-row optimal
+  Teacher: mean 1.84%  argmin_acc 58.5%
+  Student: mean 3.33%  argmin_acc 45.9%
+
+## Scalar regression RMSE
+  Teacher chroma_scale RMSE: 0.2159  (MAE 0.1450, range 0.6..1.5)
+  Student chroma_scale RMSE: 0.2334  (MAE 0.1695)
+  Teacher lambda RMSE: 2.9519  (MAE 1.7506, range 8.0..25.0)
+  Student lambda RMSE: 3.2319  (MAE 2.1136)

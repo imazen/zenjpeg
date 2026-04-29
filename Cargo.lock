@@ -976,9 +976,9 @@ dependencies = [
 
 [[package]]
 name = "garb"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96bf7a00ed7fc01dae4e581831996672b2824746af4c0a658ee28ca3cbb823dc"
+checksum = "ae3f56f280a24621bef5778559c4502d10136565311efa37a7b4ca257dce00ed"
 dependencies = [
  "archmage 0.9.23",
  "bytemuck",
@@ -3059,8 +3059,6 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
 dependencies = [
  "archmage 0.9.23",
  "garb",

@@ -1,0 +1,68 @@
+
+# Feature ablation — Pareto controller HistGB
+Train rows: 30833, val rows: 7673
+HistGB: {'max_iter': 100, 'max_depth': 4, 'learning_rate': 0.1, 'l2_regularization': 0.5, 'random_state': 51966}
+
+## Baseline (all 53 features)
+mean overhead: 7.61%  argmin_acc: 11.8%
+
+## Leave-one-out (sorted by Δ vs baseline, largest hurt first)
+feature                                    overhead  Δ vs base
+-----------------------------------------------------------------
+feat_laplacian_variance                       8.91%     +1.30pp
+feat_quant_survival_y                         8.59%     +0.98pp
+feat_uniformity                               8.12%     +0.51pp
+feat_aq_map_mean                              8.05%     +0.43pp
+feat_distinct_color_bins                      8.00%     +0.39pp
+feat_edge_density                             7.97%     +0.36pp
+feat_cr_sharpness                             7.87%     +0.26pp
+feat_cb_sharpness                             7.81%     +0.20pp
+feat_gradient_fraction                        7.79%     +0.18pp
+feat_colourfulness                            7.78%     +0.16pp
+feat_high_freq_energy_ratio                   7.74%     +0.13pp
+feat_quant_survival_uv                        7.74%     +0.13pp
+feat_natural_likelihood                       7.73%     +0.12pp
+feat_cr_vert_sharpness                        7.73%     +0.12pp
+feat_dct_compressibility_y                    7.72%     +0.11pp
+feat_cr_horiz_sharpness                       7.71%     +0.10pp
+feat_patch_fraction_fast                      7.70%     +0.09pp
+feat_variance                                 7.69%     +0.08pp
+feat_cb_vert_sharpness                        7.66%     +0.05pp
+feat_luma_histogram_entropy                   7.66%     +0.05pp
+feat_flat_color_block_ratio                   7.66%     +0.04pp
+feat_chroma_complexity                        7.65%     +0.04pp
+feat_aq_map_std                               7.65%     +0.04pp
+feat_grayscale_score                          7.64%     +0.03pp
+feat_patch_fraction                           7.64%     +0.03pp
+feat_cr_peak_sharpness                        7.64%     +0.03pp
+feat_cb_horiz_sharpness                       7.63%     +0.02pp
+feat_noise_floor_uv                           7.63%     +0.02pp
+feat_noise_floor_y                            7.63%     +0.02pp
+feat_variance_spread                          7.63%     +0.02pp
+feat_dct_compressibility_uv                   7.62%     +0.01pp
+feat_cb_peak_sharpness                        7.61%     +0.00pp
+feat_palette_density                          7.61%     +0.00pp
+feat_line_art_score                           7.61%     +0.00pp
+feat_alpha_present                            7.61%     +0.00pp
+feat_alpha_used_fraction                      7.61%     +0.00pp
+feat_alpha_bimodal_score                      7.61%     +0.00pp
+feat_palette_fits_in_256                      7.61%     +0.00pp
+feat_peak_luminance_nits                      7.61%     +0.00pp
+feat_p99_luminance_nits                       7.61%     +0.00pp
+feat_hdr_headroom_stops                       7.61%     +0.00pp
+feat_hdr_pixel_fraction                       7.61%     +0.00pp
+feat_wide_gamut_peak                          7.61%     +0.00pp
+feat_wide_gamut_fraction                      7.61%     +0.00pp
+feat_effective_bit_depth                      7.61%     +0.00pp
+feat_hdr_present                              7.61%     +0.00pp
+feat_gamut_coverage_srgb                      7.61%     +0.00pp
+feat_gamut_coverage_p3                        7.61%     +0.00pp
+feat_indexed_palette_width                    7.61%     -0.00pp
+feat_edge_slope_stdev                         7.61%     -0.00pp
+feat_text_likelihood                          7.60%     -0.01pp
+feat_screen_content_likelihood                7.60%     -0.01pp
+feat_skin_tone_fraction                       7.58%     -0.03pp
+
+## Forward greedy curve (cumulative best feature subsets)
+  K   overhead  argmin_acc  added
+-----------------------------------------------------------------
