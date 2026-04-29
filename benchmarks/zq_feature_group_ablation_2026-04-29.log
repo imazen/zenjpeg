@@ -1,0 +1,20 @@
+
+# Group ablation — Pareto controller HistGB
+Train rows: 30833, val rows: 7673
+HistGB: {'max_iter': 100, 'max_depth': 4, 'learning_rate': 0.1, 'l2_regularization': 0.5, 'random_state': 51966}
+
+## Baseline (all 19 features)
+mean overhead: 7.42%  argmin_acc: 11.5%
+
+## Group ablations (drop each group; sorted by Δ vs baseline)
+group                  n_feats   overhead  Δ vs base
+------------------------------------------------------------
+tier1_basic                  4      7.85%     +0.43pp
+chroma_sharpness             8      7.78%     +0.36pp
+tier3_dct                    2      7.60%     +0.19pp
+palette                      2      7.44%     +0.02pp
+alpha                        3      7.42%     +0.00pp
+
+## Combined LOO-suggested drops (8 features dropped)
+dropped: feat_distinct_color_bins, feat_cr_peak_sharpness, feat_cb_vert_sharpness, feat_flat_color_block_ratio, feat_alpha_bimodal_score, feat_alpha_used_fraction, feat_alpha_present, feat_variance
+overhead: 7.54% (Δ +0.12pp)  argmin_acc: 10.8%
