@@ -1,0 +1,111 @@
+{
+  "baseline": {
+    "n": 7673,
+    "argmin_acc": 0.1152091750293236,
+    "mean_pct": 7.416591644287109,
+    "p50_pct": 4.950918674468994,
+    "p90_pct": 16.91618537902832
+  },
+  "groups": {
+    "alpha": {
+      "features": [
+        "feat_alpha_present",
+        "feat_alpha_used_fraction",
+        "feat_alpha_bimodal_score"
+      ],
+      "metrics": {
+        "n": 7673,
+        "argmin_acc": 0.1152091750293236,
+        "mean_pct": 7.416591644287109,
+        "p50_pct": 4.950918674468994,
+        "p90_pct": 16.91618537902832
+      }
+    },
+    "chroma_sharpness": {
+      "features": [
+        "feat_cb_sharpness",
+        "feat_cr_sharpness",
+        "feat_cb_horiz_sharpness",
+        "feat_cb_vert_sharpness",
+        "feat_cb_peak_sharpness",
+        "feat_cr_horiz_sharpness",
+        "feat_cr_vert_sharpness",
+        "feat_cr_peak_sharpness"
+      ],
+      "metrics": {
+        "n": 7673,
+        "argmin_acc": 0.11573048351361918,
+        "mean_pct": 7.775148868560791,
+        "p50_pct": 5.013962745666504,
+        "p90_pct": 17.597631454467773
+      }
+    },
+    "palette": {
+      "features": [
+        "feat_distinct_color_bins",
+        "feat_flat_color_block_ratio"
+      ],
+      "metrics": {
+        "n": 7673,
+        "argmin_acc": 0.11064772579173726,
+        "mean_pct": 7.438657283782959,
+        "p50_pct": 4.929907321929932,
+        "p90_pct": 17.083335876464844
+      }
+    },
+    "tier3_dct": {
+      "features": [
+        "feat_high_freq_energy_ratio",
+        "feat_luma_histogram_entropy"
+      ],
+      "metrics": {
+        "n": 7673,
+        "argmin_acc": 0.11638211911898866,
+        "mean_pct": 7.604856014251709,
+        "p50_pct": 4.8590874671936035,
+        "p90_pct": 17.554096221923828
+      }
+    },
+    "tier1_basic": {
+      "features": [
+        "feat_variance",
+        "feat_edge_density",
+        "feat_uniformity",
+        "feat_chroma_complexity"
+      ],
+      "metrics": {
+        "n": 7673,
+        "argmin_acc": 0.11299361397106739,
+        "mean_pct": 7.850247383117676,
+        "p50_pct": 5.341299533843994,
+        "p90_pct": 17.70064926147461
+      }
+    }
+  },
+  "combined_loo_drops": {
+    "features_dropped": [
+      "feat_distinct_color_bins",
+      "feat_cr_peak_sharpness",
+      "feat_cb_vert_sharpness",
+      "feat_flat_color_block_ratio",
+      "feat_alpha_bimodal_score",
+      "feat_alpha_used_fraction",
+      "feat_alpha_present",
+      "feat_variance"
+    ],
+    "metrics": {
+      "n": 7673,
+      "argmin_acc": 0.10791085624918545,
+      "mean_pct": 7.537555694580078,
+      "p50_pct": 4.974152565002441,
+      "p90_pct": 17.166343688964844
+    }
+  },
+  "histgb_params": {
+    "max_iter": 100,
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "l2_regularization": 0.5,
+    "random_state": 51966
+  }
+}

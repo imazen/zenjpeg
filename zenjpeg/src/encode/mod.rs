@@ -34,7 +34,9 @@
 // by an unrelated commit on main); wiring it in here makes the file
 // actually reachable.
 mod adaptive;
+pub(crate) mod aq_controller;
 mod blocks;
+
 #[doc(hidden)]
 pub mod chroma;
 #[doc(hidden)]
@@ -45,6 +47,10 @@ pub(crate) mod scan_optimize;
 #[doc(hidden)]
 pub mod scan_script;
 mod serialize;
+/// Target perceptual-quality (`zq`) types and helpers (issue #113).
+///
+/// See [`Quality::Zq`] and [`Quality::ZqExplicit`] for the entry points.
+pub mod zq;
 
 #[doc(hidden)]
 pub mod config;

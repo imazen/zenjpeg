@@ -113,6 +113,16 @@ impl StreamingEncoder {
         &self.processor.quant
     }
 
+    /// Install a per-iMCU [`super::aq_controller::AqController`] on the
+    /// underlying strip processor. Used by the target-zq iteration loop
+    /// in [`super::zq`].
+    pub(crate) fn set_aq_controller(
+        &mut self,
+        ctrl: Option<Box<dyn super::aq_controller::AqController>>,
+    ) {
+        self.processor.set_aq_controller(ctrl);
+    }
+
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
     /// Use the builder methods to configure quality, subsampling, etc.

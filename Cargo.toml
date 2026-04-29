@@ -42,6 +42,9 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # Quality metrics
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
+# Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop and
+# by various dev-only test/measurement examples.
+zensim = { version = "0.2.6" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)

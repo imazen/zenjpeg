@@ -1,0 +1,20 @@
+Loading benchmarks/zq_pareto_2026-04-29.tsv...
+Loaded 1388 cells × 19 features
+
+Baseline (all 19 features)...
+  baseline: 7.42% argmin 11.5%
+
+Drop alpha + palette only (5 features)...
+  -> 7.44% (Δ +0.02pp)  argmin 11.1%
+
+Drop alpha + palette + ALL 6 Tier 2 chroma (11 features)...
+  -> 7.35% (Δ -0.07pp)  argmin 11.4%
+
+Drop alpha + palette + 4 Tier 2 (keep horiz, 9 dropped)...
+  -> 7.53% (Δ +0.11pp)  argmin 10.8%
+
+Summary:
+  baseline (all 19):              7.42%
+  drop alpha+palette (5 dropped): 7.44% (Δ +0.02pp)
+  + all 6 Tier 2 (11 dropped):    7.35% (Δ -0.07pp)
+  + 4 Tier 2 keep horiz (9):      7.53% (Δ +0.11pp)

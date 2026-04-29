@@ -76,3 +76,9 @@ Cargo.toml.original.txt
 *.profdata
 fuzz-*.log
 .workongoing
+
+# Comprehensive Zq Pareto sweep — multi-megabyte raw TSV outputs.
+# Source-informing data, kept locally (do not delete) but too big for git.
+# Reproduce via examples/zq_pareto_calibrate.rs; summary committed at
+# benchmarks/zq_pareto_<DATE>.summary.md.
+benchmarks/zq_pareto_*.tsv
