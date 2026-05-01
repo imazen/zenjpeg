@@ -54,10 +54,7 @@ const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::Uniformity)
     .with(AnalysisFeature::FlatColorBlockRatio)
     .with(AnalysisFeature::EdgeDensity)
-    .with(AnalysisFeature::HighFreqEnergyRatio)
-    .with(AnalysisFeature::TextLikelihood)
-    .with(AnalysisFeature::ScreenContentLikelihood)
-    .with(AnalysisFeature::NaturalLikelihood);
+    .with(AnalysisFeature::HighFreqEnergyRatio);
 
 /// Tiny accessor: read an f32 feature out of [`AnalysisResults`],
 /// defaulting to 0.0 when missing. The adaptive selector treats
@@ -360,23 +357,11 @@ pub(crate) fn infer_bucket(r: &AnalysisResults) -> InferredBucket {
     // either way (PhotoDetailed and PhotoNatural both ship sensible
     // configs), but a fresh sweep should tighten the boundary.
     //
-    // Strong synthetic signals win first (text/screen content have
-    // very distinctive feature signatures).
-    if f(r, AnalysisFeature::TextLikelihood) > 0.55 {
-        // Text + low chroma + sharp edges → screen content / document.
-        // The oracle's 'ScreenContent' bucket dominates at q ≥ 25 and
-        // wants XYB+4:4:4; 'Illustration' is similar but with more
-        // chroma. Differentiate by chroma signal strength.
-        if f(r, AnalysisFeature::ChromaComplexity) > 0.04
-            || f(r, AnalysisFeature::CbPeakSharpness) > 5.0
-        {
-            return InferredBucket::Illustration;
-        }
-        return InferredBucket::ScreenContent;
-    }
-    if f(r, AnalysisFeature::ScreenContentLikelihood) > 0.5 {
-        return InferredBucket::ScreenContent;
-    }
+    // Composite likelihoods (TextLikelihood/ScreenContentLikelihood)
+    // were removed in zenanalyze 0.1.0; the oracle picks classes from
+    // raw signals only. (overnight-ablate stub — restore once the
+    // adaptive path is rewritten against post-cull features.)
+    let _ = r;
     // Photo-class: differentiate by content density.
     if f(r, AnalysisFeature::Uniformity) > 0.55 || f(r, AnalysisFeature::FlatColorBlockRatio) > 0.25
     {
@@ -501,10 +486,12 @@ fn adaptive_internal(
     // Only meaningful in YCbCr mode (XYB doesn't subsample chroma the
     // same way).
     if !use_xyb {
+        // NaturalLikelihood removed — fall back to bucket-only gating.
         let sharp_yuv = matches!(
             bucket,
             InferredBucket::PhotoNatural | InferredBucket::PhotoDetailed
-        ) && f(features, AnalysisFeature::NaturalLikelihood) > 0.5;
+        );
+        let _ = features;
         cfg = cfg.sharp_yuv(sharp_yuv);
     }
 
