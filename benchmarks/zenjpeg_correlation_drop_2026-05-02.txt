@@ -1,0 +1,16 @@
+feat_aq_map_mean
+feat_aq_map_p10
+feat_aq_map_p75
+feat_bitmap_bytes
+feat_cb_horiz_sharpness
+feat_colourfulness
+feat_cr_horiz_sharpness
+feat_dct_compressibility_uv
+feat_indexed_palette_width
+feat_log_pixels
+feat_noise_floor_uv_p90
+feat_noise_floor_y_p10
+feat_noise_floor_y_p50
+feat_palette_density
+feat_quant_survival_y_p50
+feat_quant_survival_y_p75

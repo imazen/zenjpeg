@@ -1,0 +1,87 @@
+Loading benchmarks/zenjpeg_features_expanded_2026-05-02.tsv...
+Dropped 36 rows with NaN feature values (tiny images skipping percentile features).
+Loaded 768 rows × 99 features
+Constant columns (corpus gap, NOT redundancy): 14
+Low-variance columns (n_unique < 5): 5
+Computing Spearman correlation (85x85, constants stripped)...
+Found 11 multi-feature clusters at |Spearman| >= 0.95
+Wrote benchmarks/zenjpeg_correlation_2026-05-02.json
+Wrote benchmarks/zenjpeg_correlation_drop_2026-05-02.txt
+# Correlation cleanup report
+# Source: benchmarks/zenjpeg_features_expanded_2026-05-02.tsv
+# Threshold: |Spearman| >= 0.95
+# 768 rows × 99 features
+
+## CORPUS GAP — 14 constant column(s) (zero variance across the whole corpus)
+# These are NOT redundancy candidates. The feature might
+# carry real signal — the corpus just doesn't exercise it.
+# Fix the corpus before drawing conclusions about these.
+
+  constant: feat_alpha_present                       = 0.0
+  constant: feat_alpha_used_fraction                 = 0.0
+  constant: feat_alpha_bimodal_score                 = 0.0
+  constant: feat_peak_luminance_nits                 = 80.0
+  constant: feat_p99_luminance_nits                  = 80.0
+  constant: feat_hdr_headroom_stops                  = 0.0
+  constant: feat_hdr_pixel_fraction                  = 0.0
+  constant: feat_wide_gamut_peak                     = 1.0
+  constant: feat_wide_gamut_fraction                 = 0.0
+  constant: feat_effective_bit_depth                 = 8.0
+  constant: feat_hdr_present                         = 0.0
+  constant: feat_gamut_coverage_srgb                 = 1.0
+  constant: feat_gamut_coverage_p3                   = 1.0
+  constant: feat_channel_count                       = 3.0
+
+## LOW-VARIANCE — 5 column(s) with < 5 unique values
+# Spearman is rank-based; <5 unique values means tied
+# ranks dominate. Any redundancy claim against these is
+# suspect. Treat as 'corpus coverage borderline'.
+
+  low_var: feat_indexed_palette_width               n_unique = 4
+  low_var: feat_palette_fits_in_256                 n_unique = 2
+  low_var: feat_is_grayscale                        n_unique = 2
+  low_var: feat_quant_survival_uv_p10               n_unique = 4
+  low_var: feat_laplacian_variance_p1               n_unique = 2
+
+## REDUNDANCY — 11 cluster(s), 16 drop candidate(s)
+# These features are ≥ 0.95 Spearman-correlated.
+# Tree learners route signal through one and ignore the rest.
+
+### Anchor: feat_aq_map_p50  (cluster size 3, anchor unique values 644, min |corr| 0.9577)
+  drop: feat_noise_floor_y_p50
+  drop: feat_quant_survival_y_p50
+
+### Anchor: feat_cb_vert_sharpness  (cluster size 2, anchor unique values 558, min |corr| 0.9690)
+  drop: feat_cb_horiz_sharpness
+
+### Anchor: feat_chroma_complexity  (cluster size 2, anchor unique values 689, min |corr| 0.9818)
+  drop: feat_colourfulness
+
+### Anchor: feat_cr_vert_sharpness  (cluster size 2, anchor unique values 640, min |corr| 0.9669)
+  drop: feat_cr_horiz_sharpness
+
+### Anchor: feat_distinct_color_bins  (cluster size 2, anchor unique values 635, min |corr| 0.9871)
+  drop: feat_palette_density
+
+### Anchor: feat_noise_floor_y  (cluster size 3, anchor unique values 496, min |corr| 0.9630)
+  drop: feat_aq_map_p10
+  drop: feat_noise_floor_y_p10
+
+### Anchor: feat_palette_fits_in_256  (cluster size 2, anchor unique values 2, min |corr| 0.9843)
+  drop: feat_indexed_palette_width
+
+### Anchor: feat_pixel_count  (cluster size 3, anchor unique values 188, min |corr| 1.0000)
+  drop: feat_bitmap_bytes
+  drop: feat_log_pixels
+
+### Anchor: feat_quant_survival_uv  (cluster size 3, anchor unique values 641, min |corr| 0.9475)
+  drop: feat_dct_compressibility_uv
+  drop: feat_noise_floor_uv_p90
+
+### Anchor: feat_quant_survival_y  (cluster size 3, anchor unique values 741, min |corr| 0.9211)
+  drop: feat_aq_map_p75
+  drop: feat_quant_survival_y_p75
+
+### Anchor: feat_uniformity  (cluster size 2, anchor unique values 717, min |corr| 0.9566)
+  drop: feat_aq_map_mean
+

@@ -426,8 +426,9 @@ fn main() {
             .unwrap_or_else(|e| panic!("read_dir {}: {e}", corpus.display()));
         for entry in entries.filter_map(|r| r.ok()) {
             let p = entry.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("png") {
-                paths.push(p);
+            match p.extension().and_then(|s| s.to_str()) {
+                Some("png") | Some("jpg") | Some("jpeg") => paths.push(p),
+                _ => {}
             }
         }
     }
