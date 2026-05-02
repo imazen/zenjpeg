@@ -35,6 +35,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
@@ -105,6 +106,7 @@ jobs:
           git clone --depth 1 https://github.com/imazen/zencodec.git
           git clone --depth 1 https://github.com/imazen/zenpng.git
           git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
 
       - name: Strip non-CI workspace members and deps
         shell: bash
