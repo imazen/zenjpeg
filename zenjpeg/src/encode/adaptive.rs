@@ -47,14 +47,103 @@ use crate::analyze::{
 /// Features the adaptive selector consults. Compose other codecs'
 /// preset `FeatureSet`s with this via `FeatureSet::union` if
 /// orchestrating multi-codec analysis from one pass.
+///
+/// Previously also requested `TextLikelihood`, `ScreenContentLikelihood`,
+/// and `NaturalLikelihood` — those classifier-style composites were
+/// deleted from zenanalyze in commit `b1623ba` (2026-05-01) along with
+/// the entire `composites` cargo feature. The exact deleted math is
+/// ported inline as `text_likelihood()`, `screen_content_likelihood()`,
+/// and `natural_likelihood()` below, so the bucket-inference thresholds
+/// (0.55, 0.5, 0.5) preserve the documented F1 / precision / recall
+/// targets without depending on zenanalyze's deprecated combinator path.
+/// Re-derive against a corpus sweep on the next adaptive recalibration.
 const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::ChromaComplexity)
+    .with(AnalysisFeature::CbSharpness)
+    .with(AnalysisFeature::CrSharpness)
     .with(AnalysisFeature::CbPeakSharpness)
     .with(AnalysisFeature::CrPeakSharpness)
     .with(AnalysisFeature::Uniformity)
     .with(AnalysisFeature::FlatColorBlockRatio)
     .with(AnalysisFeature::EdgeDensity)
-    .with(AnalysisFeature::HighFreqEnergyRatio);
+    .with(AnalysisFeature::HighFreqEnergyRatio)
+    .with(AnalysisFeature::LumaHistogramEntropy)
+    .with(AnalysisFeature::DistinctColorBins)
+    .with(AnalysisFeature::PatchFraction);
+
+/// `TextLikelihood` formula ported verbatim from
+/// `zenanalyze::compute_derived_likelihoods` (deleted commit `b1623ba`).
+/// Combines luma-histogram entropy (text → low entropy), edge density
+/// (text → many edges), and chroma stillness (text → near-monochrome).
+/// Re-stretched by the corpus-derived TEXT_MAX so the resulting score
+/// is roughly uniform on [0, 1] over the labeled 219-image corpus.
+fn text_likelihood(r: &AnalysisResults) -> f32 {
+    let cb_sh = f(r, AnalysisFeature::CbSharpness);
+    let cr_sh = f(r, AnalysisFeature::CrSharpness);
+    let chroma_sh = cb_sh + cr_sh;
+    let chroma_lo = (0.005_f32 - chroma_sh).clamp(0.0, 0.005) / 0.005;
+    let edge_hi = (f(r, AnalysisFeature::EdgeDensity) / 0.25).min(1.0);
+    let entropy_low =
+        (4.0_f32 - f(r, AnalysisFeature::LumaHistogramEntropy)).clamp(0.0, 4.0) / 4.0;
+    let raw = (entropy_low * 0.4 + edge_hi * 0.3 + chroma_lo * 0.3).clamp(0.0, 1.0);
+    const TEXT_MAX: f32 = 0.71;
+    (raw / TEXT_MAX).clamp(0.0, 1.0)
+}
+
+/// `ScreenContentLikelihood` formula ported verbatim from
+/// `zenanalyze::compute_derived_likelihoods` (deleted commit `b1623ba`).
+/// Uses the post-2026-04-28 reformulation: `patch_fraction * 0.6 +
+/// flat_high * 0.4`, which lifted AUC from 0.83 to 0.85 vs the prior
+/// `palette_small` formulation. Falls back to the palette form if
+/// `patch_fraction` is unavailable in the request set.
+fn screen_content_likelihood(r: &AnalysisResults) -> f32 {
+    let flat_high = (f(r, AnalysisFeature::FlatColorBlockRatio) / 0.5).min(1.0);
+    let raw = match r.get_f32(AnalysisFeature::PatchFraction) {
+        Some(pf) => (pf * 0.6 + flat_high * 0.4).clamp(0.0, 1.0),
+        None => {
+            let bins = r
+                .get_f32(AnalysisFeature::DistinctColorBins)
+                .unwrap_or(0.0);
+            let palette_small = if bins == 0.0 {
+                0.0
+            } else {
+                (1.0 - (bins / 4000.0).min(1.0)).clamp(0.0, 1.0)
+            };
+            let cb_sh = f(r, AnalysisFeature::CbSharpness);
+            let cr_sh = f(r, AnalysisFeature::CrSharpness);
+            let chroma_lo = (0.005_f32 - (cb_sh + cr_sh)).clamp(0.0, 0.005) / 0.005;
+            (flat_high * 0.6 + palette_small * 0.3 + chroma_lo * 0.1).clamp(0.0, 1.0)
+        }
+    };
+    const SCREEN_MAX: f32 = 0.70;
+    (raw / SCREEN_MAX).clamp(0.0, 1.0)
+}
+
+/// `NaturalLikelihood` formula ported verbatim from
+/// `zenanalyze::compute_derived_likelihoods` (deleted commit `b1623ba`).
+/// Photos: medium-high luma entropy, a wide colour palette, moderate
+/// chroma activity, and not-mostly-flat. Each component is normalised
+/// then re-stretched by NATURAL_MAX (corpus-derived).
+fn natural_likelihood(r: &AnalysisResults) -> f32 {
+    let entropy_hi = (f(r, AnalysisFeature::LumaHistogramEntropy) - 3.5).clamp(0.0, 1.5) / 1.5;
+    let bins = r
+        .get_f32(AnalysisFeature::DistinctColorBins)
+        .unwrap_or(0.0);
+    let palette_large = if bins < 2000.0 {
+        0.0
+    } else {
+        ((bins - 2000.0) / 8000.0).clamp(0.0, 1.0)
+    };
+    let cb_sh = f(r, AnalysisFeature::CbSharpness);
+    let cr_sh = f(r, AnalysisFeature::CrSharpness);
+    let chroma_moderate = ((cb_sh + cr_sh) / 0.012).min(1.0);
+    let not_flat = (1.0 - (f(r, AnalysisFeature::FlatColorBlockRatio) / 0.3).min(1.0))
+        .clamp(0.0, 1.0);
+    let raw = (entropy_hi * 0.3 + palette_large * 0.25 + chroma_moderate * 0.2 + not_flat * 0.25)
+        .clamp(0.0, 1.0);
+    const NATURAL_MAX: f32 = 0.69;
+    (raw / NATURAL_MAX).clamp(0.0, 1.0)
+}
 
 /// Tiny accessor: read an f32 feature out of [`AnalysisResults`],
 /// defaulting to 0.0 when missing. The adaptive selector treats
@@ -357,11 +446,26 @@ pub(crate) fn infer_bucket(r: &AnalysisResults) -> InferredBucket {
     // either way (PhotoDetailed and PhotoNatural both ship sensible
     // configs), but a fresh sweep should tighten the boundary.
     //
-    // Composite likelihoods (TextLikelihood/ScreenContentLikelihood)
-    // were removed in zenanalyze 0.1.0; the oracle picks classes from
-    // raw signals only. (overnight-ablate stub — restore once the
-    // adaptive path is rewritten against post-cull features.)
-    let _ = r;
+    // Strong synthetic signals win first (text/screen content have
+    // very distinctive feature signatures). Likelihood functions are
+    // ported verbatim from the deleted zenanalyze composites; their
+    // thresholds (0.55 for text, 0.5 for screen) match the F1-tuned
+    // operating points in the original module-level docstring.
+    if text_likelihood(r) > 0.55 {
+        // Text + low chroma + sharp edges → screen content / document.
+        // The oracle's 'ScreenContent' bucket dominates at q ≥ 25 and
+        // wants XYB+4:4:4; 'Illustration' is similar but with more
+        // chroma. Differentiate by chroma signal strength.
+        if f(r, AnalysisFeature::ChromaComplexity) > 0.04
+            || f(r, AnalysisFeature::CbPeakSharpness) > 5.0
+        {
+            return InferredBucket::Illustration;
+        }
+        return InferredBucket::ScreenContent;
+    }
+    if screen_content_likelihood(r) > 0.5 {
+        return InferredBucket::ScreenContent;
+    }
     // Photo-class: differentiate by content density.
     if f(r, AnalysisFeature::Uniformity) > 0.55 || f(r, AnalysisFeature::FlatColorBlockRatio) > 0.25
     {
@@ -484,14 +588,13 @@ fn adaptive_internal(
 
     // sharp_yuv: helps natural / detailed photos, hurts text/screen.
     // Only meaningful in YCbCr mode (XYB doesn't subsample chroma the
-    // same way).
+    // same way). The `NaturalLikelihood > 0.5` gate uses the inline
+    // ported formula now that zenanalyze's composite is deleted.
     if !use_xyb {
-        // NaturalLikelihood removed — fall back to bucket-only gating.
         let sharp_yuv = matches!(
             bucket,
             InferredBucket::PhotoNatural | InferredBucket::PhotoDetailed
-        );
-        let _ = features;
+        ) && natural_likelihood(features) > 0.5;
         cfg = cfg.sharp_yuv(sharp_yuv);
     }
 

@@ -56,11 +56,13 @@ zenpixels = { workspace = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
 # used by `EncoderConfig::adaptive`. Pulls rows on demand from any
 # PixelSlice via zenpixels-convert internally.
-# `composites` enables the classifier-style likelihoods
-# (TextLikelihood, ScreenContentLikelihood, NaturalLikelihood,
-# LineArtScore) that drive the adaptive path. Their combinator
-# coefficients are calibration-driven and may drift in 0.1.x —
-# zenjpeg pins to whichever zenanalyze patch ships in lockstep.
+# Note: the `composites` feature (classifier-style likelihoods —
+# TextLikelihood, ScreenContentLikelihood, NaturalLikelihood) was
+# deleted upstream in zenanalyze (commit b1623ba, 2026-05-01). The
+# adaptive bucket inference in encode/adaptive.rs ports those
+# formulas inline; we read primitive features (EdgeDensity,
+# Uniformity, ChromaComplexity, FlatColorBlockRatio, etc.) directly.
+# `hdr` retained from upstream main for HDR-aware analyzer support.
 zenanalyze = { workspace = true, features = ["experimental", "hdr"] }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
