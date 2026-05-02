@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (skeleton)
+- New `__expert` cargo feature + empty placeholder
+  `expert::InternalParams` struct. Migration of post-0.8.4
+  EncoderConfig knobs into the struct is **TODO** — see
+  `zenjpeg/src/expert.rs` module docs for the candidate list. The
+  struct is empty so the feature has no effect yet; landing this
+  skeleton unblocks downstream codecs that need to reference a
+  stable `__expert` flag name. Double-underscore prefix signals
+  "private — do not depend on this in production code." Anything
+  in `expert` may change without semver bumps.
+
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next minor release.
      Until the next minor ships, keep adding here rather than releasing piecemeal. -->

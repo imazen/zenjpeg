@@ -176,6 +176,9 @@ pub mod blur;
 /// Contains: `EncoderConfig`, `BytesEncoder`, `RgbEncoder`, `Error`, `Result`, etc.
 pub mod encoder;
 
+#[cfg(feature = "__expert")]
+pub mod expert;
+
 /// Resource estimation heuristics for encoding and decoding.
 ///
 /// Provides min/typical/max estimates for peak memory and time.

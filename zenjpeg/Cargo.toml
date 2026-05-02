@@ -165,6 +165,16 @@ image = "0.25"
 default = ["decoder"]
 # Enable the decoder API.
 decoder = []
+# Expert / unstable: exposes `expert::InternalParams` for codec
+# calibration sweeps + the Zq picker training pipeline. Double-underscore
+# prefix signals "private — do not depend on this in production code."
+# Anything in `expert` may change without semver bumps.
+#
+# AUDIT TODO: enumerate the EncoderConfig knobs added since 0.8.4 and
+# move them into InternalParams. Currently a placeholder; the struct
+# is empty so the feature has no effect yet. See
+# zenjpeg/src/expert.rs for the migration plan.
+__expert = []
 # Enable parallel encoding/decoding (multi-threaded DCT/quantization via rayon)
 parallel = ["dep:rayon"]
 # Rate-distortion trellis quantization (mozjpeg-style). Enables encode::trellis module
