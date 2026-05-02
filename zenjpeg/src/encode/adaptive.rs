@@ -83,8 +83,7 @@ fn text_likelihood(r: &AnalysisResults) -> f32 {
     let chroma_sh = cb_sh + cr_sh;
     let chroma_lo = (0.005_f32 - chroma_sh).clamp(0.0, 0.005) / 0.005;
     let edge_hi = (f(r, AnalysisFeature::EdgeDensity) / 0.25).min(1.0);
-    let entropy_low =
-        (4.0_f32 - f(r, AnalysisFeature::LumaHistogramEntropy)).clamp(0.0, 4.0) / 4.0;
+    let entropy_low = (4.0_f32 - f(r, AnalysisFeature::LumaHistogramEntropy)).clamp(0.0, 4.0) / 4.0;
     let raw = (entropy_low * 0.4 + edge_hi * 0.3 + chroma_lo * 0.3).clamp(0.0, 1.0);
     const TEXT_MAX: f32 = 0.71;
     (raw / TEXT_MAX).clamp(0.0, 1.0)
@@ -101,9 +100,7 @@ fn screen_content_likelihood(r: &AnalysisResults) -> f32 {
     let raw = match r.get_f32(AnalysisFeature::PatchFraction) {
         Some(pf) => (pf * 0.6 + flat_high * 0.4).clamp(0.0, 1.0),
         None => {
-            let bins = r
-                .get_f32(AnalysisFeature::DistinctColorBins)
-                .unwrap_or(0.0);
+            let bins = r.get_f32(AnalysisFeature::DistinctColorBins).unwrap_or(0.0);
             let palette_small = if bins == 0.0 {
                 0.0
             } else {
@@ -126,9 +123,7 @@ fn screen_content_likelihood(r: &AnalysisResults) -> f32 {
 /// then re-stretched by NATURAL_MAX (corpus-derived).
 fn natural_likelihood(r: &AnalysisResults) -> f32 {
     let entropy_hi = (f(r, AnalysisFeature::LumaHistogramEntropy) - 3.5).clamp(0.0, 1.5) / 1.5;
-    let bins = r
-        .get_f32(AnalysisFeature::DistinctColorBins)
-        .unwrap_or(0.0);
+    let bins = r.get_f32(AnalysisFeature::DistinctColorBins).unwrap_or(0.0);
     let palette_large = if bins < 2000.0 {
         0.0
     } else {
@@ -137,8 +132,8 @@ fn natural_likelihood(r: &AnalysisResults) -> f32 {
     let cb_sh = f(r, AnalysisFeature::CbSharpness);
     let cr_sh = f(r, AnalysisFeature::CrSharpness);
     let chroma_moderate = ((cb_sh + cr_sh) / 0.012).min(1.0);
-    let not_flat = (1.0 - (f(r, AnalysisFeature::FlatColorBlockRatio) / 0.3).min(1.0))
-        .clamp(0.0, 1.0);
+    let not_flat =
+        (1.0 - (f(r, AnalysisFeature::FlatColorBlockRatio) / 0.3).min(1.0)).clamp(0.0, 1.0);
     let raw = (entropy_hi * 0.3 + palette_large * 0.25 + chroma_moderate * 0.2 + not_flat * 0.25)
         .clamp(0.0, 1.0);
     const NATURAL_MAX: f32 = 0.69;
