@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EncoderConfig::force_restart_markers(bool)` opt-in to emit RST markers in
   progressive mode. Default off — progressive suppresses RST markers because
   they provide no benefit and cost ~10% in overhead (066a9206).
+- Internal-params bundle (`InternalParams`, `ColorPath`) and
+  `EncoderConfig::with_internal_params(params)` setter under the new
+  `__expert` cargo feature. Mirrors `zenwebp::InternalParams` so external
+  pipelines (codec-calibration sweeps, picker training, learned auto-tuners)
+  can drive every zen codec through the same shape. Re-bundles existing
+  builder methods only — no new public knobs are exposed.
 
 ### Changed
 

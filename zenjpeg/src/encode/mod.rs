@@ -111,6 +111,14 @@ pub mod exif;
 pub mod extras;
 pub mod request;
 
+/// Cross-codec uniformity bundle (`__expert`-gated). Mirrors
+/// `zenwebp::InternalParams` so external pipelines (calibration
+/// sweeps, picker training, learned auto-tuners) can drive every zen
+/// codec the same way. See [`internal_params::InternalParams`] and
+/// [`encoder_config::EncoderConfig::with_internal_params`].
+#[cfg(feature = "__expert")]
+pub mod internal_params;
+
 /// Default quantization and zero-bias tables for customization.
 ///
 /// This module exposes the internal default tables so users can modify them
@@ -175,6 +183,9 @@ pub use enough::Stop;
 pub use exif::{Exif, ExifFields, Orientation};
 #[allow(unused_imports)] // Public API re-exports
 pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
+#[cfg(feature = "__expert")]
+#[allow(unused_imports)] // Public API re-exports gated behind __expert
+pub use internal_params::{ColorPath, InternalParams};
 #[allow(unused_imports)] // Public API re-export
 pub use request::EncodeRequest;
 #[allow(unused_imports)] // Public API re-exports

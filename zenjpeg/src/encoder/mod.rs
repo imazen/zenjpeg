@@ -161,6 +161,12 @@ pub use crate::encode::encoder_types::{
     should_activate_tiny_file_mode, should_activate_tiny_file_mode_for_subsampling,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
+// === Cross-codec uniformity bundle (`__expert`-gated) ===
+// Mirrors `zenwebp::InternalParams` so external pipelines (calibration
+// sweeps, picker training, learned auto-tuners) can drive every zen
+// codec the same way. See `EncoderConfig::with_internal_params`.
+#[cfg(feature = "__expert")]
+pub use crate::encode::internal_params::{ColorPath, InternalParams};
 pub use crate::encode::request::EncodeRequest;
 pub use crate::foundation::alloc::EncodeStats;
 pub use crate::types::Limits;

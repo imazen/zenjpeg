@@ -200,6 +200,13 @@ __bdrd-trace = ["boundary-rd"]
 __alloc-instrument = []
 # Test utilities (image generation, quality verification)
 __test-utils = []
+# Cross-codec uniformity hook: exposes the `InternalParams` knob bundle
+# and `EncoderConfig::with_internal_params(params)` setter so external
+# pipelines (codec calibration sweeps, picker training, learned
+# auto-tuners) can drive every zen codec through the same shape. Mirrors
+# `zenwebp`'s `__expert` feature. No new public knobs are exposed —
+# `InternalParams` only re-bundles existing builder methods.
+__expert = []
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.

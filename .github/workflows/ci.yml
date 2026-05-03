@@ -75,6 +75,9 @@ jobs:
       - name: Test (no defaults, decoder only)
         run: cargo test -p zenjpeg --release --no-default-features --features decoder --lib --tests
 
+      - name: Test (__expert + all user features)
+        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec,boundary-rd,__expert" --lib --tests
+
 
   i686:
     name: Test (i686)
@@ -344,6 +347,9 @@ jobs:
 
       - name: Clippy (default features)
         run: cargo clippy -p zenjpeg --lib --tests --benches -- -D warnings
+
+      - name: Clippy (__expert + boundary-rd + trellis)
+        run: cargo clippy -p zenjpeg --lib --tests --features "trellis,parallel,moxcms,ultrahdr,zencodec,__test-utils,boundary-rd,__expert" -- -D warnings
 
   fmt:
     name: Format
