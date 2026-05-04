@@ -10,7 +10,9 @@
 //!     `color × sub × trellis_on × sa`) + scalar heads
 //!     (`chroma_scale`, `lambda`) → `EncoderConfig::ycbcr`/`xyb`
 //!     with the picker-derived `(ChromaSubsampling, hybrid_config,
-//!     chroma_distance_scale, optimize_scans)` knobs.
+//!     chroma_distance_scale, sa_piecewise_v4 tables)` knobs — the same
+//!     mapping the v2.1+ Pareto sweep used to generate training data
+//!     (commit `bb5cbf06`, `zenjpeg/examples/zq_pareto_calibrate.rs`).
 //!   * **bucket**: `EncoderConfig::ycbcr(Quality::Zq(target),
 //!     ChromaSubsampling::Quarter)` with codec defaults — the simplest
 //!     baseline (no analyzer, no trellis, no chroma scaling).
@@ -576,25 +578,41 @@ fn build_picker_config(spec: CellSpec, lambda: f32, chroma_scale: f32, target: f
             EncoderConfig::xyb(zq, xyb_sub)
         }
     };
+    // Bug 2 fix (was: applied chroma_scale via HybridConfig.chroma_scale
+    // for trellis cells only, defaulting to chroma_distance_scale only
+    // when trellis was off). The training Pareto sweep (commit bb5cbf06,
+    // `zenjpeg/examples/zq_pareto_calibrate.rs` 120-config builder)
+    // applies `chroma_distance_scale(spec.chroma_scale)` UNIFORMLY for
+    // every cell — independent of trellis. Mirror that exactly.
+    cfg = cfg.chroma_distance_scale(chroma_scale);
+
+    // Trellis: enable hybrid with the picker-chosen lambda. Leave
+    // HybridConfig.chroma_scale at its default (1.0) — the chroma signal
+    // is fully expressed via the chroma_distance_scale call above. The
+    // canonical sweep set HybridConfig::default() with only `enabled`
+    // and `base_lambda_scale1` overridden.
     if spec.trellis_on && lambda > 0.0 {
         cfg = cfg.hybrid_config(HybridConfig {
             enabled: true,
             base_lambda_scale1: lambda,
-            chroma_scale,
             ..HybridConfig::default()
         });
-    } else {
-        // Even without trellis, apply chroma_scale via
-        // chroma_distance_scale so the picker's chroma signal still
-        // affects the output. (HybridConfig.chroma_scale only fires
-        // when trellis is on.)
-        cfg = cfg.chroma_distance_scale(chroma_scale);
     }
     if spec.sa {
-        // SA-piecewise tables (CID22-tuned). When the picker selects a
-        // `sa` cell the trainer expects `optimize_scans` to be on too,
-        // matching `_sa` config-name semantics.
-        cfg = cfg.optimize_scans(true);
+        // Bug 1 fix (was: cfg.optimize_scans(true)). The training Pareto
+        // sweep (commit bb5cbf06) translated `_sa` cells via
+        // `cfg.tables(Box::new(sa_piecewise_v4::tables_for_quality(q)))`,
+        // NOT `optimize_scans`. Mirror that. The closed-loop Zq path
+        // iterates jpegli q; we evaluate the SA tables at the starting
+        // q derived from `target_zq` (same q the iteration loop seeds
+        // pass 0 with — see `zq.rs::zq_to_starting_jpegli_q`). The v4
+        // tables vary smoothly with q so seeding at start_q is the
+        // correct, single-snapshot choice.
+        let start_q = cfg.get_quality().to_internal().clamp(1.0, 100.0);
+        let tables = zenjpeg::encode::tables::sa_piecewise_v4::tables_for_quality(
+            start_q.round() as u8,
+        );
+        cfg = cfg.tables(Box::new(tables));
     }
     cfg
 }
@@ -936,7 +954,7 @@ fn main() {
         "* Picker arm: extracted 51-feature zenanalyze vector in `FEAT_COLS` order, applied per-feature transforms (log/log1p/identity per the v0.3 trainer's `feature_transforms`), built the engineered 112-vec via `feats[51] || size_oh[4] || poly[5] || zq*feats[51] || icc[1]` (mirror of the v0.3 manifest's `extra_axes`), ran `Predictor::predict` against the externally-loaded v0.3 `.bin`, decoded the `bytes_log[0..12]` argmin → cell index → `(color, sub, trellis_on, sa)` from the lex-sorted 12-cell taxonomy, and read `chroma_scale` (clamped to [0.6, 1.5]) and `lambda` (snapped to {{0, 8.0, 14.5, 25.0}}) from the per-cell scalar heads at offsets {} and {}.\n",
         OFF_CHROMA_SCALE, OFF_LAMBDA,
     ));
-    md.push_str("* Cell → encoder mapping: `EncoderConfig::ycbcr(zq, sub)` or `EncoderConfig::xyb(zq, b_sub)` based on cell color; if `trellis_on` and `lambda > 0`, apply `hybrid_config(HybridConfig { base_lambda_scale1: lambda, chroma_scale, .. })`; otherwise apply `chroma_distance_scale(chroma_scale)`. `sa` cells additionally enable `optimize_scans(true)`.\n");
+    md.push_str("* Cell → encoder mapping (mirrors the v2.1+ Pareto sweep at commit `bb5cbf06`): `EncoderConfig::ycbcr(zq, sub)` or `EncoderConfig::xyb(zq, b_sub)` based on cell color; `chroma_distance_scale(chroma_scale)` applied UNIFORMLY (all cells, irrespective of trellis); if `trellis_on && lambda > 0`, additionally apply `hybrid_config(HybridConfig { enabled: true, base_lambda_scale1: lambda, ..default })` — `HybridConfig.chroma_scale` is left at default since chroma is already handled at the distance-scale level; `sa` cells additionally call `tables(Box::new(sa_piecewise_v4::tables_for_quality(starting_q)))` where `starting_q = Quality::Zq(target).to_internal()`.\n");
     md.push_str("* Bucket arm: `EncoderConfig::ycbcr(Quality::ZqExplicit(target), ChromaSubsampling::Quarter)` — codec defaults, no analyzer-derived knobs. The simplest baseline a caller would get from a one-line `EncoderConfig::ycbcr(...)` call.\n");
     md.push_str("* Both arms ride the same `Quality::ZqExplicit` closed loop so the iteration adapts the underlying jpegli quality to land in the target zensim band.\n");
     md.push_str("* FEAT_COLS source: hardcoded from `benchmarks/zenjpeg_hybrid_v0.3_2026-05-04.json::feat_cols` (51 entries, matches `zenjpeg_picker_v0.3_2026-05-04.manifest.json::feat_cols` exactly). Engineered axes (61 = size_oh[4] + poly[5] + zq×feats[51] + icc[1]) match `manifest.json::extra_axes` order.\n");
