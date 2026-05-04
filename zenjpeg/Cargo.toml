@@ -376,6 +376,12 @@ name = "picker_v0_3_holdout_ab"
 path = "dev/picker_v0_3_holdout_ab.rs"
 required-features = ["target-zq", "trellis"]
 
+# Per-class quant table signal probe (gating experiment, 2026-05-04).
+# See dev/per_class_signal_probe.rs.
+[[example]]
+name = "per_class_signal_probe"
+path = "dev/per_class_signal_probe.rs"
+
 # Examples requiring trellis feature
 [[example]]
 name = "hybrid_auto_detect"
