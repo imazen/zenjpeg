@@ -382,6 +382,12 @@ required-features = ["target-zq", "trellis"]
 name = "per_class_signal_probe"
 path = "dev/per_class_signal_probe.rs"
 
+# Per-class signal probe — B' variant (HF quant INCREASED).
+# Step-0 gate before any per-class SA work; see dev/per_class_signal_probe_bprime.rs.
+[[example]]
+name = "per_class_signal_probe_bprime"
+path = "dev/per_class_signal_probe_bprime.rs"
+
 # Examples requiring trellis feature
 [[example]]
 name = "hybrid_auto_detect"
