@@ -3164,6 +3164,7 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
+ "zenpredict",
  "zenresize",
  "zensim",
  "zensim-regress",
@@ -3218,6 +3219,16 @@ dependencies = [
  "paste",
  "whereat",
  "zenpixels",
+]
+
+[[package]]
+name = "zenpredict"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "libm",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
