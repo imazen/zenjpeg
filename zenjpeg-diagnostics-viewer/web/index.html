@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>zenjpeg diagnostics viewer</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>zenjpeg diagnostics viewer</h1>
+      <p class="status" id="status" data-testid="status">Initializing…</p>
+    </header>
+
+    <section class="controls" aria-label="Encode controls">
+      <label>
+        Quality
+        <input
+          type="range"
+          id="quality"
+          min="1"
+          max="100"
+          step="1"
+          value="85"
+          data-testid="quality-slider"
+        />
+        <output id="quality-out" data-testid="quality-out">85</output>
+      </label>
+
+      <label>
+        Color path
+        <select id="color-path" data-testid="color-path-select">
+          <option value="ycbcr" selected>YCbCr</option>
+          <option value="xyb">XYB</option>
+        </select>
+      </label>
+
+      <label data-controls-for="ycbcr" id="subsampling-label">
+        Subsampling
+        <select id="subsampling" data-testid="subsampling-select">
+          <option value="none" selected>4:4:4 (none)</option>
+          <option value="halfHorizontal">4:2:2 (half horizontal)</option>
+          <option value="quarter">4:2:0 (quarter)</option>
+          <option value="halfVertical">4:4:0 (half vertical)</option>
+        </select>
+      </label>
+
+      <label data-controls-for="xyb" id="xyb-subsampling-label" hidden>
+        XYB B
+        <select id="xyb-subsampling" data-testid="xyb-subsampling-select">
+          <option value="full" selected>Full</option>
+          <option value="bQuarter">B Quarter</option>
+        </select>
+      </label>
+
+      <label>
+        <input
+          type="checkbox"
+          id="aq-enabled"
+          checked
+          data-testid="aq-checkbox"
+        />
+        AQ
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          id="trellis"
+          data-testid="trellis-checkbox"
+        />
+        Trellis
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          id="auto-optimize"
+          data-testid="auto-optimize-checkbox"
+        />
+        Auto-optimize (hybrid)
+      </label>
+
+      <label class="file-pick">
+        <input type="file" id="image-input" accept="image/*" data-testid="image-input" />
+        <span>Load image</span>
+      </label>
+      <button id="reset" type="button" data-testid="reset-button">
+        Reset to synthetic
+      </button>
+      <button id="encode" type="button" data-testid="encode-button">Encode</button>
+    </section>
+
+    <main>
+      <section class="triptych" aria-label="Source / encoded / delta">
+        <figure>
+          <figcaption>Source</figcaption>
+          <canvas id="source-canvas" data-testid="source-canvas"></canvas>
+        </figure>
+        <figure>
+          <figcaption>Encoded</figcaption>
+          <canvas id="encoded-canvas" data-testid="encoded-canvas"></canvas>
+        </figure>
+        <figure>
+          <figcaption>|delta| (×8)</figcaption>
+          <canvas id="delta-canvas" data-testid="delta-canvas"></canvas>
+        </figure>
+      </section>
+
+      <section class="aq-row" aria-label="AQ field">
+        <h2>AQ multiplier per Y block</h2>
+        <canvas id="aq-canvas" data-testid="aq-canvas"></canvas>
+        <p class="legend">
+          Smaller AQ multiplier → finer quantization (more bits spent).
+          Hover to see per-block value.
+        </p>
+      </section>
+
+      <section class="component-grid" aria-label="Per-component editors">
+        <article class="component" data-component="0" id="component-0">
+          <header>
+            <h2>Component 0 (Y/X)</h2>
+            <p class="grid-info" data-testid="comp-0-grid-info"></p>
+          </header>
+          <div class="component-body">
+            <div class="quant-editor">
+              <h3>Quant table (base × h_eq × v_eq)</h3>
+              <div class="quant-grid" data-testid="comp-0-quant-grid"></div>
+              <div class="eq-row">
+                <span class="eq-label">h_eq</span>
+                <div
+                  class="eq-sliders horizontal"
+                  data-testid="comp-0-h-eq"
+                ></div>
+              </div>
+              <div class="eq-col">
+                <span class="eq-label">v_eq</span>
+                <div
+                  class="eq-sliders vertical"
+                  data-testid="comp-0-v-eq"
+                ></div>
+              </div>
+              <button
+                type="button"
+                data-testid="comp-0-reset-eq"
+                class="reset-eq"
+              >
+                Reset EQ
+              </button>
+            </div>
+            <div class="utilization">
+              <h3>Coefficient utilization</h3>
+              <canvas
+                data-testid="comp-0-utilization"
+                class="utilization-canvas"
+              ></canvas>
+              <p class="legend">
+                Mean |coef_pre_quant| / effective_quant per coefficient
+                position (natural order; DC top-left).
+              </p>
+            </div>
+            <div class="estimate">
+              <h3>Byte budget</h3>
+              <p>
+                <span data-testid="comp-0-zero-rate">--</span>%
+                of coefs zero out at this table.
+              </p>
+              <p class="legend">
+                Re-applying the user-adjusted table to this component's
+                pre-quant coefficients. Updates live as you drag.
+              </p>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -83,3 +83,8 @@ fuzz-*.log
 # benchmarks/zq_pareto_<DATE>.summary.md.
 benchmarks/zq_pareto_*.tsv
 CLAUDE.local.md
+zenjpeg-diagnostics-viewer/web/node_modules/
+zenjpeg-diagnostics-viewer/web/dist/
+zenjpeg-diagnostics-viewer/web/test-results/
+zenjpeg-diagnostics-viewer/web/playwright-report/
+zenjpeg-diagnostics-viewer/web/wasm-pkg/

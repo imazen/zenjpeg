@@ -147,15 +147,12 @@ fn default_true() -> bool {
     true
 }
 
-/// Output of `encodeWithDiagnostics`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EncodeResult {
-    /// JPEG bytes.
-    pub bytes: Vec<u8>,
-    /// Per-block diagnostics.
-    pub diagnostics: Diagnostics,
-}
+// Note: `EncodeResult` is built up on the JS side as
+// `{ bytes: Uint8Array, diagnostics: Diagnostics }`. We can't go through
+// serde_wasm_bindgen for the whole struct because it serializes
+// `Vec<u8>` as a plain JS Array<number>, which produces invalid bytes
+// when fed to `new Blob([...])`. We hand-pack the result with
+// `js_sys::Uint8Array` to keep the byte path zero-copy.
 
 #[wasm_bindgen(start)]
 pub fn init() {
@@ -271,12 +268,16 @@ pub fn encode_with_diagnostics(
         JsValue::from_str("with_diagnostics(true) was set but encoder returned None")
     })?;
 
-    let result = EncodeResult {
-        bytes,
-        diagnostics: to_js_diagnostics(diag),
-    };
-    serde_wasm_bindgen::to_value(&result)
-        .map_err(|e| JsValue::from_str(&format!("serialize result: {e}")))
+    let js_bytes = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+    js_bytes.copy_from(&bytes);
+    let js_diag = serde_wasm_bindgen::to_value(&to_js_diagnostics(diag))
+        .map_err(|e| JsValue::from_str(&format!("serialize diagnostics: {e}")))?;
+    let out = js_sys::Object::new();
+    js_sys::Reflect::set(&out, &JsValue::from_str("bytes"), &js_bytes)
+        .map_err(|_| JsValue::from_str("failed to set bytes on result"))?;
+    js_sys::Reflect::set(&out, &JsValue::from_str("diagnostics"), &js_diag)
+        .map_err(|_| JsValue::from_str("failed to set diagnostics on result"))?;
+    Ok(out.into())
 }
 
 #[cfg(test)]
@@ -302,6 +303,7 @@ mod tests {
     /// shape as the Rust diagnostics. Doesn't go through wasm-bindgen
     /// (that's covered by the web/Playwright suite).
     #[test]
+    #[allow(unused_variables)]
     fn to_js_diagnostics_preserves_shape() {
         let w = 32u32;
         let h = 32u32;

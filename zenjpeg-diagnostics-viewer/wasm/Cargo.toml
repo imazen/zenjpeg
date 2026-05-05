@@ -10,8 +10,9 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-zenjpeg = { path = "../../zenjpeg", features = ["__diagnostics", "decoder", "trellis"] }
+zenjpeg = { path = "../../zenjpeg", default-features = false, features = ["__diagnostics", "trellis"] }
 wasm-bindgen = "0.2"
+js-sys = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 serde_json = "1.0"

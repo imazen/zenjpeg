@@ -212,3 +212,44 @@ test-aarch64:
 test-cross:
     just test-i686
     just test-aarch64
+
+# ─────────────────────────────────────────────────────────────────────
+# zenjpeg-diagnostics-viewer (UNSTABLE __diagnostics surface + viewer)
+# ─────────────────────────────────────────────────────────────────────
+
+# Default chain: rust unit + integration tests, wasm build, e2e suite.
+diagnostics-all: diagnostics-test diagnostics-wasm diagnostics-e2e
+
+# Rust unit + integration tests for the __diagnostics feature.
+diagnostics-test:
+    cargo test -p zenjpeg --features __diagnostics,trellis --test diagnostics_smoke
+    cargo test -p zenjpeg --features __diagnostics --lib encode::diagnostics
+    cargo test -p zenjpeg-diagnostics-wasm
+
+# Build the wasm bindings via wasm-pack for the web demo.
+diagnostics-wasm:
+    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --target web --out-dir ../web/wasm-pkg --release
+
+# Build the demo viewer once.
+diagnostics-viewer-build: diagnostics-wasm
+    cd zenjpeg-diagnostics-viewer/web && npm install && npx vite build
+
+# Serve the demo viewer locally (vite preview, port 3173).
+diagnostics-viewer: diagnostics-viewer-build
+    cd zenjpeg-diagnostics-viewer/web && npx vite preview --port 3173 --strictPort
+
+# Run the Playwright E2E suite (headless chromium).
+diagnostics-e2e: diagnostics-viewer-build
+    cd zenjpeg-diagnostics-viewer/web && npx playwright install chromium
+    cd zenjpeg-diagnostics-viewer/web && npx playwright test
+
+# Typecheck the web app without running it.
+diagnostics-typecheck:
+    cd zenjpeg-diagnostics-viewer/web && npm install && npx tsc --noEmit
+
+# Build everything (rust + wasm + viewer) without running tests.
+diagnostics-build:
+    cargo build -p zenjpeg --features __diagnostics,trellis
+    cargo build -p zenjpeg-diagnostics-wasm
+    cd zenjpeg-diagnostics-viewer/wasm && wasm-pack build --target web --out-dir ../web/wasm-pkg --release
+    cd zenjpeg-diagnostics-viewer/web && npm install && npx vite build
