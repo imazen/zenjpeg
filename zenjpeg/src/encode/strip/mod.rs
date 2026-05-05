@@ -596,6 +596,15 @@ pub struct StripProcessor {
     /// arrive in irregular shapes (e.g. zero-length flush at EOI).
     aq_controller: Option<Box<dyn crate::encode::aq_controller::AqController>>,
     aq_controller_imcu_idx: usize,
+
+    /// Per-block encode diagnostics sink (UNSTABLE; gated behind
+    /// `__diagnostics`). When `Some`, the quantize loop captures
+    /// pre-quant DCT, post-quant levels, AQ multiplier, and entropy
+    /// bits into per-component block lists. When `None` (the default
+    /// and the only option in default builds), the encode hot path is
+    /// unchanged.
+    #[cfg(feature = "__diagnostics")]
+    diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
 }
 
 impl StripProcessor {
@@ -890,6 +899,11 @@ impl StripProcessor {
             // No AQ controller installed by default (#113 PR-A scaffold).
             aq_controller: None,
             aq_controller_imcu_idx: 0,
+
+            // Diagnostics sink starts as `None`; opt-in via
+            // `enable_diagnostics()` (gated behind `__diagnostics`).
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: None,
         })
     }
 
@@ -936,6 +950,8 @@ impl StripProcessor {
             y_dc_raw: core::mem::take(&mut self.y_dc_raw),
             cb_dc_raw: core::mem::take(&mut self.cb_dc_raw),
             cr_dc_raw: core::mem::take(&mut self.cr_dc_raw),
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: None, // mid-encode take; use finalize() for final diagnostics
         }
     }
 
@@ -1018,6 +1034,99 @@ impl StripProcessor {
     #[cfg(feature = "trellis")]
     pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
+    }
+
+    /// Allocate the per-block diagnostics sink and pre-size component
+    /// block lists from the resolved layout. Idempotent: calling twice
+    /// resets to a fresh sink.
+    ///
+    /// UNSTABLE — gated behind the `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn enable_diagnostics(&mut self) {
+        use crate::encode::diagnostics::{
+            ColorPathTag, ComponentDiagnostics, EncodeDiagnostics, ImageInfo,
+        };
+        let layout = &self.layout;
+        let is_grayscale = self.pixel_format.is_grayscale();
+
+        // Flatten the SIMD `[[f32; 8]; 8]` zero-bias offset rows into a
+        // natural-order `[f32; 64]` for the diagnostics consumer.
+        let flatten = |rows: &[[f32; 8]; 8]| -> [f32; 64] {
+            let mut out = [0.0f32; 64];
+            for (r, row) in rows.iter().enumerate() {
+                out[r * 8..(r + 1) * 8].copy_from_slice(row);
+            }
+            out
+        };
+
+        let mut diag = EncodeDiagnostics::default();
+        diag.image = ImageInfo {
+            width: layout.width as u32,
+            height: layout.height as u32,
+            color_path: if layout.use_xyb {
+                ColorPathTag::Xyb
+            } else if is_grayscale {
+                ColorPathTag::Grayscale
+            } else {
+                ColorPathTag::YCbCr
+            },
+            sampling_factors: Vec::new(),
+        };
+
+        let h_samp_y = layout.subsampling.h_samp_factor_luma();
+        let v_samp_y = layout.subsampling.v_samp_factor_luma();
+
+        // Y component: full resolution.
+        let y_blocks = (layout.y_blocks_w as u32) * (layout.y_blocks_h as u32);
+        diag.image.sampling_factors.push((h_samp_y, v_samp_y));
+        diag.components.push(ComponentDiagnostics {
+            component_id: 1,
+            block_grid: (layout.y_blocks_w as u32, layout.y_blocks_h as u32),
+            quant_table_base: self.quant.y_quant.values,
+            zero_bias: flatten(&self.quant.y_zero_bias_simd.offset_rows),
+            blocks: alloc::vec![Default::default(); y_blocks as usize],
+        });
+
+        // Cb / Cr (skip for grayscale).
+        if !is_grayscale {
+            let cb_blocks = (layout.c_blocks_w as u32) * (layout.c_blocks_h as u32);
+            diag.image.sampling_factors.push((1, 1));
+            diag.components.push(ComponentDiagnostics {
+                component_id: 2,
+                block_grid: (layout.c_blocks_w as u32, layout.c_blocks_h as u32),
+                quant_table_base: self.quant.cb_quant.values,
+                zero_bias: flatten(&self.quant.cb_zero_bias_simd.offset_rows),
+                blocks: alloc::vec![Default::default(); cb_blocks as usize],
+            });
+
+            // Cr / B-channel: XYB B uses b_blocks dims, others use c_blocks.
+            let (cr_w, cr_h) = if layout.use_xyb {
+                (layout.b_blocks_w as u32, layout.b_blocks_h as u32)
+            } else {
+                (layout.c_blocks_w as u32, layout.c_blocks_h as u32)
+            };
+            let cr_blocks = cr_w * cr_h;
+            diag.image.sampling_factors.push((1, 1));
+            diag.components.push(ComponentDiagnostics {
+                component_id: 3,
+                block_grid: (cr_w, cr_h),
+                quant_table_base: self.quant.cr_quant.values,
+                zero_bias: flatten(&self.quant.cr_zero_bias_simd.offset_rows),
+                blocks: alloc::vec![Default::default(); cr_blocks as usize],
+            });
+        }
+
+        self.diagnostics = Some(diag);
+    }
+
+    /// Take the captured per-block diagnostics, leaving `None` in the
+    /// processor. Returns `None` when diagnostics weren't enabled.
+    /// UNSTABLE — gated behind the `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn take_diagnostics(
+        &mut self,
+    ) -> Option<crate::encode::diagnostics::EncodeDiagnostics> {
+        self.diagnostics.take()
     }
 
     /// Returns whether XYB mode is enabled.
@@ -2038,6 +2147,8 @@ impl StripProcessor {
             y_dc_raw: self.y_dc_raw,
             cb_dc_raw: self.cb_dc_raw,
             cr_dc_raw: self.cr_dc_raw,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: self.diagnostics,
         })
     }
 
@@ -2246,6 +2357,12 @@ pub struct StripProcessorOutput {
     pub cb_dc_raw: Vec<i32>,
     /// Cr channel raw DC coefficients.
     pub cr_dc_raw: Vec<i32>,
+    /// Per-block encode diagnostics (UNSTABLE; gated behind
+    /// `__diagnostics`). `Some` when `enable_diagnostics()` was called
+    /// on the source processor; `None` (the default) for production
+    /// encodes.
+    #[cfg(feature = "__diagnostics")]
+    pub diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
 }
 
 #[cfg(test)]

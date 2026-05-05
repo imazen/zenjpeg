@@ -514,6 +514,15 @@ pub struct EncoderConfig {
     /// for the same purpose. `None` keeps the historical behaviour of
     /// using the same quality for both tables.
     pub(crate) chroma_quality: Option<u8>,
+
+    /// Per-block encode diagnostics capture (UNSTABLE). When `true`,
+    /// the encoder allocates an
+    /// [`EncodeDiagnostics`](crate::encode::diagnostics::EncodeDiagnostics)
+    /// struct and fills it during encoding; retrieve via the encoder's
+    /// `take_diagnostics()` method after `finish()`. Gated behind the
+    /// `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) diagnostics_enabled: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -672,6 +681,8 @@ impl EncoderConfig {
             boundary_rd_mode: BoundaryRd::Off,
             chroma_distance_scale: 1.0,
             chroma_quality: None,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics_enabled: false,
         }
     }
 
@@ -1444,6 +1455,29 @@ impl EncoderConfig {
     #[must_use]
     pub fn aq_enabled(mut self, enable: bool) -> Self {
         self.aq_enabled = enable;
+        self
+    }
+
+    /// Enable per-block encode diagnostics capture (UNSTABLE).
+    ///
+    /// When `true`, the encoder fills an
+    /// [`EncodeDiagnostics`](crate::encode::diagnostics::EncodeDiagnostics)
+    /// struct with pre-quant DCT coefficients, post-quant levels,
+    /// per-block AQ multipliers, entropy bits, and image-level state
+    /// (resolved config, AQ field, scan script). Retrieve from the
+    /// concrete encoder via its `take_diagnostics()` method after
+    /// `finish()`.
+    ///
+    /// **UNSTABLE.** Gated behind the `__diagnostics` cargo feature.
+    /// Type shape may change between any two patch versions.
+    /// Diagnostics encoding routes through the strip processor
+    /// (skipping `FusedParallelEncode` even with `parallel`); output
+    /// may differ from the default fused path by a handful of bytes
+    /// at quant/AQ boundaries.
+    #[cfg(feature = "__diagnostics")]
+    #[must_use]
+    pub fn with_diagnostics(mut self, enable: bool) -> Self {
+        self.diagnostics_enabled = enable;
         self
     }
 

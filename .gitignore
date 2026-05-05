@@ -82,3 +82,4 @@ fuzz-*.log
 # Reproduce via examples/zq_pareto_calibrate.rs; summary committed at
 # benchmarks/zq_pareto_<DATE>.summary.md.
 benchmarks/zq_pareto_*.tsv
+CLAUDE.local.md
