@@ -1,0 +1,22 @@
+[package]
+name = "zenjpeg-diagnostics-wasm"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+description = "WASM bindings for the unstable zenjpeg encode-diagnostics demo viewer."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+zenjpeg = { path = "../../zenjpeg", features = ["__diagnostics", "decoder", "trellis"] }
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+serde_json = "1.0"
+enough = { version = "0.4", features = ["std"] }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]

@@ -605,6 +605,13 @@ pub struct StripProcessor {
     /// unchanged.
     #[cfg(feature = "__diagnostics")]
     diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
+
+    /// Count of `quantize_prev_pending_imcu` invocations so far. Used
+    /// solely by the diagnostics capture path to map per-iMCU MCU-
+    /// traversal block indices to global raster (row, col) positions
+    /// in the per-component block grid. Incremented by 1 per call.
+    #[cfg(feature = "__diagnostics")]
+    diag_imcu_call_idx: usize,
 }
 
 impl StripProcessor {
@@ -904,6 +911,8 @@ impl StripProcessor {
             // `enable_diagnostics()` (gated behind `__diagnostics`).
             #[cfg(feature = "__diagnostics")]
             diagnostics: None,
+            #[cfg(feature = "__diagnostics")]
+            diag_imcu_call_idx: 0,
         })
     }
 
@@ -1645,6 +1654,22 @@ impl StripProcessor {
             unreachable!("use_boundary_rd is always false without the boundary-rd feature");
         } else {
             let quant = &self.quant;
+            // Snapshot of layout values consumed inside the diagnostics
+            // capture (avoid re-borrowing `self` while we already hold
+            // `&self.quant` and `&self.pending`).
+            //
+            // Use `layout.h_samp` / `layout.v_samp` (MAX sampling factors
+            // of the JFIF frame, which correctly account for XYB
+            // BQuarter's B-channel-driven `v_samp=2` even though the
+            // underlying subsampling enum reports `S444`).
+            #[cfg(feature = "__diagnostics")]
+            let diag_h = self.layout.h_samp;
+            #[cfg(feature = "__diagnostics")]
+            let diag_v = self.layout.v_samp;
+            #[cfg(feature = "__diagnostics")]
+            let diag_y_blocks_w = self.layout.y_blocks_w;
+            #[cfg(feature = "__diagnostics")]
+            let diag_imcu_idx = self.diag_imcu_call_idx;
             // Default fast path — unchanged from before boundary-RD was added.
             for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
                 // Use get() with fallback to avoid branch on common path
@@ -1691,18 +1716,65 @@ impl StripProcessor {
 
                 self.y_blocks.push(zigzag);
                 self.all_aq_strengths.push(aq_strength);
+
+                // Diagnostics capture (Y, default fast path). Maps the
+                // MCU-traversal block index `i` to a global raster
+                // (row, col) in the y_blocks_w × y_blocks_h grid.
+                #[cfg(feature = "__diagnostics")]
+                if let Some(ref mut diag) = self.diagnostics {
+                    let blocks_per_mcu = diag_h * diag_v;
+                    let mcu_in_row = if blocks_per_mcu > 0 {
+                        i / blocks_per_mcu
+                    } else {
+                        i
+                    };
+                    let block_in_mcu = if blocks_per_mcu > 0 {
+                        i % blocks_per_mcu
+                    } else {
+                        0
+                    };
+                    let bc = block_in_mcu % diag_h.max(1);
+                    let br = block_in_mcu / diag_h.max(1);
+                    let global_col = mcu_in_row * diag_h.max(1) + bc;
+                    let global_row = diag_imcu_idx * diag_v.max(1) + br;
+                    let global_idx = global_row * diag_y_blocks_w + global_col;
+                    if let Some(slot) = diag
+                        .components
+                        .get_mut(0)
+                        .and_then(|c| c.blocks.get_mut(global_idx))
+                    {
+                        slot.coef_pre_quant = dct.to_array();
+                        slot.coef_levels = zigzag;
+                        slot.aq_multiplier = aq_strength;
+                    }
+                }
             }
         }
 
-        // Quantize Cb/Cr blocks
+        // Quantize Cb/Cr blocks — scoped so the `quant` borrow drops
+        // before any `&mut self` diagnostic captures.
+        let y_blocks_w = self.layout.y_blocks_w;
+        let y_blocks_h = self.layout.y_blocks_h;
+        let c_blocks_w = self.layout.c_blocks_w;
+        let c_blocks_h = self.layout.c_blocks_h;
+        let cr_blocks_h = if self.layout.use_xyb {
+            self.layout.b_blocks_w
+        } else {
+            c_blocks_w
+        };
+        let cr_blocks_v = if self.layout.use_xyb {
+            self.layout.b_blocks_h
+        } else {
+            c_blocks_h
+        };
+
+        #[cfg(feature = "__diagnostics")]
+        let cb_start = self.cb_blocks.len();
+        #[cfg(feature = "__diagnostics")]
+        let cr_start = self.cr_blocks.len();
         {
             let quant = &self.quant;
-            let y_blocks_w = self.layout.y_blocks_w;
-            let y_blocks_h = self.layout.y_blocks_h;
-            let c_blocks_w = self.layout.c_blocks_w;
-            let c_blocks_h = self.layout.c_blocks_h;
 
-            // Cb: always uses c_blocks dimensions
             let cb_dc_raw = if store_dc_raw {
                 Some(&mut self.cb_dc_raw)
             } else {
@@ -1725,17 +1797,6 @@ impl StripProcessor {
                 y_blocks_h,
             );
 
-            // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
-            let cr_blocks_h = if self.layout.use_xyb {
-                self.layout.b_blocks_w
-            } else {
-                c_blocks_w
-            };
-            let cr_blocks_v = if self.layout.use_xyb {
-                self.layout.b_blocks_h
-            } else {
-                c_blocks_h
-            };
             let cr_dc_raw = if store_dc_raw {
                 Some(&mut self.cr_dc_raw)
             } else {
@@ -1757,6 +1818,98 @@ impl StripProcessor {
                 y_blocks_w,
                 y_blocks_h,
             );
+        }
+
+        // Diagnostics captures for chroma — outside the `quant` borrow scope.
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.capture_chroma_diag(
+                /* component_idx */ 1,
+                cb_start,
+                buffer_idx,
+                /* is_cb */ true,
+                c_blocks_w,
+                c_blocks_h,
+                y_blocks_w,
+                y_blocks_h,
+            );
+            self.capture_chroma_diag(
+                /* component_idx */ 2,
+                cr_start,
+                buffer_idx,
+                /* is_cb */ false,
+                cr_blocks_h,
+                cr_blocks_v,
+                y_blocks_w,
+                y_blocks_h,
+            );
+        }
+
+        // Advance the iMCU counter — diagnostics needs this to map
+        // per-iMCU MCU-traversal indices to global raster positions.
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.diag_imcu_call_idx += 1;
+        }
+    }
+
+    /// Capture chroma per-block diagnostics after `quantize_chroma_blocks`.
+    /// `component_idx` is the index into `diagnostics.components` (1 = Cb,
+    /// 2 = Cr). `block_start` is the chroma-blocks Vec length captured
+    /// before the helper call. `is_cb` selects between `pending.cb` and
+    /// `pending.cr`. The remaining args mirror the chroma helper's
+    /// dimensions so we can replicate the AQ-strength lookup formula.
+    #[cfg(feature = "__diagnostics")]
+    #[allow(clippy::too_many_arguments)]
+    fn capture_chroma_diag(
+        &mut self,
+        component_idx: usize,
+        block_start: usize,
+        buffer_idx: usize,
+        is_cb: bool,
+        chroma_blocks_h: usize,
+        chroma_blocks_v: usize,
+        y_blocks_w: usize,
+        y_blocks_h: usize,
+    ) {
+        let blocks_h = chroma_blocks_h.max(1);
+        let pending = if is_cb {
+            &self.pending.cb[buffer_idx]
+        } else {
+            &self.pending.cr[buffer_idx]
+        };
+        let new_blocks = if is_cb {
+            &self.cb_blocks[block_start..]
+        } else {
+            &self.cr_blocks[block_start..]
+        };
+        let aq_src = &self.all_aq_strengths;
+
+        let Some(diag) = self.diagnostics.as_mut() else {
+            return;
+        };
+        let Some(component) = diag.components.get_mut(component_idx) else {
+            return;
+        };
+
+        let global_chroma_by_start = block_start / blocks_h;
+        for (i, dct) in pending.iter().enumerate() {
+            let bx = i % blocks_h;
+            let local_by = i / blocks_h;
+            let chroma_by = global_chroma_by_start + local_by;
+            let y_bx = (bx * y_blocks_w) / blocks_h;
+            let y_by = (chroma_by * y_blocks_h) / chroma_blocks_v.max(1);
+            let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
+            let aq_strength = aq_src.get(global_aq_idx).copied().unwrap_or(0.08);
+
+            let global_idx = chroma_by * blocks_h + bx;
+            if let Some(slot) = component.blocks.get_mut(global_idx) {
+                slot.coef_pre_quant = dct.to_array();
+                if let Some(levels) = new_blocks.get(i) {
+                    slot.coef_levels = *levels;
+                }
+                slot.aq_multiplier = aq_strength;
+            }
         }
     }
 

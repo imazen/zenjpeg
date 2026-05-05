@@ -275,10 +275,12 @@ pub mod container;
 // Internal Implementation Modules
 // ============================================================================
 
-// Internal encoder implementation (exposed via test-utils for benchmarks)
-#[cfg(feature = "__test-utils")]
+// Internal encoder implementation (exposed via test-utils for benchmarks
+// or `__diagnostics` for the unstable encode-diagnostics surface used by
+// the visualizer).
+#[cfg(any(feature = "__test-utils", feature = "__diagnostics"))]
 pub mod encode;
-#[cfg(not(feature = "__test-utils"))]
+#[cfg(not(any(feature = "__test-utils", feature = "__diagnostics")))]
 pub(crate) mod encode;
 
 // Internal decoder implementation
