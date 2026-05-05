@@ -230,6 +230,7 @@ function buildQuantGrid(
 }
 
 function buildEqSliders(
+  componentIdx: number,
   hEl: HTMLElement,
   vEl: HTMLElement,
   eq: ComponentEqState,
@@ -244,7 +245,7 @@ function buildEqSliders(
     h.max = "2";
     h.step = "0.05";
     h.value = String(eq.hEq[i]!);
-    h.dataset.testid = `comp-0-h-eq-${i}`;
+    h.dataset.testid = `comp-${componentIdx}-h-eq-${i}`;
     h.title = `h_eq[${i}]: column ${i} multiplier`;
     h.addEventListener("input", () => {
       eq.hEq[i] = parseFloat(h.value);
@@ -258,7 +259,7 @@ function buildEqSliders(
     vv.max = "2";
     vv.step = "0.05";
     vv.value = String(eq.vEq[i]!);
-    vv.dataset.testid = `comp-0-v-eq-${i}`;
+    vv.dataset.testid = `comp-${componentIdx}-v-eq-${i}`;
     vv.title = `v_eq[${i}]: row ${i} multiplier`;
     vv.addEventListener("input", () => {
       eq.vEq[i] = parseFloat(vv.value);
@@ -337,7 +338,7 @@ function renderComponent(
     zeroRateEl.textContent = zeroRate.toFixed(1);
   };
 
-  buildEqSliders(hEqEl, vEqEl, eq, refresh);
+  buildEqSliders(componentIdx, hEqEl, vEqEl, eq, refresh);
   resetBtn.addEventListener("click", () => {
     eq.hEq.fill(1);
     eq.vEq.fill(1);

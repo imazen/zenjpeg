@@ -1128,15 +1128,11 @@ impl StripProcessor {
         self.diagnostics = Some(diag);
     }
 
-    /// Take the captured per-block diagnostics, leaving `None` in the
-    /// processor. Returns `None` when diagnostics weren't enabled.
-    /// UNSTABLE — gated behind the `__diagnostics` cargo feature.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) fn take_diagnostics(
-        &mut self,
-    ) -> Option<crate::encode::diagnostics::EncodeDiagnostics> {
-        self.diagnostics.take()
-    }
+    // Note: `take_diagnostics(&mut self)` was removed. The
+    // diagnostics record is now extracted via the
+    // `StripProcessorOutput.diagnostics` field returned from
+    // `finalize()`, intercepted by the streaming encoder's
+    // `finish_into_with_stop_threaded` callback.
 
     /// Returns whether XYB mode is enabled.
     #[must_use]

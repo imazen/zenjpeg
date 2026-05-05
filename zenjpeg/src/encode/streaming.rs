@@ -123,15 +123,13 @@ impl StreamingEncoder {
         self.processor.set_aq_controller(ctrl);
     }
 
-    /// Take the captured per-block diagnostics, leaving `None` in the
-    /// processor. Returns `None` when diagnostics weren't enabled.
-    /// UNSTABLE — gated behind the `__diagnostics` feature.
-    #[cfg(feature = "__diagnostics")]
-    pub(crate) fn take_diagnostics(
-        &mut self,
-    ) -> Option<crate::encode::diagnostics::EncodeDiagnostics> {
-        self.processor.take_diagnostics()
-    }
+    // Note: an earlier draft of this surface exposed
+    // `take_diagnostics(&mut self)` directly on `StreamingEncoder` and
+    // `StripProcessor`. The `finish_with_diagnostics` path now threads
+    // the diagnostics record out through an intercept callback in
+    // `finish_into_with_stop_threaded`, so the explicit takers were
+    // dropped to keep the dead-code lint clean under
+    // `--features __diagnostics`.
 
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
@@ -1027,6 +1025,12 @@ impl StreamingEncoder {
         self.finish_into_with_stop_inner_diag(output, stop, Some(diagnostics_out))
     }
 
+    // Inner finish dispatcher: routes to the diagnostics-instrumented
+    // body when the `__diagnostics` feature is on, the plain body
+    // otherwise. Marked allow(dead_code) because under
+    // `--features __diagnostics` this wrapper is unused (the diag
+    // path goes via `finish_into_with_stop_and_diagnostics`).
+    #[allow(dead_code)]
     fn finish_into_with_stop_inner(
         self,
         output: &mut Vec<u8>,

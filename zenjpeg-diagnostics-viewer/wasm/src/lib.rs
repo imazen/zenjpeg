@@ -236,22 +236,21 @@ pub fn encode_with_diagnostics(
         }
     };
 
+    // Trellis + auto-optimize are always available because the wasm
+    // crate enables zenjpeg's `trellis` feature unconditionally
+    // (see Cargo.toml). The cfg gate that was here previously was
+    // checking the `trellis` feature on *this* crate, which doesn't
+    // exist — leading to dead code under any cfg evaluation.
     let mut config = config
         .aq_enabled(opts.aq_enabled)
         .deringing(opts.deringing)
         .with_diagnostics(true);
-
-    #[cfg(feature = "trellis")]
-    {
-        if opts.auto_optimize {
-            config = config.auto_optimize(true);
-        } else if opts.trellis {
-            use zenjpeg::encode::trellis::TrellisConfig;
-            config = config.trellis(TrellisConfig::new());
-        }
+    if opts.auto_optimize {
+        config = config.auto_optimize(true);
+    } else if opts.trellis {
+        use zenjpeg::encode::trellis::TrellisConfig;
+        config = config.trellis(TrellisConfig::new());
     }
-    // Suppress unused-warning when trellis isn't enabled.
-    let _ = (opts.trellis, opts.auto_optimize);
 
     let request = config.request();
     let mut encoder = request

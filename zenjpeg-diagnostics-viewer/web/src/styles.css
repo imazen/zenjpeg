@@ -58,6 +58,12 @@ header h1 {
   gap: 6px;
   color: var(--muted);
 }
+/* Browser default `[hidden] { display: none }` is overridden by the
+ * `display: flex` rule above (specificity tie + later rule wins). Be
+ * explicit so `subLabel.hidden = true` actually hides the label. */
+.controls label[hidden] {
+  display: none;
+}
 .controls input[type="range"] {
   width: 140px;
 }

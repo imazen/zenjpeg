@@ -48,16 +48,20 @@ test("page loads, triptych populated, diagnostics non-empty", async ({ page }) =
   // Diagnostics struct is reachable and well-shaped.
   const diag = await page.evaluate(() => window.__zenjpegDiagnostics.getCurrent());
   expect(diag).not.toBeNull();
-  expect(diag!.width).toBe(64);
-  expect(diag!.height).toBe(64);
+  if (!diag) throw new Error("diagnostics null");
+  expect(diag.width).toBe(64);
+  expect(diag.height).toBe(64);
   // Default is YCbCr 4:4:4 → 3 components, each 8×8 blocks.
-  expect(diag!.components).toHaveLength(3);
-  expect(diag!.components[0].blockGrid).toEqual([8, 8]);
-  expect(diag!.components[1].blockGrid).toEqual([8, 8]);
-  expect(diag!.components[2].blockGrid).toEqual([8, 8]);
-  expect(diag!.components[0].blocks).toHaveLength(64);
+  expect(diag.components).toHaveLength(3);
+  const [c0, c1, c2] = diag.components;
+  if (!c0 || !c1 || !c2) throw new Error("expected 3 components");
+  expect(c0.blockGrid).toEqual([8, 8]);
+  expect(c1.blockGrid).toEqual([8, 8]);
+  expect(c2.blockGrid).toEqual([8, 8]);
+  expect(c0.blocks).toHaveLength(64);
   // Pre-quant DCT non-trivial on the synthetic pattern.
-  const block0 = diag!.components[0].blocks[0];
+  const block0 = c0.blocks[0];
+  if (!block0) throw new Error("expected block 0");
   const energy = (block0.coefPreQuant as number[]).reduce(
     (a: number, b: number) => a + Math.abs(b),
     0,
