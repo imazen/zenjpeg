@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
+  plugins: [tailwindcss()],
   // Relative asset URLs (`./assets/...`) so the same `dist/` works at
   // any deploy subpath: local `vite preview` at root, GitHub Pages at
   // `/zenjpeg/diagnostics/`, Cloudflare Pages at `/`, an arbitrary
@@ -24,6 +26,9 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
+  },
+  worker: {
+    format: "es",
   },
   optimizeDeps: {
     // wasm-pack output uses ES modules — let vite serve them as-is.

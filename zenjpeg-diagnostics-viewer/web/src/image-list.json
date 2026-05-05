@@ -1,0 +1,48 @@
+{
+  "_comment": "Demo picker images, sourced from the imazen codec-corpus R2 bucket. PNG-only — JPEG/WebP demos cause generation-loss confusion (encoding a lossy source through a lossy codec hides where the artifacts actually came from). The codec-corpus's `corpus/png-24-32` label doesn't track provenance, so any of these may be PNG conversions of original JPEGs. We mark them all with `wasJpeg: true` and scripts/fetch-images.ts applies an 8× lanczos3 downscale at BUILD TIME via sharp (no browser-side resampling). The washed PNG is named <sha>-w8.png and the runtime reads it directly. 8× decimation eliminates the original 8×8 DCT block artifacts and ringing. Override per-entry by setting wasJpeg: false (e.g. for synthetic / RAW-derived sources where you trust the PNG is pixel-clean).",
+  "defaultBase": "https://pub-7c5c57fd3e0842f0b147946928891d40.r2.dev",
+  "images": [
+    {
+      "id": "png-4k-square",
+      "label": "Photo (PNG, 4219×4548 → 527×568 after 8× wash)",
+      "sha256": "0ca1248e164f04ae6fd9e24f45d232f89533c8dfba3eeadc64778a2e5f4519f3",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-5k-square",
+      "label": "Photo (PNG, 4951×5014 → 619×627 after 8× wash)",
+      "sha256": "25a3473eddc8dcc8a20ce6a9880bb6cfee0f80e04a826cca07cae253afcf8f27",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-4k-landscape",
+      "label": "Photo (PNG, 4000×2700 → 500×337 after 8× wash)",
+      "sha256": "403685d7adabe161b02529db9eb16c055f1820c9536014560abfe0e556b0e983",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-2k-landscape",
+      "label": "Photo (PNG, 2038×2244 → 254×280 after 8× wash)",
+      "sha256": "0e6234204dd0d0fbc9b673a0250457d728ee27b4485cb7facb719d391da99bd4",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-2k-square",
+      "label": "Photo (PNG, 2652×2582 → 332×322 after 8× wash)",
+      "sha256": "33c8ca08a529e40d6fe46842a2f6a2705911f275a94e4816cf47079ff6c52b50",
+      "ext": "png",
+      "wasJpeg": true
+    },
+    {
+      "id": "png-1700",
+      "label": "Photo (PNG, 1700×1133 → 212×142 after 8× wash)",
+      "sha256": "37c09d8426302e30f373c1b499d5a8e852cd3242538b4e53ca0c727bfcda2066",
+      "ext": "png",
+      "wasJpeg": true
+    }
+  ]
+}

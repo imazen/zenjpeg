@@ -200,7 +200,13 @@ jobs:
       - name: Build viewer
         run: |
           cd zenjpeg-diagnostics-viewer/web
-          npx vite build
+          # `npm run build` runs the `prebuild` hook (fetch-images.ts)
+          # which downloads the picker corpus from R2 and writes a
+          # local manifest + cached blobs into public/images/. Without
+          # this, the deployed viewer hits CORS errors trying to fetch
+          # the R2 origin from GitHub Pages (R2 public buckets do not
+          # send Access-Control-Allow-Origin headers by default).
+          npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: diagnostics-viewer-dist

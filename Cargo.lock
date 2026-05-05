@@ -3209,12 +3209,14 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "enough",
+ "fast-ssim2 0.8.0",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
  "zenjpeg",
+ "zensim",
 ]
 
 [[package]]

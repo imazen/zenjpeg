@@ -88,3 +88,8 @@ zenjpeg-diagnostics-viewer/web/dist/
 zenjpeg-diagnostics-viewer/web/test-results/
 zenjpeg-diagnostics-viewer/web/playwright-report/
 zenjpeg-diagnostics-viewer/web/wasm-pkg/
+
+# Diagnostics-viewer image picker corpus — fetched at build time from R2
+# via web/scripts/fetch-images.ts. Manifest is regenerated; both files
+# and manifest.json stay out of git.
+zenjpeg-diagnostics-viewer/web/public/images/
