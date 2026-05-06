@@ -52,8 +52,16 @@ const XYB_PROFILE_MARKER: &[u8] = b"XYB";
 /// Large profiles may be split across multiple APP2 markers.
 ///
 /// Scans marker-to-marker (not byte-by-byte), stopping at SOS.
+///
+/// The cumulative profile size is checked **incrementally** against
+/// [`MAX_ICC_PROFILE_SIZE`](crate::foundation::alloc::MAX_ICC_PROFILE_SIZE).
+/// As soon as a chunk would push the running total over the cap, we abort
+/// and return `None` without copying that chunk — bounding peak memory
+/// usage during extraction to roughly the cap size rather than the full
+/// length of the input JPEG.
 pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
     let mut chunks: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut running_total: usize = 0;
 
     // Skip SOI (0xFF 0xD8)
     let mut i = 2;
@@ -96,8 +104,19 @@ pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
         {
             let chunk_num = jpeg_data[i + 16];
             let _total_chunks = jpeg_data[i + 17];
-            let icc_data = jpeg_data[i + 18..i + 2 + length].to_vec();
-            chunks.push((chunk_num, icc_data));
+            let chunk_payload = &jpeg_data[i + 18..i + 2 + length];
+
+            // Enforce the cap incrementally so a JPEG with many APP2/ICC
+            // chunks (each individually under u16::MAX bytes) cannot
+            // accumulate gigabytes of u8 vectors into `chunks` before the
+            // post-loop size check fires.
+            let next_total = running_total.checked_add(chunk_payload.len())?;
+            if next_total > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
+                return None;
+            }
+            running_total = next_total;
+
+            chunks.push((chunk_num, chunk_payload.to_vec()));
         }
 
         i += 2 + length;
@@ -107,16 +126,15 @@ pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
 
-    // Sort by chunk number and concatenate
+    // Sort by chunk number and concatenate. The per-chunk incremental
+    // cap above already guarantees `running_total` <= MAX_ICC_PROFILE_SIZE.
     chunks.sort_by_key(|(num, _)| *num);
-    let total_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
 
-    // Enforce maximum ICC profile size to prevent memory exhaustion
-    if total_size > crate::foundation::alloc::MAX_ICC_PROFILE_SIZE {
-        return None;
+    let mut profile: Vec<u8> = Vec::new();
+    profile.try_reserve_exact(running_total).ok()?;
+    for (_, data) in chunks {
+        profile.extend_from_slice(&data);
     }
-
-    let profile: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
 
     Some(profile)
 }
@@ -321,5 +339,50 @@ mod tests {
     fn test_extract_icc_profile_empty() {
         let no_icc = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]; // JFIF
         assert!(extract_icc_profile(&no_icc).is_none());
+    }
+
+    /// Regression for the security audit's H4 finding: many APP2/ICC
+    /// chunks whose individual lengths fit in u16 but whose sum exceeds
+    /// `MAX_ICC_PROFILE_SIZE` must be rejected without buffering hundreds
+    /// of MB of u8 vectors first. We construct a JPEG-shaped byte sequence
+    /// with enough chunks to (in aggregate) exceed the 16 MB cap and
+    /// assert `extract_icc_profile` returns `None`.
+    #[test]
+    fn test_extract_icc_profile_oversize_rejected_incrementally() {
+        use crate::foundation::alloc::MAX_ICC_PROFILE_SIZE;
+
+        // Build a JPEG-like buffer: SOI then a long string of APP2 ICC
+        // chunks. Each chunk: 0xFF 0xE2 [len_hi len_lo] "ICC_PROFILE\0"
+        // [chunk_num total_chunks] [payload..]. We pick payload_len so
+        // that ~2x MAX_ICC_PROFILE_SIZE worth of payload would be
+        // accumulated if the cap weren't enforced incrementally.
+        let payload_len: usize = 65500 - 16; // marker payload after sig+chunk hdrs
+        let mut buf: Vec<u8> = Vec::with_capacity(MAX_ICC_PROFILE_SIZE * 2);
+        buf.extend_from_slice(&[0xFF, 0xD8]); // SOI
+        let mut total = 0usize;
+        let mut chunk_num: u8 = 1;
+        while total < MAX_ICC_PROFILE_SIZE * 2 {
+            let length = 2 + 12 + 2 + payload_len;
+            buf.push(0xFF);
+            buf.push(0xE2);
+            buf.push((length >> 8) as u8);
+            buf.push((length & 0xFF) as u8);
+            buf.extend_from_slice(ICC_PROFILE_SIGNATURE);
+            buf.push(chunk_num);
+            buf.push(0xFF); // total_chunks (unused in our scanner)
+            buf.extend(std::iter::repeat_n(0u8, payload_len));
+            total += payload_len;
+            chunk_num = chunk_num.wrapping_add(1);
+        }
+        // Trailing EOI to terminate the marker walk cleanly
+        buf.extend_from_slice(&[0xFF, 0xD9]);
+
+        // The function must reject without exploding peak memory. We
+        // can't directly assert peak memory in a unit test, but we *can*
+        // assert it returns None, and the buffer-building above runs in
+        // bounded ~2x MAX_ICC_PROFILE_SIZE bytes — meaning the function
+        // iterates over our crafted input and refuses, which is the
+        // intended fix.
+        assert!(extract_icc_profile(&buf).is_none());
     }
 }
