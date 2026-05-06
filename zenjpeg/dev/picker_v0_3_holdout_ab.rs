@@ -50,11 +50,9 @@ use enough::Unstoppable;
 use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 use zenpredict::{AllowedMask, Model, Predictor, ScoreTransform, argmin_masked_in_range};
 
-use zenjpeg::encode::{
-    ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling,
-};
 use zenjpeg::encode::trellis::HybridConfig;
 use zenjpeg::encode::zq::ZqTarget;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
 // -----------------------------------------------------------------------
 // Schema (mirrors the v0.3 manifest.json::feat_cols ordering exactly).
@@ -190,18 +188,78 @@ enum ColorChoice {
 }
 
 const CELLS: &[CellSpec] = &[
-    CellSpec { color: ColorChoice::Xyb,   sub_420: true,  trellis_on: false, sa: false }, // 0  xyb_420_noT
-    CellSpec { color: ColorChoice::Xyb,   sub_420: true,  trellis_on: true,  sa: false }, // 1  xyb_420_trellis
-    CellSpec { color: ColorChoice::Xyb,   sub_420: false, trellis_on: false, sa: false }, // 2  xyb_444_noT
-    CellSpec { color: ColorChoice::Xyb,   sub_420: false, trellis_on: true,  sa: false }, // 3  xyb_444_trellis
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: true,  trellis_on: false, sa: false }, // 4  ycbcr_420_noT
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: true,  trellis_on: false, sa: true  }, // 5  ycbcr_420_noT_sa
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: true,  trellis_on: true,  sa: false }, // 6  ycbcr_420_trellis
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: true,  trellis_on: true,  sa: true  }, // 7  ycbcr_420_trellis_sa
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: false, trellis_on: false, sa: false }, // 8  ycbcr_444_noT
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: false, trellis_on: false, sa: true  }, // 9  ycbcr_444_noT_sa
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: false, trellis_on: true,  sa: false }, // 10 ycbcr_444_trellis
-    CellSpec { color: ColorChoice::Ycbcr, sub_420: false, trellis_on: true,  sa: true  }, // 11 ycbcr_444_trellis_sa
+    CellSpec {
+        color: ColorChoice::Xyb,
+        sub_420: true,
+        trellis_on: false,
+        sa: false,
+    }, // 0  xyb_420_noT
+    CellSpec {
+        color: ColorChoice::Xyb,
+        sub_420: true,
+        trellis_on: true,
+        sa: false,
+    }, // 1  xyb_420_trellis
+    CellSpec {
+        color: ColorChoice::Xyb,
+        sub_420: false,
+        trellis_on: false,
+        sa: false,
+    }, // 2  xyb_444_noT
+    CellSpec {
+        color: ColorChoice::Xyb,
+        sub_420: false,
+        trellis_on: true,
+        sa: false,
+    }, // 3  xyb_444_trellis
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: true,
+        trellis_on: false,
+        sa: false,
+    }, // 4  ycbcr_420_noT
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: true,
+        trellis_on: false,
+        sa: true,
+    }, // 5  ycbcr_420_noT_sa
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: true,
+        trellis_on: true,
+        sa: false,
+    }, // 6  ycbcr_420_trellis
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: true,
+        trellis_on: true,
+        sa: true,
+    }, // 7  ycbcr_420_trellis_sa
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: false,
+        trellis_on: false,
+        sa: false,
+    }, // 8  ycbcr_444_noT
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: false,
+        trellis_on: false,
+        sa: true,
+    }, // 9  ycbcr_444_noT_sa
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: false,
+        trellis_on: true,
+        sa: false,
+    }, // 10 ycbcr_444_trellis
+    CellSpec {
+        color: ColorChoice::Ycbcr,
+        sub_420: false,
+        trellis_on: true,
+        sa: true,
+    }, // 11 ycbcr_444_trellis_sa
 ];
 
 const N_CELLS: usize = 12;
@@ -400,11 +458,7 @@ fn list_pngs(dir: &Path) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|e| e == "png" || e == "PNG")
-        })
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "png" || e == "PNG"))
         .collect();
     v.sort();
     v
@@ -501,8 +555,9 @@ fn pick_knobs(predictor: &mut Predictor<'_>, feats: &[f32]) -> PickerKnobs {
     assert_eq!(output.len(), N_OUTPUTS);
     let mask_arr = [true; N_CELLS];
     let mask = AllowedMask::new(&mask_arr);
-    let cell_idx = argmin_masked_in_range(output, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)
-        .expect("argmin");
+    let cell_idx =
+        argmin_masked_in_range(output, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)
+            .expect("argmin");
     assert!(cell_idx < N_CELLS);
     let spec = CELLS[cell_idx];
     let chroma_scale = clamp_f32(output[OFF_CHROMA_SCALE + cell_idx], 0.6, 1.5);
@@ -522,11 +577,7 @@ fn pick_knobs(predictor: &mut Predictor<'_>, feats: &[f32]) -> PickerKnobs {
 }
 
 fn clamp_f32(v: f32, lo: f32, hi: f32) -> f32 {
-    if v.is_nan() {
-        lo
-    } else {
-        v.max(lo).min(hi)
-    }
+    if v.is_nan() { lo } else { v.max(lo).min(hi) }
 }
 
 fn snap_to_set(v: f32, set: &[f32]) -> f32 {
@@ -554,7 +605,12 @@ struct EncodeOutcome {
     elapsed_ms: f64,
 }
 
-fn build_picker_config(spec: CellSpec, lambda: f32, chroma_scale: f32, target: f32) -> EncoderConfig {
+fn build_picker_config(
+    spec: CellSpec,
+    lambda: f32,
+    chroma_scale: f32,
+    target: f32,
+) -> EncoderConfig {
     let zq = Quality::ZqExplicit(
         ZqTarget::new(target)
             .with_max_overshoot(Some(1.5))
@@ -609,9 +665,8 @@ fn build_picker_config(spec: CellSpec, lambda: f32, chroma_scale: f32, target: f
         // tables vary smoothly with q so seeding at start_q is the
         // correct, single-snapshot choice.
         let start_q = cfg.get_quality().to_internal().clamp(1.0, 100.0);
-        let tables = zenjpeg::encode::tables::sa_piecewise_v4::tables_for_quality(
-            start_q.round() as u8,
-        );
+        let tables =
+            zenjpeg::encode::tables::sa_piecewise_v4::tables_for_quality(start_q.round() as u8);
         cfg = cfg.tables(Box::new(tables));
     }
     cfg
@@ -717,8 +772,16 @@ fn main() {
         model.n_outputs(),
         model.schema_hash()
     );
-    assert_eq!(model.n_inputs(), 112, "expected 112 inputs (51 + 4 + 5 + 51 + 1)");
-    assert_eq!(model.n_outputs(), 48, "expected 48 outputs (12 cells × 4 heads)");
+    assert_eq!(
+        model.n_inputs(),
+        112,
+        "expected 112 inputs (51 + 4 + 5 + 51 + 1)"
+    );
+    assert_eq!(
+        model.n_outputs(),
+        48,
+        "expected 48 outputs (12 cells × 4 heads)"
+    );
     let schema_hash = model.schema_hash();
     let mut predictor = Predictor::new(model);
 
@@ -882,7 +945,11 @@ fn main() {
         let b = &bucket_per_target[ti];
         let bp = p.bytes_sum as f64;
         let bb = b.bytes_sum as f64;
-        let delta_pct = if bb > 0.0 { (bp - bb) / bb * 100.0 } else { 0.0 };
+        let delta_pct = if bb > 0.0 {
+            (bp - bb) / bb * 100.0
+        } else {
+            0.0
+        };
         let wins = picker_wins_per_target[ti];
         let paired = paired_count_per_target[ti].max(1);
         let win_rate = wins as f64 / paired as f64 * 100.0;
@@ -902,15 +969,25 @@ fn main() {
     }
 
     md.push_str("\n## Per-band totals\n\n");
-    md.push_str("| band | range | bytes_picker | bytes_bucket | Δ% | achieved_picker | achieved_bucket |\n");
+    md.push_str(
+        "| band | range | bytes_picker | bytes_bucket | Δ% | achieved_picker | achieved_bucket |\n",
+    );
     md.push_str("|:--|:--|---:|---:|---:|---:|---:|\n");
-    let band_ranges = [("low", "zq < 50"), ("mid", "50 ≤ zq < 75"), ("high", "zq ≥ 75")];
+    let band_ranges = [
+        ("low", "zq < 50"),
+        ("mid", "50 ≤ zq < 75"),
+        ("high", "zq ≥ 75"),
+    ];
     for (band, range) in band_ranges {
         let p = picker_band.get(band).cloned().unwrap_or_default();
         let b = bucket_band.get(band).cloned().unwrap_or_default();
         let bp = p.bytes_sum as f64;
         let bb = b.bytes_sum as f64;
-        let delta_pct = if bb > 0.0 { (bp - bb) / bb * 100.0 } else { 0.0 };
+        let delta_pct = if bb > 0.0 {
+            (bp - bb) / bb * 100.0
+        } else {
+            0.0
+        };
         md.push_str(&format!(
             "| {} | {} | {} | {} | {:+.2}% | {:.2} | {:.2} |\n",
             band,
@@ -925,7 +1002,11 @@ fn main() {
 
     let bp = picker_total.bytes_sum as f64;
     let bb = bucket_total.bytes_sum as f64;
-    let total_delta_pct = if bb > 0.0 { (bp - bb) / bb * 100.0 } else { 0.0 };
+    let total_delta_pct = if bb > 0.0 {
+        (bp - bb) / bb * 100.0
+    } else {
+        0.0
+    };
     md.push_str(&format!(
         "\n## Total\n\n* Picker total bytes: **{}** (mean achieved zensim {:.2})\n* Bucket total bytes: **{}** (mean achieved zensim {:.2})\n* Δ bytes: **{:+.2}%** (picker − bucket)\n* Δ achieved zensim: **{:+.3}** pp\n",
         fmt_bytes(picker_total.bytes_sum),
