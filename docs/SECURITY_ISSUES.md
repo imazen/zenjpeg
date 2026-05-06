@@ -110,11 +110,25 @@ Additionally, our current scan script only uses simple progressive without succe
 
 **Root Cause**: `Plane<T>` allocation failures not propagated, causing crashes.
 
-**Rust Fix**: All allocations now use fallible `try_alloc_*` functions from `alloc.rs` that return `Error::AllocationFailed` instead of panicking on OOM. This includes:
+**Rust Fix**: All `try_alloc_*` helpers in `foundation/alloc.rs` now use
+`Vec::try_reserve_exact` and return `Error::AllocationFailed` instead of
+panicking on OOM. The set in current use:
 - `try_alloc_zeroed()` for u8 buffers
 - `try_alloc_zeroed_f32()` for f32 buffers
 - `try_alloc_filled()` for non-zero initialized buffers
 - `try_alloc_dct_blocks()` for DCT coefficient arrays
+- `try_alloc_maybeuninit()` and `try_alloc_zeroed_bytes()` (parallel /
+  decoded-output buffers)
+- `try_alloc_vec()` and `try_with_capacity()` (general-purpose)
+
+Note (2026-05-06): the previous `try_alloc_maybeuninit` and
+`try_alloc_zeroed_bytes` bodies called `vec![T::default(); n]` directly,
+which panics on OOM despite the `try_` prefix in the name. These were
+converted to `Vec::try_reserve_exact` + `resize` so OOM now propagates
+as `Error::AllocationFailed`. Linux's lazy-zero-page fast path is
+preserved on the happy path because `resize` on freshly-reserved
+capacity for zero-default types is internally specialized to
+`alloc_zeroed`/`calloc`.
 
 ---
 
@@ -123,21 +137,39 @@ Additionally, our current scan script only uses simple progressive without succe
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `eeb331ce` |
-| **Rust Status** | ✅ **Fixed** |
+| **Rust Status** | ⚠️ **Partial** — see below |
 | **Component** | Memory manager |
 
 **Root Cause**: Some large allocations weren't tracked by memory manager, allowing memory limit bypass.
 
-**Rust Fix**: Added `MemoryTracker` in `alloc.rs` for cumulative allocation tracking:
-- `MemoryTracker::new(limit)` - Creates tracker with byte limit
-- `MemoryTracker::try_alloc(bytes, context)` - Returns error if limit exceeded
-- `MemoryTracker::free(bytes)` - Releases tracked bytes
-- `DEFAULT_MAX_MEMORY = 512 MB` - Default allocation limit
+**Rust enforcement (current shape, 2026-05-06):**
+
+`Decoder::max_memory(bytes)` is now enforced **at decode-entry time** via
+a conservative peak-memory estimate against the validated dimensions
+and the requested output format's bytes-per-pixel. The check fires in
+`decode()`, `decode_into()`, `decode_coefficients()`,
+`decode_to_ycbcr_f32()`, and `scanline_reader()`. Over-budget requests
+return `Error::AllocationFailed` before any large allocation is
+attempted.
+
+The per-allocation `MemoryTracker` type in `foundation/alloc.rs` is
+kept for future cumulative tracking but is **not** plumbed through
+every call site. The dual line of defense for runtime over-allocation
+is the fallible allocation helpers (`try_alloc_zeroed`,
+`try_alloc_zeroed_f32`, `try_alloc_filled`,
+`try_alloc_maybeuninit`/`try_alloc_zeroed_bytes`/`try_alloc_dct_blocks`,
+all of which now use `Vec::try_reserve_exact` and propagate
+`Error::AllocationFailed` rather than panicking on OOM).
 
 Decoder configuration:
-- `DecoderConfig.max_memory` - Per-decode allocation limit
-- `Decoder::max_memory(bytes)` - Builder method to configure
-- Set to `usize::MAX` for unlimited (trusted inputs only)
+- `DecoderConfig.max_memory` — Per-decode peak-bytes ceiling.
+- `Decoder::max_memory(bytes)` — Builder method to configure.
+- Set to `0` for unlimited (the historical sentinel; trusted inputs only).
+
+Regression tests in `tests/bundled/decode_api_guide.rs`:
+- `max_memory_rejects_obviously_oversize_decode`
+- `max_memory_rejects_decode_into`
+- `max_memory_zero_is_unlimited`
 
 ---
 
