@@ -80,11 +80,25 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                // For progressive, we don't know coeff counts until all scans are done
-                // Default to 64 (full IDCT) - tiered IDCT is mainly for baseline
-                self.coeff_counts.push(vec![64u8; num_blocks]);
-                // Nonzero bitmap: all zeros initially (no coefficients placed yet)
-                self.nonzero_bitmaps.push(vec![0u64; num_blocks]);
+                // For progressive, we don't know coeff counts until all scans are
+                // done. Default to 64 (full IDCT) — tiered IDCT is mainly for
+                // baseline. Use fallible allocation so an OOM here cannot panic
+                // after the parallel try_alloc_dct_blocks above succeeded with
+                // lazy-committed pages.
+                self.coeff_counts
+                    .push(crate::foundation::alloc::try_alloc_filled(
+                        num_blocks,
+                        64u8,
+                        "allocating progressive coefficient counts",
+                    )?);
+                // Nonzero bitmap: all zeros initially (no coefficients placed yet).
+                // Use fallible allocation for the same reason.
+                self.nonzero_bitmaps
+                    .push(crate::foundation::alloc::try_alloc_filled(
+                        num_blocks,
+                        0u64,
+                        "allocating progressive nonzero bitmaps",
+                    )?);
             }
         }
 

@@ -226,8 +226,18 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
-                // Allocate parallel storage for coefficient counts (tiered IDCT)
-                self.coeff_counts.push(vec![64u8; num_blocks]);
+                // Allocate parallel storage for coefficient counts (tiered IDCT).
+                // Use the fallible try_alloc_filled rather than vec![64u8; ..] so
+                // that an OOM on this allocation surfaces as Error::AllocationFailed
+                // — without this, a successful try_alloc_dct_blocks (which on Linux
+                // can succeed with lazy-committed zero pages) followed by an
+                // infallible vec! could panic on physical commit.
+                self.coeff_counts
+                    .push(crate::foundation::alloc::try_alloc_filled(
+                        num_blocks,
+                        64u8,
+                        "allocating coefficient counts",
+                    )?);
             }
         }
 
