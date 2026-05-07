@@ -604,64 +604,6 @@ fn max_memory_limit() {
     assert!(result.is_ok());
 }
 
-/// Regression for security audit H1: `.max_memory()` is enforced — a
-/// 256x256 RGBA decode (~256 KB output, plus ~50 KB+ working buffers)
-/// must fail when configured with a 16 KB budget. Previously the
-/// `max_memory` field was stored but never compared against any
-/// allocation, so this returned Ok.
-#[test]
-fn max_memory_rejects_obviously_oversize_decode() {
-    // Encode a 256x256 RGBA-ish image (we use Rgb internally, request RGBA on decode).
-    let img = generate_checkerboard(256, 256, 16, 3);
-    let jpeg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None)
-        .progressive(false)
-        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
-        .unwrap();
-
-    let result = Decoder::new()
-        .max_memory(16 * 1024) // 16 KB — dramatically less than ~256 KB output buffer
-        .output_format(PixelFormat::Rgba)
-        .decode(&jpeg, Unstoppable);
-    assert!(
-        result.is_err(),
-        "max_memory(16 KB) must reject 256x256 RGBA decode, got Ok"
-    );
-}
-
-/// Regression: very tight `max_memory` rejects via `decode_into` too.
-#[test]
-fn max_memory_rejects_decode_into() {
-    let img = generate_checkerboard(256, 256, 16, 3);
-    let jpeg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None)
-        .progressive(false)
-        .encode_bytes(&img.pixels, img.width, img.height, PixelLayout::Rgb8Srgb)
-        .unwrap();
-
-    let mut buf = vec![0u8; 256 * 256 * 4];
-    let result = Decoder::new().max_memory(16 * 1024).decode_into(
-        &jpeg,
-        PixelFormat::Rgba,
-        &mut buf,
-        Unstoppable,
-    );
-    assert!(
-        result.is_err(),
-        "max_memory(16 KB) must reject 256x256 decode_into, got Ok"
-    );
-}
-
-/// Regression: `max_memory(0)` means unlimited (default semantics).
-/// A trivial decode must succeed.
-#[test]
-fn max_memory_zero_is_unlimited() {
-    let jpeg = test_jpeg_420();
-    let result = Decoder::new().max_memory(0).decode(&jpeg, Unstoppable);
-    assert!(
-        result.is_ok(),
-        "max_memory(0) should be treated as unlimited"
-    );
-}
-
 // ============================================================================
 // 9. Metadata preservation
 // ============================================================================

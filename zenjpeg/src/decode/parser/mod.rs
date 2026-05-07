@@ -172,14 +172,6 @@ pub(super) struct JpegParser<'a> {
 
     // Security limits
     pub(super) max_pixels: u64,
-    /// Maximum allowed peak memory for this decode (0 = unlimited).
-    /// Enforced after `read_header()` parses dimensions but before any
-    /// large allocation (coefficient storage, output buffers, etc.).
-    pub(super) max_memory: u64,
-    /// Bytes-per-pixel of the requested output format, used when
-    /// computing the peak-memory estimate inside the parser. Default
-    /// 4 (worst-case 4-channel).
-    pub(super) max_memory_output_bpp: u8,
 
     // Extras preservation
     preserve_config: Option<PreserveConfig>,
@@ -273,8 +265,6 @@ impl<'a> JpegParser<'a> {
             idct_method: super::IdctMethod::default(),
             icc_profile,
             max_pixels,
-            max_memory: 0,
-            max_memory_output_bpp: 4,
             preserve_config,
             extras,
             mpf_header_pos: 0,
@@ -512,30 +502,6 @@ impl<'a> JpegParser<'a> {
     // =========================================================================
 }
 
-/// Conservative peak-memory estimate used by `parser.decode()` to enforce
-/// `Decoder::max_memory()`. Mirrors `Decoder::estimate_peak_memory_bytes`
-/// — kept in this module so the parser doesn't need to call back through
-/// the `decode` module.
-fn estimate_peak_memory_bytes(width: u32, height: u32, bytes_per_pixel: usize) -> u128 {
-    let w = width as u128;
-    let h = height as u128;
-    let bpp = bytes_per_pixel as u128;
-
-    let output_bytes = w * h * bpp;
-    let mcu_cols = (w + 7) / 8;
-    let strip_bytes = mcu_cols * 8 * 8 * 2 * 3;
-    let blocks_per_component = mcu_cols * ((h + 7) / 8);
-    let coeff_storage = blocks_per_component * 130 * 3;
-
-    let streaming_total = strip_bytes + output_bytes;
-    let coeff_total = coeff_storage + output_bytes;
-    if streaming_total > coeff_total {
-        streaming_total
-    } else {
-        coeff_total
-    }
-}
-
 /// Extract XMP string from a JPEG's APP1 segment.
 #[cfg(feature = "ultrahdr")]
 fn find_xmp_in_jpeg(jpeg: &[u8]) -> Option<alloc::string::String> {
@@ -652,30 +618,6 @@ impl<'a> JpegParser<'a> {
         // First read header
         self.position = 2; // Skip SOI
         self.read_header()?;
-
-        // Enforce max_memory using the now-known dimensions and the
-        // configured output bytes-per-pixel. This is the security-audit
-        // H1 fix: the historical Decoder::max_memory() knob was stored
-        // but never compared to any allocation. Reject obviously
-        // over-budget decodes before any large allocation runs.
-        if self.max_memory != 0 {
-            let estimate = estimate_peak_memory_bytes(
-                self.width,
-                self.height,
-                self.max_memory_output_bpp as usize,
-            );
-            if estimate > self.max_memory as u128 {
-                let bytes_for_err = if estimate > usize::MAX as u128 {
-                    usize::MAX
-                } else {
-                    estimate as usize
-                };
-                return Err(Error::allocation_failed(
-                    bytes_for_err,
-                    "estimated peak memory exceeds Decoder::max_memory()",
-                ));
-            }
-        }
 
         // Reject non-8-bit precision before attempting decode.
         // 12-bit Extended Sequential uses different level shift (+2048 vs +128)

@@ -708,89 +708,6 @@ impl DecodeConfig {
         streaming_total.max(coeff_storage + rgb_size)
     }
 
-    /// Estimate peak memory usage for decoding to a specific output format.
-    ///
-    /// Like [`estimate_memory_usage`](Self::estimate_memory_usage) but
-    /// accounts for the bytes-per-pixel of the configured / requested
-    /// output format. Used by the internal `max_memory` enforcement
-    /// guard to reject obviously-over-budget decode requests before
-    /// any large allocation is attempted.
-    ///
-    /// The estimate is intentionally conservative: it covers the
-    /// largest single output buffer plus the worst-case coefficient
-    /// storage for non-streaming paths. It does **not** track every
-    /// transient working buffer, so callers that set extremely tight
-    /// budgets may still see decode-time `AllocationFailed` errors
-    /// from the per-allocation fallible helpers (which is the correct
-    /// behavior — both checks are belts on the same suspenders).
-    fn estimate_peak_memory_bytes(&self, width: u32, height: u32, bytes_per_pixel: usize) -> u128 {
-        let w = width as u128;
-        let h = height as u128;
-        let bpp = bytes_per_pixel as u128;
-
-        // Output buffer scales with format: 1 (gray), 3 (RGB), 4 (RGBA / CMYK)
-        let output_bytes = w * h * bpp;
-
-        // Strip buffers (Y/Cb/Cr i16, 1 MCU row, padded to 8) — small
-        // versus the output buffer at any reasonable size.
-        let mcu_cols = (w + 7) / 8;
-        let strip_bytes = mcu_cols * 8 * 8 * 2 * 3;
-
-        // Coefficient storage for non-streaming paths: 130 bytes/block × 3 comps.
-        let blocks_per_component = mcu_cols * ((h + 7) / 8);
-        let coeff_storage = blocks_per_component * 130 * 3;
-
-        // Worst-case: output + strips OR output + coefficient storage.
-        let streaming_total = strip_bytes + output_bytes;
-        let coeff_total = coeff_storage + output_bytes;
-        if streaming_total > coeff_total {
-            streaming_total
-        } else {
-            coeff_total
-        }
-    }
-
-    /// Reject the decode request if the configured `max_memory` is set
-    /// (non-zero) AND the conservative peak-memory estimate for the
-    /// given dimensions × output bytes-per-pixel would exceed it.
-    ///
-    /// This is the user-visible enforcement of `Decoder::max_memory()`
-    /// — the historical implementation stored the limit but never
-    /// compared it against any actual allocation. Real enforcement is
-    /// split between this early gate (catches the largest single
-    /// buffer at config-evaluation time) and the per-allocation
-    /// fallible helpers in `foundation::alloc` (catch overflows of
-    /// transient buffers at decode time). Either path produces
-    /// `Error::AllocationFailed` on exceedance.
-    pub(crate) fn enforce_max_memory(
-        &self,
-        width: u32,
-        height: u32,
-        bytes_per_pixel: usize,
-    ) -> Result<()> {
-        // 0 == unlimited per the field's documentation.
-        if self.max_memory == 0 {
-            return Ok(());
-        }
-
-        let estimated = self.estimate_peak_memory_bytes(width, height, bytes_per_pixel);
-        let limit = self.max_memory as u128;
-        if estimated > limit {
-            // Saturate to usize::MAX in the error so callers get a
-            // sensible "huge" rather than a truncated number.
-            let bytes_for_err = if estimated > usize::MAX as u128 {
-                usize::MAX
-            } else {
-                estimated as usize
-            };
-            return Err(Error::allocation_failed(
-                bytes_for_err,
-                "estimated peak memory exceeds Decoder::max_memory()",
-            ));
-        }
-        Ok(())
-    }
-
     /// Creates a pull-based scanline reader for streaming decode.
     ///
     /// This allows reading the image row by row without loading the entire
@@ -829,16 +746,6 @@ impl DecodeConfig {
 
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
         parser.read_header()?;
-        // Enforce max_memory using the requested or default output format's
-        // bytes-per-pixel. Scanline readers don't materialize the full image,
-        // but they do allocate per-row buffers and (for parallel/wave decode)
-        // multi-segment buffers; the budget guard catches obviously-over-limit
-        // requests up-front.
-        self.enforce_max_memory(
-            parser.width,
-            parser.height,
-            output_format_bytes_per_pixel(self.output_format.unwrap_or(PixelFormat::Rgb)),
-        )?;
 
         // Knusperli needs full coefficient access. When requested (explicitly or
         // via Auto at low Q), fall back to decode() + buffered scanline reader
@@ -1861,15 +1768,6 @@ impl DecodeConfig {
         let mut parser =
             JpegParser::with_strictness(data, self.max_pixels, Some(&preserve), self.strictness)?;
 
-        // Configure parser-side max_memory enforcement so the budget
-        // check fires inside parser.decode() right after read_header()
-        // succeeds — without re-parsing APP markers (which would
-        // duplicate XMP / EXIF / ICC accumulation) and before any
-        // large allocation runs.
-        parser.max_memory = self.max_memory;
-        parser.max_memory_output_bpp =
-            output_format_bytes_per_pixel(self.output_format.unwrap_or(PixelFormat::Rgb)) as u8;
-
         // Streaming decode produces RGB u8 directly — disable it when the output
         // needs coefficients (f32, u16, precise, dequant_bias, transform, non-RGB formats,
         // or Knusperli deblocking which requires DCT coefficients).
@@ -2357,21 +2255,6 @@ impl DecodeConfig {
             let mut parser =
                 parser::JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
             parser.read_header()?;
-            // No PreserveConfig was attached, so re-reading APP markers
-            // inside parser.decode() doesn't duplicate any user-visible
-            // metadata. We can safely enforce max_memory using the
-            // already-known dimensions before configuring the rest of
-            // the decode pipeline.
-            self.enforce_max_memory(
-                parser.width,
-                parser.height,
-                output_format_bytes_per_pixel(format),
-            )?;
-            // Belt-and-suspenders: also configure parser-side enforcement
-            // so the budget is checked again after the in-decode header
-            // re-parse — this matches the path used by `decode()`.
-            parser.max_memory = self.max_memory;
-            parser.max_memory_output_bpp = output_format_bytes_per_pixel(format) as u8;
             let is_xyb = parser.info().is_xyb;
 
             // For grayscale source, only PixelFormat::Gray is meaningful.
@@ -2647,11 +2530,6 @@ impl DecodeConfig {
     /// For analysis of large images, consider streaming APIs.
     pub fn decode_coefficients(&self, data: &[u8], stop: impl Stop) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
-        // Configure parser-side max_memory check (fires after the
-        // in-decode read_header, so APP markers are only parsed once).
-        // 4 bytes/pixel covers the worst-case output buffer downstream.
-        parser.max_memory = self.max_memory;
-        parser.max_memory_output_bpp = 4;
         // Disable streaming - we need coefficients stored
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
@@ -2675,11 +2553,6 @@ impl DecodeConfig {
             Some(&self.preserve),
             self.strictness,
         )?;
-        // Parser-side max_memory enforcement: fires inside decode()
-        // after read_header, so APP markers / preserved metadata are
-        // only accumulated once (no XMP / EXIF duplication).
-        parser.max_memory = self.max_memory;
-        parser.max_memory_output_bpp = 4;
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
 
@@ -2732,9 +2605,6 @@ impl DecodeConfig {
     /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8], stop: impl Stop) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
-        // Three f32 planes worst-case: 12 bytes per pixel.
-        parser.max_memory = self.max_memory;
-        parser.max_memory_output_bpp = 12;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.decode_mode = parser::DecodeMode::Coefficient;
         parser.decode(&stop)?;
@@ -2902,19 +2772,6 @@ impl DecodeConfig {
     #[must_use]
     pub fn get_max_memory(&self) -> u64 {
         self.max_memory
-    }
-}
-
-/// Returns the bytes-per-pixel value used for `max_memory` budgeting
-/// of the given output format. Conservative — always picks the wider
-/// of channel count vs sample size when there's any ambiguity.
-fn output_format_bytes_per_pixel(format: PixelFormat) -> usize {
-    match format {
-        PixelFormat::Gray => 1,
-        PixelFormat::Rgb | PixelFormat::Bgr => 3,
-        PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Cmyk => 4,
-        // Forward-compat for any future variant: treat as 4 bytes (worst common case).
-        _ => 4,
     }
 }
 

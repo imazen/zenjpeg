@@ -232,12 +232,11 @@ impl<'a> JpegParser<'a> {
                 // — without this, a successful try_alloc_dct_blocks (which on Linux
                 // can succeed with lazy-committed zero pages) followed by an
                 // infallible vec! could panic on physical commit.
-                self.coeff_counts
-                    .push(crate::foundation::alloc::try_alloc_filled(
-                        num_blocks,
-                        64u8,
-                        "allocating coefficient counts",
-                    )?);
+                self.coeff_counts.push(crate::foundation::alloc::try_alloc_filled(
+                    num_blocks,
+                    64u8,
+                    "allocating coefficient counts",
+                )?);
             }
         }
 

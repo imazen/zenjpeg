@@ -85,20 +85,18 @@ impl<'a> JpegParser<'a> {
                 // baseline. Use fallible allocation so an OOM here cannot panic
                 // after the parallel try_alloc_dct_blocks above succeeded with
                 // lazy-committed pages.
-                self.coeff_counts
-                    .push(crate::foundation::alloc::try_alloc_filled(
-                        num_blocks,
-                        64u8,
-                        "allocating progressive coefficient counts",
-                    )?);
+                self.coeff_counts.push(crate::foundation::alloc::try_alloc_filled(
+                    num_blocks,
+                    64u8,
+                    "allocating progressive coefficient counts",
+                )?);
                 // Nonzero bitmap: all zeros initially (no coefficients placed yet).
                 // Use fallible allocation for the same reason.
-                self.nonzero_bitmaps
-                    .push(crate::foundation::alloc::try_alloc_filled(
-                        num_blocks,
-                        0u64,
-                        "allocating progressive nonzero bitmaps",
-                    )?);
+                self.nonzero_bitmaps.push(crate::foundation::alloc::try_alloc_filled(
+                    num_blocks,
+                    0u64,
+                    "allocating progressive nonzero bitmaps",
+                )?);
             }
         }
 
