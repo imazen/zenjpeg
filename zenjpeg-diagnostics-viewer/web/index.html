@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>zenjpeg diagnostics viewer</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="min-h-screen text-text">
+    <header class="px-6 py-3 border-b border-line flex items-baseline gap-6">
+      <h1 class="text-base font-semibold m-0">zenjpeg diagnostics viewer</h1>
+      <p class="m-0 text-xs text-muted font-mono" id="status" data-testid="status">
+        Initializing…
+      </p>
+      <div class="ml-auto flex items-center gap-3">
+        <label class="flex items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            id="auto-encode"
+            checked
+            data-testid="auto-encode-toggle"
+          />
+          <span>Auto-encode (debounced)</span>
+        </label>
+        <button
+          id="encode"
+          type="button"
+          data-testid="encode-button"
+          class="px-3 py-1.5 text-xs font-semibold rounded bg-accent text-bg hover:brightness-110"
+        >
+          Encode now
+        </button>
+        <button
+          id="cancel"
+          type="button"
+          data-testid="cancel-button"
+          class="px-3 py-1.5 text-xs font-semibold rounded bg-panel-2 text-text border border-line hover:bg-panel"
+          disabled
+        >
+          Cancel
+        </button>
+      </div>
+    </header>
+
+    <!-- Image source bar -->
+    <section class="px-6 py-2 border-b border-line bg-panel flex flex-wrap gap-4 items-center text-sm">
+      <label class="flex items-center gap-2 text-muted">
+        <span class="text-xs uppercase tracking-wider">Image</span>
+        <select id="image-pick" data-testid="image-pick" class="min-w-[280px]">
+          <option value="__synthetic__" selected>Synthetic 64×64</option>
+        </select>
+      </label>
+      <label class="flex items-center gap-2 text-muted relative">
+        <input
+          type="file"
+          id="image-input"
+          accept="image/*"
+          data-testid="image-input"
+          class="absolute w-0 h-0 opacity-0"
+        />
+        <span class="px-2.5 py-1 rounded bg-panel-2 border border-line cursor-pointer hover:bg-bg">
+          Or upload…
+        </span>
+      </label>
+      <button
+        id="reset"
+        type="button"
+        data-testid="reset-button"
+        class="px-3 py-1.5 text-xs font-semibold rounded bg-panel-2 text-text border border-line hover:bg-bg"
+      >
+        Reset to synthetic
+      </button>
+      <span id="image-info" class="ml-auto text-xs text-muted font-mono">
+        — × —
+      </span>
+    </section>
+
+    <!-- BIG RESULTS PANEL -->
+    <section
+      class="px-6 py-4 bg-panel border-b border-line flex flex-wrap gap-3 items-stretch relative"
+      aria-label="Encode results"
+      id="results-panel"
+    >
+      <!-- Encoding overlay: shown during in-flight encode -->
+      <div
+        id="encode-overlay"
+        data-testid="encode-overlay"
+        class="encode-overlay"
+        hidden
+      >
+        <div class="encode-overlay-inner">
+          <span class="encode-overlay-spinner" aria-hidden="true"></span>
+          <span class="encode-overlay-label">ENCODING</span>
+          <span class="encode-overlay-detail" id="encode-overlay-detail">…</span>
+        </div>
+      </div>
+      <div class="metric-readout" data-testid="metric-bytes">
+        <span class="label">Bytes</span>
+        <span class="value" id="m-bytes">—</span>
+        <span class="unit" id="m-bpp">—</span>
+      </div>
+      <div class="metric-readout" data-testid="metric-mode">
+        <span class="label">Mode</span>
+        <span class="value text-2xl!" id="m-mode" style="font-size: 22px">—</span>
+        <span class="unit" id="m-mode-detail">—</span>
+      </div>
+      <div class="metric-readout" data-testid="metric-ssim2">
+        <span class="label">SSIMULACRA 2</span>
+        <span class="value" id="m-ssim2">—</span>
+        <span class="unit">100 = identical</span>
+      </div>
+      <div class="metric-readout" data-testid="metric-zensim">
+        <span class="label">zensim</span>
+        <span class="value" id="m-zensim">—</span>
+        <span class="unit">100 = identical</span>
+      </div>
+      <div class="metric-readout" data-testid="metric-pareto">
+        <span class="label">Δ vs reference</span>
+        <span class="value" id="m-pareto">—</span>
+        <span class="unit">+ above ref curve · − below</span>
+      </div>
+      <div class="metric-readout" data-testid="metric-time">
+        <span class="label">Encode</span>
+        <span class="value" id="m-time">—</span>
+        <span class="unit">ms</span>
+      </div>
+    </section>
+
+    <!-- Image triptych — click any canvas to open the zoom inspector -->
+    <section
+      class="px-6 py-4 grid grid-cols-3 gap-4 border-b border-line"
+      aria-label="Source / encoded / delta"
+    >
+      <figure class="m-0 flex flex-col">
+        <figcaption class="text-xs text-muted font-mono mb-1 flex justify-between items-center">
+          <span>Source</span>
+          <span class="text-[10px] opacity-60">click to zoom</span>
+        </figcaption>
+        <canvas
+          id="source-canvas"
+          data-testid="source-canvas"
+          class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
+          data-zoom-source="source"
+        ></canvas>
+      </figure>
+      <figure class="m-0 flex flex-col">
+        <figcaption class="text-xs text-muted font-mono mb-1 flex justify-between items-center">
+          <span>Encoded</span>
+          <span class="text-[10px] opacity-60">click to zoom</span>
+        </figcaption>
+        <canvas
+          id="encoded-canvas"
+          data-testid="encoded-canvas"
+          class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
+          data-zoom-source="encoded"
+        ></canvas>
+      </figure>
+      <figure class="m-0 flex flex-col">
+        <figcaption class="text-xs text-muted font-mono mb-1 flex justify-between items-center">
+          <span>|delta| (×8)</span>
+          <span class="text-[10px] opacity-60">click to zoom</span>
+        </figcaption>
+        <canvas
+          id="delta-canvas"
+          data-testid="delta-canvas"
+          class="w-full h-auto bg-black border border-line rounded cursor-zoom-in"
+          data-zoom-source="delta"
+        ></canvas>
+      </figure>
+    </section>
+
+    <!-- Zoom inspector modal -->
+    <div
+      id="zoom-modal"
+      class="zoom-modal"
+      data-testid="zoom-modal"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-label="Pixel zoom inspector"
+    >
+      <div class="zoom-modal-bar">
+        <span class="zoom-modal-title">Pixel zoom inspector</span>
+        <span class="zoom-modal-coords" id="zoom-coords">—</span>
+        <span class="zoom-modal-scale" id="zoom-scale">×4</span>
+        <span class="zoom-modal-hint">drag to pan · wheel to zoom · 1-9 to set scale · esc to close</span>
+        <button type="button" id="zoom-close" data-testid="zoom-close" class="zoom-modal-close">
+          ✕
+        </button>
+      </div>
+      <div class="zoom-modal-grid">
+        <figure class="zoom-pane">
+          <figcaption>Source</figcaption>
+          <canvas id="zoom-source" data-testid="zoom-source"></canvas>
+        </figure>
+        <figure class="zoom-pane">
+          <figcaption>Encoded</figcaption>
+          <canvas id="zoom-encoded" data-testid="zoom-encoded"></canvas>
+        </figure>
+        <figure class="zoom-pane">
+          <figcaption>|delta| (×8)</figcaption>
+          <canvas id="zoom-delta" data-testid="zoom-delta"></canvas>
+        </figure>
+      </div>
+    </div>
+
+    <!-- AQ + RD row -->
+    <section
+      class="px-6 py-4 grid grid-cols-1 lg:grid-cols-2 gap-6 border-b border-line"
+    >
+      <div class="bg-panel border border-line rounded p-3">
+        <h2 class="text-sm m-0 mb-2 text-accent font-semibold">
+          AQ multiplier per Y/X block
+        </h2>
+        <div class="flex gap-3 items-start">
+          <canvas
+            id="aq-canvas"
+            data-testid="aq-canvas"
+            class="bg-black rounded max-w-[480px] w-full h-auto"
+          ></canvas>
+          <dl
+            class="m-0 grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-xs font-mono"
+            id="aq-stats"
+          >
+            <dt class="text-muted">min</dt>
+            <dd class="m-0" id="aq-min">—</dd>
+            <dt class="text-muted">max</dt>
+            <dd class="m-0" id="aq-max">—</dd>
+            <dt class="text-muted">mean</dt>
+            <dd class="m-0" id="aq-mean">—</dd>
+            <dt class="text-muted">channel</dt>
+            <dd class="m-0" id="aq-channel">—</dd>
+          </dl>
+        </div>
+        <p class="m-0 mt-2 text-xs text-muted">
+          Smaller AQ multiplier → finer quantization (more bits spent).
+          Map is computed on the AQ source channel (Y for YCbCr, Y-XYB
+          for XYB) and applied to the lead component (Y or X).
+        </p>
+      </div>
+      <div class="bg-panel border border-line rounded p-3">
+        <h2 class="text-sm m-0 mb-2 text-accent font-semibold">
+          Reference RD curve
+        </h2>
+        <canvas
+          id="rd-canvas"
+          data-testid="rd-canvas"
+          width="640"
+          height="280"
+          class="bg-black rounded w-full h-auto"
+        ></canvas>
+        <p class="m-0 mt-2 text-xs text-muted">
+          White polyline = reference encode (default tables, AQ on,
+          4:2:0, q=1..100). Blue dot = current encode.
+          <strong>This is a single-config q-sweep, not a true
+          rate-distortion pareto envelope</strong> — a real pareto
+          would also vary subsampling, mode, and other knobs to find
+          the upper-left frontier. The Δ vs reference number says how
+          far the current encode lands above (positive) or below
+          (negative) the reference at its byte count.
+        </p>
+      </div>
+    </section>
+
+    <!-- Controls panel (tabs) -->
+    <nav
+      class="tabs flex gap-1 px-6 bg-bg border-b border-line overflow-x-auto"
+      role="tablist"
+      aria-label="Encoder controls"
+    >
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="quality"
+        aria-selected="true"
+        data-testid="tab-quality"
+      >
+        Quality &amp; Chroma
+      </button>
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="aq"
+        aria-selected="false"
+        data-testid="tab-aq"
+      >
+        AQ &amp; Mode
+      </button>
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="trellis"
+        aria-selected="false"
+        data-testid="tab-trellis"
+      >
+        Trellis
+      </button>
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="hybrid"
+        aria-selected="false"
+        data-testid="tab-hybrid"
+      >
+        Hybrid
+      </button>
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="quant"
+        aria-selected="false"
+        data-testid="tab-quant"
+      >
+        Quant tables
+      </button>
+      <button
+        role="tab"
+        type="button"
+        class="tab text-xs font-medium px-4 py-2.5 whitespace-nowrap"
+        data-tab="misc"
+        aria-selected="false"
+        data-testid="tab-misc"
+      >
+        Misc
+      </button>
+    </nav>
+
+    <section class="bg-panel border-b border-line" id="tab-panels">
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="quality"
+        aria-hidden="false"
+        data-testid="panel-quality"
+      >
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted min-w-[180px]">
+          <span class="uppercase tracking-wider text-[10px]">Quality</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="range"
+              id="quality"
+              min="0"
+              max="100"
+              step="1"
+              value="85"
+              data-testid="quality-slider"
+              class="flex-1"
+            />
+            <output id="quality-out" data-testid="quality-out" class="w-8 text-right text-text">85</output>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Color path</span>
+          <select id="color-path" data-testid="color-path-select">
+            <option value="ycbcr" selected>YCbCr</option>
+            <option value="xyb">XYB</option>
+          </select>
+        </label>
+        <label
+          class="ctrl flex flex-col gap-1 text-xs text-muted"
+          data-controls-for="ycbcr"
+          id="subsampling-label"
+        >
+          <span class="uppercase tracking-wider text-[10px]">Subsampling</span>
+          <select id="subsampling" data-testid="subsampling-select">
+            <option value="none" selected>4:4:4 (none)</option>
+            <option value="halfHorizontal">4:2:2 (half horizontal)</option>
+            <option value="quarter">4:2:0 (quarter)</option>
+            <option value="halfVertical">4:4:0 (half vertical)</option>
+          </select>
+        </label>
+        <label
+          class="ctrl flex flex-col gap-1 text-xs text-muted"
+          data-controls-for="xyb"
+          id="xyb-subsampling-label"
+          hidden
+        >
+          <span class="uppercase tracking-wider text-[10px]">XYB B chroma</span>
+          <select id="xyb-subsampling" data-testid="xyb-subsampling-select">
+            <option value="full" selected>Full</option>
+            <option value="bQuarter">B Quarter</option>
+          </select>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">
+            Sharp YUV
+            <span class="ignored-note ml-2" data-when="sharp-yuv-ignored"></span>
+          </span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="sharp-yuv" data-testid="sharp-yuv-checkbox" />
+            <span class="text-text">Gamma-aware downsample</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Pre-blur σ (px)</span>
+          <input
+            type="number"
+            id="pre-blur"
+            min="0"
+            max="3"
+            step="0.05"
+            value="0"
+            data-testid="pre-blur"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Chroma distance scale</span>
+          <input
+            type="number"
+            id="chroma-dist-scale"
+            min="0.1"
+            max="10"
+            step="0.05"
+            value="1"
+            data-testid="chroma-dist-scale"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Progressive scan</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="progressive"
+              data-testid="progressive-checkbox"
+              checked
+            />
+            <span class="text-text">Multi-pass scans (smaller files at high q)</span>
+          </span>
+        </label>
+      </article>
+
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="aq"
+        aria-hidden="true"
+        data-testid="panel-aq"
+        hidden
+      >
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Adaptive quantization</span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="aq-enabled" checked data-testid="aq-checkbox" />
+            <span class="text-text">Enable AQ</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Deringing</span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="deringing" checked data-testid="deringing-checkbox" />
+            <span class="text-text">Enable</span>
+          </span>
+        </label>
+        <fieldset
+          class="border border-line rounded px-3 py-2 flex flex-col gap-1 m-0"
+          data-testid="mode-radio-group"
+        >
+          <legend class="px-1 text-[10px] uppercase tracking-wider text-muted">
+            Encoder mode
+          </legend>
+          <label class="flex items-center gap-2 text-xs text-text">
+            <input type="radio" name="mode" value="baseline" checked data-testid="mode-baseline" />
+            Adaptive Quantization
+            <span class="text-muted text-[10px]">(per-block AQ multiplier; no trellis RD)</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text">
+            <input type="radio" name="mode" value="trellis" data-testid="mode-trellis" />
+            Trellis <span class="text-muted text-[10px]">(explicit RD optimization)</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text">
+            <input type="radio" name="mode" value="hybrid" data-testid="mode-hybrid" />
+            Hybrid <span class="text-muted text-[10px]">(AQ-aware trellis)</span>
+          </label>
+        </fieldset>
+      </article>
+
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="trellis"
+        aria-hidden="true"
+        data-testid="panel-trellis"
+        hidden
+      >
+        <p class="ignored-note basis-full" data-when="trellis-ignored">
+          Trellis applies only when <strong>Mode = Trellis</strong>.
+          Pick it on the AQ &amp; Mode tab.
+        </p>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">DC trellis</span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="trellis-dc" data-testid="trellis-dc-checkbox" />
+            <span class="text-text">Enable DC trellis</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">λ log-scale 1 (rate)</span>
+          <input
+            type="number"
+            id="trellis-lambda1"
+            min="0"
+            max="40"
+            step="0.05"
+            value="14.75"
+            data-testid="trellis-lambda1"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">λ log-scale 2 (distortion)</span>
+          <input
+            type="number"
+            id="trellis-lambda2"
+            min="0"
+            max="40"
+            step="0.05"
+            value="16.5"
+            data-testid="trellis-lambda2"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Speed</span>
+          <select id="trellis-speed" data-testid="trellis-speed-select">
+            <option value="thorough">Thorough</option>
+            <option value="balanced" selected>Balanced (adaptive)</option>
+            <option value="fast">Fast (level 8)</option>
+          </select>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">ΔDC weight</span>
+          <input
+            type="number"
+            id="trellis-delta-dc"
+            min="0"
+            max="10"
+            step="0.05"
+            value="0"
+            data-testid="trellis-delta-dc"
+            class="w-24"
+          />
+        </label>
+      </article>
+
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="hybrid"
+        aria-hidden="true"
+        data-testid="panel-hybrid"
+        hidden
+      >
+        <p class="ignored-note basis-full" data-when="hybrid-ignored">
+          Hybrid applies only when <strong>Mode = Hybrid</strong>.
+          Pick it on the AQ &amp; Mode tab.
+        </p>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">AQ → λ scale</span>
+          <input
+            type="number"
+            id="hybrid-aq-lambda-scale"
+            min="0"
+            max="10"
+            step="0.05"
+            value="2"
+            data-testid="hybrid-aq-lambda-scale"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Base λ scale 1</span>
+          <input
+            type="number"
+            id="hybrid-base-lambda1"
+            min="0"
+            max="40"
+            step="0.05"
+            value="14.75"
+            data-testid="hybrid-base-lambda1"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Base λ scale 2</span>
+          <input
+            type="number"
+            id="hybrid-base-lambda2"
+            min="0"
+            max="40"
+            step="0.05"
+            value="16.5"
+            data-testid="hybrid-base-lambda2"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">DC trellis (hybrid)</span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="hybrid-dc" data-testid="hybrid-dc-checkbox" />
+            <span class="text-text">Enable</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">AQ exponent</span>
+          <input
+            type="number"
+            id="hybrid-aq-exp"
+            min="0"
+            max="3"
+            step="0.05"
+            value="1"
+            data-testid="hybrid-aq-exp"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">AQ threshold</span>
+          <input
+            type="number"
+            id="hybrid-aq-threshold"
+            min="0"
+            max="3"
+            step="0.05"
+            value="0"
+            data-testid="hybrid-aq-threshold"
+            class="w-24"
+          />
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Quality-adaptive λ</span>
+          <span class="flex items-center gap-2">
+            <input type="checkbox" id="hybrid-q-adapt" checked data-testid="hybrid-q-adapt-checkbox" />
+            <span class="text-text">Enable</span>
+          </span>
+        </label>
+      </article>
+
+      <article
+        class="tab-panel flex flex-col gap-3 px-6 py-4"
+        data-tab="quant"
+        aria-hidden="true"
+        data-testid="panel-quant"
+        hidden
+      >
+        <div class="flex flex-col gap-1">
+          <p class="text-xs text-muted m-0">
+            Per-component <strong>f32</strong> quant tables (encoder
+            uses these as final values when custom tables are present
+            — <code>ScalingParams::Exact</code>). The 8-band sliders
+            (h_eq, v_eq) drive a separable multiplier; curve presets
+            jump to common shapes; click any cell to edit the float
+            directly. Values are sent as
+            <code>customQuantTables</code>.
+          </p>
+          <p
+            class="text-xs m-0"
+            id="quant-mode-banner"
+            data-testid="quant-mode-banner"
+          ></p>
+        </div>
+        <div class="flex flex-wrap gap-x-6 gap-y-3 items-end">
+          <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+            <span class="uppercase tracking-wider text-[10px]">
+              Q-scale (uniform) <output id="curve-qscale-out">1.00</output>
+            </span>
+            <input
+              type="range"
+              id="curve-qscale"
+              min="0.25"
+              max="4"
+              step="0.05"
+              value="1"
+              data-testid="curve-qscale"
+            />
+          </label>
+          <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+            <span class="uppercase tracking-wider text-[10px]">
+              Frequency tilt (HF emphasis) <output id="curve-tilt-out">+0.00</output>
+            </span>
+            <input
+              type="range"
+              id="curve-tilt"
+              min="-1"
+              max="1"
+              step="0.02"
+              value="0"
+              data-testid="curve-tilt"
+            />
+          </label>
+          <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+            <span class="uppercase tracking-wider text-[10px]">
+              H/V emphasis (H − V) <output id="curve-hv-out">+0.00</output>
+            </span>
+            <input
+              type="range"
+              id="curve-hv"
+              min="-1"
+              max="1"
+              step="0.02"
+              value="0"
+              data-testid="curve-hv"
+            />
+          </label>
+          <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+            <span class="uppercase tracking-wider text-[10px]">Preset</span>
+            <select id="curve-preset" data-testid="curve-preset">
+              <option value="jfif" selected>JFIF default</option>
+              <option value="hf-boost">HF-boost</option>
+              <option value="lf-keep">LF-keep</option>
+              <option value="flat">Flat</option>
+            </select>
+          </label>
+          <button
+            id="curve-reset"
+            type="button"
+            data-testid="curve-reset-all"
+            class="px-3 py-1.5 text-xs font-semibold rounded bg-panel-2 text-text border border-line hover:bg-bg"
+          >
+            Reset all components
+          </button>
+        </div>
+
+        <!-- Zero-bias controls (separate from quant tables — these are
+             the per-frequency dead-zone parameters and the per-component
+             DC/AC offsets that control rounding behavior near zero). -->
+        <details class="border border-line rounded p-3 bg-panel-2" open>
+          <summary class="text-xs font-semibold text-accent cursor-pointer">
+            Zero-bias (dead-zone) parameters
+          </summary>
+          <p class="text-xs text-muted mt-2 mb-2">
+            Coefficient with abs value below
+            <code>zero_bias_mul[k] · quant[k]</code> snaps to zero.
+            Higher mul = more aggressive zeroing. DC/AC offsets shift
+            the dead-zone center.
+          </p>
+          <div class="grid grid-cols-3 gap-3">
+            <div class="flex flex-col gap-2">
+              <span class="text-[10px] uppercase tracking-wider text-muted">Y / X</span>
+              <label class="text-xs text-muted flex flex-col gap-1">
+                Global mul
+                <span class="flex items-center gap-2">
+                  <input
+                    type="range"
+                    id="zb-mul-0"
+                    min="0.0"
+                    max="3.0"
+                    step="0.05"
+                    value="1"
+                    data-testid="zb-mul-0"
+                    class="flex-1"
+                  />
+                  <output id="zb-mul-0-out" class="text-text">1.00</output>
+                </span>
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                DC offset
+                <input
+                  type="number"
+                  id="zb-dc-0"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-dc-0"
+                  class="w-20"
+                />
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                AC offset
+                <input
+                  type="number"
+                  id="zb-ac-0"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-ac-0"
+                  class="w-20"
+                />
+              </label>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="text-[10px] uppercase tracking-wider text-muted">Cb / Y-XYB</span>
+              <label class="text-xs text-muted flex flex-col gap-1">
+                Global mul
+                <span class="flex items-center gap-2">
+                  <input
+                    type="range"
+                    id="zb-mul-1"
+                    min="0.0"
+                    max="3.0"
+                    step="0.05"
+                    value="1"
+                    data-testid="zb-mul-1"
+                    class="flex-1"
+                  />
+                  <output id="zb-mul-1-out" class="text-text">1.00</output>
+                </span>
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                DC offset
+                <input
+                  type="number"
+                  id="zb-dc-1"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-dc-1"
+                  class="w-20"
+                />
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                AC offset
+                <input
+                  type="number"
+                  id="zb-ac-1"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-ac-1"
+                  class="w-20"
+                />
+              </label>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="text-[10px] uppercase tracking-wider text-muted">Cr / B</span>
+              <label class="text-xs text-muted flex flex-col gap-1">
+                Global mul
+                <span class="flex items-center gap-2">
+                  <input
+                    type="range"
+                    id="zb-mul-2"
+                    min="0.0"
+                    max="3.0"
+                    step="0.05"
+                    value="1"
+                    data-testid="zb-mul-2"
+                    class="flex-1"
+                  />
+                  <output id="zb-mul-2-out" class="text-text">1.00</output>
+                </span>
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                DC offset
+                <input
+                  type="number"
+                  id="zb-dc-2"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-dc-2"
+                  class="w-20"
+                />
+              </label>
+              <label class="text-xs text-muted flex items-center gap-2">
+                AC offset
+                <input
+                  type="number"
+                  id="zb-ac-2"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  data-testid="zb-ac-2"
+                  class="w-20"
+                />
+              </label>
+            </div>
+          </div>
+          <button
+            id="zb-reset"
+            type="button"
+            data-testid="zb-reset"
+            class="mt-2 px-3 py-1 text-xs rounded bg-panel border border-line text-muted hover:text-text"
+          >
+            Reset zero-bias to defaults
+          </button>
+        </details>
+
+        <!-- Per-component editors -->
+        <div class="component-grid flex flex-col gap-4">
+          <article
+            class="component bg-panel-2 border border-line rounded p-3"
+            data-component="0"
+            id="component-0"
+          >
+            <header class="flex items-baseline gap-3 mb-2">
+              <h2 class="text-sm m-0 text-accent font-semibold">
+                Component 0 (Y/X)
+              </h2>
+              <p
+                class="m-0 text-xs text-muted font-mono"
+                data-testid="comp-0-grid-info"
+              ></p>
+            </header>
+            <div
+              class="grid gap-6 items-start"
+              style="grid-template-columns: minmax(280px, 1fr) minmax(220px, 1fr) minmax(200px, 1fr)"
+            >
+              <div class="grid grid-cols-[auto_auto] gap-1 items-center">
+                <h3 class="col-span-2 text-xs m-0 text-text font-semibold">
+                  Quant table (base × h_eq × v_eq, click to edit)
+                </h3>
+                <div class="quant-grid" data-testid="comp-0-quant-grid"></div>
+                <div class="flex flex-col items-center gap-1">
+                  <span class="text-[11px] text-muted font-mono">v_eq</span>
+                  <div class="eq-sliders vertical" data-testid="comp-0-v-eq"></div>
+                </div>
+                <div class="flex items-center gap-1 col-start-1">
+                  <span class="text-[11px] text-muted font-mono">h_eq</span>
+                  <div class="eq-sliders horizontal" data-testid="comp-0-h-eq"></div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="comp-0-reset-eq"
+                  class="col-start-1 mt-1 px-2 py-1 text-[11px] rounded border border-line bg-panel hover:bg-bg justify-self-start"
+                >
+                  Reset EQ
+                </button>
+              </div>
+              <div>
+                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
+                  Coefficient utilization
+                </h3>
+                <canvas
+                  data-testid="comp-0-utilization"
+                  class="block w-[200px] h-[200px] bg-black rounded"
+                ></canvas>
+                <p class="m-0 mt-1 text-xs text-muted">
+                  Mean |coef_pre_quant| / effective_quant per coefficient
+                  position (natural order; DC top-left).
+                </p>
+              </div>
+              <div>
+                <h3 class="text-xs m-0 mb-1 text-text font-semibold">
+                  Byte budget
+                </h3>
+                <p class="m-0 text-sm font-mono">
+                  <span data-testid="comp-0-zero-rate">--</span>%
+                  <span class="text-muted">of coefs zero out</span>
+                </p>
+                <p class="m-0 mt-2 text-xs text-muted">
+                  Re-applying the user-adjusted table to this
+                  component's pre-quant coefficients. Updates live as
+                  you drag.
+                </p>
+              </div>
+            </div>
+          </article>
+        </div>
+      </article>
+
+      <article
+        class="tab-panel flex flex-wrap gap-x-6 gap-y-3 px-6 py-4"
+        data-tab="misc"
+        aria-hidden="true"
+        data-testid="panel-misc"
+        hidden
+      >
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Optimize Huffman tables</span>
+          <span class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="optimize-huffman"
+              checked
+              data-testid="optimize-huffman-checkbox"
+            />
+            <span class="text-text">Enable</span>
+          </span>
+        </label>
+        <label class="ctrl flex flex-col gap-1 text-xs text-muted">
+          <span class="uppercase tracking-wider text-[10px]">Restart MCU rows</span>
+          <input
+            type="number"
+            id="restart-mcu-rows"
+            min="0"
+            max="65535"
+            step="1"
+            value="0"
+            data-testid="restart-mcu-rows"
+            class="w-24"
+          />
+          <span class="text-[10px] text-muted">0 disables restart markers</span>
+        </label>
+      </article>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

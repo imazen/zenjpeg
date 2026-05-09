@@ -217,6 +217,12 @@ impl BytesEncoder {
             }
         }
 
+        // UNSTABLE diagnostics capture (gated; default: off, no behavior change).
+        #[cfg(feature = "__diagnostics")]
+        {
+            builder = builder.diagnostics(config.diagnostics_enabled);
+        }
+
         builder.start()
     }
 
@@ -407,6 +413,26 @@ impl BytesEncoder {
         let mut output = Vec::new();
         self.finish_into(&mut output)?;
         Ok(output)
+    }
+
+    /// Finish encoding and return both the JPEG bytes and the captured
+    /// per-block diagnostics record. Returns `(bytes, Some(diag))` when
+    /// `with_diagnostics(true)` was set on the source `EncoderConfig`,
+    /// `(bytes, None)` otherwise. UNSTABLE — gated behind the
+    /// `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub fn finish_with_diagnostics(
+        self,
+    ) -> Result<(
+        Vec<u8>,
+        Option<crate::encode::diagnostics::EncodeDiagnostics>,
+    )> {
+        use enough::Unstoppable;
+        let mut output = Vec::new();
+        let mut diag: Option<crate::encode::diagnostics::EncodeDiagnostics> = None;
+        self.inner
+            .finish_into_with_stop_and_diagnostics(&mut output, Unstoppable, &mut diag)?;
+        Ok((output, diag))
     }
 
     /// Finish encoding, writing directly to the provided buffer.
@@ -1016,6 +1042,23 @@ impl<P: Pixel> RgbEncoder<P> {
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
     }
+
+    /// Finish encoding and return both the JPEG bytes and the captured
+    /// diagnostics record.
+    ///
+    /// Returns `Ok((bytes, Some(diag)))` when `with_diagnostics(true)`
+    /// was set on the source `EncoderConfig`; otherwise returns
+    /// `Ok((bytes, None))`. UNSTABLE — gated behind the
+    /// `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub fn finish_with_diagnostics(
+        self,
+    ) -> Result<(
+        Vec<u8>,
+        Option<crate::encode::diagnostics::EncodeDiagnostics>,
+    )> {
+        self.inner.finish_with_diagnostics()
+    }
 }
 
 /// Encoder for planar f32 YCbCr input.
@@ -1209,6 +1252,12 @@ impl YCbCrPlanarEncoder {
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             builder = builder.parallel(true);
+        }
+
+        // UNSTABLE diagnostics capture (gated; default: off, no behavior change).
+        #[cfg(feature = "__diagnostics")]
+        {
+            builder = builder.diagnostics(config.diagnostics_enabled);
         }
 
         builder.start()

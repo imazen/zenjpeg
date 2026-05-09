@@ -1,0 +1,114 @@
+# CLAUDE.md — zenjpeg-diagnostics-viewer
+
+Rules for Claude Code / agent sessions working in this directory.
+**Read [README.md](README.md) first** — that's the comprehensive
+handoff. This file is just the rules you must not break.
+
+## Hard rules
+
+### Source-image discipline
+
+- **PNG sources only in the picker corpus.** No JPEG, no WebP, no
+  AVIF. Lossy sources cause generation-loss confusion that defeats
+  the whole tool. JPEG/WebP demos were removed; do not re-add.
+- **All resampling is BUILD-TIME, never browser-side.** The 8×
+  lanczos3 wash lives in `web/scripts/fetch-images.ts` via sharp.
+  Do NOT reach for `canvas.drawImage` with smoothing to "wash"
+  pixels at runtime — browser kernels are
+  implementation-defined and unsuitable for compression research.
+- **Lossy uploads pass through unwashed with a warning.** If the
+  user uploads a JPEG, surface the `⚠ lossy source` status-line
+  warning. Do not silently re-process.
+
+### State / quant-table editor
+
+- **Never put `eqStates.clear()` in the encode path.** It used to
+  be at the top of `runEncode`, which wiped slider state on every
+  encode. The editor only persists state across encodes if the
+  encoder loop leaves it alone. Reset is explicit (per-component
+  "Reset EQ" buttons or the Quant tab's "Reset all components").
+- **Read base quant tables from `baseSnapshot`, never from live
+  diagnostics.** The diagnostics struct returns the *current*
+  table, which after a custom-tables encode reflects user
+  modifications. Reading from there and applying user multipliers
+  on top creates a compounding mistake — Q-scale 0.5 once → halved,
+  Q-scale 0.5 again → quartered. The snapshot pins a stable base
+  captured from no-custom encodes only.
+- **`buildCustomQuantTables` returns null when nothing differs from
+  defaults.** Don't ship `customQuantTables` containing the
+  encoder's own defaults — it forces `ScalingParams::Exact` for no
+  benefit.
+
+### Wasm side
+
+- **`ScalingParams::Exact` when shipping custom quant tables.**
+  Default `Scaled` re-multiplies by `distance_to_scale ×
+  global_scale`. Pass user f32 expecting them to be final, leave
+  scaling on default → exploding values.
+- **`PerComponent` fields are `c0/c1/c2`.** Type aliases
+  (`y_or_x`/etc.) are NOT field names. Compile errors come fast if
+  you forget, but failing tests with confusing values come slow.
+- **`TrellisSpeedMode` has no `Fast` variant.** Variants are
+  `Thorough`, `Adaptive`, `Level(u8)`. Map JS "fast" → `Level(8)`.
+- **`fast-ssim2` and `zensim` MUST disable default features for
+  wasm.** rayon and avx512 don't compile to wasm32. Always
+  `default-features = false`.
+- **Pick `default_xyb` vs `default_ycbcr` based on `colorPath`.**
+
+### Build / CI
+
+- **CI Pages workflow MUST run `npm run build`.** NOT `npx vite
+  build`. The `prebuild` hook bakes images. Without it, the
+  deployed page hits R2 CORS errors.
+- **Two `image-list.json` files, kept in sync.** `web/scripts/` is
+  read by the prebuild script; `web/src/` is bundled into JS. Both
+  matter. If you change one, change the other.
+- **`npm run` always, never bare `vite`.** `predev` and `prebuild`
+  hooks are npm-script lifecycle features. Bypass them and the
+  picker dropdown is empty at runtime.
+- **`wasm-pack build` after wasm changes.** `cargo build` alone
+  doesn't regenerate JS bindings. The `just diagnostics-wasm`
+  target wraps it.
+
+### UI / naming
+
+- **Mode picker visible label is "Adaptive Quantization"; wire
+  value stays `"baseline"`.** Don't rename the value — `mode-baseline`
+  is the Playwright `data-testid` and the wasm fall-through default.
+- **Don't call the curve "Pareto".** It's a single-config q-sweep,
+  not the upper-left envelope. UI labels are "Reference RD" / "Δ
+  vs reference". Until someone implements a multi-config sweep,
+  keep the language honest.
+- **Tab `data-testid` attributes are stable contracts** for
+  `tests/viewer.spec.ts`. Don't rename them when you change visible
+  labels.
+
+## Workflow notes
+
+- `.workongoing` marker file goes at the *workspace root* (where
+  `.jj` lives), not inside this subdir. Refresh it every couple of
+  minutes per the global CLAUDE.md.
+- `jj describe` updates the working-copy commit's message;
+  successive describes don't create new commits, they amend. Use
+  `jj new` if you want a fresh commit on top.
+- Pushing: `jj git push --bookmark diagnostics`. Never push to
+  `main` from here without explicit user direction — this is a
+  feature branch.
+- The diagnostics workspace is colocated with the main zenjpeg jj
+  repo (workspace `diagnostics`). `jj workspace list` shows them
+  all.
+
+## Files you'll edit most often
+
+- `web/src/main.ts` — UI controller. Long but linear.
+- `web/index.html` — DOM. Tabs, controls, modals.
+- `web/src/styles.css` — `@theme` + carve-outs.
+- `wasm/src/lib.rs` — encoder dispatch + score exports.
+- `web/scripts/fetch-images.ts` — build-time fetch + wash.
+
+## Files you should rarely touch without good reason
+
+- `web/wasm-pkg/*` — generated by wasm-pack. Don't hand-edit.
+- `web/public/images/*` — generated by the prebuild hook.
+  Gitignored.
+- `web/src/heatmap.ts`, `web/src/synthetic.ts` — small, stable.

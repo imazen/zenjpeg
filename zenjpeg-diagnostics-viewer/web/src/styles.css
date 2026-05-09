@@ -1,0 +1,359 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0e1117;
+  --color-panel: #161b22;
+  --color-panel-2: #1c232c;
+  --color-line: #30363d;
+  --color-text: #c9d1d9;
+  --color-muted: #8b949e;
+  --color-accent: #58a6ff;
+  --color-accent-soft: #1f6feb33;
+  --color-warm: #f0883e;
+  --color-hot: #ff6b6b;
+  --color-cold: #6ec1e4;
+  --color-good: #56d364;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-sans);
+  margin: 0;
+}
+
+/* Range / number input styling — Tailwind doesn't ship these in @theme. */
+input[type="range"] {
+  accent-color: var(--color-accent);
+  background: transparent;
+}
+input[type="number"],
+input[type="text"],
+select {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+  border-color: var(--color-accent);
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+canvas {
+  image-rendering: pixelated;
+}
+
+/* Quant grid cells — preserve fixed grid tile look. */
+.quant-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 1px;
+  background: var(--color-line);
+  padding: 1px;
+  border-radius: 2px;
+  width: 200px;
+  height: 200px;
+}
+.quant-grid > div {
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-text);
+  user-select: none;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.quant-grid > div:hover {
+  background: var(--color-panel-2);
+}
+
+.eq-sliders.horizontal {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: 200px;
+  gap: 1px;
+}
+.eq-sliders.horizontal input {
+  appearance: slider-vertical;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+}
+.eq-sliders.vertical {
+  display: grid;
+  grid-template-rows: repeat(8, 1fr);
+  height: 200px;
+  gap: 1px;
+}
+.eq-sliders.vertical input {
+  width: 36px;
+  margin: 0;
+}
+
+/* Big-readout number block — drives the results panel. */
+.metric-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  background: var(--color-panel-2);
+  border-radius: 6px;
+  border: 1px solid var(--color-line);
+  min-width: 140px;
+}
+.metric-readout .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+}
+.metric-readout .value {
+  font-size: 32px;
+  line-height: 1.1;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.metric-readout .unit {
+  font-size: 12px;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+}
+.metric-readout[data-tone="good"] .value {
+  color: var(--color-good);
+}
+.metric-readout[data-tone="warn"] .value {
+  color: var(--color-warm);
+}
+.metric-readout[data-tone="bad"] .value {
+  color: var(--color-hot);
+}
+
+/* Ignored-knob annotation. */
+.ignored-note {
+  color: var(--color-warm);
+  font-size: 11px;
+  font-style: italic;
+}
+.ignored-note:empty {
+  display: none;
+}
+
+/* Tab styles — kept since the controls panel still uses them. */
+.tab[aria-selected="true"] {
+  color: var(--color-accent);
+  border-bottom: 2px solid var(--color-accent);
+}
+.tab[aria-selected="false"] {
+  color: var(--color-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.ctrl[data-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Encoding overlay: a big translucent banner over the results panel
+ * while a wasm encode is in flight. Auto-encode + slider drags fire
+ * many of these in quick succession, so the overlay is the only
+ * reliable visual cue that the displayed numbers are stale. */
+.encode-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(14, 17, 23, 0.55),
+    rgba(31, 111, 235, 0.18),
+    rgba(14, 17, 23, 0.55)
+  );
+  background-size: 200% 100%;
+  animation: encode-overlay-shimmer 1.6s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  border-radius: 0;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.encode-overlay[hidden] {
+  display: none;
+}
+.encode-overlay-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 24px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  box-shadow: 0 0 32px rgba(88, 166, 255, 0.4);
+}
+.encode-overlay-label {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--color-accent);
+}
+.encode-overlay-detail {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--color-muted);
+}
+.encode-overlay-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: encode-overlay-spin 0.8s linear infinite;
+}
+@keyframes encode-overlay-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes encode-overlay-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+/* Pulsing border on the canvases while encoding. */
+body[data-encoding="true"] #encoded-canvas,
+body[data-encoding="true"] #delta-canvas {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  opacity: 0.7;
+  transition: opacity 0.1s;
+}
+
+/* Zoom inspector modal */
+.zoom-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  flex-direction: column;
+}
+.zoom-modal[hidden] {
+  display: none;
+}
+.zoom-modal-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.zoom-modal-title {
+  font-weight: 600;
+  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.zoom-modal-coords {
+  color: var(--color-muted);
+  min-width: 100px;
+}
+.zoom-modal-scale {
+  color: var(--color-text);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-line);
+  min-width: 50px;
+  text-align: center;
+}
+.zoom-modal-hint {
+  color: var(--color-muted);
+  font-size: 11px;
+  margin-left: auto;
+}
+.zoom-modal-close {
+  background: transparent;
+  color: var(--color-muted);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-family: inherit;
+}
+.zoom-modal-close:hover {
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+.zoom-modal-grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
+}
+.zoom-pane {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.zoom-pane figcaption {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.zoom-pane canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  cursor: grab;
+  image-rendering: pixelated;
+  min-height: 0;
+}
+.zoom-pane canvas:active {
+  cursor: grabbing;
+}

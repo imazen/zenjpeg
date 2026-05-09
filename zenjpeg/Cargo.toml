@@ -211,6 +211,16 @@ __test-utils = []
 __expert = []
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
+# Per-block encode diagnostics for tooling (visualizers, calibration UIs).
+# UNSTABLE — types are `#[doc(hidden)]` and can change between any two
+# patch versions. Captures pre-quant DCT coefficients, post-quant levels,
+# AQ multipliers, entropy bits, AQ field, scan script, and resolved
+# config snapshot during encode. Routes encodes through the strip
+# processor (skips `FusedParallelEncode` even if `parallel` is enabled);
+# diagnostics output may differ from the default fused path by a handful
+# of bytes at quant/AQ boundaries due to ordering. Off in every
+# production build.
+__diagnostics = []
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is

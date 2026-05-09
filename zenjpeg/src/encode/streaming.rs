@@ -123,6 +123,14 @@ impl StreamingEncoder {
         self.processor.set_aq_controller(ctrl);
     }
 
+    // Note: an earlier draft of this surface exposed
+    // `take_diagnostics(&mut self)` directly on `StreamingEncoder` and
+    // `StripProcessor`. The `finish_with_diagnostics` path now threads
+    // the diagnostics record out through an intercept callback in
+    // `finish_into_with_stop_threaded`, so the explicit takers were
+    // dropped to keep the dead-code lint clean under
+    // `--features __diagnostics`.
+
     /// Creates a new streaming encoder builder with the given dimensions.
     ///
     /// Use the builder methods to configure quality, subsampling, etc.
@@ -321,6 +329,15 @@ impl StreamingEncoder {
 
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
+
+        // Wire diagnostics sink (UNSTABLE; gated behind `__diagnostics`).
+        // When enabled, the strip processor allocates an
+        // `EncodeDiagnostics` struct and fills it during encoding.
+        // Retrieve via `take_diagnostics()` after `finish()`.
+        #[cfg(feature = "__diagnostics")]
+        if builder.diagnostics_enabled {
+            processor.enable_diagnostics();
+        }
 
         // Set boundary-RD config (off by default; #91). `None` keeps the
         // refinement module out of the hot path entirely.
@@ -980,9 +997,96 @@ impl StreamingEncoder {
 
     /// Finishes encoding into provided buffer with cancellation support.
     pub(crate) fn finish_into_with_stop(
+        self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<()> {
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.finish_into_with_stop_and_diagnostics(output, stop, &mut None)
+        }
+        #[cfg(not(feature = "__diagnostics"))]
+        {
+            self.finish_into_with_stop_inner(output, stop)
+        }
+    }
+
+    /// `finish_into_with_stop` variant that also captures the per-block
+    /// diagnostics record into the provided sink. The sink is set to
+    /// `Some(diag)` if diagnostics were enabled on this encoder, and
+    /// remains `None` otherwise. UNSTABLE.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn finish_into_with_stop_and_diagnostics(
+        self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+        diagnostics_out: &mut Option<crate::encode::diagnostics::EncodeDiagnostics>,
+    ) -> Result<()> {
+        self.finish_into_with_stop_inner_diag(output, stop, Some(diagnostics_out))
+    }
+
+    // Inner finish dispatcher: routes to the diagnostics-instrumented
+    // body when the `__diagnostics` feature is on, the plain body
+    // otherwise. Marked allow(dead_code) because under
+    // `--features __diagnostics` this wrapper is unused (the diag
+    // path goes via `finish_into_with_stop_and_diagnostics`).
+    #[allow(dead_code)]
+    fn finish_into_with_stop_inner(
+        self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<()> {
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.finish_into_with_stop_inner_diag(output, stop, None)
+        }
+        #[cfg(not(feature = "__diagnostics"))]
+        {
+            self.finish_into_with_stop_impl(output, stop)
+        }
+    }
+
+    /// Inner finish with optional diagnostics sink. When the
+    /// `__diagnostics` feature is enabled, the sink (if provided)
+    /// receives the diagnostics from the strip processor's output.
+    #[cfg(feature = "__diagnostics")]
+    fn finish_into_with_stop_inner_diag(
+        self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+        mut diagnostics_out: Option<
+            &mut Option<crate::encode::diagnostics::EncodeDiagnostics>,
+        >,
+    ) -> Result<()> {
+        // Wrap the existing implementation; intercept the StripProcessorOutput
+        // to extract diagnostics before downstream consumers move it.
+        self.finish_into_with_stop_threaded(output, stop, |strip_output| {
+            if let Some(sink) = diagnostics_out.as_mut() {
+                **sink = strip_output.diagnostics.take();
+            }
+        })
+    }
+
+    #[cfg(not(feature = "__diagnostics"))]
+    fn finish_into_with_stop_impl(
+        self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<()> {
+        self.finish_into_with_stop_threaded(output, stop, |_| {})
+    }
+
+    /// Implementation core: identical to the historic `finish_into_with_stop`
+    /// body, with a callback `intercept` invoked once on the
+    /// `StripProcessorOutput` after `processor.finalize()` and before the
+    /// output is consumed by the entropy encoder. Default callbacks are
+    /// no-ops; the diagnostics path uses the callback to extract its
+    /// captured per-block record.
+    fn finish_into_with_stop_threaded(
         mut self,
         output: &mut Vec<u8>,
         stop: impl Stop,
+        mut intercept: impl FnMut(&mut crate::encode::strip::StripProcessorOutput),
     ) -> Result<()> {
         stop.check()?;
 
@@ -1010,7 +1114,8 @@ impl StreamingEncoder {
             let subsampling = self.config.subsampling;
             let restart_interval = self.config.restart_interval;
 
-            let final_output = self.processor.finalize()?;
+            let mut final_output = self.processor.finalize()?;
+            intercept(&mut final_output);
             if !final_output.y_blocks.is_empty() {
                 crate::entropy::encode_blocks_mcu_order(
                     &final_output.y_blocks,
@@ -1038,7 +1143,8 @@ impl StreamingEncoder {
             let width = self.width;
             let height = self.height;
 
-            let strip_output = self.processor.finalize()?;
+            let mut strip_output = self.processor.finalize()?;
+            intercept(&mut strip_output);
 
             Self::build_jpeg_from_blocks_into(
                 &config,

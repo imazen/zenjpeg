@@ -119,6 +119,17 @@ pub mod request;
 #[cfg(feature = "__expert")]
 pub mod internal_params;
 
+/// Per-block encode diagnostics (`__diagnostics`-gated, UNSTABLE).
+///
+/// Captures pre-quant DCT coefficients, post-quant levels, per-block
+/// AQ multipliers, and entropy bit attribution alongside image-level
+/// state (resolved config, AQ field, scan script). Driven by
+/// visualizer / calibration tooling. See module docs for ordering
+/// conventions and memory cost.
+#[cfg(feature = "__diagnostics")]
+#[doc(hidden)]
+pub mod diagnostics;
+
 /// Default quantization and zero-bias tables for customization.
 ///
 /// This module exposes the internal default tables so users can modify them

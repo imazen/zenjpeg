@@ -596,6 +596,22 @@ pub struct StripProcessor {
     /// arrive in irregular shapes (e.g. zero-length flush at EOI).
     aq_controller: Option<Box<dyn crate::encode::aq_controller::AqController>>,
     aq_controller_imcu_idx: usize,
+
+    /// Per-block encode diagnostics sink (UNSTABLE; gated behind
+    /// `__diagnostics`). When `Some`, the quantize loop captures
+    /// pre-quant DCT, post-quant levels, AQ multiplier, and entropy
+    /// bits into per-component block lists. When `None` (the default
+    /// and the only option in default builds), the encode hot path is
+    /// unchanged.
+    #[cfg(feature = "__diagnostics")]
+    diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
+
+    /// Count of `quantize_prev_pending_imcu` invocations so far. Used
+    /// solely by the diagnostics capture path to map per-iMCU MCU-
+    /// traversal block indices to global raster (row, col) positions
+    /// in the per-component block grid. Incremented by 1 per call.
+    #[cfg(feature = "__diagnostics")]
+    diag_imcu_call_idx: usize,
 }
 
 impl StripProcessor {
@@ -890,6 +906,13 @@ impl StripProcessor {
             // No AQ controller installed by default (#113 PR-A scaffold).
             aq_controller: None,
             aq_controller_imcu_idx: 0,
+
+            // Diagnostics sink starts as `None`; opt-in via
+            // `enable_diagnostics()` (gated behind `__diagnostics`).
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: None,
+            #[cfg(feature = "__diagnostics")]
+            diag_imcu_call_idx: 0,
         })
     }
 
@@ -936,6 +959,8 @@ impl StripProcessor {
             y_dc_raw: core::mem::take(&mut self.y_dc_raw),
             cb_dc_raw: core::mem::take(&mut self.cb_dc_raw),
             cr_dc_raw: core::mem::take(&mut self.cr_dc_raw),
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: None, // mid-encode take; use finalize() for final diagnostics
         }
     }
 
@@ -1019,6 +1044,95 @@ impl StripProcessor {
     pub fn set_hybrid(&mut self, config: crate::encode::trellis::HybridConfig) {
         self.hybrid_ctx = Some(HybridQuantContext::new(config));
     }
+
+    /// Allocate the per-block diagnostics sink and pre-size component
+    /// block lists from the resolved layout. Idempotent: calling twice
+    /// resets to a fresh sink.
+    ///
+    /// UNSTABLE — gated behind the `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) fn enable_diagnostics(&mut self) {
+        use crate::encode::diagnostics::{
+            ColorPathTag, ComponentDiagnostics, EncodeDiagnostics, ImageInfo,
+        };
+        let layout = &self.layout;
+        let is_grayscale = self.pixel_format.is_grayscale();
+
+        // Flatten the SIMD `[[f32; 8]; 8]` zero-bias offset rows into a
+        // natural-order `[f32; 64]` for the diagnostics consumer.
+        let flatten = |rows: &[[f32; 8]; 8]| -> [f32; 64] {
+            let mut out = [0.0f32; 64];
+            for (r, row) in rows.iter().enumerate() {
+                out[r * 8..(r + 1) * 8].copy_from_slice(row);
+            }
+            out
+        };
+
+        let mut diag = EncodeDiagnostics::default();
+        diag.image = ImageInfo {
+            width: layout.width as u32,
+            height: layout.height as u32,
+            color_path: if layout.use_xyb {
+                ColorPathTag::Xyb
+            } else if is_grayscale {
+                ColorPathTag::Grayscale
+            } else {
+                ColorPathTag::YCbCr
+            },
+            sampling_factors: Vec::new(),
+        };
+
+        let h_samp_y = layout.subsampling.h_samp_factor_luma();
+        let v_samp_y = layout.subsampling.v_samp_factor_luma();
+
+        // Y component: full resolution.
+        let y_blocks = (layout.y_blocks_w as u32) * (layout.y_blocks_h as u32);
+        diag.image.sampling_factors.push((h_samp_y, v_samp_y));
+        diag.components.push(ComponentDiagnostics {
+            component_id: 1,
+            block_grid: (layout.y_blocks_w as u32, layout.y_blocks_h as u32),
+            quant_table_base: self.quant.y_quant.values,
+            zero_bias: flatten(&self.quant.y_zero_bias_simd.offset_rows),
+            blocks: alloc::vec![Default::default(); y_blocks as usize],
+        });
+
+        // Cb / Cr (skip for grayscale).
+        if !is_grayscale {
+            let cb_blocks = (layout.c_blocks_w as u32) * (layout.c_blocks_h as u32);
+            diag.image.sampling_factors.push((1, 1));
+            diag.components.push(ComponentDiagnostics {
+                component_id: 2,
+                block_grid: (layout.c_blocks_w as u32, layout.c_blocks_h as u32),
+                quant_table_base: self.quant.cb_quant.values,
+                zero_bias: flatten(&self.quant.cb_zero_bias_simd.offset_rows),
+                blocks: alloc::vec![Default::default(); cb_blocks as usize],
+            });
+
+            // Cr / B-channel: XYB B uses b_blocks dims, others use c_blocks.
+            let (cr_w, cr_h) = if layout.use_xyb {
+                (layout.b_blocks_w as u32, layout.b_blocks_h as u32)
+            } else {
+                (layout.c_blocks_w as u32, layout.c_blocks_h as u32)
+            };
+            let cr_blocks = cr_w * cr_h;
+            diag.image.sampling_factors.push((1, 1));
+            diag.components.push(ComponentDiagnostics {
+                component_id: 3,
+                block_grid: (cr_w, cr_h),
+                quant_table_base: self.quant.cr_quant.values,
+                zero_bias: flatten(&self.quant.cr_zero_bias_simd.offset_rows),
+                blocks: alloc::vec![Default::default(); cr_blocks as usize],
+            });
+        }
+
+        self.diagnostics = Some(diag);
+    }
+
+    // Note: `take_diagnostics(&mut self)` was removed. The
+    // diagnostics record is now extracted via the
+    // `StripProcessorOutput.diagnostics` field returned from
+    // `finalize()`, intercepted by the streaming encoder's
+    // `finish_into_with_stop_threaded` callback.
 
     /// Returns whether XYB mode is enabled.
     #[must_use]
@@ -1536,6 +1650,22 @@ impl StripProcessor {
             unreachable!("use_boundary_rd is always false without the boundary-rd feature");
         } else {
             let quant = &self.quant;
+            // Snapshot of layout values consumed inside the diagnostics
+            // capture (avoid re-borrowing `self` while we already hold
+            // `&self.quant` and `&self.pending`).
+            //
+            // Use `layout.h_samp` / `layout.v_samp` (MAX sampling factors
+            // of the JFIF frame, which correctly account for XYB
+            // BQuarter's B-channel-driven `v_samp=2` even though the
+            // underlying subsampling enum reports `S444`).
+            #[cfg(feature = "__diagnostics")]
+            let diag_h = self.layout.h_samp;
+            #[cfg(feature = "__diagnostics")]
+            let diag_v = self.layout.v_samp;
+            #[cfg(feature = "__diagnostics")]
+            let diag_y_blocks_w = self.layout.y_blocks_w;
+            #[cfg(feature = "__diagnostics")]
+            let diag_imcu_idx = self.diag_imcu_call_idx;
             // Default fast path — unchanged from before boundary-RD was added.
             for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
                 // Use get() with fallback to avoid branch on common path
@@ -1582,18 +1712,65 @@ impl StripProcessor {
 
                 self.y_blocks.push(zigzag);
                 self.all_aq_strengths.push(aq_strength);
+
+                // Diagnostics capture (Y, default fast path). Maps the
+                // MCU-traversal block index `i` to a global raster
+                // (row, col) in the y_blocks_w × y_blocks_h grid.
+                #[cfg(feature = "__diagnostics")]
+                if let Some(ref mut diag) = self.diagnostics {
+                    let blocks_per_mcu = diag_h * diag_v;
+                    let mcu_in_row = if blocks_per_mcu > 0 {
+                        i / blocks_per_mcu
+                    } else {
+                        i
+                    };
+                    let block_in_mcu = if blocks_per_mcu > 0 {
+                        i % blocks_per_mcu
+                    } else {
+                        0
+                    };
+                    let bc = block_in_mcu % diag_h.max(1);
+                    let br = block_in_mcu / diag_h.max(1);
+                    let global_col = mcu_in_row * diag_h.max(1) + bc;
+                    let global_row = diag_imcu_idx * diag_v.max(1) + br;
+                    let global_idx = global_row * diag_y_blocks_w + global_col;
+                    if let Some(slot) = diag
+                        .components
+                        .get_mut(0)
+                        .and_then(|c| c.blocks.get_mut(global_idx))
+                    {
+                        slot.coef_pre_quant = dct.to_array();
+                        slot.coef_levels = zigzag;
+                        slot.aq_multiplier = aq_strength;
+                    }
+                }
             }
         }
 
-        // Quantize Cb/Cr blocks
+        // Quantize Cb/Cr blocks — scoped so the `quant` borrow drops
+        // before any `&mut self` diagnostic captures.
+        let y_blocks_w = self.layout.y_blocks_w;
+        let y_blocks_h = self.layout.y_blocks_h;
+        let c_blocks_w = self.layout.c_blocks_w;
+        let c_blocks_h = self.layout.c_blocks_h;
+        let cr_blocks_h = if self.layout.use_xyb {
+            self.layout.b_blocks_w
+        } else {
+            c_blocks_w
+        };
+        let cr_blocks_v = if self.layout.use_xyb {
+            self.layout.b_blocks_h
+        } else {
+            c_blocks_h
+        };
+
+        #[cfg(feature = "__diagnostics")]
+        let cb_start = self.cb_blocks.len();
+        #[cfg(feature = "__diagnostics")]
+        let cr_start = self.cr_blocks.len();
         {
             let quant = &self.quant;
-            let y_blocks_w = self.layout.y_blocks_w;
-            let y_blocks_h = self.layout.y_blocks_h;
-            let c_blocks_w = self.layout.c_blocks_w;
-            let c_blocks_h = self.layout.c_blocks_h;
 
-            // Cb: always uses c_blocks dimensions
             let cb_dc_raw = if store_dc_raw {
                 Some(&mut self.cb_dc_raw)
             } else {
@@ -1616,17 +1793,6 @@ impl StripProcessor {
                 y_blocks_h,
             );
 
-            // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
-            let cr_blocks_h = if self.layout.use_xyb {
-                self.layout.b_blocks_w
-            } else {
-                c_blocks_w
-            };
-            let cr_blocks_v = if self.layout.use_xyb {
-                self.layout.b_blocks_h
-            } else {
-                c_blocks_h
-            };
             let cr_dc_raw = if store_dc_raw {
                 Some(&mut self.cr_dc_raw)
             } else {
@@ -1648,6 +1814,98 @@ impl StripProcessor {
                 y_blocks_w,
                 y_blocks_h,
             );
+        }
+
+        // Diagnostics captures for chroma — outside the `quant` borrow scope.
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.capture_chroma_diag(
+                /* component_idx */ 1,
+                cb_start,
+                buffer_idx,
+                /* is_cb */ true,
+                c_blocks_w,
+                c_blocks_h,
+                y_blocks_w,
+                y_blocks_h,
+            );
+            self.capture_chroma_diag(
+                /* component_idx */ 2,
+                cr_start,
+                buffer_idx,
+                /* is_cb */ false,
+                cr_blocks_h,
+                cr_blocks_v,
+                y_blocks_w,
+                y_blocks_h,
+            );
+        }
+
+        // Advance the iMCU counter — diagnostics needs this to map
+        // per-iMCU MCU-traversal indices to global raster positions.
+        #[cfg(feature = "__diagnostics")]
+        {
+            self.diag_imcu_call_idx += 1;
+        }
+    }
+
+    /// Capture chroma per-block diagnostics after `quantize_chroma_blocks`.
+    /// `component_idx` is the index into `diagnostics.components` (1 = Cb,
+    /// 2 = Cr). `block_start` is the chroma-blocks Vec length captured
+    /// before the helper call. `is_cb` selects between `pending.cb` and
+    /// `pending.cr`. The remaining args mirror the chroma helper's
+    /// dimensions so we can replicate the AQ-strength lookup formula.
+    #[cfg(feature = "__diagnostics")]
+    #[allow(clippy::too_many_arguments)]
+    fn capture_chroma_diag(
+        &mut self,
+        component_idx: usize,
+        block_start: usize,
+        buffer_idx: usize,
+        is_cb: bool,
+        chroma_blocks_h: usize,
+        chroma_blocks_v: usize,
+        y_blocks_w: usize,
+        y_blocks_h: usize,
+    ) {
+        let blocks_h = chroma_blocks_h.max(1);
+        let pending = if is_cb {
+            &self.pending.cb[buffer_idx]
+        } else {
+            &self.pending.cr[buffer_idx]
+        };
+        let new_blocks = if is_cb {
+            &self.cb_blocks[block_start..]
+        } else {
+            &self.cr_blocks[block_start..]
+        };
+        let aq_src = &self.all_aq_strengths;
+
+        let Some(diag) = self.diagnostics.as_mut() else {
+            return;
+        };
+        let Some(component) = diag.components.get_mut(component_idx) else {
+            return;
+        };
+
+        let global_chroma_by_start = block_start / blocks_h;
+        for (i, dct) in pending.iter().enumerate() {
+            let bx = i % blocks_h;
+            let local_by = i / blocks_h;
+            let chroma_by = global_chroma_by_start + local_by;
+            let y_bx = (bx * y_blocks_w) / blocks_h;
+            let y_by = (chroma_by * y_blocks_h) / chroma_blocks_v.max(1);
+            let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
+            let aq_strength = aq_src.get(global_aq_idx).copied().unwrap_or(0.08);
+
+            let global_idx = chroma_by * blocks_h + bx;
+            if let Some(slot) = component.blocks.get_mut(global_idx) {
+                slot.coef_pre_quant = dct.to_array();
+                if let Some(levels) = new_blocks.get(i) {
+                    slot.coef_levels = *levels;
+                }
+                slot.aq_multiplier = aq_strength;
+            }
         }
     }
 
@@ -2038,6 +2296,8 @@ impl StripProcessor {
             y_dc_raw: self.y_dc_raw,
             cb_dc_raw: self.cb_dc_raw,
             cr_dc_raw: self.cr_dc_raw,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics: self.diagnostics,
         })
     }
 
@@ -2246,6 +2506,12 @@ pub struct StripProcessorOutput {
     pub cb_dc_raw: Vec<i32>,
     /// Cr channel raw DC coefficients.
     pub cr_dc_raw: Vec<i32>,
+    /// Per-block encode diagnostics (UNSTABLE; gated behind
+    /// `__diagnostics`). `Some` when `enable_diagnostics()` was called
+    /// on the source processor; `None` (the default) for production
+    /// encodes.
+    #[cfg(feature = "__diagnostics")]
+    pub diagnostics: Option<crate::encode::diagnostics::EncodeDiagnostics>,
 }
 
 #[cfg(test)]

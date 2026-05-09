@@ -83,6 +83,14 @@ pub(crate) struct StreamingEncoderBuilder {
     /// compat (`QuantTableSource::MozjpegDefault`) path — the jpegli
     /// path uses `chroma_distance_scale` for the same purpose.
     pub(crate) chroma_quality: Option<u8>,
+
+    /// Per-block encode diagnostics capture. UNSTABLE — gated behind
+    /// the `__diagnostics` feature. When `true`, the underlying
+    /// `StripProcessor` allocates an `EncodeDiagnostics` struct and
+    /// fills it during encoding; retrieve via `take_diagnostics()`
+    /// after `finish()`.
+    #[cfg(feature = "__diagnostics")]
+    pub(crate) diagnostics_enabled: bool,
 }
 
 impl StreamingEncoderBuilder {
@@ -123,7 +131,21 @@ impl StreamingEncoderBuilder {
             tiny_file_mode: TinyFileMode::default(),
             chroma_distance_scale: 1.0,
             chroma_quality: None,
+            #[cfg(feature = "__diagnostics")]
+            diagnostics_enabled: false,
         }
+    }
+
+    /// Enable per-block encode diagnostics capture (UNSTABLE).
+    ///
+    /// When `true`, the encoder fills an `EncodeDiagnostics` struct
+    /// during encoding; retrieve via `take_diagnostics()` after
+    /// `finish()`. Gated behind the `__diagnostics` cargo feature.
+    #[cfg(feature = "__diagnostics")]
+    #[must_use]
+    pub(crate) fn diagnostics(mut self, enable: bool) -> Self {
+        self.diagnostics_enabled = enable;
+        self
     }
 
     /// Sets the quality using jpegli's native quality scale.

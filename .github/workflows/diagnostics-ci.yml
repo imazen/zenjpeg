@@ -1,0 +1,341 @@
+name: diagnostics-ci
+
+# UNSTABLE __diagnostics feature + viewer end-to-end gate.
+# Triggers on the diagnostics branch and matching PRs.
+# Does NOT block main; the parent ci.yml is unaffected.
+
+on:
+  push:
+    branches: [diagnostics]
+  pull_request:
+    branches: [main]
+    paths:
+      - "zenjpeg/src/encode/diagnostics.rs"
+      - "zenjpeg/src/encode/strip/**"
+      - "zenjpeg/src/encode/streaming.rs"
+      - "zenjpeg/src/encode/streaming_builder.rs"
+      - "zenjpeg/src/encode/byte_encoders.rs"
+      - "zenjpeg/src/encode/encoder_config.rs"
+      - "zenjpeg/src/lib.rs"
+      - "zenjpeg/Cargo.toml"
+      - "zenjpeg/tests/diagnostics_smoke.rs"
+      - "zenjpeg-diagnostics-viewer/**"
+      - ".github/workflows/diagnostics-ci.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Don't promote warnings to errors globally — sibling crates we
+  # build alongside zenjpeg (zenanalyze, zencodec, etc.) may have
+  # transient unused-import warnings that we don't control. The
+  # zenjpeg crates themselves still get warning hygiene from the
+  # parent ci.yml on its own runs.
+
+jobs:
+  rust-tests:
+    name: rust tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-11-arm
+          - os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          # Remove workspace members that can't build in CI.
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Remove zenresize workspace dep (needs zenblend/zennode chain).
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          # Remove non-CI deps from zenjpeg.
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: diag-${{ matrix.os }}
+
+      - name: Test diagnostics module
+        run: cargo test -p zenjpeg --features __diagnostics --lib encode::diagnostics
+      - name: Test diagnostics smoke matrix
+        run: cargo test -p zenjpeg --features __diagnostics,trellis --test diagnostics_smoke
+      - name: Test wasm bindings (native)
+        run: cargo test -p zenjpeg-diagnostics-wasm
+
+  rust-tests-i686:
+    name: rust tests (i686-linux cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: diag-cross-i686
+
+      - name: Test (i686, __diagnostics + trellis)
+        run: cross test --target i686-unknown-linux-gnu -p zenjpeg --features __diagnostics,trellis --test diagnostics_smoke
+
+  wasm-build:
+    name: wasm + viewer build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: diag-wasm
+      - name: Cache web node_modules
+        uses: actions/cache@v4
+        with:
+          path: zenjpeg-diagnostics-viewer/web/node_modules
+          key: diag-web-node-${{ hashFiles('zenjpeg-diagnostics-viewer/web/package-lock.json') }}
+
+      - name: Build wasm
+        run: |
+          cd zenjpeg-diagnostics-viewer/wasm
+          wasm-pack build --target web --out-dir ../web/wasm-pkg --release
+      - name: Install web deps
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          npm ci || npm install
+      - name: Typecheck
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          npx tsc --noEmit
+      - name: Build viewer
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          # `npm run build` runs the `prebuild` hook (fetch-images.ts)
+          # which downloads the picker corpus from R2 and writes a
+          # local manifest + cached blobs into public/images/. Without
+          # this, the deployed viewer hits CORS errors trying to fetch
+          # the R2 origin from GitHub Pages (R2 public buckets do not
+          # send Access-Control-Allow-Origin headers by default).
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-viewer-dist
+          path: zenjpeg-diagnostics-viewer/web/dist
+          retention-days: 7
+
+  deploy-pages:
+    name: deploy viewer to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: wasm-build
+    # Only deploy on pushes to the diagnostics branch — PRs don't get
+    # a deploy. Matches the wasm-build artifact's existence window.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/diagnostics'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      # GitHub Pages serializes deploys per repo. We don't want to
+      # cancel a half-deploy mid-flight (could leave the live site in
+      # a bad state).
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: diagnostics-viewer-dist
+          path: dist
+      - name: Stage dist under /diagnostics/ subpath
+        # GitHub Pages serves the artifact at the project root
+        # (imazen.github.io/zenjpeg/). Putting the viewer at
+        # /diagnostics/ keeps the project root free for future docs
+        # (rustdoc, README site, etc.).
+        run: |
+          mkdir -p _site/diagnostics
+          cp -r dist/. _site/diagnostics/
+          # Drop a tiny index at the root so visitors hitting just
+          # /zenjpeg/ get a pointer instead of a 404.
+          cat > _site/index.html <<'EOF'
+          <!DOCTYPE html>
+          <meta charset="utf-8">
+          <title>zenjpeg</title>
+          <meta http-equiv="refresh" content="0; url=./diagnostics/">
+          <p>Redirecting to <a href="./diagnostics/">zenjpeg encode-diagnostics viewer</a>…</p>
+          EOF
+      - uses: actions/configure-pages@v5
+        # Pages is already enabled (Settings → Pages → Source:
+        # GitHub Actions). configure-pages just needs to fetch the
+        # site config — no enablement attempt, no Administration
+        # token required.
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  e2e:
+    name: playwright e2e
+    runs-on: ubuntu-latest
+    needs: wasm-build
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          cd ..
+          git clone --depth 1 https://github.com/imazen/zencodec.git
+          git clone --depth 1 https://github.com/imazen/zenpng.git
+          git clone --depth 1 https://github.com/imazen/zenflate.git
+          git clone --depth 1 https://github.com/imazen/zenanalyze.git
+
+      - name: Strip non-CI workspace members and deps
+        shell: bash
+        run: |
+          sed \
+            -e '/"internal\/jpegli-internals-sys"/d' \
+            -e '/"zjpeg"/d' \
+            Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed -e '/^zenresize/d' Cargo.toml > Cargo.toml.ci && mv Cargo.toml.ci Cargo.toml
+          sed \
+            -e '/jpegli-internals-sys/d' \
+            -e '/zenresize.*workspace/d' \
+            -e '/zennode.*path/d' \
+            -e 's/^layout = .*/layout = []/' \
+            -e 's/^zennode = .*/zennode = []/' \
+            -e 's/, features = \["cjpegli-ffi"\]//' \
+            zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
+          rm -f Cargo.lock
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: diag-e2e
+      - name: Build wasm + web
+        run: |
+          cd zenjpeg-diagnostics-viewer/wasm
+          wasm-pack build --target web --out-dir ../web/wasm-pkg --release
+      - name: Install web deps
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          npm ci || npm install
+      - name: Install playwright browsers
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          npx playwright install --with-deps chromium
+      - name: Run Playwright tests
+        run: |
+          cd zenjpeg-diagnostics-viewer/web
+          npx playwright test --reporter=github
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            zenjpeg-diagnostics-viewer/web/playwright-report
+            zenjpeg-diagnostics-viewer/web/test-results
+          retention-days: 14

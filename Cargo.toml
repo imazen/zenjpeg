@@ -6,6 +6,7 @@ members = [
     "zenyuv",
     "zjpeg",
     "internal/jpegli-internals-sys",
+    "zenjpeg-diagnostics-viewer/wasm",
 ]
 
 [workspace.package]
