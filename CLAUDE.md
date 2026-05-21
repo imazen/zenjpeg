@@ -2,6 +2,28 @@
 
 Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
+## Canonical training data + indexes (added 2026-05-20)
+
+**The canonical index for all ML data lives at `~/work/zen/DATA_PROVENANCE.md`.**
+
+Quick paths:
+- Trainer input: `/mnt/v/zen/zensim-training/canonical-2026-05-21/`
+- Master inventory: `~/work/zen/_ml-inventory-2026-05-20/00-MASTER-SYNTHESIS.md`
+- Per-codec picker audit: `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md`
+
+## ML/adaptive selector status (2026-05-20)
+
+zenjpeg's adaptive selector lives in `~/work/coefficient/` (NOT in this repo):
+
+- Substrate: `/home/lilith/oracle-d2-store/oracle-d2/` (75k JPEG encodings, 108k metrics, 90 source images)
+- Trainer: `coefficient/scripts/fit_oracle_tree.py` (sklearn decision tree)
+- Rules output: `selector_tree_rules.json` (~70 decisions per (bucket, q_bin, metric))
+- Wired into `EncoderConfig::adaptive(image, quality)` in this repo
+
+The `benchmarks/zenjpeg_picker_v0.3_2026-05-04.bin` (7.5 KB, ZNPR format) is a training artifact only — no encoder integration. `dev/picker_v0_3_holdout_ab.rs` is the eval harness for it. Both kept for reproducibility; do not delete.
+
+**Future picker work pattern:** if a Rust-side picker is needed, follow zenavif (`~/work/zen/zenavif/src/auto_tune.rs` + `EncoderConfig::auto_tune()` public API). See `~/work/zen/_ml-inventory-2026-05-20/05-per-codec-pickers.md` for the cross-codec design discussion.
+
 ## BANNED: worktrees in this repo (CRITICAL)
 
 **Do NOT create `git worktree` directories in this repo.** Claude Code
