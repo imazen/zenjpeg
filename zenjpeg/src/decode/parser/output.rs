@@ -231,6 +231,102 @@ fn reformat_rgb_into(
     Ok(written)
 }
 
+/// f32 IDCT path: dequantize (optionally with Laplacian bias), inverse DCT,
+/// and copy the 8x8 block of f32 pixels into `comp_plane_f32` at
+/// `(base_px, base_py)`, clipped to `(cols_to_copy, rows_to_copy)`.
+///
+/// Used for XYB (extended-gamut precision), `dequant_bias` (fractional bias
+/// application), and `force_f32_idct` (dimension-swapping transforms need
+/// symmetric IDCT). Hot path — inlined into the MCU-row loop.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn idct_block_f32_into_plane(
+    natural_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    biases: &[f32; DCT_BLOCK_SIZE],
+    is_xyb: bool,
+    dequant_bias: bool,
+    comp_plane_f32: &mut [f32],
+    comp_width: usize,
+    base_px: usize,
+    base_py: usize,
+    rows_to_copy: usize,
+    cols_to_copy: usize,
+) {
+    let dequant = if dequant_bias && !is_xyb {
+        dequantize_block_with_bias(natural_coeffs, quant, biases)
+    } else {
+        dequantize_block(natural_coeffs, quant)
+    };
+    let pixels = inverse_dct_8x8(&dequant);
+
+    if cols_to_copy == DCT_SIZE {
+        for y in 0..rows_to_copy {
+            let dst_offset = (base_py + y) * comp_width + base_px;
+            let src_offset = y * DCT_SIZE;
+            comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
+                .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+        }
+    } else {
+        for y in 0..rows_to_copy {
+            for x in 0..cols_to_copy {
+                comp_plane_f32[(base_py + y) * comp_width + base_px + x] = pixels[y * DCT_SIZE + x];
+            }
+        }
+    }
+}
+
+/// Integer IDCT path: dequantize to i32, run the integer IDCT
+/// (libjpeg-style for `Triangle` upsampling, auto-tier otherwise), then
+/// level-shift the i16 [0,255] result to f32 [-128, 127] and copy into
+/// `comp_plane_f32` at `(base_px, base_py)`, clipped to `(cols_to_copy,
+/// rows_to_copy)`.
+///
+/// Used for standard non-XYB, non-bias 4:4:4 / subsampled JPEGs that fell
+/// through the fast i16 paths (e.g., uncommon channel counts). Hot path —
+/// inlined into the MCU-row loop.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn idct_block_i16_into_plane(
+    natural_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    chroma_upsampling: super::super::ChromaUpsampling,
+    comp_plane_f32: &mut [f32],
+    comp_width: usize,
+    base_px: usize,
+    base_py: usize,
+    rows_to_copy: usize,
+    cols_to_copy: usize,
+) {
+    let mut dequant_i32 = dequantize_block_i32(natural_coeffs, quant);
+    let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+    match chroma_upsampling {
+        super::super::ChromaUpsampling::Triangle => {
+            idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
+        }
+        _ => {
+            idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
+        }
+    }
+
+    if cols_to_copy == DCT_SIZE {
+        for y in 0..rows_to_copy {
+            let dst_offset = (base_py + y) * comp_width + base_px;
+            let src_offset = y * DCT_SIZE;
+            for x in 0..DCT_SIZE {
+                comp_plane_f32[dst_offset + x] = pixels_i16[src_offset + x] as f32 - 128.0;
+            }
+        }
+    } else {
+        for y in 0..rows_to_copy {
+            for x in 0..cols_to_copy {
+                comp_plane_f32[(base_py + y) * comp_width + base_px + x] =
+                    pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
+            }
+        }
+    }
+}
+
 /// Pixel output conversion methods for JpegParser.
 impl<'a> JpegParser<'a> {
     /// Check if this JPEG stores raw RGB (not YCbCr).
@@ -1253,73 +1349,9 @@ impl<'a> JpegParser<'a> {
         if is_rgb_family_u8(format)
             && !is_xyb
             && let Some(buf) = self.streaming_rgb.take()
+            && let Some(result) = self.consume_streaming_rgb(buf, format, width, height)?
         {
-            // Grayscale streaming always emits 1bpp gray regardless of
-            // `streaming_output_format` (that hint only applies to 3-component
-            // JPEGs — see scan.rs `(out_bpp, out_4bpp, swap_rb)` selection for
-            // grayscale). Expand 1bpp → the requested RGB-family format here
-            // instead of honoring a hint the streaming path never applied.
-            if self.num_components == 1 {
-                return expand_gray_u8_to_format(&buf, format, width, height);
-            }
-            let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
-            if streaming_fmt == format
-                || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
-                || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
-            {
-                // Exact match — return as-is
-                return Ok(buf);
-            }
-            let streaming_4bpp = matches!(
-                streaming_fmt,
-                PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
-            );
-            if !streaming_4bpp {
-                // 3bpp RGB — use existing reformat
-                return reformat_rgb_output(buf, format, width, height);
-            }
-            // 4bpp streaming → different target: allocate + reformat
-            let npixels = width * height;
-            match format {
-                PixelFormat::Rgb | PixelFormat::Bgr => {
-                    let swap_needed =
-                        (matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx)
-                            && format == PixelFormat::Rgb)
-                            || (streaming_fmt == PixelFormat::Rgba && format == PixelFormat::Bgr);
-                    let out_size = checked_size_2d(npixels, 3)?;
-                    let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->RGB reformat")?;
-                    for i in 0..npixels {
-                        let s = i * 4;
-                        let d = i * 3;
-                        if swap_needed {
-                            out[d] = buf[s + 2];
-                            out[d + 1] = buf[s + 1];
-                            out[d + 2] = buf[s];
-                        } else {
-                            out[d] = buf[s];
-                            out[d + 1] = buf[s + 1];
-                            out[d + 2] = buf[s + 2];
-                        }
-                    }
-                    return Ok(out);
-                }
-                PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
-                    // 4bpp → different 4bpp: swap R and B
-                    let out_size = checked_size_2d(npixels, 4)?;
-                    let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->4bpp swap")?;
-                    for i in 0..npixels {
-                        let s = i * 4;
-                        out[s] = buf[s + 2];
-                        out[s + 1] = buf[s + 1];
-                        out[s + 2] = buf[s];
-                        out[s + 3] = buf[s + 3];
-                    }
-                    return Ok(out);
-                }
-                _ => {
-                    // Unsupported — fall through to generic path
-                }
-            }
+            return Ok(result);
         }
 
         // If fused parallel decode was used, return its result
@@ -1380,116 +1412,17 @@ impl<'a> JpegParser<'a> {
             max_v_samp,
         ) = self.setup_f32_decode(num_components)?;
 
-        // Process MCU row by MCU row (matching C++ incremental bias recomputation)
-        for imcu_row in 0..mcu_rows {
-            for comp_idx in 0..num_components {
-                let info = &comp_infos[comp_idx];
-                let quant = self.quant_tables[info.quant_idx]
-                    .as_ref()
-                    .ok_or(Error::internal("missing quantization table"))?;
-
-                self.gather_bias_stats(imcu_row, comp_idx, info, &mut bias_stats);
-                if info.is_full_res && imcu_row % 4 == 3 {
-                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
-                }
-
-                // IDCT for this component in this MCU row
-                let biases = &component_biases[comp_idx];
-                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
-
-                for iy in 0..info.v_samp {
-                    let by = imcu_row * info.v_samp + iy;
-                    if by >= info.comp_blocks_v {
-                        continue;
-                    }
-
-                    // Pre-compute base y position and check row bounds once
-                    let base_py = by * DCT_SIZE;
-                    let rows_to_copy = DCT_SIZE.min(info.comp_height.saturating_sub(base_py));
-
-                    for bx in 0..info.comp_blocks_h {
-                        let block_idx = by * info.comp_blocks_h + bx;
-                        if block_idx >= self.coeffs[comp_idx].len() {
-                            continue;
-                        }
-                        let coeffs = &self.coeffs[comp_idx][block_idx];
-
-                        // Zigzag reorder
-                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
-                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
-                            natural_coeffs[zi as usize] = coeffs[i];
-                        }
-
-                        // Store pixels - use row-based copy for efficiency
-                        let base_px = bx * DCT_SIZE;
-                        let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
-
-                        if is_xyb || dequant_bias || self.force_f32_idct {
-                            // f32 IDCT path: XYB needs extended gamut precision,
-                            // dequant_bias needs fractional bias application,
-                            // dimension-swapping transforms need symmetric IDCT
-                            let dequant = if dequant_bias && !is_xyb {
-                                dequantize_block_with_bias(&natural_coeffs, quant, biases)
-                            } else {
-                                dequantize_block(&natural_coeffs, quant)
-                            };
-                            let pixels = inverse_dct_8x8(&dequant);
-
-                            if cols_to_copy == DCT_SIZE {
-                                for y in 0..rows_to_copy {
-                                    let dst_offset = (base_py + y) * info.comp_width + base_px;
-                                    let src_offset = y * DCT_SIZE;
-                                    comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
-                                        .copy_from_slice(
-                                            &pixels[src_offset..src_offset + DCT_SIZE],
-                                        );
-                                }
-                            } else {
-                                for y in 0..rows_to_copy {
-                                    for x in 0..cols_to_copy {
-                                        comp_plane_f32
-                                            [(base_py + y) * info.comp_width + base_px + x] =
-                                            pixels[y * DCT_SIZE + x];
-                                    }
-                                }
-                            }
-                        } else {
-                            // Standard JPEG: use fast integer IDCT
-                            let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
-                            let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
-                            match chroma_upsampling {
-                                super::super::ChromaUpsampling::Triangle => {
-                                    idct_int_libjpeg(&mut dequant_i32, &mut pixels_i16, 8);
-                                }
-                                _ => {
-                                    idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
-                                }
-                            }
-
-                            // Convert i16 [0,255] to f32 centered [-128,127]
-                            if cols_to_copy == DCT_SIZE {
-                                for y in 0..rows_to_copy {
-                                    let dst_offset = (base_py + y) * info.comp_width + base_px;
-                                    let src_offset = y * DCT_SIZE;
-                                    for x in 0..DCT_SIZE {
-                                        comp_plane_f32[dst_offset + x] =
-                                            pixels_i16[src_offset + x] as f32 - 128.0;
-                                    }
-                                }
-                            } else {
-                                for y in 0..rows_to_copy {
-                                    for x in 0..cols_to_copy {
-                                        comp_plane_f32
-                                            [(base_py + y) * info.comp_width + base_px + x] =
-                                            pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.decode_coeffs_to_planes_f32(
+            num_components,
+            &comp_infos,
+            &mut bias_stats,
+            &mut component_biases,
+            &mut comp_planes_f32,
+            mcu_rows,
+            is_xyb,
+            dequant_bias,
+            chroma_upsampling,
+        )?;
 
         // Upsample and convert to output format
         let planes_f32 = self.upsample_planes_f32(
@@ -1500,17 +1433,214 @@ impl<'a> JpegParser<'a> {
             chroma_upsampling,
         )?;
 
-        let output_size = checked_size_2d(width, height)?;
+        self.dispatch_planes_to_output_u8(format, is_xyb, &planes_f32, width, height)
+    }
 
+    /// Run the per-MCU-row IDCT loop for `to_pixels`, populating `comp_planes_f32`.
+    ///
+    /// Per component per MCU row: gather bias stats, refresh per-component
+    /// biases every 4 MCU rows (matching C++ incremental bias recomputation),
+    /// then IDCT each block via either the f32 path (XYB / dequant_bias /
+    /// `force_f32_idct`) or the standard integer path.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_coeffs_to_planes_f32(
+        &self,
+        num_components: usize,
+        comp_infos: &[CompInfo],
+        bias_stats: &mut DequantBiasStats,
+        component_biases: &mut [[f32; DCT_BLOCK_SIZE]],
+        comp_planes_f32: &mut [Vec<f32>],
+        mcu_rows: usize,
+        is_xyb: bool,
+        dequant_bias: bool,
+        chroma_upsampling: super::super::ChromaUpsampling,
+    ) -> Result<()> {
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..num_components {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
+
+                self.gather_bias_stats(imcu_row, comp_idx, info, bias_stats);
+                if info.is_full_res && imcu_row % 4 == 3 {
+                    component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                }
+
+                let biases = &component_biases[comp_idx];
+                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    let base_py = by * DCT_SIZE;
+                    let rows_to_copy = DCT_SIZE.min(info.comp_height.saturating_sub(base_py));
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        let base_px = bx * DCT_SIZE;
+                        let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
+
+                        if is_xyb || dequant_bias || self.force_f32_idct {
+                            idct_block_f32_into_plane(
+                                &natural_coeffs,
+                                quant,
+                                biases,
+                                is_xyb,
+                                dequant_bias,
+                                comp_plane_f32,
+                                info.comp_width,
+                                base_px,
+                                base_py,
+                                rows_to_copy,
+                                cols_to_copy,
+                            );
+                        } else {
+                            idct_block_i16_into_plane(
+                                &natural_coeffs,
+                                quant,
+                                chroma_upsampling,
+                                comp_plane_f32,
+                                info.comp_width,
+                                base_px,
+                                base_py,
+                                rows_to_copy,
+                                cols_to_copy,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Convert a pre-decoded streaming RGB-family buffer into `format`.
+    ///
+    /// `buf` is the buffer produced by the streaming decoder
+    /// (`self.streaming_rgb` after `take()`). It may be 1bpp gray (when
+    /// `num_components == 1`), 3bpp RGB, or 4bpp BGRA/RGBA/BGRX depending
+    /// on `self.streaming_output_format` and the streaming-path negotiation
+    /// in scan.rs.
+    ///
+    /// Returns `Ok(Some(out))` when the streaming buffer can fulfill the
+    /// caller's request (which is the common case), or `Ok(None)` to signal
+    /// "fall through to the generic f32 path" — currently only when the
+    /// streaming buffer is 4bpp and the requested `format` is something
+    /// outside the RGB family understood here.
+    fn consume_streaming_rgb(
+        &self,
+        buf: Vec<u8>,
+        format: PixelFormat,
+        width: usize,
+        height: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        // Grayscale streaming always emits 1bpp gray regardless of
+        // `streaming_output_format` (that hint only applies to 3-component
+        // JPEGs — see scan.rs `(out_bpp, out_4bpp, swap_rb)` selection for
+        // grayscale). Expand 1bpp → the requested RGB-family format here
+        // instead of honoring a hint the streaming path never applied.
+        if self.num_components == 1 {
+            return Ok(Some(expand_gray_u8_to_format(&buf, format, width, height)?));
+        }
+
+        let streaming_fmt = self.streaming_output_format.unwrap_or(PixelFormat::Rgb);
+        if streaming_fmt == format
+            || (streaming_fmt == PixelFormat::Bgra && format == PixelFormat::Bgrx)
+            || (streaming_fmt == PixelFormat::Bgrx && format == PixelFormat::Bgra)
+        {
+            // Exact match (Bgra↔Bgrx are byte-identical) — return as-is.
+            return Ok(Some(buf));
+        }
+
+        let streaming_4bpp = matches!(
+            streaming_fmt,
+            PixelFormat::Bgra | PixelFormat::Bgrx | PixelFormat::Rgba
+        );
+        if !streaming_4bpp {
+            // 3bpp RGB → target format — use existing reformat (swap / pad).
+            return Ok(Some(reformat_rgb_output(buf, format, width, height)?));
+        }
+
+        // 4bpp streaming → different target: allocate + reformat.
+        let npixels = width * height;
+        match format {
+            PixelFormat::Rgb | PixelFormat::Bgr => {
+                let swap_needed = (matches!(streaming_fmt, PixelFormat::Bgra | PixelFormat::Bgrx)
+                    && format == PixelFormat::Rgb)
+                    || (streaming_fmt == PixelFormat::Rgba && format == PixelFormat::Bgr);
+                let out_size = checked_size_2d(npixels, 3)?;
+                let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->RGB reformat")?;
+                for i in 0..npixels {
+                    let s = i * 4;
+                    let d = i * 3;
+                    if swap_needed {
+                        out[d] = buf[s + 2];
+                        out[d + 1] = buf[s + 1];
+                        out[d + 2] = buf[s];
+                    } else {
+                        out[d] = buf[s];
+                        out[d + 1] = buf[s + 1];
+                        out[d + 2] = buf[s + 2];
+                    }
+                }
+                Ok(Some(out))
+            }
+            PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Bgrx => {
+                // 4bpp → different 4bpp: swap R and B.
+                let out_size = checked_size_2d(npixels, 4)?;
+                let mut out = try_alloc_zeroed(out_size, "streaming 4bpp->4bpp swap")?;
+                for i in 0..npixels {
+                    let s = i * 4;
+                    out[s] = buf[s + 2];
+                    out[s + 1] = buf[s + 1];
+                    out[s + 2] = buf[s];
+                    out[s + 3] = buf[s + 3];
+                }
+                Ok(Some(out))
+            }
+            // Unsupported — fall through to generic path.
+            _ => Ok(None),
+        }
+    }
+
+    /// Dispatch upsampled f32 planes to the requested u8 output format.
+    ///
+    /// Handles the cross-product of `(num_components, format)`:
+    /// - `(1, Gray)`        → level-shifted grayscale
+    /// - `(1, RGB-family)`  → gray-expanded RGB, reformatted
+    /// - `(3, RGB-family)`  → XYB / RGB-JPEG / YCbCr → RGB, reformatted
+    /// - `(4, RGB-family)`  → CMYK / YCCK → RGB, reformatted
+    /// - `(4, Cmyk)`        → raw CMYK / YCCK → CMYK interleave
+    fn dispatch_planes_to_output_u8(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let output_size = checked_size_2d(width, height)?;
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => {
-                // Grayscale: level shift and convert to u8
                 let mut output = try_alloc_zeroed(output_size, "grayscale u8 output")?;
                 gray_f32_to_gray_u8(&planes_f32[0], &mut output);
                 Ok(output)
             }
             (1, f) if is_rgb_family_u8(f) => {
-                // Grayscale → RGB-family: produce RGB, then reformat
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = try_alloc_zeroed(rgb_size, "gray->RGB u8 output")?;
@@ -1518,106 +1648,119 @@ impl<'a> JpegParser<'a> {
                 reformat_rgb_output(rgb, f, width, height)
             }
             (3, f) if is_rgb_family_u8(f) => {
-                let rgb_size =
-                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed(rgb_size, "3-channel RGB u8 output")?;
-
-                if is_xyb {
-                    // XYB mode: run the inverse XYB → sRGB transform in-decoder
-                    // (no CMS required). Output is visibly-correct sRGB.
-                    crate::color::xyb::xyb_planes_to_srgb_u8_simd(
-                        &planes_f32[0],
-                        &planes_f32[1],
-                        &planes_f32[2],
-                        &mut rgb,
-                    );
-                } else if self.is_rgb_jpeg() {
-                    // RGB JPEG (Adobe APP14 transform=0 or RGB component IDs):
-                    // Level-shift from [-128..127] to [0..255] and interleave.
-                    for i in 0..output_size {
-                        let r = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
-                        let g = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
-                        let b = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
-                        rgb[i * 3] = r;
-                        rgb[i * 3 + 1] = g;
-                        rgb[i * 3 + 2] = b;
-                    }
-                } else {
-                    // YCbCr to RGB conversion using batch function
-                    ycbcr_planes_f32_to_rgb_u8(
-                        &planes_f32[0],
-                        &planes_f32[1],
-                        &planes_f32[2],
-                        &mut rgb,
-                    );
-                }
+                let rgb = self.three_chan_planes_to_rgb_u8(is_xyb, planes_f32, output_size)?;
                 reformat_rgb_output(rgb, f, width, height)
             }
             (4, f) if is_rgb_family_u8(f) => {
-                // CMYK or YCCK → RGB, then reformat
-                let rgb_size =
-                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed(rgb_size, "CMYK/YCCK->RGB u8 output")?;
-
-                // Check Adobe transform to determine conversion type
-                // YCCK (transform=2) uses YCbCr→CMY then applies K
-                // CMYK (transform=0 or absent) uses raw CMYK with Adobe inversion
-                match self.adobe_transform {
-                    Some(AdobeColorTransform::Ycck) => {
-                        // YCCK: YCbCr channels + K
-                        ycck_planes_to_rgb_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut rgb,
-                        );
-                    }
-                    _ => {
-                        // CMYK (Adobe inverted format)
-                        cmyk_planes_to_rgb_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut rgb,
-                        );
-                    }
-                }
+                let rgb = self.four_chan_planes_to_rgb_u8(planes_f32, width, height)?;
                 reformat_rgb_output(rgb, f, width, height)
             }
-            (4, PixelFormat::Cmyk) => {
-                // Raw CMYK output: interleave 4 planes as C,M,Y,K bytes
-                let cmyk_size =
-                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
-                let mut cmyk_out = try_alloc_zeroed(cmyk_size, "CMYK u8 output")?;
-
-                match self.adobe_transform {
-                    Some(AdobeColorTransform::Ycck) => {
-                        // YCCK: convert YCbCr→CMY, interleave with K
-                        ycck_planes_to_cmyk_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut cmyk_out,
-                        );
-                    }
-                    _ => {
-                        // CMYK (Adobe inverted format): level-shift and interleave
-                        cmyk_planes_to_cmyk_u8(
-                            &planes_f32[0],
-                            &planes_f32[1],
-                            &planes_f32[2],
-                            &planes_f32[3],
-                            &mut cmyk_out,
-                        );
-                    }
-                }
-                Ok(cmyk_out)
-            }
+            (4, PixelFormat::Cmyk) => self.four_chan_planes_to_cmyk_u8(planes_f32, width, height),
             _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
+    }
+
+    /// XYB / RGB-JPEG / YCbCr → 3-byte interleaved RGB u8.
+    fn three_chan_planes_to_rgb_u8(
+        &self,
+        is_xyb: bool,
+        planes_f32: &[Vec<f32>],
+        output_size: usize,
+    ) -> Result<Vec<u8>> {
+        let rgb_size = checked_size_2d(output_size, 3)?;
+        let mut rgb = try_alloc_zeroed(rgb_size, "3-channel RGB u8 output")?;
+
+        if is_xyb {
+            // XYB mode: run the inverse XYB → sRGB transform in-decoder
+            // (no CMS required). Output is visibly-correct sRGB.
+            crate::color::xyb::xyb_planes_to_srgb_u8_simd(
+                &planes_f32[0],
+                &planes_f32[1],
+                &planes_f32[2],
+                &mut rgb,
+            );
+        } else if self.is_rgb_jpeg() {
+            // RGB JPEG (Adobe APP14 transform=0 or RGB component IDs):
+            // Level-shift from [-128..127] to [0..255] and interleave.
+            for i in 0..output_size {
+                let r = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                let g = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                let b = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                rgb[i * 3] = r;
+                rgb[i * 3 + 1] = g;
+                rgb[i * 3 + 2] = b;
+            }
+        } else {
+            ycbcr_planes_f32_to_rgb_u8(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
+        }
+        Ok(rgb)
+    }
+
+    /// CMYK or YCCK 4-plane → 3-byte interleaved RGB u8.
+    ///
+    /// Adobe APP14 transform=2 routes through YCCK; otherwise raw CMYK
+    /// with Adobe-inverted convention.
+    fn four_chan_planes_to_rgb_u8(
+        &self,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb = try_alloc_zeroed(rgb_size, "CMYK/YCCK->RGB u8 output")?;
+        match self.adobe_transform {
+            Some(AdobeColorTransform::Ycck) => {
+                ycck_planes_to_rgb_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut rgb,
+                );
+            }
+            _ => {
+                cmyk_planes_to_rgb_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut rgb,
+                );
+            }
+        }
+        Ok(rgb)
+    }
+
+    /// CMYK or YCCK 4-plane → raw 4-byte interleaved CMYK u8.
+    fn four_chan_planes_to_cmyk_u8(
+        &self,
+        planes_f32: &[Vec<f32>],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let cmyk_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 4))?;
+        let mut cmyk_out = try_alloc_zeroed(cmyk_size, "CMYK u8 output")?;
+        match self.adobe_transform {
+            Some(AdobeColorTransform::Ycck) => {
+                ycck_planes_to_cmyk_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut cmyk_out,
+                );
+            }
+            _ => {
+                cmyk_planes_to_cmyk_u8(
+                    &planes_f32[0],
+                    &planes_f32[1],
+                    &planes_f32[2],
+                    &planes_f32[3],
+                    &mut cmyk_out,
+                );
+            }
+        }
+        Ok(cmyk_out)
     }
 
     /// Convert decoded coefficients to f32 pixels.
