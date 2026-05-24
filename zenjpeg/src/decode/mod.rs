@@ -1887,21 +1887,16 @@ impl DecodeConfig {
                 parser.to_pixels_f32(output_format, info.is_xyb, self.chroma_upsampling, &stop)?
             };
 
-            // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
-                let inflated_w = parser.width as usize;
-                let vis_w = visible_w as usize;
-                let vis_h = visible_h as usize;
-                let channels = output_format.num_channels();
-                let mut cropped = vec![0f32; vis_w * vis_h * channels];
-                for y in 0..vis_h {
-                    let src_off = ((crop_y + y) * inflated_w + crop_x) * channels;
-                    let dst_off = y * vis_w * channels;
-                    let row_elems = vis_w * channels;
-                    cropped[dst_off..dst_off + row_elems]
-                        .copy_from_slice(&pixels[src_off..src_off + row_elems]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    parser.width as usize,
+                    crop_x,
+                    crop_y,
+                    visible_w as usize,
+                    visible_h as usize,
+                    output_format.num_channels(),
+                );
             }
 
             // Apply ICC profile if enabled and the caller explicitly asked
@@ -1952,21 +1947,15 @@ impl DecodeConfig {
             // Apply user crop region (pixel-level crop of decoded buffer)
             let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
                 let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
-                let cw = resolved.width as usize;
-                let ch = resolved.height as usize;
-                let cx = resolved.x as usize;
-                let cy = resolved.y as usize;
-                let src_w = visible_w as usize;
-                let channels = output_format.num_channels();
-                let mut cropped = vec![0f32; cw * ch * channels];
-                for y in 0..ch {
-                    let src_off = ((cy + y) * src_w + cx) * channels;
-                    let dst_off = y * cw * channels;
-                    let row_elems = cw * channels;
-                    cropped[dst_off..dst_off + row_elems]
-                        .copy_from_slice(&pixels[src_off..src_off + row_elems]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.num_channels(),
+                );
                 (resolved.width, resolved.height)
             } else {
                 (visible_w, visible_h)
@@ -1999,40 +1988,29 @@ impl DecodeConfig {
                 .map(|&v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8)
                 .collect();
 
-            // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
-                let inflated_w = parser.width as usize;
-                let vis_w = visible_w as usize;
-                let vis_h = visible_h as usize;
-                let bpp = output_format.bytes_per_pixel();
-                let mut cropped = vec![0u8; vis_w * vis_h * bpp];
-                for y in 0..vis_h {
-                    let src_off = ((crop_y + y) * inflated_w + crop_x) * bpp;
-                    let dst_off = y * vis_w * bpp;
-                    let row_bytes = vis_w * bpp;
-                    cropped[dst_off..dst_off + row_bytes]
-                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    parser.width as usize,
+                    crop_x,
+                    crop_y,
+                    visible_w as usize,
+                    visible_h as usize,
+                    output_format.bytes_per_pixel(),
+                );
             }
 
             let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
                 let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
-                let cw = resolved.width as usize;
-                let ch = resolved.height as usize;
-                let cx = resolved.x as usize;
-                let cy = resolved.y as usize;
-                let src_w = visible_w as usize;
-                let bpp = output_format.bytes_per_pixel();
-                let mut cropped = vec![0u8; cw * ch * bpp];
-                for y in 0..ch {
-                    let src_off = ((cy + y) * src_w + cx) * bpp;
-                    let dst_off = y * cw * bpp;
-                    let row_bytes = cw * bpp;
-                    cropped[dst_off..dst_off + row_bytes]
-                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.bytes_per_pixel(),
+                );
                 (resolved.width, resolved.height)
             } else {
                 (visible_w, visible_h)
@@ -2087,21 +2065,16 @@ impl DecodeConfig {
                 );
             }
 
-            // Crop to visible region if transform introduced a crop offset
             if crop_x > 0 || crop_y > 0 {
-                let inflated_w = parser.width as usize;
-                let vis_w = visible_w as usize;
-                let vis_h = visible_h as usize;
-                let bpp = output_format.bytes_per_pixel();
-                let mut cropped = vec![0u8; vis_w * vis_h * bpp];
-                for y in 0..vis_h {
-                    let src_off = ((crop_y + y) * inflated_w + crop_x) * bpp;
-                    let dst_off = y * vis_w * bpp;
-                    let row_bytes = vis_w * bpp;
-                    cropped[dst_off..dst_off + row_bytes]
-                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    parser.width as usize,
+                    crop_x,
+                    crop_y,
+                    visible_w as usize,
+                    visible_h as usize,
+                    output_format.bytes_per_pixel(),
+                );
             }
 
             // Apply ICC profile if enabled and the caller explicitly asked
@@ -2144,21 +2117,15 @@ impl DecodeConfig {
             // Apply user crop region (pixel-level crop of decoded buffer)
             let (out_w, out_h) = if let Some(crop_region) = self.crop_region {
                 let resolved = crop_region.resolve(visible_w, visible_h, 8)?;
-                let cw = resolved.width as usize;
-                let ch = resolved.height as usize;
-                let cx = resolved.x as usize;
-                let cy = resolved.y as usize;
-                let src_w = visible_w as usize;
-                let bpp = output_format.bytes_per_pixel();
-                let mut cropped = vec![0u8; cw * ch * bpp];
-                for y in 0..ch {
-                    let src_off = ((cy + y) * src_w + cx) * bpp;
-                    let dst_off = y * cw * bpp;
-                    let row_bytes = cw * bpp;
-                    cropped[dst_off..dst_off + row_bytes]
-                        .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
-                }
-                pixels = cropped;
+                pixels = copy_cropped_rect(
+                    &pixels,
+                    visible_w as usize,
+                    resolved.x as usize,
+                    resolved.y as usize,
+                    resolved.width as usize,
+                    resolved.height as usize,
+                    output_format.bytes_per_pixel(),
+                );
                 (resolved.width, resolved.height)
             } else {
                 (visible_w, visible_h)
@@ -2832,6 +2799,33 @@ fn find_exif_orientation(data: &[u8]) -> Option<u8> {
         pos = seg_end;
     }
     None
+}
+
+/// Copy a `dst_w × dst_h` rectangle starting at `(crop_x, crop_y)` out of an interleaved
+/// `src_w`-wide buffer with `channels` elements per pixel.
+///
+/// Used by the post-decode pipeline for the two crop steps (lossless-transform crop and
+/// caller-supplied crop_region) on every output type — f32 and u8 paths share this
+/// fixed shape, only `T` and `channels` vary.
+fn copy_cropped_rect<T: Copy + Default>(
+    src: &[T],
+    src_w: usize,
+    crop_x: usize,
+    crop_y: usize,
+    dst_w: usize,
+    dst_h: usize,
+    channels: usize,
+) -> Vec<T> {
+    let mut dst = vec![T::default(); dst_w * dst_h * channels];
+    let src_stride = src_w * channels;
+    let dst_stride = dst_w * channels;
+    let row_elems = dst_w * channels;
+    for y in 0..dst_h {
+        let src_off = (crop_y + y) * src_stride + crop_x * channels;
+        let dst_off = y * dst_stride;
+        dst[dst_off..dst_off + row_elems].copy_from_slice(&src[src_off..src_off + row_elems]);
+    }
+    dst
 }
 
 /// Finalize extras: inject probe result and strip forced EXIF if needed.
