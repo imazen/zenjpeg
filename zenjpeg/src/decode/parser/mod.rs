@@ -10,6 +10,7 @@
 //! - `output` - Pixel conversion and output formatting
 
 mod arithmetic_scan;
+mod baseline_streaming;
 mod markers;
 mod output;
 mod progressive;

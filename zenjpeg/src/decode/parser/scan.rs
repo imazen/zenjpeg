@@ -17,7 +17,7 @@ use enough::Stop;
 use super::super::idct_int::{idct_int_dc_only, idct_int_tiered};
 use super::super::{DecodeWarning, Strictness};
 use super::JpegParser;
-use crate::color::ycbcr::fused_h2v2_box_ycbcr_to_rgb_u8;
+use super::baseline_streaming;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_planes_i16_to_xrgba_u8};
 use crate::types::PixelFormat;
 
@@ -915,62 +915,16 @@ impl<'a> JpegParser<'a> {
             ));
         }
 
-        let width = self.width as usize;
-        let height = self.height as usize;
-        let is_grayscale = self.num_components == 1;
-
-        let max_h_samp = if is_grayscale {
-            1usize
-        } else {
-            self.components[..3]
-                .iter()
-                .map(|c| c.h_samp_factor as usize)
-                .max()
-                .unwrap_or(1)
-        };
-        let max_v_samp = if is_grayscale {
-            1usize
-        } else {
-            self.components[..3]
-                .iter()
-                .map(|c| c.v_samp_factor as usize)
-                .max()
-                .unwrap_or(1)
-        };
+        // ---- Phase 1: geometry ----
+        let geom = baseline_streaming::StreamingGeometry::from_parser(self);
 
         // Delegate to 4:4:4 path (already optimized)
-        if !is_grayscale && max_h_samp == 1 && max_v_samp == 1 {
+        if !geom.is_grayscale && geom.max_h_samp == 1 && geom.max_v_samp == 1 {
             return self.decode_baseline_streaming_rgb(scan_components, stop);
         }
 
-        let mcu_width = max_h_samp * 8;
-        let mcu_height = max_v_samp * 8;
-        let mcu_cols = (width + mcu_width - 1) / mcu_width;
-        let mcu_rows = (height + mcu_height - 1) / mcu_height;
-
-        let y_strip_width = mcu_cols * max_h_samp * 8;
-        let y_strip_height = max_v_samp * 8;
-
-        let (c_h_samp, c_v_samp, c_strip_width, c_strip_height) = if is_grayscale {
-            (1, 1, 0, 0)
-        } else {
-            let c_h = self.components[1].h_samp_factor as usize;
-            let c_v = self.components[1].v_samp_factor as usize;
-            (c_h, c_v, mcu_cols * c_h * 8, c_v * 8)
-        };
-
-        let h_ratio = if is_grayscale {
-            1
-        } else {
-            max_h_samp / c_h_samp
-        };
-        let v_ratio = if is_grayscale {
-            1
-        } else {
-            max_v_samp / c_v_samp
-        };
-
-        // Check for missing DHT
+        // ---- Phase 2: validation ----
+        // Check for missing DHT — warn (and propagate if escalated to error).
         {
             let mut any_missing = false;
             for (_comp_idx, dc_table, ac_table) in scan_components {
@@ -994,782 +948,84 @@ impl<'a> JpegParser<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Set up entropy decoder
-        let scan_data = &self.data[self.position..];
-        let mut decoder = EntropyDecoder::new(scan_data);
-        if matches!(
-            self.strictness,
-            Strictness::Lenient | Strictness::Permissive
-        ) {
-            decoder.set_lenient(true);
-        }
-        // Enable RST resync for all non-Strict modes. Zero overhead on valid
-        // input (only gates error-path recovery). On mismatch, resync_to_restart()
-        // scans forward for the next RST marker and continues decoding.
-        if self.strictness != Strictness::Strict {
-            decoder.set_permissive_rst(true);
-        }
-        for (_comp_idx, dc_table, ac_table) in scan_components {
-            let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
-            let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
-            let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
-                Some(table) => table,
-                None => {
-                    if dc_idx == 0 {
-                        HuffmanDecodeTable::std_dc_luminance()
-                    } else {
-                        HuffmanDecodeTable::std_dc_chrominance()
-                    }
-                }
-            };
-            decoder.set_dc_table(dc_idx, dc_table_ref);
-            let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
-                Some(table) => table,
-                None => {
-                    if ac_idx == 0 {
-                        HuffmanDecodeTable::std_ac_luminance()
-                    } else {
-                        HuffmanDecodeTable::std_ac_chrominance()
-                    }
-                }
-            };
-            decoder.set_ac_table(ac_idx, ac_table_ref);
-        }
+        // ---- Phase 3: buffer allocation ----
+        let mut bufs = baseline_streaming::StreamingBuffers::allocate(
+            &geom,
+            self.chroma_upsampling,
+            self.streaming_output_format,
+        )?;
 
-        // ---- Buffer allocation ----
-
-        // Fancy h2v2 needs double-buffered Y and chroma strips (1-row lag for context)
-        let need_fancy = !is_grayscale
-            && v_ratio == 2
-            && !matches!(
-                self.chroma_upsampling,
-                super::super::ChromaUpsampling::NearestNeighbor
-            );
-
-        let y_strip_size = y_strip_width * y_strip_height;
-        let mut y_strip_a: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip A")?;
-        let mut y_strip_b: Vec<i16> = if need_fancy {
-            try_alloc_maybeuninit(y_strip_size, "Y strip B")?
-        } else {
-            Vec::new()
-        };
-
-        // Extended chroma buffers (data + 1 above + 1 below context row for fancy)
-        let ext_height = if need_fancy {
-            c_strip_height + 2
-        } else {
-            c_strip_height
-        };
-        let c_buf_size = if is_grayscale {
-            0
-        } else {
-            c_strip_width * ext_height
-        };
-
-        let mut cb_a: Vec<i16> = if c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cb strip A")?
-        } else {
-            Vec::new()
-        };
-        let mut cr_a: Vec<i16> = if c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cr strip A")?
-        } else {
-            Vec::new()
-        };
-        let mut cb_b: Vec<i16> = if need_fancy && c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cb strip B")?
-        } else {
-            Vec::new()
-        };
-        let mut cr_b: Vec<i16> = if need_fancy && c_buf_size > 0 {
-            try_alloc_maybeuninit(c_buf_size, "Cr strip B")?
-        } else {
-            Vec::new()
-        };
-
-        // Upsampled chroma output buffers
-        // For fancy h2v2: output is ext_height * v_ratio rows (includes context row output)
-        let upsample_out_height = if need_fancy {
-            ext_height * v_ratio
-        } else {
-            y_strip_height
-        };
-        let up_size = if (!is_grayscale && h_ratio == 2) || need_fancy {
-            y_strip_width * upsample_out_height
-        } else {
-            0
-        };
-        let mut cb_up: Vec<i16> = if up_size > 0 {
-            try_alloc_maybeuninit(up_size, "Cb upsampled")?
-        } else {
-            Vec::new()
-        };
-        let mut cr_up: Vec<i16> = if up_size > 0 {
-            try_alloc_maybeuninit(up_size, "Cr upsampled")?
-        } else {
-            Vec::new()
-        };
-
-        // Determine output pixel format: 4bpp direct BGRA/RGBA when hinted,
-        // otherwise 3bpp RGB (grayscale always 1bpp).
-        let (out_bpp, out_4bpp, swap_rb) = if is_grayscale {
-            (1, false, false)
-        } else {
-            match self.streaming_output_format {
-                Some(PixelFormat::Bgra | PixelFormat::Bgrx) => (4, true, true),
-                Some(PixelFormat::Rgba) => (4, true, false),
-                _ => (3, false, false),
-            }
-        };
-
-        // Output buffer
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, out_bpp))?;
-        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "output buffer")?;
-
-        let mut mcu_count = 0u32;
-        let restart_interval = self.restart_interval as u32;
-        let mut next_restart_num = 0u8;
-        let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
-        let mut coeffs = [0i16; DCT_BLOCK_SIZE];
-        let mut prev_coeff_counts: [u8; 4] = [64; 4];
-        let mut streaming_truncation_mcu: Option<u32> = None;
-
-        let is_rgb = !is_grayscale && self.is_rgb_jpeg();
-
-        // Use fused box kernel for h2v2+NearestNeighbor
-        let use_fused_box = !is_grayscale
-            && h_ratio == 2
-            && v_ratio == 2
+        // ---- Phase 4: kernel selection ----
+        let use_fused_box = !geom.is_grayscale
+            && geom.h_ratio == 2
+            && geom.v_ratio == 2
             && matches!(
                 self.chroma_upsampling,
                 super::super::ChromaUpsampling::NearestNeighbor
             );
+        let upsample_fn =
+            baseline_streaming::select_upsample_fn(&geom, self.chroma_upsampling, use_fused_box)?;
+        let idct_fn = baseline_streaming::select_idct_fn(self.idct_method);
+        let is_rgb = !geom.is_grayscale && self.is_rgb_jpeg();
 
-        // Select upsample function
-        let upsample_fn: Option<fn(&[i16], usize, usize, &mut [i16], usize, usize)> =
-            if is_grayscale || (h_ratio == 1 && v_ratio == 1) || use_fused_box {
-                None
-            } else {
-                use super::super::ChromaUpsampling;
-                use crate::decode::upsample::{
-                    upsample_h2v1_i16_libjpeg, upsample_h2v1_i16_nearest, upsample_h2v2_i16_libjpeg,
-                };
-                Some(match (h_ratio, v_ratio) {
-                    (2, 2) => match self.chroma_upsampling {
-                        ChromaUpsampling::Triangle => upsample_h2v2_i16_libjpeg,
-                        ChromaUpsampling::NearestNeighbor => {
-                            unreachable!()
-                        }
-                    },
-                    (2, 1) => match self.chroma_upsampling {
-                        ChromaUpsampling::Triangle => upsample_h2v1_i16_libjpeg,
-                        ChromaUpsampling::NearestNeighbor => upsample_h2v1_i16_nearest,
-                    },
-                    _ => {
-                        return Err(Error::unsupported_feature(
-                            "unsupported chroma subsampling for streaming decode",
-                        ));
-                    }
-                })
-            };
+        // ---- Phase 5: entropy decoder setup ----
+        let mut decoder = baseline_streaming::setup_entropy_decoder(self, scan_components);
 
-        // Select IDCT function
-        let idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8) = match self.idct_method {
-            super::super::IdctMethod::Libjpeg => super::super::idct_int::idct_int_tiered_libjpeg,
-            super::super::IdctMethod::Jpegli => idct_int_tiered,
-        };
-
-        /// Decode one MCU row of blocks into Y strip and chroma strips.
-        /// `c_data_offset` is the byte offset into chroma buffers for data (skips context row).
-        #[inline(always)]
-        fn decode_mcu_row(
-            decoder: &mut EntropyDecoder<'_, '_>,
-            scan_components: &[(usize, u8, u8)],
-            components: &[crate::types::Component; crate::foundation::consts::MAX_COMPONENTS],
-            mcu_cols: usize,
-            mcu_count: &mut u32,
-            restart_interval: u32,
-            next_restart_num: &mut u8,
-            prev_coeff_counts: &mut [u8; 4],
-            streaming_truncation_mcu: &mut Option<u32>,
-            quant_tables: &[&[u16; DCT_BLOCK_SIZE]],
-            y_strip: &mut [i16],
-            y_strip_width: usize,
-            max_h_samp: usize,
-            cb: &mut [i16],
-            cr: &mut [i16],
-            c_strip_width: usize,
-            c_h_samp: usize,
-            c_data_offset: usize,
-            is_grayscale: bool,
-            coeffs: &mut [i16; DCT_BLOCK_SIZE],
-            dequant_buf: &mut [i32; DCT_BLOCK_SIZE],
-            idct_fn: fn(&mut [i32; 64], &mut [i16], usize, u8),
-        ) -> Result<()> {
-            for mcu_x in 0..mcu_cols {
-                if restart_interval > 0 && *mcu_count > 0 && *mcu_count % restart_interval == 0 {
-                    decoder.align_to_byte();
-                    decoder.read_restart_marker(*next_restart_num)?;
-                    *next_restart_num = (*next_restart_num + 1) & 7;
-                    decoder.reset_dc();
-                    *prev_coeff_counts = [64; 4];
-                }
-
-                for (comp_idx, dc_table, ac_table) in scan_components {
-                    let h_samp = components[*comp_idx].h_samp_factor as usize;
-                    let v_samp = components[*comp_idx].v_samp_factor as usize;
-
-                    for by in 0..v_samp {
-                        for bx in 0..h_samp {
-                            let coeff_count = match decoder.decode_block_into(
-                                coeffs,
-                                prev_coeff_counts[*comp_idx],
-                                *comp_idx,
-                                *dc_table as usize,
-                                *ac_table as usize,
-                            )? {
-                                ScanRead::Value(c) => c,
-                                ScanRead::EndOfScan | ScanRead::Truncated => {
-                                    if streaming_truncation_mcu.is_none() {
-                                        *streaming_truncation_mcu = Some(*mcu_count);
-                                    }
-                                    prev_coeff_counts[*comp_idx] = 64;
-                                    continue;
-                                }
-                            };
-                            prev_coeff_counts[*comp_idx] =
-                                prev_coeff_counts[*comp_idx].max(coeff_count);
-
-                            let quant = quant_tables[*comp_idx];
-
-                            if *comp_idx == 0 || is_grayscale {
-                                let dst_x = mcu_x * max_h_samp * 8 + bx * 8;
-                                let dst_y = by * 8;
-                                let dst_offset = dst_y * y_strip_width + dst_x;
-                                if coeff_count <= 1 {
-                                    let dc = coeffs[0] as i32 * quant[0] as i32;
-                                    idct_int_dc_only(dc, &mut y_strip[dst_offset..], y_strip_width);
-                                } else {
-                                    dequantize_unzigzag_i32_into_partial(
-                                        coeffs,
-                                        quant,
-                                        dequant_buf,
-                                        coeff_count,
-                                    );
-                                    idct_fn(
-                                        dequant_buf,
-                                        &mut y_strip[dst_offset..],
-                                        y_strip_width,
-                                        coeff_count,
-                                    );
-                                }
-                            } else {
-                                let dst_x = mcu_x * c_h_samp * 8 + bx * 8;
-                                let dst_y = by * 8;
-                                let dst_offset = c_data_offset + dst_y * c_strip_width + dst_x;
-                                let strip = if *comp_idx == 1 { &mut *cb } else { &mut *cr };
-                                if coeff_count <= 1 {
-                                    let dc = coeffs[0] as i32 * quant[0] as i32;
-                                    idct_int_dc_only(dc, &mut strip[dst_offset..], c_strip_width);
-                                } else {
-                                    dequantize_unzigzag_i32_into_partial(
-                                        coeffs,
-                                        quant,
-                                        dequant_buf,
-                                        coeff_count,
-                                    );
-                                    idct_fn(
-                                        dequant_buf,
-                                        &mut strip[dst_offset..],
-                                        c_strip_width,
-                                        coeff_count,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                *mcu_count += 1;
-            }
-            Ok(())
-        }
-
-        /// Output one MCU row to the output buffer using upsampled chroma.
-        /// `chroma_row_skip` is the number of upsampled rows to skip at the start
-        /// of the chroma buffer (to skip context row output in fancy mode).
-        /// When `out_4bpp` is true, writes BGRA/RGBA (4 bytes/pixel) with alpha=255;
-        /// `swap_rb` controls B,G,R,A vs R,G,B,A order.
-        #[inline(always)]
-        fn output_mcu_row(
-            mcu_y: usize,
-            y_strip: &[i16],
-            y_strip_width: usize,
-            y_strip_height: usize,
-            cb_up: &[i16],
-            cr_up: &[i16],
-            chroma_row_skip: usize,
-            rgb: &mut [u8],
-            width: usize,
-            height: usize,
-            is_rgb: bool,
-            out_4bpp: bool,
-            swap_rb: bool,
-        ) {
-            let bpp = if out_4bpp { 4 } else { 3 };
-            let y_start = mcu_y * y_strip_height;
-            let rows = y_strip_height.min(height.saturating_sub(y_start));
-            let cols = width.min(y_strip_width);
-            for row in 0..rows {
-                let y_off = row * y_strip_width;
-                let up_off = (chroma_row_skip + row) * y_strip_width;
-                let rgb_off = (y_start + row) * width * bpp;
-                if is_rgb {
-                    // RGB JPEG: interleave planes without YCbCr→RGB matrix
-                    if out_4bpp {
-                        for px in 0..cols {
-                            let o = rgb_off + px * 4;
-                            if swap_rb {
-                                rgb[o] = cr_up[up_off + px].clamp(0, 255) as u8;
-                                rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                                rgb[o + 2] = y_strip[y_off + px].clamp(0, 255) as u8;
-                            } else {
-                                rgb[o] = y_strip[y_off + px].clamp(0, 255) as u8;
-                                rgb[o + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                                rgb[o + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
-                            }
-                            rgb[o + 3] = 255;
-                        }
-                    } else {
-                        for px in 0..cols {
-                            rgb[rgb_off + px * 3] = y_strip[y_off + px].clamp(0, 255) as u8;
-                            rgb[rgb_off + px * 3 + 1] = cb_up[up_off + px].clamp(0, 255) as u8;
-                            rgb[rgb_off + px * 3 + 2] = cr_up[up_off + px].clamp(0, 255) as u8;
-                        }
-                    }
-                } else if out_4bpp {
-                    ycbcr_planes_i16_to_xrgba_u8(
-                        &y_strip[y_off..y_off + cols],
-                        &cb_up[up_off..up_off + cols],
-                        &cr_up[up_off..up_off + cols],
-                        &mut rgb[rgb_off..rgb_off + cols * 4],
-                        swap_rb,
-                    );
-                } else {
-                    ycbcr_planes_i16_to_rgb_u8(
-                        &y_strip[y_off..y_off + cols],
-                        &cb_up[up_off..up_off + cols],
-                        &cr_up[up_off..up_off + cols],
-                        &mut rgb[rgb_off..rgb_off + cols * 3],
-                    );
-                }
-            }
-        }
-
-        // ---- Main MCU row loop ----
-        let c_data_offset = if need_fancy { c_strip_width } else { 0 };
-
-        // Horizontal chroma padding: libjpeg-turbo's upsampler uses
-        // downsampled_width, not the MCU-padded width. Edge-replicate
-        // the last real column over padding columns so our upsampler
-        // (which uses c_strip_width) doesn't interpolate with padding.
-        let downsampled_w = (width + h_ratio - 1) / h_ratio;
-        let has_h_padding = downsampled_w < c_strip_width;
-
-        // Edge-replicate horizontal padding columns in an extended chroma buffer.
-        // Covers rows [c_data_offset..c_data_offset + c_strip_height * c_strip_width].
-        let fixup_h_padding = |buf: &mut [i16]| {
-            if !has_h_padding {
-                return;
-            }
-            // Also fixup above/below context rows if present
-            let total_rows = if need_fancy {
-                ext_height
-            } else {
-                c_strip_height
-            };
-            let start_offset = 0; // include above context row
-            for row in 0..total_rows {
-                let row_off = start_offset + row * c_strip_width;
-                let last_val = buf[row_off + downsampled_w - 1];
-                for col in downsampled_w..c_strip_width {
-                    buf[row_off + col] = last_val;
-                }
-            }
-        };
-
-        if need_fancy {
-            // ============================================================
-            // Fancy h2v2: double-buffered Y + chroma with 1-row lag
-            // ============================================================
-            // Pattern:
-            //   MCU 0: decode → B, set above ctx = edge repl, swap (B→A)
-            //   MCU N: decode → B, set A.below = B.first, output A, set B.above = A.last, swap
-            //   Flush: set A.below = edge repl, output A
-            let upsample = upsample_fn.unwrap();
-
-            for mcu_y in 0..mcu_rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
-
-                // Decode into B buffers (y_strip_b, cb_b, cr_b)
-                decode_mcu_row(
-                    &mut decoder,
-                    scan_components,
-                    &self.components,
-                    mcu_cols,
-                    &mut mcu_count,
-                    restart_interval,
-                    &mut next_restart_num,
-                    &mut prev_coeff_counts,
-                    &mut streaming_truncation_mcu,
-                    &quant_tables,
-                    &mut y_strip_b,
-                    y_strip_width,
-                    max_h_samp,
-                    &mut cb_b,
-                    &mut cr_b,
-                    c_strip_width,
-                    c_h_samp,
-                    c_data_offset,
-                    false,
-                    &mut coeffs,
-                    &mut dequant_buf,
-                    idct_fn,
-                )?;
-
-                if mcu_y == 0 {
-                    // First row: set above-context = edge replicate (copy first data row to row 0)
-                    cb_b.copy_within(c_strip_width..2 * c_strip_width, 0);
-                    cr_b.copy_within(c_strip_width..2 * c_strip_width, 0);
-                } else {
-                    // Set A's below-context = B's first data row
-                    let below_start = (c_strip_height + 1) * c_strip_width;
-                    cb_a[below_start..below_start + c_strip_width]
-                        .copy_from_slice(&cb_b[c_strip_width..2 * c_strip_width]);
-                    cr_a[below_start..below_start + c_strip_width]
-                        .copy_from_slice(&cr_b[c_strip_width..2 * c_strip_width]);
-
-                    // Output pending MCU row (A has full context now)
-                    fixup_h_padding(&mut cb_a);
-                    fixup_h_padding(&mut cr_a);
-                    upsample(
-                        &cb_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cb_up,
-                        y_strip_width,
-                        upsample_out_height,
-                    );
-                    upsample(
-                        &cr_a,
-                        c_strip_width,
-                        ext_height,
-                        &mut cr_up,
-                        y_strip_width,
-                        upsample_out_height,
-                    );
-                    output_mcu_row(
-                        mcu_y - 1,
-                        &y_strip_a,
-                        y_strip_width,
-                        y_strip_height,
-                        &cb_up,
-                        &cr_up,
-                        v_ratio, // skip context rows in upsampled output
-                        &mut rgb,
-                        width,
-                        height,
-                        is_rgb,
-                        out_4bpp,
-                        swap_rb,
-                    );
-
-                    // Set B's above-context = A's last data row
-                    let last_data = c_strip_height * c_strip_width;
-                    cb_b[..c_strip_width]
-                        .copy_from_slice(&cb_a[last_data..last_data + c_strip_width]);
-                    cr_b[..c_strip_width]
-                        .copy_from_slice(&cr_a[last_data..last_data + c_strip_width]);
-                }
-
-                // Swap: B (freshly decoded) → A (pending output)
-                core::mem::swap(&mut y_strip_a, &mut y_strip_b);
-                core::mem::swap(&mut cb_a, &mut cb_b);
-                core::mem::swap(&mut cr_a, &mut cr_b);
-            }
-
-            // Flush last pending MCU row (below context = edge replicate)
-            if mcu_rows > 0 {
-                // For the last MCU row, edge-replicate from the last REAL chroma
-                // row, not the last padding row. The encoder pads MCU boundaries
-                // by replicating pixel rows before DCT, but IDCT rounding means
-                // decoded padding rows differ slightly from the last real row.
-                // libjpeg-turbo's set_bottom_pointers() does this same truncation.
-                let downsampled_h = (height + v_ratio - 1) / v_ratio;
-                let real_rows_in_strip = c_strip_height
-                    .min(downsampled_h.saturating_sub((mcu_rows - 1) * c_strip_height));
-                if real_rows_in_strip < c_strip_height {
-                    // Edge-replicate last real row over padding rows
-                    // Data rows are at offset c_data_offset (1 row for fancy context)
-                    let last_real = c_data_offset + (real_rows_in_strip - 1) * c_strip_width;
-                    for pad_row in real_rows_in_strip..c_strip_height {
-                        let dst = c_data_offset + pad_row * c_strip_width;
-                        cb_a.copy_within(last_real..last_real + c_strip_width, dst);
-                        cr_a.copy_within(last_real..last_real + c_strip_width, dst);
-                    }
-                }
-
-                let last_data = c_strip_height * c_strip_width;
-                let below_start = (c_strip_height + 1) * c_strip_width;
-                // Now last_data points to the edge-replicated row (== last real row)
-                cb_a.copy_within(last_data..last_data + c_strip_width, below_start);
-                cr_a.copy_within(last_data..last_data + c_strip_width, below_start);
-
-                fixup_h_padding(&mut cb_a);
-                fixup_h_padding(&mut cr_a);
-                upsample(
-                    &cb_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cb_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
-                upsample(
-                    &cr_a,
-                    c_strip_width,
-                    ext_height,
-                    &mut cr_up,
-                    y_strip_width,
-                    upsample_out_height,
-                );
-                output_mcu_row(
-                    mcu_rows - 1,
-                    &y_strip_a,
-                    y_strip_width,
-                    y_strip_height,
-                    &cb_up,
-                    &cr_up,
-                    v_ratio, // skip context rows in upsampled output
-                    &mut rgb,
-                    width,
-                    height,
-                    is_rgb,
-                    out_4bpp,
-                    swap_rb,
-                );
-            }
+        // ---- Phase 6: main MCU-row dispatch ----
+        let c_data_offset = if bufs.need_fancy {
+            geom.c_strip_width
         } else {
-            // ============================================================
-            // Non-fancy paths: grayscale, box h2v2, h2v1
-            // No double-buffering needed (no vertical chroma context)
-            // ============================================================
-            for mcu_y in 0..mcu_rows {
-                if stop.should_stop() {
-                    return Err(Error::cancelled());
-                }
+            0
+        };
+        let downsampled_w = (geom.width + geom.h_ratio - 1) / geom.h_ratio;
 
-                decode_mcu_row(
-                    &mut decoder,
-                    scan_components,
-                    &self.components,
-                    mcu_cols,
-                    &mut mcu_count,
-                    restart_interval,
-                    &mut next_restart_num,
-                    &mut prev_coeff_counts,
-                    &mut streaming_truncation_mcu,
-                    &quant_tables,
-                    &mut y_strip_a,
-                    y_strip_width,
-                    max_h_samp,
-                    &mut cb_a,
-                    &mut cr_a,
-                    c_strip_width,
-                    c_h_samp,
-                    c_data_offset,
-                    is_grayscale,
-                    &mut coeffs,
-                    &mut dequant_buf,
-                    idct_fn,
-                )?;
+        let mut state = baseline_streaming::McuRowState::new();
+        let inputs = baseline_streaming::LoopInputs {
+            scan_components,
+            components: &self.components,
+            quant_tables: &quant_tables,
+            restart_interval: self.restart_interval as u32,
+            idct_fn,
+            is_rgb,
+        };
 
-                if is_grayscale {
-                    let y_start = mcu_y * y_strip_height;
-                    let rows = y_strip_height.min(height.saturating_sub(y_start));
-                    let cols = width.min(y_strip_width);
-                    if out_4bpp {
-                        // Grayscale → BGRA/RGBA: write [v, v, v, 0xFF] per pixel.
-                        // 16-pixel chunks for auto-vectorization, remainder scalar.
-                        for row in 0..rows {
-                            let strip_off = row * y_strip_width;
-                            let out_off = (y_start + row) * width * 4;
-                            let src = &y_strip_a[strip_off..strip_off + cols];
-                            let dst = &mut rgb[out_off..out_off + cols * 4];
-                            let chunks = cols / 16;
-                            for c in 0..chunks {
-                                let si = c * 16;
-                                let di = c * 64;
-                                let s: &[i16; 16] = src[si..si + 16].try_into().unwrap();
-                                let d: &mut [u8; 64] = (&mut dst[di..di + 64]).try_into().unwrap();
-                                for i in 0..16 {
-                                    let v = s[i].clamp(0, 255) as u8;
-                                    d[i * 4] = v;
-                                    d[i * 4 + 1] = v;
-                                    d[i * 4 + 2] = v;
-                                    d[i * 4 + 3] = 255;
-                                }
-                            }
-                            for px in chunks * 16..cols {
-                                let v = src[px].clamp(0, 255) as u8;
-                                let o = px * 4;
-                                dst[o] = v;
-                                dst[o + 1] = v;
-                                dst[o + 2] = v;
-                                dst[o + 3] = 255;
-                            }
-                        }
-                    } else {
-                        // Grayscale → 1bpp gray output
-                        for row in 0..rows {
-                            let strip_off = row * y_strip_width;
-                            let out_off = (y_start + row) * width;
-                            for px in 0..cols {
-                                rgb[out_off + px] = y_strip_a[strip_off + px].clamp(0, 255) as u8;
-                            }
-                        }
-                    }
-                } else if use_fused_box {
-                    let y_start = mcu_y * y_strip_height;
-                    let y_rows = y_strip_height.min(height.saturating_sub(y_start));
-                    let c_rows = c_strip_height;
-                    let cols = width.min(y_strip_width);
-                    for row in 0..y_rows {
-                        let c_row = (row / 2).min(c_rows.saturating_sub(1));
-                        let y_off = row * y_strip_width;
-                        let c_off = c_row * c_strip_width;
-                        let rgb_off = (y_start + row) * width * out_bpp;
-                        if is_rgb && out_4bpp {
-                            for px in 0..cols {
-                                let cx = px / 2;
-                                let o = rgb_off + px * 4;
-                                if swap_rb {
-                                    rgb[o] = cr_a[c_off + cx].clamp(0, 255) as u8;
-                                    rgb[o + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
-                                    rgb[o + 2] = y_strip_a[y_off + px].clamp(0, 255) as u8;
-                                } else {
-                                    rgb[o] = y_strip_a[y_off + px].clamp(0, 255) as u8;
-                                    rgb[o + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
-                                    rgb[o + 2] = cr_a[c_off + cx].clamp(0, 255) as u8;
-                                }
-                                rgb[o + 3] = 255;
-                            }
-                        } else if is_rgb {
-                            for px in 0..cols {
-                                let cx = px / 2;
-                                rgb[rgb_off + px * 3] = y_strip_a[y_off + px].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 1] = cb_a[c_off + cx].clamp(0, 255) as u8;
-                                rgb[rgb_off + px * 3 + 2] = cr_a[c_off + cx].clamp(0, 255) as u8;
-                            }
-                        } else if out_4bpp {
-                            // No fused h2v2 box→4bpp SIMD kernel yet.
-                            // Expand chroma inline (box upsample: duplicate each
-                            // sample to 2 pixels) then call the SIMD xrgba function.
-                            // This is a cold path (NearestNeighbor + 4bpp).
-                            let chroma_w = (cols + 1) / 2;
-                            let needed = cols;
-                            // Reuse cb_up/cr_up scratch buffers (already allocated
-                            // with at least y_strip_width per row)
-                            for px in 0..chroma_w {
-                                let val_cb = cb_a[c_off + px];
-                                let val_cr = cr_a[c_off + px];
-                                let x0 = px * 2;
-                                cb_up[x0] = val_cb;
-                                cr_up[x0] = val_cr;
-                                if x0 + 1 < needed {
-                                    cb_up[x0 + 1] = val_cb;
-                                    cr_up[x0 + 1] = val_cr;
-                                }
-                            }
-                            ycbcr_planes_i16_to_xrgba_u8(
-                                &y_strip_a[y_off..y_off + cols],
-                                &cb_up[..cols],
-                                &cr_up[..cols],
-                                &mut rgb[rgb_off..rgb_off + cols * 4],
-                                swap_rb,
-                            );
-                        } else {
-                            fused_h2v2_box_ycbcr_to_rgb_u8(
-                                &y_strip_a[y_off..y_off + cols],
-                                &cb_a[c_off..c_off + (cols + 1) / 2],
-                                &cr_a[c_off..c_off + (cols + 1) / 2],
-                                &mut rgb[rgb_off..rgb_off + cols * 3],
-                                cols,
-                            );
-                        }
-                    }
-                } else {
-                    // h2v1 or other: upsample then color convert
-                    let upsample = upsample_fn.unwrap();
-                    upsample(
-                        &cb_a[..c_strip_width * c_strip_height],
-                        c_strip_width,
-                        c_strip_height,
-                        &mut cb_up[..y_strip_width * y_strip_height],
-                        y_strip_width,
-                        y_strip_height,
-                    );
-                    upsample(
-                        &cr_a[..c_strip_width * c_strip_height],
-                        c_strip_width,
-                        c_strip_height,
-                        &mut cr_up[..y_strip_width * y_strip_height],
-                        y_strip_width,
-                        y_strip_height,
-                    );
-                    output_mcu_row(
-                        mcu_y,
-                        &y_strip_a,
-                        y_strip_width,
-                        y_strip_height,
-                        &cb_up,
-                        &cr_up,
-                        0, // no context row skip for non-fancy paths
-                        &mut rgb,
-                        width,
-                        height,
-                        is_rgb,
-                        out_4bpp,
-                        swap_rb,
-                    );
-                }
-            }
+        if bufs.need_fancy {
+            let upsample = upsample_fn.expect("fancy h2v2 requires an upsample fn");
+            baseline_streaming::run_fancy_h2v2_loop(
+                &mut decoder,
+                &inputs,
+                &geom,
+                &mut bufs,
+                &mut state,
+                upsample,
+                c_data_offset,
+                downsampled_w,
+                stop,
+            )?;
+        } else {
+            baseline_streaming::run_simple_loop(
+                &mut decoder,
+                &inputs,
+                &geom,
+                &mut bufs,
+                &mut state,
+                upsample_fn,
+                use_fused_box,
+                c_data_offset,
+                stop,
+            )?;
         }
 
-        // Update position and emit warnings
-        let had_ac_overflow = decoder.had_ac_overflow;
-        let had_invalid_huffman = decoder.had_invalid_huffman;
-        let rst_resyncs = decoder.rst_resync_count();
-        self.position += decoder.position();
+        // ---- Phase 7: finalize (warnings + position) ----
+        // Snapshot stats in a sub-scope so the decoder's borrow of `self`
+        // is released before `finalize_streaming` re-borrows mutably.
+        let stats = {
+            let stats = baseline_streaming::DecoderStats::snapshot(&decoder);
+            let _ = decoder;
+            stats
+        };
+        baseline_streaming::finalize_streaming(self, stats, &state, geom.mcu_rows, geom.mcu_cols)?;
 
-        let total_mcus = (mcu_rows * mcu_cols) as u32;
-        if let Some(at_mcu) = streaming_truncation_mcu {
-            self.warn(DecodeWarning::TruncatedScan {
-                blocks_decoded: at_mcu,
-                blocks_expected: total_mcus,
-            })?;
-        }
-        if had_ac_overflow {
-            self.warn(DecodeWarning::AcIndexOverflow)?;
-        }
-        if had_invalid_huffman {
-            self.warn(DecodeWarning::InvalidHuffmanCode)?;
-        }
-        if rst_resyncs > 0 {
-            self.warn(DecodeWarning::RestartMarkerResync { count: rst_resyncs })?;
-        }
-
-        Ok(rgb)
+        Ok(bufs.rgb)
     }
 }
