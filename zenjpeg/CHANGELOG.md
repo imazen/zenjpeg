@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-05-28
+
+### Fixed
+
+- JBRD `reset_points` / `extra_zero_runs` emission now matches libjxl bit-for-
+  bit. Adds a parallel signed `eobrun_signed: i32` tracker to
+  `decode_ac_first_scan_tracked` and `decode_ac_refine_scan_tracked` that
+  mirrors libjxl's `*eobrun` semantics from `enc_jpeg_data_reader.cc:602-617`
+  (init -1, RST resets to -1, decrement at end of every non-fast-path block,
+  EOB branches set to post-line-617 value). The reset_state predicate is now
+  `k == Ss && eobrun_signed == 0` — the libjxl-exact condition. Pre-fix
+  pushed a phantom reset_point at every AC-scan start AND shifted all
+  subsequent indices by -1 from cjxl's emission. Verified on 3 representative
+  JPEGs (10-scan progressive, 9-scan progressive, 1-scan baseline): per-scan
+  reset_point counts AND cumulative indices now bit-identical to cjxl.
+  Closes the +1.99% JBRD bloat regression introduced in 0.8.4-0.8.6 (the
+  initial JBRD emission API): 50-file paired A/B `cjxl-rs` vs `cjxl` bench
+  shows -0.50pp recovery (+2.15% → +1.65%); 200-file aggregate now +1.24%.
+
 ## [0.8.6] - 2026-05-28
 
 ### Added

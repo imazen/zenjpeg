@@ -1635,6 +1635,24 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // candidates per the libjxl spec.
         let track_jbrd = jbrd.is_some();
         let eobrun_allowed = ss > 0;
+        // JBRD reset_state semantics (libjxl `enc_jpeg_data_reader.cc`):
+        // libjxl initialises `eobrun = -1` (line 776) and decrements it at
+        // the END of every block (line 617), so the line-602 predicate
+        // `*eobrun == 0` is TRUE iff the PRIOR block ended with eobrun == 1
+        // (post-EOB-introduce + 1-decrement = 0) OR the fast-path consumed
+        // the last entry of a run (1 → 0). It is NOT true at scan start
+        // (init -1), after RST (libjxl line 815 resets to -1), or after a
+        // block whose loop exited via a real coefficient (decrements to a
+        // negative value).
+        //
+        // We do not change `eob_run`'s u16 type (used by the JPEG decode
+        // logic itself). Instead we mirror libjxl's signed semantics in a
+        // parallel `eobrun_signed` tracker, used ONLY for the JBRD push
+        // predicate.
+        //
+        // This matches libjxl's "two end-of-block runs right after each
+        // other" semantic (the comment at line 603-604).
+        let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
             if block_y & 15 == 0 && stop.should_stop() {
@@ -1668,6 +1686,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
+                    // libjxl resets `eobrun = -1` after RST (line 815) → no
+                    // reset_state push for the first block after a restart.
+                    eobrun_signed = -1;
                 }
 
                 let block_idx = block_y * padded_blocks_h + block_x;
@@ -1676,6 +1697,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                 // EOB fast path — most common case in progressive
                 if eob_run > 0 {
+                    // Mirror libjxl's line 570-572: --(*eobrun); return.
+                    // Decrement the SIGNED tracker once; next non-fast-path
+                    // block will see eobrun_signed == 0 iff this was the
+                    // last block of the run.
+                    eobrun_signed -= 1;
                     eob_run -= 1;
                     mcu_count += 1;
                     continue;
@@ -1686,6 +1712,13 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 // is placed (size > 0). Matches libjxl DecodeDCTBlock semantics
                 // (enc_jpeg_data_reader.cc:574 init, :597 reset, :600 increment).
                 let mut block_num_zero_runs: u32 = 0;
+                // Track whether the Huffman loop exited via an EOB symbol
+                // (single, multi, or AC overflow) or via natural loop
+                // completion (k > Se after real-coeff path). libjxl decrements
+                // `*eobrun` at end of every block (line 617) — the EOB branches
+                // already accounted for that in their pre-decrement set.
+                // For the real-coeff exit we need the explicit decrement here.
+                let mut exited_via_eob = false;
 
                 let mut k = ss as usize;
                 'block: while k <= se_usize {
@@ -1801,25 +1834,30 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             block_num_zero_runs += 1;
                             k += 16;
                         } else if run == 0 {
-                            // Single EOB. JBRD reset_state if this is the very
-                            // first symbol of the block (k == ss) — i.e. a fresh
-                            // EOB run starts here with no prior active eob_run.
-                            // libjxl enc_jpeg_data_reader.cc:602-606
+                            // Single EOB. JBRD reset_state semantic
+                            // (libjxl enc_jpeg_data_reader.cc:602): fires iff
+                            // k == Ss AND *eobrun == 0 (our `eobrun_signed`).
                             if track_jbrd
                                 && eobrun_allowed
                                 && k == ss as usize
+                                && eobrun_signed == 0
                                 && let Some(j) = jbrd.as_deref_mut()
                             {
                                 j.reset_points.push(mcu_count);
                             }
+                            // libjxl line 607: *eobrun = 1<<0 = 1.
+                            // line 617: --(*eobrun) → 0.
+                            eobrun_signed = 0;
+                            exited_via_eob = true;
                             break 'block;
                         } else {
                             // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits).
-                            // JBRD reset_state same condition as single-EOB.
+                            // Same JBRD predicate as single-EOB.
                             // libjxl enc_jpeg_data_reader.cc:602-606
                             if track_jbrd
                                 && eobrun_allowed
                                 && k == ss as usize
+                                && eobrun_signed == 0
                                 && let Some(j) = jbrd.as_deref_mut()
                             {
                                 j.reset_points.push(mcu_count);
@@ -1830,12 +1868,20 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             }
                             let extra = self.reader.read_bits_fast(run) as u16;
                             eob_run = (1 << run) + extra - 1;
+                            // libjxl line 607-612: *eobrun = (1<<r)+extra;
+                            // line 617: --(*eobrun). Net: eob_run.
+                            eobrun_signed = eob_run as i32;
+                            exited_via_eob = true;
                             break 'block;
                         }
                     } else {
                         k += run as usize;
                         if k > se_usize {
-                            // AC overflow — treat as EOB
+                            // AC overflow — treat as EOB. libjxl returns an
+                            // error here so we don't have a canonical
+                            // line-617 equivalent. Mark as EOB-exited so
+                            // the post-block decrement is skipped.
+                            exited_via_eob = true;
                             break 'block;
                         }
                         // Extra bits for coefficient value (size ≤ 10)
@@ -1861,6 +1907,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     && let Some(j) = jbrd.as_deref_mut()
                 {
                     j.extra_zero_runs.push((mcu_count, block_num_zero_runs));
+                }
+
+                // Mirror libjxl line 617: `--(*eobrun);` runs at end of
+                // every non-fast-path block. The EOB branches already
+                // accounted for the libjxl pre-decrement + decrement (net
+                // = `eob_run` for multi-EOB, 0 for single-EOB). Only the
+                // real-coeff-completion path needs the decrement here.
+                if !exited_via_eob {
+                    eobrun_signed -= 1;
                 }
 
                 mcu_count += 1;
@@ -1995,6 +2050,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut next_restart_num = 0u8;
         let track_jbrd = jbrd.is_some();
         let eobrun_allowed = ss > 0;
+        // JBRD reset_state for refinement-scan path mirrors libjxl
+        // `RefineDCTBlock` line 661-665, with the same `*eobrun == 0`
+        // predicate as first-scan. We mirror libjxl's signed `eobrun`
+        // semantics in a parallel `eobrun_signed` tracker (see the comment
+        // in `decode_ac_first_scan_tracked` for full semantics).
+        let mut eobrun_signed: i32 = -1;
 
         for block_y in 0..blocks_v {
             if block_y & 15 == 0 && stop.should_stop() {
@@ -2024,11 +2085,21 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     next_restart_num = (next_restart_num + 1) & 7;
                     self.prev_dc = [0; 4];
                     eob_run = 0;
+                    // libjxl resets `eobrun = -1` after RST → no reset_state
+                    // push for the first block of a fresh segment.
+                    eobrun_signed = -1;
                 }
 
                 let block_idx = block_y * padded_blocks_h + block_x;
                 let block = &mut coeffs[comp_idx][block_idx];
                 let bitmap = &mut bitmaps[comp_idx][block_idx];
+
+                // Track whether this block's Huffman loop exited via an EOB
+                // symbol (single, multi, AC overflow) or via natural loop
+                // completion. The EOB branches set `eobrun_signed` to the
+                // libjxl post-line-617 value; the loop-completion path
+                // requires us to decrement here.
+                let mut exited_via_eob = false;
 
                 // EOB fast path — apply refinement bits to existing nonzero coefficients
                 if eob_run > 0 {
@@ -2065,6 +2136,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             }
                         }
                     }
+                    // Mirror libjxl's line 570-572: --(*eobrun); return.
+                    // Decrement signed tracker once; next non-fast-path block
+                    // sees eobrun_signed == 0 iff this was the last entry.
+                    eobrun_signed -= 1;
                     eob_run -= 1;
                     mcu_count += 1;
                     continue;
@@ -2095,14 +2170,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     if size == 0 {
                         if run != 15 {
                             // EOB — apply refinement to remaining nonzero coeffs.
-                            // JBRD reset_state if this is the very first symbol
-                            // of the block (k == ss). We're in the Huffman path
-                            // so eob_run == 0 is implicit (else fast-path above
-                            // would have run).
-                            // libjxl enc_jpeg_data_reader.cc:661-665
+                            // JBRD reset_state (libjxl `RefineDCTBlock` line
+                            // 661-665): fires iff k == Ss AND *eobrun == 0.
                             if track_jbrd
                                 && eobrun_allowed
                                 && k == ss as usize
+                                && eobrun_signed == 0
                                 && let Some(j) = jbrd.as_deref_mut()
                             {
                                 j.reset_points.push(mcu_count);
@@ -2114,7 +2187,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                                 }
                                 let extra = self.reader.read_bits_fast(run) as u16;
                                 eob_run = (1 << run) + extra - 1;
+                                // libjxl line 666-672: *eobrun = (1<<r)+extra;
+                                // line 705: --(*eobrun) → eob_run.
+                                eobrun_signed = eob_run as i32;
+                            } else {
+                                // run==0: *eobrun=1; --(*eobrun)→0.
+                                eobrun_signed = 0;
                             }
+                            exited_via_eob = true;
                             let rem_count = nz_remaining.count_ones() as u8;
                             if rem_count > 0 {
                                 if rem_count > self.reader.bits_available() {
@@ -2213,6 +2293,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             k += 1;
                         }
                     }
+                }
+
+                // Mirror libjxl `RefineDCTBlock` line 705: `--(*eobrun);`
+                // runs at end of every non-fast-path block. The EOB branch
+                // already accounted for the line-666 set + line-705
+                // decrement (net = eob_run or 0). Only the real-coeff /
+                // ZRL-only completion path needs the decrement here.
+                if !exited_via_eob {
+                    eobrun_signed -= 1;
                 }
 
                 mcu_count += 1;
