@@ -2,6 +2,7 @@
 //!
 //! Provides `EntropyDecoder` for baseline and progressive JPEG decoding.
 
+use crate::decode::JbrdScanInfo;
 use crate::error::{Error, Result, ScanRead, ScanResult};
 use crate::foundation::bitstream::BitReader;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -1556,12 +1557,66 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         restart_interval: u32,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
+        self.decode_ac_first_scan_tracked(
+            coeffs,
+            bitmaps,
+            comp_idx,
+            ac_table_idx,
+            ss,
+            se,
+            al,
+            blocks_h,
+            blocks_v,
+            padded_blocks_h,
+            restart_interval,
+            None,
+            stop,
+        )
+    }
+
+    /// Tracking variant of [`decode_ac_first_scan`] that, when `jbrd` is
+    /// `Some`, populates the scan's `reset_points` and `extra_zero_runs`
+    /// fields per the libjxl JBRD semantics (see
+    /// `enc_jpeg_data_reader.cc:537-619` `DecodeDCTBlock`).
+    ///
+    /// `block_scan_index` accounting: this function processes ONE
+    /// component (progressive AC scans are always non-interleaved),
+    /// one block per inner loop iteration. The libjxl `block_scan_index`
+    /// is therefore exactly the running `mcu_count`.
+    ///
+    /// When `jbrd` is `None`, this is identical to `decode_ac_first_scan`
+    /// and incurs no extra cost beyond a single None-check per scan.
+    ///
+    /// [`decode_ac_first_scan`]: Self::decode_ac_first_scan
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_ac_first_scan_tracked(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        mut jbrd: Option<&mut JbrdScanInfo>,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let fast_ac = ac_table.fast_ac_array();
         let se_usize = se as usize;
         let mut eob_run = 0u16;
         let mut mcu_count = 0u32;
         let mut next_restart_num = 0u8;
+        // JBRD per-block state. Reset at block boundaries (and ZRL counters reset on real coeffs).
+        // `eobrun_allowed = ss > 0` matches libjxl's `DecodeDCTBlock`: AC scans always
+        // have ss>0 (Ss==0 is DC-only), so we treat EOB-run starts as JBRD reset_state
+        // candidates per the libjxl spec.
+        let track_jbrd = jbrd.is_some();
+        let eobrun_allowed = ss > 0;
 
         for block_y in 0..blocks_v {
             if block_y & 15 == 0 && stop.should_stop() {
@@ -1599,6 +1654,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     mcu_count += 1;
                     continue;
                 }
+
+                // JBRD per-block ZRL accumulator. Reset every block, incremented
+                // on each ZRL (run=15, size=0), reset to 0 when a real coefficient
+                // is placed (size > 0). Matches libjxl DecodeDCTBlock semantics
+                // (enc_jpeg_data_reader.cc:574 init, :597 reset, :600 increment).
+                let mut block_num_zero_runs: u32 = 0;
 
                 let mut k = ss as usize;
                 'block: while k <= se_usize {
@@ -1640,6 +1701,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             }
                             block[k] = value << al;
                             *bitmap |= 1u64 << (k & 63);
+                            // JBRD: real coefficient placed → reset ZRL run accumulator.
+                            // (libjxl enc_jpeg_data_reader.cc:597)
+                            block_num_zero_runs = 0;
                             k += 1;
                             continue 'block;
                         }
@@ -1706,12 +1770,34 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     if size == 0 {
                         if run == 15 {
+                            // JBRD: ZRL → increment per-block zero-run counter.
+                            // libjxl enc_jpeg_data_reader.cc:600
+                            block_num_zero_runs += 1;
                             k += 16;
                         } else if run == 0 {
-                            // Single EOB
+                            // Single EOB. JBRD reset_state if this is the very
+                            // first symbol of the block (k == ss) — i.e. a fresh
+                            // EOB run starts here with no prior active eob_run.
+                            // libjxl enc_jpeg_data_reader.cc:602-606
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
                             break 'block;
                         } else {
-                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits)
+                            // EOB run: 2^run + extra_bits - 1 (run ≤ 14 bits).
+                            // JBRD reset_state same condition as single-EOB.
+                            // libjxl enc_jpeg_data_reader.cc:602-606
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
                             let _ = self.reader.refill();
                             if self.reader.bits_available() < run {
                                 return Ok(false);
@@ -1735,8 +1821,20 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         let value = decode_value(size, bits);
                         block[k] = value << al;
                         *bitmap |= 1u64 << (k & 63);
+                        // JBRD: real coefficient placed → reset ZRL run accumulator.
+                        // libjxl enc_jpeg_data_reader.cc:597
+                        block_num_zero_runs = 0;
                         k += 1;
                     }
+                }
+
+                // JBRD: end of block — record extra zero runs if any accumulated.
+                // libjxl enc_jpeg_data_reader.cc:852-857
+                if track_jbrd
+                    && block_num_zero_runs > 0
+                    && let Some(j) = jbrd.as_deref_mut()
+                {
+                    j.extra_zero_runs.push((mcu_count, block_num_zero_runs));
                 }
 
                 mcu_count += 1;
@@ -1813,6 +1911,53 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         restart_interval: u32,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
+        self.decode_ac_refine_scan_tracked(
+            coeffs,
+            bitmaps,
+            comp_idx,
+            ac_table_idx,
+            ss,
+            se,
+            al,
+            blocks_h,
+            blocks_v,
+            padded_blocks_h,
+            restart_interval,
+            None,
+            stop,
+        )
+    }
+
+    /// Tracking variant of [`decode_ac_refine_scan`]. When `jbrd` is `Some`,
+    /// populates the scan's `reset_points` per libjxl JBRD semantics
+    /// (see `enc_jpeg_data_reader.cc:621-728` `RefineDCTBlock`).
+    ///
+    /// `RefineDCTBlock` does NOT track extra zero runs — only reset points —
+    /// because refinement scans encode each coefficient position explicitly
+    /// (no run-length encoding of multi-zero gaps via separate ZRL symbols
+    /// the way first-scan does). Per libjxl the ZRL in refinement scans
+    /// is an in-block skip-and-refine, not a JBRD-trackable accumulation.
+    ///
+    /// `block_scan_index` accounting matches `decode_ac_first_scan_tracked`.
+    ///
+    /// [`decode_ac_refine_scan`]: Self::decode_ac_refine_scan
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_ac_refine_scan_tracked(
+        &mut self,
+        coeffs: &mut [Vec<[i16; DCT_BLOCK_SIZE]>],
+        bitmaps: &mut [Vec<u64>],
+        comp_idx: usize,
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        blocks_h: usize,
+        blocks_v: usize,
+        padded_blocks_h: usize,
+        restart_interval: u32,
+        mut jbrd: Option<&mut JbrdScanInfo>,
+        stop: &impl enough::Stop,
+    ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
         let range_mask = range_bitmap(ss, se);
@@ -1820,6 +1965,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut eob_run = 0u16;
         let mut mcu_count = 0u32;
         let mut next_restart_num = 0u8;
+        let track_jbrd = jbrd.is_some();
+        let eobrun_allowed = ss > 0;
 
         for block_y in 0..blocks_v {
             if block_y & 15 == 0 && stop.should_stop() {
@@ -1913,7 +2060,19 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     if size == 0 {
                         if run != 15 {
-                            // EOB — apply refinement to remaining nonzero coeffs
+                            // EOB — apply refinement to remaining nonzero coeffs.
+                            // JBRD reset_state if this is the very first symbol
+                            // of the block (k == ss). We're in the Huffman path
+                            // so eob_run == 0 is implicit (else fast-path above
+                            // would have run).
+                            // libjxl enc_jpeg_data_reader.cc:661-665
+                            if track_jbrd
+                                && eobrun_allowed
+                                && k == ss as usize
+                                && let Some(j) = jbrd.as_deref_mut()
+                            {
+                                j.reset_points.push(mcu_count);
+                            }
                             if run != 0 {
                                 let _ = self.reader.refill();
                                 if self.reader.bits_available() < run {

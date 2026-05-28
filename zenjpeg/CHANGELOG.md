@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-05-28
+
+### Added
+
+- `Decoder::decode_coefficients_with_jbrd_metadata(data, stop)` returns
+  `(DecodedCoefficients, JbrdMetadata)` in a single decode pass. The new
+  `JbrdMetadata` carries per-scan `reset_points` (block-scan indices where
+  two end-of-block runs occur back-to-back) and `extra_zero_runs` (block
+  indices and counts of ZRL symbols preceding a natural EOB in AC-first
+  scans). These are the libjxl `JPEGScanInfo` fields a JPEG-XL transcoder
+  needs to reconstruct the exact original entropy-coded bitstream from
+  DCT coefficients (the "JBRD" box in the JXL spec). Existing
+  `decode_coefficients()` / `decode_coefficients_with_extras()` are
+  unchanged — zero overhead, no tracking. Used by jxl-encoder's
+  `jpeg-reencoding` feature to close known-DIFF cases on progressive
+  JPEGs with successive-approximation refinement scans (jxl-encoder task #10).
+- New public types `zenjpeg::decoder::{JbrdMetadata, JbrdScanInfo}`.
+- New public methods on `EntropyDecoder`:
+  `decode_ac_first_scan_tracked` and `decode_ac_refine_scan_tracked` —
+  tracking-aware variants that accept an `Option<&mut JbrdScanInfo>`
+  parameter. The non-tracked methods (`decode_ac_first_scan` /
+  `decode_ac_refine_scan`) are now thin shims that delegate with `None`,
+  preserving zero overhead and back-compat.
+
+### Compatibility
+
+- The existing 0.8.4 public surface is preserved unchanged. No struct
+  field additions on existing public types, no signature changes on
+  existing methods. `DecodedCoefficients` is byte-for-byte identical.
+  The new JBRD types live in a separate, additive namespace.
+
 ## [Unreleased]
 
 ### QUEUED BREAKING CHANGES

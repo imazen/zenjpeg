@@ -300,6 +300,10 @@ fn decode_dc_scan_interleaved(
 /// refinement.
 ///
 /// Returns `true` if the scan was truncated.
+///
+/// When `jbrd` is `Some`, populates the JBRD per-scan signals
+/// (`reset_points`, `extra_zero_runs`) per libjxl's `DecodeDCTBlock` /
+/// `RefineDCTBlock` semantics. `None` keeps the legacy zero-overhead path.
 #[allow(clippy::too_many_arguments)]
 fn decode_ac_scan(
     decoder: &mut EntropyDecoder<'_, '_>,
@@ -312,12 +316,13 @@ fn decode_ac_scan(
     al: u8,
     grid: &ComponentBlockGrid,
     restart_interval: u32,
+    jbrd: Option<&mut crate::decode::image::JbrdScanInfo>,
     stop: &impl Stop,
 ) -> Result<bool> {
     let (comp_idx, _dc_table, ac_table) = scan_component;
 
     let completed = if is_first_scan {
-        decoder.decode_ac_first_scan(
+        decoder.decode_ac_first_scan_tracked(
             coeffs,
             nonzero_bitmaps,
             comp_idx,
@@ -329,10 +334,11 @@ fn decode_ac_scan(
             grid.comp_blocks_v,
             grid.padded_blocks_h,
             restart_interval,
+            jbrd,
             stop,
         )?
     } else {
-        decoder.decode_ac_refine_scan(
+        decoder.decode_ac_refine_scan_tracked(
             coeffs,
             nonzero_bitmaps,
             comp_idx,
@@ -344,6 +350,7 @@ fn decode_ac_scan(
             grid.comp_blocks_v,
             grid.padded_blocks_h,
             restart_interval,
+            jbrd,
             stop,
         )?
     };
@@ -384,6 +391,21 @@ impl<'a> JpegParser<'a> {
         );
         self.init_progressive_coeff_storage(&geom)?;
 
+        // JBRD: if tracking is enabled, append a fresh scan_info record for
+        // this SOS. AC scan helpers will fill `reset_points` and (first-scan
+        // only) `extra_zero_runs`. DC scans push the record too — both stay
+        // empty there since JBRD signals only fire on AC scans.
+        if let Some(jbrd) = self.jbrd_scans.as_mut() {
+            jbrd.push(crate::decode::image::JbrdScanInfo {
+                ss,
+                se,
+                ah,
+                al,
+                reset_points: Vec::new(),
+                extra_zero_runs: Vec::new(),
+            });
+        }
+
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
         configure_decoder_strictness(&mut decoder, self.strictness);
@@ -398,6 +420,12 @@ impl<'a> JpegParser<'a> {
         let is_dc_scan = ss == 0 && se == 0;
         let is_first_scan = ah == 0;
         let restart_interval = self.restart_interval as u32;
+
+        // JBRD tracker for THIS scan, if tracking is enabled. Pulled out of
+        // `self.jbrd_scans` so the inner closure can borrow it mutably while
+        // the rest of `self` (coeffs, bitmaps, components) is mutably
+        // borrowed alongside.
+        let mut current_jbrd_scan = self.jbrd_scans.as_mut().and_then(|v| v.last_mut());
 
         let had_progressive_truncation = if is_dc_scan {
             // DC scan: interleaved (multi-component) or non-interleaved (single).
@@ -457,9 +485,11 @@ impl<'a> JpegParser<'a> {
                 al,
                 &grid,
                 restart_interval,
+                current_jbrd_scan.as_deref_mut(),
                 stop,
             )?
         };
+        drop(current_jbrd_scan);
 
         // Extract warning flags before dropping decoder
         let had_ac_overflow = decoder.had_ac_overflow;

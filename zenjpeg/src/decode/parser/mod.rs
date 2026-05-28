@@ -205,6 +205,15 @@ pub(super) struct JpegParser<'a> {
     pub(super) arith_dc_cond: [(u8, u8); 4],
     /// AC conditioning: Kx per table, default 5
     pub(super) arith_ac_kx: [u8; 4],
+
+    /// JBRD per-scan metadata accumulator. Set to `Some(Vec::new())` by
+    /// [`Decoder::decode_coefficients_with_jbrd_metadata`] before decode;
+    /// each SOS that runs through `decode_progressive_scan` pushes a new
+    /// `JbrdScanInfo` and tracks `reset_points`/`extra_zero_runs` during
+    /// AC entropy decode. `None` keeps the legacy zero-overhead path.
+    ///
+    /// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+    pub(super) jbrd_scans: Option<Vec<crate::decode::image::JbrdScanInfo>>,
 }
 
 impl<'a> JpegParser<'a> {
@@ -278,6 +287,7 @@ impl<'a> JpegParser<'a> {
             arith_dc_cond: [(0, 1); 4], // Default L=0, U=1
             arith_ac_kx: [5; 4],        // Default Kx=5
             force_f32_idct: false,
+            jbrd_scans: None,
         })
     }
 
@@ -318,6 +328,20 @@ impl<'a> JpegParser<'a> {
     /// Take warnings out of the parser (for use after decode).
     pub(super) fn take_warnings(&mut self) -> Vec<DecodeWarning> {
         core::mem::take(&mut self.warnings)
+    }
+
+    /// Enable JBRD metadata tracking. Call before `decode()` to capture
+    /// per-scan `reset_points` and `extra_zero_runs`.
+    pub(super) fn enable_jbrd_tracking(&mut self) {
+        if self.jbrd_scans.is_none() {
+            self.jbrd_scans = Some(Vec::new());
+        }
+    }
+
+    /// Take JBRD metadata out of the parser (for use after decode).
+    /// Returns `None` if tracking was not enabled.
+    pub(super) fn take_jbrd_scans(&mut self) -> Option<Vec<crate::decode::image::JbrdScanInfo>> {
+        self.jbrd_scans.take()
     }
 
     /// Take the extras out of the parser (for use after decode).

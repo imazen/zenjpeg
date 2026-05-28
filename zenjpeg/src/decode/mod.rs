@@ -73,7 +73,7 @@ mod ultrahdr_reader;
 #[allow(unused_imports)]
 pub use image::{
     CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
-    DecodedImageF32, DecodedYCbCr,
+    DecodedImageF32, DecodedYCbCr, JbrdMetadata, JbrdScanInfo,
 };
 
 // New unified types
@@ -2503,6 +2503,54 @@ impl DecodeConfig {
 
         // Extract coefficients from parser
         parser.extract_coefficients()
+    }
+
+    /// Decodes a JPEG to coefficients AND JBRD per-scan reconstruction metadata.
+    ///
+    /// JBRD (JPEG-Bitstream-Reconstruction) is the metadata required by a
+    /// downstream JPEG-XL transcoder to reproduce the *exact original* JPEG
+    /// entropy-coded bitstream from DCT coefficients. The JXL spec stores
+    /// this in a JBRD box; libjxl populates the same fields in
+    /// `JPEGScanInfo::reset_points` and `JPEGScanInfo::extra_zero_runs`
+    /// (see `enc_jpeg_data_reader.cc`).
+    ///
+    /// Use this entry point when transcoding a JPEG to JPEG-XL losslessly
+    /// and you need byte-exact bitstream reconstruction (e.g.,
+    /// progressive JPEGs with successive-approximation refinement scans
+    /// where djxl re-derives EOB-run boundaries differently from the
+    /// original encoder).
+    ///
+    /// The existing [`decode_coefficients`] entry point is unchanged
+    /// (zero overhead, no tracking).
+    ///
+    /// # Returns
+    ///
+    /// A pair `(DecodedCoefficients, JbrdMetadata)`. The `JbrdMetadata`
+    /// contains one [`JbrdScanInfo`] per SOS scan in the JPEG, in
+    /// bitstream order.
+    ///
+    /// # Cost
+    ///
+    /// Tracking adds a small constant cost per AC entropy-decode block
+    /// (one branch on `Option` + one `Vec::push` only when a JBRD signal
+    /// fires). For typical progressive JPEGs this is a fraction of a
+    /// percent of decode wall.
+    ///
+    /// [`decode_coefficients`]: Self::decode_coefficients
+    /// [`JbrdScanInfo`]: crate::decode::image::JbrdScanInfo
+    pub fn decode_coefficients_with_jbrd_metadata(
+        &self,
+        data: &[u8],
+        stop: impl Stop,
+    ) -> Result<(DecodedCoefficients, crate::decode::image::JbrdMetadata)> {
+        let mut parser = JpegParser::with_strictness(data, self.max_pixels, None, self.strictness)?;
+        parser.decode_mode = parser::DecodeMode::Coefficient;
+        parser.enable_jbrd_tracking();
+        parser.decode(&stop)?;
+        let coeffs = parser.extract_coefficients()?;
+        let scans = parser.take_jbrd_scans().unwrap_or_default();
+        let metadata = crate::decode::image::JbrdMetadata { scans };
+        Ok((coeffs, metadata))
     }
 
     /// Decodes a JPEG to coefficients AND preserved metadata in a single parse pass.

@@ -504,3 +504,86 @@ impl CoefficientComparison {
         }
     }
 }
+
+// ============================================================================
+// JbrdMetadata — per-scan signals for JPEG-Bitstream-Reconstruction (JXL JBRD)
+// ============================================================================
+
+/// Per-scan JPEG-Bitstream-Reconstruction (JBRD) metadata.
+///
+/// This is the metadata a downstream JPEG-XL transcoder needs to reproduce
+/// the *exact original* JPEG entropy-coded bitstream from DCT coefficients,
+/// per the JXL spec's JBRD box. It is intentionally NOT included in
+/// [`DecodedCoefficients`] — that struct is the legacy 0.8.x public surface
+/// and we keep it byte-for-byte backwards-compatible.
+///
+/// Callers wanting JBRD reconstruction use
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`] which returns this
+/// alongside the coefficients.
+///
+/// # Mapping to libjxl `JPEGScanInfo`
+///
+/// Each [`JbrdScanInfo`] corresponds 1-to-1 with a `JPEGScanInfo` in libjxl's
+/// `enc_jpeg_data_reader.cc`. The `block_idx` values inside `reset_points`
+/// and `extra_zero_runs` are libjxl's `block_scan_index` — a per-scan
+/// running counter across ALL components and ALL blocks decoded so far in
+/// that scan (for interleaved scans, MCU-by-MCU, component-by-component,
+/// block-by-block within each component).
+///
+/// # When entries are populated
+///
+/// - `reset_points`: signaled in AC scans (`Ss > 0`) when two end-of-block
+///   runs occur back-to-back. Empty for DC-only scans.
+/// - `extra_zero_runs`: signaled in the AC FIRST scan (`Ah == 0, Ss > 0`)
+///   when ZRL (run=15, size=0) symbols accumulate before a natural EOB.
+///   Always empty in AC refinement scans (`Ah > 0`) and DC scans.
+///
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct JbrdMetadata {
+    /// Per-scan signals, in the order scans appear in the JPEG bitstream.
+    ///
+    /// For a baseline sequential JPEG this contains exactly one entry.
+    /// For a progressive JPEG with N SOS markers, this contains N entries.
+    pub scans: Vec<JbrdScanInfo>,
+}
+
+/// Per-scan reset-point + extra-zero-run signals (JBRD).
+///
+/// One of these is collected per SOS scan when
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`] is used.
+///
+/// The semantics match libjxl's `JPEGScanInfo::reset_points` and
+/// `JPEGScanInfo::extra_zero_runs` (see `enc_jpeg_data_reader.cc:849-857`).
+///
+/// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct JbrdScanInfo {
+    /// Spectral selection start (`Ss`).
+    pub ss: u8,
+    /// Spectral selection end (`Se`).
+    pub se: u8,
+    /// Successive approximation high (`Ah`).
+    pub ah: u8,
+    /// Successive approximation low (`Al`).
+    pub al: u8,
+    /// Block-scan indices at which two end-of-block runs occurred
+    /// back-to-back — the encoder must force a state reset here.
+    ///
+    /// Always empty for DC-only scans (`Ss == 0`). Populated only when an
+    /// AC scan emits a fresh EOB run at the beginning of a block with no
+    /// preceding active EOB run.
+    pub reset_points: Vec<u32>,
+    /// Extra zero runs that occurred before a natural end-of-block in
+    /// the AC first scan (`Ah == 0, Ss > 0`).
+    ///
+    /// Each entry is `(block_scan_index, num_extra_zero_runs)`. A "ZRL"
+    /// symbol encodes 16 consecutive zeros; runs of ZRL symbols
+    /// immediately preceding an EOB are *extra* in the sense that the
+    /// re-encoder would otherwise prefer to emit them via an EOB-run
+    /// instead. Always empty for DC scans and AC refinement scans
+    /// (`Ah > 0`).
+    pub extra_zero_runs: Vec<(u32, u32)>,
+}
