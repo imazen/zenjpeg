@@ -56,14 +56,11 @@ zenpixels = { workspace = true }
 # Image content analyzers (variance, edges, chroma sharpness, DCT energy)
 # used by `EncoderConfig::adaptive`. Pulls rows on demand from any
 # PixelSlice via zenpixels-convert internally.
-# Note: the `composites` feature (classifier-style likelihoods —
-# TextLikelihood, ScreenContentLikelihood, NaturalLikelihood) was
-# deleted upstream in zenanalyze (commit b1623ba, 2026-05-01). The
-# adaptive bucket inference in encode/adaptive.rs ports those
-# formulas inline; we read primitive features (EdgeDensity,
-# Uniformity, ChromaComplexity, FlatColorBlockRatio, etc.) directly.
-# `hdr` retained from upstream main for HDR-aware analyzer support.
-zenanalyze = { workspace = true, features = ["experimental", "hdr"] }
+# `experimental` is required for PatchFraction and a handful of other
+# features the adaptive bucket inference reads. HDR features are
+# gated under `experimental` in registry 0.1.0 (a separate `hdr`
+# feature only exists on local-main and isn't required by src/).
+zenanalyze = { workspace = true, features = ["experimental"] }
 garb = { workspace = true }  # SIMD pixel format conversions (rgb↔rgba/bgra)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 memchr = "2"  # SIMD byte search — used in detect::scanner to find marker bytes
@@ -98,6 +95,12 @@ zenresize = { workspace = true, optional = true }
 # Perceptual metric used by Quality::Zq target-perceptual-quality variants
 # (issue #113). Pulled in only when the `target-zq` feature is enabled.
 zensim = { workspace = true, optional = true }
+
+# zenpredict (ZNPR v3 runtime) — pulled in only by the
+# `__picker-research` feature for the dev/picker_v0_3_holdout_ab.rs
+# held-out A/B harness. Path-only because the v3 schema lives on the
+# sibling `../zenanalyze/zenpredict` and isn't published yet.
+zenpredict = { path = "../../zenanalyze/zenpredict", optional = true }
 
 [dev-dependencies]
 wide = { workspace = true }
@@ -151,8 +154,6 @@ rayon = { workspace = true }
 # zenresize = { workspace = true }  # Disabled: linear-srgb version mismatch
 # For corpus comparison tests (requires local codec-eval crate)
 codec-eval = { workspace = true }
-# Picker held-out A/B harness (loads ZNPR v2 .bin externally for v0.3 picker A/B)
-zenpredict = { path = "../../zenanalyze/zenpredict" }
 # Metadata crates (for integration testing)
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
@@ -211,6 +212,11 @@ __test-utils = []
 __expert = []
 # WASM SIMD128 tests (requires wasm runtime with SIMD support)
 __wasm-simd = []
+# Research-only dev binaries (`dev/picker_v0_3_holdout_ab.rs`) that
+# need the sibling `../../zenanalyze/zenpredict` checked out and use
+# post-0.1.0 zenanalyze symbols. Off by default; off in CI. Local
+# devs running picker A/B experiments enable this.
+__picker-research = ["dep:zenpredict"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is
@@ -371,10 +377,16 @@ required-features = ["trellis", "decoder", "boundary-rd"]
 # v0.3 picker held-out A/B harness (loads .bin externally; lives in
 # dev/ so the file isn't shipped as part of the public examples dir).
 # See dev/picker_v0_3_holdout_ab.rs for the full methodology block.
+#
+# Requires the `__picker-research` feature, which pulls in the
+# sibling `zenanalyze/zenpredict` (v3, unpublished) and post-0.1.0
+# zenanalyze symbols (`GradientFractionSmooth`, `QuantSurvivalY`,
+# etc.). Off in default / CI builds — these path siblings aren't
+# guaranteed to be checked out next to zenjpeg.
 [[example]]
 name = "picker_v0_3_holdout_ab"
 path = "dev/picker_v0_3_holdout_ab.rs"
-required-features = ["target-zq", "trellis"]
+required-features = ["target-zq", "trellis", "__picker-research"]
 
 # Per-class quant table signal probe (gating experiment, 2026-05-04).
 # See dev/per_class_signal_probe.rs.

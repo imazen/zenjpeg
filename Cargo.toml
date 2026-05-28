@@ -50,7 +50,14 @@ rayon = "1.10"
 # Color conversion (for benchmarking/comparison - faster than libyuv)
 yuv = { version = "0.8", features = ["professional_mode"] }
 zenyuv = { path = "zenyuv" }
-zenanalyze = { path = "../zenanalyze", version = "0.1" }
+# zenanalyze: registry-only. The sibling `../zenanalyze` is not
+# guaranteed to be checked out on downstream CI (e.g. ultrahdr-fuzz
+# pulls zenjpeg as a path-dep and only has its own repo checked out).
+# Pinned to the floor (0.1.0). zenjpeg's `src/` only uses 0.1.0
+# symbols; dev binaries that need post-0.1.0 zenanalyze features are
+# gated behind the `__picker-research` feature and require the
+# sibling to be checked out.
+zenanalyze = "0.1.0"
 
 # Testing
 approx = "0.5"
