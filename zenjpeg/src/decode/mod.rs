@@ -2549,7 +2549,22 @@ impl DecodeConfig {
         parser.decode(&stop)?;
         let coeffs = parser.extract_coefficients()?;
         let scans = parser.take_jbrd_scans().unwrap_or_default();
-        let metadata = crate::decode::image::JbrdMetadata { scans };
+        let padding_bits = parser.take_jbrd_padding_bits().unwrap_or_default();
+        // libjxl semantics (jpeg_data.cc:368-380): set the flag iff ANY pad
+        // bit is 0 (a non-spec-compliant zero pad). If all bits are 1 (or
+        // there are no partial-byte boundaries), drop the redundant Vec —
+        // the JBRD writer treats `has_zero_padding_bit == false` as
+        // "spec-default 1-bit padding" and never needs the explicit bits.
+        let has_zero_padding_bit = padding_bits.iter().any(|&b| b == 0);
+        let metadata = crate::decode::image::JbrdMetadata {
+            scans,
+            has_zero_padding_bit,
+            padding_bits: if has_zero_padding_bit {
+                padding_bits
+            } else {
+                alloc::vec::Vec::new()
+            },
+        };
         Ok((coeffs, metadata))
     }
 

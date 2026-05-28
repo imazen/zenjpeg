@@ -312,6 +312,12 @@ impl<'a> JpegParser<'a> {
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
 
+        // JBRD padding-bit accumulator borrow. Pulled out of `self` here so
+        // the MCU loop body can mutate it without conflicting with the
+        // immutable borrow of `self.dc_tables`/`self.ac_tables` held by the
+        // entropy decoder.
+        let mut jbrd_padding_bits = self.jbrd_padding_bits.as_mut();
+
         // Track previous coefficient count per component for smart zeroing (zero-copy optimization).
         // Start with 64 to force full zeroing on first block of each component.
         let mut prev_coeff_counts: [u8; 4] = [64; 4];
@@ -373,6 +379,14 @@ impl<'a> JpegParser<'a> {
             for mcu_x in 0..mcu_cols {
                 // Check for restart marker
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // JBRD: capture entropy-segment pad bits before aligning.
+                    // Per-RST padding bits are part of the source bitstream;
+                    // byte-exact JPEG-XL transcoding (djxl --reconstruct_jpeg)
+                    // needs them to mirror the source encoder's zero-padding
+                    // behaviour. No-op when JBRD tracking is disabled.
+                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                        buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+                    }
                     // Align to byte boundary (discard padding bits)
                     decoder.align_to_byte();
                     // Read and verify restart marker
@@ -497,6 +511,15 @@ impl<'a> JpegParser<'a> {
                 mcu_count += 1;
             }
         }
+
+        // JBRD: capture end-of-scan entropy-segment pad bits. The next marker
+        // is whatever follows the scan in the bitstream (DHT/SOS/EOI/...).
+        // Mirrors libjxl's `FinishStream` call at `ProcessScan` end. No-op
+        // when JBRD tracking is disabled.
+        if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+            buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+        }
+        drop(jbrd_padding_bits);
 
         // Extract warning flags (decoder borrows self.dc_tables/ac_tables)
         let had_ac_overflow = decoder.had_ac_overflow;

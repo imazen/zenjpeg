@@ -1165,6 +1165,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.reader.align_to_byte();
     }
 
+    /// Returns the partial-byte padding bits currently in the bit reader, in
+    /// bitstream order (MSB-first). Read-only — does NOT consume the bits.
+    ///
+    /// Use this immediately BEFORE [`align_to_byte`] at every entropy-segment
+    /// terminator to capture the JBRD padding bits for byte-exact JPEG-XL
+    /// transcoding.
+    ///
+    /// See [`crate::foundation::bitstream::BitReader::partial_byte_padding_bits`]
+    /// for the underlying algorithm.
+    ///
+    /// [`align_to_byte`]: Self::align_to_byte
+    #[must_use]
+    pub fn partial_byte_padding_bits(&self) -> alloc::vec::Vec<u8> {
+        self.reader.partial_byte_padding_bits()
+    }
+
     /// Saves the current decoder state for potential rollback.
     #[must_use]
     pub fn save_state(&self) -> EntropyDecoderState {
@@ -1570,6 +1586,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             padded_blocks_h,
             restart_interval,
             None,
+            None,
             stop,
         )
     }
@@ -1603,6 +1620,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         padded_blocks_h: usize,
         restart_interval: u32,
         mut jbrd: Option<&mut JbrdScanInfo>,
+        mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
@@ -1636,6 +1654,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         } else {
                             break;
                         }
+                    }
+                    // JBRD: capture per-RST entropy-segment pad bits BEFORE
+                    // aligning. The drain loop above ensures we've actually
+                    // reached the marker (refill stops loading when it sees
+                    // the 0xFF prefix); `partial_byte_padding_bits` then
+                    // extracts the trailing-byte pad bits via the BitReader.
+                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                        buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
                     }
                     self.reader.align_to_byte();
                     self.reader.read_restart_marker(next_restart_num)?;
@@ -1924,6 +1950,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             padded_blocks_h,
             restart_interval,
             None,
+            None,
             stop,
         )
     }
@@ -1956,6 +1983,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         padded_blocks_h: usize,
         restart_interval: u32,
         mut jbrd: Option<&mut JbrdScanInfo>,
+        mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
         stop: &impl enough::Stop,
     ) -> Result<bool> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
@@ -1984,6 +2012,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         } else {
                             break;
                         }
+                    }
+                    // JBRD: capture per-RST entropy-segment pad bits BEFORE
+                    // aligning. Same pattern as
+                    // `decode_ac_first_scan_tracked`.
+                    if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                        buf.extend_from_slice(&self.reader.partial_byte_padding_bits());
                     }
                     self.reader.align_to_byte();
                     self.reader.read_restart_marker(next_restart_num)?;

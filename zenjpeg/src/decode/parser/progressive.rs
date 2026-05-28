@@ -159,6 +159,7 @@ fn decode_dc_scan_non_interleaved(
     al: u8,
     grid: &ComponentBlockGrid,
     restart_interval: u32,
+    mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
     stop: &impl Stop,
 ) -> Result<bool> {
     let (comp_idx, dc_table, _ac_table) = scan_component;
@@ -175,6 +176,10 @@ fn decode_dc_scan_non_interleaved(
         for block_x in 0..grid.comp_blocks_h {
             // Check for restart marker
             if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                // JBRD: capture per-RST entropy-segment pad bits.
+                if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                    buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+                }
                 decoder.align_to_byte();
                 decoder.read_restart_marker(next_restart_num)?;
                 next_restart_num = (next_restart_num + 1) & 7;
@@ -224,6 +229,7 @@ fn decode_dc_scan_interleaved(
     al: u8,
     geom: &ProgressiveGeometry,
     restart_interval: u32,
+    mut jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
     stop: &impl Stop,
 ) -> Result<bool> {
     let mut mcu_count = 0u32;
@@ -239,6 +245,10 @@ fn decode_dc_scan_interleaved(
         for mcu_x in 0..geom.mcu_cols {
             // Check for restart marker
             if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                // JBRD: capture per-RST entropy-segment pad bits.
+                if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+                    buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+                }
                 decoder.align_to_byte();
                 decoder.read_restart_marker(next_restart_num)?;
                 next_restart_num = (next_restart_num + 1) & 7;
@@ -317,6 +327,7 @@ fn decode_ac_scan(
     grid: &ComponentBlockGrid,
     restart_interval: u32,
     jbrd: Option<&mut crate::decode::image::JbrdScanInfo>,
+    jbrd_padding_bits: Option<&mut alloc::vec::Vec<u8>>,
     stop: &impl Stop,
 ) -> Result<bool> {
     let (comp_idx, _dc_table, ac_table) = scan_component;
@@ -335,6 +346,7 @@ fn decode_ac_scan(
             grid.padded_blocks_h,
             restart_interval,
             jbrd,
+            jbrd_padding_bits,
             stop,
         )?
     } else {
@@ -351,6 +363,7 @@ fn decode_ac_scan(
             grid.padded_blocks_h,
             restart_interval,
             jbrd,
+            jbrd_padding_bits,
             stop,
         )?
     };
@@ -422,10 +435,11 @@ impl<'a> JpegParser<'a> {
         let restart_interval = self.restart_interval as u32;
 
         // JBRD tracker for THIS scan, if tracking is enabled. Pulled out of
-        // `self.jbrd_scans` so the inner closure can borrow it mutably while
-        // the rest of `self` (coeffs, bitmaps, components) is mutably
-        // borrowed alongside.
+        // `self.jbrd_scans` / `self.jbrd_padding_bits` so the inner closures
+        // can borrow them mutably while the rest of `self` (coeffs, bitmaps,
+        // components) is also mutably borrowed alongside.
         let mut current_jbrd_scan = self.jbrd_scans.as_mut().and_then(|v| v.last_mut());
+        let mut current_jbrd_padding_bits = self.jbrd_padding_bits.as_mut();
 
         let had_progressive_truncation = if is_dc_scan {
             // DC scan: interleaved (multi-component) or non-interleaved (single).
@@ -445,6 +459,7 @@ impl<'a> JpegParser<'a> {
                     al,
                     &grid,
                     restart_interval,
+                    current_jbrd_padding_bits.as_deref_mut(),
                     stop,
                 )?
             } else {
@@ -457,6 +472,7 @@ impl<'a> JpegParser<'a> {
                     al,
                     &geom,
                     restart_interval,
+                    current_jbrd_padding_bits.as_deref_mut(),
                     stop,
                 )?
             }
@@ -486,10 +502,19 @@ impl<'a> JpegParser<'a> {
                 &grid,
                 restart_interval,
                 current_jbrd_scan.as_deref_mut(),
+                current_jbrd_padding_bits.as_deref_mut(),
                 stop,
             )?
         };
+        // JBRD: capture end-of-scan pad bits (the partial-byte padding
+        // before the NEXT marker — could be another SOS, EOI, or
+        // anything else). Mirrors libjxl's terminal `FinishStream` call
+        // in `ProcessScan`.
+        if let Some(buf) = current_jbrd_padding_bits.as_deref_mut() {
+            buf.extend_from_slice(&decoder.partial_byte_padding_bits());
+        }
         drop(current_jbrd_scan);
+        drop(current_jbrd_padding_bits);
 
         // Extract warning flags before dropping decoder
         let had_ac_overflow = decoder.had_ac_overflow;

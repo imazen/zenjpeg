@@ -547,6 +547,28 @@ pub struct JbrdMetadata {
     /// For a baseline sequential JPEG this contains exactly one entry.
     /// For a progressive JPEG with N SOS markers, this contains N entries.
     pub scans: Vec<JbrdScanInfo>,
+    /// Whether the JPEG contains any non-1 entropy-segment padding bits.
+    ///
+    /// JPEG entropy-coded segments end with `0..7` padding bits before the
+    /// next marker when the entropy stream ends mid-byte. ITU-T T.81 §F.1.2.3
+    /// recommends these padding bits be 1, but some encoders pad with 0 (or
+    /// mixed values). Byte-exact JPEG-XL transcoding (JBRD) needs to preserve
+    /// the source's actual padding bits.
+    ///
+    /// When `false`, all padding bits are 1 — the standard fast path — and
+    /// `padding_bits` is empty. When `true`, `padding_bits` contains the
+    /// explicit bit sequence (one entry per pad bit, value `0` or `1`).
+    pub has_zero_padding_bit: bool,
+    /// Padding-bit values for every entropy-segment boundary (per RST marker
+    /// AND at end-of-scan), in bitstream order, MSB-first.
+    ///
+    /// Empty when `has_zero_padding_bit` is `false`. Total length equals the
+    /// sum of `bits_in_buffer & 7` at every scan-segment terminator (each
+    /// terminator contributes `0..=7` bits).
+    ///
+    /// Maps directly to libjxl's `JPEGData::padding_bits` field (see
+    /// `enc_jpeg_data_reader.cc:441-470` `FinishStream`).
+    pub padding_bits: Vec<u8>,
 }
 
 /// Per-scan reset-point + extra-zero-run signals (JBRD).

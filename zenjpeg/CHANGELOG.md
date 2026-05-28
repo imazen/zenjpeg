@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-05-28
+
+### Added
+
+- `BitReader::partial_byte_padding_bits()` returns the current partial-byte
+  unconsumed bits in bitstream order (MSB-first), as a `Vec<u8>` of length
+  `0..=7`. Read-only — does NOT mutate reader state. Mirrors libjxl's
+  `BitReaderState::FinishStream` (`enc_jpeg_data_reader.cc:441-470`)
+  `npadbits = bits_left_ & 7` extraction. Used by JBRD-aware decoding
+  to capture the per-segment entropy padding bits a JPEG-XL transcoder
+  needs to reproduce the source's exact bytes (some encoders pad with
+  0-bits instead of the spec-recommended 1-bits).
+- `EntropyDecoder::partial_byte_padding_bits()` forwards to the above.
+- `JbrdMetadata` extended with two new public fields:
+  - `has_zero_padding_bit: bool` — set iff the JPEG contains any non-1
+    padding bit at any entropy-segment boundary (per-RST or end-of-scan).
+  - `padding_bits: Vec<u8>` — concatenated MSB-first bit sequence across
+    every entropy-segment terminator in bitstream order. Empty when
+    `has_zero_padding_bit == false` (libjxl's compact-payload pattern,
+    `jpeg_data.cc:368-380`).
+- `decode_coefficients_with_jbrd_metadata` now populates the new
+  `JbrdMetadata` padding-bit fields. Used by jxl-encoder task #11
+  to byte-roundtrip baseline JPEGs whose source encoder uses
+  non-spec zero-bit entropy padding.
+- New tracking parameter on `EntropyDecoder::decode_ac_first_scan_tracked`
+  and `EntropyDecoder::decode_ac_refine_scan_tracked`: an additional
+  `Option<&mut Vec<u8>>` after the existing `jbrd: Option<&mut JbrdScanInfo>`
+  for per-RST padding-bit accumulation. The non-tracked variants
+  (`decode_ac_first_scan` / `decode_ac_refine_scan`) are unchanged —
+  they continue to pass `None` for both tracking parameters.
+
+### Compatibility
+
+- The 0.8.5 public surface remains additive-compatible. `JbrdMetadata`
+  was already declared `#[non_exhaustive]` in 0.8.5, so adding fields
+  preserves construction-from-other-crates safety. Existing
+  callers that just `.scans` are unaffected.
+- The new `EntropyDecoder` tracking-parameter on the two
+  `*_scan_tracked` methods IS a signature change, but those methods
+  were added in 0.8.5 specifically for libjxl JBRD parity work — no
+  other use case exists in tree.
+
 ## [0.8.5] - 2026-05-28
 
 ### Added

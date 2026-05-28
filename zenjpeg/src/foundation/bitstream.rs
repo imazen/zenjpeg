@@ -736,6 +736,54 @@ impl<'a> BitReader<'a> {
         self.aligned_buffer = 0;
     }
 
+    /// Returns the partial-byte padding bits currently in the buffer, MSB-first.
+    ///
+    /// JPEG entropy-coded segments end with `0..7` "padding bits" before the
+    /// next marker (or before a restart marker) when the entropy stream ends
+    /// mid-byte. Per ITU-T T.81 Section F.1.2.3 the encoder pads with 1-bits,
+    /// but some encoders pad with 0-bits, and byte-exact JPEG-XL transcoding
+    /// (JBRD) needs to preserve those padding bits verbatim.
+    ///
+    /// This helper extracts the padding bits WITHOUT consuming them or
+    /// modifying state — it is safe to call before `align_to_byte`, before
+    /// reading a restart marker, or before exiting a scan loop. The returned
+    /// vector is empty when the partial-byte count (`bits_in_buffer & 7`) is
+    /// zero (i.e. the entropy stream ended exactly on a byte boundary).
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<u8>` of length `0..=7` containing the padding-bit values in
+    /// the order they would appear in the bitstream (oldest bit first).
+    /// Each entry is `0` or `1`.
+    ///
+    /// # Mapping to libjxl
+    ///
+    /// Mirrors `BitReaderState::FinishStream` in libjxl's
+    /// `enc_jpeg_data_reader.cc:441-470` — specifically the
+    /// `npadbits = bits_left_ & 7` + push-bits-msb-first loop. The accompanying
+    /// "give back unused full bytes" logic from libjxl is not needed here
+    /// because zenjpeg's `BitReader` only loads bytes via byte-stuffed reads
+    /// and detects markers via `marker_found` before the bytes containing
+    /// the marker are loaded into the bit buffer — so the unconsumed bits
+    /// always represent ONLY the partial trailing byte at end-of-segment.
+    #[must_use]
+    pub fn partial_byte_padding_bits(&self) -> alloc::vec::Vec<u8> {
+        let npadbits = self.bits_in_buffer & 7;
+        let mut out = alloc::vec::Vec::with_capacity(npadbits as usize);
+        if npadbits > 0 {
+            // The OLDEST unconsumed bits sit at the top of `aligned_buffer`
+            // (reads consume from MSB downward via left-shift). The partial
+            // byte's `8 - K` unused trailing bits are the OLDEST of the
+            // unconsumed window, so they occupy positions [63..63-npadbits+1].
+            // Extract them MSB-first.
+            for i in 0..npadbits {
+                let bit = ((self.aligned_buffer >> (63 - i)) & 1) as u8;
+                out.push(bit);
+            }
+        }
+        out
+    }
+
     /// Saves the current reader state for potential rollback.
     #[must_use]
     pub fn save_state(&self) -> BitReaderState {
@@ -963,5 +1011,92 @@ mod tests {
         // 1-bit category: 0 -> -1, 1 -> 1
         assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(-1));
         assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(1));
+    }
+
+    /// `partial_byte_padding_bits` returns an empty vector when the entropy
+    /// stream ended exactly on a byte boundary (`bits_in_buffer % 8 == 0`).
+    /// Construct that state by reading 8 bits from a single-byte input.
+    #[test]
+    fn test_partial_byte_padding_bits_empty_on_byte_aligned() {
+        let data = [0xE8u8, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Read all 8 bits of E8. Marker handling kicks in at the next refill.
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        let pads = reader.partial_byte_padding_bits();
+        assert!(pads.is_empty(), "expected no pad bits, got {pads:?}");
+    }
+
+    /// Source-pattern case: 1 entropy bit consumed from the partial byte (0x00),
+    /// 7 zero pad bits expected to follow. Reproduces the exact bitstream from
+    /// the JPEG-in-JXL recompression bug at byte 1129739 of `20230706_124619.jpg`.
+    #[test]
+    fn test_partial_byte_padding_bits_seven_zeros() {
+        // Bitstream: `0xE8` (full entropy byte) + `0x00` (1 entropy bit `0`,
+        // then 7 pad bits `0000000`) + `0xFF 0xD0` (RST0 marker).
+        let data = [0xE8u8, 0x00, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Consume 9 bits = all of E8 + top bit of 0x00 (which is 0).
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 7, "expected 7 pad bits, got {pads:?}");
+        assert!(pads.iter().all(|&b| b == 0), "all pads should be 0");
+    }
+
+    /// Spec-compliant 1-bit padding (the `0x7F` case our re-encoder defaults to
+    /// emit). 1 entropy bit `0`, 7 pad bits `1111111`.
+    #[test]
+    fn test_partial_byte_padding_bits_seven_ones() {
+        let data = [0xE8u8, 0x7F, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xE8));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 7);
+        assert!(pads.iter().all(|&b| b == 1));
+    }
+
+    /// 2 entropy bits + 6 pad bits — the second diff in `20230706_124619.jpg`
+    /// (byte 2431077 = `0x00` source, `0x3F` from spec-compliant emitter).
+    #[test]
+    fn test_partial_byte_padding_bits_six_zeros() {
+        // 0xB4 fully consumed + 0x00 with 2 entropy bits + 6 pad zero-bits.
+        let data = [0xB4u8, 0x00, 0xFF, 0xD1];
+        let mut reader = BitReader::new(&data);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xB4));
+        // Read 2 entropy bits — they're both `0` (top 2 of 0x00).
+        assert_eq!(reader.read_bits(2).unwrap(), ScanRead::Value(0));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads.len(), 6, "expected 6 pad bits, got {pads:?}");
+        assert!(pads.iter().all(|&b| b == 0));
+    }
+
+    /// Mixed pads (some 0, some 1). 3 entropy bits + 5 pad bits `01010`.
+    /// Partial byte is `eee_01010` = entropy `eee` + pad `01010`. With eee = 110
+    /// (the 3 MSBs of 0xC0 -- wait, that's `11000000`, only top 3 = 110), the
+    /// byte = `110_01010` = `0b11001010` = 0xCA.
+    #[test]
+    fn test_partial_byte_padding_bits_mixed() {
+        let data = [0xCAu8, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        // Consume 3 entropy bits = top 3 of 0xCA = 0b110 = 6.
+        assert_eq!(reader.read_bits(3).unwrap(), ScanRead::Value(0b110));
+        let pads = reader.partial_byte_padding_bits();
+        assert_eq!(pads, alloc::vec![0u8, 1, 0, 1, 0]);
+    }
+
+    /// `partial_byte_padding_bits` does not mutate the reader state.
+    /// Calling it repeatedly returns the same result.
+    #[test]
+    fn test_partial_byte_padding_bits_is_read_only() {
+        let data = [0xE8u8, 0x00, 0xFF, 0xD0];
+        let mut reader = BitReader::new(&data);
+        let _ = reader.read_bits(8);
+        let _ = reader.read_bits(1);
+        let pads1 = reader.partial_byte_padding_bits();
+        let pads2 = reader.partial_byte_padding_bits();
+        assert_eq!(pads1, pads2);
+        let pads3 = reader.partial_byte_padding_bits();
+        assert_eq!(pads1, pads3);
     }
 }

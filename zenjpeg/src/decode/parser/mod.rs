@@ -214,6 +214,16 @@ pub(super) struct JpegParser<'a> {
     ///
     /// [`Decoder::decode_coefficients_with_jbrd_metadata`]: super::Decoder::decode_coefficients_with_jbrd_metadata
     pub(super) jbrd_scans: Option<Vec<crate::decode::image::JbrdScanInfo>>,
+
+    /// Accumulator for JBRD entropy-segment padding bits. Captured at every
+    /// scan-segment terminator (per-RST and at end-of-scan) when JBRD
+    /// tracking is enabled. See [`JbrdMetadata::padding_bits`] for semantics.
+    ///
+    /// `None` keeps the legacy zero-overhead path; `Some(_)` is set together
+    /// with `jbrd_scans` by `enable_jbrd_tracking`.
+    ///
+    /// [`JbrdMetadata::padding_bits`]: crate::decode::image::JbrdMetadata::padding_bits
+    pub(super) jbrd_padding_bits: Option<alloc::vec::Vec<u8>>,
 }
 
 impl<'a> JpegParser<'a> {
@@ -288,6 +298,7 @@ impl<'a> JpegParser<'a> {
             arith_ac_kx: [5; 4],        // Default Kx=5
             force_f32_idct: false,
             jbrd_scans: None,
+            jbrd_padding_bits: None,
         })
     }
 
@@ -331,10 +342,14 @@ impl<'a> JpegParser<'a> {
     }
 
     /// Enable JBRD metadata tracking. Call before `decode()` to capture
-    /// per-scan `reset_points` and `extra_zero_runs`.
+    /// per-scan `reset_points`, `extra_zero_runs`, and entropy-segment
+    /// padding bits.
     pub(super) fn enable_jbrd_tracking(&mut self) {
         if self.jbrd_scans.is_none() {
             self.jbrd_scans = Some(Vec::new());
+        }
+        if self.jbrd_padding_bits.is_none() {
+            self.jbrd_padding_bits = Some(alloc::vec::Vec::new());
         }
     }
 
@@ -342,6 +357,27 @@ impl<'a> JpegParser<'a> {
     /// Returns `None` if tracking was not enabled.
     pub(super) fn take_jbrd_scans(&mut self) -> Option<Vec<crate::decode::image::JbrdScanInfo>> {
         self.jbrd_scans.take()
+    }
+
+    /// Take the accumulated entropy-segment padding bits out of the parser
+    /// (for use after decode). Returns `None` if tracking was not enabled.
+    pub(super) fn take_jbrd_padding_bits(&mut self) -> Option<alloc::vec::Vec<u8>> {
+        self.jbrd_padding_bits.take()
+    }
+
+    /// Append entropy-segment padding bits to the parser's JBRD accumulator,
+    /// if tracking is enabled. No-op when tracking is off (zero-overhead
+    /// legacy path).
+    ///
+    /// Call this immediately BEFORE `BitReader::align_to_byte` at every
+    /// scan-segment terminator (per-RST boundary and at end-of-scan), passing
+    /// the bits returned by [`BitReader::partial_byte_padding_bits`].
+    ///
+    /// [`BitReader::partial_byte_padding_bits`]: crate::foundation::bitstream::BitReader::partial_byte_padding_bits
+    pub(super) fn jbrd_append_padding_bits(&mut self, pads: &[u8]) {
+        if let Some(buf) = self.jbrd_padding_bits.as_mut() {
+            buf.extend_from_slice(pads);
+        }
     }
 
     /// Take the extras out of the parser (for use after decode).
