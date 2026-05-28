@@ -66,6 +66,9 @@ Started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpe
 | `ultrahdr` | no | UltraHDR HDR gain map encode/decode |
 | `zencodec` | no | zencodec trait implementations for cross-codec pipelines |
 | `layout` | no | Lossless transforms + lossy decode→resize→encode pipeline |
+| `recompress` | no | JPEG→JPEG recompression to a target perceptual quality (see [Recompress](#recompress)). Core path; no heavy deps |
+| `recompress-iqa` | no | Adds the measured closed loop to `recompress` (pulls in `zensim`) |
+| `recompress-expert` | no | Exposes `recompress::expert` internals (unstable, not semver-covered) |
 
 `decoder` is on by default. The decoder API is prerelease; expect breaking changes.
 
@@ -395,6 +398,45 @@ let config = EncoderConfig::ycbcr(
 ```
 
 Detected families: `LibjpegTurbo`, `Mozjpeg`, `CjpegliYcbcr`, `CjpegliXyb`, `ImageMagick`, `IjgFamily`, `Unknown`. Configurable quality/size tradeoff via `info.reencode_settings(tolerance)`.
+
+## Recompress
+
+Requires the `recompress` feature. Recompress an already-encoded JPEG to a
+target **zensim Profile A** quality (`[0, 100]`, higher = closer to the
+original) with **minimal generation loss** and **no size regression**. One
+entry point routes between `NoOp` / `Lossless` (scan re-pack) / `Preserve`
+(coefficient-domain requant, incl. same-family Robidoux retargeting for
+mozjpeg/ImageMagick) / `Tuned` / `Deblock`, picking the smallest output that
+hits the target, using per-encoder calibration (libjpeg-turbo, mozjpeg,
+jpegli) fit on 50 CID22-512 references.
+
+```rust
+use zenjpeg::recompress::{recompress, Budget, Confidence, RecompressOptions};
+
+let opts = RecompressOptions::new(80.0)        // target zensim-A, 0..=100
+    .with_budget(Budget::OneShot)               // default; no IQA loop
+    .with_confidence(Confidence::P50);          // P25/P50/P75/P90/P95 delivery confidence
+
+let result = recompress(&jpeg_bytes, &opts)?;
+
+// `output_bytes()` is `Some` for a recompressed/lossless result, `None` for
+// NoOp (source already meets target — keep the input):
+let out: &[u8] = result.output_bytes().unwrap_or(&jpeg_bytes);
+# Ok::<(), zenjpeg::recompress::Error>(())
+```
+
+The result carries `strategy`, the projected quality vs the original, and (with
+the IQA loop) a measured generation-loss score. **Budget:** `OneShot` (default,
+calibration-only, needs only the `recompress` feature) or — with
+`recompress-iqa` — `MaxIterations(n)` / `MaxTime(d)`, which measure generation
+loss and bump the dial to land closer to target. **Confidence** shifts the
+internal aim so a chosen quantile of images clears the target (content variance
+is large, so a bare target under-delivers on ~half the images at P50).
+
+Invariants: output is **never larger than the source** (lossless fallback +
+byte-level guard), and the user's target — not the confidence-shifted aim —
+gates the `NoOp` decision. See `docs/recompress/RECOMPRESSION_COMPENDIUM.md`
+for the strategy taxonomy, generation-loss math, and calibration provenance.
 
 ## Performance
 

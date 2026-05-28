@@ -3172,9 +3172,9 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
- "zenpredict",
+ "zenpredict 0.2.1",
  "zenresize",
- "zensim",
+ "zensim 0.3.0",
  "zensim-regress",
  "zentone",
  "zenyuv",
@@ -3239,6 +3239,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpredict"
+version = "0.2.1"
+source = "git+https://github.com/imazen/zenanalyze?rev=9a9be8200f26f643b45338711426cacae820f3a1#9a9be8200f26f643b45338711426cacae820f3a1"
+dependencies = [
+ "bytemuck",
+ "libm",
+ "lz4_flex",
+]
+
+[[package]]
 name = "zenresize"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3264,12 +3274,25 @@ checksum = "f46ead96f329b3f706ce66c8f36bf5b5bc1bb1fc5135c467079728379560b93c"
 dependencies = [
  "archmage 0.9.23",
  "bytemuck",
+ "linear-srgb",
+ "magetypes",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "zensim"
+version = "0.3.0"
+dependencies = [
+ "archmage 0.9.23",
+ "bytemuck",
  "imgref",
  "linear-srgb",
  "magetypes",
  "rayon",
  "rgb",
  "thiserror",
+ "zenpredict 0.2.1 (git+https://github.com/imazen/zenanalyze?rev=9a9be8200f26f643b45338711426cacae820f3a1)",
 ]
 
 [[package]]
@@ -3283,7 +3306,7 @@ dependencies = [
  "image",
  "seahash",
  "thiserror",
- "zensim",
+ "zensim 0.2.7",
 ]
 
 [[package]]
@@ -3350,6 +3373,22 @@ dependencies = [
  "rgb",
  "zenjpeg",
  "zenresize",
+]
+
+[[package]]
+name = "zjr-calibrate"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "enough",
+ "png",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "walkdir",
+ "zenjpeg",
+ "zensim 0.3.0",
 ]
 
 [[package]]

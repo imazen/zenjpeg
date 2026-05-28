@@ -161,7 +161,7 @@ img-parts = { workspace = true }
 ultrahdr-core = { workspace = true }
 # Visual regression testing (diff images, montages, checksum management)
 zensim-regress = "0.3.0"
-zensim = { version = "0.2", features = ["classification"] }
+zensim = { workspace = true, features = ["classification"] }
 image = "0.25"
 
 [features]
@@ -232,6 +232,18 @@ zencodec = ["decoder"]
 # score target (issue #113). Pulls in `decoder` (for re-decoding each pass)
 # and the zensim crate (for the perceptual metric).
 target-zq = ["decoder", "dep:zensim"]
+# JPEG→JPEG recompression to a target zensim Profile A quality with no size
+# regression (the `recompress` module, ex-`zenjpeg-recompress` crate). The
+# core router/strategies/calibration need only the decoder — no heavy deps,
+# so enabling this barely moves compile time. The closed-loop IQA refinement
+# (`Budget::MaxIterations` > 1 / `MaxTime`) needs the perceptual metric, so it
+# is split into `recompress-iqa` (pulls `zensim`, like `target-zq`).
+recompress = ["decoder", "trellis"]
+# Closed-loop measurement for `recompress` (generation loss vs source).
+recompress-iqa = ["recompress", "dep:zensim"]
+# Expose `recompress::expert` (per-strategy entry points, calibration-table
+# inspection, block classification). Unstable internals; not semver-covered.
+recompress-expert = ["recompress"]
 # Layout pipeline: lossless transforms + lossy decode→resize→encode.
 # Geometry/constraint solving (FitMode) and EXIF-orientation bridge live in
 # zenresize itself; orientation group algebra comes from zenpixels (re-exported
@@ -471,3 +483,40 @@ required-features = ["layout"]
 [[example]]
 name = "deblock_harness"
 required-features = ["decoder"]
+
+# --- recompress module examples (moved from the zenjpeg-recompress crate) ---
+[[example]]
+name = "jxl_phase0_recompress"
+required-features = ["recompress"]
+
+[[example]]
+name = "aq_ablation"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "aq_direction"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "dump_estimates"
+required-features = ["recompress-expert"]
+
+[[example]]
+name = "preserve_identity_diag"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "preserve_requant_diag"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "preserve_vs_tuned"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "tri_metric_gen"
+required-features = ["recompress-expert", "recompress-iqa"]
+
+[[example]]
+name = "zenjpeg_param_rd"
+required-features = ["recompress-expert", "recompress-iqa"]

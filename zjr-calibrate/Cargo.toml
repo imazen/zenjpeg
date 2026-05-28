@@ -1,0 +1,26 @@
+[package]
+name = "zjr-calibrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Expert-only: sweep corpora and emit (encoder × source-q × target-zensim-A) calibration tables for zenjpeg's recompress module."
+publish = false
+
+[[bin]]
+name = "zjr-calibrate"
+path = "src/main.rs"
+
+[dependencies]
+# The recompress module lives in zenjpeg now; the calibration tool needs its
+# expert API + the zensim-backed IQA scoring helpers.
+zenjpeg = { path = "../zenjpeg", features = ["recompress-expert", "recompress-iqa"] }
+zensim.workspace = true
+enough.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+png.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+walkdir = "2.5"

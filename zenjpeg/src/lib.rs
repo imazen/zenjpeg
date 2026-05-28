@@ -344,6 +344,15 @@ pub mod layout;
 // Profiling instrumentation (zero-cost when disabled)
 pub mod profile;
 
+// JPEG→JPEG recompression to a target perceptual (zensim Profile A)
+// quality with no size regression. Moved in from the standalone
+// `zenjpeg-recompress` crate (2026-05-29); reaches the codec's
+// `pub(crate)` internals directly. Behind the `recompress` feature so
+// base builds are unaffected; the closed loop's `zensim` measurement is
+// further gated behind `recompress-iqa`.
+#[cfg(feature = "recompress")]
+pub mod recompress;
+
 // Image content analysis for `EncoderConfig::adaptive`.
 //
 // Internal by default — the analyzer output and tier helpers are

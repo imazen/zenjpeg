@@ -5,6 +5,7 @@ members = [
     "zenjpeg-bench-utils",
     "zenyuv",
     "zjpeg",
+    "zjr-calibrate",
     "internal/jpegli-internals-sys",
 ]
 
@@ -42,9 +43,13 @@ zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
 # Quality metrics
 dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
-# Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop and
-# by various dev-only test/measurement examples.
-zensim = { version = "0.2.6" }
+# Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop, the
+# `recompress` module's IQA path, and dev-only test/measurement examples.
+# LOCAL path (the in-monorepo zensim 0.3.0) — it has the canonical
+# `ZensimProfile::A` ("Profile A", the dial the recompressor targets), which
+# the crates.io 0.2.x releases dropped. Do NOT revert to a crates.io version
+# without confirming Profile A is present.
+zensim = { path = "../zensim/zensim" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)

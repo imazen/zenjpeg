@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`recompress` module** — JPEG→JPEG recompression to a target zensim
+  Profile A quality with no size regression, merged in from the standalone
+  `zenjpeg-recompress` crate (2026-05-29). Single entry point
+  `recompress::recompress` routing NoOp / Lossless / Preserve (coefficient-
+  domain requant, incl. same-family Robidoux retargeting for
+  mozjpeg/ImageMagick) / Tuned / Deblock, with per-encoder calibration
+  (libjpeg-turbo, mozjpeg, jpegli) fit on 50 CID22-512 references.
+  - **Features:** `recompress` (core router/strategies/calibration; needs
+    only `decoder` + `trellis`, no heavy deps — base builds unaffected),
+    `recompress-iqa` (the `Budget::MaxIterations`/`MaxTime` closed loop;
+    pulls `zensim` for the generation-loss measurement), `recompress-expert`
+    (unstable `recompress::expert` internals). The module reaches the
+    codec's `pub(crate)` entropy/huffman/foundation/quant internals
+    directly — no `__test-utils` exposure.
+  - The closed loop's metric is pinned to `ZensimProfile::A` ("Profile A",
+    the dial the recompressor targets) — a distinct profile, NOT any
+    `PreviewV0_*` variant — and zensim is wired to the in-monorepo local
+    crate (0.3.0), which carries Profile A (crates.io 0.2.x dropped it).
+    Pinned to the `A` variant, not `latest()`, so a zensim rotation can't
+    silently shift the baked tables.
+  - Calibration validity confirmed post-integration: a full n=50 3-encoder
+    revalidation under the local-zensim Profile A reproduces the committed
+    gate **exactly** (turbo 8.6 % / mozjpeg 7.0 % / jpegli 3.6 % under-target,
+    0 size regressions, aggregate byte ratios identical to 4 dp) — the
+    calibration was always fit against this same local Profile A, and the
+    zensim `avx512` default vs the calibration's scalar build flips no cell.
+  - New workspace member `zjr-calibrate` (the calibration sweep CLI) and
+    `recompress`-gated examples; methodology in
+    `docs/recompress/RECOMPRESSION_COMPENDIUM.md`.
+
 ## [0.8.7] - 2026-05-28
 
 ### Fixed
