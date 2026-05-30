@@ -45,11 +45,13 @@ dssim-core = "3.4"
 fast-ssim2 = { version = "0.8.0", features = ["imgref"] }
 # Used by zenjpeg's Quality::Zq target-perceptual-quality closed loop, the
 # `recompress` module's IQA path, and dev-only test/measurement examples.
-# LOCAL path (the in-monorepo zensim 0.3.0) — it has the canonical
-# `ZensimProfile::A` ("Profile A", the dial the recompressor targets), which
-# the crates.io 0.2.x releases dropped. Do NOT revert to a crates.io version
-# without confirming Profile A is present.
-zensim = { path = "../zensim/zensim" }
+# Pinned to the imazen/zensim main commit that carries the canonical
+# `ZensimProfile::A` ("Profile A", the dial the recompressor targets) — the
+# crates.io 0.2.x releases dropped it. A git rev (NOT a `../zensim` path dep)
+# so CI's isolated checkout can resolve it; a committed sibling-path dep breaks
+# every CI job (no siblings in the checkout). For local live-iteration against
+# the sibling, add a gitignored `.cargo/config.toml` patch — do not commit it.
+zensim = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
