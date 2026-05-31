@@ -23,7 +23,7 @@
 //! trip**. Generation loss is bounded by the rounding error in the
 //! re-quantize step `round(coeff * old_q / new_q)`.
 
-use crate::decode::DecodedCoefficients;
+use crate::decode::{DecodedCoefficients, PreservedSegment, SegmentType};
 use crate::entropy::{StreamingEntropyState, encode_blocks_mcu_order};
 use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::{
@@ -153,6 +153,15 @@ type NewQuantTables = (Vec<Option<[u16; 64]>>, Vec<[f32; 64]>);
 pub struct EmitConfig {
     pub quant_strategy: QuantStrategy,
     pub aq_mask: Option<AqMask>,
+    /// APPn / COM segments decoded from the source, written verbatim
+    /// after SOI so the recompressed file keeps the source's ICC
+    /// profile, EXIF (orientation), XMP, JFIF density, and Adobe color
+    /// transform. Coefficient-domain recompression is metadata-
+    /// transparent — dropping these would silently change the decoded
+    /// colors (ICC) and display orientation (EXIF). MPF segments are
+    /// excluded by the caller (their byte offsets reference embedded
+    /// images that recompression invalidates).
+    pub preserved_segments: Vec<PreservedSegment>,
 }
 
 impl EmitConfig {
@@ -161,6 +170,7 @@ impl EmitConfig {
         Self {
             quant_strategy: QuantStrategy::UniformScale(scale),
             aq_mask: None,
+            preserved_segments: Vec::new(),
         }
     }
 
@@ -171,6 +181,7 @@ impl EmitConfig {
         Self {
             quant_strategy: QuantStrategy::TargetQuality { target_ijg_q },
             aq_mask: None,
+            preserved_segments: Vec::new(),
         }
     }
 
@@ -183,12 +194,20 @@ impl EmitConfig {
         Self {
             quant_strategy: QuantStrategy::RobidouxTargetQuality { target_quality },
             aq_mask: None,
+            preserved_segments: Vec::new(),
         }
     }
 
     /// Set the AQ zero-bias mask. Returns `self` for builder chaining.
     pub fn with_aq_mask(mut self, aq_mask: Option<AqMask>) -> Self {
         self.aq_mask = aq_mask;
+        self
+    }
+
+    /// Set the source APPn/COM segments to carry through (ICC, EXIF,
+    /// XMP, JFIF, Adobe, COM). Returns `self` for builder chaining.
+    pub fn with_preserved_segments(mut self, segments: Vec<PreservedSegment>) -> Self {
+        self.preserved_segments = segments;
         self
     }
 }
@@ -198,6 +217,7 @@ impl Default for EmitConfig {
         Self {
             quant_strategy: QuantStrategy::IDENTITY,
             aq_mask: None,
+            preserved_segments: Vec::new(),
         }
     }
 }
@@ -261,6 +281,15 @@ pub fn emit_preserved(
     // 4. Emit JPEG bytes.
     let mut out = Vec::with_capacity(64 * 1024);
     write_marker_segment(&mut out, MARKER_SOI, &[]); // SOI has no payload
+    // Carry the source's APPn/COM metadata (ICC, EXIF, XMP, JFIF, Adobe,
+    // COM) verbatim, right after SOI and before DQT — JPEG requires APPn
+    // segments before the frame header. Written in their original decoded
+    // order (JFIF/APP0 first in well-formed files). `seg.data` is the raw
+    // payload excluding the 2 length bytes, exactly what
+    // `write_marker_segment` expects. MPF is filtered out by the caller.
+    for seg in &config.preserved_segments {
+        write_marker_segment(&mut out, seg.marker, &seg.data);
+    }
     write_dqt(&mut out, &new_quant_tables)?;
     write_sof0(&mut out, coeffs, subsampling, &edited_components)?;
     write_dht(&mut out, &huff, is_color)?;

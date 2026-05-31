@@ -14,7 +14,7 @@
 //! aggressive quant scaling than the source's tables can express,
 //! the router falls back to Tuned.
 
-use crate::decode::DecodeConfig;
+use crate::decode::{DecodeConfig, SegmentType};
 use crate::detect::EncoderFamily;
 use crate::types::Subsampling;
 use enough::Unstoppable;
@@ -100,10 +100,24 @@ pub fn run_preserve(
         ));
     }
 
-    // 1. Decode source coefficients via the public API.
-    let coeffs = DecodeConfig::new()
-        .decode_coefficients(jpeg_bytes, Unstoppable)
+    // 1. Decode source coefficients AND preserved metadata in one pass.
+    let (coeffs, extras) = DecodeConfig::new()
+        .decode_coefficients_with_extras(jpeg_bytes, Unstoppable)
         .map_err(|e| Error::Zenjpeg(format!("preserve decode coefficients: {e}")))?;
+    // Carry every APPn/COM segment EXCEPT MPF. Coefficient-domain
+    // recompression is metadata-transparent: dropping these would
+    // silently change the decoded colors (ICC profile) and display
+    // orientation (EXIF). MPF is excluded because its directory holds
+    // byte offsets into embedded images that recompression invalidates.
+    let preserved_segments: Vec<_> = extras
+        .map(|ex| {
+            ex.segments()
+                .iter()
+                .filter(|s| s.segment_type != SegmentType::Mpf)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
 
     // 2. Quant-strategy dispatch based on source quality. The
     // head-to-head sweep (benchmarks/preserve_vs_tuned_*.tsv) shows:
@@ -167,6 +181,7 @@ pub fn run_preserve(
     let cfg = EmitConfig {
         quant_strategy,
         aq_mask,
+        preserved_segments,
     };
     let subsampling = match analysis.subsampling {
         Subsampling::S444 | Subsampling::S422 | Subsampling::S420 | Subsampling::S440 => {
