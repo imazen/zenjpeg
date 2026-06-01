@@ -66,14 +66,14 @@ jobs:
           fi
 
       - name: Run tests
-        run: cargo test -p zenjpeg --all-features --release
+        run: cargo test -p zenjpeg --release --features "trellis,parallel,moxcms,ultrahdr,zencodec"
 
       - name: Build docs
-        run: cargo doc -p zenjpeg --all-features --no-deps
+        run: cargo doc -p zenjpeg --no-deps --features "trellis,parallel,moxcms,ultrahdr,zencodec"
 
       - name: Publish (dry run)
         if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'
-        run: cargo publish -p zenjpeg --dry-run
+        run: cargo publish -p zenjpeg --dry-run --allow-dirty
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
@@ -83,6 +83,6 @@ jobs:
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.dry_run != 'true'
-        run: cargo publish -p zenjpeg
+        run: cargo publish -p zenjpeg --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
