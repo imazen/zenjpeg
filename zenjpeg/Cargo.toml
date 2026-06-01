@@ -20,6 +20,7 @@ exclude = [
     "fuzz/",
     "scripts/",
     "reports/",
+    "benchmarks/",
     "*.log",
     "*.csv",
     "*.png",
