@@ -113,6 +113,7 @@ jobs:
             -e 's/^layout = .*/layout = []/' \
             -e 's/^zennode = .*/zennode = []/' \
             -e '/zenpredict.*path/d' \
+            -e 's/^__picker-research = .*/__picker-research = []/' \
             -e 's/, features = \["cjpegli-ffi"\]//' \
             zenjpeg/Cargo.toml > zenjpeg/Cargo.toml.ci && mv zenjpeg/Cargo.toml.ci zenjpeg/Cargo.toml
           rm -f Cargo.lock
