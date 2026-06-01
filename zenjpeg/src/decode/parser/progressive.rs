@@ -438,7 +438,7 @@ impl<'a> JpegParser<'a> {
         // `self.jbrd_scans` / `self.jbrd_padding_bits` so the inner closures
         // can borrow them mutably while the rest of `self` (coeffs, bitmaps,
         // components) is also mutably borrowed alongside.
-        let mut current_jbrd_scan = self.jbrd_scans.as_mut().and_then(|v| v.last_mut());
+        let current_jbrd_scan = self.jbrd_scans.as_mut().and_then(|v| v.last_mut());
         let mut current_jbrd_padding_bits = self.jbrd_padding_bits.as_mut();
 
         let had_progressive_truncation = if is_dc_scan {
@@ -501,7 +501,7 @@ impl<'a> JpegParser<'a> {
                 al,
                 &grid,
                 restart_interval,
-                current_jbrd_scan.as_deref_mut(),
+                current_jbrd_scan,
                 current_jbrd_padding_bits.as_deref_mut(),
                 stop,
             )?
@@ -510,11 +510,9 @@ impl<'a> JpegParser<'a> {
         // before the NEXT marker — could be another SOS, EOI, or
         // anything else). Mirrors libjxl's terminal `FinishStream` call
         // in `ProcessScan`.
-        if let Some(buf) = current_jbrd_padding_bits.as_deref_mut() {
+        if let Some(buf) = current_jbrd_padding_bits {
             buf.extend_from_slice(&decoder.partial_byte_padding_bits());
         }
-        drop(current_jbrd_scan);
-        drop(current_jbrd_padding_bits);
 
         // Extract warning flags before dropping decoder
         let had_ac_overflow = decoder.had_ac_overflow;

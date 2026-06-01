@@ -638,7 +638,7 @@ pub(crate) fn run_iteration_loop(
     // loop; other layouts (BGR, RGBA, 16-bit linear, YCbCr) fall
     // through to single-pass — adding each is a small follow-up that
     // mirrors the path taken below.
-    let z = Zensim::new(ZensimProfile::latest());
+    let z = Zensim::new(ZensimProfile::codec_target());
     let pre = match build_source_reference(&z, ctx.layout, ctx.pixels, ctx.width, ctx.height) {
         Some(p) => p,
         None => return run_single_pass(&ctx, None),

@@ -3114,6 +3114,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenflate"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8409543ad469f954834da58409f0d9c463156f01cfaf8a8a03fe277c73b1e0f5"
+dependencies = [
+ "archmage 0.9.23",
+ "enough",
+ "libm",
+]
+
+[[package]]
 name = "zenjpeg"
 version = "0.8.7"
 dependencies = [
@@ -3174,7 +3185,7 @@ dependencies = [
  "zenpixels",
  "zenpredict 0.2.1",
  "zenresize",
- "zensim 0.3.0",
+ "zensim",
  "zensim-regress",
  "zentone",
  "zenyuv",
@@ -3225,8 +3236,32 @@ dependencies = [
  "magetypes",
  "once_cell",
  "paste",
+ "rgb",
  "whereat",
  "zenpixels",
+]
+
+[[package]]
+name = "zenpng"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ef0ff0cfac28ce74a9241dbe8ba3abe60f385819d55675c4daced1ac8ac4bd"
+dependencies = [
+ "almost-enough",
+ "archmage 0.9.23",
+ "bytemuck",
+ "enough",
+ "imgref",
+ "linear-srgb",
+ "memchr",
+ "rgb",
+ "safe_unaligned_simd",
+ "thiserror",
+ "whereat",
+ "zencodec",
+ "zenflate",
+ "zenpixels",
+ "zenpixels-convert",
 ]
 
 [[package]]
@@ -3268,20 +3303,6 @@ dependencies = [
 
 [[package]]
 name = "zensim"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46ead96f329b3f706ce66c8f36bf5b5bc1bb1fc5135c467079728379560b93c"
-dependencies = [
- "archmage 0.9.23",
- "bytemuck",
- "linear-srgb",
- "magetypes",
- "rayon",
- "thiserror",
-]
-
-[[package]]
-name = "zensim"
 version = "0.3.0"
 source = "git+https://github.com/imazen/zensim?rev=9d8f73a5a82a944420ca0e040ecfcea0f4afa263#9d8f73a5a82a944420ca0e040ecfcea0f4afa263"
 dependencies = [
@@ -3298,16 +3319,23 @@ dependencies = [
 
 [[package]]
 name = "zensim-regress"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81760b7396cfc229282b77dc5ea504b1dfa2e3c1c54b18d01bd8fb8c8ed00832"
+version = "0.4.0"
+source = "git+https://github.com/imazen/zensim?rev=9d8f73a5a82a944420ca0e040ecfcea0f4afa263#9d8f73a5a82a944420ca0e040ecfcea0f4afa263"
 dependencies = [
  "base64",
+ "bytemuck",
+ "enough",
  "fs2",
- "image",
+ "imgref",
+ "linear-srgb",
+ "rgb",
  "seahash",
  "thiserror",
- "zensim 0.2.7",
+ "zenblend",
+ "zenpixels",
+ "zenpng",
+ "zenresize",
+ "zensim",
 ]
 
 [[package]]
@@ -3389,7 +3417,7 @@ dependencies = [
  "thiserror",
  "walkdir",
  "zenjpeg",
- "zensim 0.3.0",
+ "zensim",
 ]
 
 [[package]]

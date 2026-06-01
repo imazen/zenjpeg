@@ -242,7 +242,7 @@ fn process_file(path: &Path, base: &Path) -> Option<CompareResult> {
 
     // Compute zensim score (thread-local instance to avoid contention)
     thread_local! {
-        static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+        static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
     }
 
     let score = ZENSIM.with(|z| {

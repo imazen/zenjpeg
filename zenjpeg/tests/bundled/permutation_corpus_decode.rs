@@ -202,7 +202,7 @@ fn zensim_regress(a: &Decoded, b: &Decoded) -> Option<(f64, String)> {
     use zensim::{PixelFormat, StridedBytes, Zensim, ZensimProfile};
     use zensim_regress::{RegressionTolerance, check_regression};
 
-    let zsim = Zensim::new(ZensimProfile::latest());
+    let zsim = Zensim::new(ZensimProfile::codec_target());
     let w = a.width as usize;
     let h = a.height as usize;
     let stride = w * 3;

@@ -10,9 +10,54 @@
 use enough::Unstoppable;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use zensim_regress::diff_image::{create_comparison_montage_raw, generate_diff_image_raw};
+use zensim_regress::Bitmap;
+use zensim_regress::diff_image::{create_montage, generate_diff_image};
 
 const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/visual_diffs";
+
+/// Build a `Bitmap` from raw packed RGBA bytes (panics on size mismatch —
+/// these are test-internal buffers we control).
+fn bitmap_from_rgba(rgba: &[u8], width: u32, height: u32) -> Bitmap {
+    Bitmap::from_rgba_slice(rgba, width, height).expect("rgba buffer matches w*h*4")
+}
+
+/// Convert a `Bitmap` to an `image::RgbaImage` (the rest of this test, incl.
+/// `save_montage`, works with `image::RgbaImage`).
+fn bitmap_to_image(bm: Bitmap) -> image::RgbaImage {
+    let (w, h) = bm.dimensions();
+    image::RgbaImage::from_raw(w, h, bm.into_raw()).expect("bitmap raw matches dimensions")
+}
+
+/// Shim preserving the old `create_comparison_montage_raw` signature on top of
+/// zensim-regress 0.4's `Bitmap` API: amplified diff panel + side-by-side
+/// montage `[expected | actual | diff]`.
+fn create_comparison_montage_raw(
+    ref_rgba: &[u8],
+    test_rgba: &[u8],
+    width: u32,
+    height: u32,
+    amplification: u8,
+    gap: u32,
+) -> image::RgbaImage {
+    let expected = bitmap_from_rgba(ref_rgba, width, height);
+    let actual = bitmap_from_rgba(test_rgba, width, height);
+    let diff = generate_diff_image(&expected, &actual, amplification);
+    bitmap_to_image(create_montage(&[&expected, &actual, &diff], gap))
+}
+
+/// Shim preserving the old `generate_diff_image_raw` signature on top of
+/// zensim-regress 0.4's `generate_diff_image`.
+fn generate_diff_image_raw(
+    ref_rgba: &[u8],
+    test_rgba: &[u8],
+    width: u32,
+    height: u32,
+    amplification: u8,
+) -> image::RgbaImage {
+    let expected = bitmap_from_rgba(ref_rgba, width, height);
+    let actual = bitmap_from_rgba(test_rgba, width, height);
+    bitmap_to_image(generate_diff_image(&expected, &actual, amplification))
+}
 
 /// Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel) for zensim-regress.
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {

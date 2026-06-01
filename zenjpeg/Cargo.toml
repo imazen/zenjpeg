@@ -159,8 +159,13 @@ kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 # UltraHDR integration testing
 ultrahdr-core = { workspace = true }
-# Visual regression testing (diff images, montages, checksum management)
-zensim-regress = "0.3.0"
+# Visual regression testing (diff images, montages, checksum management).
+# Pinned to the SAME imazen/zensim git rev as the `zensim` dep above: the
+# crates.io zensim-regress 0.3.1 depends on zensim 0.2.x, which collides with
+# our git-rev zensim 0.3.0 — two incompatible `zensim` crates in the graph make
+# `RgbSlice`/`ImageSource` mismatch in dev examples (mozjpeg_parity_tuning).
+# Sourcing zensim-regress from the same rev unifies the graph onto one zensim.
+zensim-regress = { git = "https://github.com/imazen/zensim", rev = "9d8f73a5a82a944420ca0e040ecfcea0f4afa263" }
 zensim = { workspace = true, features = ["classification"] }
 image = "0.25"
 

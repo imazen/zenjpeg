@@ -516,10 +516,9 @@ impl<'a> JpegParser<'a> {
         // is whatever follows the scan in the bitstream (DHT/SOS/EOI/...).
         // Mirrors libjxl's `FinishStream` call at `ProcessScan` end. No-op
         // when JBRD tracking is disabled.
-        if let Some(buf) = jbrd_padding_bits.as_deref_mut() {
+        if let Some(buf) = jbrd_padding_bits {
             buf.extend_from_slice(&decoder.partial_byte_padding_bits());
         }
-        drop(jbrd_padding_bits);
 
         // Extract warning flags (decoder borrows self.dc_tables/ac_tables)
         let had_ac_overflow = decoder.had_ac_overflow;

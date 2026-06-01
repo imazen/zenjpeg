@@ -184,7 +184,7 @@ fn decode_rgb(jpeg: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 /// Compare original vs decoded using zensim. Returns (score, report_string).
 fn compare_quality(original: &[u8], decoded: &[u8], width: usize, height: usize) -> (f64, String) {
-    let z = Zensim::new(ZensimProfile::latest());
+    let z = Zensim::new(ZensimProfile::codec_target());
     let stride = width * 3;
     let expected = StridedBytes::new(original, width, height, stride, PixelFormat::Srgb8Rgb);
     let actual = StridedBytes::new(decoded, width, height, stride, PixelFormat::Srgb8Rgb);
@@ -500,7 +500,7 @@ fn test_decoder_path_consistency() {
     let images = load_gb82_images(&["baby", "guitar"]).expect("gb82 corpus images not found");
 
     let qualities = [50, 75, 90, 95];
-    let z = Zensim::new(ZensimProfile::latest());
+    let z = Zensim::new(ZensimProfile::codec_target());
 
     println!("\n=== Decoder Path Consistency (gb82) ===");
 

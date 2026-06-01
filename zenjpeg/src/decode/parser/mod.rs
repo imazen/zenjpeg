@@ -369,17 +369,6 @@ impl<'a> JpegParser<'a> {
     /// if tracking is enabled. No-op when tracking is off (zero-overhead
     /// legacy path).
     ///
-    /// Call this immediately BEFORE `BitReader::align_to_byte` at every
-    /// scan-segment terminator (per-RST boundary and at end-of-scan), passing
-    /// the bits returned by [`BitReader::partial_byte_padding_bits`].
-    ///
-    /// [`BitReader::partial_byte_padding_bits`]: crate::foundation::bitstream::BitReader::partial_byte_padding_bits
-    pub(super) fn jbrd_append_padding_bits(&mut self, pads: &[u8]) {
-        if let Some(buf) = self.jbrd_padding_bits.as_mut() {
-            buf.extend_from_slice(pads);
-        }
-    }
-
     /// Take the extras out of the parser (for use after decode).
     pub(super) fn take_extras(&mut self) -> Option<DecodedExtras> {
         self.extras.take().filter(|e| !e.is_empty())

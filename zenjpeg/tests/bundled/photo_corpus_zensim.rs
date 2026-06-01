@@ -67,7 +67,7 @@ const MAX_PIXELS: u64 = 6_000_000;
 // ── Shared infrastructure ───────────────────────────────────────────────────
 
 thread_local! {
-    static ZENSIM: Zensim = Zensim::new(ZensimProfile::latest());
+    static ZENSIM: Zensim = Zensim::new(ZensimProfile::codec_target());
 }
 
 /// Load corpus, or return empty vec (test will skip).

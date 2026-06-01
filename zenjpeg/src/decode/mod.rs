@@ -2555,7 +2555,7 @@ impl DecodeConfig {
         // there are no partial-byte boundaries), drop the redundant Vec —
         // the JBRD writer treats `has_zero_padding_bit == false` as
         // "spec-default 1-bit padding" and never needs the explicit bits.
-        let has_zero_padding_bit = padding_bits.iter().any(|&b| b == 0);
+        let has_zero_padding_bit = padding_bits.contains(&0);
         let metadata = crate::decode::image::JbrdMetadata {
             scans,
             has_zero_padding_bit,

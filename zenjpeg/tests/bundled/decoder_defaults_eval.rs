@@ -265,7 +265,7 @@ fn decoder_defaults_quality_and_speed() {
     }
     println!();
 
-    let zensim = Zensim::new(ZensimProfile::latest());
+    let zensim = Zensim::new(ZensimProfile::codec_target());
 
     // Decode timing iterations per image
     let timing_iters = 10u32;

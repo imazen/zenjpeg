@@ -86,7 +86,9 @@ fn preserve_keeps_icc_profile() {
 
     match result {
         RecompressResult::Recompressed {
-            ref bytes, strategy, ..
+            ref bytes,
+            strategy,
+            ..
         } => {
             eprintln!("strategy-chosen: {strategy:?}");
             assert!(
