@@ -255,8 +255,8 @@ pub(crate) mod simd {
     /// AVX2 transpose using magetypes intrinsics (load → transpose → store).
     #[cfg(target_arch = "x86_64")]
     #[arcane]
-    fn mage_transpose_8x8(_token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
-        let mut rows = mf32x8::load_8x8(input);
+    fn mage_transpose_8x8(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+        let mut rows = mf32x8::load_8x8(token, input);
         mf32x8::transpose_8x8(&mut rows);
         mf32x8::store_8x8(&rows, output);
     }
@@ -264,11 +264,11 @@ pub(crate) mod simd {
     /// Generic transpose fallback using magetypes generics.
     #[magetypes(v3, neon, wasm128, scalar)]
     #[inline(always)]
-    fn transpose_8x8_generic(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    fn transpose_8x8_generic(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(input);
+        let mut rows = f32x8::load_8x8(token, input);
         f32x8::transpose_8x8(&mut rows);
         f32x8::store_8x8(&rows, output);
     }
@@ -397,7 +397,7 @@ pub(crate) mod simd {
         type f32x8 = GenericF32x8<Token>;
 
         // Load all 8 rows
-        let mut rows = f32x8::load_8x8(input);
+        let mut rows = f32x8::load_8x8(token, input);
 
         // Transpose to column-major
         f32x8::transpose_8x8(&mut rows);
@@ -440,7 +440,7 @@ pub(crate) mod simd {
     ) -> [f32; 64] {
         type F32x8 = GenericF32x8<archmage::Wasm128Token>;
 
-        let mut rows = F32x8::load_8x8(input);
+        let mut rows = F32x8::load_8x8(token, input);
         F32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -458,7 +458,7 @@ pub(crate) mod simd {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(input);
+        let mut rows = f32x8::load_8x8(token, input);
         f32x8::transpose_8x8(&mut rows);
         let cols_after_row = scale_vec_generic(token, dct_1d_vec_generic(token, rows));
         let mut rows_for_col = cols_after_row;
@@ -641,7 +641,7 @@ pub(crate) mod simd {
         let token = archmage::X64V3Token::summon().unwrap();
         let scale = mf32x8::splat(token, 1.0 / 8.0);
 
-        let mut reg = mf32x8::load_8x8(input);
+        let mut reg = mf32x8::load_8x8(token, input);
 
         // Transpose → row DCT → scale
         mf32x8::transpose_8x8(&mut reg);

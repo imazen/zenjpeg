@@ -389,6 +389,9 @@ impl StripProcessor {
     /// `image_width`: the actual image width in pixels.
     /// `image_height`: the actual image height in pixels.
     /// `mcu_row`: the current MCU row index (0-based).
+    // The `if h_ratio > 0` guard also protects `h_ratio - 1` from underflowing,
+    // so clippy's `checked_div` suggestion would be incorrect here.
+    #[allow(clippy::manual_checked_ops)]
     pub fn truncate_chroma_padding(
         &mut self,
         image_width: usize,

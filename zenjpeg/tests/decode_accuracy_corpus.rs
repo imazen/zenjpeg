@@ -706,14 +706,14 @@ fn corpus_libjpeg_compat_vs_djpeg() {
 
         // Show worst files for each
         let mut tri_sorted = tri_vs_djpeg_diffs.clone();
-        tri_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        tri_sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
         eprintln!("\nWorst Triangle vs djpeg:");
         for (name, diff) in tri_sorted.iter().take(5) {
             eprintln!("  {:>3} {}", diff, name);
         }
 
         let mut ljc_sorted = ljc_vs_djpeg_diffs.clone();
-        ljc_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        ljc_sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
         eprintln!("\nWorst LibjpegCompat vs djpeg:");
         for (name, diff) in ljc_sorted.iter().take(5) {
             eprintln!("  {:>3} {}", diff, name);
@@ -800,7 +800,7 @@ fn investigate_rst_diff() {
         }
     }
 
-    diffs.sort_by(|a, b| b.3.unsigned_abs().cmp(&a.3.unsigned_abs()));
+    diffs.sort_by_key(|x| std::cmp::Reverse(x.3.unsigned_abs()));
 
     eprintln!("\nTop 30 worst pixel diffs (|diff|>20):");
     eprintln!(
@@ -842,7 +842,7 @@ fn investigate_rst_diff() {
         }
     }
     let mut block_sorted: Vec<_> = block_hist.into_iter().collect();
-    block_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    block_sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
     for ((bx, by), count) in block_sorted.iter().take(10) {
         eprintln!("  block_pos ({},{}) : {} high diffs", bx, by, count);
     }

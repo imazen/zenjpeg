@@ -222,7 +222,7 @@ mod simd {
         type f32x8 = GenericF32x8<Token>;
 
         // Load input as rows
-        let mut rows = f32x8::load_8x8(input);
+        let mut rows = f32x8::load_8x8(token, input);
 
         // Transpose: rows -> cols for parallel row IDCT
         f32x8::transpose_8x8(&mut rows);
@@ -252,11 +252,11 @@ mod simd {
     }
 
     #[magetypes(v3, neon, wasm128, scalar)]
-    fn transpose_8x8_simd_impl(_token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    fn transpose_8x8_simd_impl(token: Token, input: &[f32; 64], output: &mut [f32; 64]) {
         #[allow(non_camel_case_types)]
         type f32x8 = GenericF32x8<Token>;
 
-        let mut rows = f32x8::load_8x8(input);
+        let mut rows = f32x8::load_8x8(token, input);
         f32x8::transpose_8x8(&mut rows);
         f32x8::store_8x8(&rows, output);
     }

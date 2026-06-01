@@ -327,6 +327,8 @@ impl<'a> JpegParser<'a> {
     /// Returns byte range `(start, end)` into `full_data` instead of copying,
     /// enabling zero-copy access to the gain map JPEG.
     #[cfg(feature = "ultrahdr")]
+    // The APP2/MPF arm reads clearer as an explicit nested `if` than as a match guard.
+    #[allow(clippy::collapsible_match)]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],

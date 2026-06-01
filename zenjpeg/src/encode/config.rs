@@ -177,6 +177,9 @@ const MAX_OVERHEAD_PER_MILLE: u32 = 3;
 /// MCU count would be below `MIN_MCUS_PER_RESTART` or when the number
 /// of restart markers would bloat the file by more than 0.3%.
 /// Ensures the result fits in u16 by reducing rows if needed.
+// The `if max_markers == 0` guard also protects the `max_markers - 1` subtraction
+// from underflowing, so clippy's `checked_div` suggestion would be incorrect here.
+#[allow(clippy::manual_checked_ops)]
 pub(crate) fn resolve_restart_rows(
     rows: u16,
     width: u32,

@@ -1406,6 +1406,9 @@ impl DecodeConfig {
     /// This is the core computation shared by [`try_wave_parallel`] and the
     /// owned-data path.
     #[cfg(feature = "parallel")]
+    // The `if seg_rgb_bytes > 0` check selects a distinct else value, so clippy's
+    // `checked_div` suggestion does not map cleanly.
+    #[allow(clippy::manual_checked_ops)]
     fn compute_wave_state(
         &self,
         scan_data: &parser::ParsedScanData<'_>,

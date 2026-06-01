@@ -20,6 +20,12 @@
 //! | `StreamingDecode` | [`JpegStreamingDecoder`] |
 //! | `AnimationFrameDecode` | `Unsupported<Error>` (JPEG has no animation) |
 
+// Newer zencodec (0.1.20+) deprecated ThreadingPolicy::{SingleThread, Balanced,
+// LimitOrSingle, LimitOrAny, Unlimited}, descriptor_for_decoded_pixels, and the
+// IccMatchTolerance sub-Intent variants; all remain functional. This 0.8.4 patch
+// keeps the existing calls — migration to the v2 API lives on the main line.
+#![allow(deprecated)]
+
 extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::vec::Vec;

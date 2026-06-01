@@ -658,21 +658,21 @@ fn test_comprehensive_benchmark() {
 
     println!("\nQuality wins (lowest DSSIM):");
     let mut qw: Vec<_> = quality_wins.into_iter().collect();
-    qw.sort_by(|a, b| b.1.cmp(&a.1));
+    qw.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (name, count) in qw {
         println!("  {}: {}", name, count);
     }
 
     println!("\nSize wins (smallest file):");
     let mut sw: Vec<_> = size_wins.into_iter().collect();
-    sw.sort_by(|a, b| b.1.cmp(&a.1));
+    sw.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (name, count) in sw {
         println!("  {}: {}", name, count);
     }
 
     println!("\nSpeed wins (fastest encoding):");
     let mut spw: Vec<_> = speed_wins.into_iter().collect();
-    spw.sort_by(|a, b| b.1.cmp(&a.1));
+    spw.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (name, count) in spw {
         println!("  {}: {}", name, count);
     }

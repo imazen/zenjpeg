@@ -72,3 +72,6 @@ Cargo.toml.original.txt
 *.rs.local
 *.profdata
 fuzz-*.log
+
+# Multi-agent coordination marker (never committed)
+.workongoing
