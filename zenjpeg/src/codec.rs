@@ -319,9 +319,26 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
     fn with_generic_quality(mut self, quality: f32) -> Self {
         let clamped = quality.clamp(0.0, 100.0);
         self.generic_quality_input = Some(clamped);
-        let q = calibrated_jpeg_quality(clamped);
-        self.quality = q;
-        self.inner = self.inner.quality(Quality::ApproxJpegli(q));
+        // `generic_quality` is the codec-agnostic 0..100 dial. For zenjpeg it
+        // means "target a zensim Profile A score of `quality`": A is the
+        // canonical codec-target metric (`ZensimProfile::codec_target()`), so a
+        // caller asking for generic quality 70 gets an encode whose achieved
+        // zensim:A score lands at ~70 regardless of content. When the
+        // zensim-targeting machinery is compiled in (`target-zq`), route to the
+        // `Quality::Zq` closed loop (warm-started by the picker under
+        // `__picker-research`); otherwise fall back to the CID22-calibrated
+        // jpegli-native approximation of the same perceptual target.
+        #[cfg(feature = "target-zq")]
+        {
+            self.quality = clamped;
+            self.inner = self.inner.quality(Quality::Zq(clamped));
+        }
+        #[cfg(not(feature = "target-zq"))]
+        {
+            let q = calibrated_jpeg_quality(clamped);
+            self.quality = q;
+            self.inner = self.inner.quality(Quality::ApproxJpegli(q));
+        }
         self
     }
 
