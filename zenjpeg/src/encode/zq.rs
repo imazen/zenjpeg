@@ -623,21 +623,35 @@ pub(crate) fn run_iteration_loop(
     let mut pass_config: EncoderConfig = ctx.config.clone();
 
     // Picker warm-start (research-gated, off by default). Given the source
-    // pixels + the Profile-A target, the distilled MLP predicts the RD-optimal
+    // features + the Profile-A target, the distilled MLP predicts the RD-optimal
     // categorical cell (subsampling × progressive × sharp_yuv × effort); seed
     // pass 0 with it so the first encode already uses the right config instead
-    // of a content-blind default. RGB8-sRGB only (the picker's analyzer input);
-    // other layouts keep the caller's config. `pick_config` returns None — and
-    // we keep the caller's config — on any degenerate input, a non-finite
-    // target, or a needed feature missing from this zenanalyze build.
+    // of a content-blind default.
+    //
+    // If the caller supplied packed source features (`with_packed_source_features`)
+    // the picker reuses them and skips analysis — and an incomplete/malformed
+    // pack is the caller's bug, so it FAILS the encode with the missing ids
+    // rather than mis-picking off zeroed inputs. Otherwise it analyzes the RGB8
+    // source fresh (other layouts keep the caller's config), returning None — and
+    // keeping the caller's config — on any degenerate input, a non-finite target,
+    // or a needed feature missing from this zenanalyze build.
     #[cfg(feature = "__picker-research")]
-    if let crate::encode::PixelLayout::Rgb8Srgb = ctx.layout {
-        if let Some(picked) = crate::encode::picker::pick_config(
-            ctx.pixels,
-            ctx.width,
-            ctx.height,
-            ctx.target.target,
-        ) {
+    {
+        let picked = if let Some(packed) = ctx.config.packed_source_features() {
+            match crate::encode::picker::pick_config_from_packed(packed, ctx.target.target) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(crate::error::Error::invalid_config(alloc::format!(
+                        "Quality::Zq picker: packed source features unusable: {e:?}"
+                    )));
+                }
+            }
+        } else if let crate::encode::PixelLayout::Rgb8Srgb = ctx.layout {
+            crate::encode::picker::pick_config(ctx.pixels, ctx.width, ctx.height, ctx.target.target)
+        } else {
+            None
+        };
+        if let Some(picked) = picked {
             pass_config = pass_config
                 .color_mode(crate::encode::ColorMode::YCbCr {
                     subsampling: picked.subsampling,
@@ -686,7 +700,13 @@ pub(crate) fn run_iteration_loop(
     // Bucket detection runs the analyzer on the source pixels — same
     // ~1ms cost as `EncoderConfig::adaptive`. Falls through to the
     // bucket-naive lookup if analysis fails (e.g. tiny images).
-    let bucket = detect_bucket(ctx.layout, ctx.pixels, ctx.width, ctx.height);
+    let bucket = detect_bucket(
+        ctx.layout,
+        ctx.pixels,
+        ctx.width,
+        ctx.height,
+        ctx.config.packed_source_features(),
+    );
     let starting_q = match (ctx.target.target, bucket) {
         (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
         (zq, None) => zq_to_starting_jpegli_q(zq),
@@ -994,7 +1014,16 @@ fn detect_bucket(
     pixels: &[u8],
     width: u32,
     height: u32,
+    packed: Option<&[(u16, f32)]>,
 ) -> Option<crate::encode::adaptive::InferredBucket> {
+    // Caller-supplied packed features: reuse them and skip analysis. Best-effort
+    // — a malformed pack falls back (`ok()?`) to the bucket-naive calibration;
+    // bucket inference reads features defensively (absent → default) so a sparse
+    // pack still produces a sensible bucket.
+    if let Some(packed) = packed {
+        let analysis = zenanalyze::feature::AnalysisResults::from_packed(packed).ok()?;
+        return Some(crate::encode::adaptive::infer_bucket(&analysis));
+    }
     if width < 8 || height < 8 {
         return None;
     }
@@ -1070,5 +1099,41 @@ mod tests {
             assert!((1.0..=100.0).contains(&q), "out of range at zq={zq}: {q}");
             prev = q;
         }
+    }
+
+    /// The public `with_packed_source_features` path: a caller's pre-computed
+    /// features drive the Zq encode (skipping re-analysis); an incomplete pack
+    /// fails the encode rather than mis-picking.
+    #[cfg(feature = "__picker-research")]
+    #[test]
+    fn zq_packed_source_features_drive_encode_and_flag_incomplete() {
+        use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
+        use enough::Unstoppable;
+        use zenanalyze::feature::{AnalysisQuery, FeatureSet};
+
+        let (w, h) = (256u32, 256);
+        let rgb: alloc::vec::Vec<u8> =
+            (0..(w * h * 3)).map(|i| (i.wrapping_mul(7) % 251) as u8).collect();
+        let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
+        let packed = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query).pack();
+
+        // Complete pack → encode succeeds off the supplied features (no re-analysis).
+        let cfg = EncoderConfig::ycbcr(Quality::Zq(75.0), ChromaSubsampling::Quarter)
+            .with_packed_source_features(packed.clone());
+        let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).expect("encoder");
+        enc.push_packed(&rgb, Unstoppable).expect("push");
+        let (jpeg, _) = enc.finish_with_metrics().expect("complete pack encodes");
+        assert!(!jpeg.is_empty());
+
+        // Incomplete pack (drop a needed feature) → the encode FAILS.
+        let pruned: alloc::vec::Vec<(u16, f32)> = packed.iter().copied().skip(1).collect();
+        let cfg2 = EncoderConfig::ycbcr(Quality::Zq(75.0), ChromaSubsampling::Quarter)
+            .with_packed_source_features(pruned);
+        let mut enc2 = cfg2.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).expect("encoder");
+        enc2.push_packed(&rgb, Unstoppable).expect("push");
+        assert!(
+            enc2.finish_with_metrics().is_err(),
+            "an incomplete packed-feature set must fail the encode, not mis-pick"
+        );
     }
 }

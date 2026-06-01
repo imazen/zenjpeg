@@ -514,6 +514,12 @@ pub struct EncoderConfig {
     /// for the same purpose. `None` keeps the historical behaviour of
     /// using the same quality for both tables.
     pub(crate) chroma_quality: Option<u8>,
+    /// Pre-computed zenanalyze source features, as a
+    /// [`zenanalyze::feature::AnalysisResults::pack`] `(u16 id, f32)` blob.
+    /// When set, the `Quality::Zq` closed loop reuses these instead of
+    /// re-analyzing the source — see [`Self::with_packed_source_features`].
+    /// `None` (default) analyzes the source as before.
+    pub(crate) packed_source_features: Option<Vec<(u16, f32)>>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -672,6 +678,7 @@ impl EncoderConfig {
             boundary_rd_mode: BoundaryRd::Off,
             chroma_distance_scale: 1.0,
             chroma_quality: None,
+            packed_source_features: None,
         }
     }
 
@@ -1018,6 +1025,36 @@ impl EncoderConfig {
     pub fn chroma_quality(mut self, quality: Option<u8>) -> Self {
         self.chroma_quality = quality.map(|q| q.clamp(1, 100));
         self
+    }
+
+    /// Supply pre-computed zenanalyze source features so the `Quality::Zq`
+    /// closed loop skips re-analyzing the image.
+    ///
+    /// `packed` is a [`zenanalyze::feature::AnalysisResults::pack`] blob — a
+    /// `(stable_u16_id, f32)` list. Because it crosses as plain data (not a
+    /// versioned `AnalysisResults` type), the caller may have produced it with
+    /// a different zenanalyze version; ids are matched by zenanalyze's stable,
+    /// retired-keeps-its-slot id contract.
+    ///
+    /// The loop feeds these to its content-bucket inference (best-effort: a
+    /// malformed or sparse pack quietly falls back to its naive calibration)
+    /// and, when the source-feature picker is compiled in, to the picker. The
+    /// picker holds caller data to a stricter contract: if the pack omits a
+    /// feature it needs, the encode **fails** with the missing ids rather than
+    /// feeding the model zeroed inputs.
+    ///
+    /// Pass a pack from analyzing the *source* pixels with
+    /// [`FeatureSet::SUPPORTED`](zenanalyze::feature::FeatureSet::SUPPORTED).
+    #[must_use]
+    pub fn with_packed_source_features(mut self, packed: Vec<(u16, f32)>) -> Self {
+        self.packed_source_features = Some(packed);
+        self
+    }
+
+    /// The caller-supplied packed source features, if any
+    /// (see [`Self::with_packed_source_features`]).
+    pub(crate) fn packed_source_features(&self) -> Option<&[(u16, f32)]> {
+        self.packed_source_features.as_deref()
     }
 
     /// Use separate quantization tables for Cb and Cr components.
