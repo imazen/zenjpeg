@@ -52,6 +52,11 @@ mod serialize;
 /// See [`Quality::Zq`] and [`Quality::ZqExplicit`] for the entry points.
 pub mod zq;
 
+/// Source-feature quality picker (warm-starts the `Quality::Zq` loop).
+/// Research-only: pulls the unpublished zenpredict v3 runtime + `zenanalyze/hdr`.
+#[cfg(feature = "__picker-research")]
+pub(crate) mod picker;
+
 #[doc(hidden)]
 pub mod config;
 pub(crate) mod linear_lut;

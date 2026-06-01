@@ -221,7 +221,21 @@ __wasm-simd = []
 # need the sibling `../../zenanalyze/zenpredict` checked out and use
 # post-0.1.0 zenanalyze symbols. Off by default; off in CI. Local
 # devs running picker A/B experiments enable this.
-__picker-research = ["dep:zenpredict"]
+#
+# `zenanalyze/hdr` is REQUIRED for the production picker: its 109-input
+# vector is the zenanalyze `SUPPORTED` set (108 features) which only equals
+# the 108 the picker trained on when BOTH `experimental` + `hdr` are on.
+# Without `hdr`, `SUPPORTED` shrinks and the feature order shifts, feeding
+# the MLP misaligned inputs. (The 8 hdr/alpha features are content-constant
+# for SDR inputs — `peak/p99_luminance_nits = 80`, the rest `0` — so they
+# carry no signal, but they must sit at the right positions with the right
+# values; `hdr` produces them via the same code path the training used.)
+# `zenpredict/advanced` unlocks the typed rescue/OOD API the picker uses to
+# stay safe on adversarial inputs: `first_out_of_distribution` (per-input
+# bounds + NaN/inf guard) and the bake's safety/fallback sections. The wire
+# format always parses those sections; this only exposes the Rust API. Lean
+# `predict`/`argmin_masked`-only consumers leave it off.
+__picker-research = ["dep:zenpredict", "zenpredict/advanced", "zenanalyze/hdr"]
 # UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction.
 # Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper.
 # Pinned to ultrahdr-core ≥ 0.5: `transfer` feature removed (linear-srgb is

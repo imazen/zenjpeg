@@ -57,14 +57,16 @@ rayon = "1.10"
 # Color conversion (for benchmarking/comparison - faster than libyuv)
 yuv = { version = "0.8", features = ["professional_mode"] }
 zenyuv = { path = "zenyuv" }
-# zenanalyze: registry-only. The sibling `../zenanalyze` is not
-# guaranteed to be checked out on downstream CI (e.g. ultrahdr-fuzz
-# pulls zenjpeg as a path-dep and only has its own repo checked out).
-# Pinned to the floor (0.1.0). zenjpeg's `src/` only uses 0.1.0
-# symbols; dev binaries that need post-0.1.0 zenanalyze features are
-# gated behind the `__picker-research` feature and require the
-# sibling to be checked out.
-zenanalyze = "0.1.0"
+# zenanalyze: git-pinned to the imazen/zenanalyze rev that carries the
+# `hdr` feature (the 108-feature `SUPPORTED` set the source-feature
+# picker trains + infers against). zenjpeg's non-picker `src/` (adaptive
+# bucket inference) needs only `experimental`; the picker (behind
+# `__picker-research`) additionally enables `zenanalyze/hdr`. A git rev
+# rather than registry because zenanalyze 0.2.0 (which adds `hdr` and
+# removes the retired `composites` feature) isn't published yet — CI that
+# pulls zenjpeg as a path-dep resolves zenanalyze from the same git rev,
+# so no sibling checkout is required.
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "913b0fa0ab290971fae7d5e9d2fff77442287346" }
 
 # Testing
 approx = "0.5"

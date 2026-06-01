@@ -3064,9 +3064,8 @@ dependencies = [
 
 [[package]]
 name = "zenanalyze"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9711cf1c3363003dd436f5b5dc113f7881f9b377613eecbf41f91b6b85626442"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze?rev=913b0fa0ab290971fae7d5e9d2fff77442287346#913b0fa0ab290971fae7d5e9d2fff77442287346"
 dependencies = [
  "archmage 0.9.23",
  "garb",

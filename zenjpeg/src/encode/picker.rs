@@ -1,0 +1,320 @@
+//! Source-feature quality picker — warm-starts the `Quality::Zq` closed
+//! loop with the RD-optimal categorical config for the target.
+//!
+//! At encode time, given the source pixels and a target zensim Profile-A
+//! score, this:
+//!   1. extracts the 108 zenanalyze `SUPPORTED` source features (the
+//!      `experimental` + `hdr` set — the exact features and ORDER the picker
+//!      trained on; see `picker_data/feature_order.txt`),
+//!   2. appends `zq_norm = target / 100`,
+//!   3. runs the distilled ZNPR-v3 MLP (`picker_data/picker_zenjpeg_a_v3_f16.bin`,
+//!      held-out byte-overhead 3.35 %, bytes-SROCC 0.906), and
+//!   4. argmins the predicted per-cell `bytes_log` to the cheapest
+//!      categorical cell (subsampling × progressive × sharp_yuv × effort)
+//!      that reaches the target.
+//!
+//! That cell seeds the closed loop's config so the first pass already uses
+//! the right subsampling/effort/etc. instead of a content-blind default.
+//! The picker only predicts the *config*; the loop still refines the codec
+//! `q` to land the achieved zensim:A score on target.
+//!
+//! Gated behind `__picker-research` (pulls the unpublished `zenpredict` v3
+//! runtime + the `zenanalyze/hdr` features); off by default.
+
+use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, AnalysisResults, FeatureSet};
+use zenpredict::{
+    AllowedMask, Model, Predictor, ScoreTransform, argmin_masked_in_range,
+    first_out_of_distribution,
+};
+
+use crate::encode::{ChromaSubsampling, Effort};
+
+/// Shipped FIXED picker bake (f16, distilled [64,64]; sha256 `5b807ce2…`).
+const PICKER_BAKE: &[u8] = include_bytes!("picker_data/picker_zenjpeg_a_v3_f16.bin");
+
+/// zenanalyze `SUPPORTED` source features (experimental + hdr).
+const N_FEATURES: usize = 108;
+/// Inputs = 108 features + `zq_norm`.
+const N_INPUTS: usize = 109;
+/// Categorical cells = subsampling{420,422,444} × progressive{f,t} ×
+/// sharp_yuv{f,t} × effort{0,1,2}, in the bake's `cell_labels` order.
+const N_CELLS: usize = 36;
+/// Cell index range `(start, end)` for `argmin_masked_in_range`.
+const RANGE_BYTES_LOG: (usize, usize) = (0, N_CELLS);
+
+/// The config the picker chose for the target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PickedConfig {
+    pub subsampling: ChromaSubsampling,
+    pub progressive: bool,
+    pub sharp_yuv: bool,
+    pub effort: Effort,
+}
+
+/// One feature's value as f32, matching the training extractor: the NaN
+/// sentinel ("too few samples for this percentile") and any missing value
+/// map to 0.0 (training blank cells were imputed to 0.0).
+fn feat_f32(a: &AnalysisResults, f: AnalysisFeature) -> f32 {
+    match a.get_f32(f) {
+        Some(v) if !v.is_nan() => v,
+        _ => 0.0,
+    }
+}
+
+/// The picker's feature contract: `feat_<i>\t<zenanalyze name>` per line, in
+/// TRAINING ORDER. Embedded so the runtime resolves each input BY NAME against
+/// whatever features this zenanalyze build exposes — never by `SUPPORTED`
+/// position.
+///
+/// **Forward-compatible by construction.** zenanalyze adds features in chunks
+/// (e.g. the `hdr` tier) with new stable ids; `SUPPORTED` grows and its
+/// iteration order shifts. Because we resolve OUR features by name, those
+/// additions do not touch this bake's inputs. The picker only breaks if a
+/// feature it NEEDS is REMOVED — genuinely breaking (semver-major) — at which
+/// point [`resolve_features`] returns `None` and the encoder keeps its
+/// heuristic rather than feed the MLP a misaligned vector.
+const FEATURE_ORDER: &str = include_str!("picker_data/feature_order.txt");
+
+/// Resolve the embedded feature names to `AnalysisFeature`s in training order.
+/// `None` if any name is no longer known to this zenanalyze build (a needed
+/// feature was removed). This is the forward-compatibility seam: it depends
+/// only on the NAMES the bake declares, not on `SUPPORTED`'s size or order.
+fn resolve_features() -> Option<Vec<AnalysisFeature>> {
+    // name -> feature, over every feature THIS build knows. SUPPORTED (with
+    // experimental+hdr) is a superset of the picker's set; extra features are
+    // simply ignored, which is exactly what makes additions non-breaking.
+    let mut by_name = std::collections::HashMap::with_capacity(256);
+    for f in FeatureSet::SUPPORTED.iter() {
+        by_name.insert(f.name(), f);
+    }
+    let mut out = Vec::with_capacity(N_FEATURES);
+    for line in FEATURE_ORDER.lines() {
+        let Some(col) = line.split('\t').nth(1).map(str::trim) else {
+            continue;
+        };
+        if col.is_empty() {
+            continue;
+        }
+        // The extractor writes columns as `feat_<name>`; `AnalysisFeature::name()`
+        // returns the bare field name (`stringify!($field)`). Strip the prefix so
+        // the two conventions meet. Fall back to the raw column if a future
+        // exporter drops the prefix.
+        let name = col.strip_prefix("feat_").unwrap_or(col);
+        out.push(*by_name.get(name)?);
+    }
+    (out.len() == N_FEATURES).then_some(out)
+}
+
+/// Build the 109-input vector: the picker's `features` (resolved by name, in
+/// training order) + `zq_norm`.
+fn build_inputs(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    target_zensim_a: f32,
+    features: &[AnalysisFeature],
+) -> [f32; N_INPUTS] {
+    let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
+    let a = zenanalyze::analyze_features_rgb8(rgb, w, h, &query);
+    let mut x = [0.0f32; N_INPUTS];
+    for (i, &f) in features.iter().enumerate().take(N_FEATURES) {
+        // Degenerate-image guard: a non-finite feature (NaN/inf from an
+        // all-flat or pathological source) collapses to 0.0 — the same value
+        // the trainer used for a missing/empty cell — rather than poisoning
+        // the whole forward pass with a propagating NaN.
+        let v = feat_f32(&a, f);
+        x[i] = if v.is_finite() { v } else { 0.0 };
+    }
+    // OOB target guard: the Profile-A dial is 0..100. A finite target beyond
+    // it saturates to the nearest edge (there is no quality below 0 or above
+    // 100), so e.g. -2000 → 0.0 and 100/200 → 1.0. A non-finite target is
+    // left as NaN here and rejected by `pick_config` (caller bug, not a
+    // quality request).
+    x[N_FEATURES] = if target_zensim_a.is_finite() {
+        (target_zensim_a / 100.0).clamp(0.0, 1.0)
+    } else {
+        f32::NAN
+    };
+    x
+}
+
+/// Map a cell index (argmin over the 36 `bytes_log` outputs) to its config.
+/// Order MUST match the bake's `cell_labels`: outer→inner =
+/// subsampling{420,422,444} × progressive{false,true} × sharp_yuv{false,true}
+/// × effort{0,1,2}.
+fn cell_to_config(cell: usize) -> PickedConfig {
+    let effort_i = cell % 3;
+    let sharp = (cell / 3) % 2 == 1;
+    let prog = (cell / 6) % 2 == 1;
+    let sub_i = (cell / 12) % 3;
+    PickedConfig {
+        subsampling: match sub_i {
+            0 => ChromaSubsampling::Quarter,        // 4:2:0
+            1 => ChromaSubsampling::HalfHorizontal, // 4:2:2
+            _ => ChromaSubsampling::None,           // 4:4:4
+        },
+        progressive: prog,
+        sharp_yuv: sharp,
+        effort: match effort_i {
+            0 => Effort::Fast,
+            1 => Effort::Balanced,
+            _ => Effort::Max,
+        },
+    }
+}
+
+/// Predict the RD-optimal config for `target_zensim_a` (a Profile-A score,
+/// 0..100) from the source RGB8. `None` if the bake can't load/predict — the
+/// caller then keeps its bucket-heuristic config.
+pub(crate) fn pick_config(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    target_zensim_a: f32,
+) -> Option<PickedConfig> {
+    // Forward-compat seam: resolve the bake's features BY NAME. Returns None
+    // (→ caller's heuristic) only if a feature the picker NEEDS was REMOVED
+    // from zenanalyze; features ADDED since training are tolerated.
+    let features = resolve_features()?;
+    let model = Model::from_bytes(PICKER_BAKE).ok()?;
+    let mut predictor = Predictor::new(&model);
+    let x = build_inputs(rgb, w, h, target_zensim_a, &features);
+    // A non-finite target (NaN/±inf) is a caller bug, not a quality request —
+    // saturating it would silently pick a wrong config, so keep the encoder's
+    // heuristic instead. Finite OOB targets were already saturated to the
+    // [0,100] dial in `build_inputs`, so they fall through here.
+    if !x[N_FEATURES].is_finite() {
+        return None;
+    }
+    // OOD rescue seam: if the bake declares per-input bounds, an input outside
+    // them means the forward pass would extrapolate — `first_out_of_distribution`
+    // also catches any NaN/inf that slipped through. With no known-good
+    // fallback table in this bake, fall through to the caller's heuristic (the
+    // "known-good rescue strategy on a hit" `zenpredict::bounds` documents).
+    // Dormant while the bake's `feature_bounds` are empty; auto-activates if a
+    // future re-bake includes them — no code change needed.
+    let bounds = model.feature_bounds();
+    if !bounds.is_empty() && first_out_of_distribution(&x, bounds).is_some() {
+        return None;
+    }
+    let out = if model.has_nontrivial_feature_transforms() {
+        predictor.predict_transformed(&x).ok()?
+    } else {
+        predictor.predict(&x).ok()?
+    };
+    // All cells allowed; pick the argmin of predicted log-bytes (Exp because
+    // the outputs are in log space — matches the trainer's argmin metric).
+    let allow = [true; N_CELLS];
+    let mask = AllowedMask::new(&allow);
+    let cell = argmin_masked_in_range(out, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)?;
+    Some(cell_to_config(cell))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_to_config_round_trips_the_taxonomy() {
+        // Re-encode each config back to its index and confirm it equals the
+        // original cell — i.e. cell_to_config is a bijection over the 36 cells.
+        // (ChromaSubsampling/Effort aren't Hash, so map to discriminants.)
+        let enc = |c: PickedConfig| -> usize {
+            let sub = match c.subsampling {
+                ChromaSubsampling::Quarter => 0,
+                ChromaSubsampling::HalfHorizontal => 1,
+                ChromaSubsampling::None => 2,
+                _ => 99,
+            };
+            let eff = match c.effort {
+                Effort::Fast => 0,
+                Effort::Balanced => 1,
+                Effort::Max => 2,
+            };
+            sub * 12 + (c.progressive as usize) * 6 + (c.sharp_yuv as usize) * 3 + eff
+        };
+        for cell in 0..N_CELLS {
+            assert_eq!(enc(cell_to_config(cell)), cell, "cell {cell} round-trip");
+        }
+        // Spot-check the first + last labels against the toml ordering.
+        let c0 = cell_to_config(0); // 420 | prog=false | sharp=false | effort=0
+        assert_eq!(c0.subsampling, ChromaSubsampling::Quarter);
+        assert!(!c0.progressive && !c0.sharp_yuv);
+        assert_eq!(c0.effort, Effort::Fast);
+        let c35 = cell_to_config(35); // 444 | prog=true | sharp=true | effort=2
+        assert_eq!(c35.subsampling, ChromaSubsampling::None);
+        assert!(c35.progressive && c35.sharp_yuv);
+        assert_eq!(c35.effort, Effort::Max);
+    }
+
+    #[test]
+    fn picker_features_resolve_by_name_forward_compatibly() {
+        // The picker's 108 features must all resolve BY NAME against this
+        // zenanalyze build — and the resolution must NOT require SUPPORTED to
+        // have exactly 108 entries. That's the forward-compat contract: a
+        // future zenanalyze can ADD features (SUPPORTED grows) without breaking
+        // this bake, because we look up our features by name, not by position.
+        let feats = resolve_features()
+            .expect("all 108 picker features must resolve by name in this zenanalyze build");
+        assert_eq!(feats.len(), N_FEATURES);
+        // Resolution tolerates SUPPORTED being a strict superset (the whole
+        // point): assert it works whenever SUPPORTED ⊇ the picker's set.
+        assert!(
+            FeatureSet::SUPPORTED.iter().count() >= N_FEATURES,
+            "SUPPORTED must at least cover the picker's feature set"
+        );
+        // Every resolved feature is distinct (no name collision / duplicate).
+        let uniq: std::collections::HashSet<_> = feats.iter().map(|f| f.id()).collect();
+        assert_eq!(uniq.len(), N_FEATURES, "resolved features must be distinct");
+    }
+
+    #[test]
+    fn bake_loads_and_predicts_a_valid_cell() {
+        // A tiny synthetic RGB image must produce a valid config without
+        // panicking — exercises feature extraction + the v3 forward + argmin.
+        let (w, h) = (32u32, 32u32);
+        let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 255) as u8).collect();
+        let picked = pick_config(&rgb, w, h, 70.0);
+        assert!(picked.is_some(), "picker should return a config for a 32x32 image");
+    }
+
+    #[test]
+    fn out_of_bounds_target_zq_is_handled_without_panic_or_garbage() {
+        let (w, h) = (32u32, 32u32);
+        let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 255) as u8).collect();
+
+        // Finite targets — including ones well outside the 0..100 dial —
+        // saturate to the nearest edge and still yield a valid config. The MLP
+        // never sees a wild zq_norm, so no NaN-driven mis-pick.
+        for t in [-2000.0f32, -1.0, 0.0, 50.0, 100.0, 200.0, 1.0e9] {
+            let picked = pick_config(&rgb, w, h, t);
+            assert!(
+                picked.is_some(),
+                "finite OOB target {t} must saturate to the dial and yield a config",
+            );
+        }
+
+        // The normalized target is always within [0,1] for finite inputs —
+        // confirm the saturation directly so the contract is pinned, not just
+        // the downstream pick.
+        let feats = resolve_features().expect("features resolve");
+        for (t, want) in [(-2000.0f32, 0.0f32), (100.0, 1.0), (200.0, 1.0), (50.0, 0.5)] {
+            let x = build_inputs(&rgb, w, h, t, &feats);
+            assert!(
+                (x[N_FEATURES] - want).abs() < 1e-6,
+                "target {t} → zq_norm {} (want {want})",
+                x[N_FEATURES],
+            );
+        }
+
+        // Non-finite targets are caller bugs: the picker returns None so the
+        // encoder keeps its heuristic instead of silently picking a config off
+        // a NaN forward pass.
+        for t in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(
+                pick_config(&rgb, w, h, t).is_none(),
+                "non-finite target {t} must yield None (heuristic fallback)",
+            );
+        }
+    }
+}

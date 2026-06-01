@@ -603,7 +603,7 @@ pub(crate) fn run_iteration_loop(
     ctx: IterationContext<'_>,
 ) -> crate::error::Result<(alloc::vec::Vec<u8>, EncodeMetrics)> {
     use crate::encode::{EncoderConfig, Quality};
-    use zensim::{RgbSlice, Zensim, ZensimProfile};
+    use zensim::{Zensim, ZensimProfile};
 
     let blocks_w = (ctx.width as usize) / 8;
     let blocks_h = (ctx.height as usize) / 8;
@@ -611,6 +611,41 @@ pub(crate) fn run_iteration_loop(
         // Image too small to do per-block correction; fall back to the
         // single-pass starting-q encode.
         return run_single_pass(&ctx, None);
+    }
+
+    // The mutable pass config starts as the caller's. The source-feature
+    // picker (when enabled) overrides the categorical axes BELOW, before
+    // v_samp is derived — so the AQ iMCU schedule tracks the picked
+    // subsampling rather than the caller's. (If the picker flips 4:4:4→4:2:0
+    // but v_samp stays 1, the block→iMCU mapping is wrong and the per-block
+    // AQ scaling corrupts; deriving v_samp from `pass_config` after the
+    // override is what keeps them in lockstep.)
+    let mut pass_config: EncoderConfig = ctx.config.clone();
+
+    // Picker warm-start (research-gated, off by default). Given the source
+    // pixels + the Profile-A target, the distilled MLP predicts the RD-optimal
+    // categorical cell (subsampling × progressive × sharp_yuv × effort); seed
+    // pass 0 with it so the first encode already uses the right config instead
+    // of a content-blind default. RGB8-sRGB only (the picker's analyzer input);
+    // other layouts keep the caller's config. `pick_config` returns None — and
+    // we keep the caller's config — on any degenerate input, a non-finite
+    // target, or a needed feature missing from this zenanalyze build.
+    #[cfg(feature = "__picker-research")]
+    if let crate::encode::PixelLayout::Rgb8Srgb = ctx.layout {
+        if let Some(picked) = crate::encode::picker::pick_config(
+            ctx.pixels,
+            ctx.width,
+            ctx.height,
+            ctx.target.target,
+        ) {
+            pass_config = pass_config
+                .color_mode(crate::encode::ColorMode::YCbCr {
+                    subsampling: picked.subsampling,
+                })
+                .progressive(picked.progressive)
+                .sharp_yuv(picked.sharp_yuv)
+                .optimization(picked.effort.to_preset());
+        }
     }
 
     // Vertical sampling factor of the luma plane in iMCUs. Determines
@@ -622,7 +657,7 @@ pub(crate) fn run_iteration_loop(
     //   XYB Full            → v_samp = 1
     //   XYB BQuarter        → v_samp = 2  (B is 2×2 downsampled, max v_samp=2)
     //   Grayscale           → v_samp = 1
-    let v_samp = match ctx.config.color_mode {
+    let v_samp = match pass_config.color_mode {
         crate::encode::ColorMode::YCbCr { subsampling } => {
             subsampling.v_samp_factor_luma() as usize
         }
@@ -656,7 +691,8 @@ pub(crate) fn run_iteration_loop(
         (zq, Some(b)) => zq_to_starting_jpegli_q_for_bucket(zq, b),
         (zq, None) => zq_to_starting_jpegli_q(zq),
     };
-    let mut pass_config: EncoderConfig = ctx.config.clone();
+    // pass_config was cloned (and picker-warm-started) above; just set the
+    // pass-0 starting q here.
     pass_config = pass_config.quality(Quality::ApproxJpegli(starting_q));
 
     let bytes0 = encode_pass(&pass_config, &ctx, None)?;
