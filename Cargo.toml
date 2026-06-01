@@ -66,7 +66,7 @@ zenyuv = { path = "zenyuv" }
 # removes the retired `composites` feature) isn't published yet — CI that
 # pulls zenjpeg as a path-dep resolves zenanalyze from the same git rev,
 # so no sibling checkout is required.
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "913b0fa0ab290971fae7d5e9d2fff77442287346" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "7fb46b99af6f" }
 
 # Testing
 approx = "0.5"

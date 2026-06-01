@@ -105,8 +105,38 @@ fn resolve_features() -> Option<Vec<AnalysisFeature>> {
     (out.len() == N_FEATURES).then_some(out)
 }
 
-/// Build the 109-input vector: the picker's `features` (resolved by name, in
-/// training order) + `zq_norm`.
+/// Build the 109-input vector from an already-computed analysis result + the
+/// resolved `features` (in training order) + `zq_norm`. The analysis-free core
+/// shared by the fresh-analysis path ([`build_inputs`]) and the packed path
+/// ([`pick_config_from_packed`]).
+fn build_inputs_from_results(
+    a: &AnalysisResults,
+    target_zensim_a: f32,
+    features: &[AnalysisFeature],
+) -> [f32; N_INPUTS] {
+    let mut x = [0.0f32; N_INPUTS];
+    for (i, &f) in features.iter().enumerate().take(N_FEATURES) {
+        // Degenerate-image guard: a non-finite feature (NaN/inf from an
+        // all-flat or pathological source) collapses to 0.0 — the same value
+        // the trainer used for a missing/empty cell — rather than poisoning
+        // the whole forward pass with a propagating NaN.
+        let v = feat_f32(a, f);
+        x[i] = if v.is_finite() { v } else { 0.0 };
+    }
+    // OOB target guard: the Profile-A dial is 0..100. A finite target beyond
+    // it saturates to the nearest edge (there is no quality below 0 or above
+    // 100), so e.g. -2000 → 0.0 and 100/200 → 1.0. A non-finite target is
+    // left as NaN here and rejected downstream (caller bug, not a quality
+    // request).
+    x[N_FEATURES] = if target_zensim_a.is_finite() {
+        (target_zensim_a / 100.0).clamp(0.0, 1.0)
+    } else {
+        f32::NAN
+    };
+    x
+}
+
+/// Build the 109-input vector by analyzing `rgb` fresh.
 fn build_inputs(
     rgb: &[u8],
     w: u32,
@@ -116,26 +146,7 @@ fn build_inputs(
 ) -> [f32; N_INPUTS] {
     let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
     let a = zenanalyze::analyze_features_rgb8(rgb, w, h, &query);
-    let mut x = [0.0f32; N_INPUTS];
-    for (i, &f) in features.iter().enumerate().take(N_FEATURES) {
-        // Degenerate-image guard: a non-finite feature (NaN/inf from an
-        // all-flat or pathological source) collapses to 0.0 — the same value
-        // the trainer used for a missing/empty cell — rather than poisoning
-        // the whole forward pass with a propagating NaN.
-        let v = feat_f32(&a, f);
-        x[i] = if v.is_finite() { v } else { 0.0 };
-    }
-    // OOB target guard: the Profile-A dial is 0..100. A finite target beyond
-    // it saturates to the nearest edge (there is no quality below 0 or above
-    // 100), so e.g. -2000 → 0.0 and 100/200 → 1.0. A non-finite target is
-    // left as NaN here and rejected by `pick_config` (caller bug, not a
-    // quality request).
-    x[N_FEATURES] = if target_zensim_a.is_finite() {
-        (target_zensim_a / 100.0).clamp(0.0, 1.0)
-    } else {
-        f32::NAN
-    };
-    x
+    build_inputs_from_results(&a, target_zensim_a, features)
 }
 
 /// Map a cell index (argmin over the 36 `bytes_log` outputs) to its config.
@@ -163,6 +174,43 @@ fn cell_to_config(cell: usize) -> PickedConfig {
     }
 }
 
+/// Run the bake on a built input vector and argmin to a config. `None` if the
+/// bake can't load/predict, the target is non-finite, or an input is
+/// out-of-distribution — in every case the caller keeps its heuristic config.
+fn run_model(x: &[f32; N_INPUTS]) -> Option<PickedConfig> {
+    // A non-finite target (NaN/±inf) is a caller bug, not a quality request —
+    // saturating it would silently pick a wrong config, so keep the encoder's
+    // heuristic instead. Finite OOB targets were already saturated to the
+    // [0,100] dial in `build_inputs*`, so they fall through here.
+    if !x[N_FEATURES].is_finite() {
+        return None;
+    }
+    let model = Model::from_bytes(PICKER_BAKE).ok()?;
+    let mut predictor = Predictor::new(&model);
+    // OOD rescue seam: if the bake declares per-input bounds, an input outside
+    // them means the forward pass would extrapolate — `first_out_of_distribution`
+    // also catches any NaN/inf that slipped through. With no known-good
+    // fallback table in this bake, fall through to the caller's heuristic (the
+    // "known-good rescue strategy on a hit" `zenpredict::bounds` documents).
+    // Dormant while the bake's `feature_bounds` are empty; auto-activates if a
+    // future re-bake includes them — no code change needed.
+    let bounds = model.feature_bounds();
+    if !bounds.is_empty() && first_out_of_distribution(x, bounds).is_some() {
+        return None;
+    }
+    let out = if model.has_nontrivial_feature_transforms() {
+        predictor.predict_transformed(x).ok()?
+    } else {
+        predictor.predict(x).ok()?
+    };
+    // All cells allowed; pick the argmin of predicted log-bytes (Exp because
+    // the outputs are in log space — matches the trainer's argmin metric).
+    let allow = [true; N_CELLS];
+    let mask = AllowedMask::new(&allow);
+    let cell = argmin_masked_in_range(out, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)?;
+    Some(cell_to_config(cell))
+}
+
 /// Predict the RD-optimal config for `target_zensim_a` (a Profile-A score,
 /// 0..100) from the source RGB8. `None` if the bake can't load/predict — the
 /// caller then keeps its bucket-heuristic config.
@@ -176,38 +224,59 @@ pub(crate) fn pick_config(
     // (→ caller's heuristic) only if a feature the picker NEEDS was REMOVED
     // from zenanalyze; features ADDED since training are tolerated.
     let features = resolve_features()?;
-    let model = Model::from_bytes(PICKER_BAKE).ok()?;
-    let mut predictor = Predictor::new(&model);
     let x = build_inputs(rgb, w, h, target_zensim_a, &features);
-    // A non-finite target (NaN/±inf) is a caller bug, not a quality request —
-    // saturating it would silently pick a wrong config, so keep the encoder's
-    // heuristic instead. Finite OOB targets were already saturated to the
-    // [0,100] dial in `build_inputs`, so they fall through here.
-    if !x[N_FEATURES].is_finite() {
-        return None;
-    }
-    // OOD rescue seam: if the bake declares per-input bounds, an input outside
-    // them means the forward pass would extrapolate — `first_out_of_distribution`
-    // also catches any NaN/inf that slipped through. With no known-good
-    // fallback table in this bake, fall through to the caller's heuristic (the
-    // "known-good rescue strategy on a hit" `zenpredict::bounds` documents).
-    // Dormant while the bake's `feature_bounds` are empty; auto-activates if a
-    // future re-bake includes them — no code change needed.
-    let bounds = model.feature_bounds();
-    if !bounds.is_empty() && first_out_of_distribution(&x, bounds).is_some() {
-        return None;
-    }
-    let out = if model.has_nontrivial_feature_transforms() {
-        predictor.predict_transformed(&x).ok()?
-    } else {
-        predictor.predict(&x).ok()?
+    run_model(&x)
+}
+
+/// Why a packed-feature pick could not be made from caller-supplied data.
+///
+/// A bake/predict failure is deliberately NOT one of these — that returns
+/// `Ok(None)` so the encoder keeps its heuristic, exactly like [`pick_config`].
+/// These variants are reserved for the caller having supplied *bad or
+/// incomplete* feature data.
+#[derive(Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum PackedPickError {
+    /// The packed pairs were malformed (duplicate id or non-finite value).
+    Unpack(zenanalyze::feature::PackError),
+    /// The pack omitted one or more features the picker needs; carries their
+    /// stable ids.
+    Missing(zenanalyze::feature::MissingFeatures),
+}
+
+/// Predict the RD-optimal config from **pre-computed** zenanalyze features —
+/// `packed` is a [`zenanalyze::feature::AnalysisResults::pack`] blob — so the
+/// encoder skips re-analyzing the source. This is the cross-version path: the
+/// caller may have produced `packed` with a different zenanalyze version, and
+/// it travels as plain `(u16, f32)` data rather than a versioned type.
+///
+/// Returns `Err` if the caller's data is bad: [`PackedPickError::Unpack`] for a
+/// malformed pack, or [`PackedPickError::Missing`] (with the absent ids) if it
+/// doesn't carry every feature the picker needs — a clear error beats silently
+/// feeding the model zeroed inputs. Returns `Ok(None)` (→ heuristic) on a
+/// bake/predict failure or a non-finite target, matching [`pick_config`].
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn pick_config_from_packed(
+    packed: &[(u16, f32)],
+    target_zensim_a: f32,
+) -> Result<Option<PickedConfig>, PackedPickError> {
+    // If a feature the picker NEEDS was removed from THIS zenanalyze build, the
+    // picker can't run here at all — not the caller's fault, so Ok(None)
+    // (heuristic), same as pick_config's `resolve_features()?`.
+    let Some(features) = resolve_features() else {
+        return Ok(None);
     };
-    // All cells allowed; pick the argmin of predicted log-bytes (Exp because
-    // the outputs are in log space — matches the trainer's argmin metric).
-    let allow = [true; N_CELLS];
-    let mask = AllowedMask::new(&allow);
-    let cell = argmin_masked_in_range(out, RANGE_BYTES_LOG, &mask, ScoreTransform::Exp, None)?;
-    Some(cell_to_config(cell))
+    let results =
+        AnalysisResults::from_packed(packed).map_err(PackedPickError::Unpack)?;
+    // Demand the pack carries every feature the picker needs — otherwise the
+    // degenerate-guard would silently zero the absent ones and mis-pick.
+    let mut needed = FeatureSet::new();
+    for &f in &features {
+        needed = needed.with(f);
+    }
+    results.require(needed).map_err(PackedPickError::Missing)?;
+    let x = build_inputs_from_results(&results, target_zensim_a, &features);
+    Ok(run_model(&x))
 }
 
 #[cfg(test)]
@@ -316,5 +385,57 @@ mod tests {
                 "non-finite target {t} must yield None (heuristic fallback)",
             );
         }
+    }
+
+    #[test]
+    fn packed_path_picks_from_complete_pack_and_flags_bad_input() {
+        // A COMPLETE pack — every needed feature id present — is accepted and
+        // yields a config. Synthetic values exercise the plumbing without
+        // depending on which features a given image populates.
+        let feats = resolve_features().expect("features resolve");
+        let complete: Vec<(u16, f32)> =
+            feats.iter().enumerate().map(|(i, f)| (f.id(), i as f32 * 0.01)).collect();
+        let picked = pick_config_from_packed(&complete, 70.0).expect("complete pack accepted");
+        assert!(picked.is_some(), "a complete pack yields a config");
+
+        // A pack missing a needed feature → Err(Missing) naming the absent id,
+        // NOT a silent zero-fill.
+        let missing_id = feats[0].id();
+        let pruned: Vec<(u16, f32)> =
+            complete.iter().copied().filter(|(id, _)| *id != missing_id).collect();
+        match pick_config_from_packed(&pruned, 70.0) {
+            Err(PackedPickError::Missing(m)) => {
+                assert!(m.missing.contains(&missing_id), "must name the absent id")
+            }
+            other => panic!("expected Missing({missing_id}), got {other:?}"),
+        }
+
+        // A malformed pack (duplicate id) → Err(Unpack).
+        let mut dup = complete.clone();
+        dup.push(complete[0]);
+        assert!(matches!(
+            pick_config_from_packed(&dup, 70.0),
+            Err(PackedPickError::Unpack(_))
+        ));
+    }
+
+    #[test]
+    fn packed_path_matches_fresh_analysis_round_trip() {
+        // When a real analysis populates the full needed set, the packed pick is
+        // identical to the fresh-analysis pick — proving pack→from_packed is a
+        // faithful round-trip of the inputs the model sees. 256x256 textured
+        // noise populates every picker feature (hard-asserted via `require`, so
+        // a future feature that DOESN'T populate fails loudly rather than
+        // silently skipping the comparison).
+        let (w, h) = (256u32, 256);
+        let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| (i.wrapping_mul(7) % 251) as u8).collect();
+        let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
+        let results = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query);
+
+        let packed = results.pack();
+        let from_packed = pick_config_from_packed(&packed, 70.0)
+            .expect("256x256 analysis must populate the full picker feature set");
+        let fresh = pick_config(&rgb, w, h, 70.0);
+        assert_eq!(from_packed, fresh, "packed pick must match fresh-analysis pick");
     }
 }

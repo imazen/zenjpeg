@@ -3065,7 +3065,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=913b0fa0ab290971fae7d5e9d2fff77442287346#913b0fa0ab290971fae7d5e9d2fff77442287346"
+source = "git+https://github.com/imazen/zenanalyze?rev=7fb46b99af6f#7fb46b99af6f236dce26cacc93b26a785dfb5c4a"
 dependencies = [
  "archmage 0.9.23",
  "garb",
