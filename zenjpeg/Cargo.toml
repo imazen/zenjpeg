@@ -432,6 +432,14 @@ path = "dev/per_class_signal_probe.rs"
 name = "per_class_signal_probe_bprime"
 path = "dev/per_class_signal_probe_bprime.rs"
 
+# Per-image color-space loss probe for the YCbCr-vs-XYB picker (research).
+# Color-only (no DCT) round-trip loss per path; see dev/color_loss.rs.
+# Gated behind __test-utils (makes zenjpeg::color public).
+[[example]]
+name = "color_loss"
+path = "dev/color_loss.rs"
+required-features = ["__test-utils"]
+
 # Examples requiring trellis feature
 [[example]]
 name = "hybrid_auto_detect"

@@ -3182,7 +3182,7 @@ dependencies = [
  "zencodec",
  "zenjpeg-bench-utils",
  "zenpixels",
- "zenpredict 0.2.1",
+ "zenpredict 0.2.0",
  "zenresize",
  "zensim",
  "zensim-regress",
@@ -3265,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "zenpredict"
-version = "0.2.1"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "libm",
@@ -3313,7 +3313,7 @@ dependencies = [
  "rayon",
  "rgb",
  "thiserror",
- "zenpredict 0.2.1 (git+https://github.com/imazen/zenanalyze?rev=9a9be8200f26f643b45338711426cacae820f3a1)",
+ "zenpredict 0.2.1",
 ]
 
 [[package]]
