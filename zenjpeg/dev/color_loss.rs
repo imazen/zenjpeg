@@ -31,6 +31,36 @@
 //! Predictive signal per image: `delta = ycbcr_loss − xyb_loss`
 //! (positive ⇒ XYB preserves color better, by MAE).
 //!
+//! ## 444/Full pure-color-conversion mode
+//!
+//! The 4:2:0 vs BQuarter comparison above conflates two opposing forces:
+//! XYB drops ONE chroma plane (scaled-B) while YCbCr drops TWO (Cb,Cr), so
+//! XYB always "loses less" — but that is a SUBSAMPLING artifact. To isolate
+//! the COLOR CONVERSION itself, we also run both paths at full chroma/B
+//! resolution (YCbCr 4:4:4, XYB Full):
+//!
+//!   - `ycbcr_444_roundtrip`: RGB8 → BT.601 → RGB8 (no subsample). Near-
+//!     lossless; the only loss is the f32→u8 requant.
+//!   - `xyb_full_roundtrip`: RGB8 → scaled-XYB (all 3 channels full res) →
+//!     RGB8. Isolates the opsin → cbrt → unscale → XYB→linear → sRGB
+//!     transfer → 8-bit requant loss, which sheds gamut detail (notably
+//!     YELLOW and some RED hues) that BT.601 keeps.
+//!
+//! With subsampling removed, the conversion alone FAVORS YCbCr. Per image
+//! we emit `ycbcr444_mae`, `xyb444_mae`, their max errors, plus:
+//!
+//!   - `xyb_conv_loss_frac` = fraction of pixels where (err_xyb444 > 8) AND
+//!     (err_ycbcr444 <= 3): colors ONLY XYB's conversion sheds — the
+//!     "favor-YCbCr" picker signal.
+//!   - `ycbcr_conv_loss_frac` = fraction where (err_ycbcr444 > 8) AND
+//!     (err_xyb444 <= 3).
+//!   - a hue histogram (R,Y,G,C,B,M, sat>0.15) of the XYB-uniquely-lost
+//!     pixels, to confirm the yellow/red concentration.
+//!
+//! Together the two forces — subsampling (favors XYB, the `delta_mae`
+//! column) and color conversion (favors YCbCr, `xyb_conv_loss_frac`) —
+//! give the picker BOTH signals it needs.
+//!
 //! This harness lives in `zenjpeg/dev/` (a research tool, not part of the
 //! public examples dir or library API). It is gated behind `__test-utils`
 //! (which makes `zenjpeg::color` public).
@@ -193,6 +223,172 @@ fn xyb_bquarter_roundtrip(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
+/// YCbCr 4:4:4 (Full) color-only round-trip — NO chroma subsampling.
+/// Isolates the pure color-conversion loss of the BT.601 matrix + 8-bit
+/// JPEG-sample requant: RGB8 → BT.601 YCbCr (full res) → **8-bit sample
+/// requant on Y,Cb,Cr** → YCbCr→RGB8, clip.
+///
+/// `rgb_to_ycbcr_f32` already outputs Y,Cb,Cr in the 0-255 JPEG sample
+/// range (Cb,Cr centered at 128). The encoder stores `round(Y)` etc. as
+/// 8-bit DCT samples; at q100 the round trip is round-to-nearest. We model
+/// that with `round()` on each channel so this path goes through the same
+/// 8-bit sample grid as `xyb_full_roundtrip` — making the conversion-loss
+/// comparison apples-to-apples (both at 444/Full, both 8-bit samples).
+/// BT.601 is well-conditioned, so this is the YCbCr "conversion floor".
+fn ycbcr_444_roundtrip(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let n = w * h;
+    let mut out = vec![0u8; n * 3];
+    for i in 0..n {
+        let r = rgb[i * 3] as f32;
+        let g = rgb[i * 3 + 1] as f32;
+        let b = rgb[i * 3 + 2] as f32;
+        let (yy, cbb, crr) = rgb_to_ycbcr_f32(r, g, b);
+        // 8-bit JPEG-sample requant (Y,Cb,Cr stored as integer samples).
+        let yq = yy.round();
+        let cbq = cbb.round();
+        let crq = crr.round();
+        let (r2, g2, b2) = ycbcr_to_rgb_f32(yq, cbq, crq);
+        out[i * 3] = clip_u8(r2);
+        out[i * 3 + 1] = clip_u8(g2);
+        out[i * 3 + 2] = clip_u8(b2);
+    }
+    out
+}
+
+/// XYB Full color-only round-trip — NO B subsampling, all 3 XYB channels
+/// full res. Isolates the pure color-conversion loss of XYB's
+/// opsin → cube-root → scale → **8-bit JPEG-sample requant** → unscale →
+/// XYB→linear → sRGB transfer → 8-bit RGB requant.
+///
+/// The dominant loss is the 8-bit JPEG-sample requant on the scaled-XYB
+/// channels. The encoder maps each scaled-XYB value to a JPEG sample via
+/// `scaled_xyb * 255.0` (`convert_strip_to_xyb`, strip/convert.rs:642),
+/// the sample is stored as an 8-bit DCT coefficient (level-shifted), and
+/// the decoder reverses it as `sample / 255.0` before `unscale_xyb`. At
+/// q100 the DCT quant step is 1, so the spatial round trip is exactly
+/// `round(scaled_xyb * 255) / 255` per channel — the 8-bit sample grid is
+/// the conversion floor. XYB's cube-root packs the (large) yellow/red
+/// gamut into that grid more coarsely than BT.601 packs Cb/Cr, so XYB
+/// sheds those hues here. Returns the reconstructed RGB8 buffer.
+///
+/// We do NOT clamp the sample to [0,255]: XYB JPEGs use SOF1 / extended
+/// range and the encoder does not clamp the scaled f32 at this stage, so
+/// the only quantization modeled is round-to-nearest-integer sample.
+fn xyb_full_roundtrip(rgb: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let n = w * h;
+    let mut out = vec![0u8; n * 3];
+    for i in 0..n {
+        let r = rgb[i * 3];
+        let g = rgb[i * 3 + 1];
+        let b = rgb[i * 3 + 2];
+        // forward: sRGB8 -> scaled XYB (encoder's exact conversion).
+        let (x, yv, bv) = srgb_to_scaled_xyb(r, g, b);
+        // 8-bit JPEG-sample requant on each scaled-XYB channel: the
+        // encoder stores `scaled * 255` as an integer DCT sample; at q100
+        // the round trip is round-to-nearest. Reverse with `/ 255`.
+        let xq = (x * 255.0).round() / 255.0;
+        let yq = (yv * 255.0).round() / 255.0;
+        let bq = (bv * 255.0).round() / 255.0;
+        // inverse: scaled XYB -> sRGB8 (encoder's exact inverse).
+        let (r2, g2, b2) = scaled_xyb_to_srgb(xq, yq, bq);
+        out[i * 3] = r2;
+        out[i * 3 + 1] = g2;
+        out[i * 3 + 2] = b2;
+    }
+    out
+}
+
+/// Per-pixel max-channel |ΔRGB| between two RGB8 buffers.
+#[inline]
+fn pixel_err(orig: &[u8], recon: &[u8], i: usize) -> u32 {
+    let dr = (orig[i * 3] as i32 - recon[i * 3] as i32).unsigned_abs();
+    let dg = (orig[i * 3 + 1] as i32 - recon[i * 3 + 1] as i32).unsigned_abs();
+    let db = (orig[i * 3 + 2] as i32 - recon[i * 3 + 2] as i32).unsigned_abs();
+    dr.max(dg).max(db)
+}
+
+/// Pure-color-conversion (444/Full) metrics comparing the YCbCr-4:4:4 and
+/// XYB-Full round trips per pixel. Both paths run at full chroma/B
+/// resolution, so any difference is COLOR CONVERSION, not subsampling.
+struct ConvMetrics {
+    ycbcr444_mae: f64,
+    xyb444_mae: f64,
+    ycbcr444_maxerr: u32,
+    xyb444_maxerr: u32,
+    /// fraction of pixels where (err_xyb444 > 8) AND (err_ycbcr444 <= 3):
+    /// colors ONLY XYB's conversion sheds (the "favor-YCbCr" signal).
+    xyb_conv_loss_frac: f64,
+    /// fraction where (err_ycbcr444 > 8) AND (err_xyb444 <= 3).
+    ycbcr_conv_loss_frac: f64,
+    /// hue histogram (R,Y,G,C,B,M) of the XYB-uniquely-lost pixels,
+    /// counting only those with saturation > 0.15.
+    xyb_lost_hue: [u64; 6],
+    /// count of XYB-uniquely-lost pixels with sat > 0.15 (hist denominator).
+    xyb_lost_sat_pixels: u64,
+}
+
+fn compute_conv_metrics(
+    orig: &[u8],
+    yc444: &[u8],
+    xyb444: &[u8],
+    w: usize,
+    h: usize,
+) -> ConvMetrics {
+    let n = w * h;
+    let mut yc_sum: u64 = 0;
+    let mut xy_sum: u64 = 0;
+    let mut yc_max: u32 = 0;
+    let mut xy_max: u32 = 0;
+    let mut xyb_only_lost: u64 = 0;
+    let mut ycbcr_only_lost: u64 = 0;
+    let mut xyb_lost_hue = [0u64; 6];
+    let mut xyb_lost_sat_pixels: u64 = 0;
+    for i in 0..n {
+        let dr_y = (orig[i * 3] as i32 - yc444[i * 3] as i32).unsigned_abs();
+        let dg_y = (orig[i * 3 + 1] as i32 - yc444[i * 3 + 1] as i32).unsigned_abs();
+        let db_y = (orig[i * 3 + 2] as i32 - yc444[i * 3 + 2] as i32).unsigned_abs();
+        yc_sum += (dr_y + dg_y + db_y) as u64;
+        let e_yc = dr_y.max(dg_y).max(db_y);
+        if e_yc > yc_max {
+            yc_max = e_yc;
+        }
+        let e_xy = pixel_err(orig, xyb444, i);
+        xy_sum += {
+            let dr = (orig[i * 3] as i32 - xyb444[i * 3] as i32).unsigned_abs();
+            let dg = (orig[i * 3 + 1] as i32 - xyb444[i * 3 + 1] as i32).unsigned_abs();
+            let db = (orig[i * 3 + 2] as i32 - xyb444[i * 3 + 2] as i32).unsigned_abs();
+            (dr + dg + db) as u64
+        };
+        if e_xy > xy_max {
+            xy_max = e_xy;
+        }
+        // colors ONLY XYB sheds (favor-YCbCr).
+        if e_xy > 8 && e_yc <= 3 {
+            xyb_only_lost += 1;
+            let (sector, s) = hue_sat(orig[i * 3], orig[i * 3 + 1], orig[i * 3 + 2]);
+            if s > 0.15 {
+                xyb_lost_hue[sector] += 1;
+                xyb_lost_sat_pixels += 1;
+            }
+        }
+        // colors ONLY YCbCr sheds (favor-XYB on conversion alone).
+        if e_yc > 8 && e_xy <= 3 {
+            ycbcr_only_lost += 1;
+        }
+    }
+    let np = n as f64;
+    ConvMetrics {
+        ycbcr444_mae: yc_sum as f64 / (np * 3.0),
+        xyb444_mae: xy_sum as f64 / (np * 3.0),
+        ycbcr444_maxerr: yc_max,
+        xyb444_maxerr: xy_max,
+        xyb_conv_loss_frac: xyb_only_lost as f64 / np,
+        ycbcr_conv_loss_frac: ycbcr_only_lost as f64 / np,
+        xyb_lost_hue,
+        xyb_lost_sat_pixels,
+    }
+}
+
 /// Per-image, per-path color-loss metrics.
 struct PathMetrics {
     mae: f64,      // mean |ΔRGB| over all channels & pixels
@@ -344,15 +540,18 @@ delta_mae\tdelta_pct_gt5\t\
 ycbcr_high_R\tycbcr_high_Y\tycbcr_high_G\tycbcr_high_C\tycbcr_high_B\tycbcr_high_M\t\
 ycbcr_high_satlo\tycbcr_high_satmid\tycbcr_high_sathi\t\
 xyb_high_R\txyb_high_Y\txyb_high_G\txyb_high_C\txyb_high_B\txyb_high_M\t\
-xyb_high_satlo\txyb_high_satmid\txyb_high_sathi"
+xyb_high_satlo\txyb_high_satmid\txyb_high_sathi\t\
+ycbcr444_mae\txyb444_mae\tycbcr444_maxerr\txyb444_maxerr\t\
+xyb_conv_loss_frac\tycbcr_conv_loss_frac\t\
+xyblost_R\txyblost_Y\txyblost_G\txyblost_C\txyblost_B\txyblost_M\txyblost_satpx"
     )
     .unwrap();
 
     println!(
-        "{:<46} {:>9} {:>9} {:>9} {:>9}  {:>9}",
-        "image", "yc_mae", "xyb_mae", "delta", "yc_max", "xyb_max"
+        "{:<40} {:>8} {:>8} {:>8}  {:>10} {:>10}",
+        "image", "yc_mae", "xyb_mae", "delta", "xyb444_mae", "xybconvlos"
     );
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(96));
 
     for path in &entries {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -373,6 +572,11 @@ xyb_high_satlo\txyb_high_satmid\txyb_high_sathi"
         let delta_mae = mc.mae - mx.mae;
         let delta_pct5 = mc.pct_gt5 - mx.pct_gt5;
 
+        // 444/Full pure-color-conversion round trips (NO subsampling).
+        let yc444 = ycbcr_444_roundtrip(&rgb, w, h);
+        let xy444 = xyb_full_roundtrip(&rgb, w, h);
+        let cm = compute_conv_metrics(&rgb, &yc444, &xy444, w, h);
+
         writeln!(
             f,
             "{name}\t{class}\t{w}\t{h}\t\
@@ -380,7 +584,10 @@ xyb_high_satlo\txyb_high_satmid\txyb_high_sathi"
 {:.4}\t{}\t{:.3}\t{:.3}\t{:.3}\t\
 {:.4}\t{:.3}\t\
 {}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t\
-{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t\
+{:.4}\t{:.4}\t{}\t{}\t\
+{:.6}\t{:.6}\t\
+{}\t{}\t{}\t{}\t{}\t{}\t{}",
             mc.mae,
             mc.max,
             mc.pct_gt2,
@@ -411,14 +618,27 @@ xyb_high_satlo\txyb_high_satmid\txyb_high_sathi"
             mx.sat_lo,
             mx.sat_mid,
             mx.sat_hi,
+            cm.ycbcr444_mae,
+            cm.xyb444_mae,
+            cm.ycbcr444_maxerr,
+            cm.xyb444_maxerr,
+            cm.xyb_conv_loss_frac,
+            cm.ycbcr_conv_loss_frac,
+            cm.xyb_lost_hue[0],
+            cm.xyb_lost_hue[1],
+            cm.xyb_lost_hue[2],
+            cm.xyb_lost_hue[3],
+            cm.xyb_lost_hue[4],
+            cm.xyb_lost_hue[5],
+            cm.xyb_lost_sat_pixels,
         )
         .unwrap();
 
         let _ = mc.n_high;
         let _ = mx.n_high;
         println!(
-            "{:<46} {:>9.4} {:>9.4} {:>+9.4} {:>9} {:>9}",
-            name, mc.mae, mx.mae, delta_mae, mc.max, mx.max
+            "{:<40} {:>8.4} {:>8.4} {:>+8.4}  {:>10.4} {:>10.5}",
+            name, mc.mae, mx.mae, delta_mae, cm.xyb444_mae, cm.xyb_conv_loss_frac
         );
     }
 
