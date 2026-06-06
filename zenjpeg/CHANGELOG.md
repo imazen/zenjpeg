@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BQuarter-aware XYB subsampling pick in `EncoderConfig::adaptive`** — when
+  the adaptive oracle chooses XYB, it now picks Full vs BQuarter from
+  zenanalyze's `xyb_bquarter_chroma_loss` (id 139, the per-color-sensitivity-
+  weighted B-subsample loss) instead of hardcoding BQuarter. BQuarter stays the
+  RD-smart default (wins/ties XYB-Full on ~94% of an all-GPU butteraugli RD
+  sweep by spending the saved B-channel bytes on X/Y); the pick escalates to
+  Full only where the source has blue-yellow detail the 2× B-subsample would
+  drop (`xyb_bquarter_chroma_loss > 4.0`, recovering ~80% of the oracle RD gain
+  held-out). Pareto-safe over always-BQuarter. Bumps the zenanalyze dependency
+  to `13d40c3b` (adds ids 138/139, computed in the generic `analyze_features`
+  path). `adaptive.rs::pick_xyb_b_subsampling`.
+
 - **`recompress` module** — JPEG→JPEG recompression to a target zensim
   Profile A quality with no size regression, merged in from the standalone
   `zenjpeg-recompress` crate (2026-05-29). Single entry point

@@ -69,7 +69,10 @@ const ADAPTIVE_FEATURES: FeatureSet = FeatureSet::new()
     .with(AnalysisFeature::HighFreqEnergyRatio)
     .with(AnalysisFeature::LumaHistogramEntropy)
     .with(AnalysisFeature::DistinctColorBins)
-    .with(AnalysisFeature::PatchFraction);
+    .with(AnalysisFeature::PatchFraction)
+    // XYB-BQuarter B-subsample loss — drives the XYB Full-vs-BQuarter pick
+    // (see `pick_xyb_b_subsampling`). Experimental zenanalyze feature (id 139).
+    .with(AnalysisFeature::XybBquarterChromaLoss);
 
 /// `TextLikelihood` formula ported verbatim from
 /// `zenanalyze::compute_derived_likelihoods` (deleted commit `b1623ba`).
@@ -512,6 +515,27 @@ fn q_bin(q: f32) -> QBin {
 /// pick the codec config the 2026-04-25 oracle most often crowned a
 /// winner — clamped to caller permissions in `options`.
 ///
+/// XYB chroma-subsampling pick (Full vs BQuarter). BQuarter — subsampling the
+/// perceptually cheap XYB B (blue-yellow) channel 2× — is the RD-smart default:
+/// on an all-GPU butteraugli RD sweep (459 imgs, 2026-06-06) it wins or ties
+/// XYB-Full on ~94% of images by spending the saved bytes on the X/Y planes.
+/// Escalate to Full only where `xyb_bquarter_chroma_loss` (zenanalyze id 139,
+/// the per-color-sensitivity-weighted B-subsample loss `J·|Δsb|`) is high —
+/// i.e. the source has blue-yellow detail the subsample would drop. The
+/// threshold recovers ~80% of the oracle Full-vs-BQuarter RD gain held-out.
+///
+/// Note: butteraugli prefers BQuarter here; SSIMULACRA2 leans the other way
+/// (it values full B resolution). This default + escape is calibrated on
+/// butteraugli and is a Pareto-safe improvement over always-BQuarter — it only
+/// switches to Full where Full helps, and Full tends to help ssim2 too.
+fn pick_xyb_b_subsampling(features: &AnalysisResults) -> XybSubsampling {
+    const XYB_FULL_THRESHOLD: f32 = 4.0;
+    match features.get_f32(AnalysisFeature::XybBquarterChromaLoss) {
+        Some(loss) if loss.is_finite() && loss > XYB_FULL_THRESHOLD => XybSubsampling::Full,
+        _ => XybSubsampling::BQuarter,
+    }
+}
+
 /// This is a manual approximation of the 70 sklearn trees the fitter
 /// produces. Replaces the prior "chroma-detail → 4:4:4" two-line
 /// heuristic with something that actually reflects the measured
@@ -568,10 +592,10 @@ fn adaptive_internal(
 
     // ---- Build the EncoderConfig ----
     let mut cfg = if use_xyb {
-        // XYB always wants 4:4:4 in the oracle (or BQuarter for the
-        // B-channel). Pick BQuarter — that's the published recommendation
-        // and matches every winning XYB cell in the rules JSON.
-        EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
+        // XYB-BQuarter is the RD-smart default; the picker escalates to Full
+        // only where the source has blue-yellow detail the 2× B-subsample
+        // would drop (see `pick_xyb_b_subsampling`).
+        EncoderConfig::xyb(quality, pick_xyb_b_subsampling(features))
     } else {
         EncoderConfig::ycbcr(quality, pick.subsampling)
     };
@@ -746,6 +770,40 @@ mod tests {
         let rgb = vec![64u8; 64 * 64 * 3];
         let _cfg =
             EncoderConfig::adaptive(slice(&rgb, 64, 64), Quality::ApproxButteraugli(1.5)).unwrap();
+    }
+
+    #[test]
+    fn xyb_b_subsampling_picks_full_on_b_detail() {
+        // High blue-yellow detail (per-pixel B checkerboard) should escalate to
+        // XYB-Full; a flat patch keeps the RD-smart BQuarter default. Exercises
+        // the id-139 feature through the generic analyze_features path.
+        let (w, h) = (32u32, 32u32);
+        let mut detailed = vec![0u8; (w * h * 3) as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let i = (y * w as usize + x) * 3;
+                let c = if (x + y) & 1 == 0 {
+                    [20u8, 20, 230]
+                } else {
+                    [230, 230, 20]
+                };
+                detailed[i..i + 3].copy_from_slice(&c);
+            }
+        }
+        let flat = vec![128u8; (w * h * 3) as usize];
+        let q = AnalysisQuery::new(FeatureSet::new().with(AnalysisFeature::XybBquarterChromaLoss));
+        let rd = analyze_features(slice(&detailed, w, h), &q).unwrap();
+        let rf = analyze_features(slice(&flat, w, h), &q).unwrap();
+        assert_eq!(
+            pick_xyb_b_subsampling(&rd),
+            XybSubsampling::Full,
+            "high B detail → Full"
+        );
+        assert_eq!(
+            pick_xyb_b_subsampling(&rf),
+            XybSubsampling::BQuarter,
+            "flat → BQuarter"
+        );
     }
 
     #[test]
