@@ -24,6 +24,11 @@ convert -size 96x64 plasma:fractal -modulate 100,80 "$SRC/a.ppm"
 convert -size 67x53 plasma:fractal -colorspace sRGB -modulate 100,60 "$SRC/b.ppm"
 # A near-flat source (stresses EOB-run / all-zero AC blocks in progressive).
 convert -size 80x48 gradient:'#203040'-'#a0b0c0' "$SRC/c.ppm"
+# A larger high-entropy source (seeded → deterministic). Its codestream is big
+# enough that frame-decode read-ahead does NOT over-read the trailing metadata
+# boxes — this is what exercises the trailing-Exif/XMP/brob reconstruction path
+# (small sources mask it: the whole file fits in one read). See meta_d_* below.
+convert -seed 42 -size 256x192 plasma:fractal -depth 8 "$SRC/d.ppm"
 
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$MAN"; }
 
@@ -74,6 +79,18 @@ fi
 if command -v exiftool >/dev/null 2>&1; then
   cp "$OUT/base_a_444.jpg" "$OUT/meta_a_exif.jpg"
   exiftool -overwrite_original -Artist="zen" -Copyright="zen" "$OUT/meta_a_exif.jpg" >/dev/null 2>&1 && emit "meta_a_exif.jpg" "baseline,ycbcr,8bit,s444,exif,metadata" roundtrip
+fi
+
+# ---- Large codestream + EXIF Orientation (rotflip) — regression for trailing
+# metadata-box reconstruction. The big `d` source pushes the codestream past the
+# frame-decode read-ahead window, so the trailing brotli-compressed `Exif` box is
+# NOT slurped during frame decode; reconstruction must drain it explicitly or the
+# EXIF (incl. Orientation) is silently dropped. Small meta_a_* fixtures can't
+# catch this. Orientation=6 is the rotate-90 case behind EXIF "rotflip".
+if command -v exiftool >/dev/null 2>&1; then
+  cjpeg -quality 90 -sample 1x1 -outfile "$OUT/meta_d_exif_orient_big.jpg" "$SRC/d.ppm"
+  exiftool -overwrite_original -Orientation=6 -n -Artist=zen -Copyright=zen "$OUT/meta_d_exif_orient_big.jpg" >/dev/null 2>&1 \
+    && emit "meta_d_exif_orient_big.jpg" "baseline,ycbcr,8bit,s444,exif,orientation,large-codestream,metadata" roundtrip
 fi
 
 # ---- XMP metadata (lifted into a brotli-compressed `xml ` container box) ----
