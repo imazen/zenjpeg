@@ -92,11 +92,38 @@ if command -v exiftool >/dev/null 2>&1 && [ -f "$ICC_SMALL" ]; then
     -Comment="zen comment" "$OUT/meta_a_all.jpg" >/dev/null 2>&1 \
     && emit "meta_a_all.jpg" "baseline,ycbcr,8bit,s444,icc,exif,xmp,com,metadata" roundtrip
 fi
-# ---- Chunked ICC (>64KB profile -> multiple ICC_PROFILE APP2 markers) ----
+# ---- Chunked ICC (>64KB LUT profile -> multiple ICC_PROFILE APP2 markers).
+#      Realistic but incompressible; kept in /mnt/v, not committed to git. ----
 if [ -f "$ICC_BIG" ]; then
   convert "$SRC/a.ppm" -quality 85 -sampling-factor 2x2 -profile "$ICC_BIG" "$OUT/meta_a_iccbig.jpg" 2>/dev/null \
     && emit "meta_a_iccbig.jpg" "baseline,ycbcr,8bit,s420,icc-chunked,metadata" roundtrip
 fi
+# ---- Synthetic chunked ICC: a >64KB mostly-zero profile so the fixture is git
+#      -friendly (70KB on disk, ~0.8KB compressed). Exercises the 2-marker
+#      ICC_PROFILE re-stitch path hermetically. ----
+python3 - "$OUT/meta_a_iccsynth.jpg" <<'PYICC'
+import struct, subprocess, sys
+dest = sys.argv[1]
+size = 70000  # > 65519 -> two ICC_PROFILE APP2 chunks
+icc = bytearray(size)
+icc[0:4] = struct.pack('>I', size)
+icc[8:12] = struct.pack('>I', 0x02100000)  # ICC version 2.1
+icc[12:16] = b'mntr'; icc[16:20] = b'RGB '; icc[20:24] = b'XYZ '
+icc[36:40] = b'acsp'                        # required signature
+icc[128:132] = struct.pack('>I', 0)         # 0 tags (minimal, structurally valid)
+subprocess.run("convert -size 16x16 plasma:fractal ppm:- | cjpeg -quality 85 -sample 2x2 -outfile /tmp/_iccbase.jpg",
+               shell=True, check=True, stderr=subprocess.DEVNULL)
+d = open('/tmp/_iccbase.jpg', 'rb').read()
+ins = 4 + struct.unpack('>H', d[4:6])[0] if d[2:4] == b'\xff\xe0' else 2
+CH = 65519
+chunks = [bytes(icc[k:k+CH]) for k in range(0, len(icc), CH)]
+m = bytearray()
+for n, ch in enumerate(chunks, 1):
+    p = b'ICC_PROFILE\0' + bytes([n, len(chunks)]) + ch
+    m += b'\xff\xe2' + struct.pack('>H', len(p) + 2) + p
+open(dest, 'wb').write(d[:ins] + bytes(m) + d[ins:])
+PYICC
+[ -s "$OUT/meta_a_iccsynth.jpg" ] && emit "meta_a_iccsynth.jpg" "baseline,ycbcr,8bit,s420,icc-chunked,synthetic,metadata" roundtrip
 
 # ---- Tiny / single-MCU (per-call fixed-overhead + boundary edge cases) ----
 convert -size 8x8   plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 1x1 -outfile "$OUT/tiny_8x8_444.jpg" && emit "tiny_8x8_444.jpg" "baseline,ycbcr,8bit,s444,tiny,single-mcu" roundtrip
