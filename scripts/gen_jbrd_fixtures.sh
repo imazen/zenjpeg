@@ -76,6 +76,44 @@ if command -v exiftool >/dev/null 2>&1; then
   exiftool -overwrite_original -Artist="zen" -Copyright="zen" "$OUT/meta_a_exif.jpg" >/dev/null 2>&1 && emit "meta_a_exif.jpg" "baseline,ycbcr,8bit,s444,exif,metadata" roundtrip
 fi
 
+# ---- XMP metadata (lifted into a brotli-compressed `xml ` container box) ----
+if command -v exiftool >/dev/null 2>&1; then
+  cjpeg -quality 85 -outfile "$OUT/meta_a_xmp.jpg" "$SRC/a.ppm"
+  exiftool -overwrite_original -XMP-dc:Title="zenJBRD" "$OUT/meta_a_xmp.jpg" >/dev/null 2>&1 \
+    && emit "meta_a_xmp.jpg" "baseline,ycbcr,8bit,s420,xmp,metadata" roundtrip
+fi
+
+# ---- Combined metadata stack: JFIF + EXIF + XMP + ICC + COM ----
+ICC_SMALL=/home/lilith/.cache/zencodec-icc/skcms-sRGB_D65_colorimetric.icc
+ICC_BIG=/home/lilith/.cache/zencodec-icc/skcms-Kodak_sRGB.icc
+if command -v exiftool >/dev/null 2>&1 && [ -f "$ICC_SMALL" ]; then
+  convert "$SRC/a.ppm" -quality 85 -sampling-factor 1x1 -profile "$ICC_SMALL" "$OUT/meta_a_all.jpg" 2>/dev/null
+  exiftool -overwrite_original -Artist=zen -Copyright=zen -XMP-dc:Title="zenJBRD" \
+    -Comment="zen comment" "$OUT/meta_a_all.jpg" >/dev/null 2>&1 \
+    && emit "meta_a_all.jpg" "baseline,ycbcr,8bit,s444,icc,exif,xmp,com,metadata" roundtrip
+fi
+# ---- Chunked ICC (>64KB profile -> multiple ICC_PROFILE APP2 markers) ----
+if [ -f "$ICC_BIG" ]; then
+  convert "$SRC/a.ppm" -quality 85 -sampling-factor 2x2 -profile "$ICC_BIG" "$OUT/meta_a_iccbig.jpg" 2>/dev/null \
+    && emit "meta_a_iccbig.jpg" "baseline,ycbcr,8bit,s420,icc-chunked,metadata" roundtrip
+fi
+
+# ---- Tiny / single-MCU (per-call fixed-overhead + boundary edge cases) ----
+convert -size 8x8   plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 1x1 -outfile "$OUT/tiny_8x8_444.jpg" && emit "tiny_8x8_444.jpg" "baseline,ycbcr,8bit,s444,tiny,single-mcu" roundtrip
+convert -size 16x16 plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 2x2 -outfile "$OUT/tiny_16x16_420.jpg" && emit "tiny_16x16_420.jpg" "baseline,ycbcr,8bit,s420,tiny,single-mcu" roundtrip
+convert -size 8x8   plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 1x1 -progressive -outfile "$OUT/tiny_8x8_prog.jpg" && emit "tiny_8x8_prog.jpg" "progressive,ycbcr,8bit,s444,tiny" roundtrip
+convert -size 1x1   xc:'#7090b0'    ppm:- 2>/dev/null | cjpeg -quality 85 -outfile "$OUT/tiny_1x1.jpg" && emit "tiny_1x1.jpg" "baseline,ycbcr,8bit,tiny,1px" roundtrip
+
+# ---- Edge geometry (non-MCU-aligned dims: partial-MCU padding) ----
+convert -size 17x13 plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 2x2 -outfile "$OUT/edge_17x13_420.jpg" && emit "edge_17x13_420.jpg" "baseline,ycbcr,8bit,s420,edge-geom" roundtrip
+convert -size 23x7  plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 2x1 -outfile "$OUT/edge_23x7_422.jpg" && emit "edge_23x7_422.jpg" "baseline,ycbcr,8bit,s422,edge-geom" roundtrip
+convert -size 1x16  plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 1x1 -outfile "$OUT/edge_1x16_444.jpg" && emit "edge_1x16_444.jpg" "baseline,ycbcr,8bit,s444,edge-geom,1xN" roundtrip
+convert -size 16x1  plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 1x1 -outfile "$OUT/edge_16x1_444.jpg" && emit "edge_16x1_444.jpg" "baseline,ycbcr,8bit,s444,edge-geom,Nx1" roundtrip
+convert -size 19x19 plasma:fractal ppm:- 2>/dev/null | cjpeg -quality 85 -sample 2x2 -progressive -outfile "$OUT/edge_19x19_prog420.jpg" && emit "edge_19x19_prog420.jpg" "progressive,ycbcr,8bit,s420,edge-geom" roundtrip
+
+# ---- RGB with Adobe APP14 (color_transform = kNone) ----
+cjpeg -quality 90 -rgb -outfile "$OUT/rgb_adobe.jpg" "$SRC/a.ppm" && emit "rgb_adobe.jpg" "baseline,rgb,8bit,3comp,adobe-app14,kNone" roundtrip
+
 # ===================== FORMAT BOUNDARIES (expect: reject) =====================
 # These exceed what the JXL-JBRD container can represent byte-exactly; cjxl
 # refuses them too. The encoder MUST cleanly Err, never silently mis-encode.
