@@ -266,8 +266,7 @@ pub(crate) fn pick_config_from_packed(
     let Some(features) = resolve_features() else {
         return Ok(None);
     };
-    let results =
-        AnalysisResults::from_packed(packed).map_err(PackedPickError::Unpack)?;
+    let results = AnalysisResults::from_packed(packed).map_err(PackedPickError::Unpack)?;
     // Demand the pack carries every feature the picker needs — otherwise the
     // degenerate-guard would silently zero the absent ones and mis-pick.
     let mut needed = FeatureSet::new();
@@ -344,7 +343,10 @@ mod tests {
         let (w, h) = (32u32, 32u32);
         let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 255) as u8).collect();
         let picked = pick_config(&rgb, w, h, 70.0);
-        assert!(picked.is_some(), "picker should return a config for a 32x32 image");
+        assert!(
+            picked.is_some(),
+            "picker should return a config for a 32x32 image"
+        );
     }
 
     #[test]
@@ -367,7 +369,12 @@ mod tests {
         // confirm the saturation directly so the contract is pinned, not just
         // the downstream pick.
         let feats = resolve_features().expect("features resolve");
-        for (t, want) in [(-2000.0f32, 0.0f32), (100.0, 1.0), (200.0, 1.0), (50.0, 0.5)] {
+        for (t, want) in [
+            (-2000.0f32, 0.0f32),
+            (100.0, 1.0),
+            (200.0, 1.0),
+            (50.0, 0.5),
+        ] {
             let x = build_inputs(&rgb, w, h, t, &feats);
             assert!(
                 (x[N_FEATURES] - want).abs() < 1e-6,
@@ -393,16 +400,22 @@ mod tests {
         // yields a config. Synthetic values exercise the plumbing without
         // depending on which features a given image populates.
         let feats = resolve_features().expect("features resolve");
-        let complete: Vec<(u16, f32)> =
-            feats.iter().enumerate().map(|(i, f)| (f.id(), i as f32 * 0.01)).collect();
+        let complete: Vec<(u16, f32)> = feats
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.id(), i as f32 * 0.01))
+            .collect();
         let picked = pick_config_from_packed(&complete, 70.0).expect("complete pack accepted");
         assert!(picked.is_some(), "a complete pack yields a config");
 
         // A pack missing a needed feature → Err(Missing) naming the absent id,
         // NOT a silent zero-fill.
         let missing_id = feats[0].id();
-        let pruned: Vec<(u16, f32)> =
-            complete.iter().copied().filter(|(id, _)| *id != missing_id).collect();
+        let pruned: Vec<(u16, f32)> = complete
+            .iter()
+            .copied()
+            .filter(|(id, _)| *id != missing_id)
+            .collect();
         match pick_config_from_packed(&pruned, 70.0) {
             Err(PackedPickError::Missing(m)) => {
                 assert!(m.missing.contains(&missing_id), "must name the absent id")
@@ -428,7 +441,9 @@ mod tests {
         // a future feature that DOESN'T populate fails loudly rather than
         // silently skipping the comparison).
         let (w, h) = (256u32, 256);
-        let rgb: Vec<u8> = (0..(w * h * 3)).map(|i| (i.wrapping_mul(7) % 251) as u8).collect();
+        let rgb: Vec<u8> = (0..(w * h * 3))
+            .map(|i| (i.wrapping_mul(7) % 251) as u8)
+            .collect();
         let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
         let results = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query);
 
@@ -436,6 +451,9 @@ mod tests {
         let from_packed = pick_config_from_packed(&packed, 70.0)
             .expect("256x256 analysis must populate the full picker feature set");
         let fresh = pick_config(&rgb, w, h, 70.0);
-        assert_eq!(from_packed, fresh, "packed pick must match fresh-analysis pick");
+        assert_eq!(
+            from_packed, fresh,
+            "packed pick must match fresh-analysis pick"
+        );
     }
 }

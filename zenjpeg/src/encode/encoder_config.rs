@@ -1053,6 +1053,11 @@ impl EncoderConfig {
 
     /// The caller-supplied packed source features, if any
     /// (see [`Self::with_packed_source_features`]).
+    // Only consumed by the `target-zq` closed-loop encoder (`encode/zq.rs`), so it
+    // is genuinely unused in feature sets that don't compile that path (e.g. the CI
+    // clippy set, which omits `target-zq` to avoid the zensim git dep). The public
+    // `with_packed_source_features` setter + field remain available regardless.
+    #[cfg_attr(not(feature = "target-zq"), allow(dead_code))]
     pub(crate) fn packed_source_features(&self) -> Option<&[(u16, f32)]> {
         self.packed_source_features.as_deref()
     }

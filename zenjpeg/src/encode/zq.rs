@@ -1112,15 +1112,18 @@ mod tests {
         use zenanalyze::feature::{AnalysisQuery, FeatureSet};
 
         let (w, h) = (256u32, 256);
-        let rgb: alloc::vec::Vec<u8> =
-            (0..(w * h * 3)).map(|i| (i.wrapping_mul(7) % 251) as u8).collect();
+        let rgb: alloc::vec::Vec<u8> = (0..(w * h * 3))
+            .map(|i| (i.wrapping_mul(7) % 251) as u8)
+            .collect();
         let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
         let packed = zenanalyze::analyze_features_rgb8(&rgb, w, h, &query).pack();
 
         // Complete pack → encode succeeds off the supplied features (no re-analysis).
         let cfg = EncoderConfig::ycbcr(Quality::Zq(75.0), ChromaSubsampling::Quarter)
             .with_packed_source_features(packed.clone());
-        let mut enc = cfg.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).expect("encoder");
+        let mut enc = cfg
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .expect("encoder");
         enc.push_packed(&rgb, Unstoppable).expect("push");
         let (jpeg, _) = enc.finish_with_metrics().expect("complete pack encodes");
         assert!(!jpeg.is_empty());
@@ -1129,7 +1132,9 @@ mod tests {
         let pruned: alloc::vec::Vec<(u16, f32)> = packed.iter().copied().skip(1).collect();
         let cfg2 = EncoderConfig::ycbcr(Quality::Zq(75.0), ChromaSubsampling::Quarter)
             .with_packed_source_features(pruned);
-        let mut enc2 = cfg2.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb).expect("encoder");
+        let mut enc2 = cfg2
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .expect("encoder");
         enc2.push_packed(&rgb, Unstoppable).expect("push");
         assert!(
             enc2.finish_with_metrics().is_err(),
