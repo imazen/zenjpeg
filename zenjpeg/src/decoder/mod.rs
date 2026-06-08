@@ -86,5 +86,8 @@ pub use crate::encode::encoder_types::PixelLayout;
 
 // === ICC profile support ===
 pub use crate::color::icc::TargetColorSpace;
-#[cfg(feature = "moxcms")]
+// `extract_icc_profile` only scans APP2 `ICC_PROFILE` markers and returns the raw
+// bytes — it does no color management, so it is NOT gated behind `moxcms`. Gating
+// it forced consumers that just need the source profile (e.g. transcoders) to pull
+// the whole CMS.
 pub use crate::color::icc::extract_icc_profile;
