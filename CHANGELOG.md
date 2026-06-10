@@ -43,19 +43,25 @@ All notable changes to zenjpeg are documented here. Earlier history
 
 ### Added
 
-- `ProgressiveScanMode::Smallest` — exact min-bytes entropy-stage
-  selection. Coefficients are computed once, then serialized as up to
-  three candidates (sequential, sequential+tiny-file when eligible and
-  not `Off`, progressive jpegli script) and the smallest is emitted.
-  Pure rate decision: every candidate decodes to identical pixels, so
-  min(bytes) is correct 100% of the time — this replaces size-threshold
-  heuristics (e.g. tiny-file's pixel-count crossover) with the exact
-  answer. Sequential candidates emit exactly what an explicit Baseline
-  encode would, including restart markers. Cost: one extra entropy pass
-  per candidate (~12% of encode time each); DCT/AQ/quant shared.
-  Tests pin byte-equality with min(explicit modes) and pixel-identity.
-  `encode::sweep::rd_core()` now uses `Smallest` as its scan value —
-  the scan axis leaves heuristic space entirely.
+- `ProgressiveScanMode::Smallest` — smallest-output entropy-stage
+  selection. Coefficients are computed once; at ≤256×256 pixels they are
+  serialized as up to three candidates (sequential, sequential+tiny-file
+  when eligible and not `Off`, progressive jpegli script) and the exact
+  min(bytes) is emitted — a pure rate decision (identical pixels),
+  replacing tiny-file's pixel-count crossover heuristic with the exact
+  answer at the cost of microsecond entropy passes. Above 256×256 the
+  progressive candidate is emitted directly (one serialization): RD
+  sweeps found zero sequential wins at those sizes, while confirmed wins
+  exist below (e.g. ~10% at 200×160 q10 noise); the bound is empirical
+  and documented at `SMALLEST_TRIAL_MAX_PIXELS` with provenance.
+  Sequential candidates are restart-free (strictly additive bytes; the
+  progressive alternative cannot restart-parallel-decode either);
+  `force_restart_markers(true)` restores RSTs in sequential winners.
+  Tests pin: exact equality with min(explicit restart-free modes) below
+  the gate, byte-identity with Progressive above it, pixel-identity
+  across candidates, DRI presence under force.
+  `encode::sweep::rd_core()` uses `Smallest` as its scan value — the
+  scan axis leaves heuristic space.
 
 ### Fixed
 

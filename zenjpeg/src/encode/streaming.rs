@@ -1201,13 +1201,30 @@ impl StreamingEncoder {
         Ok(output)
     }
 
-    /// Exact smallest-entropy selection: serialize sequential (+ tiny-file
-    /// variant when eligible) and progressive candidates from the SAME
-    /// quantized coefficients and emit the smallest.
+    /// Pixel count at or below which `Smallest` trials the sequential
+    /// candidates. Above it, the progressive candidate is emitted
+    /// directly (one serialization).
     ///
-    /// This is a pure rate decision — every candidate decodes to identical
-    /// pixels — so `min(bytes)` is correct by construction. No size
-    /// thresholds, no content heuristics.
+    /// Provenance: RD sweeps (>256×256 images) found ZERO cases of a
+    /// Huffman-optimized sequential stream beating the jpegli
+    /// progressive script; confirmed sequential wins exist only below —
+    /// e.g. 200×160 noise at q10 (sequential ~10 % smaller, measured in
+    /// `tests/smallest_scan.rs` territory) and the tiny-file regime.
+    /// This is an empirical bound, not a theorem (successive
+    /// approximation + EOBn restructure the symbol stream, so no
+    /// partitioned-coding dominance argument closes); revisit with sweep
+    /// evidence if a larger counterexample ever appears.
+    const SMALLEST_TRIAL_MAX_PIXELS: u64 = 256 * 256;
+
+    /// Smallest-entropy selection: emit the smallest byte stream for the
+    /// SAME quantized coefficients.
+    ///
+    /// At or below [`SMALLEST_TRIAL_MAX_PIXELS`](Self::SMALLEST_TRIAL_MAX_PIXELS):
+    /// exact `min` over {sequential, sequential+tiny (when eligible),
+    /// progressive} — every candidate decodes to identical pixels, so
+    /// this is a pure rate decision. Above: progressive is emitted
+    /// directly (measured-universal winner at those sizes; one
+    /// serialization).
     fn build_smallest_into(
         config: &ComputedConfig,
         y_quant: &QuantTable,
@@ -1221,6 +1238,11 @@ impl StreamingEncoder {
                 "Smallest scan selection requires optimized Huffman tables",
             ));
         }
+
+        // Above SMALLEST_TRIAL_MAX_PIXELS the sequential candidates are
+        // skipped entirely — one serialization, zero trial overhead.
+        let run_trials =
+            u64::from(config.width) * u64::from(config.height) <= Self::SMALLEST_TRIAL_MAX_PIXELS;
 
         // Candidate 1: progressive, jpegli default script.
         let mut prog_cfg = config.clone();
@@ -1238,13 +1260,26 @@ impl StreamingEncoder {
             &mut prog,
         )?;
 
+        if !run_trials {
+            output.clear();
+            output
+                .try_reserve(prog.len())
+                .map_err(|_| Error::allocation_failed(prog.len(), "smallest-scan output"))?;
+            output.extend_from_slice(&prog);
+            return Ok(());
+        }
+
         // Candidate 2: plain sequential.
         let mut seq_cfg = config.clone();
         seq_cfg.smallest_scan = false;
         seq_cfg.mode = JpegMode::Baseline;
         seq_cfg.tiny_file_active = false;
-        // Sequential candidates emit exactly what an explicit Baseline
-        // encode would — including its restart markers.
+        // Pure rate minimizer: restart markers are strictly additive
+        // bytes, and the progressive alternative cannot
+        // restart-parallel-decode either, so 0 trades nothing away.
+        // `force_restart_markers` overrides via
+        // smallest_seq_restart_interval (resolved in byte_encoders,
+        // where that knob is in scope).
         seq_cfg.restart_interval = config.smallest_seq_restart_interval;
         let mut seq = Vec::new();
         Self::build_jpeg_sequential_into(

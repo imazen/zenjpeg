@@ -1523,23 +1523,27 @@ pub enum ProgressiveScanMode {
     /// Closest parity with C mozjpeg's default progressive output.
     ProgressiveMozjpeg,
 
-    /// Exact smallest-output selection across the entropy stage.
+    /// Smallest-output selection across the entropy stage.
     ///
-    /// Quantized coefficients are computed once, then serialized as up to
-    /// three candidates — sequential (+ tiny-file shared-table variant
-    /// when eligible and [`TinyFileMode`] is not `Off`) and progressive
-    /// (jpegli script) — and the smallest byte stream is emitted.
+    /// Quantized coefficients are computed once. For images at or below
+    /// 256×256 pixels they are serialized as up to three candidates —
+    /// sequential (+ tiny-file shared-table variant when eligible and
+    /// [`TinyFileMode`] is not `Off`) and progressive (jpegli script) —
+    /// and the smallest byte stream is emitted: a **lossless rate
+    /// decision** (identical pixels, exact `min(bytes)`). The extra
+    /// entropy passes cost microseconds at these sizes.
     ///
-    /// This is a **lossless rate decision**: every candidate decodes to
-    /// identical pixels, so min(bytes) is correct 100 % of the time — no
-    /// size threshold or content heuristic involved. Costs one extra
-    /// entropy pass per candidate (~12 % of encode time each); the
-    /// DCT/AQ/quantization work is shared.
+    /// Above 256×256 the progressive candidate is emitted directly (one
+    /// serialization): RD sweeps found zero sequential wins at those
+    /// sizes, while confirmed wins exist below (low-q noise, tiny-file
+    /// territory). Empirical bound, documented at the constant.
     ///
-    /// Each candidate emits exactly what its explicit mode would —
-    /// sequential candidates honor `restart_mcu_rows` like a plain
-    /// Baseline encode; the progressive candidate follows progressive
-    /// restart suppression.
+    /// Restart markers are suppressed in every candidate (they are
+    /// strictly additive bytes, and the progressive alternative cannot
+    /// restart-parallel-decode either, so nothing is traded away);
+    /// `force_restart_markers(true)` restores them — sequential
+    /// candidates then honor `restart_mcu_rows` like a plain Baseline
+    /// encode.
     Smallest,
 
     /// Progressive JPEG with scan search optimization.

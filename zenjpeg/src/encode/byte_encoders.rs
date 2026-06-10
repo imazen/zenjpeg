@@ -170,14 +170,21 @@ impl BytesEncoder {
             config.scan_mode,
             super::encoder_types::ProgressiveScanMode::Smallest
         ) {
-            builder = builder.smallest_scan(true).smallest_seq_restart_interval(
+            // Sequential candidates are restart-free (pure rate
+            // minimizer) unless restart markers are explicitly forced.
+            let seq_interval = if config.force_restart_markers {
                 super::config::resolve_restart_rows(
                     config.restart_mcu_rows,
                     width,
                     height,
                     subsampling,
-                ),
-            );
+                )
+            } else {
+                0
+            };
+            builder = builder
+                .smallest_scan(true)
+                .smallest_seq_restart_interval(seq_interval);
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
@@ -1180,14 +1187,21 @@ impl YCbCrPlanarEncoder {
             config.scan_mode,
             super::encoder_types::ProgressiveScanMode::Smallest
         ) {
-            builder = builder.smallest_scan(true).smallest_seq_restart_interval(
+            // Sequential candidates are restart-free (pure rate
+            // minimizer) unless restart markers are explicitly forced.
+            let seq_interval = if config.force_restart_markers {
                 super::config::resolve_restart_rows(
                     config.restart_mcu_rows,
                     width,
                     height,
                     subsampling,
-                ),
-            );
+                )
+            } else {
+                0
+            };
+            builder = builder
+                .smallest_scan(true)
+                .smallest_seq_restart_interval(seq_interval);
         }
         builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 

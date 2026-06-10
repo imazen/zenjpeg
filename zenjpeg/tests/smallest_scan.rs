@@ -43,6 +43,9 @@ fn decode(jpeg: &[u8]) -> Vec<u8> {
 }
 
 fn candidates(base: &EncoderConfig, rgb: &[u8], w: u32, h: u32) -> Vec<(&'static str, Vec<u8>)> {
+    // Smallest is a pure rate minimizer: its sequential candidates are
+    // restart-free (restart markers are strictly additive bytes), so the
+    // explicit comparison set uses restart_mcu_rows(0).
     vec![
         (
             "sequential",
@@ -50,6 +53,7 @@ fn candidates(base: &EncoderConfig, rgb: &[u8], w: u32, h: u32) -> Vec<(&'static
                 &base
                     .clone()
                     .progressive(ProgressiveScanMode::Baseline)
+                    .restart_mcu_rows(0)
                     .tiny_file_mode(TinyFileMode::Off),
                 rgb,
                 w,
@@ -62,6 +66,7 @@ fn candidates(base: &EncoderConfig, rgb: &[u8], w: u32, h: u32) -> Vec<(&'static
                 &base
                     .clone()
                     .progressive(ProgressiveScanMode::Baseline)
+                    .restart_mcu_rows(0)
                     .tiny_file_mode(TinyFileMode::Force),
                 rgb,
                 w,
@@ -143,7 +148,10 @@ fn smallest_respects_tiny_off() {
         h,
     );
     let seq = encode(
-        &base.clone().progressive(ProgressiveScanMode::Baseline),
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::Baseline)
+            .restart_mcu_rows(0),
         &rgb,
         w,
         h,
@@ -155,4 +163,59 @@ fn smallest_respects_tiny_off() {
         h,
     );
     assert_eq!(smallest.len(), seq.len().min(prog.len()));
+}
+
+#[test]
+fn smallest_above_trial_gate_is_byte_identical_to_progressive() {
+    // Above 256x256 the sequential candidates are skipped (zero observed
+    // wins at those sizes in RD sweeps) — Smallest must equal the
+    // progressive encode byte-for-byte, proving one serialization.
+    let (w, h) = (320u32, 280u32); // 89,600 px > 65,536
+    let rgb = photo_ish_rgb(w, h);
+    let base = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+
+    let smallest = encode(
+        &base.clone().progressive(ProgressiveScanMode::Smallest),
+        &rgb,
+        w,
+        h,
+    );
+    let prog = encode(
+        &base.clone().progressive(ProgressiveScanMode::Progressive),
+        &rgb,
+        w,
+        h,
+    );
+    assert_eq!(smallest, prog);
+}
+
+#[test]
+fn smallest_force_restart_markers_keeps_rst_in_sequential_winner() {
+    // Pick a config where sequential wins (tiny image), force restarts,
+    // and verify the winner carries a DRI segment (FF DD) — the explicit
+    // opt-in path for callers who want RSTs in whatever stream wins.
+    let (w, h) = (48u32, 48u32);
+    let rgb = photo_ish_rgb(w, h);
+    let base = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+
+    let plain = encode(
+        &base.clone().progressive(ProgressiveScanMode::Smallest),
+        &rgb,
+        w,
+        h,
+    );
+    let forced = encode(
+        &base
+            .clone()
+            .progressive(ProgressiveScanMode::Smallest)
+            .force_restart_markers(true),
+        &rgb,
+        w,
+        h,
+    );
+
+    let has_dri = |bytes: &[u8]| bytes.windows(2).any(|w| w == [0xFF, 0xDD]);
+    assert!(!has_dri(&plain), "default Smallest must be restart-free");
+    assert!(has_dri(&forced), "forced Smallest must carry DRI");
+    assert!(forced.len() >= plain.len());
 }
