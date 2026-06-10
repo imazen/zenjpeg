@@ -77,6 +77,21 @@ All notable changes to zenjpeg are documented here. Earlier history
   oracle vs the bundled `DISPLAY_P3_V4` profile). Supersedes the parked
   pre-release `resolve_emit` dogfooding worktree (the scenario/EmitFacts
   machinery never shipped; its codec-level subset became 0.1.21's API).
+- `encode::sweep` queue ordering + scalar coverage: cells now emit
+  main-effects-first (all-defaults stratum, then single-deviation
+  strata, then interaction combos; q ascending within a stratum so
+  truncation never strands a partial RD curve; `SweepCell::deviations`
+  exposes the class). `modes_full()` gains provenance-documented scalar
+  steps: λ₁ ladder {13.5–16.0}, λ₂ probes {16.0, 17.0}, coupling
+  {−8+clamp, −4, +4, exponent-2 probe}, delta_dc 1.0 probe, per-channel
+  chroma scales {[0.5,0.5],[2,2],[1,2],[2,1]}, pre_blur 0.4. The budget
+  ladder sheds one value at a time (was whole-axis: a 2000-cell budget
+  now keeps 1818 cells vs 909 before) with coalesced drop reports.
+- `docs/VARIANT_GENERATION.md` — the variant-generation playbook in
+  codec-neutral terms (discrimination, dominance/trial/metric taxonomy,
+  byte-domain gates, resolve-plan introspection, fingerprint dedup,
+  budgeted ordered sweeps) with a per-codec adoption table for
+  zenwebp/zenjxl/zenavif/zenpng.
 - `ProgressiveScanMode::SmallestSearch` — Smallest's sequential/tiny
   trials composed with the 64-candidate scan-script search as the
   progressive candidate (the search always includes the default jpegli

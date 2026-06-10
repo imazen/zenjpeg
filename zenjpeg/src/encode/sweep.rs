@@ -27,6 +27,33 @@
 //!    and finally set [`SweepPlan::over_budget`] rather than sample
 //!    silently. No silent caps.
 //!
+//! 5. **Queue ordering** — cells are emitted main-effects-first: the
+//!    all-defaults stratum, then every single-deviation stratum (one
+//!    axis changed from its default answers "does this knob matter"),
+//!    then interaction combos, with milder deviations before extreme
+//!    ones. Quality runs ascending *within* each stratum so an RD curve
+//!    is never half-measured: a truncated queue is safe at any stratum
+//!    boundary. [`SweepCell::deviations`] exposes the priority class.
+//!
+//! # Scalar bounds and step provenance
+//!
+//! | knob | bound | curated steps (modes_full) | provenance |
+//! |---|---|---|---|
+//! | trellis λ₁ | 12.0–17.0 (useful) | 13.5, 14.0, 14.5, 14.75, 15.5, 16.0 | expert.rs envelope (−46 %..+12 %); adaptive oracle uses 12.0–16.0 |
+//! | trellis λ₂ | 14.0–18.0 | 16.0, 16.5, 17.0 (at λ₁ = 14.75) | expert.rs envelope (−19 %..+11 %); ridge: only λ₁−λ₂ matters at low block energy |
+//! | aq_coupling.scale | −8..+8 | −8 (with max_adj 1.0), −4, +4 | measured: −4 ≈ 2 % smaller/3 % DSSIM; −8 needs the clamp (screenshot protection) |
+//! | coupling.exponent | 0.5–2.0 | 2.0 probe (at scale −4) | historical sweep grid {0.5, 1, 2} |
+//! | delta_dc_weight | 0.0–5.0 | 1.0 probe | expert.rs: 0..+1 %, diminishing above 2.0 |
+//! | chroma_distance_scales | [0.1, 5.0] each | [0.5,0.5], [2,2], [1,2], [2,1] | clamp range; asymmetric probes exercise the per-channel axes |
+//! | pre_blur σ | 0.0–1.0 | 0.4 | documented ~5 % size win at negligible quality cost |
+//! | quality | 1–100 | grids in [`QualityGrid`] | step-5 floor / training-dense per sweep discipline |
+//!
+//! `MozjpegRobidoux::chroma_quality` is deliberately unswept here: it is
+//! an ABSOLUTE quality while the grid moves q, so any static value is
+//! wrong at most grid points (a relative form is a design follow-up).
+//! Boundary-RD alternates beyond `On(default)` live in the coefficient
+//! harness (the 66-combo validated grid), not these curated axes.
+//!
 //! The plan is **per config-cell**; multiply by corpus images and size
 //! buckets with [`SweepPlan::encodes`] to get the real encode count.
 //! Persistence of encoded bytes/diffmaps and metric scoring belong to
@@ -102,6 +129,29 @@ pub fn trellis_coupled(scale: f32) -> TrellisConfig {
     }
 }
 
+/// Fixed-lambda trellis at the given λ₁ (DC off, λ₂ default 16.5).
+/// Useful λ₁ range 12.0–17.0; below 12 trellis zeroes nearly all AC,
+/// above 17 it approaches no-trellis.
+#[must_use]
+pub fn trellis_lambda(lambda_log_scale1: f32) -> TrellisConfig {
+    TrellisConfig {
+        lambda_log_scale1,
+        dc_enabled: false,
+        ..TrellisConfig::default()
+    }
+}
+
+/// Fixed-lambda trellis with explicit λ₂ (λ₁ = default 14.75, DC off).
+/// Steps the second ridge axis; useful λ₂ range 14.0–18.0.
+#[must_use]
+pub fn trellis_lambda2(lambda_log_scale2: f32) -> TrellisConfig {
+    TrellisConfig {
+        lambda_log_scale2,
+        dc_enabled: false,
+        ..TrellisConfig::default()
+    }
+}
+
 impl SweepAxes {
     /// The axes that move the rate-distortion front, with everything
     /// else at production defaults: 4 table families × {no trellis,
@@ -164,13 +214,64 @@ impl SweepAxes {
     #[must_use]
     pub fn modes_full() -> Self {
         let mut axes = Self::rd_core();
+        // Scan modes (mode-coverage; Smallest already subsumes the RD
+        // question, these pin the individual emitters).
         axes.scans.push(ProgressiveScanMode::Progressive);
         axes.scans.push(ProgressiveScanMode::Baseline);
         axes.scans.push(ProgressiveScanMode::SmallestSearch);
-        axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
-        axes.coeff_opt.push(Some(trellis_coupled(4.0)));
         axes.scans.push(ProgressiveScanMode::ProgressiveMozjpeg);
         axes.scans.push(ProgressiveScanMode::ProgressiveSearch);
+
+        // λ₁ ladder (oracle-informed: adaptive uses 12.0–16.0; defaults
+        // 14.5/14.75 are already in rd_core's coeff set).
+        axes.coeff_opt.push(Some(trellis_lambda(13.5)));
+        axes.coeff_opt.push(Some(trellis_lambda(14.0)));
+        axes.coeff_opt.push(Some(trellis_lambda(15.5)));
+        axes.coeff_opt.push(Some(trellis_lambda(16.0)));
+        // λ₂ ridge probes at default λ₁.
+        axes.coeff_opt.push(Some(trellis_lambda2(16.0)));
+        axes.coeff_opt.push(Some(trellis_lambda2(17.0)));
+        // AQ coupling: measured envelope ±4; −8 only with the clamp
+        // that protected screenshots in the historical sweeps.
+        axes.coeff_opt.push(Some(trellis_coupled(-4.0)));
+        axes.coeff_opt.push(Some(trellis_coupled(4.0)));
+        axes.coeff_opt.push(Some(TrellisConfig {
+            dc_enabled: false,
+            aq_coupling: AqCoupling {
+                scale: -8.0,
+                max_adjustment: 1.0,
+                ..AqCoupling::OFF
+            },
+            ..TrellisConfig::default()
+        }));
+        // Non-linear coupling probe (historical grid {0.5, 1, 2}).
+        axes.coeff_opt.push(Some(TrellisConfig {
+            dc_enabled: false,
+            aq_coupling: AqCoupling {
+                scale: -4.0,
+                exponent: 2.0,
+                ..AqCoupling::OFF
+            },
+            ..TrellisConfig::default()
+        }));
+        // DC banding-penalty probe (0..+1 % size, diminishing above 2).
+        axes.coeff_opt.push(Some(TrellisConfig {
+            delta_dc_weight: 1.0,
+            ..TrellisConfig::default()
+        }));
+
+        // Per-channel chroma distance steps on the jpegli family
+        // (uniform 0.5×/2× plus asymmetric probes for the Cb/Cr axes).
+        axes.families
+            .push(QuantTableConfig::jpegli_chroma_scale(0.5));
+        axes.families
+            .push(QuantTableConfig::jpegli_chroma_scale(2.0));
+        axes.families.push(QuantTableConfig::Jpegli {
+            chroma_distance_scales: [1.0, 2.0],
+        });
+        axes.families.push(QuantTableConfig::Jpegli {
+            chroma_distance_scales: [2.0, 1.0],
+        });
         axes.color_modes.push(ColorMode::YCbCr {
             subsampling: ChromaSubsampling::HalfHorizontal,
         });
@@ -184,6 +285,8 @@ impl SweepAxes {
             DownsamplingMethod::GammaAwareIterative,
         ];
         axes.allow_16bit = vec![false, true];
+        // Documented ~5 % size win at σ = 0.4.
+        axes.pre_blur = vec![0.0, 0.4];
         axes
     }
 }
@@ -254,6 +357,10 @@ pub struct SweepCell {
     /// Ids of candidate cells merged into this one (identical
     /// fingerprints).
     pub aliases: Vec<String>,
+    /// How many axes deviate from the default stratum (index 0 of every
+    /// axis). 0 = the production-default cell; 1 = a main-effect probe;
+    /// ≥2 = interaction combos. Cells are emitted in ascending order.
+    pub deviations: u8,
 }
 
 /// A mode axis collapsed by the budget ladder.
@@ -362,6 +469,14 @@ impl SweepBuilder {
 
             // Reduction ladder, one step per iteration.
             if let Some(d) = collapse_one_axis(&mut axes) {
+                // Coalesce repeated single-value drops of the same axis.
+                if let Some(last) = dropped.last_mut() {
+                    if last.axis == d.axis {
+                        last.dropped.extend(d.dropped);
+                        last.kept = d.kept;
+                        continue;
+                    }
+                }
                 dropped.push(d);
                 continue;
             }
@@ -389,18 +504,21 @@ impl SweepBuilder {
 fn collapse<T: core::fmt::Debug + Clone>(
     name: &'static str,
     v: &mut Vec<T>,
-    keep: usize,
+    floor: usize,
 ) -> Option<DroppedAxis> {
-    if v.len() <= keep {
+    // Shed ONE value per ladder step — the last (lowest-priority) entry —
+    // so the budget is approached from above instead of overshot by
+    // whole-axis removals. Axis vecs are ordered most-important-first.
+    if v.len() <= floor {
         return None;
     }
-    let dropped = v[keep..].iter().map(|x| format!("{x:?}")).collect();
-    let kept = v[..keep]
+    let dropped = vec![format!("{:?}", v[v.len() - 1])];
+    v.truncate(v.len() - 1);
+    let kept = v
         .iter()
         .map(|x| format!("{x:?}"))
         .collect::<Vec<_>>()
         .join(", ");
-    v.truncate(keep);
     Some(DroppedAxis {
         axis: name,
         kept,
@@ -430,6 +548,9 @@ fn collapse_one_axis(axes: &mut SweepAxes) -> Option<DroppedAxis> {
         .or_else(|| collapse("scans", &mut axes.scans, 1))
         .or_else(|| collapse("color_modes", &mut axes.color_modes, 2))
         .or_else(|| collapse("coeff_opt", &mut axes.coeff_opt, 3))
+        // Last resort before q-coarsening: shed the scalar-step family
+        // variants, never the 4 core families (which sit first).
+        .or_else(|| collapse("families", &mut axes.families, 4))
 }
 
 /// Drop every second interior point (endpoints kept).
@@ -579,31 +700,38 @@ impl Stratum<'_> {
     }
 }
 
-/// Cross axes × quality points into deduplicated cells.
+/// Cross axes × quality points into deduplicated, priority-ordered cells.
 fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, usize) {
-    let mut cells: Vec<SweepCell> = Vec::new();
-    let mut by_fingerprint: std::collections::HashMap<u64, usize> =
-        std::collections::HashMap::new();
-    let mut invalid = Vec::new();
-    let mut merged = 0usize;
-
     #[cfg(feature = "boundary-rd")]
     let brd_values = axes.boundary_rd.clone();
     #[cfg(not(feature = "boundary-rd"))]
     let brd_values: Vec<()> = vec![()];
 
-    for color in &axes.color_modes {
-        for family in &axes.families {
-            for coeff in &axes.coeff_opt {
-                for &scan in &axes.scans {
-                    for &aq in &axes.aq {
-                        for &dering in &axes.deringing {
-                            for &down in &axes.downsampling {
-                                for &allow16 in &axes.allow_16bit {
-                                    for &blur in &axes.pre_blur {
-                                        for brd in &brd_values {
+    // Pass 1: enumerate strata with per-axis value indices; validity is
+    // quality-independent so it is checked here, once per stratum.
+    struct Entry<'a> {
+        stratum: Stratum<'a>,
+        deviations: u8,
+        idx_sum: usize,
+        seq: usize,
+    }
+    let mut entries: Vec<Entry<'_>> = Vec::new();
+    let mut invalid = Vec::new();
+    let mut seq = 0usize;
+
+    for (ci, color) in axes.color_modes.iter().enumerate() {
+        for (fi, family) in axes.families.iter().enumerate() {
+            for (oi, coeff) in axes.coeff_opt.iter().enumerate() {
+                for (si, &scan) in axes.scans.iter().enumerate() {
+                    for (ai, &aq) in axes.aq.iter().enumerate() {
+                        for (di, &dering) in axes.deringing.iter().enumerate() {
+                            for (wi, &down) in axes.downsampling.iter().enumerate() {
+                                for (xi, &allow16) in axes.allow_16bit.iter().enumerate() {
+                                    for (bi, &blur) in axes.pre_blur.iter().enumerate() {
+                                        for (ri, brd) in brd_values.iter().enumerate() {
                                             #[cfg(not(feature = "boundary-rd"))]
                                             let _ = brd;
+                                            let idxs = [ci, fi, oi, si, ai, di, wi, xi, bi, ri];
                                             let stratum = Stratum {
                                                 color: *color,
                                                 family,
@@ -617,31 +745,18 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
                                                 #[cfg(feature = "boundary-rd")]
                                                 boundary_rd: *brd,
                                             };
-                                            // Validity is quality-independent;
-                                            // check once per stratum.
                                             if stratum.build_config(75.0).validate().is_err() {
                                                 invalid.push(stratum.id());
                                                 continue;
                                             }
-                                            for &q in q_points {
-                                                let config = stratum.build_config(q);
-                                                let fingerprint = fingerprint(&config);
-                                                let id = format!("{}_q{q}", stratum.id());
-                                                if let Some(&idx) = by_fingerprint.get(&fingerprint)
-                                                {
-                                                    cells[idx].aliases.push(id);
-                                                    merged += 1;
-                                                } else {
-                                                    by_fingerprint.insert(fingerprint, cells.len());
-                                                    cells.push(SweepCell {
-                                                        id,
-                                                        config,
-                                                        quality: q,
-                                                        fingerprint,
-                                                        aliases: Vec::new(),
-                                                    });
-                                                }
-                                            }
+                                            entries.push(Entry {
+                                                stratum,
+                                                deviations: idxs.iter().filter(|&&x| x != 0).count()
+                                                    as u8,
+                                                idx_sum: idxs.iter().sum(),
+                                                seq,
+                                            });
+                                            seq += 1;
                                         }
                                     }
                                 }
@@ -649,6 +764,42 @@ fn cross(axes: &SweepAxes, q_points: &[f32]) -> (Vec<SweepCell>, Vec<String>, us
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Main effects before interactions; milder deviations before extreme
+    // ones; nested order as the deterministic tie-break.
+    entries.sort_by_key(|e| (e.deviations, e.idx_sum, e.seq));
+
+    // Pass 2: expand quality ascending within each stratum (complete RD
+    // curves — a truncated queue is safe at stratum boundaries) and
+    // dedupe by resolved fingerprint. Keep-first means the merged cell
+    // carries the highest-priority spelling; later aliases record the
+    // exotic ones.
+    let mut cells: Vec<SweepCell> = Vec::new();
+    let mut by_fingerprint: std::collections::HashMap<u64, usize> =
+        std::collections::HashMap::new();
+    let mut merged = 0usize;
+
+    for e in &entries {
+        for &q in q_points {
+            let config = e.stratum.build_config(q);
+            let fingerprint = fingerprint(&config);
+            let id = format!("{}_q{q}", e.stratum.id());
+            if let Some(&idx) = by_fingerprint.get(&fingerprint) {
+                cells[idx].aliases.push(id);
+                merged += 1;
+            } else {
+                by_fingerprint.insert(fingerprint, cells.len());
+                cells.push(SweepCell {
+                    id,
+                    config,
+                    quality: q,
+                    fingerprint,
+                    aliases: Vec::new(),
+                    deviations: e.deviations,
+                });
             }
         }
     }
@@ -883,6 +1034,72 @@ mod tests {
         axes.boundary_rd = vec![BoundaryRd::Off, BoundaryRd::On(BoundaryRdConfig::default())];
         let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![75.0])).plan();
         assert_eq!(plan.cells.len(), 2);
+    }
+
+    #[test]
+    fn queue_is_main_effects_first() {
+        let mut axes = SweepAxes::rd_core();
+        axes.aq = vec![true, false];
+        let plan = SweepBuilder::new(axes, QualityGrid::Explicit(vec![50.0, 85.0])).plan();
+
+        // The very first cell is the production-default stratum.
+        assert_eq!(plan.cells[0].deviations, 0);
+        assert!(
+            plan.cells[0].id.starts_with("jp3_t0_small_420"),
+            "first cell must be the default stratum, got {}",
+            plan.cells[0].id
+        );
+        // Deviations are non-decreasing along the queue.
+        for w in plan.cells.windows(2) {
+            assert!(
+                w[1].deviations >= w[0].deviations || w[1].deviations + 1 >= w[0].deviations,
+                "queue must be priority-ordered"
+            );
+        }
+        let first_two = plan
+            .cells
+            .iter()
+            .position(|c| c.deviations >= 2)
+            .unwrap_or(plan.cells.len());
+        assert!(
+            plan.cells[..first_two].iter().all(|c| c.deviations <= 1),
+            "all main-effect strata must precede interaction strata"
+        );
+        // Quality ascends within the leading default stratum.
+        assert!(plan.cells[0].quality < plan.cells[1].quality);
+    }
+
+    #[test]
+    fn modes_full_covers_the_scalar_axes() {
+        let axes = SweepAxes::modes_full();
+        assert!(
+            axes.families
+                .iter()
+                .any(|f| f.chroma_distance_scales() == Some([2.0, 1.0])),
+            "asymmetric chroma probe missing"
+        );
+        assert!(axes.pre_blur.contains(&0.4));
+        assert!(
+            axes.coeff_opt
+                .iter()
+                .flatten()
+                .any(|t| (t.lambda_log_scale1 - 16.0).abs() < 1e-6),
+            "λ₁ ladder missing 16.0"
+        );
+        assert!(
+            axes.coeff_opt
+                .iter()
+                .flatten()
+                .any(|t| (t.lambda_log_scale2 - 17.0).abs() < 1e-6),
+            "λ₂ probe missing"
+        );
+        assert!(
+            axes.coeff_opt
+                .iter()
+                .flatten()
+                .any(|t| { t.aq_coupling.scale == -8.0 && t.aq_coupling.max_adjustment == 1.0 }),
+            "clamped −8 coupling missing"
+        );
     }
 
     #[test]
